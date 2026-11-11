@@ -15,11 +15,13 @@ use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// The rule files a bundle holds; `factions.ron` is last so the indices of the others are stable.
-const FILES: [&str; 5] = [
+const FILES: [&str; 7] = [
     "units.ron",
     "structures.ron",
     "upgrades.ron",
     "movement_rules.ron",
+    "statuses.ron",
+    "ability_effects.ron",
     "factions.ron",
 ];
 
@@ -590,5 +592,248 @@ fn a_structure_scan_range_is_required_exactly_when_it_is_armed() -> TestResult {
             result.as_ref().err()
         );
     }
+    Ok(())
+}
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3: the spell tables are read at run time. Raising
+/// the first damage node of `ability_effects.ron` (the storm's initial damage) in a copied bundle
+/// changes what a storm deals, with no recompilation.
+#[test]
+fn an_edited_effect_value_changes_a_storm_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("spell")?;
+    let effects = std::fs::read_to_string(bundle.directory.join(FILES[5]))?;
+    std::fs::write(
+        bundle.directory.join(FILES[5]),
+        replace_first_field(&effects, "amount", "25.0"),
+    )?;
+    let mut losses = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        world.research_upgrade(PlayerId(0), "psionic_storm")?;
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "psionic_storm")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped storm caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_shields == SimScalar::ZERO
+                    && archetype.max_speed > SimScalar::ZERO
+            })
+            .ok_or("a unit without shields")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        let before = world.entities[&victim].hp;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        losses.push(before - world.entities[&victim].hp);
+    }
+    assert_eq!(
+        losses,
+        [SimScalar::from_i32(10), SimScalar::from_i32(25)],
+        "the shipped initial damage, then the edited one"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP3: shortening Abduct's flight in a copied
+/// `ability_effects.ron` shortens the pull, with no recompilation.
+#[test]
+fn an_edited_flight_changes_an_abduct_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("abduct")?;
+    let effects = std::fs::read_to_string(bundle.directory.join(FILES[5]))?;
+    std::fs::write(
+        bundle.directory.join(FILES[5]),
+        replace_first_field(&effects, "flight_ticks", "6"),
+    )?;
+    let mut flights = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "abduct")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Abduct caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_speed > SimScalar::ZERO
+                    && archetype.weapon.is_none()
+                    && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("an unarmed mobile unit")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(0), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, None, Some(victim)));
+        let mut flying = 0;
+        for _ in 0..60 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(world.current_tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+            if world.entities[&victim].displacement.is_some() {
+                flying += 1;
+            }
+        }
+        flights.push(flying);
+    }
+    // The tick a flight starts the unit is still at its start; it lands on the last tick.
+    assert_eq!(flights, [18, 6], "the shipped flight, then the edited one");
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP4: a weaker slow in a copied `statuses.ron`
+/// changes what Fungal Growth does to a unit's speed, with no recompilation.
+#[test]
+fn an_edited_status_changes_a_fungal_slow_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("fungal")?;
+    let statuses = std::fs::read_to_string(bundle.directory.join(FILES[4]))?;
+    assert_eq!(
+        statuses.matches("move_speed_factor:").count(),
+        1,
+        "the slow is the one status that changes speed"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[4]),
+        replace_first_field(&statuses, "move_speed_factor", "0.5"),
+    )?;
+    let mut factors = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "fungal_growth")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Fungal Growth caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_speed > SimScalar::ZERO
+                    && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("a mobile unit")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        for _ in 0..12 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(world.current_tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+        }
+        factors.push(world.entities[&victim].status_modifiers().move_speed_factor);
+    }
+    assert_eq!(
+        factors,
+        [SimScalar::from_num(0.25), SimScalar::from_num(0.5)],
+        "the shipped slow, then the edited one"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP5: a smaller reduction in a copied
+/// `statuses.ron` changes what Blinding Cloud leaves of a ranged weapon's range, with no
+/// recompilation.
+#[test]
+fn an_edited_status_changes_a_blinding_cloud_range_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("blinding")?;
+    let statuses = std::fs::read_to_string(bundle.directory.join(FILES[4]))?;
+    assert_eq!(
+        statuses.matches("ranged_weapon_range_delta:").count(),
+        1,
+        "the cloud's unit status is the one that reduces ranged weapons only"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[4]),
+        replace_first_field(&statuses, "ranged_weapon_range_delta", "-2.0"),
+    )?;
+    let mut ranges = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "blinding_cloud")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Blinding Cloud caster")?;
+        // A mobile ground unit whose only weapon is ranged with range 5.
+        let shooter = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.mover_type == sim_types::MoverType::Ground
+                    && archetype.max_speed > SimScalar::ZERO
+                    && archetype.weapon.as_ref().is_some_and(|weapon| {
+                        !weapon.melee && weapon.max_range == SimScalar::from_i32(5)
+                    })
+            })
+            .ok_or("a ranged ground unit")?
+            .clone();
+        let weapon = shooter.weapon.clone().ok_or("armed")?;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim =
+            world.spawn_unit(shooter.unit_type_id, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        let entity = world.entities[&victim].clone();
+        ranges.push(world.entity_weapon_range(&entity, &weapon, &shooter.slug));
+    }
+    assert_eq!(
+        ranges,
+        [
+            SimScalar::ONE.saturating_div(SimScalar::from_i32(10)),
+            SimScalar::from_i32(3)
+        ],
+        "the shipped reduction to the floor, then the edited one"
+    );
+    bundle.finish()?;
     Ok(())
 }

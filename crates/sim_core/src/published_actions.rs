@@ -239,6 +239,10 @@ mod tests {
                 is_burrow: true,
             },
             leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
         });
         assert!(anchored.can_ever_move());
     }

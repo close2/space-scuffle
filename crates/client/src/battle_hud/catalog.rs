@@ -16,6 +16,8 @@
 //! - Mode entries come from `ToggleMode` abilities whose `SwitchMode` effect names one of their
 //!   archetype's modes ([`mode_of_ability`]). A mode name is interned as a [`ModeId`] and compared
 //!   only with other catalog strings, never with a literal.
+//! - Cast entries come from targeted effect-tree abilities ([`cast_of_ability`]), interned as a
+//!   [`CastId`] by name and target kind, in catalog order, the same way.
 //! - An identity is unpresentable exactly when
 //!   [`ClientMediaStatus::presentable`](crate::media::ClientMediaStatus::presentable) refuses it.
 
@@ -26,7 +28,9 @@ use sim_core::{UnitArchetype, UnitCatalog};
 use sim_types::enums::ShapeKind;
 use sim_types::{SimScalar, UnitTypeId, UpgradeEffect};
 
-use crate::battle_pipeline::commands::{is_armed, mode_of_ability};
+use crate::battle_pipeline::commands::{
+    cast_of_ability, is_armed, mode_of_ability, CastKey, CastTarget,
+};
 
 /// What one catalog identity is called and can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +53,8 @@ pub struct ArchetypeCommands {
     pub overclock_unlock: Option<u32>,
     /// Its mode abilities, one per mode, in `ModeId` order.
     pub modes: Vec<ModeCommand>,
+    /// Its targeted effect-tree abilities, one per cast, in `CastId` order.
+    pub casts: Vec<CastCommand>,
     /// Whether it can transport other units.
     pub carrier: bool,
     /// Whether it is a structure.
@@ -84,6 +90,35 @@ pub struct ModeCommand {
     pub unlock: Option<u32>,
 }
 
+/// A targeted cast of the catalog, interned in catalog order (by archetype, then by ability).
+///
+/// Archetypes that declare an ability of the same name and target kind share one ID, and so
+/// one card entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CastId(pub u16);
+
+/// One archetype's way to one cast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CastCommand {
+    /// The cast.
+    pub cast: CastId,
+    /// Index of the archetype's first ability for it.
+    pub ability_index: u8,
+    /// Catalog ID of the upgrade that unlocks the ability, if one must be researched.
+    pub unlock: Option<u32>,
+}
+
+/// The name of one cast and what arms it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CastLabels {
+    /// The ability's catalog `name`, the entry's label.
+    pub name: String,
+    /// The ability on the first archetype that declares it, which a cast mode carries.
+    pub key: CastKey,
+    /// Whether it aims at a point or a unit.
+    pub target: CastTarget,
+}
+
 /// The names of one mode and of its two commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModeLabels {
@@ -109,6 +144,8 @@ pub struct CommandCatalog {
     upgrades: BTreeMap<u32, UpgradeCommand>,
     /// Every mode, indexed by [`ModeId`]; labels from the first archetype that declares it.
     modes: Vec<ModeLabels>,
+    /// Every cast, indexed by [`CastId`]; labels from the first archetype that declares it.
+    casts: Vec<CastLabels>,
 }
 
 impl CommandCatalog {
@@ -123,6 +160,7 @@ impl CommandCatalog {
         unpresentable: impl Fn(UnitTypeId) -> Option<String>,
     ) -> Self {
         let modes = intern_modes(units);
+        let casts = intern_casts(units);
         Self {
             archetypes: units
                 .archetypes()
@@ -130,6 +168,7 @@ impl CommandCatalog {
                     let id = archetype.unit_type_id;
                     let mut commands = commands_of(archetype, units, upgrades, unpresentable(id));
                     commands.modes = mode_commands(archetype, upgrades, &modes);
+                    commands.casts = cast_commands(archetype, upgrades, &casts);
                     (id, commands)
                 })
                 .collect(),
@@ -141,7 +180,19 @@ impl CommandCatalog {
                 })
                 .collect(),
             modes,
+            casts,
         }
+    }
+
+    /// The name and key of `cast`, if the catalog declares it.
+    #[must_use]
+    pub fn cast(&self, cast: CastId) -> Option<&CastLabels> {
+        self.casts.get(usize::from(cast.0))
+    }
+
+    /// Every cast's ID, in catalog order.
+    pub fn cast_ids(&self) -> impl Iterator<Item = CastId> {
+        (0..self.casts.len()).filter_map(|index| u16::try_from(index).ok().map(CastId))
     }
 
     /// The names of `mode`, if the catalog declares it.
@@ -191,6 +242,7 @@ fn commands_of(
         overclock: archetype.overclock.is_some(),
         overclock_unlock: unlock_of(archetype, OVERCLOCK_ABILITY_SLUG, upgrades),
         modes: Vec::new(),
+        casts: Vec::new(),
         carrier: archetype.capabilities.transport_capacity > 0,
         structure: is_structure(archetype),
         shielded: archetype.max_shields > SimScalar::ZERO,
@@ -292,6 +344,65 @@ fn mode_commands(
     commands
 }
 
+/// Every targeted cast of the catalog, by name and target kind, in catalog order, labelled and
+/// keyed by the first archetype that declares it.
+fn intern_casts(units: &UnitCatalog) -> Vec<CastLabels> {
+    let mut casts: Vec<CastLabels> = Vec::new();
+    for archetype in units.archetypes() {
+        for (ability, ability_index) in archetype.abilities.iter().zip(0_u8..) {
+            let Some(target) = cast_of_ability(ability) else {
+                continue;
+            };
+            if casts
+                .iter()
+                .all(|cast| cast.name != ability.name || cast.target != target)
+            {
+                casts.push(CastLabels {
+                    name: ability.name.clone(),
+                    key: CastKey {
+                        holder: archetype.unit_type_id,
+                        ability_index,
+                    },
+                    target,
+                });
+            }
+        }
+    }
+    casts
+}
+
+/// `archetype`'s cast commands, one per cast (its first ability for that cast), in `CastId`
+/// order.
+fn cast_commands(
+    archetype: &UnitArchetype,
+    upgrades: &UpgradeCatalog,
+    casts: &[CastLabels],
+) -> Vec<CastCommand> {
+    let mut commands: Vec<CastCommand> = Vec::new();
+    for (ability, ability_index) in archetype.abilities.iter().zip(0_u8..) {
+        let Some(target) = cast_of_ability(ability) else {
+            continue;
+        };
+        let Some(id) = casts
+            .iter()
+            .position(|cast| cast.name == ability.name && cast.target == target)
+            .and_then(|index| u16::try_from(index).ok())
+        else {
+            continue;
+        };
+        if commands.iter().any(|command| command.cast == CastId(id)) {
+            continue;
+        }
+        commands.push(CastCommand {
+            cast: CastId(id),
+            ability_index,
+            unlock: unlock_of(archetype, &ability.name, upgrades),
+        });
+    }
+    commands.sort_unstable_by_key(|command| command.cast);
+    commands
+}
+
 const fn is_structure(archetype: &UnitArchetype) -> bool {
     matches!(archetype.shape, ShapeKind::BuildingDome { .. })
 }
@@ -341,6 +452,86 @@ mod tests {
             }
         }
         assert!(seen >= 2, "the shipped catalog has mode abilities");
+        Ok(())
+    }
+
+    /// A scratch point cast rooted at an effect name; the catalog reads no spell table.
+    fn scratch_cast(
+        name: &str,
+        target_kind: sim_types::AbilityTargetKind,
+    ) -> sim_types::AbilitySpec {
+        sim_types::AbilitySpec {
+            name: name.to_owned(),
+            target_kind,
+            energy_cost: SimScalar::ZERO,
+            cooldown_ticks: 0,
+            cast_range: SimScalar::ONE,
+            effect: sim_types::AbilityEffectSpec::Effect("scratch".to_owned()),
+            leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
+        }
+    }
+
+    #[test]
+    fn targeted_effect_abilities_become_casts_shared_by_name_and_target() -> TestResult {
+        use sim_types::AbilityTargetKind::{TargetEntity, TargetPosition};
+        let (mut units, upgrades) = shipped();
+        // The shipped casts, so the count below holds whatever spells the catalog ships.
+        let shipped_casts = CommandCatalog::build(&units, &upgrades, |_| None)
+            .cast_ids()
+            .count();
+        let kinds: Vec<UnitTypeId> = units
+            .archetypes()
+            .filter(|archetype| archetype.abilities.is_empty())
+            .map(|archetype| archetype.unit_type_id)
+            .collect();
+        let (first, second) = (*kinds.first().ok_or("one")?, *kinds.get(1).ok_or("two")?);
+        units
+            .get_mut(first)?
+            .abilities
+            .push(scratch_cast("Scratch zone", TargetPosition));
+        {
+            let second = units.get_mut(second)?;
+            second
+                .abilities
+                .push(scratch_cast("Scratch bolt", TargetEntity));
+            second
+                .abilities
+                .push(scratch_cast("Scratch zone", TargetPosition));
+            second
+                .abilities
+                .push(scratch_cast("Scratch zone", TargetEntity));
+        }
+        let catalog = CommandCatalog::build(&units, &upgrades, |_| None);
+        let zone = catalog.archetype(first).ok_or("first")?.casts[0];
+        let shared = catalog
+            .archetype(second)
+            .ok_or("second")?
+            .casts
+            .iter()
+            .find(|command| command.cast == zone.cast)
+            .ok_or("the second archetype shares the zone")?;
+        assert_eq!(shared.ability_index, 1, "its own index");
+        let labels = catalog.cast(zone.cast).ok_or("labels")?;
+        assert_eq!(labels.name, "Scratch zone");
+        assert_eq!(labels.target, CastTarget::Point);
+        assert_eq!(
+            labels.key.holder, first,
+            "keyed by the first declaring archetype"
+        );
+        assert_eq!(
+            catalog.archetype(second).ok_or("second")?.casts.len(),
+            3,
+            "a unit cast of the same name is a cast of its own"
+        );
+        assert_eq!(
+            catalog.cast_ids().count(),
+            shipped_casts + 3,
+            "three scratch casts: the shared point zone, the bolt and the unit zone"
+        );
         Ok(())
     }
 

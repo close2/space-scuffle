@@ -8,9 +8,11 @@
 
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use sim_core::{
-    ActiveBuff, ActiveHazardZone, ActiveProjectile, Entity, SimWorld, WeaponPhase, WeaponSpec,
-};
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::{open_storm, ScratchStorm};
+use sim_core::{ActiveBuff, ActiveProjectile, Entity, SimWorld, WeaponPhase, WeaponSpec};
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, PlayerVisionMap, RampDir, ResourceKind, ResourceNode,
     TerrainKind, VisionSource, Watchtower,
@@ -86,21 +88,6 @@ fn projectile() -> ActiveProjectile {
         source_slug: Some("fixture-source".to_owned()),
         remaining_lifetime_ticks: 25,
         strikes: 1,
-    }
-}
-
-fn hazard() -> ActiveHazardZone {
-    ActiveHazardZone {
-        id: 1,
-        owner: PlayerId(0),
-        center: point(4, 4),
-        radius: SimScalar::ONE,
-        delay_ticks: 2,
-        remaining_ticks: 25,
-        interval_ticks: 3,
-        ticks_until_next_interval: 1,
-        damage_per_interval: SimScalar::ONE,
-        targets_friendly: false,
     }
 }
 
@@ -184,11 +171,25 @@ fn every_public_entity_field_changes_the_world_checksum() {
             channeling_remaining_ticks => 7,
             pending_ability => Some((1, Some(point(3, 4)), Some(EntityId(2)))),
             ability_cooldowns => [1, 2, 3, 4],
-            last_storm_damage_tick => Some(Tick(0)),
             is_cloaked => true,
             max_hp => SimScalar::from_i32(-1),
             is_completed => false,
             is_invulnerable => true,
+            cast_lock_ticks => 9,
+            displacement => Some(sim_core::effects::Displacement {
+                node: sim_types::EffectId(1),
+                context: sim_types::EffectContext {
+                    owner: PlayerId(1),
+                    caster: Some(EntityId(2)),
+                    ability: sim_types::AbilitySource::default(),
+                    origin: point(1, 1),
+                    source_point: point(2, 2),
+                    target: sim_types::EffectTarget::Unit(EntityId(1)),
+                },
+                from: point(3, 3),
+                to: point(4, 4),
+                start_tick: Tick(5),
+            }),
         },
         |entity| {
             world.entities.insert(EntityId(1), entity.clone());
@@ -199,7 +200,7 @@ fn every_public_entity_field_changes_the_world_checksum() {
 }
 
 #[test]
-fn every_projectile_and_hazard_field_changes_the_world_checksum() {
+fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
     let mut world = world();
     assert_mutations(
         &projectile(),
@@ -215,17 +216,24 @@ fn every_projectile_and_hazard_field_changes_the_world_checksum() {
             world.compute_checksum()
         },
     );
-    assert_mutations(
-        &hazard(),
-        mutations! { ActiveHazardZone;
-            id => 2, owner => PlayerId(1), center => point(5, 4), radius => SimScalar::from_i32(2),
-            delay_ticks => 3, remaining_ticks => 24, interval_ticks => 4,
-            ticks_until_next_interval => 2, damage_per_interval => SimScalar::from_i32(2), targets_friendly => true,
-        },
-        |hazard| {
-            world.active_hazards = vec![hazard.clone()];
-            world.compute_checksum()
-        },
+    // The effect engine replaced the hazard zones (plan `2026-11-10-spellcaster-mechanics` D-12).
+    // Each field of its state is mutated by the unit test in `sim_core::checksum::encoding`;
+    // through the public API, a storm open on empty ground (a persistent alone) and one on the
+    // unit (its status and damage) each move the checksum.
+    ScratchStorm::GAME.install(&mut world);
+    world.projectiles.clear();
+    let empty = world.compute_checksum();
+    open_storm(&mut world, PlayerId(1), point(12, 3));
+    assert_eq!(world.effects().persistents().len(), 1);
+    assert_eq!(world.effects().statuses().len(), 0);
+    let one_persistent = world.compute_checksum();
+    assert_ne!(empty, one_persistent, "checksum omitted a persistent");
+    open_storm(&mut world, PlayerId(1), point(3, 3));
+    assert_eq!(world.effects().statuses().len(), 1);
+    assert_ne!(
+        one_persistent,
+        world.compute_checksum(),
+        "checksum omitted a status"
     );
 }
 
@@ -560,7 +568,6 @@ fn player_world_map_and_rng_state_are_observable() {
         }),
         ("entity generator", |w| w.next_entity_id += 1),
         ("projectile generator", |w| w.next_projectile_id += 1),
-        ("hazard generator", |w| w.next_hazard_id += 1),
         ("vision pathfinding", |w| w.vision_aware_pathfinding = false),
         ("minerals", |w| w.player_resources[P0].minerals += 1),
         ("gas", |w| w.player_resources[P0].gas += 1),
@@ -879,10 +886,7 @@ fn capability_selected_replay_matches_full_state_for_2000_ticks() {
             a.projectiles, b.projectiles,
             "full projectile state at tick {tick}"
         );
-        assert_eq!(
-            a.active_hazards, b.active_hazards,
-            "hazard state at tick {tick}"
-        );
+        assert_eq!(a.effects(), b.effects(), "effect state at tick {tick}");
         assert_eq!(a.player_resources, b.player_resources);
         assert_eq!(a.player_upgrades, b.player_upgrades);
         observed_movement |= a

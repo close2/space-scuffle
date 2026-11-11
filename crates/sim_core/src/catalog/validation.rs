@@ -1069,6 +1069,10 @@ mod tests {
                     attack_rate_multiplier: rate,
                 }),
                 leave_name: None,
+                cast_backswing_ticks: 0,
+                single_caster: true,
+                target_filter: None,
+                origin: None,
             };
             for capability_list in [false, true] {
                 let mut file: CatalogFile = ron::from_str(units)?;

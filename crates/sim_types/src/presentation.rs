@@ -92,6 +92,24 @@ pub enum StatusKind {
     Slowed,
     /// The damage-absorbing barrier is raised.
     Barrier,
+    /// A status dealing damage over time is running.
+    DamageOverTime,
+    /// A status stunning the unit is running.
+    Stunned,
+    /// A status reducing weapon range is running.
+    RangeReduced,
+    /// A status revealing the unit through cloak and burrow is running.
+    Revealed,
+}
+
+/// Whether a flag is off; the spell flags are then left out of a serialized frame, so frames
+/// without spells keep the bytes they had before the flags existed.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+const fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// Status effects active on a bubble this frame.
@@ -117,6 +135,18 @@ pub struct StatusFlags {
     /// The barrier absorbed damage during this tick (an absorb flash).
     #[serde(default)]
     pub barrier_hit: bool,
+    /// A status dealing damage over time is running ([`StatusKind::DamageOverTime`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub damage_over_time: bool,
+    /// A stunning status is running ([`StatusKind::Stunned`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stunned: bool,
+    /// A range-reducing status is running ([`StatusKind::RangeReduced`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub range_reduced: bool,
+    /// A revealing status is running ([`StatusKind::Revealed`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub revealed: bool,
 }
 
 impl StatusFlags {
@@ -128,6 +158,10 @@ impl StatusFlags {
             StatusKind::Dash => self.dash,
             StatusKind::Slowed => self.slowed,
             StatusKind::Barrier => self.barrier_up,
+            StatusKind::DamageOverTime => self.damage_over_time,
+            StatusKind::Stunned => self.stunned,
+            StatusKind::RangeReduced => self.range_reduced,
+            StatusKind::Revealed => self.revealed,
         }
     }
 }
@@ -209,7 +243,8 @@ pub struct LineView {
     pub count: u8,
 }
 
-/// A persistent area on the ground (a hazard zone), refreshed every frame.
+/// A persistent area on the ground (a point-anchored effect persistent that searches, such as a
+/// storm), refreshed every frame.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaView {
@@ -228,6 +263,21 @@ pub struct AreaView {
     /// The caster type and ability that opened it; `None` when the area was placed by other
     /// means (a scenario or a test).
     pub source: Option<AbilitySource>,
+}
+
+/// A spell missile in flight presented as a projectile, refreshed every frame (plan
+/// `2026-11-10-spellcaster-mechanics` D-11, D-19).
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpellMissileView {
+    /// The missile's identifier, stable for its flight.
+    pub id: u32,
+    /// Player whose cast launched it.
+    pub owner: PlayerId,
+    /// Position `[x, y, altitude]` in world units.
+    pub position: [f32; 3],
+    /// The caster type and ability that launched it.
+    pub source: AbilitySource,
 }
 
 /// A tether between two entities, refreshed every frame. Its ends follow the two bubbles.
@@ -272,7 +322,15 @@ mod tests {
             slowed: true,
             barrier_up: false,
             barrier_hit: true,
+            damage_over_time: true,
+            stunned: false,
+            range_reduced: true,
+            revealed: false,
         };
+        assert!(flags.has(StatusKind::DamageOverTime));
+        assert!(!flags.has(StatusKind::Stunned));
+        assert!(flags.has(StatusKind::RangeReduced));
+        assert!(!flags.has(StatusKind::Revealed));
         assert!(flags.has(StatusKind::Overclock));
         assert!(!flags.has(StatusKind::Dash));
         assert!(flags.has(StatusKind::Slowed));

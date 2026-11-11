@@ -661,6 +661,15 @@ fn expected_cell(expect: &Expected) -> String {
             push(&mut text, format_args!(", {side} lead hull {low}–{high}"));
         }
     }
+    for (side, alive) in [
+        ("blue", expect.blue_lead_alive),
+        ("red", expect.red_lead_alive),
+    ] {
+        if let Some(alive) = alive {
+            let fate = if alive { "alive" } else { "dead" };
+            push(&mut text, format_args!(", {side} lead {fate}"));
+        }
+    }
     text
 }
 

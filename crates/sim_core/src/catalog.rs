@@ -35,6 +35,7 @@ mod effects;
 mod factions;
 mod movement_rules;
 mod runtime;
+mod spells;
 mod targeting;
 mod validation;
 
@@ -42,11 +43,17 @@ pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use movement_rules::{MovementRules, MAX_LANE_TOLERANCE_PERMILLE};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
+pub use spells::{
+    min_missile_speed, CatalogError, EffectFacts, EffectNode, FlatNode, ResolvedFilter,
+    ResolvedStatus, SpellCatalog, MAX_EFFECT_DEPTH, MAX_EFFECT_NODES, MAX_FLIGHT_TICKS,
+    MAX_MISSILE_SPEED, MAX_PERSISTENT_COUNT, MAX_SEARCH_COUNT, MAX_SEARCH_RADIUS, MAX_SET_CHILDREN,
+    MAX_TREE_NODES,
+};
 pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// The default of `surround_walk`: blocked attackers walk round their crowd (Q0074).
 const fn surround_walk_default() -> bool {
@@ -354,6 +361,7 @@ pub struct UnitCatalog {
     slug_index: OnceLock<Vec<(String, usize)>>,
     factions: FactionCatalog,
     movement_rules: MovementRules,
+    spells: Arc<SpellCatalog>,
 }
 
 impl UnitCatalog {
@@ -374,6 +382,7 @@ impl UnitCatalog {
             slug_index: OnceLock::new(),
             factions: factions.clone(),
             movement_rules: MovementRules::PER_UNIT,
+            spells: Arc::new(SpellCatalog::default()),
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
@@ -400,6 +409,38 @@ impl UnitCatalog {
     /// Replaces the movement rules this catalog carries into the world.
     pub fn set_movement_rules(&mut self, rules: MovementRules) {
         self.movement_rules = rules;
+    }
+
+    /// The statuses and effect trees of `statuses.ron` and `ability_effects.ron` (plan
+    /// `2026-11-10-spellcaster-mechanics` D-3, D-18). Empty until [`Self::set_spell_catalog`]
+    /// replaces it; [`RuntimeCatalogs::load_from_directory`] always loads it from the files.
+    #[must_use]
+    pub fn spells(&self) -> &SpellCatalog {
+        &self.spells
+    }
+
+    /// A shared handle on [`Self::spells`], for readers that also mutate the world. Cloning it
+    /// counts a reference and allocates nothing.
+    #[must_use]
+    pub fn spells_handle(&self) -> Arc<SpellCatalog> {
+        Arc::clone(&self.spells)
+    }
+
+    /// Replaces the spell catalog after checking every ability that names it: an
+    /// [`sim_types::AbilityEffectSpec::Effect`] ability must target a point or a unit and name
+    /// a known root that reaches its nodes with the target kind they need, and places an
+    /// origin if its tree displaces; every ability target filter names known statuses.
+    ///
+    /// # Errors
+    /// [`SimCoreError::SpellCatalog`] with the first violated rule; the catalog is unchanged.
+    pub fn set_spell_catalog(&mut self, spells: SpellCatalog) -> SimResult<()> {
+        for archetype in self.archetypes() {
+            for ability in &archetype.abilities {
+                spells::check_ability(&spells, &archetype.slug, ability)?;
+            }
+        }
+        self.spells = Arc::new(spells);
+        Ok(())
     }
 
     /// Loads additional structures from a raw RON string and registers them into the catalog.
@@ -1051,6 +1092,10 @@ impl TurretIdleDef {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts of one weapon (turret, channel, suicide, melee)"
+)]
 struct WeaponSpecDef {
     name: String,
     visual_kind: WeaponVisualKind,
@@ -1112,6 +1157,10 @@ struct WeaponSpecDef {
     /// engine default: structures take the weapon's usual strike.
     #[serde(default)]
     pub(crate) structure_strike: Option<StructureStrike>,
+    /// Whether the weapon is melee (`StarCraft` II `Options Melee`, plan
+    /// `2026-11-10-spellcaster-mechanics` D-14).
+    #[serde(default)]
+    pub(crate) melee: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1318,6 +1367,7 @@ impl UnitArchetypeDef {
             max_projectile_lifetime_ticks: w.max_projectile_lifetime_ticks,
             suicide_on_attack: w.suicide_on_attack,
             structure_strike: w.structure_strike,
+            melee: w.melee,
         })
     }
 

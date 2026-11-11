@@ -33,11 +33,15 @@ const STATUS_KINDS: &[EventKind] = &[EventKind::Status];
 const MODE_KINDS: &[EventKind] = &[EventKind::Mode];
 
 /// Every status kind, in the order of [`status_index`].
-const STATUS_ORDER: [StatusKind; 4] = [
+const STATUS_ORDER: [StatusKind; 8] = [
     StatusKind::Overclock,
     StatusKind::Dash,
     StatusKind::Slowed,
     StatusKind::Barrier,
+    StatusKind::DamageOverTime,
+    StatusKind::Stunned,
+    StatusKind::RangeReduced,
+    StatusKind::Revealed,
 ];
 
 /// Dense index of a status kind.
@@ -47,6 +51,10 @@ const fn status_index(kind: StatusKind) -> usize {
         StatusKind::Dash => 1,
         StatusKind::Slowed => 2,
         StatusKind::Barrier => 3,
+        StatusKind::DamageOverTime => 4,
+        StatusKind::Stunned => 5,
+        StatusKind::RangeReduced => 6,
+        StatusKind::Revealed => 7,
     }
 }
 
@@ -90,7 +98,7 @@ struct UnitEntry {
     /// Modes named by the block.
     modes: Vec<ModeEffectIds>,
     /// Status effects by [`status_index`], defaults filled in.
-    status: [Option<EffectId>; 4],
+    status: [Option<EffectId>; STATUS_ORDER.len()],
     /// Death effect, default filled in.
     death: Option<EffectId>,
 }

@@ -14,7 +14,7 @@ use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRa
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
     EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec, UnitOrder, UnitTypeId,
+    SimAngle, SimScalar, SimVec2, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -501,8 +501,6 @@ pub struct Entity {
     pub pending_ability: Option<(u8, Option<SimVec2>, Option<EntityId>)>,
     /// Independent ability cooldown timers for up to 4 ability slots.
     pub ability_cooldowns: [u16; 4],
-    /// Last tick at which this unit sustained damage from an active hazard zone (Psionic Storm non-stacking).
-    pub last_storm_damage_tick: Option<Tick>,
     /// Cloaking / subterranean invisibility flag.
     pub is_cloaked: bool,
     /// Maximum hull hit points including upgrades.
@@ -520,6 +518,15 @@ pub struct Entity {
     /// queued ([`Self::active_route_ordinal`]); route groups bind members by it. Only
     /// [`Self::enqueue_order`] changes it.
     pub route_orders_issued: u32,
+    /// Ticks the unit stays locked after a cast (`CastOutroTime`, plan
+    /// `2026-11-10-spellcaster-mechanics` D-7.4): no movement, attack or other cast.
+    pub cast_lock_ticks: u16,
+    /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
+    pub displacement: Option<crate::effects::Displacement>,
+    /// The combined modifiers of the statuses this unit carries: a cache of the fold of
+    /// `SimWorld::effects` for this entity, refreshed by the effect engine whenever one of its
+    /// statuses is inserted or removed, and so derived state, left out of the checksum.
+    pub(crate) status_modifiers: crate::effects::StatusModifiers,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
     /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
@@ -629,13 +636,15 @@ impl Entity {
             channeling_remaining_ticks: 0,
             pending_ability: None,
             ability_cooldowns: [0; 4],
-            last_storm_damage_tick: None,
             is_cloaked: false,
             max_hp: archetype.max_hp,
             is_completed: true,
             transport_carrier: None,
             is_invulnerable: false,
             route_orders_issued: 0,
+            cast_lock_ticks: 0,
+            displacement: None,
+            status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
     }
@@ -645,6 +654,36 @@ impl Entity {
     #[must_use]
     pub const fn transport_carrier(&self) -> Option<EntityId> {
         self.transport_carrier
+    }
+
+    /// The combined modifiers of the statuses this unit carries (plan
+    /// `2026-11-10-spellcaster-mechanics` D-3); neutral without statuses.
+    #[must_use]
+    pub const fn status_modifiers(&self) -> crate::effects::StatusModifiers {
+        self.status_modifiers
+    }
+
+    /// Whether the unit may not act of its own accord this tick: stunned by a status, locked
+    /// after a cast (`cast_lock_ticks`, D-7.4) or flown by a displacement (D-8). Such a unit
+    /// does not walk, attack, acquire or cast; its orders wait.
+    #[must_use]
+    pub const fn is_action_locked(&self) -> bool {
+        self.status_modifiers.stun || self.cast_lock_ticks > 0 || self.displacement.is_some()
+    }
+
+    /// Whether the unit is hidden by cloak or burrow now: cloaked and not revealed by a status
+    /// (plan D-11). A revealed unit is seen like any other unit wherever its owner's enemies
+    /// have vision.
+    #[must_use]
+    pub const fn is_concealed(&self) -> bool {
+        self.is_cloaked && !self.status_modifiers.reveal
+    }
+
+    /// Whether the unit takes part in the movement and collision phases: alive, in the world
+    /// and not flown by a displacement, whose position the effect engine drives (D-8).
+    #[must_use]
+    pub fn takes_part_in_movement(&self) -> bool {
+        self.is_alive() && !self.is_loaded_in_transport() && self.displacement.is_none()
     }
 
     /// Whether this actor is carried; derived solely from its authoritative carrier link.
@@ -1196,6 +1235,25 @@ impl Entity {
     pub fn is_on_hold(&self) -> bool {
         self.is_holding_position
             || matches!(self.order_queue.front(), Some(UnitOrder::HoldPosition))
+    }
+
+    /// Clears the order queue, hold, current target, route and weapon swing, as an effect's
+    /// `CancelOrders` node does (plan `2026-11-10-spellcaster-mechanics` D-8): a swing in
+    /// wind-up returns to ready, a backswing goes to cooldown. A mode channel in progress and a
+    /// settled mode are kept.
+    pub(crate) fn cancel_orders_for_effect(&mut self) {
+        match self.weapon_phase {
+            WeaponPhase::Windup { .. } => self.weapon_phase = WeaponPhase::Ready,
+            WeaponPhase::Backswing { .. } => self.weapon_phase = WeaponPhase::Cooldown,
+            _ => {}
+        }
+        self.end_attack_dash();
+        self.order_queue.clear();
+        self.current_funnel_waypoints.clear();
+        self.is_holding_position = false;
+        self.current_target = None;
+        self.velocity = SimVec2::ZERO;
+        self.movement.restart();
     }
 
     /// Whether this entity is alive (`hp > 0`).

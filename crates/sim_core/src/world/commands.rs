@@ -173,6 +173,11 @@ impl SimWorld {
     }
 
     /// Casts now, or queues the cast behind a busy unit's orders when the command is queued.
+    ///
+    /// An effect-tree ability goes through the cast pipeline instead
+    /// ([`Self::order_effect_cast`]); a non-queued single-caster one reaches only the unit
+    /// [`Self::pick_single_caster`] picks, and the others keep their orders (plan
+    /// `2026-11-10-spellcaster-mechanics` D-7.6).
     fn dispatch_cast(
         &mut self,
         cmd: &PlayerCommand,
@@ -180,7 +185,19 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
         target_entity: Option<EntityId>,
     ) {
+        let picked = if cmd.queue {
+            None
+        } else {
+            self.pick_single_caster(cmd, ability_index, target_pos, target_entity)
+        };
         for &ent_id in &cmd.entities {
+            if self.is_effect_ability(ent_id, ability_index) {
+                let single = self.is_single_caster_ability(ent_id, ability_index);
+                if cmd.queue || !single || picked == Some(ent_id) {
+                    self.order_effect_cast(cmd, ent_id, ability_index, target_pos, target_entity);
+                }
+                continue;
+            }
             if let Some(ent) = self.entities.get_mut(&ent_id) {
                 if ent.owner == cmd.player_id {
                     if cmd.queue && !ent.order_queue.is_empty() {
@@ -208,6 +225,61 @@ impl SimWorld {
                 }
             }
         }
+    }
+
+    /// Gives `ent_id` the order to cast an effect-tree ability (plan
+    /// `2026-11-10-spellcaster-mechanics` D-7): nothing happens unless the unit would accept
+    /// the order; a queued command joins a busy unit's queue; otherwise the order replaces the
+    /// unit's orders and the cast runs at once if the unit stands in range and is free to act.
+    /// Else movement walks it into range and casts there (`cast_approach_goal`).
+    fn order_effect_cast(
+        &mut self,
+        cmd: &PlayerCommand,
+        ent_id: EntityId,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
+    ) {
+        let owned = self
+            .entities
+            .get(&ent_id)
+            .is_some_and(|ent| ent.owner == cmd.player_id);
+        if !owned || !self.would_accept_cast_order(ent_id, ability_index, target_pos, target_entity)
+        {
+            return;
+        }
+        let Some(ent) = self.entities.get_mut(&ent_id) else {
+            return;
+        };
+        let queued = cmd.queue && !ent.order_queue.is_empty();
+        if let Err(source) = ent.issue_order(cmd.order.clone(), queued) {
+            self.tick_diagnostics
+                .push(SimulationDiagnostic::MovementInvariant {
+                    tick: Tick(self.current_tick),
+                    source: MovementInvariant::Admission {
+                        entity: ent_id,
+                        source,
+                    },
+                });
+            return;
+        }
+        if !queued
+            && self.execute_ability_prevalidated(ent_id, ability_index, target_pos, target_entity)
+        {
+            if let Some(ent) = self.entities.get_mut(&ent_id) {
+                ent.order_queue.pop_front();
+            }
+        }
+    }
+
+    /// Whether the ability at `ability_index` of `entity`'s archetype goes to one unit of a
+    /// group command (`AbilitySpec::single_caster`).
+    fn is_single_caster_ability(&self, entity: EntityId, ability_index: u8) -> bool {
+        self.entities
+            .get(&entity)
+            .and_then(|ent| self.catalog.get(ent.unit_type_id).ok())
+            .and_then(|arch| arch.abilities.get(usize::from(ability_index)))
+            .is_some_and(|ability| ability.single_caster)
     }
 
     /// Whether the ability at `ability_index` of `entity`'s archetype toggles a mode

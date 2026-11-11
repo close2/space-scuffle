@@ -104,6 +104,10 @@ fn test_render_snapshot_full_serialization() {
                 slowed: i == 3,
                 barrier_up: i == 5,
                 barrier_hit: i == 5,
+                damage_over_time: i == 6,
+                stunned: i == 7,
+                range_reduced: i == 8,
+                revealed: i == 9,
             },
             barrier_ratio: if i == 5 { 0.4 } else { 0.0 },
         });

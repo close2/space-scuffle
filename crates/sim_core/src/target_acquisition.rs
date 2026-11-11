@@ -123,7 +123,7 @@ impl SimWorld {
         if !Self::is_damageable(target) {
             return false;
         }
-        !target.is_cloaked
+        !target.is_concealed()
             || Self::is_cloak_revealed(map, vision_maps, attacker_owner, target.position)
     }
 
@@ -195,7 +195,7 @@ impl SimWorld {
         self.apply_combat_retaliation_prevalidated(victim_id, attacker_id);
     }
 
-    // Called from valid combat/hazard phases; no relation fields are mutated.
+    // Called from valid combat/effect phases; no relation fields are mutated.
     pub(crate) fn apply_combat_retaliation_prevalidated(
         &mut self,
         victim_id: EntityId,
@@ -244,6 +244,54 @@ impl SimWorld {
         }
     }
 
+    /// The responses of spell damage (plan `2026-11-10-spellcaster-mechanics` D-9): with
+    /// `flee`, an idle victim that cannot hit the caster (or has none to hit) and may move
+    /// flees from `source_point`; with `acquire`, the victim and idle allies nearby attack the
+    /// caster when they see it. Own and allied casters raise nothing.
+    pub(crate) fn apply_spell_responses(
+        &mut self,
+        victim_id: EntityId,
+        caster: Option<EntityId>,
+        source_point: SimVec2,
+        responses: sim_types::DamageResponses,
+    ) {
+        let Some(victim) = self
+            .entities
+            .get(&victim_id)
+            .filter(|v| v.is_alive() && !v.is_loaded_in_transport())
+        else {
+            return;
+        };
+        let Ok(victim_arch) = self.catalog.get(victim.unit_type_id) else {
+            return;
+        };
+        let attacker = caster
+            .and_then(|id| self.entities.get(&id).map(|a| (id, a)))
+            .filter(|(_, a)| a.is_alive() && a.owner != victim.owner);
+        let visible = attacker.filter(|(_, a)| self.is_attacker_visible_to(victim.owner, a));
+        let can_hit = visible.is_some_and(|(_, a)| {
+            self.catalog.get(a.unit_type_id).is_ok_and(|attacker_arch| {
+                victim_arch
+                    .weapon_against(attacker_arch.mover_type, None)
+                    .is_some_and(|w| w.target_flags.intersects(attacker_arch.attributes))
+            })
+        });
+        let helpless = !can_hit
+            && matches!(victim.order_queue.front(), None | Some(UnitOrder::Idle))
+            && !victim.is_holding_position
+            && !victim.is_immobile
+            && victim_arch.max_speed > SimScalar::ZERO;
+        let owner = victim.owner;
+        let position = victim.position;
+        let visible = visible.map(|(id, _)| id);
+        if responses.flee && helpless {
+            self.flee_from_attacker(victim_id, source_point);
+        }
+        if let (true, Some(attacker_id)) = (responses.acquire, visible) {
+            self.alert_idle_allies(victim_id, owner, position, attacker_id);
+        }
+    }
+
     /// Whether `viewer` sees `attacker` well enough to shoot back at it.
     fn is_attacker_visible_to(&self, viewer: PlayerId, attacker: &Entity) -> bool {
         if attacker.is_loaded_in_transport() {
@@ -256,7 +304,7 @@ impl SimWorld {
             .world_to_cell(attacker.position)
             .is_ok_and(|(cx, cy)| {
                 vision.visibility_at(cx, cy) == VisibilityState::Visible
-                    && (!attacker.is_cloaked || vision.is_detected(cx, cy))
+                    && (!attacker.is_concealed() || vision.is_detected(cx, cy))
             })
     }
 
@@ -369,6 +417,7 @@ impl SimWorld {
         );
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
+                || entity.is_action_locked()
                 || entity.is_loaded_in_transport()
                 || !entity.is_completed
             {
@@ -476,7 +525,7 @@ impl SimWorld {
             return false;
         };
         let radii = arch.collision_radius + target_arch.collision_radius;
-        let reach = self.effective_weapon_range(weapon, &arch.slug, entity.owner) + radii;
+        let reach = self.entity_weapon_range(entity, weapon, &arch.slug) + radii;
         let distance = entity.position.distance(target.position);
         distance <= reach
             && (weapon.min_range <= SimScalar::ZERO || distance >= weapon.min_range + radii)
@@ -580,7 +629,7 @@ impl SimWorld {
         ]
         .into_iter()
         .flatten()
-        .map(|weapon| self.effective_weapon_range(weapon, &arch.slug, entity.owner))
+        .map(|weapon| self.entity_weapon_range(entity, weapon, &arch.slug))
         .fold(arch.scan_range, SimScalar::max)
     }
 
@@ -639,9 +688,9 @@ impl SimWorld {
                 continue;
             };
             let radii = arch.collision_radius + target_arch.collision_radius;
-            let scan_range =
-                arch.scan_range
-                    .max(self.effective_weapon_range(weapon, &arch.slug, entity.owner));
+            let scan_range = arch
+                .scan_range
+                .max(self.entity_weapon_range(entity, weapon, &arch.slug));
             if dist > scan_range + radii {
                 continue;
             }

@@ -15,13 +15,15 @@
 //! This file owns the [`SimWorld`] state, its construction, spawning and the tick sequence.
 //! Each phase that is more than a call lives in a private child module with its own
 //! `impl SimWorld` block: `commands` (phase 1), `upkeep` (phase 2), `vision` (phase 3),
-//! `snapshot` (phase 10), plus `abilities` (casting and hazard zones), `attack_dash` (the dash
+//! `snapshot` (phase 10), plus `abilities` (casting), `casts` (the cast
+//! pipeline of effect abilities; its after-cast locks count down after the weapons), `attack_dash` (the dash
 //! an attack order triggers, after acquisition), `upgrade_stats`
 //! (research and effective stats) and `sandbox` (the Visual Lab scene). Children see the
 //! struct's private fields, so splitting the file widened no field's visibility.
 
 mod abilities;
 mod attack_dash;
+mod casts;
 mod commands;
 pub(crate) mod presentation;
 mod snapshot;
@@ -29,7 +31,6 @@ mod upgrade_stats;
 mod upkeep;
 mod vision;
 
-pub use abilities::ActiveHazardZone;
 use vision::VisionWorkspace;
 
 use crate::catalog::UnitCatalog;
@@ -135,10 +136,6 @@ pub struct SimWorld {
     /// Authoritative standing of the match: participants, defeats and result.
     pub match_state: crate::match_state::MatchState,
     pub(crate) combat: crate::combat_resolution::CombatWorkspace,
-    /// Active continuous hazard/AoE zones (e.g. Psionic Storm) ticking in the world.
-    pub active_hazards: Vec<ActiveHazardZone>,
-    /// Monotonically increasing hazard ID generator.
-    pub next_hazard_id: u32,
     /// Whether pathfinding respects fog-of-war vision and known obstacles.
     pub vision_aware_pathfinding: bool,
     /// Per-player known blocked cells (structures seen in visible cells and remembered through fog).
@@ -152,11 +149,16 @@ pub struct SimWorld {
     pub(crate) scratch_dashes: Vec<(EntityId, sim_types::AttackDashSpec)>,
     /// Phase 3 bookkeeping derived from `vision_maps`; excluded from the checksum.
     pub(crate) vision: VisionWorkspace,
+    /// Statuses, persistents and missiles of the effect-tree engine (plan
+    /// `2026-11-10-spellcaster-mechanics` D-13, D-18); hashed.
+    pub(crate) effects: crate::effects::EffectWorld,
+    /// Reused buffers of the effect engine; not state, excluded from the checksum.
+    pub(crate) effect_scratch: crate::effects::EffectScratch,
     /// Live route groups sorted by id (plan `2026-11-10-group-routing`, D-1); hashed.
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
     /// The id the next route group gets; hashed.
     pub(crate) next_route_group: u32,
-    /// Unhashed provenance for the render snapshot: projectile and hazard sources and this
+    /// Unhashed provenance for the render snapshot: projectile sources and this
     /// tick's barrier hits (plan `2026-11-09-effect-visualization` D-1).
     pub(crate) presentation: presentation::PresentationWorkspace,
 }
@@ -214,8 +216,6 @@ impl SimWorld {
             economy: crate::economy::EconomyWorkspace::default(),
             match_state: crate::match_state::MatchState::default(),
             combat: crate::combat_resolution::CombatWorkspace::default(),
-            active_hazards: Vec::new(),
-            next_hazard_id: 1,
             vision_aware_pathfinding: true,
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),
@@ -223,6 +223,8 @@ impl SimWorld {
             scratch_acquisitions: Vec::with_capacity(64),
             scratch_dashes: Vec::new(),
             vision: VisionWorkspace::default(),
+            effects: crate::effects::EffectWorld::default(),
+            effect_scratch: crate::effects::EffectScratch::default(),
             route_groups: Vec::new(),
             next_route_group: 1,
             presentation: presentation::PresentationWorkspace::default(),
@@ -362,6 +364,7 @@ impl SimWorld {
         self.step_movement_and_steering();
         self.resolve_collisions_and_push();
         self.step_weapons_and_projectiles();
+        self.count_down_cast_locks();
         self.reap_dead_and_emit_shatter();
         self.last_checksum = self.compute_checksum();
         self.write_render_snapshot(output);
@@ -378,6 +381,12 @@ impl SimWorld {
     /// Normal clients must report any returned error before continuing the match.
     pub fn drain_diagnostics(&mut self) -> std::vec::Drain<'_, SimulationDiagnostic> {
         self.tick_diagnostics.drain(..)
+    }
+
+    /// The live statuses, persistents and missiles of the effect-tree engine.
+    #[must_use]
+    pub fn effects(&self) -> &crate::effects::EffectWorld {
+        &self.effects
     }
 
     /// Returns the most recently computed 64-bit state checksum.

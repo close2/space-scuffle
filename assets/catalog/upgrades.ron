@@ -1077,7 +1077,14 @@
             research_ticks: 1964,
             researched_at: "psionic_archives_dome",
             requires_structures: [],
-            effects: [],
+            // PsiStormTech (liberty UpgradeData:1808) satisfies UsePsiStorm, the requirement of the
+            // High Templar's PsiStorm button (liberty AbilData:2070).
+            effects: [
+                UnlockAbility(
+                    target_slug: "cerebral_elder",
+                    ability_slug: "Psionic Storm",
+                ),
+            ],
         ),
         (
             upgrade_id: 48,

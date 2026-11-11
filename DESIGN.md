@@ -122,7 +122,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Construction | Working | Transactional build admission and a construction lifecycle | `crates/sim_core/tests/construction_lifecycle_tests.rs` | none known |
 | Production and research | Working | Production and research queues, cancel and refund | `crates/sim_core/tests/production_transactions_tests.rs`, `crates/sim_core/tests/research_transaction_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`research_through_the_card_then_overclock_works`) | none known; research is enabled in the shipped game since Veo batch 1 (`2c5ed5e`) |
 | Transport | Working | Load and unload orders with ownership checks; enabled in the shipped game since Veo batch 1 (`2c5ed5e`) | `crates/sim_core/tests/transport_ownership_tests.rs`, `crates/sim_core/tests/load_orders_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`load_and_unload_through_right_click_and_the_card`) | none known |
-| Abilities and hazard zones | Working | Data-defined abilities, modes and hazard zones; a mode switch given without Shift replaces the unit's orders, and a queued one reaches an anchored unit (plan `2026-11-09-client-mode-commands` D-6) | `crates/sim_core/tests/spells_and_abilities_tests.rs` | the skirmish client issues only mode switches; other abilities have no command (B-69) |
+| Abilities and spells | Working | Data-defined abilities and modes, and spells as composable effect trees with statuses read from `assets/catalog/ability_effects.ron` and `statuses.ron` (plan `2026-11-10-spellcaster-mechanics`); Psionic Storm, Abduct, Fungal Growth and Blinding Cloud are shipped ([evidence](docs/evidence/2026-11-10-spellcaster-mechanics.md)); a mode switch given without Shift replaces the unit's orders, and a queued one reaches an anchored unit (plan `2026-11-09-client-mode-commands` D-6) | `crates/sim_core/tests/spells_and_abilities_tests.rs`, `crates/sim_core/tests/psionic_storm_tests.rs`, `crates/sim_core/tests/abduct_tests.rs`, `crates/sim_core/tests/fungal_growth_tests.rs`, `crates/sim_core/tests/blinding_cloud_tests.rs`, `crates/sim_core/tests/effect_tree_tests.rs` | The storm's and the cloud's area rings, Abduct's tether line and Fungal Growth's missile wait on Q0080; other missing abilities (B-69); a second Abduct meeting a unit in flight (B-114) |
 | Match result | Working | Victory and defeat from the game rules | `crates/sim_core/tests/match_result_tests.rs` | Rules accepted by the owner (Q0008); where the spec is silent, they follow StarCraft II (charter §8) |
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
@@ -162,8 +162,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
-| B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
-| B-24 | Matrix battle 13's storm values | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
@@ -191,11 +189,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-65 | Unload sets every passenger down at once and stops the carrier | WP17 |
 | B-66 | A blocked exit stalls production | WP17 |
 | B-67 | Next-patch search radius 12 is unsourced | WP17 |
-| B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
+| B-68 | 13 researchable upgrades have no effect | WP13d, WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
 | B-77 | Hard-coded Concussive slow | WP13d |
-| B-78 | Hard-coded storm evacuation margin | WP18 |
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
@@ -218,6 +215,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-110 | A projectile shows no impact when it arrives | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP7; unblocked by [Q0080](docs/questions/closed/0080-effect-review-outcome.md) (Amendment 2), not started |
 | B-111 | A unit's flipbook does not change with its mode (a sieged tank looks mobile) | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP13 ([Q0075](docs/questions/open/0075-veo-morph-and-mode-clips.md)); unblocked by [Q0080](docs/questions/closed/0080-effect-review-outcome.md) (Amendment 2), not started |
 | B-113 | A unit that the crowd pushes inside its own radius of a route corner (0.30 from the vertex for a radius of 0.375) passes the corner's arc points by terrain view, its next leg cuts the corner and is refused, and it steps back and forth until the crowd frees it (one pulse bot, ticks 756 to 769 of the showcase battle; 454° of turning at the ramp E foot); the game's units slide round the corner. Four route-following variants are measured and rejected (that plan's evidence, Amendment 5, A to C; deviation-fix evidence §18.5, D) | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Amendment 6, open |
+| B-114 | A second Abduct whose tongue reaches a unit while the first one's pull is under way (its 2-tick delay or its flight) is applied, and the first landing then removes the `abducted` status: the unit flies the second pull without stun, collision rule or boarding ban. What the game does then is not yet sourced (its `NoYoink` validator, `swarm` EffectData:1468, guards the cast's start only) | [`2026-11-10-spellcaster-mechanics`](docs/plans/2026-11-10-spellcaster-mechanics.md) WP3 follow-up (research) |
 
 ---
 
@@ -246,6 +244,11 @@ Amendment 5). The slowest scenario runs at about five times real time. The figur
 (3395, 1187, 200, 225 and 213 ticks/s on the flat rows) were measured on an older tree at load average 7 to 11. CI's
 `throughput` job runs the benchmark with `--floor 25`, the tick rate: a scenario below real time fails the job, and
 every run's table is published in the job summary (charter §3.1).
+
+A seventh row (plan `2026-11-10-spellcaster-mechanics` WP6) adds 67 spellcasters to the 64x64 battle of 400
+units, casting Blinding Cloud, Psionic Storm and Fungal Growth throughout (13.7 live areas and 101 statuses per
+measured tick): 243 ticks/s on 2026-11-11, when the other rows measured within 3 % of the table above
+([evidence](docs/evidence/2026-11-10-spellcaster-mechanics.md) §6).
 
 The handover's higher figures (11,114 ticks/s on the empty map, 639 at 400 units) came from the owner's notebook
 and were never reproduced on this server at any commit. The 3 to 4 % residual at 400 units since `b263734` is code

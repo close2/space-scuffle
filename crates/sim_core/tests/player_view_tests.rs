@@ -1267,3 +1267,57 @@ fn only_the_viewers_detection_reveals_and_never_its_own_units() -> TestResult {
     );
     Ok(())
 }
+
+/// A scratch targeted effect-tree ability; the view reads no spell table.
+fn scratch_cast(energy_cost: i32) -> sim_types::AbilitySpec {
+    sim_types::AbilitySpec {
+        name: "Scratch cast".to_owned(),
+        target_kind: sim_types::AbilityTargetKind::TargetPosition,
+        energy_cost: SimScalar::from_i32(energy_cost),
+        cooldown_ticks: 10,
+        cast_range: SimScalar::ONE,
+        effect: sim_types::AbilityEffectSpec::Effect("scratch".to_owned()),
+        leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
+    }
+}
+
+/// Effect-tree abilities of the viewer's units are listed with their cooldown and energy, in
+/// order; other abilities and the enemy's casters are not (spellcaster plan D-10).
+#[test]
+fn cast_states_report_the_viewers_casters_cooldown_and_energy() -> TestResult {
+    let (mut world, _hidden, plain, _) = concealment_world()?;
+    let index = {
+        let archetype = world.catalog.get_mut(plain)?;
+        archetype.abilities.truncate(1);
+        archetype.abilities.push(scratch_cast(50));
+        u8::try_from(archetype.abilities.len() - 1)?
+    };
+    let caster = world.spawn_unit(plain, HOME, point(10, 10))?;
+    let ready = world.spawn_unit(plain, HOME, point(12, 10))?;
+    let theirs = world.spawn_unit(plain, AWAY, point(14, 10))?;
+    let entity = world.entities.get_mut(&caster).ok_or("caster")?;
+    entity.energy = SimScalar::from_i32(49);
+    entity.ability_cooldowns[usize::from(index)] = 7;
+    world.entities.get_mut(&ready).ok_or("ready")?.energy = SimScalar::from_i32(50);
+    let view = view_of(&world, HOME);
+    let state = |id: EntityId| view.cast_states.iter().find(|state| state.entity == id);
+    let blocked = state(caster).ok_or("the caster is listed")?;
+    assert_eq!(blocked.ability_index, index);
+    assert_eq!(blocked.cooldown_ticks, 7);
+    assert!(blocked.short_of_energy, "49 energy for a cast of 50");
+    let free = state(ready).ok_or("the other caster is listed")?;
+    assert_eq!((free.cooldown_ticks, free.short_of_energy), (0, false));
+    assert!(state(theirs).is_none(), "no enemy caster is listed");
+    assert!(
+        view.cast_states
+            .iter()
+            .all(|state| state.ability_index == index),
+        "only effect-tree abilities"
+    );
+    assert!(view.cast_states.windows(2).all(|pair| pair[0] < pair[1]));
+    Ok(())
+}

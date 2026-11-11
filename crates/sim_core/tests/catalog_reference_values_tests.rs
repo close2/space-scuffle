@@ -2103,6 +2103,56 @@ fn b82_only_the_baneling_has_its_structure_strike() {
     assert!(found > 0, "the Baneling analogue has its structure strike");
 }
 
+/// The analogues whose weapon carries `Options index="Melee"` (plan
+/// `2026-11-10-spellcaster-mechanics` D-14, WP5a): no `CWeapon` default sets it (`core`
+/// WeaponData:3-31) and no later layer clears it. The game weapons the catalog leaves out (the
+/// Roach's and Hydralisk's melee weapons, `liberty` WeaponData:86-89 and :46-49, the
+/// Ultralisk's `Ram`, :441-451) have no catalog counterpart; the analogues' ranged weapons are
+/// not melee.
+const SC2_MELEE_WEAPONS: [(&str, &str); 8] = [
+    ("SCV", "FusionCutter, liberty WeaponData:201"),
+    ("Probe", "ParticleBeam, liberty WeaponData:148"),
+    ("Zealot", "PsiBlades, liberty WeaponData:158"),
+    ("Dark Templar", "WarpBlades, liberty WeaponData:169"),
+    ("Drone", "Spines, liberty WeaponData:355"),
+    ("Zergling", "Claws, liberty WeaponData:363"),
+    ("Baneling", "VolatileBurst, liberty WeaponData:472"),
+    ("Ultralisk", "KaiserBlades, liberty WeaponData:439"),
+];
+
+#[test]
+fn d14_melee_weapons_follow_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut melee = Vec::new();
+    for archetype in catalogs.units.archetypes() {
+        let modes = replacing_mode_weapons(archetype).map(|weapon| ("siege_mode", Some(weapon)));
+        for (block, weapon) in weapon_blocks(archetype).into_iter().chain(modes) {
+            let Some(weapon) = weapon else {
+                continue;
+            };
+            let row = SC2_MELEE_WEAPONS
+                .iter()
+                .find(|(unit, _)| *unit == analogue(archetype));
+            assert_eq!(
+                weapon.melee,
+                row.is_some(),
+                "{} {block} {}: melee per {}",
+                archetype.slug,
+                weapon.name,
+                row.map_or("no Options Melee in its weapon", |(_, source)| source)
+            );
+            if weapon.melee {
+                melee.push(analogue(archetype));
+            }
+        }
+    }
+    melee.sort_unstable();
+    melee.dedup();
+    let mut want: Vec<_> = SC2_MELEE_WEAPONS.iter().map(|(unit, _)| *unit).collect();
+    want.sort_unstable();
+    assert_eq!(melee, want, "every melee row has its analogue");
+}
+
 /// Where a weapon sets no `Arc`: no `CWeapon` default sets it (`core` WeaponData:3-31), so the
 /// engine's 0 applies (catalog-time audit §10.3).
 const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
@@ -2681,4 +2731,572 @@ fn b48_push_priorities_follow_starcraft() {
         );
     }
     assert_eq!(seen, SC2_PUSH_PRIORITY.len(), "every row has an archetype");
+}
+
+/// Asserts `value` equals `want` to 0.001 after the catalog's fixed-point conversion.
+fn assert_close(value: SimScalar, want: f32, source: &str) {
+    assert!(
+        (f(value) - want).abs() < 0.001,
+        "{} is not {want} ({source})",
+        f(value)
+    );
+}
+
+/// Psionic Storm as authored (plan `2026-11-10-spellcaster-mechanics` §3.1, §5): the High Templar
+/// analogue's ability, its effect tree, its status and the research that unlocks it, each value
+/// cited from `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn psionic_storm_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{AbilityEffectSpec, AbilityTargetKind, EffectAnchor, StructureRule};
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "High Templar")
+        .ok_or("the High Templar analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Psionic Storm")
+        .ok_or("Psionic Storm")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 75.0, "liberty AbilData:2067");
+    assert_eq!(
+        ability.cooldown_ticks, 36,
+        "2 Normal s, swarm AbilData:1111"
+    );
+    assert_close(ability.cast_range, 9.0, "liberty AbilData:2061");
+    assert_eq!(
+        ability.cast_backswing_ticks, 9,
+        "0.5 Normal s, liberty AbilData:2062"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Psionic Storm runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let root = spells.effect_id(root).ok_or("the root")?;
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetPoint,
+        initial: Some(initial),
+        periodic: Some(periodic),
+        period_ticks,
+        count: 6,
+    } = node(root)?
+    else {
+        return Err("a point persistent of six pulses, liberty EffectData:2072".into());
+    };
+    assert_eq!(
+        initial, periodic,
+        "one search, liberty EffectData:2071, :2073"
+    );
+    assert_close(
+        period_ticks,
+        10.2,
+        "0.5712 Normal s, liberty EffectData:2074",
+    );
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(initial)?
+    else {
+        return Err("the persistent searches".into());
+    };
+    assert_close(radius, 1.5, "liberty EffectData:2080");
+    assert!(filter.ground && filter.air, "liberty EffectData:2079");
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    assert_eq!(filter.alliance, sim_types::FilterAlliance::Any);
+    let EffectNode::ApplyStatus { status } = node(child)? else {
+        return Err("the search applies a status".into());
+    };
+    let status = spells.status(status).ok_or("the status")?;
+    assert_close(
+        status.spec.duration_ticks,
+        11.901_786,
+        "0.6665 Normal s, liberty BehaviorData:713",
+    );
+    assert_close(
+        status.spec.period_ticks.ok_or("a period")?,
+        10.196_429,
+        "0.571 Normal s, liberty BehaviorData:714",
+    );
+    let EffectNode::Damage {
+        amount, responses, ..
+    } = node(status.initial_effect.ok_or("initial damage")?)?
+    else {
+        return Err("the initial effect is damage".into());
+    };
+    assert_close(amount, 10.0, "liberty EffectData:2091");
+    assert!(
+        responses.acquire && responses.flee,
+        "liberty EffectData:2093-2094"
+    );
+    let EffectNode::Damage {
+        amount, responses, ..
+    } = node(status.periodic_effect.ok_or("periodic damage")?)?
+    else {
+        return Err("the periodic effect is damage".into());
+    };
+    assert_close(amount, 10.0, "liberty EffectData:2100");
+    assert!(
+        !responses.acquire && !responses.flee,
+        "no responses on a pulse"
+    );
+
+    let research = catalogs
+        .upgrades
+        .get_by_slug("psionic_storm")
+        .ok_or("the research")?;
+    assert!(research.effects.iter().any(|effect| matches!(
+        effect,
+        UpgradeEffect::UnlockAbility { target_slug, ability_slug }
+            if *target_slug == caster.slug && ability_slug == "Psionic Storm"
+    )));
+    Ok(())
+}
+
+/// Abduct as authored (plan `2026-11-10-spellcaster-mechanics` §3.2, §5): the Viper analogue's
+/// ability, its target filter and origin placement, its effect tree and the `abducted` status,
+/// each value cited from `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn abduct_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, EffectAnchor, FilterAlliance, MissileView,
+        StructureRule, TargetPlane,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Viper")
+        .ok_or("the Viper analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Abduct")
+        .ok_or("Abduct")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetEntity);
+    assert_close(ability.energy_cost, 75.0, "swarm AbilData:1230");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "no cooldown, swarm AbilData:1222-1239"
+    );
+    assert_close(ability.cast_range, 9.0, "swarm AbilData:1233");
+    assert_eq!(
+        ability.cast_backswing_ticks, 14,
+        "0.8 Normal s, voidmulti AbilData:1754"
+    );
+    assert!(ability.single_caster);
+    let filter = ability.target_filter.as_ref().ok_or("a target filter")?;
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::AnyButSelf,
+        "voidmulti AbilData:1755"
+    );
+    assert!(
+        filter.planes.contains(&TargetPlane::Ground) && filter.planes.contains(&TargetPlane::Air)
+    );
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    assert_eq!(
+        filter.without_status.as_deref(),
+        Some("abducted"),
+        "NoYoink"
+    );
+    let origin = ability.origin.ok_or("origin placement")?;
+    assert_close(
+        origin.forward_offset,
+        0.1,
+        "SpawnOffset, swarm EffectData:1460",
+    );
+    assert_close(
+        origin.search_range,
+        2.0,
+        "SpawnRange, swarm EffectData:1459",
+    );
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Abduct runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let EffectNode::LaunchMissile {
+        to: EffectAnchor::TargetUnit,
+        speed,
+        view: MissileView::Tether,
+        impact,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a homing tether missile, swarm EffectData:1486-1494".into());
+    };
+    assert_close(speed, 1.05, "18.75 x 1.4 / 25, swarm MoverData:147");
+    let EffectNode::Set { first, len: 3 } = node(impact)? else {
+        return Err("the contact set of three, swarm EffectData:1498-1509".into());
+    };
+    let child = |index| spells.set_child(first, index).ok_or("a child");
+    assert_eq!(
+        node(child(0)?)?,
+        EffectNode::CancelOrders {
+            force_unburrow: true
+        },
+        "YoinkCancelOrders and InstantUnburrow, swarm EffectData:1503-1504"
+    );
+    let EffectNode::ApplyStatus { status: applied } = node(child(1)?)? else {
+        return Err("the contact applies the status".into());
+    };
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetUnit,
+        initial: None,
+        periodic: Some(flight),
+        period_ticks,
+        count: 1,
+    } = node(child(2)?)?
+    else {
+        return Err("a one-pulse delay on the target, swarm EffectData:1539-1547".into());
+    };
+    assert_close(
+        period_ticks,
+        1.785_714,
+        "0.1 Normal s, swarm EffectData:1545",
+    );
+    let EffectNode::Displace {
+        flight_ticks: 18,
+        tether: true,
+        on_land: Some(on_land),
+    } = node(flight)?
+    else {
+        return Err("an 18-tick tethered flight, swarm MoverData:167".into());
+    };
+    assert_eq!(
+        node(on_land)?,
+        EffectNode::RemoveStatus { status: applied },
+        "YoinkRemoveBehavior, swarm EffectData:1601-1605"
+    );
+
+    let status = spells.status(applied).ok_or("the status")?;
+    assert_eq!(status.spec.name, "abducted");
+    assert_close(
+        status.spec.duration_ticks,
+        35.714_286,
+        "2 Normal s, swarm BehaviorData:1087",
+    );
+    let spec = &status.spec;
+    assert!(
+        spec.stun && spec.reveal && spec.suppress_collision && spec.suppress_boarding,
+        "Stun, SuppressCloak, SuppressCollision, SuppressPassenger, swarm BehaviorData:1078-1084"
+    );
+    assert!(spec.period_ticks.is_none() && status.initial_effect.is_none());
+    Ok(())
+}
+
+/// Fungal Growth as authored (plan `2026-11-10-spellcaster-mechanics` §3.3, §5): the Infestor
+/// analogue's ability, its missile, search and set, and the two statuses, each value cited from
+/// `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn fungal_growth_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, AttributeBonuses, EffectAnchor, FilterAlliance,
+        MissileView, StructureRule,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Infestor")
+        .ok_or("the Infestor analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Fungal Growth")
+        .ok_or("Fungal Growth")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 75.0, "liberty AbilData:486");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "the Leech link has no time, liberty AbilData:487"
+    );
+    assert_close(ability.cast_range, 10.0, "void AbilData:674");
+    assert_eq!(
+        ability.cast_backswing_ticks, 0,
+        "no CastOutroTime in the chain"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Fungal Growth runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let EffectNode::LaunchMissile {
+        to: EffectAnchor::TargetPoint,
+        speed,
+        view: MissileView::Projectile,
+        impact,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a missile to the point, void EffectData:1141-1146".into());
+    };
+    assert_close(speed, 0.672, "12 x 1.4 / 25, void MoverData:18");
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(impact)?
+    else {
+        return Err("the impact searches, liberty EffectData:728-735".into());
+    };
+    assert_close(radius, 2.25, "voidmulti EffectData:1559");
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::Enemy,
+        "liberty EffectData:731"
+    );
+    assert!(filter.ground && filter.air);
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    let EffectNode::Set { first, len: 3 } = node(child)? else {
+        return Err("FungalGrowthSet and the search dummy, liberty EffectData:714-741".into());
+    };
+    let child = |index| spells.set_child(first, index).ok_or("a child");
+    let EffectNode::ApplyStatus { status: damage } = node(child(0)?)? else {
+        return Err("FungalGrowthApplyBehavior, liberty EffectData:720-723".into());
+    };
+    let EffectNode::ApplyStatus { status: slow } = node(child(1)?)? else {
+        return Err("FungalGrowthSlowMovementApplyBehavior, voidmulti EffectData:1562".into());
+    };
+    let EffectNode::Damage {
+        amount,
+        attribute_bonus,
+        responses,
+    } = node(child(2)?)?
+    else {
+        return Err("FungalGrowthSearchDummy, liberty EffectData:736-741".into());
+    };
+    assert_close(amount, 0.0, "a dummy");
+    assert_eq!(attribute_bonus, AttributeBonuses::NONE);
+    assert!(
+        responses.acquire && responses.flee,
+        "liberty EffectData:738-739"
+    );
+
+    let damage = spells.status(damage).ok_or("the damage status")?;
+    assert_eq!(damage.spec.name, "fungal_growth");
+    assert_close(
+        damage.spec.duration_ticks,
+        71.428_57,
+        "4 Normal s, swarm BehaviorData:839",
+    );
+    assert_close(
+        damage.spec.period_ticks.ok_or("a period")?,
+        4.464_286,
+        "0.25 Normal s, swarm BehaviorData:840",
+    );
+    assert!(
+        damage.spec.reveal,
+        "SuppressCloak, liberty BehaviorData:332"
+    );
+    assert!(
+        damage.spec.suppress_blink,
+        "CasterNotFungalGrowthed, swarm ValidatorData:537-541"
+    );
+    assert!(damage.initial_effect.is_none());
+    let EffectNode::Damage {
+        amount,
+        attribute_bonus,
+        responses,
+    } = node(damage.periodic_effect.ok_or("periodic damage")?)?
+    else {
+        return Err("FungalGrowthDamage".into());
+    };
+    assert_close(amount, 1.5625, "voidmulti EffectData:2389");
+    assert_eq!(
+        attribute_bonus,
+        AttributeBonuses::NONE,
+        "Armored 0, void EffectData:1139"
+    );
+    assert!(!responses.acquire && !responses.flee);
+
+    let slow = spells.status(slow).ok_or("the slow")?;
+    assert_eq!(slow.spec.name, "fungal_growth_slow");
+    assert_close(
+        slow.spec.duration_ticks,
+        71.428_57,
+        "4 Normal s, voidmulti BehaviorData:696",
+    );
+    assert_close(
+        slow.spec.move_speed_factor,
+        0.25,
+        "voidmulti BehaviorData:697",
+    );
+    assert!(
+        slow.spec.suppress_boarding,
+        "SuppressPassenger, voidmulti BehaviorData:698"
+    );
+    assert!(slow.spec.period_ticks.is_none() && slow.periodic_effect.is_none());
+    Ok(())
+}
+
+/// Blinding Cloud (plan `2026-11-10-spellcaster-mechanics` §3.4, WP5): the ability, the tree
+/// and both statuses as authored, against `SC2GameData` 5.0.14 (`5444e12f13`).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn blinding_cloud_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, EffectAnchor, FilterAlliance, StructureRule,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Viper")
+        .ok_or("the Viper analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Blinding Cloud")
+        .ok_or("Blinding Cloud")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 100.0, "swarm AbilData:1202");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "no cooldown, swarm AbilData:1197-1209"
+    );
+    assert_close(ability.cast_range, 10.0, "swarm AbilData:1204");
+    assert_eq!(
+        ability.cast_backswing_ticks, 0,
+        "no CastOutroTime in the chain"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Blinding Cloud runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let flat = |id| spells.node(id).ok_or("a node");
+    let node = |id| flat(id).map(|node| node.kind);
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetPoint,
+        initial: Some(initial),
+        periodic: Some(periodic),
+        period_ticks,
+        count: 15,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a point persistent of 15 pulses, voidmulti EffectData:158".into());
+    };
+    assert_eq!(initial, periodic, "one search, swarm EffectData:238, :240");
+    assert_close(
+        period_ticks,
+        8.928_571,
+        "0.5 Normal s, swarm EffectData:241",
+    );
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(initial)?
+    else {
+        return Err("BlindingCloudSearch, swarm EffectData:243-248".into());
+    };
+    assert_close(radius, 2.0, "swarm EffectData:247");
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::AnyButSelf,
+        "swarm EffectData:246"
+    );
+    assert!(
+        filter.ground && !filter.air,
+        "Ground required, swarm EffectData:246"
+    );
+    assert_eq!(filter.structures, StructureRule::Include);
+    let EffectNode::Set { first, len: 2 } = node(child)? else {
+        return Err("BlindingCloudSwitch, swarm EffectData:254-258".into());
+    };
+    let mut seen = Vec::new();
+    for index in 0..2 {
+        let branch = flat(spells.set_child(first, index).ok_or("a child")?)?;
+        let EffectNode::ApplyStatus { status } = branch.kind else {
+            return Err("an ApplyStatus branch".into());
+        };
+        let rule = branch.require.ok_or("a filtered branch")?.structures;
+        let name = spells.status(status).ok_or("a status")?.spec.name.clone();
+        seen.push((name, rule));
+    }
+    assert_eq!(
+        seen,
+        [
+            ("blinding_cloud".to_owned(), StructureRule::Exclude),
+            ("blinding_cloud_structure".to_owned(), StructureRule::Only),
+        ],
+        "CaseDefault BlindingCloudAB and Case IsStructure, swarm EffectData:256-257"
+    );
+
+    let units = spells
+        .status(
+            spells
+                .status_id("blinding_cloud")
+                .ok_or("the unit status")?,
+        )
+        .ok_or("listed")?;
+    assert_close(
+        units.spec.duration_ticks,
+        11.160_714,
+        "0.625 Normal s, swarm BehaviorData:997",
+    );
+    assert_close(
+        units.spec.ranged_weapon_range_delta,
+        -20.0,
+        "voidmulti BehaviorData:1068",
+    );
+    assert_close(
+        units.spec.weapon_range_delta,
+        0.0,
+        "WeaponRange 0, voidmulti BehaviorData:1068",
+    );
+    assert_close(units.spec.range_floor, 0.1, "SU-2");
+    assert!(!units.spec.suppress_detection && units.periodic_effect.is_none());
+
+    let structures = spells
+        .status(
+            spells
+                .status_id("blinding_cloud_structure")
+                .ok_or("the structure status")?,
+        )
+        .ok_or("listed")?;
+    assert_close(
+        structures.spec.duration_ticks,
+        11.160_714,
+        "0.625 Normal s, swarm BehaviorData:24",
+    );
+    assert_close(
+        structures.spec.weapon_range_delta,
+        -20.0,
+        "swarm BehaviorData:25",
+    );
+    assert_close(
+        structures.spec.ranged_weapon_range_delta,
+        0.0,
+        "every weapon instead",
+    );
+    assert!(
+        structures.spec.suppress_detection,
+        "DetectArc 0, swarm BehaviorData:25"
+    );
+    assert!(structures.periodic_effect.is_none());
+    Ok(())
 }

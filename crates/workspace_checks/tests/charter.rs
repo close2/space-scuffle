@@ -56,9 +56,9 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_types/src/presentation.rs",
-        count: 5,
-        reason: "presentation: line-splash and area geometry carried by `RenderSnapshot` for the \
-                 effect system",
+        count: 6,
+        reason: "presentation: line-splash, area and spell-missile geometry carried by \
+                 `RenderSnapshot` for the effect system",
     },
     FloatAllowance {
         path: "crates/sim_map/src/grid.rs",

@@ -225,22 +225,6 @@ pub enum AbilityEffectSpec {
         /// Cooldown ticks incurred on cast.
         cooldown_ticks: u16,
     },
-    /// Spawns a periodic area-of-effect damage hazard zone at the target point.
-    SpawnHazardZone {
-        /// Circular radius of effect.
-        radius: SimScalar,
-        /// Initial detonation delay in ticks before first damage application.
-        delay_ticks: u16,
-        /// Total lifetime duration of the hazard zone in ticks.
-        duration_ticks: u16,
-        /// Ticks between consecutive periodic damage pulses.
-        interval_ticks: u16,
-        /// Damage applied per interval pulse.
-        damage_per_interval: SimScalar,
-        /// If true, friendly entities also suffer damage.
-        #[serde(default = "default_true", alias = "targets_friendly")]
-        friendly_fire: bool,
-    },
     /// Tactical cloaking or subterranean burrowing.
     CloakToggle {
         /// Energy drain per second while active.
@@ -253,6 +237,10 @@ pub enum AbilityEffectSpec {
         /// Canonical mode identifier to enter/toggle (matches `UnitModeSpec.mode_name`).
         mode_name: String,
     },
+    /// Runs the effect tree whose root is the named entry of `assets/catalog/ability_effects.ron`
+    /// (plan `2026-11-10-spellcaster-mechanics` D-1). Only for `TargetPosition` and
+    /// `TargetEntity` abilities.
+    Effect(String),
 }
 
 /// Declarative specification of a toggleable unit stance or transformation mode
@@ -340,6 +328,21 @@ pub struct AbilitySpec {
     /// validation checks. Display data only: the simulation never reads it.
     #[serde(default)]
     pub leave_name: Option<String>,
+    /// Ticks the caster stays locked after the cast (`StarCraft` II `CastOutroTime`; plan
+    /// `2026-11-10-spellcaster-mechanics` D-6, D-7).
+    #[serde(default)]
+    pub cast_backswing_ticks: u16,
+    /// Whether a non-queued group command is sent to one caster only (`BestUnit`). Read for
+    /// `TargetPosition` and `TargetEntity` abilities only.
+    #[serde(default = "default_true")]
+    pub single_caster: bool,
+    /// The units a `TargetEntity` ability may target.
+    #[serde(default)]
+    pub target_filter: Option<crate::effects::TargetFilter>,
+    /// Placement of the effect tree's origin near the caster; the caster's position when
+    /// absent.
+    #[serde(default)]
+    pub origin: Option<crate::effects::OriginPlacement>,
 }
 
 /// Bundle of optional mechanical capabilities possessed by an archetype.

@@ -16,6 +16,10 @@
 //! position (D-6), so no key belongs to a unit. A lock is shown rather than hidden (D-8). Shortage
 //! of money or supply is not a lock: the simulation's typed rejection explains it.
 //!
+//! Targeted effect-tree abilities follow the mode entries, one entry per cast of the selection,
+//! and arm a cast mode (plan `2026-11-10-spellcaster-mechanics` D-10). Energy and cooldown are
+//! locks, read from [`PlayerView::cast_states`], because they belong to the units, not to money.
+//!
 //! # Invariants
 //! - Pure: [`derive_card`] depends only on its arguments, and no Bevy type but [`Resource`] is here.
 //! - A slot is enabled exactly when it carries no [`CardLock`].
@@ -31,10 +35,10 @@ use sim_types::{
     CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerView, UnitOrder, UnitTypeId,
 };
 
-use super::catalog::{ArchetypeCommands, ModeCommand, ModeId};
+use super::catalog::{ArchetypeCommands, CastCommand, CastId, ModeCommand, ModeId};
 use super::model::{HudModel, SelectedFact};
 use crate::battle_input::command_mode::CommandMode;
-use crate::battle_pipeline::commands::ModeDirection;
+use crate::battle_pipeline::commands::{CastTarget, ModeDirection};
 use crate::input_bindings::{
     COMMAND_CARD_KEYS, COMMAND_CARD_KEY_LABELS, COMMAND_CARD_SLOTS, HOLD_POSITION_KEY,
     HOLD_POSITION_KEY_LABEL, STOP_KEY, STOP_KEY_LABEL,
@@ -169,6 +173,8 @@ pub enum CardLabel {
         /// Which of its two commands.
         direction: ModeDirection,
     },
+    /// A targeted cast, named by the catalog.
+    Cast(CastId),
     /// Stop.
     Stop,
     /// Hold position.
@@ -194,10 +200,20 @@ pub enum CardLock {
     NeedsResearch(Option<u32>),
     /// Every unit that could take the command is switching a mode now.
     Transforming,
+    /// Every unit that could cast it is waiting for the ability's cooldown.
+    Cooldown,
+    /// Every unit that could cast it has less energy than it costs.
+    NeedsEnergy,
 }
 
 /// Tooltip of a mode entry whose units are all switching.
 pub const TRANSFORMING_TEXT: &str = "Transforming";
+
+/// Tooltip of a cast entry whose casters are all cooling down.
+pub const COOLDOWN_TEXT: &str = "Cooling down";
+
+/// Tooltip of a cast entry whose casters all lack the energy.
+pub const NEEDS_ENERGY_TEXT: &str = "Not enough energy";
 
 /// What a slot costs, for its tooltip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +460,91 @@ fn mode_entry(
     })
 }
 
+/// Why one contributor of a cast cannot cast now, ordered from the farthest from casting to the
+/// nearest, so the entry of a group none of which can cast names its nearest member's reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CastBlock {
+    /// The ability still needs research.
+    Research,
+    /// The unit is switching a mode.
+    Transforming,
+    /// The ability is cooling down.
+    Cooldown,
+    /// The unit lacks the energy.
+    Energy,
+}
+
+/// What keeps `fact` from casting `command` now, from the view, if anything.
+fn cast_block(model: &HudModel, fact: &SelectedFact, command: CastCommand) -> Option<CastBlock> {
+    let view = &model.view;
+    let lock = sim_types::AbilityLockView {
+        unit_type: fact.unit_type,
+        ability_index: command.ability_index,
+    };
+    if view.ability_locks.binary_search(&lock).is_ok() {
+        return Some(CastBlock::Research);
+    }
+    let channeling = view
+        .mode_states
+        .binary_search_by_key(&fact.id, |state| state.entity)
+        .is_ok_and(|index| view.mode_states[index].channeling);
+    if channeling {
+        return Some(CastBlock::Transforming);
+    }
+    let state = view
+        .cast_states
+        .binary_search_by_key(&(fact.id, command.ability_index), |state| {
+            (state.entity, state.ability_index)
+        })
+        .ok()
+        .map(|index| view.cast_states[index]);
+    match state {
+        Some(state) if state.cooldown_ticks > 0 => Some(CastBlock::Cooldown),
+        Some(state) if state.short_of_energy => Some(CastBlock::Energy),
+        _ => None,
+    }
+}
+
+/// The entry of `cast`, if a selected unit holds it.
+///
+/// Enabled when any holder could cast now; otherwise locked by the reason of the holder nearest
+/// to casting ([`CastBlock`]). Shown, not hidden (D-8 of the mode plan).
+fn cast_entry(model: &HudModel, facts: &[SelectedFact], cast: CastId) -> Option<CardEntry> {
+    let labels = model.catalog.cast(cast)?;
+    let contributors = || {
+        facts
+            .iter()
+            .filter(|fact| !fact.foundation)
+            .filter_map(move |fact| {
+                let archetype = model.catalog.archetype(fact.unit_type)?;
+                let command = archetype
+                    .casts
+                    .iter()
+                    .find(|command| command.cast == cast)?;
+                Some((fact, *command))
+            })
+    };
+    let (_, first) = contributors().next()?;
+    // `None` as soon as one holder is free; otherwise the reason nearest to casting.
+    let block = contributors().try_fold(CastBlock::Research, |nearest, (fact, command)| {
+        cast_block(model, fact, command).map(|block| nearest.max(block))
+    });
+    let lock = block.map(|block| match block {
+        CastBlock::Research => CardLock::NeedsResearch(first.unlock),
+        CastBlock::Transforming => CardLock::Transforming,
+        CastBlock::Cooldown => CardLock::Cooldown,
+        CastBlock::Energy => CardLock::NeedsEnergy,
+    });
+    let mode = match labels.target {
+        CastTarget::Point => CommandMode::CastAtPoint(labels.key),
+        CastTarget::Unit => CommandMode::CastOnUnit(labels.key),
+    };
+    Some(CardEntry {
+        lock,
+        ..CardEntry::free(CardAction::Mode(mode), CardLabel::Cast(cast))
+    })
+}
+
 /// Calls `emit` with each root entry, in the order of the card's table.
 fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
     let view = &model.view;
@@ -460,6 +561,14 @@ fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(C
                 if let Some(entry) = mode_entry(model, facts, mode, direction) {
                     emit(entry);
                 }
+            }
+        }
+    }
+    // Cast entries follow the mode entries, by cast.
+    if completed(model, facts).any(|archetype| !archetype.casts.is_empty()) {
+        for cast in model.catalog.cast_ids() {
+            if let Some(entry) = cast_entry(model, facts, cast) {
+                emit(entry);
             }
         }
     }
@@ -564,6 +673,10 @@ fn label_text(label: CardLabel, model: &HudModel) -> &str {
                     ModeDirection::Leave => labels.leave.as_str(),
                 })
         }
+        CardLabel::Cast(cast) => model
+            .catalog
+            .cast(cast)
+            .map_or("", |labels| labels.name.as_str()),
         CardLabel::Stop => "Stop",
         CardLabel::Hold => "Hold",
         CardLabel::Unit(unit_type) => model.catalog.label(unit_type),
@@ -580,6 +693,8 @@ fn write_lock(tooltip: &mut String, lock: CardLock, model: &HudModel) {
     let _ = match lock {
         CardLock::NoMedia => tooltip.write_str(NO_MEDIA_TEXT),
         CardLock::Transforming => tooltip.write_str(TRANSFORMING_TEXT),
+        CardLock::Cooldown => tooltip.write_str(COOLDOWN_TEXT),
+        CardLock::NeedsEnergy => tooltip.write_str(NEEDS_ENERGY_TEXT),
         CardLock::Option(OptionLock::MissingStructure(unit_type)) => {
             write!(tooltip, "Requires {}", model.catalog.label(unit_type))
         }

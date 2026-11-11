@@ -20,6 +20,7 @@
 #![deny(clippy::unreachable)]
 
 pub mod commands;
+pub mod effects;
 pub mod enums;
 pub mod errors;
 pub mod ids;
@@ -37,6 +38,13 @@ pub use commands::{
     AttackOrigin, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand, TickBundle,
     TickInputBundle, UnitModeSpec, UnitOrder,
 };
+pub use effects::{
+    CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
+    EffectContext, EffectDef, EffectId, EffectNodeDef, EffectTarget, FilterAlliance,
+    LaunchMissileDef, MissileView, ModifyVitalsDef, OriginPlacement, PersistentDef, SearchDef,
+    SetDef, StatusId, StatusRefDef, StatusSpec, StructureRule, TargetFilter, TargetPlane,
+    VitalChange,
+};
 pub use enums::{
     AnimState, AttributeFlags, MoverType, ResourceKind, ShapeKind, SilhouetteClass,
     VisibilityState, WeaponVisualKind,
@@ -48,12 +56,13 @@ pub use ids::{
 };
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use player_view::{
-    AbilityLockView, CarrierView, CommandOptionView, CommandSubject, ModeStateView, OptionLock,
-    PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView, VisibleNodeView,
+    AbilityLockView, CarrierView, CastStateView, CommandOptionView, CommandSubject, ModeStateView,
+    OptionLock, PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView,
+    VisibleNodeView,
 };
 pub use presentation::{
     AbilitySource, AreaView, Concealment, EffectSource, LineView, LinkView, ModeTransitionView,
-    StanceView, StatusFlags, StatusKind, WeaponKey, WeaponSlot,
+    SpellMissileView, StanceView, StatusFlags, StatusKind, WeaponKey, WeaponSlot,
 };
 pub use snapshot::{
     AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,

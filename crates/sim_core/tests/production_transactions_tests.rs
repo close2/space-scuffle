@@ -4,10 +4,11 @@
 //! Tests prove atomic rejection, captured supply lifetime and connected retry exits.
 
 use sim_core::production::{ProductionAdmissionError as Rejection, ProductionInvariant};
-use sim_core::{ActiveHazardZone, SimWorld, UnitCatalog, UpgradeCatalog};
+use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitTypeId,
+    AbilitySource, EffectContext, EffectTarget, EntityId, PlayerId, PlayerSlot, ShapeKind,
+    SimScalar, SimVec2, Tick, TickBundle, UnitTypeId,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -210,26 +211,51 @@ fn captured_supply_survives_catalog_edits_and_provider_loss() -> TestResult {
     Ok(())
 }
 
+/// A scratch spell whose one pulse, a tick after it opens, deals 100 000 to everything within 2
+/// of its point, structures included: a kill inside phase 2, where the effect engine steps
+/// before production completes (plan `2026-11-10-spellcaster-mechanics` D-16; the hazard zone's
+/// replacement, D-12).
+const LETHAL_PULSE: &str = r#"(effects: [
+    (name: "scratch_lethal_pulse", node: Persistent((anchor: TargetPoint,
+        periodic: Some(Search((radius: 2.0,
+            filter: (alliance: Any, planes: [Ground, Air], structures: Include),
+            child: Damage((amount: 100000.0))))),
+        period_ticks: 1.0, count: 1))),
+])"#;
+
+/// Opens [`LETHAL_PULSE`] at `center`, owned by `owner`.
+fn open_lethal_pulse(world: &mut SimWorld, owner: PlayerId, center: SimVec2) -> TestResult {
+    let spells = sim_fixtures::spells_with("(statuses: [])", LETHAL_PULSE)?;
+    world.catalog.set_spell_catalog(spells)?;
+    let root = world
+        .catalog
+        .spells()
+        .effect_id("scratch_lethal_pulse")
+        .ok_or("scratch effect")?;
+    world.run_effect(
+        root,
+        EffectContext {
+            owner,
+            caster: None,
+            ability: AbilitySource::default(),
+            origin: center,
+            source_point: center,
+            target: EffectTarget::Point(center),
+        },
+    );
+    Ok(())
+}
+
 #[test]
-fn dead_and_hazard_killed_producers_never_finish_or_leak_supply() -> TestResult {
-    for hazard in [false, true] {
+fn dead_and_spell_killed_producers_never_finish_or_leak_supply() -> TestResult {
+    for spell in [false, true] {
         let mut f = Fixture::new()?;
         f.admit()?;
         f.world.catalog.get_mut(f.producer_type)?.hp_regen_per_tick = SimScalar::from_i32(5);
         let position = f.world.entities[&f.producer].position;
-        if hazard {
-            f.world.active_hazards.push(ActiveHazardZone {
-                id: 1,
-                owner: PlayerId(1),
-                center: position,
-                radius: SimScalar::from_i32(2),
-                delay_ticks: 0,
-                remaining_ticks: 2,
-                interval_ticks: 1,
-                ticks_until_next_interval: 0,
-                damage_per_interval: SimScalar::from_i32(100_000),
-                targets_friendly: true,
-            });
+        if spell {
+            open_lethal_pulse(&mut f.world, PlayerId(1), position)?;
+            assert!(f.world.entities[&f.producer].is_alive());
         } else {
             f.world
                 .entities

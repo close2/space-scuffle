@@ -11,6 +11,14 @@
 //! left only by finishing it, by the right button or [`CANCEL_KEY`](crate::input_bindings::CANCEL_KEY),
 //! or when [`CommandMode::reconcile`] finds nothing left to carry it out.
 //!
+//! The two cast modes (plan `2026-11-10-spellcaster-mechanics` D-10) aim a targeted effect-tree
+//! ability. Their click is not an order for the whole selection, because each archetype may hold
+//! the ability at its own index, so [`collect_pointer_intent`](super::collect_pointer_intent)
+//! sends it through
+//! [`BattleCommandQueue::submit_cast`](crate::battle_pipeline::commands::BattleCommandQueue::submit_cast)
+//! rather than [`CommandMode::order_at`]. [`CommandMode::targeting_radius`] gives the radius the
+//! targeting ring will show; drawing that ring waits on Q0080 (D-11).
+//!
 //! # Invariants
 //! - `Normal` is the only mode that lets a left click select.
 //! - A mode survives only while the match accepts orders and a selected unit can carry it out.
@@ -22,13 +30,13 @@ use bevy::math::Vec3;
 use bevy::prelude::Resource;
 use sim_core::{SimWorld, UnitArchetype};
 use sim_types::{
-    EntityId, PlayerId, ResourceKind, ShapeKind, SimScalar, SimVec2, SiteRefusal, UnitOrder,
-    UnitTypeId,
+    AbilityEffectSpec, EntityId, PlayerId, ResourceKind, ShapeKind, SimScalar, SimVec2,
+    SiteRefusal, UnitOrder, UnitTypeId,
 };
 
 use super::context_order::sim_point;
 use super::order_marker::OrderMarkerKind;
-use crate::battle_pipeline::commands::{any_recipient, SubmissionError};
+use crate::battle_pipeline::commands::{any_caster, any_recipient, CastKey, SubmissionError};
 
 /// How far from a click an extractor looks for a gas node to cover, in cells on either axis.
 pub const EXTRACTOR_SNAP_CELLS: u32 = 3;
@@ -43,6 +51,10 @@ pub enum CommandMode {
     AttackMove,
     /// The next left click places this structure.
     Place(UnitTypeId),
+    /// The next left click on the ground casts this point ability there.
+    CastAtPoint(CastKey),
+    /// The next left click on a unit the viewer sees casts this unit ability on it.
+    CastOnUnit(CastKey),
 }
 
 impl CommandMode {
@@ -56,21 +68,48 @@ impl CommandMode {
         owner: Option<PlayerId>,
         selection: &[EntityId],
     ) {
-        let Some(order) = self.eligibility_order() else {
-            return;
+        let viable = match (self.cast_key(), self.eligibility_order()) {
+            (Some(key), _) => world.zip(owner).is_some_and(|(world, owner)| {
+                orders_open(world) && any_caster(world, owner, selection, key)
+            }),
+            (None, Some(order)) => world.zip(owner).is_some_and(|(world, owner)| {
+                orders_open(world) && any_recipient(world, owner, selection, &order)
+            }),
+            (None, None) => return,
         };
-        let viable = world.zip(owner).is_some_and(|(world, owner)| {
-            orders_open(world) && any_recipient(world, owner, selection, &order)
-        });
         if !viable {
             *self = Self::Normal;
         }
     }
 
+    /// The cast this mode aims, if it is a cast mode.
+    #[must_use]
+    pub const fn cast_key(self) -> Option<CastKey> {
+        match self {
+            Self::CastAtPoint(key) | Self::CastOnUnit(key) => Some(key),
+            Self::Normal | Self::AttackMove | Self::Place(_) => None,
+        }
+    }
+
+    /// The radius, in world units, of the area the armed cast affects around its target: the
+    /// `targeting_radius` the loaded effect catalog computed for the ability's root (plan D-19).
+    ///
+    /// `None` for a mode that casts nothing, an ability outside the catalog, and a tree with no
+    /// area. The targeting ring that shows it is drawn once Q0080 rules on spell art (D-11).
+    #[must_use]
+    pub fn targeting_radius(self, world: &SimWorld) -> Option<SimScalar> {
+        let (ability, _) = self.cast_key()?.ability(world)?;
+        let AbilityEffectSpec::Effect(root) = &ability.effect else {
+            return None;
+        };
+        let spells = world.catalog.spells();
+        spells.facts(spells.effect_id(root)?)?.targeting_radius
+    }
+
     /// An order of this mode's kind, for asking who could carry it out. Its place is irrelevant.
     const fn eligibility_order(self) -> Option<UnitOrder> {
         match self {
-            Self::Normal => None,
+            Self::Normal | Self::CastAtPoint(_) | Self::CastOnUnit(_) => None,
             Self::AttackMove => Some(UnitOrder::AttackMove {
                 target: SimVec2::new(SimScalar::ZERO, SimScalar::ZERO),
             }),
@@ -89,7 +128,10 @@ impl CommandMode {
     /// # Errors
     /// [`SubmissionError::SiteRefused`] for a site that `owner` knows cannot take the structure,
     /// [`SubmissionError::InvalidStructure`] for a structure the catalog does not hold, and
-    /// [`SubmissionError::UnsupportedOrder`] in `Normal`, which targets nothing.
+    /// [`SubmissionError::UnsupportedOrder`] in `Normal`, which targets nothing, and in a cast
+    /// mode, whose click [`BattleCommandQueue::submit_cast`] carries out.
+    ///
+    /// [`BattleCommandQueue::submit_cast`]: crate::battle_pipeline::commands::BattleCommandQueue::submit_cast
     pub fn order_at(
         self,
         world: &SimWorld,
@@ -97,7 +139,9 @@ impl CommandMode {
         ground: Vec3,
     ) -> Result<(UnitOrder, OrderMarkerKind, Vec3), SubmissionError> {
         match self {
-            Self::Normal => Err(SubmissionError::UnsupportedOrder),
+            Self::Normal | Self::CastAtPoint(_) | Self::CastOnUnit(_) => {
+                Err(SubmissionError::UnsupportedOrder)
+            }
             Self::AttackMove => {
                 let target = sim_point(ground);
                 Ok((
