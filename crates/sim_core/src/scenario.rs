@@ -12,8 +12,13 @@
 //!   instantiating the simulation world.
 //! - **Exact Footprint Fit:** Validates that starting town halls fit strictly inside the reserved
 //!   start location footprints without clipping or overflowing.
-//! - **Deterministic Placement:** Mobile units are placed in deterministic radial concentric rings
-//!   around the town hall center, adhering strictly to cardinal edge iteration order.
+//! - **Deterministic Placement:** Mobile units are placed in deterministic concentric rings
+//!   around the town hall, each ring in cardinal edge iteration order ([`ring_perimeter`]), in
+//!   loadout order. Rings `d = 1..=INNER_RING_COUNT` use the rule every existing scenario was
+//!   built with, by the same code path, so their placement and every existing checksum are pinned.
+//!   Units that do not fit there continue on rings 4, 5, … inside the hall's ground region,
+//!   outside other starts' inner zones and off resource and watchtower cells (`placement`); a
+//!   loadout the region cannot hold is a typed error, never a truncated army.
 //! - **State Consistency:** World checksum is deterministically recalculated after all structures
 //!   and units are placed.
 
@@ -22,8 +27,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sim_map::{
-    validate_map, CellFlags, CliffLevel, MapDocument, MapFile, MapFormatError, MapStartLocation,
-    MapValidationError, TerrainKind,
+    validate_map, CellFlags, CliffLevel, MapDocument, MapEntityId, MapFile, MapFormatError,
+    MapStartLocation, MapValidationError, TerrainKind,
 };
 use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId};
 
@@ -31,6 +36,16 @@ use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
 use crate::upgrades::UpgradeCatalog;
 use crate::world::SimWorld;
+
+mod placement;
+
+/// Rings around a town hall placed by the original three-ring rule, `d = 1..=INNER_RING_COUNT`.
+///
+/// Placement on these rings is pinned for compatibility: every scenario that loaded before outer
+/// rings existed places the same units on the same cells, so its checksum is unchanged. Outer
+/// rings start at `INNER_RING_COUNT + 1`, and other starts' inner zones are their footprints
+/// grown by this many cells.
+const INNER_RING_COUNT: i32 = 3;
 
 /// Starting unit and structure composition for a player faction or loadout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,11 +202,18 @@ pub enum ScenarioError {
         slot: u8,
     },
 
-    /// Not enough valid pathable cells within distance 3 to spawn all starting units.
-    #[error("not enough pathable spawn cells around town hall for slot {slot}")]
+    /// The town hall's rings 1 to 3 and its ground region beyond them hold fewer free spawn cells
+    /// than the loadout has units. No world is built, so no army is silently truncated.
+    #[error(
+        "not enough spawn cells around the town hall of slot {slot}: {placed} of {requested} units placed"
+    )]
     NotEnoughSpawnCells {
         /// Player slot index.
         slot: u8,
+        /// Units in the player's loadout.
+        requested: usize,
+        /// Units placed before the region was exhausted.
+        placed: usize,
     },
 
     /// Simulation engine failed to spawn an entity.
@@ -515,10 +537,15 @@ pub fn load_scenario_world(
 ///    - Resolves the requested loadout and unit archetypes.
 ///    - Checks that the town hall archetype is a dome shape that fits within the start footprint.
 ///    - Centers the town hall inside the footprint `(top_left + (fp - hall) / 2)` and spawns it.
-///    - Spawns mobile units radially in concentric rings `d = 1, 2, 3` around the town hall footprint.
+///    - Spawns mobile units in loadout order on concentric rings `d = 1, 2, 3`
+///      (`INNER_RING_COUNT`) around the town hall footprint, on in-bounds, ground-pathable,
+///      non-abyss, non-ramp cells of the hall's cliff level that hold no structure and no unit.
+///      This is the rule every existing scenario was built with, kept as its own code path.
+///    - Units that remain continue on rings `d = 4, 5, …`, on cells that also lie in the hall's
+///      4-connected ground region, outside every other start location's footprint grown by
+///      three cells, and off resource and watchtower cells. The rings end where the region ends.
 ///    - Within each ring, cells are visited in perimeter order:
 ///      South edge (X ascending) -> East edge (Y ascending) -> North edge (X descending) -> West edge (Y descending).
-///    - Units are only placed on in-bounds, ground-pathable, non-abyss, non-ramp, unoccupied cells.
 ///    - A loadout's `starting_resources` replace the player's default bank.
 /// 6. Records the match's players and recomputes the world checksum.
 ///
@@ -567,6 +594,7 @@ pub fn build_world_with_catalogs(
     sorted_starts.sort_by_key(|loc| loc.player_slot);
 
     let mut claimed_cells = BTreeSet::new();
+    let outer_rules = placement::OuterRingRules::from_document(doc);
 
     // 5. Spawn structures and units for each player in start location slot order.
     for start_loc in &sorted_starts {
@@ -586,6 +614,7 @@ pub fn build_world_with_catalogs(
             &hall,
             &resolved.units,
             &mut claimed_cells,
+            &outer_rules,
         )?;
     }
 
@@ -607,7 +636,8 @@ struct ResolvedLoadout {
     units: Vec<UnitTypeId>,
 }
 
-/// The cells a placed town hall covers, inclusive, and the plateau its units must share.
+/// The cells a placed town hall covers, inclusive, the plateau its units must share, and the
+/// start location it stands on.
 struct PlacedHall {
     x_min: i32,
     x_max: i32,
@@ -615,6 +645,9 @@ struct PlacedHall {
     y_max: i32,
     /// Cliff level of the hall's anchor cell.
     cliff_level: CliffLevel,
+    /// Id of the start location the hall stands on; its own inner zone is not reserved
+    /// against its units.
+    start: MapEntityId,
 }
 
 /// Step 5, first part: resolves `player`'s loadout and checks that its town hall is a dome
@@ -743,15 +776,22 @@ fn place_town_hall(
         y_min: cell_coordinate(hall_cell_y),
         y_max: cell_coordinate(hall_cell_y + hall_h - 1),
         cliff_level: anchor_cliff_level,
+        start: start_loc.id,
     })
 }
 
-/// Step 5, the units: spawns `units` for player `slot` on rings `d = 1, 2, 3` around `hall`,
-/// each ring in [`ring_perimeter`] order, skipping cells that are off the map, on another
-/// plateau, not ground-pathable, abyss, ramp, occupied by a structure, or in `claimed_cells`.
+/// Step 5, the units: spawns `units` for player `slot` on rings `d = 1..=INNER_RING_COUNT`
+/// around `hall`, each ring in [`ring_perimeter`] order, skipping cells that are off the map, on
+/// another plateau, not ground-pathable, abyss, ramp, occupied by a structure, or in
+/// `claimed_cells`. Units that remain go to the outer rings under `outer_rules`
+/// (`placement::place_outer_rings`).
+///
+/// The loop over rings 1 to 3 is the original rule, unchanged: it evaluates exactly that
+/// predicate in that order and returns before any outer-ring code runs when it places every
+/// unit, so every loadout it held before outer rings existed is placed as it was.
 ///
 /// # Errors
-/// [`ScenarioError::NotEnoughSpawnCells`] when the rings hold too few cells, and
+/// [`ScenarioError::NotEnoughSpawnCells`] when the hall's region holds too few cells, and
 /// [`ScenarioError::Spawn`] when a unit cannot be spawned.
 fn place_ring_units(
     world: &mut SimWorld,
@@ -759,13 +799,14 @@ fn place_ring_units(
     hall: &PlacedHall,
     units: &[UnitTypeId],
     claimed_cells: &mut BTreeSet<(u32, u32)>,
+    outer_rules: &placement::OuterRingRules,
 ) -> Result<(), ScenarioError> {
     let map_w = i32::try_from(world.map.width()).unwrap_or(i32::MAX);
     let map_h = i32::try_from(world.map.height()).unwrap_or(i32::MAX);
     let mut spawned_count = 0;
     let total_needed = units.len();
 
-    for d in 1..=3 {
+    for d in 1..=INNER_RING_COUNT {
         if spawned_count >= total_needed {
             break;
         }
@@ -822,7 +863,15 @@ fn place_ring_units(
     }
 
     if spawned_count < total_needed {
-        return Err(ScenarioError::NotEnoughSpawnCells { slot });
+        return placement::place_outer_rings(
+            world,
+            slot,
+            hall,
+            units,
+            spawned_count,
+            claimed_cells,
+            outer_rules,
+        );
     }
     Ok(())
 }

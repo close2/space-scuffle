@@ -380,3 +380,34 @@ are merged to `main`, because the measured commit must be on `main`.
 - Keeping the eight-player arena as a second measured spec. Its figures remain in the 2026-11-03 evidence as
   history.
 - Any StarCraft II mechanic (§3.6).
+
+---
+
+## Amendment 1 (WP1 and WP2 implementation, 2026-11-11): verify items and what landed
+
+- **Module layout (D-6).** The outer rings, the reservation and the region fill are in the private submodule
+  `crates/sim_core/src/scenario/placement.rs`; `scenario.rs` keeps the rings 1 to 3 loop, now
+  `for d in 1..=INNER_RING_COUNT`, otherwise unchanged, and calls `placement::place_outer_rings` only when units
+  remain. `PlacedHall` gains the id of its start location, which identifies the player's own inner zone. The
+  §5.1 unit tests live in `placement.rs`'s `mod tests` (the module they exercise), not in `scenario.rs`; three of
+  them (`outer_rings_skip_blocked_cells`, `outer_rings_do_not_cross_onto_a_separate_plateau`,
+  `exhausted_region_is_a_typed_error`) change the built world's cells and call `place_ring_units` directly,
+  because map validation rejects a structure on ring 4, an enclosed start and lone ramp or abyss cells.
+- **Supply at setup (§2, §11): verified, not enforced.** `outer_rings_never_enter_another_starts_inner_zone` spawns
+  500 units for one player and the property tests up to 1,100; `fixture_root_scenarios_spawn_exactly_their_units`
+  loads both 200-unit armies of `battle_automaton`'s mix through the production loader. None trips a supply or
+  allocation check.
+- **C22 and `crates/gate/suites.ron`: no entry needed.** The catalog classes only targets that are not `fast`; a
+  new integration test is `fast` by default. `cargo test -p gate --test suite_catalog_tests` passes with
+  `scenario_placement_properties.rs` committed and no catalog change.
+- **`error_not_enough_spawn_cells` (§5.3).** Its enclosed region is the map itself: on `base_valid_doc` (32×32)
+  slot 0's region is 1,024 cells less its 25-cell hall and slot 1's reserved 11×11 zone, 878 cells, so 900
+  units fail with `requested: 900, placed: 878`. An enclosure by terrain would fail map validation (starts
+  unreachable).
+- **Property generator (§5.2).** Starts are separated by construction (16 or more cells apart on one axis, axis and
+  slot order drawn) rather than by `prop_assume!`, which rejected most draws. Abyss blockers are also made
+  non-pathable, because validation rejects traversable abyss. Unit counts are 0 to 250 in two draws of three and
+  850 to 1,100 otherwise, so that 32×32 maps exhaust the region and P4's failure half runs (about a third of the
+  48 cases).
+- **Checksums (§4.4).** Every shipped scenario and the three eight-player frame-budget scenarios have the same
+  `last_checksum` before and after WP1; the table is in WP1's commit message.
