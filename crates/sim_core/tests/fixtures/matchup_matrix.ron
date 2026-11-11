@@ -2,8 +2,8 @@
 //
 // Each battle spawns two sides, orders them through PlayerCommand on the first tick, and runs
 // until one side is gone or `ticks` elapse. `expect` records survivors as inclusive ranges,
-// plus an optional hull range for each side's first unit. Every outcome must hold on every
-// seed. See tests/sc2_who_wins_matchup_matrix_tests.rs, and explain any rebaseline in the
+// plus an optional hull range for each side's first unit and, for a claim about one unit's fate,
+// whether that unit is alive at the end. Every outcome must hold on every seed. See tests/sc2_who_wins_matchup_matrix_tests.rs, and explain any rebaseline in the
 // commit that changes this file.
 (
     seeds: [3203386110, 11, 22, 33],
@@ -1123,6 +1123,60 @@
             order: AttackMove(46, 45),
         ),
         expect: (blue: (0, 0), red: (9, 11)),
+    ),
+    // Battles 37a/37b (plan 2026-11-10-spellcaster-mechanics §10.2, Amendment 6): Abduct's own
+    // effect. Two sieged tanks 6 apart hold behind four marines; the Viper analogue waits on the
+    // flank while eight zerglings attack-move past it, and on tick 90 pulls the first tank (red's
+    // lead) to a landing point out of the second tank's range 13, where the zerglings kill it. The
+    // fight itself stays the tanks' (opposite winners measured impossible with these armies,
+    // evidence §3), so the pair claims the pulled tank's fate. 37a: the pulled tank dies on all 20
+    // matrix seeds, red keeps 5 (18 seeds) or 4 (2); every zergling dies; the battle runs to its
+    // limit with the Viper alive.
+    (
+        name: "37a_abduct_sieged_tank",
+        claim: "Abduct pulls a sieged tank out of its partner's cover and the zerglings kill it",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (50.0, 37.3), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 8, columns: 2, origin: (39.0, 20.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 56),
+            casts: [(tick: 90, ability: "Abduct", at: FirstEnemyOfType("railgun_crawler"))],
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (4, 5), red_lead_alive: Some(false)),
+    ),
+    // Control of 37a: no cast. The first tank survives on all 20 seeds and red keeps all 6.
+    (
+        name: "37b_sieged_tank_survives_without_abduct",
+        claim: "Control of 37a: without Abduct the same zerglings never reach the first tank",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (50.0, 37.3), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 8, columns: 2, origin: (39.0, 20.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 56),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (6, 6), red_lead_alive: Some(true)),
     ),
     ],
 )

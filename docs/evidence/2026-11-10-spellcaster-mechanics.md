@@ -122,3 +122,12 @@ from SC2GameData 5.0.14 (`5444e12f13`), checked against the local copy:
   on every seed without it; with 12 to 20 zerglings red keeps 1 to 5 with Abduct and 2 to 6 without. The claim
   (opposite winners) needs a further arrangement or army size; Abduct's effect, the pulled tank killed, is clear
   in (3).
+- **Battles 37a/37b, landed under plan Amendment 6** (the spell's own effect). Arrangement (3) with eight
+  zerglings, red's tanks spawned first so the pulled tank is red's lead unit: the Viper analogue waits at
+  (50, 37.3), the zerglings attack-move from (39, 20.5) to (60, 56), and Abduct is cast on tick 90 at the first
+  tank (56, 44); the second tank stands 6 away. The fixture's `Expected` gained `blue_lead_alive` and
+  `red_lead_alive` (generic, unit-tested in `sim_fixtures`). 37a: red's lead dead on all 20 matrix seeds, red 5
+  left (18 seeds) or 4 (2), every zergling dead, the Viper alive at the 600-tick limit. 37b: red's lead alive on
+  all 20 with 94 to 175 life, red 6, blue 1. On 52 seeds the same split held (lead dead on all 52 with Abduct,
+  alive on all 52 without). Against the base (`57f2747`, `--compare`) only 37a and 37b are new; every other
+  battle is bit-identical. Expectation failures 0 on the seeds of record, 3 over all seeds (the same three).

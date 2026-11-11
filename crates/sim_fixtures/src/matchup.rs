@@ -251,11 +251,21 @@ pub struct Expected {
     /// Inclusive hull range of red's first unit, when it survives.
     #[serde(default)]
     pub red_lead_hp: Option<(f32, f32)>,
+    /// Whether blue's first unit must be alive (`true`) or dead (`false`) at the end, for a
+    /// claim about one unit's fate (plan `2026-11-10-spellcaster-mechanics` Amendment 6);
+    /// `None` claims nothing.
+    #[serde(default)]
+    pub blue_lead_alive: Option<bool>,
+    /// Whether red's first unit must be alive (`true`) or dead (`false`) at the end; `None`
+    /// claims nothing.
+    #[serde(default)]
+    pub red_lead_alive: Option<bool>,
 }
 
 impl Expected {
-    /// Whether `outcome` meets this expectation: both survivor counts inside their ranges, and
-    /// each side's lead hull inside its range when both the range and a living lead unit exist.
+    /// Whether `outcome` meets this expectation: both survivor counts inside their ranges, each
+    /// side's lead hull inside its range when both the range and a living lead unit exist, and
+    /// each side's lead alive or dead as recorded.
     ///
     /// The one judgement of a battle, shared by the matrix test and the trace tool's matrix
     /// mode, so the tool reports exactly the failures the test would.
@@ -265,7 +275,15 @@ impl Expected {
             && (self.red.0..=self.red.1).contains(&outcome.red)
             && within(self.blue_lead_hp, outcome.blue_lead_hull)
             && within(self.red_lead_hp, outcome.red_lead_hull)
+            && fate(self.blue_lead_alive, outcome.blue_lead_hull)
+            && fate(self.red_lead_alive, outcome.red_lead_hull)
     }
+}
+
+/// Whether a lead unit whose hull is `hull` (`None` once it died) meets the recorded `alive`
+/// claim; true when nothing is recorded.
+fn fate(alive: Option<bool>, hull: Option<SimScalar>) -> bool {
+    alive.is_none_or(|alive| alive == hull.is_some())
 }
 
 /// Whether `value` lies in the inclusive `range`; true when either is absent (no range recorded,
@@ -831,6 +849,8 @@ mod tests {
             red: (0, 0),
             blue_lead_hp: Some((10.0, 20.0)),
             red_lead_hp: Some((1.0, 2.0)),
+            blue_lead_alive: None,
+            red_lead_alive: None,
         };
         assert!(expected.holds(&outcome(1, 0, Some(10.0))));
         assert!(expected.holds(&outcome(2, 0, Some(20.0))));
@@ -840,6 +860,34 @@ mod tests {
         assert!(!expected.holds(&outcome(1, 1, Some(15.0))));
         assert!(!expected.holds(&outcome(1, 0, Some(9.5))));
         assert!(!expected.holds(&outcome(1, 0, Some(20.5))));
+    }
+
+    #[test]
+    fn a_recorded_lead_fate_must_match_and_an_absent_one_claims_nothing() {
+        let alive = Expected {
+            blue: (0, 5),
+            red: (0, 0),
+            blue_lead_hp: None,
+            red_lead_hp: None,
+            blue_lead_alive: Some(true),
+            red_lead_alive: None,
+        };
+        assert!(alive.holds(&outcome(1, 0, Some(1.0))));
+        assert!(!alive.holds(&outcome(1, 0, None)), "the lead died");
+        let dead = Expected {
+            blue_lead_alive: Some(false),
+            ..alive.clone()
+        };
+        assert!(dead.holds(&outcome(1, 0, None)));
+        assert!(!dead.holds(&outcome(1, 0, Some(1.0))), "the lead lives");
+        // The survivor counts still apply on top of the fate.
+        assert!(!dead.holds(&outcome(6, 0, None)));
+        let unclaimed = Expected {
+            blue_lead_alive: None,
+            ..alive
+        };
+        assert!(unclaimed.holds(&outcome(1, 0, None)));
+        assert!(unclaimed.holds(&outcome(1, 0, Some(1.0))));
     }
 
     /// A side of one squad of `count` units in one row from `origin`, 2 world units apart.
