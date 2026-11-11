@@ -123,8 +123,8 @@
 //!   `concealment.is_concealed()`, false for every bubble here). With the old spelling
 //!   substituted back (the text cut at `, stance: ` and `concealment: None` read as
 //!   `cloaked: false`), all four reproduced their previous values, so no smog output changed.
-//! - The spellcaster status flags (plan `2026-11-10-spellcaster-mechanics` WP1a) re-recorded the
-//!   four system goldens (glibc 2.41, `x86_64`) because `StatusFlags` gained `damage_over_time`,
+//! - The spellcaster status flags (plan `2026-11-10-spellcaster-mechanics`, package 1a)
+//!   re-recorded the four system goldens (glibc 2.41, `x86_64`) because `StatusFlags` gained `damage_over_time`,
 //!   `stunned`, `range_reduced` and `revealed`, which lengthens every bubble record's `Debug`
 //!   text. With `, damage_over_time: false, stunned: false, range_reduced: false, revealed:
 //!   false` cut from that text, all seventeen tests passed on the previous values (the bubble
