@@ -1993,7 +1993,8 @@ fn braking_speed(
 /// A unit whose admissible step, after bodies that will not yield have taken their share, is
 /// shorter than [`WAIT_THRESHOLD`] of its step waits: it neither moves nor turns, keeps its order
 /// and plays `Idle`, and tries again next tick (plan `2026-11-09-friendly-blocking` D-1.3). It
-/// does not step into the gap and get pushed back out, which vibrated (bug B-103).
+/// does not step into the gap and get pushed back out, which vibrated (bug B-103). The same holds
+/// for a step that the slide along a wall cuts below that share ([`after_wall_slide`]).
 ///
 /// Returns whether terrain refused the step as planned, so the caller can check its route.
 fn step_toward(
@@ -2026,7 +2027,10 @@ fn step_toward(
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
     }
+    let unblocked = velocity;
     let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
+    // Bodies that will not yield cut this step: the queue the waiting rule is for.
+    let crowded = velocity != unblocked;
     if let Some(target) = context.surround {
         velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
     }
@@ -2036,23 +2040,30 @@ fn step_toward(
         return Ok(false);
     }
     // The probe is the disc's (plan `2026-11-11-contact-and-missiles` D-3, R-3): a step that
-    // would press the disc into a wall slides along it instead. A slide that keeps at least half
-    // the step walks along the wall; one that keeps less meets the wall nearly head-on, and the
-    // step counts as refused as planned, so the caller looks at its route (the same half step at
-    // which a blocked attacker starts its surround walk). Where a step that cannot slide goes is
-    // still the centre rule's slide, which the settle then completes.
-    let mut refused = !probe_permits(
+    // would press the disc into a wall slides along it instead, or waits on a sliver of slide
+    // ([`after_wall_slide`]).
+    let mut refused = false;
+    if !probe_permits(
         map,
         pathfinder,
         policy,
         origin,
         checked_vec_add(origin, velocity)?,
-    );
-    if refused {
-        if let Some(slid) = slide_along_wall(map, pathfinder, policy, origin, velocity)? {
-            let half = velocity.length().saturating_mul(SimScalar::HALF);
-            refused = within_distance(slid, SimVec2::ZERO, i128::from(half.raw()));
-            velocity = slid;
+    ) {
+        let slid = slide_along_wall(map, pathfinder, policy, origin, velocity)?;
+        match after_wall_slide(velocity, slid, speed, crowded) {
+            WallSlide::Step {
+                velocity: step,
+                refused: cut,
+            } => {
+                velocity = step;
+                refused = cut;
+            }
+            WallSlide::Wait { refused: cut } => {
+                proposal.velocity = SimVec2::ZERO;
+                proposal.anim = AnimState::Idle;
+                return Ok(cut);
+            }
         }
     }
     let wanted = checked_vec_add(origin, velocity)?;
@@ -2068,6 +2079,60 @@ fn step_toward(
     }
     gate_step_by_facing(hull, origin, proposal);
     Ok(refused)
+}
+
+/// What a step that the disc probe refused becomes after [`slide_along_wall`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WallSlide {
+    /// Take the step; it counts as refused when it keeps less than half the step asked for.
+    Step {
+        /// The step to take, world units per tick: the slide, or the step itself where no slide
+        /// is admitted.
+        velocity: SimVec2,
+        /// Whether the step counts as refused, so the caller looks at its route.
+        refused: bool,
+    },
+    /// Bodies block the step and the slide keeps less than [`WAIT_THRESHOLD`] of the budget:
+    /// the unit waits.
+    Wait {
+        /// Whether the step counts as refused, as for [`WallSlide::Step`].
+        refused: bool,
+    },
+}
+
+/// Decides a refused step `velocity` given its slide along the wall `slid` (`None` when no slide
+/// is admitted) and the unit's step budget `speed`, all in world units per tick; `crowded` says
+/// whether bodies that will not yield cut the step before the wall did.
+///
+/// A slide that keeps at least half the step walks along the wall. One that keeps less meets the
+/// wall nearly head-on and counts as refused, so the caller looks at its route (the half step at
+/// which a blocked attacker starts its surround walk). In a crowd, a slide below the waiting
+/// share of the budget is not taken at all: the unit waits, as one blocked by bodies does
+/// (friendly-blocking D-1.3, R1), instead of creeping and turning by a sliver every tick
+/// (evidence `2026-11-11-contact-and-missiles` §4a). A unit alone at a wall takes even a sliver:
+/// it is heading into a corner it must round, and waiting would hold it there for good. A step that cannot slide keeps its velocity and is
+/// refused; the centre rule's slide and the settle then complete it.
+fn after_wall_slide(
+    velocity: SimVec2,
+    slid: Option<SimVec2>,
+    speed: SimScalar,
+    crowded: bool,
+) -> WallSlide {
+    let Some(slid) = slid else {
+        return WallSlide::Step {
+            velocity,
+            refused: true,
+        };
+    };
+    let half = velocity.length().saturating_mul(SimScalar::HALF);
+    let refused = within_distance(slid, SimVec2::ZERO, i128::from(half.raw()));
+    if crowded && is_waiting(slid, speed) {
+        return WallSlide::Wait { refused };
+    }
+    WallSlide::Step {
+        velocity: slid,
+        refused,
+    }
 }
 
 /// Whether a unit whose step budget is `speed` (world units per tick) and whose admissible step
@@ -2272,8 +2337,92 @@ fn keep_terrain_view(
 
 #[cfg(test)]
 mod tests {
-    use super::hull_allows_step;
-    use sim_types::SimAngle;
+    use super::{after_wall_slide, hull_allows_step, WallSlide};
+    use sim_types::{SimAngle, SimScalar, SimVec2};
+
+    fn v(x: f64, y: f64) -> SimVec2 {
+        SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// A slide along the wall that keeps most of the step is taken and is not refused.
+    #[test]
+    fn a_slide_keeping_most_of_the_step_walks_along_the_wall() {
+        let speed = SimScalar::from_num(0.126);
+        let decided = after_wall_slide(v(0.0, 0.126), Some(v(0.1, 0.0)), speed, true);
+        assert_eq!(
+            decided,
+            WallSlide::Step {
+                velocity: v(0.1, 0.0),
+                refused: false
+            }
+        );
+    }
+
+    /// A slide below half the step but above the waiting share is taken and counts as refused.
+    #[test]
+    fn a_short_slide_is_taken_and_counts_as_refused() {
+        let speed = SimScalar::from_num(0.126);
+        let decided = after_wall_slide(v(0.0, 0.126), Some(v(0.03, 0.0)), speed, true);
+        assert_eq!(
+            decided,
+            WallSlide::Step {
+                velocity: v(0.03, 0.0),
+                refused: true
+            }
+        );
+    }
+
+    /// A slide below one eighth of the budget is not crept along: the unit waits (the queue at
+    /// the ramp W wall end, plan `2026-11-11-contact-and-missiles` evidence §4).
+    #[test]
+    fn a_sliver_of_slide_waits_instead_of_creeping() {
+        let speed = SimScalar::from_num(0.126);
+        // One eighth of 0.126 is 0.01575; 0.0149 and 0.0105 are the steps the evidence traced.
+        for sliver in [0.0149, 0.0105, 0.0001] {
+            let decided = after_wall_slide(v(0.0, 0.126), Some(v(sliver, 0.0)), speed, true);
+            assert_eq!(decided, WallSlide::Wait { refused: true }, "{sliver}");
+        }
+        // A step that remove_blocked_velocity already cut short keeps its sliver unrefused.
+        let decided = after_wall_slide(v(0.0, 0.02), Some(v(0.0149, 0.0)), speed, true);
+        assert_eq!(decided, WallSlide::Wait { refused: false });
+        // The share is of the budget: a slower budget walks the slide a faster one waits on.
+        let slow = SimScalar::from_num(0.08);
+        let decided = after_wall_slide(v(0.0, 0.08), Some(v(0.0149, 0.0)), slow, true);
+        assert!(
+            matches!(decided, WallSlide::Step { refused: true, .. }),
+            "{decided:?}"
+        );
+    }
+
+    /// A unit alone at a wall takes even a sliver of slide: it must round the corner it heads
+    /// into, and waiting would hold it there (a rhino beetle at the ramp W wall end of
+    /// `test_live_battle_scenario_dual_ramp_traversal`).
+    #[test]
+    fn a_sliver_alone_at_a_wall_is_taken() {
+        let speed = SimScalar::from_num(0.126);
+        let decided = after_wall_slide(v(0.0, 0.126), Some(v(0.0105, 0.0)), speed, false);
+        assert_eq!(
+            decided,
+            WallSlide::Step {
+                velocity: v(0.0105, 0.0),
+                refused: true
+            }
+        );
+    }
+
+    /// A step with no admitted slide keeps its velocity and is refused.
+    #[test]
+    fn a_step_without_a_slide_is_refused_unchanged() {
+        let speed = SimScalar::from_num(0.126);
+        let decided = after_wall_slide(v(0.1, 0.05), None, speed, true);
+        assert_eq!(
+            decided,
+            WallSlide::Step {
+                velocity: v(0.1, 0.05),
+                refused: true
+            }
+        );
+    }
 
     /// The shipped slow hull rate, 20.16° per tick, in binary units.
     const RATE: u16 = 3_670;

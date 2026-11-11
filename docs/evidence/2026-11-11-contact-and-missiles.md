@@ -332,3 +332,70 @@ creeps under 0.005 a tick to tick 59 and its heading jitters (214° in total ove
 Its slid step is shorter than the waiting threshold but it is not set waiting, because the slide
 runs after `is_waiting` in `step_toward`. That is a queue, not a wedge; whether to wait instead of
 creeping there is left to the orchestrator.
+
+### 4a. The queue at a wall: a sliver of slide is waited out (friendly-blocking R1)
+
+The orchestrator's decision on the finding above: a blocked unit waits cleanly (friendly-blocking
+D-1.3, R1), also when the step it has left is a slide along a wall.
+
+**Change.** `step_toward` (`crates/sim_core/src/movement/locomotion.rs`) decides a disc-refused
+step through `after_wall_slide`: when bodies that will not yield also cut the step
+(`remove_blocked_velocity` changed it: a queue), a slide below `WAIT_THRESHOLD` (one eighth) of
+the step budget is not taken, and the unit waits (no step, no turn, `Idle`); the step still counts
+as refused or not by the half-step rule of §3a, so the callers look at their routes as before. A
+unit alone at a wall still takes a sliver: a first version that waited there too held a rhino
+beetle of `collision_and_immobility_tests::test_live_battle_scenario_dual_ramp_traversal` at the
+ramp W wall end (29.48, 12.15), 0.5 (its radius) from the vertex (29, 12), from tick 575 to the
+test's end at 950: heading at the vertex it must round, its slide is a sliver on every tick, and
+nothing else moves it. Unit tests in `locomotion.rs`: a slide keeping most of the step walks
+unrefused; one below half walks refused; in a crowd, slivers of 0.0149, 0.0105 and 0.0001 of a
+0.126 budget wait (the steps traced below); alone, a sliver is taken; a step with no slide keeps
+its velocity and is refused.
+
+**The reproduction's creep has a second cause, which this does not change.** Traced step by step
+in T-B5's reproduction, the second body's creep from tick 25 is mostly not a slide: on 16 of the
+21 ticks 25 to 45 the disc probe admits the step, which a friend at its north-west has cut by
+`remove_blocked_velocity` to about 0.003, a quarter of the step budget. The budget is low because
+that archetype accelerates (0.00784 a tick): its budget is the speed it achieved last tick plus
+its acceleration, about 0.0105, so a quarter of it is above the waiting share and it creeps on at
+0.003 a tick. On the other five the slide keeps 0.0016 of a budget of 0.0094, also above
+one eighth. T-B5's stricter checks therefore still fail (the body turns 224° in the 60 ticks,
+3 of 6 round the corner) and stay restated as in §4. Waiting at a share of the top speed instead
+would stop every accelerating unit on its first ticks from rest (budget 0.00784 against an eighth
+of 0.1575, 0.0197); no rule change is made for it.
+
+**Where the fix acts.** The showcase's pulse bots accelerate instantly (budget 0.126). At the
+ramp W wall end (29, 12) on trace tick 192, pulse bot 4 slid 0.0149 and then 0.0105 along the
+wall (below 0.01575) and turned 64° and back; it now waits one tick, nudged by friends, and walks
+on at full speed.
+
+**Measurements** (base: `8c49fae`, tools built from each tree).
+
+| | `8c49fae` | Queue fix |
+|---|---|---|
+| Matrix | — | bit-identical (`--compare`) |
+| Battle 33 (68 seeds) | — | `seeds.csv` byte-identical |
+| Ramp W foot P0 ratio, turn (mean / max) | 1.333 / 1.473, 189° / 341° | 1.337 / 1.473, 190° / 351° |
+| Ramp W foot P1 | 1.510 / 1.523, 112° / 128° (5) | 1.507 / 1.512, 110° / 114° (4) |
+| Ramp E foot P1 | 1.154 / 1.173, 77° / 83° | unchanged |
+| Reversals P0 / P1 | 20 / 25 | 19 / 18 |
+| Blocked attacker ticks P0 / P1 | 196 / 208 | 197 / 235 |
+| Stall give-ups P0 / P1 | 1 / 0 | 1 / 0 |
+| Deeper unit-ticks | 0 / 0 | 0 / 0 |
+| In range at tick 900 P1 | 0 of 5 | 0 of 4 |
+| Outcome (default seed) | P1 wins at 1,943 | P1 wins at 2,218 |
+| Seeds 1 to 8 | P0 1 (2,157); P1 2 to 8 (2,180, 1,943, 2,597, 1,958, 1,938, 1,930, 1,927) | P0 1 (2,152); P1 2 to 8 (2,180, 1,943, 2,597, 1,958, 1,938, 2,603, 1,927) |
+
+No winner changed. Every seed first differs at the same place, trace tick 192 (pulse bot 4);
+seed 5 still ends on the same tick. The waiting-everywhere first version gave the same figures but
+for seed 5 (2,201).
+On the default seed player 0's army (ten attackers) dies between ticks 413 and 650 in the lane
+fight round (20–26, 32–34); player 1 loses six there (347 to 604) and keeps pulse bots 20, 21, 23
+and 24, which walk to player 0's base, kill its welder drones at ticks 1,163 and 1,245, and fire
+on its hall until it falls at 2,218.
+
+**Goldens.** `golden_replay` unchanged. `golden_replay_orders` re-recorded: checkpoints 1 to 26
+unchanged, first difference at tick 265, "blue_column" pulse bot entity 14 at (33.62, 33.47)
+above the ramp, whose slide along the wall kept 0.013 of its 0.126 step; it now waits. The test
+still finds both phase-order situations. Pass in debug, release and on `wasm32-wasip1`
+(wasmtime).

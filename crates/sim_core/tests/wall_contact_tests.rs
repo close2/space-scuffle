@@ -279,8 +279,9 @@ fn a_wedged_spawn_leaves_but_never_goes_deeper() {
 /// guarantees is pinned: no body comes within its radius of the corner on any tick, and no body
 /// goes deeper into a wall; the crowd's front gets round. The showcase itself no longer reaches
 /// the episode: its lane fight now ends with player 0's army dead (Amendment 1). How long the
-/// second body queues at the corner is not pinned here (evidence §4: it waits between a friend
-/// and the vertex from tick 25 and creeps under 0.005 a tick).
+/// second body queues at the corner is not pinned here (evidence §4: from tick 25 a friend
+/// leaves it about a quarter of a step budget that its acceleration keeps near 0.01, so it
+/// creeps about 0.003 a tick; a sliver of slide along the wall is waited out).
 #[test]
 fn showcase_crowd_rounds_the_ramp_e_corner_without_wedging() {
     let map = shipped("showcase_canyon.scmap.ron");
