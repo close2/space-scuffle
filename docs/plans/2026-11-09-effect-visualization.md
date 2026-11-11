@@ -919,14 +919,10 @@ only what passed (decision note, 2026-11-10).
 - `shell_impact`, named by the sieged Siege-Tank analogue's presentation block, as accepted in round 2. The
   reviewer's optional improvements are not applied now.
 
-**What ships unused.** `acid_burst`, its `acid_fleck` and `spine_line` stay in `assets/catalog/effects.ron` with
-their texture sets in `assets/effects/`, valid catalog data under the catalog tests. No shipped unit names them: the
-presentation blocks of `volatile_tick` and `burrow_scorpion` are removed, so both fall back to their pre-slice
-presentation (the default combat looks). The GPU tests of the framework (footprint, coverage, no pop, nothing
-lingers, golden stills) still render all three effects through the effect lab: the two rejected ones are bound to
-those units' weapons by lab-only presentation blocks in `crates/client/tests/data/effect_lab_blocks.ron`, a test
-fixture, and `effect_catalog_tests.rs` checks that no shipped unit names an effect only those blocks name. The
-goldens are unchanged.
+**What shipped unused (until Amendment 3).** `acid_burst`, its `acid_fleck` and `spine_line` stayed in
+`assets/catalog/effects.ron` with their texture sets in `assets/effects/`, valid catalog data under the catalog
+tests, named by no shipped unit and bound to `volatile_tick` and `burrow_scorpion` only by lab-only test blocks,
+until review round 5 accepted them and Amendment 3 put their presentation blocks back in `units.ron`.
 
 **One burrow flag.** Plan `2026-11-09-friendly-blocking` (R6, B-93) landed `UnitModeSpec::burrowed` on `main` first,
 for the burrowed body's collision. As §2.4 and §11 provide (the first to land adds the field, the other reuses it),
@@ -1072,3 +1068,61 @@ shader and one texture element (no simulation state, golden replay or checksum c
 Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 5"),
 [`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 5"), the packet's "Round 5"
 section. The independent round-5 review is next.
+
+## Amendment 3: review gate passed (round 5, 2026-11-11)
+
+**Decision note (charter §6, short note: catalog data, a test fixture and documentation).** The independent round-5
+review ([`independent_review_round5.md`](../evidence/effects/review/independent_review_round5.md)) accepts all three
+effects of the vertical slice, so the WP6c gate has passed within Q0080's five rounds. This amendment ships them; it
+changes no simulation state, golden replay or checksum (D-1 holds: presentation blocks are read by the client only),
+and no effect definition, texture or GPU golden (the effect lab already rendered these blocks with the shipped
+units' weapons).
+
+**Verdicts per round.**
+
+| Round | Review | `shell_impact` | `acid_burst` | `spine_line` |
+|---|---|---|---|---|
+| 1 | [`independent_review.md`](../evidence/effects/review/independent_review.md) | reject | reject | reject |
+| 2 | [`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md) | **accept** | reject | reject |
+| 3 | [`independent_review_round3.md`](../evidence/effects/review/independent_review_round3.md) | accept | reject (narrowly) | reject (narrowly) |
+| 4 | [`independent_review_round4.md`](../evidence/effects/review/independent_review_round4.md) | accept | reject (narrowly) | **accept** |
+| 5 | [`independent_review_round5.md`](../evidence/effects/review/independent_review_round5.md) | accept | **accept** | accept |
+
+Round 5 also passes the cross-effect consistency, the crowd frame and the fog edge of the burrowed attacker's line.
+
+**What ships.**
+
+- `acid_burst` is named again by the Baneling analogue `volatile_tick` (`weapons: [(weapon: Primary, splash:
+  Some("acid_burst"))]`), and `spine_line` by the Lurker analogue `burrow_scorpion`'s burrowed weapon
+  (`weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))]`), in
+  `assets/catalog/units.ron`, beside the sieged Siege-Tank analogue's `shell_impact`. The blocks are those the
+  effect lab and the GPU tests rendered in every round.
+- `burrow_trail` (Amendment 2, R5) stays defined and named by no shipped unit, because no shipped burrowed mode can
+  move. `crates/client/tests/data/effect_lab_blocks.ron` keeps only its entry, which the tests add to
+  `burrow_scorpion`'s shipped block (an entry repeating a shipped one fails the fixture).
+- `effect_catalog_tests.rs`: `accepted_slice_effects_are_named_by_their_shipped_units` checks that each accepted
+  effect is named by its shipped unit's block, resolves, and is the GPU-test subject bound to that unit's weapon;
+  `lab_only_effects_are_defined_and_named_by_no_shipped_unit` now covers every slot of the lab-only entries.
+- B-107 is narrowed: splash weapons beyond the slice's three still have no area drawn (WP7, WP11).
+
+**Scale-out polish items.** The reviewer's ranked remaining improvements, none blocking. They are recorded here
+under Q0002 and taken up in the scale-out (WP7 onwards), each with its own review like any other effect change:
+
+- `acid_burst`, in the reviewer's order:
+  1. Edge material inside the disc outline: a dark wet meniscus band about 0.05 to 0.1 of the radius wide with a
+     broken specular highlight on the upper-left side and, while drying, a slightly lighter cracked crust ring. The
+     outline stays on the reach; only the inner band changes.
+  2. Remove the pale double streak inside the upper-left edge (the stain texture's own inner rims, now cut inside
+     the outline), by masking those rims or reading a region without them.
+  3. Landed globs must not read as letters at close zoom ("J", "S", "13"): splat them into short blots or fade them
+     on landing, and avoid the edge-on neck variant at small sizes.
+  4. Crowd: vary each stain's interior (rotation, pooling offset, drying phase) and soften overlaps, so a field reads
+     as one liquid and not as stacked discs; recheck the green share (7.0 % of the crowd frame, 5.5 % in round 4).
+  5. More dried-crust texture after 1.8 s (cracks, pooling), so the dried oval is not a nearly flat fill.
+  6. Frame 0: drop the concentric inner ring and the sparkle dots.
+- `spine_line`: torn clods in the scar and less periodic blotches (they repeat at about the point spacing), so it
+  reads as torn earth and not as a smudge at close zoom.
+- `shell_impact`: an irregular streak fringe from a new blast-mark texture (the fringe is still a regular sunburst
+  at close zoom), and about 2x width variation in the shock ring with one or two breaks.
+
+**Next.** The WP7 to WP15 scale-out (§9), unblocked by Q0080 (Amendment 2), with B-107 to B-111 open behind it.

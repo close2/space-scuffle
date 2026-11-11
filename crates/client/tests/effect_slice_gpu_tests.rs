@@ -2,7 +2,7 @@
 //! package 6b, §7.2, §10.2).
 //!
 //! # Responsibility
-//! For each splash effect the shipped units or the lab-only blocks (Amendment 1) name
+//! For each splash effect the shipped units or the lab-only entries (Amendment 3) name
 //! (`support/effect_subjects.rs`, sorted by name; one parent test per index, no effect named
 //! in Rust), three children of this binary run
 //! the production effect lab (`client::effects::lab`) through `support/gpu_run.rs` (radv with

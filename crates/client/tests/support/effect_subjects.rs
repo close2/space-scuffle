@@ -1,12 +1,12 @@
 //! The splash effects the effect GPU tests render, with the bindings their weapons publish
-//! (plan `2026-11-09-effect-visualization` §5.3, §10.2, Amendment 1), shared by the coverage
+//! (plan `2026-11-09-effect-visualization` §5.3, §10.2, Amendments 1 and 3), shared by the coverage
 //! test and the effect GPU tests.
 //!
 //! # Responsibility
-//! - [`lab_units`]: the shipped unit catalog with the lab-only presentation blocks of
-//!   `tests/data/effect_lab_blocks.ron` applied. Those blocks name the effects the review gate
-//!   rejected (Amendment 1): they stay in the vocabulary and under test, but no shipped unit
-//!   names them.
+//! - [`lab_units`]: the shipped unit catalog with the lab-only presentation entries of
+//!   `tests/data/effect_lab_blocks.ron` added to its units' blocks. Those entries name effects
+//!   no shipped unit can use yet (a burrowed unit's trail while the shipped burrowed mode cannot
+//!   move, Amendment 2 R5): they stay in the vocabulary and under test.
 //! - [`splash_subjects`]: walks every presentation block of [`lab_units`], finds the weapon
 //!   each `splash` entry names (slot and mode) and returns the effect with the bound values a
 //!   `SplashVisual` of that weapon carries: the zone radii and, for a line, its length and
@@ -14,8 +14,9 @@
 //!
 //! # Invariants
 //! - Subjects are sorted by effect name and unique per effect (the first unit naming it).
-//! - A lab-only block only fills a unit with no shipped block: a unit that already carries
-//!   one, or a slug the catalog does not have, fails the fixture.
+//! - A lab-only entry only adds to a unit's shipped block: an entry that repeats one of the
+//!   shipped block's weapon, mode, status or ability entries, or its death effect, or a slug the
+//!   catalog does not have, fails the fixture.
 
 use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::Binding;
@@ -93,7 +94,7 @@ pub fn lab_blocks() -> BTreeMap<String, ArchetypeEffects> {
         .expect("effect_lab_blocks.ron parses")
 }
 
-/// The shipped unit catalog with every lab-only block applied to its unit.
+/// The shipped unit catalog with every lab-only block's entries added to its unit's block.
 pub fn lab_units() -> UnitCatalog {
     let mut units = sim_fixtures::shipped_catalogs().units;
     for (slug, block) in lab_blocks() {
@@ -103,13 +104,55 @@ pub fn lab_units() -> UnitCatalog {
         let archetype = units
             .get_mut(id)
             .expect("invariant: the id was just looked up");
-        assert!(
-            archetype.effects.is_empty(),
-            "{slug} already carries a shipped presentation block; its lab block is stale"
-        );
-        archetype.effects = block;
+        add_lab_entries(&slug, &mut archetype.effects, block);
     }
     units
+}
+
+/// Adds the lab-only entries of `lab` to `shipped`, failing on any entry the shipped block
+/// already has (the lab entry would then be stale).
+fn add_lab_entries(slug: &str, shipped: &mut ArchetypeEffects, lab: ArchetypeEffects) {
+    for entry in lab.weapons {
+        assert!(
+            !shipped
+                .weapons
+                .iter()
+                .any(|own| own.weapon == entry.weapon && own.mode == entry.mode),
+            "{slug} already carries a shipped {:?} {:?} weapon entry; its lab entry is stale",
+            entry.weapon,
+            entry.mode
+        );
+        shipped.weapons.push(entry);
+    }
+    for entry in lab.modes {
+        assert!(
+            !shipped.modes.iter().any(|own| own.mode == entry.mode),
+            "{slug} already carries a shipped {} mode entry; its lab entry is stale",
+            entry.mode
+        );
+        shipped.modes.push(entry);
+    }
+    for (status, effect) in lab.status {
+        let previous = shipped.status.insert(status, effect);
+        assert!(
+            previous.is_none(),
+            "{slug} already carries a shipped {status:?} status entry; its lab entry is stale"
+        );
+    }
+    for (ability, effect) in lab.abilities {
+        assert!(
+            !shipped.abilities.contains_key(&ability),
+            "{slug} already carries a shipped {ability} ability entry; its lab entry is stale"
+        );
+        shipped.abilities.insert(ability, effect);
+    }
+    if let Some(death) = lab.death {
+        assert!(
+            shipped.death.is_none(),
+            "{slug} already carries a shipped death effect; its lab entry is stale"
+        );
+        shipped.death = Some(death);
+    }
 }
 
 /// Every splash effect the units of [`lab_units`] name, with its weapon's bindings, sorted by

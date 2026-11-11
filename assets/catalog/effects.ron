@@ -13,11 +13,10 @@
 // docs/evidence/effects/reference.md): `shell_impact` (sieged Siege-Tank analogue splash),
 // `acid_burst` (Baneling analogue) and `spine_line` (Lurker analogue). Each marks its gameplay
 // extent with `Critical` layers bound to the simulation's radii or line; everything else is
-// `Detail`. The review gate (plan Amendment 1) accepted `shell_impact` only: `acid_burst` and
-// `spine_line` stay defined and tested through the effect lab
-// (crates/client/tests/data/effect_lab_blocks.ron), but no shipped unit names them until
-// review round 3 accepts them (Q0080, plan Amendment 2), and the same holds for
-// `burrow_trail`, which no shipped burrowed mode can use yet.
+// `Detail`. The review gate accepted all three in round 5 (plan Amendment 3), and the units name
+// them in assets/catalog/units.ron. `burrow_trail` (plan Amendment 2, R5) is defined and tested
+// through a lab-only entry (crates/client/tests/data/effect_lab_blocks.ron), but no shipped
+// unit names it, because no shipped burrowed mode can move yet.
 (
     format_version: 1,
     // Baked texture sets: paths of `<set>.texture.ron` manifests below the assets root.
