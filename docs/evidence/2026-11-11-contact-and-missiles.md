@@ -73,3 +73,48 @@ tick's included. The `1 +` of the old counts was B-115's extra step, not the cas
   1,693.
 - **Throughput.** Measured with the contact rule in WP4 (§4), which covers the spell scenario; this change
   replaces one comparison with another and adds no work per missile.
+
+## 2. WP2: the contact query and the overlap meter (no behaviour change)
+
+**Query.** `Pathfinder::wall_contact` (`crates/sim_map/src/navmesh/segment.rs`, `nearest_blocking_point`)
+floods from the point's triangle like the segment predicate, measures every blocking edge it meets within
+the radius exactly in `i128` and keeps the nearest: its point, its squared distance in raw Q32.32 units and
+the edge's normal into the open triangle. The flood prunes with the Q16 predicate at the radius plus two Q16
+units, which covers the predicate's rounding of the point, so pruning never drops an edge in reach.
+`Pathfinder::wall_contact_exhaustive` is the reference: every blocking edge of every open triangle, no flood.
+
+**Tests** (`crates/sim_map/tests/wall_contact_tests.rs`, all green on the first run): a straight wall, a
+convex corner (the vertex), a concave corner (the nearer wall wins, both ways), a structure's edges, a
+ramp's foot, slope and top (no wall) beside a cliff (a wall), the map border, a centre on the border (the
+normal points into the map), no wall in reach, and the property test: 2,000 seeded points per shipped map
+with radii 0.25 to 1.5, the flood's distance equal to the reference's (at least 100 points touching a wall
+per map).
+
+**Overlap meter.** `route_trace` now measures, after every tick, each walking ground body's depth into the
+walls (`radius − distance` under its physical request) and writes `overlap.csv` (one row per overlapping
+unit-tick) and a summary table: overlapping unit-ticks, unit-ticks on which a body's depth rose by more than
+2⁻²⁰ since the previous tick, and the deepest overlap. `units.csv` is unchanged. The base's figures:
+
+| Owner | Overlapping unit-ticks | Deeper unit-ticks | Max depth (entity, tick, position) |
+|---:|---:|---:|---|
+| 0 | 555 | 118 | 0.405 (13, 366, (25.90, 32.94)) |
+| 1 | 1,079 | 74 | 0.426 (26, 370, (28.93, 38.00)) |
+
+Both sides rely on overlap: about 1,600 unit-ticks, 192 of which pressed a body deeper. The B-113 episode is
+visible in it: pulse bot 7's depth rises on every trace tick from 756 to 761 (0.018, 0.072, 0.101, 0.142,
+0.255, 0.354; trace ticks count from 0), then it walks along the wall 0.0004 to 0.06 from it.
+
+**Seeds.** The showcase draws its weapons' random delays (`random_delay_ticks`) from the world's RNG, so
+`route_trace` gained `--seed`, which replaces the scenario's seed. On seeds 1 to 8, run to the end of the
+match, player 0 wins every one, at ticks 2,136, 2,143, 3,436, 1,875, 1,498, 1,572, 1,487 and 2,146. WP3
+repeats this.
+
+**Variant E's divergence** (`~/scratch/bugfix-113/v1/` against `base/`). E diverges from tick 9, at player
+1's spawn cluster round (53, 52): bodies spawned overlapping a wall are thrown out (welder drone 16 is 0.52
+off by tick 36). Player 0's west column diverges at tick 156 at the ramp W foot's wall end (29, 12), more
+than 0.5 by ticks 169 to 190 (pulse bots 4 to 9). So E changed the battle twice before the lane fight: at
+the spawn and at the column's first wall contact. The non-deepening rule throws nothing, so WP3 watches the
+same two places: a spawn overlap must stay where it is, and the column at (29, 12) may only slide.
+
+**Bit-identical.** The matrix (`--compare` against WP1: bit-identical), battle 33's `seeds.csv` and the
+showcase's `units.csv` are unchanged; the goldens pass unchanged.

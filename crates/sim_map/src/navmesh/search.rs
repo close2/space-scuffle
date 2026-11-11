@@ -33,7 +33,10 @@ use super::cdt::NONE;
 use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
 use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
-use super::segment::{segment_clear, SegmentScratch};
+use super::segment::{
+    nearest_blocking_point, nearest_blocking_point_exhaustive, segment_clear, SegmentScratch,
+    WallContact,
+};
 use super::{next, prev, Access, NavMesh};
 use crate::error::{MapError, Result};
 use crate::grid::GameMap;
@@ -740,6 +743,31 @@ pub fn segment_is_passable(
 ) -> bool {
     let access = Access::new(mesh, map, request);
     segment_clear(mesh, &access, &mut search.segment, a, b, request.radius)
+}
+
+/// Where a disc of `request.radius` at `p` touches the edges that block `request`, or `None`
+/// (plan `2026-11-11-contact-and-missiles` D-5; see [`nearest_blocking_point`]).
+pub fn wall_contact(
+    mesh: &NavMesh,
+    search: &mut MeshSearch,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    p: SimVec2,
+) -> Option<WallContact> {
+    let access = Access::new(mesh, map, request);
+    nearest_blocking_point(mesh, &access, &mut search.segment, p, request.radius)
+}
+
+/// [`wall_contact`] from every blocking edge of the mesh, with no flood: its reference.
+#[must_use]
+pub fn wall_contact_exhaustive(
+    mesh: &NavMesh,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    p: SimVec2,
+) -> Option<WallContact> {
+    let access = Access::new(mesh, map, request);
+    nearest_blocking_point_exhaustive(mesh, &access, p, request.radius)
 }
 
 /// Marks every triangle a disc of `radius` reaches from `start` (width test included) in
