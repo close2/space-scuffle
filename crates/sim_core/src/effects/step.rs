@@ -12,9 +12,45 @@ use crate::catalog::EffectNode;
 use crate::SimWorld;
 use sim_types::{EffectContext, EffectTarget, EntityId, SimScalar, SimVec2, StatusId, Tick};
 
-/// Arrival tolerance of a missile, in world units (2⁻²⁰): only fixed-point rounding of the
-/// last step can leave a gap this small, so a missile within it has arrived.
-const ARRIVAL_EPSILON: SimScalar = SimScalar::from_raw(1 << 12);
+/// What one step does to a missile (plan `2026-11-11-contact-and-missiles` D-6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MissileStep {
+    /// The step reaches contact: the missile impacts on this step, at this point.
+    Impact(SimVec2),
+    /// The missile flies on, and now stands at this point.
+    Fly(SimVec2),
+}
+
+/// One step of a missile at `position` flying `speed` world units a tick at `aim`, stopping
+/// `radius` short of it (a unit target's collision radius, 0 for a point).
+///
+/// The game's Guidance missiles impact when they arrive (B-115), as our weapon projectiles do
+/// (`advance_projectile`): if the gap to contact is at most `speed`, the missile impacts on
+/// this step at the contact point, which is `aim` itself for a point and the point `radius`
+/// from `aim` on the line from `position` for a unit (or `position`, if it is already within
+/// `radius`). Otherwise it moves `speed` towards `aim`. No arrival tolerance is needed: the
+/// test is `gap ≤ speed`, and the contact point is computed, not reached by stepping.
+pub(crate) fn missile_step(
+    position: SimVec2,
+    aim: SimVec2,
+    radius: SimScalar,
+    speed: SimScalar,
+) -> MissileStep {
+    let distance = position.distance(aim);
+    let gap = distance.saturating_sub(radius).max(SimScalar::ZERO);
+    let direction = (aim - position).normalize_or_zero();
+    if gap <= speed {
+        let contact = if radius == SimScalar::ZERO {
+            aim
+        } else if distance <= radius {
+            position
+        } else {
+            aim - direction * radius
+        };
+        return MissileStep::Impact(contact);
+    }
+    MissileStep::Fly(position + direction * speed)
+}
 
 /// Ticks after the start at which pulse `k` is due: `round_half_up(k × period)`, or `None` if
 /// it is not representable.
@@ -34,9 +70,10 @@ impl SimWorld {
         self.step_displacements();
     }
 
-    /// (a) Advances each missile in id order; one that has arrived runs its impact and is
-    /// removed, one whose unit target is no longer valid is dropped.
-    fn step_effect_missiles(&mut self) {
+    /// (a) Advances each missile in id order ([`missile_step`]); one whose step reaches contact
+    /// runs its impact with the contact point as the source and is removed, one whose unit
+    /// target is no longer valid is dropped.
+    pub(crate) fn step_effect_missiles(&mut self) {
         let spells = self.catalog.spells_handle();
         let count = self.effects.missiles.len();
         self.effect_scratch.finished.clear();
@@ -52,29 +89,14 @@ impl SimWorld {
                 self.effect_scratch.finished.push(missile.id);
                 continue;
             };
-            let gap = missile
-                .position
-                .distance(aim)
-                .saturating_sub(radius)
-                .max(SimScalar::ZERO);
-            if gap <= ARRIVAL_EPSILON {
-                self.effect_scratch.finished.push(missile.id);
-                let source = match missile.target {
-                    EffectTarget::Point(point) => point,
-                    EffectTarget::Unit(_) => missile.position,
-                };
-                let context = missile.context.retarget(missile.target, source);
-                self.run_effect_walk(impact, context);
-                continue;
+            match missile_step(missile.position, aim, radius, speed) {
+                MissileStep::Impact(contact) => {
+                    self.effect_scratch.finished.push(missile.id);
+                    let context = missile.context.retarget(missile.target, contact);
+                    self.run_effect_walk(impact, context);
+                }
+                MissileStep::Fly(moved) => self.effects.missiles[index].position = moved,
             }
-            let step = speed.min(gap);
-            let direction = (aim - missile.position).normalize_or_zero();
-            let moved = missile.position + direction * step;
-            self.effects.missiles[index].position = if step == gap && radius == SimScalar::ZERO {
-                aim
-            } else {
-                moved
-            };
         }
         let finished = &self.effect_scratch.finished;
         self.effects
@@ -295,9 +317,18 @@ impl SimWorld {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
-    use super::pulse_offset;
-    use sim_types::SimScalar;
+    use super::{missile_step, pulse_offset, MissileStep};
+    use crate::catalog::EffectNode;
+    use crate::effects::state::ActiveMissile;
+    use crate::test_support::world;
+    use crate::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AbilitySource, EffectAnchor, EffectContext, EffectId, EffectTarget, EntityId, MoverType,
+        PlayerId, SimScalar, SimVec2,
+    };
 
     fn period(text: &str) -> SimScalar {
         ron::from_str(text).unwrap_or(SimScalar::ZERO)
@@ -321,5 +352,134 @@ mod tests {
             .filter_map(|k| pulse_offset(period("10.2"), k))
             .collect();
         assert_eq!(storm_area, vec![10, 20, 31, 41, 51, 61]);
+    }
+
+    /// A flat world with the shipped catalogs.
+    fn flat_world() -> SimWorld {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a small flat map");
+        world(map, 11)
+    }
+
+    /// The first shipped `LaunchMissile` node flying to `anchor`, with its speed.
+    fn launch_node(world: &SimWorld, anchor: EffectAnchor) -> (EffectId, SimScalar) {
+        let spells = world.catalog.spells();
+        (0..spells.node_count())
+            .find_map(|index| {
+                let id = EffectId(u16::try_from(index).ok()?);
+                match spells.node(id)?.kind {
+                    EffectNode::LaunchMissile { to, speed, .. } if to == anchor => {
+                        Some((id, speed))
+                    }
+                    _ => None,
+                }
+            })
+            .expect("the shipped catalog launches a missile at this anchor")
+    }
+
+    /// Spawns the first mobile ground archetype of the shipped catalog for player 0 at `at`;
+    /// returns it and its collision radius.
+    fn ground_unit(world: &mut SimWorld, at: SimVec2) -> (EntityId, SimScalar) {
+        let (kind, radius) = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| (arch.unit_type_id, arch.collision_radius))
+            .expect("the shipped catalog has a mobile ground unit");
+        let id = world
+            .spawn_unit(kind, PlayerId(0), at)
+            .expect("invariant: a free spot on an empty map");
+        (id, radius)
+    }
+
+    /// A missile of player 0 running `node`, at `position`, flying at `target`.
+    fn missile(node: EffectId, position: SimVec2, target: EffectTarget) -> ActiveMissile {
+        ActiveMissile {
+            id: 0,
+            node,
+            context: EffectContext {
+                owner: PlayerId(0),
+                caster: None,
+                ability: AbilitySource::default(),
+                origin: position,
+                source_point: position,
+                target,
+            },
+            position,
+            target,
+        }
+    }
+
+    /// T-M1 (plan `2026-11-11-contact-and-missiles` D-6, B-115): a missile whose step reaches
+    /// contact impacts on that step. A homing missile 0.5 from its unit's edge and a missile
+    /// 0.5 from its point are both gone after one step at their shipped speeds (over 0.5).
+    #[test]
+    fn a_missile_impacts_on_the_step_that_reaches_contact() {
+        let mut world = flat_world();
+        let centre = SimVec2::from_i32(16, 16);
+        let (target, radius) = ground_unit(&mut world, centre);
+        let (node, speed) = launch_node(&world, EffectAnchor::TargetUnit);
+        assert!(speed > SimScalar::HALF);
+        let start = SimVec2::new(centre.x - radius - SimScalar::HALF, centre.y);
+        world
+            .effects
+            .missiles
+            .push(missile(node, start, EffectTarget::Unit(target)));
+        world.step_effect_missiles();
+        assert!(
+            world.effects.missiles.is_empty(),
+            "the homing missile impacts on its first step"
+        );
+
+        let (node, speed) = launch_node(&world, EffectAnchor::TargetPoint);
+        assert!(speed > SimScalar::HALF);
+        let point = SimVec2::from_i32(8, 8);
+        let start = SimVec2::new(point.x, point.y - SimScalar::HALF);
+        world
+            .effects
+            .missiles
+            .push(missile(node, start, EffectTarget::Point(point)));
+        world.step_effect_missiles();
+        assert!(
+            world.effects.missiles.is_empty(),
+            "the point missile impacts on its first step"
+        );
+    }
+
+    /// T-M1, the contact point: a unit-target missile 0.5 from contact at 1.05 impacts at the
+    /// target's edge on the line it came from; a point-target missile impacts on its point; a
+    /// missile further than its speed from contact flies exactly its speed.
+    #[test]
+    fn the_step_impacts_at_the_contact_point_or_flies_its_speed() {
+        let speed = SimScalar::from_num(1.05);
+        let radius = SimScalar::from_num(0.375);
+        let aim = SimVec2::from_i32(10, 10);
+        let start = SimVec2::new(aim.x - radius - SimScalar::HALF, aim.y);
+        assert_eq!(
+            missile_step(start, aim, radius, speed),
+            MissileStep::Impact(SimVec2::new(aim.x - radius, aim.y))
+        );
+        let start = SimVec2::new(aim.x, aim.y - SimScalar::HALF);
+        assert_eq!(
+            missile_step(start, aim, SimScalar::ZERO, speed),
+            MissileStep::Impact(aim)
+        );
+        let inside = SimVec2::new(aim.x + SimScalar::from_num(0.25), aim.y);
+        assert_eq!(
+            missile_step(inside, aim, radius, speed),
+            MissileStep::Impact(inside),
+            "already within the radius: impacts where it is"
+        );
+        let far = SimVec2::new(aim.x - SimScalar::from_i32(3), aim.y);
+        assert_eq!(
+            missile_step(far, aim, radius, speed),
+            MissileStep::Fly(SimVec2::new(far.x + speed, aim.y))
+        );
+        let edge = SimVec2::new(aim.x - radius - speed, aim.y);
+        assert_eq!(
+            missile_step(edge, aim, radius, speed),
+            MissileStep::Impact(SimVec2::new(aim.x - radius, aim.y)),
+            "a gap of exactly the speed is reached on this step"
+        );
     }
 }

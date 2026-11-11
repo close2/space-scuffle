@@ -920,3 +920,7 @@ targets, B-106, defect c").
    `wasm32-wasip1`. The showcase storyboard (`assets/captures/showcase.ron`) is restructured for the battle's new
    shape (the armies meet in the west lane at about tick 310) and checked with a real render. WP10 and WP11 follow
    in the same branch; the charter §4 wording for `sim_map` is proposed to the orchestrator, not edited here.
+
+## Amendment 7 (2026-11-11): B-113 is fixed by the contact plan
+
+B-113 (Amendment 6, open) is fixed by plan [`2026-11-11-contact-and-missiles`](2026-11-11-contact-and-missiles.md): bodies are discs against terrain, so a push can no longer wedge a body inside its radius of a route corner; the route rules of this plan are unchanged.

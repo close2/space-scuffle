@@ -533,3 +533,42 @@ Scoping decisions under Q0002, each of which can be brought back:
 - **Route-following variants A to D** are not revived (D-4).
 - **Unit-against-unit contact** (pairs, push priorities, friendly blocking) is unchanged. Friendly-blocking's walls
   of bodies (its D-1.1) are bodies, not terrain, and are not touched.
+
+---
+
+## Amendment 1 (orchestrator, 2026-11-11): the showcase's flip is accepted
+
+**Decision.** The non-deepening rule (D-1 to D-3, commit `702fc9b`) and the steering probes' disc
+test with the slide along a wall (D-3, R-3; evidence §3a) are accepted together with the
+showcase's winner flip (player 1 wins at tick 1,943 on the default seed; seeds 2 to 8 too, seed 1
+player 0). D-9, 4's stop applied, and this amendment is the decision it asks for.
+
+**Reasons.**
+
+- StarCraft II's units are discs against terrain and structures (C1, the 5.0.13 PTR notes): the
+  rule is the game's, and the flip is its consequence (evidence §3a classifies it as rule-caused).
+- The base outcome depended on player 0's column cutting the ramp W wall end (29, 12) with bodies
+  0.3 to 0.37 inside the wall. Going round it at the radius delays pulse bots 4 to 9 by 5 to 9
+  ticks into the near-tied lane fight.
+- The matrix and battle 33 are bit-identical; ramp E is back to the base's figures (1.154 / 77°
+  against 1.149 / 81°); no unit-tick presses a body deeper (0 / 0 against 118 / 74).
+- The showcase is a demo scenario, not a balance target.
+
+**Acceptance rows accepted as recorded consequences of the flip** (D-9, 2 to 4): the winner; the
+ramp W P0 turn (189° / 341° against 157° / 301°, the queue at the wall end); ramp E P0 (no pass:
+player 0's army dies in the lane fight); player 1's reversals (25 against 7, all in the fight);
+the one give-up (welder drone 2 at its own base, tick 946, after the flip).
+
+**B-116 stays deferred** (§9). Many 5.0.14 units have an `InnerRadius` below their `Radius` (C2);
+a terrain radius smaller than the unit radius would loosen queues such as the one at the ramp W
+wall end. Its own plan measures that.
+
+**Changes to the work packages.**
+
+- WP3 lands as `702fc9b` plus the probe fix. The probe sites, those kept on the centre test and
+  why, the slide and its half-step refusal rule are recorded in evidence §3a.
+- T-B5 is restated (WP4): it pins what the rule guarantees, that pulse bot 7 no longer wedges at
+  the ramp E corner, in a scripted reproduction of the corner episode, not by the bot's survival
+  through the showcase's lane fight.
+- WP4 re-checks the storyboard (`assets/captures/showcase.ron`) with a real render for the new
+  outcome (D-9, 4), as well as the goldens and the throughput.

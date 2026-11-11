@@ -95,3 +95,15 @@ pub(crate) const FIXED_BODY_TANGENT_WEIGHT: SimScalar = ratio(85, 100);
 pub(crate) const SOFT_PUSH_SPEED_SHARE: SimScalar = ratio(65, 100);
 /// Floor on the friendly push per tick, so very slow units still separate.
 pub(crate) const SOFT_PUSH_FLOOR: SimScalar = ratio(15, 1000);
+
+/// Rounding allowance of the wall contact rule, in world units (2⁻²⁰): a move whose end is at most
+/// this much nearer a wall than its start is not deepening (plan `2026-11-11-contact-and-missiles`
+/// D-2). It absorbs the rounding of the contact point and of the projection.
+pub(crate) const WALL_CONTACT_TOLERANCE: SimScalar = SimScalar::from_raw(1 << 12);
+/// Projections at most per settled move: one per wall pressing at a concave corner, plus one.
+pub(crate) const WALL_CONTACT_PASSES: usize = 3;
+/// Slack of steering's disc probe, in world units (2⁻¹⁴, four units of the mesh predicate's Q16
+/// lattice): a body touching a wall is probed at its clearance less this much, so the
+/// predicate's rounding of the point down and of the radius up to that lattice cannot refuse a
+/// step along the wall (plan `2026-11-11-contact-and-missiles` D-3, R-3).
+pub(crate) const WALL_PROBE_SLACK: SimScalar = SimScalar::from_raw(1 << 18);

@@ -7,6 +7,7 @@
 //! surface invariant diagnostics before advancing an unhealthy match.
 
 pub(crate) mod collision;
+pub(crate) mod contact;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
@@ -278,6 +279,13 @@ impl MotionPolicy {
             radius,
             burrowed: entity.is_burrowed(arch),
         })
+    }
+
+    /// The radius of the body's disc against terrain and structures, in world units (plan
+    /// `2026-11-11-contact-and-missiles` D-1). `StarCraft` II separates it from the unit radius
+    /// (`InnerRadius`); ours is the collision radius until B-116 adds the second radius.
+    pub const fn terrain_radius(self) -> SimScalar {
+        self.radius
     }
 
     /// Which bodies this one touches: two bodies steer around, push and block each other only

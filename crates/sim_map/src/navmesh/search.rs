@@ -33,7 +33,10 @@ use super::cdt::NONE;
 use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
 use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
-use super::segment::{segment_clear, SegmentScratch};
+use super::segment::{
+    nearest_blocking_point, nearest_blocking_point_exhaustive, segment_clear, SegmentScratch,
+    WallContact,
+};
 use super::{next, prev, Access, NavMesh};
 use crate::error::{MapError, Result};
 use crate::grid::GameMap;
@@ -740,6 +743,42 @@ pub fn segment_is_passable(
 ) -> bool {
     let access = Access::new(mesh, map, request);
     segment_clear(mesh, &access, &mut search.segment, a, b, request.radius)
+}
+
+/// Where a disc of `request.radius` at `p` touches the edges that block `request`, or `None`
+/// (plan `2026-11-11-contact-and-missiles` D-5; see [`nearest_blocking_point`]).
+pub fn wall_contact(
+    mesh: &NavMesh,
+    search: &mut MeshSearch,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    p: SimVec2,
+) -> Option<WallContact> {
+    let access = Access::new(mesh, map, request);
+    // PERFORMANCE RATIONALE:
+    // Why: Every moving ground body asks for its wall contact once or twice a tick; in the
+    //      400-unit canyon scenario that is up to 800 floods per tick, most in open ground.
+    // What: An exact early-out: if every cell the disc's bounding square touches is open with no
+    //      blocking side (one look-up per cell of a per-cell table built with the mesh), no wall
+    //      is within the radius and the flood is skipped. Only for all-known requests.
+    // Trade-off: A second code path that must agree with the flood; a property test compares it
+    //      with the exhaustive reference on both shipped maps, with and without structures.
+    if access.is_all_known() && mesh.contact_free_near(map, p, request.radius) {
+        return None;
+    }
+    nearest_blocking_point(mesh, &access, &mut search.segment, p, request.radius)
+}
+
+/// [`wall_contact`] from every blocking edge of the mesh, with no flood: its reference.
+#[must_use]
+pub fn wall_contact_exhaustive(
+    mesh: &NavMesh,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    p: SimVec2,
+) -> Option<WallContact> {
+    let access = Access::new(mesh, map, request);
+    nearest_blocking_point_exhaustive(mesh, &access, p, request.radius)
 }
 
 /// Marks every triangle a disc of `radius` reaches from `start` (width test included) in

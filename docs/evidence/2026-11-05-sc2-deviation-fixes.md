@@ -1874,6 +1874,8 @@ wedged against (a contact rule), not a route rule. B-113 stays open.
 
 ### 18.6 B-113: contact variants E to H, rejected (2026-11-11)
 
+**Forward pointer.** B-113 is fixed by plan [`2026-11-11-contact-and-missiles`](../plans/2026-11-11-contact-and-missiles.md) with a non-deepening rule in the physics itself (no walk or push presses a disc deeper into a wall; a step into one slides), measured in its evidence [`2026-11-11-contact-and-missiles`](2026-11-11-contact-and-missiles.md).
+
 On the spellcaster head `fc4c811` (schema 29), four contact rules were tried in the collision phase
 instead of a route rule, with a new exact mesh query (the nearest point of the blocking edges a disc
 overlaps, found by the segment predicate's flood, and whether it is a convex corner the centre lies
