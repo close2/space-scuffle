@@ -1,11 +1,59 @@
-# Independent Review Packet: Effect Vertical Slice (Round 4)
+# Independent Review Packet: Effect Vertical Slice (Round 5)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
 judge it by, and nothing else: it holds no verdict of the implementer, on purpose. Please judge each of the three
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
-(round 4: `independent_review_round4.md`, see "Round 4" below).
+(round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Round 5
+
+Round 4 accepted `shell_impact` and `spine_line` and rejected `acid_burst` narrowly
+([`independent_review_round4.md`](independent_review_round4.md), kept as written with rounds 1 to 3). This is
+round 5, the last of Q0080's five rounds. Please write the round-5 review to a new file next to this one,
+`independent_review_round5.md`, in the same form, and judge all three effects afresh against the checklist (the
+two accepted ones too, so that a regression would show). The tables below map each round-4 finding to what
+changed; they list changes and measurements, not verdicts. The images of this directory are the round-5 ones
+(same path as rounds 3 and 4: lavapipe, debug `battle_capture`, Xvfb); round 4's are in commit `b72b693`. The
+sheets' ages are unchanged.
+
+### `acid_burst`
+
+| Round-4 finding | What changed |
+|---|---|
+| Ranked change 1 / item 1: the stain's visible edge lies at 0.87 of the reach (its box at 0.98; the ragged, eroded edge about 13 % of the radius inside it) | The stain no longer uses its texture's outline as its edge. A decal may now have a **disc outline**: its visible edge is a disc whose edge wavers by a fine noise of ±2 % of the radius (about ±2 px at default zoom), and the texture (relief, pooling, rim) is read from its middle inside it. The stain is sized so that its mean edge lies on the reach, and it holds that edge **without erosion until about 1.8 s**; the deep bites come only with the drying after that. Measured on the round-5 frames along the centre row (bright ground; the outermost pixel more than 16 levels from the clean ground, against the middle of the reach circle's line): default zoom, 0.18, 0.48, 0.9, 1.8 and 3.0 s, 0 px left and right, diameter 1.000 of the reach; close zoom, 0.48–1.8 s, +2 px left, 0 to +1 px right. The GPU footprint test now measures the held stain's visible edge (72 rays, 1.39 s): 100 % of rays within ±2 px of the reach, mean −0.18 px, largest overshoot +1.27 px, on radv and lavapipe (it used to check only that the stain stayed inside). |
+| Ranked change 2 / item 4a: a pale, translucent band between stain and lip in frames 2–8, about 0.1 of the radius wide all round | With the stain on the reach, the lip lies over the stain. The lip is also thickened (its coverage doubled) and its inner side is the stain's wet emerald at near-full opacity. Sampled (3×3, sequence frames, centre row from the reach inward, default zoom): frame 2 lip and inner side (41–50, 111–125, 36–50), body (47–57, 115–134, 47–57); frame 4 (40–48, 109–117, 36–48), body (52–57, 127–136, 52–58); frame 8 (41–47, 109–115, 38–47), body (54–58, 125–140, 52–59). Round 4's band sampled (98–109, 131–132, 88–98) at default zoom against a stain of (45, 103, 42). |
+| Item 3: an 8 % contraction when the front leaves (frames 7–10) | The stain's edge is on the reach before the front fades, so the front fades onto stain. |
+| Ranked change 3 / item 4b: the globs are one teardrop sprite, identical pale-lime commas | A new texture element of **three glob shapes** (round with a blunt trailing bulge, tearing in two along a thin neck, stretched with a ragged tail; image-model stills, [`texture_review.md`](texture_review.md) "Review round 5"), each instance one of them, of more varied size (0.22–0.46), oriented along its velocity, with its own ramp: a dark wet emerald body and lime only on its one small highlight. |
+| Ranked change 4 / item 4c: dense near-white fumes | Thinner and fainter: smaller wisps broken harder by noise, in a yellow-green of lower value and about 60 % of the opacity. |
+| Ranked change 5 (optional): a small "Y" crown | The crown card is 1.3 of the reach (was 1.0) and torn harder. Its texture fills about half its cell, so it still reads as a central splash, now larger. |
+
+### `spine_line` (accepted in round 4; polish only)
+
+| Round-4 note | What changed |
+|---|---|
+| Ranked 1 / 4c: the first clump is cut by the line's start into a single tall spike, an "L" or hook (frames 3–20) | A standing clump that a line end would cut is made smaller and moved inward so that it stands whole inside the line (it keeps its far edge); the first clump is now a smaller whole clump. The last clump is treated the same way. |
+| Ranked 2 / 4c: on teal the scar is a grey-tan film of the ground's value ((119, 126, 116) on (95, 138, 133)) | The scar's ramp now only darkens: every colour lies below its opacity times the teal ground's darkest channel, so it is a darker shade of whatever ground it lies on. Sampled on the round-5 sheet (dark close, 1.622 s, 3-row averages of a 500 px run along the line): (79, 102, 97) against the clean ground's (92, 137, 133) on the same rows. The clods remain a step lighter than the furrows. |
+| Ranked 3: a lone dark chip at the far end at 1.6 s | It was the last clump's tip sinking into the ground at the very end of its life; the clumps now fade over their last 15 % as they sink. |
+
+The fog sheet and sequence are re-taken with the round-5 data ([`spine_line_fog_contact.png`](spine_line_fog_contact.png),
+[`spine_line_fog_sequence.png`](spine_line_fog_sequence.png)); the fog clipping is unchanged.
+
+### `shell_impact` (accepted; optional changes)
+
+| Round-4 improvement | What changed |
+|---|---|
+| 1: let the mark under the ring appear only once the ring has passed (no grey veil inside the ring) | The scoured blast mark now starts at 0.12 s, after the shock ring has reached the reach (about 0.115 s), and ends as before (8.03 s). |
+| 1: an irregular streak fringe (new blast-mark texture) | Not changed (scale-out). |
+| 2: push the ring's width variation further | Not changed, to avoid regressing an accepted effect in the last round. |
+
+### Crowd capture, round 5
+
+[`stress_capture_400.png`](stress_capture_400.png) is re-taken with the round-5 effects the same way as rounds 3
+and 4 (debug `frame_budget`, lavapipe under Xvfb, a scratch copy of `assets/` whose `units.ron` gives
+`volatile_tick` and `burrow_scorpion` the lab blocks, tick 150, 200 splashes a second); figures in
+[`stress_capture.txt`](stress_capture.txt), round-5 paragraph. Round 4's frame is in commit `b72b693`.
 
 ## Round 4
 

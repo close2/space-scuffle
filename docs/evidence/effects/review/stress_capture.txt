@@ -51,3 +51,15 @@ frame: 1 134 live effects, 713 cards, 3 072 ground decals; footprints cover 31.7
 bound), summed area 3.00 screens, at most 65 footprints over one cell. Over the run: 1 700 splashes, 1 700
 effects spawned, none refused, no Critical instance without a slot, 655 Detail instances skipped for room,
 1 174 skipped as smaller than 6 pixels, none retired. Cropped to x 360..1280 as before.
+
+Review round 5 (2026-11-11): stress_capture_400.png is re-taken with the round-5 effects (the acid stain's
+visible edge on the reach through its disc outline, the opaque lip, the glob variants; the spine line's fitted end
+clumps and darker scar; the shell's later blast mark) the same way as rounds 3 and 4: debug build of
+frame_budget, lavapipe under Xvfb, 1280x720, a scratch copy of assets/ whose units.ron gives volatile_tick and
+burrow_scorpion the presentation blocks of crates/client/tests/data/effect_lab_blocks.ron (`--source-assets`);
+nothing else differs. A first take ran a frame_budget binary that predated the round-5 decal record (the build
+had not finished) and drew no decal at all; it was discarded. On the captured frame: 1 134 live effects, 717
+cards, 3 066 ground decals; footprints cover 31.9 % of the screen (upper bound), summed area 3.11 screens, at
+most 38 footprints over one cell. Over the run: 1 700 splashes, 1 700 effects spawned, none refused, no Critical
+instance without a slot, 655 Detail instances skipped for room, 1 206 skipped as smaller than 6 pixels, none
+retired. Cropped to x 360..1280 as before.

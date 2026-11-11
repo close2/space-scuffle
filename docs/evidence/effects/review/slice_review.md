@@ -380,3 +380,89 @@ Other tests (2026-11-11, unlocked at `-j 4` under `nice -n 10` because package g
 
 **Round 4 result (implementer):** accepted, every item for every effect, with the watch points above. The
 independent round-4 review follows on [`independent_review_packet.md`](independent_review_packet.md).
+
+## Changes for round 5 (after the independent review of round 4)
+
+Round 4 accepted `shell_impact` and `spine_line` and rejected `acid_burst` narrowly
+([`independent_review_round4.md`](independent_review_round4.md)): its stain's visible edge lay at 0.87 of the
+reach, and a pale, see-through band lay between the stain and the front's lip. Round 5 is the last of Q0080's five
+rounds. The mapping of every round-4 finding to its change is in
+[`independent_review_packet.md`](independent_review_packet.md), section "Round 5"; the plan's round-5 note
+records the decisions.
+
+### Framework
+
+| Gap | Change |
+|---|---|
+| A Critical decal's visible edge is the texture's ragged outline eaten by deep noise bites, so it cannot be put on a radius (round 4: box 0.98, visible edge 0.87) | A decal may have a **disc outline** (`outline: (edge_noise, fill)`, `decal.wgsl`): its visible edge is a disc of the box's half length whose noise edge wavers by `edge_noise` of the radius (fine noise read on the circle of directions), and the texture is read from its middle (`fill`) inside it, so the texture's own outline lies outside. The wet rim follows the disc's edge. `DecalInstance` grows from 128 to 144 bytes. Range checks in `effect_catalog_tests`. |
+| The footprint test only held the lasting Critical marks inside the reach, so a stain 13 % short passed | **Tightened:** the held stain's visible edge (once every non-decal layer has ended, 1.39 s) must lie within ±2 px of the reach on at least 85 % of 72 rays, and never more than 2 px beyond it; the threshold is the test's "lit" bar (any channel more than 16 levels from the empty ground). |
+| A standing clump at the line's first point was cut by the line start into a lone spike | `runtime::fit_inside_line`: a standing card clipped to its line is made smaller and moved inward at a line end so that it stands whole inside the line (keeping its far edge), never wider than the line; unit test `a_standing_card_at_a_line_end_is_fitted_whole_inside_the_line`. |
+
+### Textures ([`texture_review.md`](texture_review.md), "Review round 5")
+
+New `fx_acid/acid_glob`: three image-model stills ($0.33; round, tearing in two, stretched), silhouette-keyed.
+The 27 existing `fx_acid` layers are byte-identical. Ledger $106.45 of $200.
+
+## Round 5
+
+Evidence: the round-5 contact sheets, sequences and fog sheet in this directory (lavapipe, debug
+`battle_capture`, Xvfb, 2026-11-11: the path of rounds 3 and 4), judged cell by cell and on the full-resolution lab
+frames. Edge measurements: the outermost pixel more than 16 levels from the clean ground along the centre row,
+against the middle of the reach circle's line in the reference frame. Colours: 3×3 averages of the sRGB frame.
+
+**Stain edge against the reach** (bright ground; px of the 1280×720 frame; negative is inside):
+
+| Age | 0.18 s | 0.48 s | 0.9 s | 1.8 s | 3.0 s |
+|---|---|---|---|---|---|
+| Default zoom, left / right | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 (drying bites start inside) |
+| Close zoom, left / right | | +2 / +1 | +2 / 0 | +2 / 0 | |
+| Diameter against the reach (round 4: 0.87) | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+**Band between stain and lip** (sequence, bright ground, default zoom, centre row from the reach inward): every
+sample from the lip inward is wet emerald, darker than or equal to the body; no lighter band. Frame 2: lip and
+inner side (41–50, 111–125, 36–50), body (47–57, 115–134, 47–57); frame 4: (40–48, 109–117, 36–48), body
+(52–57, 127–136, 52–58); frame 8: (41–47, 109–115, 38–47), body (54–58, 125–140, 52–59). Round 4 sampled
+(98–109, 131–132, 88–98) there against a body of (45, 103, 42).
+
+GPU figures (`effect_slice_gpu_tests.rs` through the harness, 2026-11-11; goldens re-recorded on both drivers):
+
+| Effect | Footprint | Coverage of the full-damage disc at peak | Pop | Lingering |
+|---|---|---|---|---|
+| `acid_burst` | front: 100 % of 72 rays within ±2 px, mean +0.11 px (lavapipe) / +0.10 px (radv), largest overshoot +1.27 px; **held stain's visible edge: 100 % of rays within ±2 px, mean −0.18 px, largest overshoot +1.27 px** (both drivers) | 98 % (round 4: 87 %) | 0.22/255 | 0/255 after the end |
+| `shell_impact` | 99 % of 72 rays within ±2 px, mean −0.70 px (lavapipe) / −0.66 px (radv), largest overshoot +0.44 px | 100 % | 1.22/255 | 0/255 |
+| `spine_line` | marks start −0.65 px and end +0.31 px from the line's projected ends | 75 % (least point 42 % lavapipe, 41 % radv) | 0.76/255 | 0/255 |
+
+### `acid_burst`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The stain's visible edge lies on the reach at every held age (table above), so the stain alone marks the area once the front has gone; nothing contracts when the front fades (frames 8–10). |
+| 2 | Layered | Accept | Light, larger torn crown, hot core, wet lip, dark edge ring, eleven globs of three shapes, spray, faint yellow-green fumes, liquid stain, wet centre. |
+| 3 | Timing | Accept | As round 4: peak at frames 0–1, olive by 0.9–1.8 s, drying bites from about 1.8 s, clean at 6 s. |
+| 4 | No tells of cheapness | Accept, with a watch point | No pale or see-through band (samples above); globs are dark wet bodies of three shapes and sizes, oriented along their flight; fumes thin and greenish. Watch point: while held, the stain is a near-perfect disc with a fine wavering edge (what the review asked for); the irregularity now comes from the relief and pooling inside it and from the drying bites. A faint pale relief highlight still runs along the upper edge at 0.9–1.8 s. |
+| 5 | Value and colour | Accept | Unchanged ramp; lime only in the crown, core and glob highlights; dark wet rim along the disc edge. |
+| 6 | Crowd | Accept, with a watch point | Round-5 frame ([`stress_capture_400.png`](stress_capture_400.png)): every unit and building stays readable on the stains; the stains range from fresh emerald to dried olive with dark rims. Watch point: at true size and with a near-circular held edge, the fresh stains overlap into rounder, larger green fields than in round 4 (the round-4 review expected their coverage to rise), at 200 splashes a second, far beyond a real fight. |
+| 7 | Fog | Accept | Anchored at the burst centre; nothing beyond the reach. |
+
+### `spine_line` (accepted in round 4; polish only)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1–3, 5, 7 | All | Accept | Unchanged except the polish below; the fog sheet is re-taken and unchanged in behaviour (the fitting applies only at the line's own ends). |
+| 4 | No tells of cheapness | Accept | The first clump is a smaller whole clump of several spikes inside the line (close zoom, 0.097 s and 0.26 s), not a lone "L"; no dark chip at the far end at 1.622 s (the clumps fade over their last 15 % as they sink); the scar darkens every ground: on teal at 1.622 s the line's row averages (79, 102, 97) against the clean ground's (92, 137, 133) on the same row (round 4: (119, 126, 116) on (95, 138, 133)). |
+
+### `shell_impact` (accepted; optional change)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1–7 | All | Accept | The blast mark now comes in at 0.12 s, after the ring has passed the reach, so the ring races out over clean ground (sequence frames 2–4); its end is unchanged. The ring's width variation is unchanged (the second optional change was not taken, to avoid regressing an accepted effect). |
+
+The crowd frame is re-taken with the round-5 data (figures in [`stress_capture.txt`](stress_capture.txt),
+round-5 paragraph): `spine_line` and `shell_impact` read as in round 4 (rows of spike clumps over a darker scar;
+small sparks), and no effect hides a unit.
+
+Other tests (2026-11-11, unlocked at `-j 4` under `nice -n 10`; no `cargo gate`, Q0061): see the hand-back of
+this round for the full list and results.
+
+**Round 5 result (implementer):** accepted, every item for every effect, with the watch points above. The
+independent round-5 review follows on [`independent_review_packet.md`](independent_review_packet.md).
