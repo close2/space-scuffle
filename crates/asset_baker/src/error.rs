@@ -449,6 +449,41 @@ pub enum BakerError {
         reason: String,
     },
 
+    /// The Gemini Omni client was given a model id that is not a Gemini Omni model. Nothing
+    /// was sent.
+    #[error(
+        "'{model}' is not a Gemini Omni model (ids start with `gemini-omni-`); nothing was sent"
+    )]
+    NotAnOmniModel {
+        /// The model id given.
+        model: String,
+    },
+
+    /// The Gemini Omni client is built only for Vertex AI (Veo plan, Amendment 2): the key
+    /// selects the Gemini API. Nothing was sent.
+    #[error("the Gemini Omni trial client calls Vertex AI only (a key starting with `AQ.`); the key selects the Gemini API, so nothing was sent")]
+    OmniNeedsVertex,
+
+    /// A recorded operation belongs to a model the run's client does not serve (a Veo operation
+    /// on a Gemini Omni run, or the reverse), so it cannot be polled here. Nothing was sent.
+    #[error("the recorded operation '{operation}' ran on '{model}', which this run's client ('{client_model}') cannot poll; rerun with --model {model} to resume it. Nothing was sent")]
+    ResumeOnOtherService {
+        /// The recorded operation or interaction.
+        operation: String,
+        /// The model it ran on.
+        model: String,
+        /// The model of the run's client.
+        client_model: String,
+    },
+
+    /// An interaction id from the service holds characters that cannot go into a URL path
+    /// unchanged. Nothing was sent.
+    #[error("the interaction id '{id}' is not a plain resource name; nothing was sent")]
+    UnsafeInteractionId {
+        /// The id, redacted.
+        id: String,
+    },
+
     /// The seam repair's scale lock does not explain a looping clip's motion as a steady camera
     /// zoom (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5), so the clip cannot be
     /// repaired and review must reject it.
