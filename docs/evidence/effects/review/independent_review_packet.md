@@ -36,8 +36,8 @@ sequence show the line running out of the fog (section "Fog" below).
 
 | Round-3 finding | What changed |
 |---|---|
-| 1 / ranked change 2: after the front leaves (about 0.36 s) the stain covers only 75–85 % of the reach, with deep bites; it visibly contracts between frames 8 and 10 | The stain is a little larger (1.14 of the reach; its texture's ragged outline lies at the reach) and its erosion **holds the full disc until about 1.8 s** (only a noise-broken edge, threshold 0.10 to 0.12), then dries from its edge and from holes. It is at its full size from about 0.12 s, before the front reaches the reach, so nothing contracts when the front hands over. |
-| 4a / 5 / ranked change 1: from 0.9 s a flat, mottled mid-green moss patch; no darker wet rim at any age | The liquid **keeps its relief as it dries** (the crust keeps 75 % of the relief light; only the wet sheen dries away). A **dark wet rim** is drawn by the liquid material along every edge of the liquid, its outline and the holes it dries into, at every age: a band about 0.1 to 0.2 wide, darker and more saturated than the body (colour ×0.24, 0.44, 0.24 at the edge). Sampled on the round-4 sheet (bright ground, close zoom, a ray from the centre to the right edge, sRGB): at 0.9 s the body is about (61, 112, 53) and the band inside the edge about (63, 96, 51); at 1.8 s the body is about (77, 91, 57) and the band about (69, 80, 53). |
+| 1 / ranked change 2: after the front leaves (about 0.36 s) the stain covers only 75–85 % of the reach, with deep bites; it visibly contracts between frames 8 and 10 | The stain's erosion **holds the full disc until about 1.8 s** (only a noise-broken edge, threshold 0.10 to 0.12), then dries from its edge and from holes. It is at its full size from about 0.12 s, before the front reaches the reach, so nothing contracts when the front hands over. Its size is 0.98 of the reach: a first round-4 take at 1.14 drew the stain up to 11 px (of 87) beyond the reach, which a `Critical` layer must not do (it would show damage where there is none, plan §10.2), so the ragged edge now lies just inside the reach at every age, wet or dried, and the front's dark lip marks the reach itself while it lasts. |
+| 4a / 5 / ranked change 1: from 0.9 s a flat, mottled mid-green moss patch; no darker wet rim at any age | The liquid **keeps its relief as it dries** (the crust keeps 75 % of the relief light; only the wet sheen dries away). A **dark wet rim** is drawn by the liquid material along every edge of the liquid, its outline and the holes it dries into, at every age: a band about 0.1 to 0.2 wide, darker and more saturated than the body (colour ×0.24, 0.44, 0.24 at the edge). Sampled on the round-4 sheet (bright ground, close zoom, a ray from the centre to the right edge, sRGB): at 0.9 s the body is about (57, 113, 50) and the band inside the edge about (62, 96, 50); at 1.8 s the body is about (77, 88, 57) and the band about (70, 80, 53). |
 | 3 note / ranked change 1: the colour is still emerald at 1.8 s; olive only at 4.5 s | The stain's ramp has a wide olive-brown range below the emerald, and the drying curve walks the body there faster: olive-green by 0.9 s, **olive-brown by about 1.8 s** (sample above; round 3 sampled (77, 140, 64) at 1.8 s). |
 | 4b / ranked change 3: the front is a pale, translucent, even glass or soap-bubble rim with a lighter halo; a pale gap between stain and rim | The front's ramp is now a **dark, wet, nearly opaque lip** (opacity 0.80 to 0.96, darkest at its leading edge), with no pale or translucent part; its trailing edge is broken by stronger noise, so its width varies about twofold around the circle. The stain lies under it from the first frame, so no ground shows between them. |
 | 4c: the contraction is a soft pop | See the first row. |
@@ -74,10 +74,18 @@ fogged ground beside the first seen point. Nothing else is drawn on the fogged s
 
 ### Crowd capture, round 4
 
-**Not re-taken in round 4.** [`stress_capture_400.png`](stress_capture_400.png) is still round 3's frame
-(lavapipe, debug, a scratch catalog naming the two effects for their units), so it shows the round-3 looks. The
-implementer handed back before re-taking it; the orchestrator decides whether a round-4 crowd frame is made before
-this review or judged from the sheets (the default-zoom look of one stain is in rows 1 and 5 of the acid sheet).
+[`stress_capture_400.png`](stress_capture_400.png) is re-taken with the round-4 effects (final data, the stain at
+0.98 of the reach), the same way as round 3: debug build of `frame_budget`, lavapipe under Xvfb (the driver and
+build of the contact sheets), a scratch copy of `assets/` whose `units.ron` gives `volatile_tick` and
+`burrow_scorpion` the lab blocks of `crates/client/tests/data/effect_lab_blocks.ron`, tick 150, 200 splashes a
+second; the figures are in [`stress_capture.txt`](stress_capture.txt), round-4 paragraph. Round 3's frame is in
+commit `fd24c31`. The baseline is unchanged (it draws no effect).
+
+### Fog capture, round 4
+
+New in this round, see "Fog (checklist item 7), round 4" above: [`spine_line_fog_contact.png`](spine_line_fog_contact.png)
+with its legend [`spine_line_fog_contact.txt`](spine_line_fog_contact.txt), and
+[`spine_line_fog_sequence.png`](spine_line_fog_sequence.png), the line running out of the viewer's fog.
 
 ## Round 3
 

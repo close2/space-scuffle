@@ -310,28 +310,60 @@ collar. Ledger $106.12 of $200.
 Evidence: the round-4 contact sheets, sequences and the new fog sheet in this directory (lavapipe, Mesa software
 Vulkan, debug build of `battle_capture`, Xvfb, 2026-11-10: the same path as round 3), judged cell by cell,
 cropped and enlarged (full-resolution lab frames for the close checks), with stain colours sampled along a ray
-from the centre (3×3 averages of the sRGB frame, bright ground, close zoom). The crowd capture was **not**
-re-taken in round 4 (it is round 3's, with the scratch catalog); item 6 is judged on the sheets and on round 3's
-frame and is marked accordingly. Strict reading of the round-3 review's ranked changes: anything that still reads
-as a tell is a reject.
+from the centre (3×3 averages of the sRGB frame, bright ground, close zoom). The crowd capture
+[`stress_capture_400.png`](stress_capture_400.png) is re-taken with the final round-4 data the same way as round 3
+(debug `frame_budget`, lavapipe under Xvfb: the driver and build of the sheets; a scratch copy of `assets/` naming
+the two lab effects for their units; [`stress_capture.txt`](stress_capture.txt), round-4 paragraph), judged whole
+and cropped at 2–2.7×. Strict reading of the round-3 review's ranked changes: anything that still reads as a tell
+is a reject.
+
+**Fix after the first test run (2026-11-11).** The round-4 stain (1.14 of the reach) failed the footprint test on
+both drivers: its ragged edge ran a median 4 px and at most 11.4 px (of 87 at default zoom) beyond the reach. The
+stain is `Critical`, and a Critical layer marks the damage area (plan §10.2, Amendment 2), so the stain was
+fixed, not the test: it is now 0.98 of the reach. A size of 1.02 passed the front-age shot but its dried fringe
+(darker, so its faint parts pass the 16-level threshold) still lay about 4 px beyond the reach at 1.4 s, so the
+footprint test now also takes a Critical-only shot once every non-decal layer has ended and holds the lasting
+marks to the same 2 px. The lingering check's decal margin was a disc of the decal's half size; a decal is a
+box whose texture may reach into its corners, so the margin is now the box's corner (half extents the size and
+the size times the width). The acid sheets and sequence were re-taken after the fix; the other sheets are as
+published on `4a0efda`.
+
+GPU figures (`effect_slice_gpu_tests.rs` through the harness, 2026-11-11; radv on the RX 580 and lavapipe give the
+same figures within 0.04 px; goldens re-recorded for all three effects, see the hand-back):
+
+| Effect | Footprint | Coverage of the full-damage disc at peak | Pop (largest change after the impact) | Lingering |
+|---|---|---|---|---|
+| `shell_impact` | 99 % of 72 rays within ±2 px of the reach, mean −0.66 px (radv) / −0.70 px (lavapipe), largest overshoot +0.44 px; no lasting Critical mark | 100 % | 1.45/255 | 0/255 after the end |
+| `acid_burst` | 100 % of 72 rays within ±2 px, mean −0.62 px, largest overshoot +0.28 px; the dried stain's largest overshoot −2.88 px (inside the reach) | 87 % | 0.66/255 | 0/255 after the end |
+| `spine_line` | marks start −0.65 px and end +0.31 px from the line's projected ends | 74 % (least point 42 %) | 0.74/255 | 0/255 after the end |
+| `spine_line`, seen only from its fifth point (R6) | 4 325 (radv) / 4 330 (lavapipe) lit pixels from point 4 on, 0 more than 1.0 before it | | | |
+
+Other tests (2026-11-11, unlocked at `-j 4` under `nice -n 10` because package gates held the gate lock; no
+`cargo gate`): client lib `effects` 44 passed (with
+`a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance`); `effect_catalog_tests` 22,
+`effect_runtime_tests` 15, `battle_fog_tests` 23; `client_diagnostics` lib `effect_lab` 3;
+`concealment_gpu_tests` 1 (harness); `sync_steady_state_tests` 8; `smog_golden_tests` 17;
+`dependency_direction_tests` 2; `workspace_checks` 74 unit and 23 charter; `gate` `suite_catalog_tests` 7; clippy `-D warnings` on
+`client` and `client_diagnostics` (all targets) clean; `sync_allocation_count_tests` (valgrind, triggered by the
+`effects/**` change) 10 passed, run alone.
 
 ### `shell_impact`
 
 | # | Item | Verdict | Reason |
 |---|---|---|---|
 | 1–5, 7 | All | Accept | Unchanged except the two polish items: the shock band's width now wavers visibly around the circle while its outer edge stays on the reach (sequence frames 2–6); the ground dust starts at 0.12 s, so the ring races out over clean ground. Char core, streak mark, timing and fall-off as in round 3. The regular streak fringe (round-3 optional 2) remains, recorded for the scale-out. |
-| 6 | Crowd | Accept (round 3's frame) | Not re-taken; the shell's look in a crowd is unchanged apart from the ring's width. |
+| 6 | Crowd | Accept | Round-4 frame: shock rings and soot marks as in round 3, every unit visible. |
 
 ### `acid_burst`
 
 | # | Item | Verdict | Reason |
 |---|---|---|---|
-| 1 | Reads at gameplay zoom | Accept | From frame 0 a ragged dark-green stain of about 0.9 of the reach, at full size by about 0.12 s and holding the red 2.2 circle (rows 2 and 4) until erosion starts at about 1.8 s; no contraction when the front leaves (sequence frames 8–10). |
+| 1 | Reads at gameplay zoom | Accept | From frame 0 a ragged dark-green stain, at full size by about 0.12 s, its edge just inside the red 2.2 circle (rows 2 and 4; a thin band of ground shows between them in places once the front has gone) and held until erosion starts at about 1.8 s; no contraction when the front leaves (sequence frames 8–10). The front's dark lip marks the reach while it lasts; the stain never draws beyond it (GPU test, wet and dried). |
 | 2 | Layered | Accept | Light, crown (opaque dark-wet body with lime highlights), hot core, front lip, dark edge ring, eleven globs on arcs (visible at default zoom, sequence frames 1–6), spray, fumes rising off the stain (visible as a pale wisp above it at 0.48–0.9 s), liquid stain, wet centre. |
 | 3 | Timing | Accept | Peak at frames 0–1; stain olive-green at 0.9 s and olive-brown at 1.8 s (samples in the packet), erodes from its edge and holes from about 1.8 s, gone at 6 s. |
 | 4 | No tells of cheapness | Accept, with two watch points | Relief and a dark wet rim at every age; relief varies (flat pools and swells, no polka dots); no glass rim, no pale gap, no gel oval at frame 0. Watch points for the reviewer: (a) the crown's first frames are a symmetric three-pronged splash seen from above; at close zoom it can read as a "Y" (rows 3 and 7, ages 0–0.18 s); (b) the dry stain at 3.0 s is a fairly even olive with soft relief, crust texture is modest. |
 | 5 | Value and colour | Accept | Lime only in the first frames and at the centre; emerald body with a darker, more saturated rim band (sampled darker than the body at 0.9 s and 1.8 s); olive-brown crust by 1.8 s; separates from teal by value and hue. |
-| 6 | Crowd | Not judged (no round-4 frame) | The rim, kept relief and early olive should remove round 3's pastel fields; this needs the crowd frame to confirm. |
+| 6 | Crowd | Accept, with a watch point | Round-4 frame: the stains are no longer pastel fields. Fresh ones are saturated emerald with a darker rim, older ones dark olive to olive-brown with a darker edge, so the field reads as splashes of different ages rather than one green carpet; every unit stays visible on them. Watch point: where several dried stains overlap they merge into flat olive patches whose relief does not read at this zoom (lily-pad-like shapes). |
 | 7 | Fog | Accept | Anchored at the burst centre; nothing outside the zone. |
 
 ### `spine_line`
@@ -343,9 +375,8 @@ as a tell is a reject.
 | 3 | Timing | Accept | Tears open a frame or two before each clump; clumps shoot up, overshoot, settle, sink from the source end; the sheet now runs to the true end (3.28 s) and the last column is clean. |
 | 4 | No tells of cheapness | Accept, with a watch point | No strokes across the line at any age (single spikes removed, tears run along it); clumps have volume (lit and shadowed flanks, soil collar) and stand about 0.7–0.9 units. Watch point: at close zoom the clumps' outer spikes splay wide, so a row of them can read as a row of spiky crowns; the scar is wider and broken, but its clods read only at close zoom. |
 | 5 | Value and colour | Accept | The newest clump bone-ivory but still shaded; older clumps umber; scar darker than the ground with lighter clods. |
-| 6 | Crowd | Not judged (no round-4 frame) | Round 3's frame shows thin lines; the round-4 scar is wider and needs the crowd frame. |
+| 6 | Crowd | Accept | Round-4 frame: each line reads as a row of dark spike clumps on a soft brown-grey scar, clearly lines of spikes rather than round 3's thin pencil lines; they cross stains and units without hiding them. The faint fissure tails of older lines are thin grey streaks. |
 | 7 | Fog | Accept | Fog sheet: nothing at the attacker; the ground marks and dust end at the fog edge (the cell edge half a spacing before the first seen point), fading in over 0.3; the first seen clump is drawn whole (a first take cut it in half at the edge, fixed), so its outer spikes lean a little over the fogged ground; no pop. |
 
-**Round 4 result (implementer):** `shell_impact` accept; `acid_burst` and `spine_line` accept on items 1–5 and
-7, with the watch points above; item 6 open until a round-4 crowd frame exists. Tests: see the packet and the
-hand-back.
+**Round 4 result (implementer):** accepted, every item for every effect, with the watch points above. The
+independent round-4 review follows on [`independent_review_packet.md`](independent_review_packet.md).

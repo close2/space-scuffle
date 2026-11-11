@@ -1030,7 +1030,11 @@ applies its ranked changes in the client, the catalog's presentation data, the e
   box may be wider than long (a decal's `width` now ranges over (0, 4]).
 - `acid_burst`: the radial ground flash is dropped (it read as a glowing gel oval at frame 0); the stain itself is
   there, thick and at 0.85 of its size, from frame 0. The wet rim is drawn by the liquid material along every edge
-  instead of by the ramp's top, which the drying ramp curve had turned into the brightest emerald.
+  instead of by the ramp's top, which the drying ramp curve had turned into the brightest emerald. The stain
+  stays inside the reach (0.98 of it): a larger stain (1.14) failed the Critical footprint test by up to 11 px,
+  and a Critical layer must not mark ground beyond the damage area, so the stain was fixed rather than the test.
+  The footprint test also holds the lasting Critical marks to the reach once every non-decal layer has ended, and
+  the lingering check measures a decal to its box's corner.
 - `shell_impact` (accepted): only the shock front's width variation (a shader change shared with the acid front)
   and the dust starting after the front; the streak fringe stays recorded for the scale-out.
 - Fog (R6): a partly seen line's ground-hugging layers are clipped to the run of seen points around each
