@@ -254,8 +254,8 @@ plan.
 
 | ID | Deviation | Where | Class | WP |
 |---|---|---|---|---|
-| B-68 | 14 researchable upgrades change nothing: Concussive Shells, Drilling Claws, Smart Servos, Personal Cloaking, Cloaking Field, Warp Gate Technology, Phase Blink, Shadow Stride, Psionic Storm, Tunneling Claws, Nanomuscular Swell, Adaptive Talons, Microbial Shroud, Neural Parasite | `upgrades.ron` `effects: []` | B-miss | WP13d (Concussive); WP18 (the rest) |
-| B-69 | Only Siege Mode is a shipped ability. Cloak, burrow, blink and hazard mechanisms exist but no unit carries them. Missing: Medivac heal, repair, Queen inject and transfuse, the casters' spells (Feedback, Storm, Snipe, EMP, Fungal Growth, Abduct, Blinding Cloud, Guardian Shield, Force Field), Viking and Liberator modes, Warp Prism phasing, permanent cloak (Dark Templar, Observer), Graviton Beam, Prismatic Alignment, KD8 Charge | `units.ron` `abilities` (only `railgun_crawler`) | B-miss | WP18 |
+| B-68 | 13 researchable upgrades change nothing (Psionic Storm left the list with plan `2026-11-10-spellcaster-mechanics` WP2b): Concussive Shells, Drilling Claws, Smart Servos, Personal Cloaking, Cloaking Field, Warp Gate Technology, Phase Blink, Shadow Stride, Tunneling Claws, Nanomuscular Swell, Adaptive Talons, Microbial Shroud, Neural Parasite | `upgrades.ron` `effects: []` | B-miss | WP13d (Concussive); WP18 (the rest) |
+| B-69 | Only Siege Mode is a shipped ability. Cloak, burrow and blink mechanisms exist but no unit carries them. Missing: Medivac heal, repair, Queen inject and transfuse, the casters' spells (Feedback, Snipe, EMP, Fungal Growth, Abduct, Blinding Cloud, Guardian Shield, Force Field), Viking and Liberator modes, Warp Prism phasing, permanent cloak (Dark Templar, Observer), Graviton Beam, Prismatic Alignment, KD8 Charge | `units.ron` `abilities` (only `railgun_crawler`) | B-miss | WP18 |
 | B-70 | The Phoenix's Graviton Beam (combat F-5) | `flying_saucer` | B-miss | WP18 |
 
 ### 3.12 Documents that state a wrong StarCraft II fact or a deviation as fact
@@ -773,8 +773,8 @@ requires.
 | B-20 | No glaive bounce | (i) | WP8d |
 | B-21 | No Broodlings | (i) | WP18 |
 | B-22 | Interceptors as one 8-strike weapon | (i) | WP18 |
-| B-23 | Storm hits structures; idle units dodge it on their own | (i) | WP18; an automatic dodge changes how storm is played |
-| B-24 | Battle 13's storm values | (i) | WP18 |
+| B-23 | Storm hits structures; idle units dodge it on their own | Fixed | Plan `2026-11-10-spellcaster-mechanics` WP2b: the 5.0.14 storm skips structures (`liberty` EffectData:2079), and only a victim that cannot answer and stands idle flees, by the initial damage's `Flee` response (:2094) ([evidence](../evidence/2026-11-10-spellcaster-mechanics.md)) |
+| B-24 | Battle 13's storm values | Fixed | Plan `2026-11-10-spellcaster-mechanics` WP2b: battle 13 casts the shipped 5.0.14 storm, radius 1.5 and 80 over 71 ticks ([evidence](../evidence/2026-11-10-spellcaster-mechanics.md)) |
 | B-25 | Viking analogue shoots the ground in fighter mode | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
 | B-26 | Corruptor analogue shoots the ground | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
 | B-27 | Liberator analogue shoots the ground outside Defender Mode | (i), narrowed | The ground attack outside Defender Mode is fixed by WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2); Defender Mode itself, and with it the ground attack, stays open for WP18 |
@@ -818,8 +818,8 @@ requires.
 | B-65 | Unload sets everyone down at once and stops the carrier | (i) | WP17 |
 | B-66 | A blocked exit stalls production | (i) | WP17 |
 | B-67 | Next-patch radius 12, task reach 0.75, site patience 50 ticks, boarding reach 1.0 | (i), narrowed | WP17 for the next-patch radius, which decides where workers go when a patch mines out. Task reach, site patience and boarding reach are (ii): tolerances of our own movers that decide when an order counts as arrived, with no observable game counterpart (as U-23) |
-| B-68 | 14 upgrades with no effect | (i) | WP13d, WP18 |
-| B-69 | Missing abilities | (i) | WP18 |
+| B-68 | 14 upgrades with no effect | (i) | WP13d, WP18; Psionic Storm unlocks the storm since plan `2026-11-10-spellcaster-mechanics` WP2b |
+| B-69 | Missing abilities | (i) | WP18; Psionic Storm shipped by plan `2026-11-10-spellcaster-mechanics` WP2b, the other three spells of that plan follow |
 | B-70 | No Graviton Beam | (i) | WP18 |
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
 | B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
@@ -828,7 +828,7 @@ requires.
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
-| B-78 | Storm evacuation margin | (i) | WP18 |
+| B-78 | Storm evacuation margin | Fixed | Plan `2026-11-10-spellcaster-mechanics` WP2b: the "radius + 2" evacuation is gone with the hazard zones; a fleeing victim uses the helpless-flee rule from the storm's centre ([evidence](../evidence/2026-11-10-spellcaster-mechanics.md)) |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.4). Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick) lands on the release tick | (i), narrowed | WP5 follow-up. The Colossus part is closed: its strikes land on the release tick by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) (Amendment 22) |
 | B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart | Fixed | Amendment 24 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.3): the Lurker's spines 2 ticks apart; the Colossus' sweep stays instant by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) |

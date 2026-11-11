@@ -1814,6 +1814,20 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
+            abilities: [
+                (
+                    // PsiStorm, liberty AbilData:2059-2071 (CAbilEffectTarget); swarm AbilData:1108-1112.
+                    // Unlocked by the psionic_storm research (Requirements UsePsiStorm, liberty :2070).
+                    // The cast may start while moving (Flags AllowMovement, :2065, plan D-7.5).
+                    name: "Psionic Storm",
+                    target_kind: TargetPosition,
+                    energy_cost: 75.0,                  // Cost Vital Energy 75, liberty :2067 (swarm :1110)
+                    cooldown_ticks: 36,                 // Cooldown TimeUse 2 Normal s (swarm :1111 over liberty's 2.5) = 35.71
+                    cast_range: 9.0,                    // Range 9 from the caster's edge, liberty :2061; core AbilData:48
+                    cast_backswing_ticks: 9,            // CastOutroTime 0.5 Normal s, liberty :2062 = 8.93
+                    effect: Effect("psionic_storm"),    // Effect PsiStormPersistent, liberty :2063
+                ),
+            ],
             is_detector: false,
             capabilities: (
                 overclock: None,

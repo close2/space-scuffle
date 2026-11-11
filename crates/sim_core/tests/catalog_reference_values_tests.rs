@@ -2682,3 +2682,132 @@ fn b48_push_priorities_follow_starcraft() {
     }
     assert_eq!(seen, SC2_PUSH_PRIORITY.len(), "every row has an archetype");
 }
+
+/// Asserts `value` equals `want` to 0.001 after the catalog's fixed-point conversion.
+fn assert_close(value: SimScalar, want: f32, source: &str) {
+    assert!(
+        (f(value) - want).abs() < 0.001,
+        "{} is not {want} ({source})",
+        f(value)
+    );
+}
+
+/// Psionic Storm as authored (plan `2026-11-10-spellcaster-mechanics` §3.1, §5): the High Templar
+/// analogue's ability, its effect tree, its status and the research that unlocks it, each value
+/// cited from `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn psionic_storm_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{AbilityEffectSpec, AbilityTargetKind, EffectAnchor, StructureRule};
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "High Templar")
+        .ok_or("the High Templar analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Psionic Storm")
+        .ok_or("Psionic Storm")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 75.0, "liberty AbilData:2067");
+    assert_eq!(
+        ability.cooldown_ticks, 36,
+        "2 Normal s, swarm AbilData:1111"
+    );
+    assert_close(ability.cast_range, 9.0, "liberty AbilData:2061");
+    assert_eq!(
+        ability.cast_backswing_ticks, 9,
+        "0.5 Normal s, liberty AbilData:2062"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Psionic Storm runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let root = spells.effect_id(root).ok_or("the root")?;
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetPoint,
+        initial: Some(initial),
+        periodic: Some(periodic),
+        period_ticks,
+        count: 6,
+    } = node(root)?
+    else {
+        return Err("a point persistent of six pulses, liberty EffectData:2072".into());
+    };
+    assert_eq!(
+        initial, periodic,
+        "one search, liberty EffectData:2071, :2073"
+    );
+    assert_close(
+        period_ticks,
+        10.2,
+        "0.5712 Normal s, liberty EffectData:2074",
+    );
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(initial)?
+    else {
+        return Err("the persistent searches".into());
+    };
+    assert_close(radius, 1.5, "liberty EffectData:2080");
+    assert!(filter.ground && filter.air, "liberty EffectData:2079");
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    assert_eq!(filter.alliance, sim_types::FilterAlliance::Any);
+    let EffectNode::ApplyStatus { status } = node(child)? else {
+        return Err("the search applies a status".into());
+    };
+    let status = spells.status(status).ok_or("the status")?;
+    assert_close(
+        status.spec.duration_ticks,
+        11.901_786,
+        "0.6665 Normal s, liberty BehaviorData:713",
+    );
+    assert_close(
+        status.spec.period_ticks.ok_or("a period")?,
+        10.196_429,
+        "0.571 Normal s, liberty BehaviorData:714",
+    );
+    let EffectNode::Damage {
+        amount, responses, ..
+    } = node(status.initial_effect.ok_or("initial damage")?)?
+    else {
+        return Err("the initial effect is damage".into());
+    };
+    assert_close(amount, 10.0, "liberty EffectData:2091");
+    assert!(
+        responses.acquire && responses.flee,
+        "liberty EffectData:2093-2094"
+    );
+    let EffectNode::Damage {
+        amount, responses, ..
+    } = node(status.periodic_effect.ok_or("periodic damage")?)?
+    else {
+        return Err("the periodic effect is damage".into());
+    };
+    assert_close(amount, 10.0, "liberty EffectData:2100");
+    assert!(
+        !responses.acquire && !responses.flee,
+        "no responses on a pulse"
+    );
+
+    let research = catalogs
+        .upgrades
+        .get_by_slug("psionic_storm")
+        .ok_or("the research")?;
+    assert!(research.effects.iter().any(|effect| matches!(
+        effect,
+        UpgradeEffect::UnlockAbility { target_slug, ability_slug }
+            if *target_slug == caster.slug && ability_slug == "Psionic Storm"
+    )));
+    Ok(())
+}

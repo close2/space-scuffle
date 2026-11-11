@@ -37,7 +37,6 @@ use client::battle_input::command_mode::CommandMode;
 use client::battle_pipeline::session::BattleSession;
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::ClientMode;
-use sim_core::catalog::SpellCatalog;
 use sim_core::{UpgradeCatalog, UpgradeDef};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId,
@@ -147,12 +146,13 @@ fn install_caster(harness: &mut Harness) -> (UnitTypeId, u8, u8) {
         })
         .expect("the catalog ships a presentable mobile unit with few abilities")
         .unit_type_id;
-    let spells = SpellCatalog::from_ron_strs(STATUSES, EFFECTS).expect("valid scratch tables");
+    // Appended to the shipped tables, which the shipped casters name.
+    let spells = sim_fixtures::spells_with(STATUSES, EFFECTS).expect("valid scratch tables");
     let world = harness.world_mut();
     world
         .catalog
         .set_spell_catalog(spells)
-        .expect("the shipped abilities name no effect");
+        .expect("the shipped abilities resolve in the merged tables");
     let archetype = world.catalog.get_mut(caster).unwrap();
     archetype.max_energy = SimScalar::from_i32(200);
     archetype.energy_regen_per_tick = SimScalar::ZERO;

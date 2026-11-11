@@ -37,10 +37,18 @@ fn chain(name: &str, depth: usize) -> String {
 }
 
 #[test]
-fn the_shipped_files_load_empty() {
+fn the_shipped_files_load_with_psionic_storm() {
     let catalogs = shipped_catalogs();
-    assert_eq!(catalogs.units.spells().node_count(), 0);
-    assert_eq!(catalogs.units.spells().status_count(), 0);
+    let spells = catalogs.units.spells();
+    let root = spells
+        .effect_id("psionic_storm")
+        .expect("invariant: the shipped storm tree");
+    let facts = spells.facts(root).expect("invariant: facts of every node");
+    assert_eq!(facts.area_radius, Some(SimScalar::from_num(1.5)));
+    assert_eq!(facts.targeting_radius, Some(SimScalar::from_num(1.5)));
+    // Persistent, search, apply status, then the status's initial damage (plan D-17).
+    assert_eq!(facts.sync_depth, 4);
+    assert_eq!(spells.status_count(), 1);
 }
 
 #[test]
@@ -406,6 +414,14 @@ fn a_displacement_needs_an_origin_placing_ability() {
 #[test]
 fn an_effect_ability_must_target_a_point_or_a_unit() {
     let mut units = shipped_catalogs().units;
+    // The shipped spells' casters name shipped effects the scratch tables lack.
+    let ids: Vec<_> = units.archetypes().map(|a| a.unit_type_id).collect();
+    for id in ids {
+        let archetype = units.get_mut(id).expect("invariant: listed");
+        archetype
+            .abilities
+            .retain(|ability| !matches!(ability.effect, AbilityEffectSpec::Effect(_)));
+    }
     let spells = load("", HIT).expect("invariant: valid");
     let id = units
         .archetypes()

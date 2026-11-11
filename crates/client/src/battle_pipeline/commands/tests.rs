@@ -1337,7 +1337,8 @@ fn the_generic_paths_still_refuse_a_mode_switch() -> TestResult {
 fn install_scratch_cast(
     world: &mut SimWorld,
 ) -> Result<(UnitTypeId, u8), Box<dyn std::error::Error>> {
-    let spells = sim_core::catalog::SpellCatalog::from_ron_strs(
+    // Appended to the shipped tables, which the shipped casters name.
+    let spells = sim_fixtures::spells_with(
         "(statuses: [])",
         "(effects: [(name: \"zone\", node: Search((radius: 1.0, child: Damage((amount: 1.0)))))])",
     )?;

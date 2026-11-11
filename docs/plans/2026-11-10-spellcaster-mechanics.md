@@ -65,6 +65,32 @@
 >   exposes the radius and the ring is drawn with the area ring once Q0080 is answered (D-11). Tether indicators wait
 >   for WP3 likewise.
 
+> **Amendment 4 (WP2a and WP2b as built, 2026-11-11; Q0002).**
+>
+> - **Commit order.** The hazard removal is its own commit before the storm data, as D-12 asks. Battle 13 cannot
+>   run between the two (its hazard is gone and no unit casts yet), so the removal commit takes it out of the matrix
+>   and the data commit brings it back as a real cast. The removal commit also carries the §10.1 fixture
+>   extensions (`Squad::energy`, `Side::casts`), because dropping `Battle::hazard` is the same fixture edit.
+> - **Scratch spells next to shipped ones.** `UnitCatalog::set_spell_catalog` requires every shipped ability's
+>   effect to resolve, so once the High Templar analogue names `psionic_storm` a scratch table alone no longer
+>   installs. `sim_fixtures::spells_with` appends a test's scratch statuses and effects to the shipped tables;
+>   scratch names must not meet shipped ones. Every scratch catalog a test installs goes through it.
+> - **Tests first.** `psionic_storm_tests.rs` was written against the shipped values before the data; without
+>   the data every test fails at its first step (no ability named Psionic Storm). Its first run with the data
+>   failed five tests on the test's own placement (the caster's 6-range Psi-Bolt reached the victims, a dome
+>   spawned as a unit); the casters stand 8.5 away and the dome is placed by cell. No engine change was needed.
+> - **The hazard tests' replacement.** A scratch storm of the game's shape with test-chosen radius and damage
+>   (`crates/sim_core/tests/support/scratch_storm.rs`) replaces the hazard in the nine files of D-12; the
+>   producer killed in phase 2 uses a one-pulse scratch area that admits structures. No property was dropped.
+> - **Area ids.** With the hazards gone an area's id is its persistent's id; the high bit that kept the two id
+>   spaces apart is dropped. `AreaView::source` stays an `Option` (no area lacks one now; the type is the
+>   client's contract).
+> - **Scripted cast targets** are resolved on their tick: `EnemyCentroid` is the mean position of the living
+>   enemies in fixed point, and a cast whose caster or target no longer lives is not issued. A cast naming an
+>   ability that no unit of the side has fails the setup (`MatchupError::NoCastAbility`).
+> - **D-11 ring.** The HUD's area ring waits on Q0080 with the targeting ring (Amendment 3); WP2b publishes the
+>   storm in `RenderSnapshot::areas` only.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of

@@ -2,9 +2,47 @@
 // mirror the StarCraft II editor's CEffect classes: Set, Search, Persistent, LaunchMissile,
 // Damage, ApplyStatus, RemoveStatus, ModifyVitals, CancelOrders and Displace, plus Use("name")
 // to reference a named node. Times are 25 Hz ticks; speeds world units per tick
-// (Normal × 1.4 ÷ 25). Values cite SC2GameData 5.0.14 (5444e12f13).
-//
-// Empty until the first spell package (WP2b) adds Psionic Storm's tree.
+// (Normal × 1.4 ÷ 25). Values cite SC2GameData 5.0.14 (5444e12f13); a line without a layer is
+// in the layer of its block's heading.
 (
-    effects: [],
+    effects: [
+        // ---- Psionic Storm: liberty EffectData:2069-2101 (no later layer overrides it) ----
+        (
+            // PsiStormPersistent, :2069-2076. Searches on the cast tick, then six more at
+            // round(k × 10.2): ticks 0, 10, 20, 31, 41, 51, 61 (plan §5.2).
+            name: "psionic_storm",
+            node: Persistent((
+                anchor: TargetPoint,                            // CEffectCreatePersistent default, core EffectData:35
+                initial: Some(Use("psionic_storm_search")),     // InitialEffect, :2071
+                periodic: Some(Use("psionic_storm_search")),    // PeriodicEffectArray, :2073
+                period_ticks: 10.2,                             // PeriodicPeriodArray 0.5712 Normal s, :2074
+                count: 6,                                       // PeriodCount, :2072
+            )),
+        ),
+        (
+            // PsiStormSearch, :2077-2084: every unit within 1.5 of the centre, any owner, ground and
+            // air, cloaked and burrowed alike; never structures (SearchFilters
+            // "-;Structure,Missile,Destructible,Stasis,Dead,Hidden,Invulnerable", :2079).
+            name: "psionic_storm_search",
+            node: Search((
+                radius: 1.5,                                    // AreaArray Radius, :2080
+                filter: (alliance: Any, planes: [Ground, Air], structures: Exclude),
+                child: ApplyStatus((status: "psionic_storm")),  // PsiStormApplyBehavior, :2085-2088
+            )),
+        ),
+        (
+            // PsiStormDamageInitial, :2089-2096: spell damage (no Kind, core EffectData:61-70),
+            // asking the victim to strike back and to flee.
+            name: "psionic_storm_damage_initial",
+            node: Damage((
+                amount: 10.0,                                   // :2091
+                responses: (acquire: true, flee: true),         // ResponseFlags Acquire, Flee, :2093-2094
+            )),
+        ),
+        (
+            // PsiStormDamage, :2097-2101: the periodic pulse, without responses.
+            name: "psionic_storm_damage",
+            node: Damage((amount: 10.0)),                       // :2100
+        ),
+    ],
 )

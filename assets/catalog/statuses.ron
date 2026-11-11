@@ -2,8 +2,18 @@
 // 2026-11-10-spellcaster-mechanics, Amendment 1, D-3, D-20). Times are 25 Hz ticks
 // (Normal s × 17.857143), exact; pulses round per pulse (D-4). Damage and healing are effect
 // references into ability_effects.ron. Every value cites SC2GameData 5.0.14 (5444e12f13).
-//
-// Empty until the first spell package (WP2b) adds Psionic Storm's status.
 (
-    statuses: [],
+    statuses: [
+        (
+            // PsiStorm buff, liberty BehaviorData:709-716. One per unit (MaxStackCount 1, core
+            // BehaviorData:43): a later search refreshes it without repeating the initial damage, so a
+            // unit inside throughout takes 10 at 0 and at 10, 20, 31, 41, 51, 61 and 71 ticks: 80.
+            name: "psionic_storm",
+            duration_ticks: 11.901786,                          // Duration 0.6665 Normal s, :713
+            period_ticks: Some(10.196429),                      // Period 0.571 Normal s, :714
+            initial_effect: Some("psionic_storm_damage_initial"),   // InitialEffect, :715
+            periodic_effect: Some("psionic_storm_damage"),      // PeriodicEffect, :716
+            presentation: [DamageOverTime],
+        ),
+    ],
 )

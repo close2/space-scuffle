@@ -454,6 +454,32 @@
         ),
         expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
+    // Rewritten for plan 2026-11-10-spellcaster-mechanics WP2b (B-24): the placed hazard (radius 3,
+    // 20 every 10 ticks, no caster) became the High Templar analogue casting the shipped 5.0.14 storm
+    // on the first tick (start energy 75, Psionic Storm researched). Every zergling is inside 1.5 of
+    // the centroid and dies to the fourth pulse, on tick 31 (10 + 10 + 10 + 10 against 35 life plus
+    // regeneration); the battle ends on tick 32 on all 20 matrix seeds, the caster alive.
+    (
+        name: "13_storm_vs_held_lings",
+        claim: "One Psionic Storm (80 over 71 ticks within 1.5) kills every zergling held inside it",
+        map_cells: 64,
+        ticks: 70,
+        blue: (
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (8.0, 32.0), spacing: 1.0, energy: Some(75.0)),
+            ],
+            order: None,
+            research: ["psionic_storm"],
+            casts: [(tick: 0, ability: "Psionic Storm", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 8, columns: 3, origin: (14.6, 31.6), spacing: 0.4),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
     (
         name: "14_thor_vs_ultralisk",
         // Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 (Amendment 15): the Thor's armour is
@@ -1045,6 +1071,58 @@
             order: AttackMove(28, 48),
         ),
         expect: (blue: (12, 12), red: (0, 1)),
+    ),
+    // Plan 2026-11-10-spellcaster-mechanics §10.2, WP2b. The High Templar analogue stands behind six
+    // zealots; sixteen marines attack-move into them and are in contact from tick 109. On tick 150 the
+    // templar storms the marines' centroid (the 5.0.14 storm: 80 over 71 ticks within 1.5). Measured
+    // on the 20 matrix seeds: the zealots win every one, 4 or 5 of blue's 7 left (11 and 9 seeds),
+    // ending on ticks 248 to 325. The control, 36b, the same armies without the cast, is a marine
+    // win on every seed, 9 to 11 marines left. Army sizes are the plan's, untuned.
+    // Evidence: docs/evidence/2026-11-10-spellcaster-mechanics.md §2.
+    (
+        name: "36a_storm_turns_marines",
+        claim: "A Psionic Storm on the marine ball turns a fight the marines win into a zealot win",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (46.0, 44.6), spacing: 1.0, energy: Some(75.0)),
+                (unit: "psi_grey", count: 6, columns: 3, origin: (42.0, 44.0), spacing: 1.2),
+            ],
+            order: None,
+            research: ["psionic_storm"],
+            casts: [(tick: 150, ability: "Psionic Storm", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 16, columns: 4, origin: (20.0, 43.8), spacing: 0.8),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        expect: (blue: (4, 5), red: (0, 0)),
+    ),
+    // Control of 36a (plan 2026-11-10-spellcaster-mechanics §10.2): no cast. The marines win on all
+    // 20 matrix seeds with 9 to 11 left (1, 8 and 11 seeds), ending on ticks 345 to 368.
+    (
+        name: "36b_marines_beat_zealots_without_storm",
+        claim: "Control of 36a: without the storm the same marines beat the zealots and the High Templar analogue",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (46.0, 44.6), spacing: 1.0, energy: Some(75.0)),
+                (unit: "psi_grey", count: 6, columns: 3, origin: (42.0, 44.0), spacing: 1.2),
+            ],
+            order: None,
+            research: ["psionic_storm"],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 16, columns: 4, origin: (20.0, 43.8), spacing: 0.8),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        expect: (blue: (0, 0), red: (9, 11)),
     ),
     ],
 )

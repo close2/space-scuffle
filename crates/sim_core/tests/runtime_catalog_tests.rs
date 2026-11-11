@@ -594,3 +594,57 @@ fn a_structure_scan_range_is_required_exactly_when_it_is_armed() -> TestResult {
     }
     Ok(())
 }
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3: the spell tables are read at run time. Raising
+/// the first damage node of `ability_effects.ron` (the storm's initial damage) in a copied bundle
+/// changes what a storm deals, with no recompilation.
+#[test]
+fn an_edited_effect_value_changes_a_storm_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("spell")?;
+    let effects = std::fs::read_to_string(bundle.directory.join(FILES[5]))?;
+    std::fs::write(
+        bundle.directory.join(FILES[5]),
+        replace_first_field(&effects, "amount", "25.0"),
+    )?;
+    let mut losses = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        world.research_upgrade(PlayerId(0), "psionic_storm")?;
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "psionic_storm")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped storm caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_shields == SimScalar::ZERO
+                    && archetype.max_speed > SimScalar::ZERO
+            })
+            .ok_or("a unit without shields")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        let before = world.entities[&victim].hp;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        losses.push(before - world.entities[&victim].hp);
+    }
+    assert_eq!(
+        losses,
+        [SimScalar::from_i32(10), SimScalar::from_i32(25)],
+        "the shipped initial damage, then the edited one"
+    );
+    bundle.finish()?;
+    Ok(())
+}

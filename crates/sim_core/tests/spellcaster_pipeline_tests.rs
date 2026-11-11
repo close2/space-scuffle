@@ -11,7 +11,7 @@
 #[path = "support/effect_world.rs"]
 mod support;
 
-use sim_core::catalog::{SpellCatalog, UnitArchetype};
+use sim_core::catalog::UnitArchetype;
 use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -98,7 +98,7 @@ fn world() -> SimWorld {
 /// A world on `map` with the scratch spell tables.
 fn world_on(map: GameMap) -> SimWorld {
     let mut world = sim_fixtures::world(map, 11);
-    let spells = SpellCatalog::from_ron_strs(
+    let spells = sim_fixtures::spells_with(
         &format!("(statuses: [{STATUSES}])"),
         &format!("(effects: [{EFFECTS}])"),
     )
@@ -106,7 +106,7 @@ fn world_on(map: GameMap) -> SimWorld {
     world
         .catalog
         .set_spell_catalog(spells)
-        .expect("invariant: the shipped abilities name no effect");
+        .expect("invariant: the shipped abilities resolve in the merged tables");
     world
 }
 
