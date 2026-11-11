@@ -197,7 +197,10 @@ fn the_missile_lands_ceil_distance_over_speed_later_and_is_published_while_it_fl
     // the 14th step (the convention of `effect_tree_tests.rs`).
     assert_eq!(step_to_impact(&mut world, victim), 1 + 13);
     assert!(world.effects().missiles().is_empty(), "the missile is gone");
-    assert!(world.build_render_snapshot().spell_missiles.is_empty());
+    assert!(
+        world.build_render_snapshot().spell_missiles.is_empty(),
+        "no longer published"
+    );
 }
 
 #[test]
@@ -265,7 +268,10 @@ fn carried_units_are_untouched_and_their_carrier_is_hit() {
         .expect("the shuttle carries the bot");
     assert!(fungal(&mut world, caster, 16.0, 20.0));
     step_to_impact(&mut world, carrier);
-    assert!(world.effects().statuses_of(passenger).is_empty());
+    assert!(
+        world.effects().statuses_of(passenger).is_empty(),
+        "carried: hidden from the search"
+    );
 }
 
 #[test]
@@ -353,7 +359,10 @@ fn blink_and_boarding_are_refused_until_both_statuses_expire_on_the_same_tick() 
     assert!(fungal(&mut world, caster, 16.0, 20.0));
     step_to_impact(&mut world, victim);
     assert!(has(&world, victim, "fungal_growth_slow"));
-    assert!(world.effects().statuses_of(shuttle).is_empty());
+    assert!(
+        world.effects().statuses_of(shuttle).is_empty(),
+        "the shuttle is outside the search"
+    );
     assert!(
         !world.execute_ability(victim, blink, Some(at(20.0, 20.0)), None),
         "no Blink (CasterNotFungalGrowthed, swarm EffectData:2180-2182)"
@@ -463,7 +472,7 @@ fn a_recast_refreshes_the_statuses_with_their_phase_and_repeats_no_damage() {
     // From the refresh the statuses run 71.43 ticks again, their pulses still on the first
     // impact's phase: pulse k at round_half_up(k × 4.464286) while that is within the new end.
     let due: Vec<u32> = (1..=40u32)
-        .map(|k| pulse_offset(k))
+        .map(pulse_offset)
         .filter(|&tick| f64::from(tick) <= f64::from(second) + 71.428_571)
         .collect();
     assert_eq!(
