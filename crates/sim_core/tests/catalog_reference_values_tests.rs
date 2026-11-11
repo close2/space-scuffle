@@ -2863,8 +2863,9 @@ fn psionic_storm_values_follow_starcraft() -> TestResult {
 }
 
 /// Abduct as authored (plan `2026-11-10-spellcaster-mechanics` §3.2, §5): the Viper analogue's
-/// ability, its target filter and origin placement, its effect tree and the `abducted` status,
-/// each value cited from `SC2GameData` 5.0.14 in the RON files.
+/// ability, its target filter and origin placement, its effect tree, the cast's mark (bug
+/// B-114) and the `abducted` status, each value cited from `SC2GameData` 5.0.14 in the RON
+/// files.
 #[test]
 #[allow(clippy::too_many_lines)]
 fn abduct_values_follow_starcraft() -> TestResult {
@@ -2909,8 +2910,8 @@ fn abduct_values_follow_starcraft() -> TestResult {
     assert_eq!(filter.structures, StructureRule::Exclude);
     assert_eq!(
         filter.without_status.as_deref(),
-        Some("abducted"),
-        "NoYoink"
+        Some("abduct_mark"),
+        "NoYoink counts YoinkMarker, swarm ValidatorData:812-815"
     );
     let origin = ability.origin.ok_or("origin placement")?;
     assert_close(
@@ -2929,12 +2930,43 @@ fn abduct_values_follow_starcraft() -> TestResult {
 
     let spells = catalogs.units.spells();
     let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let root = spells.effect_id(root).ok_or("the root")?;
+    let EffectNode::Set { first, len: 2 } = node(root)? else {
+        return Err("YoinkStartSet: the mark, then the tongue, swarm EffectData:1472-1478".into());
+    };
+    let mark_status = spells.status_id("abduct_mark").ok_or("the mark status")?;
+    assert_eq!(
+        spells
+            .node(root)
+            .and_then(|node| node.require)
+            .and_then(|filter| filter.without_status),
+        Some(mark_status),
+        "NoYoink on YoinkStartCreatePlaceholder, swarm EffectData:1468"
+    );
+    let start = |index| spells.set_child(first, index).ok_or("a child");
+    assert_eq!(
+        node(start(0)?)?,
+        EffectNode::ApplyStatus {
+            status: mark_status
+        },
+        "YoinkMarkerBehavior, swarm EffectData:1475, :1482-1485"
+    );
+    let mark = spells.status(mark_status).ok_or("the mark")?;
+    assert_close(
+        mark.spec.duration_ticks,
+        35.714_286,
+        "2 Normal s, swarm BehaviorData:1092",
+    );
+    assert!(
+        !mark.spec.stun && !mark.spec.reveal && mark.spec.presentation.is_empty(),
+        "hidden, no modification, swarm BehaviorData:1089-1096"
+    );
     let EffectNode::LaunchMissile {
         to: EffectAnchor::TargetUnit,
         speed,
         view: MissileView::Tether,
         impact,
-    } = node(spells.effect_id(root).ok_or("the root")?)?
+    } = node(start(1)?)?
     else {
         return Err("a homing tether missile, swarm EffectData:1486-1494".into());
     };
