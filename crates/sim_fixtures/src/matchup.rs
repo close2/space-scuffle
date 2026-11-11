@@ -166,9 +166,9 @@ pub struct Side {
     /// Issues `UseStim` to the whole side on the first tick.
     #[serde(default)]
     pub stim: bool,
-    /// On the first tick, after the standing order, every unit casts its ability that switches
-    /// it into this mode (catalog `mode_name`), as a player would burrow a unit that attacks only
-    /// burrowed. `None` casts nothing.
+    /// On the first tick, before the standing order, every unit that has an ability switching
+    /// it into this mode (catalog `mode_name`) casts it, as a player would burrow a unit that
+    /// attacks only burrowed or siege the tanks of a mixed army. `None` casts nothing.
     #[serde(default)]
     pub mode: Option<String>,
     /// Targeted casts on later ticks, each given to the side's first living unit that has the
@@ -218,6 +218,10 @@ pub struct Squad {
     /// cast on the first tick; `None` keeps the archetype's.
     #[serde(default)]
     pub energy: Option<f32>,
+    /// A standing order for this squad instead of its side's (a caster that waits while the
+    /// army attacks); `None` follows [`Side::order`].
+    #[serde(default)]
+    pub order: Option<SideOrder>,
 }
 
 /// The side's standing order, issued once on the first tick.
@@ -430,44 +434,76 @@ pub fn spawn_side(
     Ok(units)
 }
 
-/// The commands that give `side`'s `units` their standing order (and stim) on the first tick.
+/// The commands that give `side`'s `units` their standing order (and stim) on the first tick:
+/// one command for the units that follow [`Side::order`], then one for each squad with its own
+/// [`Squad::order`], in squad order. `units` are in spawn order, squad by squad.
 ///
 /// # Errors
-/// [`MatchupError::NoEnemyToFocus`] if the order is `AttackFirstEnemy` and `enemies` is empty.
+/// [`MatchupError::NoEnemyToFocus`] if an order is `AttackFirstEnemy` and `enemies` is empty.
 pub fn side_commands(
     owner: PlayerId,
     side: &Side,
     units: &[EntityId],
     enemies: &[EntityId],
 ) -> Result<Vec<PlayerCommand>, MatchupError> {
-    let command = |order| PlayerCommand {
+    let command = |entities: Vec<EntityId>, order| PlayerCommand {
         player_id: owner,
-        entities: units.to_vec(),
+        entities,
         order,
         queue: false,
     };
-    let order = match side.order {
-        SideOrder::None => None,
-        SideOrder::AttackMove(x, y) => Some(UnitOrder::AttackMove {
-            target: point(x, y),
-        }),
-        SideOrder::AttackFirstEnemy => Some(UnitOrder::attack(
-            *enemies.first().ok_or(MatchupError::NoEnemyToFocus)?,
-        )),
-        SideOrder::HoldPosition => Some(UnitOrder::HoldPosition),
+    let unit_order = |order: SideOrder| -> Result<Option<UnitOrder>, MatchupError> {
+        Ok(match order {
+            SideOrder::None => None,
+            SideOrder::AttackMove(x, y) => Some(UnitOrder::AttackMove {
+                target: point(x, y),
+            }),
+            SideOrder::AttackFirstEnemy => Some(UnitOrder::attack(
+                *enemies.first().ok_or(MatchupError::NoEnemyToFocus)?,
+            )),
+            SideOrder::HoldPosition => Some(UnitOrder::HoldPosition),
+        })
     };
-    let mut commands: Vec<_> = order.into_iter().map(command).collect();
+    // Each squad's units, by the squads' counts in spawn order; units beyond them follow the side.
+    let mut own_orders = Vec::new();
+    let mut followers = Vec::new();
+    let mut start = 0_usize;
+    for squad in &side.squads {
+        let end = start
+            .saturating_add(usize::try_from(squad.count).unwrap_or(usize::MAX))
+            .min(units.len());
+        let members = units.get(start..end).unwrap_or_default();
+        match squad.order {
+            Some(order) => own_orders.push((members.to_vec(), order)),
+            None => followers.extend_from_slice(members),
+        }
+        start = end;
+    }
+    followers.extend_from_slice(units.get(start..).unwrap_or_default());
+    let mut commands = Vec::new();
+    if let Some(order) = unit_order(side.order)? {
+        if !followers.is_empty() {
+            commands.push(command(followers, order));
+        }
+    }
+    for (members, order) in own_orders {
+        if let Some(order) = unit_order(order)? {
+            commands.push(command(members, order));
+        }
+    }
     if side.stim {
-        commands.push(command(UnitOrder::UseStim));
+        commands.push(command(units.to_vec(), UnitOrder::UseStim));
     }
     Ok(commands)
 }
 
-/// The first tick's casts that switch `side`'s `units` into its [`Side::mode`], one command a
-/// unit (each unit's archetype places the ability at its own index); empty without a mode.
+/// The first tick's casts that switch `side`'s `units` into its [`Side::mode`], one command for
+/// each unit that has such an ability (each unit's archetype places the ability at its own
+/// index), so sieged tanks may stand among marines; empty without a mode.
 ///
 /// # Errors
-/// [`MatchupError::NoModeAbility`] if a unit has no ability that switches to the mode.
+/// [`MatchupError::NoModeAbility`] if no unit of the side has an ability that switches to the
+/// mode (it names the first unit's archetype).
 pub fn mode_commands(
     world: &SimWorld,
     owner: PlayerId,
@@ -477,39 +513,43 @@ pub fn mode_commands(
     let Some(mode) = &side.mode else {
         return Ok(Vec::new());
     };
-    units
+    let archetype_of = |unit: &EntityId| {
+        world
+            .entities
+            .get(unit)
+            .and_then(|entity| world.catalog.get(entity.unit_type_id).ok())
+    };
+    let commands: Vec<PlayerCommand> = units
         .iter()
-        .map(|unit| {
-            let archetype = world
-                .entities
-                .get(unit)
-                .and_then(|entity| world.catalog.get(entity.unit_type_id).ok());
-            let index = archetype.and_then(|archetype| {
-                archetype.abilities.iter().position(|ability| {
-                    matches!(
-                        &ability.effect,
-                        AbilityEffectSpec::SwitchMode { mode_name } if mode_name == mode
-                    )
-                })
-            });
-            let ability_index = index
-                .and_then(|index| u8::try_from(index).ok())
-                .ok_or_else(|| MatchupError::NoModeAbility {
-                    unit: archetype.map_or_else(String::new, |archetype| archetype.slug.clone()),
-                    mode: mode.clone(),
-                })?;
-            Ok(PlayerCommand {
+        .filter_map(|unit| {
+            let index = archetype_of(unit)?.abilities.iter().position(|ability| {
+                matches!(
+                    &ability.effect,
+                    AbilityEffectSpec::SwitchMode { mode_name } if mode_name == mode
+                )
+            })?;
+            Some(PlayerCommand {
                 player_id: owner,
                 entities: vec![*unit],
                 order: UnitOrder::CastAbility {
-                    ability_index,
+                    ability_index: u8::try_from(index).ok()?,
                     target_pos: None,
                     target_entity: None,
                 },
                 queue: false,
             })
         })
-        .collect()
+        .collect();
+    if commands.is_empty() {
+        return Err(MatchupError::NoModeAbility {
+            unit: units
+                .first()
+                .and_then(archetype_of)
+                .map_or_else(String::new, |archetype| archetype.slug.clone()),
+            mode: mode.clone(),
+        });
+    }
+    Ok(commands)
 }
 
 /// Number of `units` that exist and are alive in `world`.
@@ -812,6 +852,7 @@ mod tests {
                 origin,
                 spacing: 2.0,
                 energy: None,
+                order: None,
             }],
             order: SideOrder::None,
             research: Vec::new(),
@@ -926,6 +967,62 @@ mod tests {
                 "the switch did not clear the order given after it"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_squad_with_its_own_order_gets_it_and_the_rest_follow_the_side() -> Result<(), MatchupError>
+    {
+        let mut side = row((10.0, 10.0), 2);
+        side.order = SideOrder::HoldPosition;
+        let mut waiting = side.squads[0].clone();
+        waiting.count = 1;
+        waiting.order = Some(SideOrder::None);
+        side.squads.insert(0, waiting);
+        let mut charging = side.squads[1].clone();
+        charging.order = Some(SideOrder::AttackMove(30.0, 30.0));
+        side.squads.push(charging);
+        let units: Vec<_> = (1..=5).map(EntityId).collect();
+        let commands = side_commands(BLUE, &side, &units, &[])?;
+        let orders: Vec<_> = commands
+            .iter()
+            .map(|command| (command.entities.clone(), command.order.clone()))
+            .collect();
+        assert_eq!(
+            orders,
+            vec![
+                (vec![EntityId(2), EntityId(3)], UnitOrder::HoldPosition),
+                (
+                    vec![EntityId(4), EntityId(5)],
+                    UnitOrder::AttackMove {
+                        target: point(30.0, 30.0)
+                    }
+                ),
+            ],
+            "the side's order first, then each squad's own; a squad told None gets nothing"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_units_that_have_the_mode_switch_into_it() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
+        battle.blue = row((10.0, 10.0), 2);
+        let mut tanks = battle.blue.squads[0].clone();
+        tanks.unit = "railgun_crawler".to_owned();
+        tanks.origin = (10.0, 20.0);
+        battle.blue.squads.push(tanks);
+        battle.blue.mode = Some("siege_mode".to_owned());
+        battle.red = row((40.0, 40.0), 1);
+        let run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
+        let casts = run
+            .commands
+            .iter()
+            .filter(|command| matches!(command.order, UnitOrder::CastAbility { .. }))
+            .count();
+        assert_eq!(casts, 2, "the two tanks, not the two workers");
         Ok(())
     }
 
