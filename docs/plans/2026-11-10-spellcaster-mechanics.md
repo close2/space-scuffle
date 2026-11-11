@@ -151,7 +151,29 @@
 >   (D-16 item 3); the tests count the impact `1 + ceil(d / 0.672)` steps after such a cast, as
 >   `effect_tree_tests.rs` does.
 
-The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
+> **Amendment 8 (WP5 and WP6 as built, 2026-11-11; Q0002).**
+>
+> - **WP5a, melee.** Eight catalog weapons carry `melee: true` (SCV, Probe, Zealot, Dark Templar, Drone,
+>   Zergling, Baneling, Ultralisk analogues). D-14's **verify** is settled: `WeaponSpec::melee` is hashed only in
+>   the copies held by projectiles and siege weapons, and no melee weapon has either, so goldens, matrix and
+>   battle 33 are bit-identical. SU-2 keeps its default (floor 0.1): no game value was found, and in battle 39a
+>   any floor under the tank's minimum range 2 gives the same outcome.
+> - **WP5b, data only.** No engine change was needed. The tree is two named nodes, `blinding_cloud`
+>   (`BlindingCloudCP`) and `blinding_cloud_search` (`BlindingCloudSearch` with `BlindingCloudSwitch` as the
+>   set of two filtered branches), the §5.2 tree. The period is authored as **8.928572**, not §5.2's 8.928571:
+>   the eighth search's exact time is 62.5 ticks, which rounds half up to 63, and the truncated value lands it on
+>   62 (as Fungal's period, 4.464286, is rounded up). Both statuses are as §5.1 has them.
+> - **Battles 39a/39b** separate as §10.2 asks (opposite winners on every seed), with the plan's armies; only
+>   the placement and the cast tick were tuned (evidence §5.2). Amendment 6 was not needed.
+> - **WP5c** waits on Q0080 with WP2c to WP4c.
+> - **WP6.** The throughput benchmark gains a spell scenario as data (`throughput_scenarios.ron`: casters,
+>   ability names, energy, cadence; the casts are `PlayerCommand`s inside the measured ticks) and prints the
+>   live areas and statuses it measured. The steady-state allocation test gains a child with the four shipped
+>   spells recast throughout its window. The client's `sync_steady_state_tests.rs` and
+>   `sync_allocation_count_tests.rs` windows are not extended: the engine's own count covers the simulation side
+>   and the client's views of areas, links and statuses are unchanged since WP1e (recorded, Q0002).
+
+The owner answered [Q0077](../questions/closed/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
 combat impact: **Psionic Storm, then Abduct, then Fungal Growth, then Blinding Cloud**. This is that plan.
@@ -176,7 +198,7 @@ the quoted symbol. Claims not confirmed while planning are marked **verify**.
 
 | Question | State | Where in this plan |
 |---|---|---|
-| Q0077, when the caster spells are built | Answered: option 1, this plan, in the order Storm, Abduct, Fungal, Blinding Cloud. Closed by WP7 | All |
+| Q0077, when the caster spells are built | Answered: option 1, this plan, in the order Storm, Abduct, Fungal, Blinding Cloud. Closed by WP7 (2026-11-11) | All |
 | Q0051 (charter §8), mechanics follow StarCraft II 5.0.14 | Standing rule | §3, D-2, D-3 |
 | Q0052, sanctioned deviations (S-5: 25 ticks per Faster second with whole-tick rounding) | Standing rule | D-4 |
 | Q0080, outcome of the effect review gate | Open; its answer decides whether the spell effects are reviewed art or stay unused | D-11, WP2c to WP5c |

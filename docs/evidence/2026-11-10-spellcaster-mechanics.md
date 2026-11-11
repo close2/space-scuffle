@@ -186,3 +186,139 @@ is cited in the RON from SC2GameData 5.0.14 (`5444e12f13`), checked against the 
   `57f2747`.
 - **Goldens** unchanged (no caster in either script), passing in debug, release and `wasm32-wasip1`
   (wasmtime). The DHAT allocation test (`effect_tree_allocation_tests.rs`) passes.
+
+## 5. WP5: melee weapons and Blinding Cloud
+
+Builds in `~/scratch/cargo-target/spells-cloud`. Base: branch `spells-fungal` at `0beb4e4` (WP4 done, schema 29);
+its matrix and battle 33 (68 seeds, 206 trace files, byte-identical to the WP4 run) are the base of every
+comparison below.
+
+### 5.1 WP5a: `WeaponSpec::melee` from the game data (`4f62d8c`)
+
+Every `CWeapon` of the local 5.0.14 chain (`~/scratch/combat_wp3_data/`, layers `core` to `voidmulti`) was read
+for `Options index="Melee"`: no `CWeapon` default sets it (`core` WeaponData:3-31) and no later layer clears it
+(no `value="0"` anywhere). Eight catalog weapons have a melee counterpart and now carry `melee: true`, each cited
+in `units.ron`:
+
+| Analogue | Catalog weapon | Game weapon |
+|---|---|---|
+| SCV | Drill Slash | `FusionCutter`, `liberty` WeaponData:195-201 |
+| Probe | Particle Beam | `ParticleBeam`, :142-148 |
+| Zealot | Psi-Blade Double Slash | `PsiBlades`, :150-158 |
+| Dark Templar | Warp Blade | `WarpBlades`, :161-169 |
+| Drone | Mandible Bite | `Spines`, :349-355 |
+| Zergling | Scythe Slash | `Claws`, :357-363 |
+| Baneling | Volatile Burst (and its structure strike) | `VolatileBurst`, :463-472; `VolatileBurstBuilding`, `swarm` :200-203 |
+| Ultralisk | Kaiser Blades Cleave | `KaiserBlades`, :430-439 |
+
+The other melee weapons of the data have no catalog counterpart: the Roach's and Hydralisk's melee weapons
+(`RoachMelee` :86-89, `HydraliskMelee` :46-49; the analogues carry only their ranged weapon), the Ultralisk's
+`Ram`, the Broodling's `NeedleClaws`, the Locust's, the Warhound's, the Sheep's and two Baneling dummies.
+`d14_melee_weapons_follow_starcraft` (`catalog_reference_values_tests.rs`) checks every weapon block, siege-mode
+weapons included; it failed on the first unflagged weapon before the data.
+
+**Hashed fields.** `WeaponSpec::melee` is hashed only inside the `WeaponSpec` copies that projectiles
+(`ActiveProjectile::weapon_spec`) and siege weapons (`Entity::siege_weapon`) hold. None of the eight weapons has a
+projectile speed or belongs to a mode, so no hashed value changes; no rule reads the flag but the ranged-range
+status delta. Measured: the matrix (20 seeds) is bit-identical to the base (`--compare`), battle 33's 206 trace
+files are byte-identical, and both goldens pass unchanged in debug, release and `wasm32-wasip1` (wasmtime).
+
+### 5.2 WP5b: Blinding Cloud as data (`370225a` tests, `83c74de` data)
+
+Blinding Cloud is data: the second ability of `tongue_chameleon` (`units.ron`), two named nodes in
+`ability_effects.ron` and the statuses `blinding_cloud` and `blinding_cloud_structure` in `statuses.ron`. No
+engine change was needed. Every value is cited in the RON from SC2GameData 5.0.14 (`5444e12f13`), checked against
+the local copy:
+
+| Value | Game data | Ours |
+|---|---|---|
+| Energy, range | `swarm` AbilData:1202, :1204 (100; 10) | 100; 10 from the caster's edge |
+| Cooldown, backswing | none in `swarm` AbilData:1197-1209, no entry in `void` or `voidmulti`, none in the `CAbilEffect` default (`core` AbilData:34-88) | 0, 0 |
+| Cloud | `BlindingCloudCP`, `swarm` EffectData:236-242 (period 0.5 :241); `PeriodCount` 19 (:239), 27 (`void` :1012-1014), 15 (`voidmulti` :157-159) | persistent at the point, initial search and 15 more every 8.928572 ticks |
+| Search | `BlindingCloudSearch`, :243-248 (radius 2 :247; `SearchFilters "Ground;Self,Neutral,Missile,Dead"` :246) | radius 2, any owner but the caster, ground only, structures included |
+| Branches | `BlindingCloudSwitch` :254-258 (`Case IsStructure`, `CaseDefault BlindingCloudAB`) | a set of two `ApplyStatus` nodes filtered `structures: Exclude` / `Only` |
+| Unit status | `BlindingCloud`, `swarm` BehaviorData:994-1000 (0.625 s :997); `voidmulti` :1067-1069 (`WeaponRange 0, RangedWeaponRange -20`) | 11.160714 ticks, ranged weapons −20, floor 0.1 (SU-2) |
+| Structure status | `BlindingCloudStructure`, `swarm` BehaviorData:19-26 (`WeaponRange -20 DetectArc 0 RadarArc 0` :25) | 11.160714 ticks, every weapon −20, no detection |
+
+**The period.** The exact period is 0.5 × 25 ÷ 1.4 = 8.9285714 ticks, and the eighth search's exact time,
+7 × 8.9285714 = 62.5, rounds half up to 63. The six-decimal 8.928571 of plan §5.2 gives 62.499997 and the 62nd
+tick; the catalog authors 8.928572, rounded up as Fungal's 4.464286 is, so the 16 searches fall on ticks 0, 9, 18,
+27, 36, 45, 54, 63, 71, 80, 89, 98, 107, 116, 125 and 134, the exact products rounded half up.
+
+- **Tests.** `crates/sim_core/tests/blinding_cloud_tests.rs` (10 tests): the 16 searches on those ticks, each
+  refreshing one status in place, which ends 12 ticks after the last search (11.16 elapsed); own, enemy and
+  cloaked ground units within 2 of the centre hit, one 2.4 away, an air unit and the caster not, with the
+  `RangeReduced` flag published; a marine's range 5 down to the floor 0.1 while a zergling's melee weapon keeps
+  its own; a blinded marine never hits an unarmed unit 1 away but hits a zergling in contact, and the zergling
+  hits it; a marine outside the cloud keeps range 5 and hits a unit inside; a marine walking out keeps the status
+  and the floor until 12 ticks after the only search that found it, then range 5; a sieged tank in the cloud
+  (range 0.1 under its minimum range 2) fires at nothing, near or far, until the status ends, then at the far
+  target; a Photon Cannon analogue gets the structure status only, every weapon (melee included) at the floor,
+  stops revealing a cloaked Dark Templar analogue and shooting it, and detects it again once the status ends;
+  100 energy, range 11 from the caster's centre, no cooldown (two casts at once); the area published from the
+  cast to its last search, 134 ticks, with its source and radius 2. `catalog_reference_values_tests.rs` checks
+  every value above as authored; `runtime_catalog_tests.rs` changes the reduction from −20 to −2 in a copied
+  `statuses.ron` and a range-5 weapon keeps 3, without recompiling.
+- **Red runs.** Before the data all 10 tests failed at their first step (no ability named Blinding Cloud); the
+  structure test also failed earlier on its own setup (a Dark Templar analogue is not cloaked by itself), fixed by
+  cloaking it. With the data, 6 of 10 failed on the tests' own setup, fixed in the tests: three casters stood
+  12.8 from the point, out of range 11; the floor compared against `from_num(0.1)` instead of the catalog's
+  `1 / 10`; and a marine shot its target during two ticks stepped before the cast.
+- **Battles 39a/39b** (the plan's armies; placement and cast tick tuned): three sieged tanks hold in a column
+  1.8 apart, each within 2 of their centroid; eight roaches attack-move into them from 18 away; the Viper
+  analogue waits 9 from the tanks (they cannot shoot air) and clouds their centroid on tick 40. 39a: the roaches
+  win all 20 matrix seeds, blue keeping 7 to 9 (9, 6 and 5 seeds) with the caster, ending on ticks 260 to 298.
+  39b (no cast): the tanks win all 20 with 2 or 3 left (11 and 9 seeds); every roach dies and the Viper analogue
+  outlives the 600-tick limit. On 52 seeds the split held on every seed (39a blue 5 to 9, 39b red 2 or 3), and
+  with the cast on tick 35 or 45 as well. Measured first: with the roaches 2 nearer and the cast on tick 10, one
+  of 52 control seeds was a roach win; with seven roaches, 39a kept as few as two.
+- **Matrix.** Against the base (`--compare`), only 39a and 39b are new; every other battle is bit-identical.
+  Expectation failures 0 on the seeds of record, 3 over all seeds (26 on seeds 10 and 13, 33 on seed 9), the same
+  three as on the base.
+- **Battle 33**, 64 seeds plus the four of record: all 206 trace files byte-identical to the base.
+- **Goldens** unchanged (no caster in either script), passing in debug, release and `wasm32-wasip1` (wasmtime).
+- **Presentation (WP5c)** not started: the cloud is published in `RenderSnapshot::areas` and the statuses as the
+  `RangeReduced` flag; its drawing waits on Q0080 with the other spells' (D-11).
+
+## 6. WP6: throughput and steady-state allocation
+
+**Throughput** (`cb55683`, `3aaec66`). `cargo bench -p sim_core --bench throughput`, release, under the gate lock
+(`flock -o ~/scratch/gate.lock`), on 2026-11-11 at load average 12 to 13 (another user's builds); median of three
+repeats, 300 measured ticks each. The new row is the 64x64 battle of 400 marines with 29 Viper, 19 High Templar and
+19 Infestor analogues of the first player casting Blinding Cloud (every 6 ticks), Psionic Storm (every 12) and
+Fungal Growth (every 10) at the second army's centroid, after 250 warm ticks:
+
+| Map | Units | Ticks/s | `DESIGN.md` §5 (2026-11-10) |
+|---|---:|---:|---:|
+| 64x64 | 0 | 3367 | 3392 |
+| 64x64 | 100 | 1002 | 1031 |
+| 64x64 | 400 | 170 | 173 |
+| 128x128 | 400 | 200 | 203 |
+| 256x256 | 0 | 210 | 208 |
+| showcase_canyon | 400 | 123 | 127 |
+| 64x64, 67 casters | 400 | 243 | — |
+
+The spell row held 13.7 live areas and 101.4 statuses per measured tick on average. Every row is above the floor
+of 25 ticks per second, and the existing rows are within 3 % of the figures of record (no simulation code changed
+in WP5; the spell catalogs differ only in data no existing row uses). The spell row runs faster than the plain
+400-unit row because its measured ticks start after 250 ticks of battle, when fewer units live. Two earlier
+runs of the same tree: one under a load average of 22 to 180 (2833 ticks/s on the empty map, spell row 148, with
+150 warm ticks: 8.9 areas and 64 statuses, the casts before the armies see each other being refused for want of
+target vision), and one with clouds every 8 ticks and Fungal every 12 (spell row 220 ticks/s, 15.2 areas, 90.0
+statuses).
+
+**Allocation** (`cb55683`). `effect_tree_allocation_tests.rs` gained a child that recasts the four shipped spells
+(storm every 60 ticks, cloud every 130, Fungal Growth every 70, Abduct every 40) on a held clump of 20 units whose
+life is restored each tick, so each spell is live throughout the 200 measured ticks. Under DHAT its engine blocks
+are 8 (30,432 bytes, the world's construction) with 0 and with 200 measured ticks: the shipped spells allocate
+nothing in steady state. The existing children are unchanged (steady 8 and 8, planted outside 8 and 8 with 200
+more window blocks, planted engine 8 and 14).
+
+**Finding (B-114).** The child's first schedule recast Abduct every 20 ticks, so a second tongue reached the unit on
+the tick its first pull landed: the contact refreshed `abducted`, the landing then removed it, and the second pull
+flew without the status (no stun, collision rule or boarding ban). The game's behaviour is not yet sourced;
+recorded as B-114 in `DESIGN.md` for a WP3 follow-up. The test now recasts only after the landing.
+
+**Client checks** (asked by the orchestrator): `cargo test -p client --lib` failed on a hard-coded count of shipped
+casts (`battle_hud::catalog`, 4 against 3 since Psionic Storm shipped); the test now counts the shipped casts first
+(`84902a6`). `client --lib` (380), `battle_card_tests` (28) and `battle_cast_tests` (6) pass.

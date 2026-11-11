@@ -255,7 +255,7 @@ plan.
 | ID | Deviation | Where | Class | WP |
 |---|---|---|---|---|
 | B-68 | 13 researchable upgrades change nothing (Psionic Storm left the list with plan `2026-11-10-spellcaster-mechanics` WP2b): Concussive Shells, Drilling Claws, Smart Servos, Personal Cloaking, Cloaking Field, Warp Gate Technology, Phase Blink, Shadow Stride, Tunneling Claws, Nanomuscular Swell, Adaptive Talons, Microbial Shroud, Neural Parasite | `upgrades.ron` `effects: []` | B-miss | WP13d (Concussive); WP18 (the rest) |
-| B-69 | Only Siege Mode is a shipped ability. Cloak, burrow and blink mechanisms exist but no unit carries them. Missing: Medivac heal, repair, Queen inject and transfuse, the casters' spells (Feedback, Snipe, EMP, Fungal Growth, Blinding Cloud, Guardian Shield, Force Field), Viking and Liberator modes, Warp Prism phasing, permanent cloak (Dark Templar, Observer), Graviton Beam, Prismatic Alignment, KD8 Charge | `units.ron` `abilities` (only `railgun_crawler`) | B-miss | WP18 |
+| B-69 | Only Siege Mode is a shipped ability. Cloak, burrow and blink mechanisms exist but no unit carries them. Missing: Medivac heal, repair, Queen inject and transfuse, the casters' spells (Feedback, Snipe, EMP, Guardian Shield, Force Field; Psionic Storm, Abduct, Fungal Growth and Blinding Cloud shipped by plan `2026-11-10-spellcaster-mechanics`), Viking and Liberator modes, Warp Prism phasing, permanent cloak (Dark Templar, Observer), Graviton Beam, Prismatic Alignment, KD8 Charge | `units.ron` `abilities` (only `railgun_crawler`) | B-miss | WP18 |
 | B-70 | The Phoenix's Graviton Beam (combat F-5) | `flying_saucer` | B-miss | WP18 |
 
 ### 3.12 Documents that state a wrong StarCraft II fact or a deviation as fact
@@ -819,7 +819,7 @@ requires.
 | B-66 | A blocked exit stalls production | (i) | WP17 |
 | B-67 | Next-patch radius 12, task reach 0.75, site patience 50 ticks, boarding reach 1.0 | (i), narrowed | WP17 for the next-patch radius, which decides where workers go when a patch mines out. Task reach, site patience and boarding reach are (ii): tolerances of our own movers that decide when an order counts as arrived, with no observable game counterpart (as U-23) |
 | B-68 | 14 upgrades with no effect | (i) | WP13d, WP18; Psionic Storm unlocks the storm since plan `2026-11-10-spellcaster-mechanics` WP2b |
-| B-69 | Missing abilities | (i) | WP18; Psionic Storm, Abduct and Fungal Growth shipped by plan `2026-11-10-spellcaster-mechanics` WP2b, WP3b and WP4b, Blinding Cloud of that plan follows |
+| B-69 | Missing abilities | (i) | WP18; Psionic Storm, Abduct, Fungal Growth and Blinding Cloud shipped by plan `2026-11-10-spellcaster-mechanics` WP2b, WP3b, WP4b and WP5b; the rest of the list stays |
 | B-70 | No Graviton Beam | (i) | WP18 |
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
 | B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
