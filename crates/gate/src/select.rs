@@ -40,6 +40,8 @@ pub enum Reason {
     Crate(String),
     /// A downstream contract of this changed crate.
     Downstream(String),
+    /// The computed `@callers` contract of this changed crate: the target's code names it.
+    Callers(String),
     /// The path rule of this name matched a changed path.
     Rule(String),
     /// This trigger glob (of a target or a command) matched a changed path.
@@ -55,6 +57,7 @@ impl fmt::Display for Reason {
             Self::Complete => f.write_str("complete suite"),
             Self::Crate(name) => write!(f, "crate {name} changed"),
             Self::Downstream(name) => write!(f, "downstream of {name}"),
+            Self::Callers(name) => write!(f, "downstream of {name} (calls {name}::)"),
             Self::Rule(name) => write!(f, "rule `{name}`"),
             Self::Trigger(glob) => write!(f, "trigger `{glob}`"),
             Self::OwnFile(path) => write!(f, "own file {path}"),
@@ -309,9 +312,21 @@ pub fn select(
     for krate in &changed_crates {
         let reason = Reason::Crate(krate.clone());
         builder.add_crate(krate, &reason)?;
-        let downstream = Reason::Downstream(krate.clone());
         for reference in inputs.catalog.downstream.get(krate).into_iter().flatten() {
-            builder.add_ref(reference, &downstream)?;
+            let reason = if *reference == TargetRef::Callers {
+                Reason::Callers(krate.clone())
+            } else {
+                Reason::Downstream(krate.clone())
+            };
+            let ids = inputs.catalog.resolve_downstream(
+                krate,
+                reference,
+                inputs.workspace,
+                inputs.sources,
+            )?;
+            for id in ids {
+                builder.add(id, reason.clone());
+            }
         }
     }
     if complete.is_some() {
@@ -594,6 +609,33 @@ mod tests {
             TargetId::test("app", "x").kind,
             TargetKind::Test(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_callers_contract_selects_the_computed_callers_with_their_reason() -> Result<(), GateError>
+    {
+        let mut fixture = Fixture::new()?;
+        fixture
+            .catalog
+            .downstream
+            .insert("core".into(), vec![TargetRef::Callers]);
+        let caller = TargetId::test("app", "alloc_tests");
+        fixture.sources = fixture
+            .sources
+            .clone()
+            .with_callers("core", BTreeSet::from([caller.clone()]));
+        let selection = fixture.select(Tier::Package, &["crates/core/src/a.rs"])?;
+        assert!(selection.targets[&caller]
+            .reasons
+            .contains(&Reason::Callers("core".into())));
+        assert!(!selection
+            .targets
+            .contains_key(&TargetId::test("app", "headless_tests")));
+        assert_eq!(
+            Reason::Callers("core".into()).to_string(),
+            "downstream of core (calls core::)"
+        );
         Ok(())
     }
 

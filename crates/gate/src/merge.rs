@@ -77,7 +77,11 @@ pub fn changed_crates(
             if rule.paths.iter().any(|glob| glob.matches(path)) {
                 covered = true;
                 out.extend(rule.crates.iter().cloned());
-                out.extend(rule.targets.iter().map(|r| r.package().to_string()));
+                out.extend(
+                    rule.targets
+                        .iter()
+                        .filter_map(|r| r.package().map(ToString::to_string)),
+                );
             }
         }
         if !covered {

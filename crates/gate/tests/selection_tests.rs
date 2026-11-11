@@ -16,8 +16,8 @@
 //! - The paths used are real files of the repository; the tests check that before selecting.
 
 use gate::{
-    select, ClippyScope, CompleteCause, GateError, Inputs, Selection, SourceIndex, SuiteCatalog,
-    TargetId, TestClass, Tier, Workspace,
+    select, ClippyScope, CompleteCause, GateError, Inputs, Reason, Selection, SourceIndex,
+    SuiteCatalog, TargetId, TestClass, Tier, Workspace,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -263,6 +263,27 @@ fn a_workspace_input_selects_the_complete_suite() -> Result<(), GateError> {
         selection.targets.len(),
         repo.workspace.test_targets().count()
     );
+    Ok(())
+}
+
+#[test]
+fn the_sim_fixtures_contract_selects_its_callers_without_a_list() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let selection = repo.select(Tier::Package, &["crates/sim_fixtures/src/lib.rs"])?;
+    assert!(selection.complete.is_none());
+    let callers = Reason::Callers("sim_fixtures".to_string());
+    for wanted in [
+        "sim_core/golden_replay_tests",
+        "client/lib",
+        "asset_baker/veo_tests",
+    ] {
+        let reasons = selection.targets.get(&id(wanted)).map(|s| &s.reasons);
+        assert!(
+            reasons.is_some_and(|r| r.contains(&callers)),
+            "{wanted} must be selected as a caller: {reasons:?}"
+        );
+    }
+    assert!(!has(&selection, "client/gpu_validation_tests"));
     Ok(())
 }
 
