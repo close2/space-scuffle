@@ -339,13 +339,15 @@ fn duel(
                 .into_iter()
                 .filter(|event| event.owner() == ATTACKER && event.source().is_some()),
         );
-        let splashed = events
+        let searches = events
             .iter()
-            .any(|event| matches!(event, CombatEventVisual::SplashVisual { .. }));
-        let done = if shipped.weapon.splash.is_some() {
-            splashed
-        } else {
-            !events.is_empty()
+            .filter(|event| matches!(event, CombatEventVisual::SplashVisual { .. }))
+            .count();
+        // A line whose searches land on several ticks (B-85) has splashed once its last has.
+        let done = match shipped.weapon.splash.as_ref().map(|splash| &splash.shape) {
+            Some(sim_types::SplashShape::Line(line)) => searches >= line.offsets.len(),
+            Some(sim_types::SplashShape::Circle) => searches > 0,
+            None => !events.is_empty(),
         };
         if done || since_first > 60 {
             break;
@@ -441,12 +443,26 @@ fn each_shipped_splash_weapon_publishes_its_zones() {
 
 #[test]
 fn a_line_splash_emits_one_event_per_offset() {
+    line_splash_emits_one_event_per_offset(0);
+}
+
+/// B-85: a line whose searches land `period_ticks` apart publishes each search when it lands,
+/// numbered by its place in the whole line, with the whole line and the weapon's source.
+#[test]
+fn a_spaced_line_splash_emits_each_search_as_it_lands() {
+    line_splash_emits_one_event_per_offset(2);
+}
+
+/// A scratch unit fires a three-search line (offsets 1, 2.5 and 4, searches `period_ticks`
+/// apart); its renderer events carry one `SplashVisual` per search, in order.
+fn line_splash_emits_one_event_per_offset(period_ticks: u16) {
     let mut world = flat_world(0x0e_ff05);
-    let line: SplashSpec = ron::from_str(
+    let line: SplashSpec = ron::from_str(&format!(
         "(zones: [(radius: 0.5, fraction: 1.0), (radius: 0.75, fraction: 0.5)],
-          shape: Line((origin: Attacker, axis: Along, offsets: [1.0, 2.5, 4.0])),
-          friendly_fire: false)",
-    )
+          shape: Line((origin: Attacker, axis: Along, offsets: [1.0, 2.5, 4.0],
+                       period_ticks: {period_ticks})),
+          friendly_fire: false)"
+    ))
     .expect("a valid line splash in RON");
     let base = world
         .catalog

@@ -172,10 +172,11 @@ pub struct BarrierSpec {
 ///
 /// While its unit has an attack order on a visible enemy, is not holding position and the dash
 /// is off cooldown, the dash starts as soon as the target's gap (centre distance less both
-/// collision radii) exceeds `min_gap` and its centre lies closer than `max_distance`: the unit's
-/// speed is multiplied by `speed_multiplier` for `duration_ticks` ticks, counting the tick it
-/// starts, or until the unit's weapon starts a swing, and `cooldown_ticks` starts. Distances are
-/// world units; times are simulation ticks (25 per Faster second).
+/// collision radii) exceeds `min_gap` and its centre lies closer than `max_distance` along the
+/// ground path the unit walks: the unit's speed is multiplied by `speed_multiplier` for
+/// `duration_ticks` ticks, counting the tick it starts, until the unit's weapon starts a swing,
+/// or until an explicit move, stop or hold-position order, and `cooldown_ticks` starts.
+/// Distances are world units; times are simulation ticks (25 per Faster second).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttackDashSpec {
     /// Factor applied to the unit's movement speed while the dash lasts.
@@ -186,7 +187,8 @@ pub struct AttackDashSpec {
     pub cooldown_ticks: u16,
     /// Edge-to-edge gap to the target, world units, that a dash needs to exceed.
     pub min_gap: SimScalar,
-    /// Centre-to-centre distance to the target, world units, below which a dash may start.
+    /// Distance to the target's centre, world units, below which a dash may start: the length of
+    /// the unit's ground path to it, or the straight line where no path can be measured.
     pub max_distance: SimScalar,
 }
 

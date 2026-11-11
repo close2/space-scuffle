@@ -556,6 +556,7 @@ fn scratch_catalog(dir: &std::path::Path, slug: &str, period: u16) -> TestResult
         ("units.ron", edited.as_str()),
         ("structures.ron", sim_fixtures::STRUCTURES_RON),
         ("upgrades.ron", sim_fixtures::UPGRADES_RON),
+        ("movement_rules.ron", sim_fixtures::MOVEMENT_RULES_RON),
         ("start_loadouts.ron", sim_fixtures::START_LOADOUTS_RON),
     ] {
         std::fs::write(dir.join(name), text)?;

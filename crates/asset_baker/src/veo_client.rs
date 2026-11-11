@@ -152,6 +152,15 @@ pub struct GenerationImages<'a> {
     pub end: Option<&'a Path>,
 }
 
+/// Where a finished generation's video is, for [`VeoClient::store_video`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VideoSource<'a> {
+    /// Base64-encoded MP4 bytes from the response.
+    Inline(&'a str),
+    /// An HTTPS URI on a trusted host.
+    Uri(&'a str),
+}
+
 impl GenerationImages<'_> {
     /// No picture: text-to-video.
     #[must_use]
@@ -216,6 +225,12 @@ pub struct VeoParameters {
     /// service picks one; a ledger line written before the field existed reads as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u32>,
+    /// Output resolution (`"360p"`, `"720p"`, ...). Veo requests never send it (Veo 3.1 Fast
+    /// returns 720p); the Gemini Omni client (`omni_client`) records here the resolution it
+    /// sent. `None` sends no field, and a ledger line written before the field existed reads
+    /// as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
 }
 
 impl Default for VeoParameters {
@@ -229,6 +244,7 @@ impl Default for VeoParameters {
             generate_audio: None,
             negative_prompt: None,
             seed: None,
+            resolution: None,
         }
     }
 }
@@ -308,6 +324,7 @@ impl VeoRequestSettings {
             generate_audio: self.generate_audio,
             negative_prompt: self.negative_prompt.clone(),
             seed: None,
+            resolution: None,
         }
     }
 }
@@ -333,6 +350,9 @@ impl std::fmt::Display for VeoParameters {
         }
         if let Some(value) = self.seed {
             fields.push(format!("seed {value}"));
+        }
+        if let Some(value) = &self.resolution {
+            fields.push(format!("resolution {value}"));
         }
         f.write_str(&fields.join(", "))
     }
@@ -1013,11 +1033,32 @@ impl VeoClient {
     /// operation itself, except the failure that the API reports. Also returns
     /// [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
     pub fn poll_operation(&self, operation_name: &str) -> Result<VeoOperation, BakerError> {
-        let deadline = std::time::Instant::now() + self.poll_timeout;
         let url = self.build_poll_url(operation_name)?;
         let poll_body = self
             .is_vertex_ai()
             .then(|| serde_json::json!({ "operationName": operation_name }).to_string());
+        self.poll_until_done(
+            operation_name,
+            &url,
+            poll_body.as_deref(),
+            self.poll_timeout,
+            &|json| self.parse_polled_operation(operation_name, json),
+        )
+    }
+
+    /// The polling loop of [`Self::poll_operation`], shared with the Gemini Omni client: polls
+    /// `url` (a POST of `poll_body`, or a GET without one) until `parse` reports a finished
+    /// operation, for at most `timeout`, retrying transient faults and unparsable bodies as
+    /// [`Self::poll_operation`] documents.
+    pub(crate) fn poll_until_done(
+        &self,
+        operation_name: &str,
+        url: &str,
+        poll_body: Option<&str>,
+        timeout: Duration,
+        parse: &dyn Fn(serde_json::Value) -> Result<VeoOperation, BakerError>,
+    ) -> Result<VeoOperation, BakerError> {
+        let deadline = std::time::Instant::now() + timeout;
         let mut consecutive_faults = 0;
 
         loop {
@@ -1029,12 +1070,8 @@ impl VeoClient {
             }
 
             let attempt = self
-                .api_request(
-                    &url,
-                    poll_body.as_deref(),
-                    remaining.min(API_REQUEST_TIMEOUT),
-                )
-                .and_then(|json| self.parse_polled_operation(operation_name, json));
+                .api_request(url, poll_body, remaining.min(API_REQUEST_TIMEOUT))
+                .and_then(parse);
 
             let wait = match attempt {
                 Ok(op) if op.done => return Ok(op),
@@ -1123,7 +1160,38 @@ impl VeoClient {
             }
         }
 
+        if let Some(b64_str) = find_base64_video(resp_val) {
+            return self.store_video(VideoSource::Inline(&b64_str), destination_mp4);
+        }
+        if let Some(uri) = find_video_uri(resp_val) {
+            return self.store_video(VideoSource::Uri(&uri), destination_mp4);
+        }
+        Err(BakerError::VeoApiError {
+            message: self.redact(&format!(
+                "Could not find video bytes or URI in operation response: {resp_val}"
+            )),
+        })
+    }
+
+    /// Writes the video `source` names to `destination_mp4`: inline base64 bytes are decoded,
+    /// and a URI is downloaded under the redirect policy of the module docs. The file reaches
+    /// `destination_mp4` only by an atomic rename after `ffprobe` read every packet of it.
+    /// Shared with the Gemini Omni client.
+    ///
+    /// # Errors
+    /// [`BakerError::VeoApiError`] for bytes that are not base64,
+    /// [`BakerError::VideoValidationFailed`] for data that is not a complete video, a download
+    /// error, or [`BakerError::Io`].
+    pub(crate) fn store_video(
+        &self,
+        source: VideoSource<'_>,
+        destination_mp4: &Path,
+    ) -> Result<(), BakerError> {
         let parent = destination_mp4.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|source| BakerError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
         let partial = tempfile::Builder::new()
             .prefix(".veo-download-")
             .suffix(".part")
@@ -1132,52 +1200,36 @@ impl VeoClient {
                 path: parent.to_path_buf(),
                 source,
             })?;
-
-        let found = if let Some(b64_str) = find_base64_video(resp_val) {
-            // 1. Inline base64 video bytes
-            let bytes =
-                BASE64_STANDARD
-                    .decode(b64_str.trim())
-                    .map_err(|e| BakerError::VeoApiError {
+        match source {
+            VideoSource::Inline(b64_str) => {
+                let bytes = BASE64_STANDARD.decode(b64_str.trim()).map_err(|e| {
+                    BakerError::VeoApiError {
                         message: format!("Base64 decoding failed for video output: {e}"),
-                    })?;
-            std::fs::write(partial.path(), &bytes).map_err(|source| BakerError::Io {
-                path: partial.path().to_path_buf(),
-                source,
-            })?;
-            true
-        } else if let Some(uri) = find_video_uri(resp_val) {
-            // 2. Downloadable video URI
-            self.with_retries(is_transient, || self.download(&uri, partial.path()))?;
-            true
-        } else {
-            false
-        };
-
-        if found {
-            probe_video(&self.ffprobe_path, partial.path()).map_err(|error| match error {
-                BakerError::VideoValidationFailed { reason, .. } => {
-                    BakerError::VideoValidationFailed {
-                        path: destination_mp4.to_path_buf(),
-                        reason,
                     }
-                }
-                other => other,
-            })?;
-            partial
-                .persist(destination_mp4)
-                .map_err(|error| BakerError::Io {
-                    path: destination_mp4.to_path_buf(),
-                    source: error.error,
                 })?;
-            return Ok(());
+                std::fs::write(partial.path(), &bytes).map_err(|source| BakerError::Io {
+                    path: partial.path().to_path_buf(),
+                    source,
+                })?;
+            }
+            VideoSource::Uri(uri) => {
+                self.with_retries(is_transient, || self.download(uri, partial.path()))?;
+            }
         }
-
-        Err(BakerError::VeoApiError {
-            message: self.redact(&format!(
-                "Could not find video bytes or URI in operation response: {resp_val}"
-            )),
-        })
+        probe_video(&self.ffprobe_path, partial.path()).map_err(|error| match error {
+            BakerError::VideoValidationFailed { reason, .. } => BakerError::VideoValidationFailed {
+                path: destination_mp4.to_path_buf(),
+                reason,
+            },
+            other => other,
+        })?;
+        partial
+            .persist(destination_mp4)
+            .map_err(|error| BakerError::Io {
+                path: destination_mp4.to_path_buf(),
+                source: error.error,
+            })?;
+        Ok(())
     }
 
     /// Classifies a finished operation for the ledger (plan D-3, D-4).
@@ -1266,31 +1318,66 @@ impl VeoClient {
     /// [`BakerError::CurlExecutionFailed`], [`BakerError::InvalidApiKey`]).
     pub fn preflight(&self) -> Result<PreflightReport, BakerError> {
         let url = self.build_model_url()?;
-        ensure_trusted_host(&url)?;
+        let probe = self.get_status(&url)?;
+        Ok(PreflightReport {
+            mode: self.mode(),
+            model: self.model.clone(),
+            http_status: probe.http_status,
+            error_status: probe.error_status,
+        })
+    }
+
+    /// One authenticated GET of `url` for a free check: the HTTP status and, for a refusal,
+    /// the `status` and redacted `message` of Google's error body, instead of failing.
+    ///
+    /// # Errors
+    /// [`BakerError::UntrustedHost`], or a transport failure ([`BakerError::Io`],
+    /// [`BakerError::CurlExecutionFailed`], [`BakerError::InvalidApiKey`]).
+    pub(crate) fn get_status(&self, url: &str) -> Result<ProbeStatus, BakerError> {
+        ensure_trusted_host(url)?;
         let response_file = tempfile::NamedTempFile::new().map_err(|source| BakerError::Io {
             path: std::env::temp_dir(),
             source,
         })?;
-        let (http_status, error_status) = match self.run_curl(&CurlRequest {
-            url: &url,
+        match self.run_curl(&CurlRequest {
+            url,
             post_body: None,
             authenticated: true,
             output: response_file.path(),
             max_time: API_REQUEST_TIMEOUT,
         }) {
-            Ok(response) => (response.status, None),
+            Ok(response) => Ok(ProbeStatus {
+                http_status: response.status,
+                error_status: None,
+                message: None,
+            }),
             Err(BakerError::VeoHttpStatus { status, body }) => {
-                (status, google_error(&body).and_then(|e| e.status))
+                // `body` is already redacted and cut to `ERROR_BODY_LIMIT` bytes.
+                let parsed = google_error(&body);
+                let message = match &parsed {
+                    Some(error) => self.redact(&error.message),
+                    None => body.trim().to_string(),
+                };
+                Ok(ProbeStatus {
+                    http_status: status,
+                    error_status: parsed.and_then(|e| e.status),
+                    message: (!message.is_empty()).then_some(message),
+                })
             }
-            Err(other) => return Err(other),
-        };
-        Ok(PreflightReport {
-            mode: self.mode(),
-            model: self.model.clone(),
-            http_status,
-            error_status,
-        })
+            Err(other) => Err(other),
+        }
     }
+}
+
+/// The answer to one free check ([`VeoClient::get_status`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeStatus {
+    /// HTTP status of the request.
+    pub http_status: u16,
+    /// The `status` field of a Google error body, such as `PERMISSION_DENIED`.
+    pub error_status: Option<String>,
+    /// The error body's message, with the key redacted.
+    pub message: Option<String>,
 }
 
 impl VeoClient {

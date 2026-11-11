@@ -10,6 +10,7 @@ pub(crate) mod collision;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
+pub mod groups;
 mod locomotion;
 pub(crate) mod math;
 pub(crate) mod tuning;
@@ -167,6 +168,19 @@ pub enum RouteOutcomeKind {
     PursuitAbandoned {
         /// The target given up on.
         target: EntityId,
+    },
+    /// A route group member ran the restricted search for its group's lane (plan
+    /// `2026-11-10-group-routing`, D-4 step 5): its own route was in another lane.
+    GroupLane {
+        /// The member's group.
+        group: groups::RouteGroupId,
+        /// Length of the member's own shortest route, in world units.
+        own_length: SimScalar,
+        /// Length of the shortest route in the group's lane, in world units; `None` when the
+        /// lane admits no route for the member.
+        lane_length: Option<SimScalar>,
+        /// Whether the member walks the lane route (it is within the tolerance).
+        adopted: bool,
     },
 }
 
@@ -419,6 +433,9 @@ impl SimWorld {
                 }
             }
         }
+        let recipients = std::mem::take(&mut self.movement.recipients);
+        self.form_route_group(player, &recipients, order);
+        self.movement.recipients = recipients;
         Ok(receipt)
     }
 

@@ -609,6 +609,9 @@ impl SimWorld {
     /// Replaces the front task order of `id` with `order`, starting it from a clean leg.
     pub(crate) fn replace_task_order(&mut self, id: EntityId, order: UnitOrder) {
         if let Some(actor) = self.entities.get_mut(&id) {
+            // Task orders only: a route order inserted here would bypass the ordinal count of
+            // route groups (plan `2026-11-10-group-routing`, D-1).
+            debug_assert!(!crate::entity::is_route_order(&order));
             actor.order_queue.pop_front();
             actor.order_queue.push_front(order);
             actor.abandon_task_leg();

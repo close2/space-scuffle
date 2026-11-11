@@ -13,6 +13,8 @@
 //!   settled on the same destination. Standing still proves nothing about a neighbour.
 //! - A unit that stops getting closer rebuilds its route, and in the end gives the order up.
 //! - An unreachable destination is replaced by the nearest reachable point and reported.
+//! - A unit with a finite deceleration brakes at it into its destination and into its weapon's
+//!   range, and glides to rest at it when its order ends without arriving (B-39, Q0067).
 //!
 //! Pursuit obeys the same route, steering and contact rules. Only its goal moves.
 //!
@@ -713,6 +715,8 @@ impl SimWorld {
         // actor while preparing compact scalar edits and optional new path ownership.
         // Trade-off: Buff/radius validation is phase-entry work; scratch capacities
         // grow at population high-water marks, while pathfinding retains its costs.
+        self.reconcile_route_groups();
+        self.compute_group_lanes();
         let mut entries = std::mem::take(&mut self.movement.entries);
         entries.clear();
         let mut pursuits = std::mem::take(&mut self.movement.pursuits);
@@ -800,7 +804,7 @@ impl SimWorld {
                 reason: "validated actor disappeared",
             })?;
         let proposal = MotionProposal::new(actor, policy);
-        let (proposal, target) = match self.walking_goal(id, actor, proposal)? {
+        let (proposal, target) = match self.walking_goal(entry, actor, proposal)? {
             ControlFlow::Continue(walk) => walk,
             ControlFlow::Break(action) => return Ok(action),
         };
@@ -837,6 +841,8 @@ impl SimWorld {
             pathfinder: &mut self.pathfinder,
             movement: &mut self.movement,
             current_tick: self.current_tick,
+            route_groups: &self.route_groups,
+            lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let walked = draft.walk(&mut scene, &mut neighbours, check_route, map_news);
@@ -851,10 +857,11 @@ impl SimWorld {
     /// casts or has nothing to do. Continues with the proposal and the goal in world units.
     fn walking_goal(
         &self,
-        id: EntityId,
+        entry: MotionEntry,
         actor: &Entity,
         mut proposal: MotionProposal,
     ) -> Result<ControlFlow<MotionAction, (MotionProposal, SimVec2)>, MovementInvariant> {
+        let id = entry.id;
         if actor.is_on_hold() || actor.is_immobile || actor.channeling_remaining_ticks > 0 {
             // A cast queued behind an anchored unit's orders runs when it reaches the front
             // (plan `2026-11-09-client-mode-commands` D-6b): a sieged tank told to focus and
@@ -876,7 +883,11 @@ impl SimWorld {
                 }
             }
             proposal.clear_route = false;
-            proposal.velocity = SimVec2::ZERO;
+            if actor.is_immobile || actor.channeling_remaining_ticks > 0 {
+                proposal.velocity = SimVec2::ZERO;
+            } else {
+                self.coast(entry, actor, &mut proposal)?;
+            }
             return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
         }
         let arch = self
@@ -914,14 +925,51 @@ impl SimWorld {
                 ))))
             }
             _ => {
-                proposal.velocity = SimVec2::ZERO;
-                if proposal.anim == AnimState::Walk {
+                self.coast(entry, actor, &mut proposal)?;
+                if proposal.velocity == SimVec2::ZERO && proposal.anim == AnimState::Walk {
                     proposal.anim = AnimState::Idle;
                 }
                 return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
             }
         };
         Ok(ControlFlow::Continue((proposal, target)))
+    }
+
+    /// Settles a unit with no walk this tick, whose order ended without arriving or which holds
+    /// (B-39, the owner's answer to Q0067): a unit with a finite deceleration glides on along its
+    /// last velocity, losing its deceleration each tick until it rests; terrain that refuses the
+    /// glide stops it at once. Any other unit rests now; its animation is the caller's.
+    fn coast(
+        &self,
+        entry: MotionEntry,
+        actor: &Entity,
+        proposal: &mut MotionProposal,
+    ) -> Result<(), MovementInvariant> {
+        let id = entry.id;
+        let fault = |e| arithmetic(id, e);
+        let mut glide = None;
+        // Only a unit that walked last tick has momentum of its own: the velocity of one that
+        // stood is what a push gave it, and a push does not carry on.
+        let walked = actor.current_anim == AnimState::Walk && actor.velocity != SimVec2::ZERO;
+        if let Some(deceleration) = entry.deceleration.filter(|_| walked) {
+            let speed = distance(actor.velocity, SimVec2::ZERO).map_err(fault)?;
+            let left = speed.saturating_sub(deceleration);
+            if left > SimScalar::ZERO {
+                let heading = direction(actor.velocity, SimVec2::ZERO).map_err(fault)?;
+                let step = checked_vec_scale(heading, left).map_err(fault)?;
+                let to = checked_vec_add(actor.position, step).map_err(fault)?;
+                if entry.policy.permits_segment(&self.map, actor.position, to) {
+                    glide = Some((to, step));
+                }
+            }
+        }
+        if let Some((to, step)) = glide {
+            proposal.position = to;
+            proposal.velocity = step;
+        } else {
+            proposal.velocity = SimVec2::ZERO;
+        }
+        Ok(())
     }
 
     /// Prepares one pursuer's motion toward `target_id`: aim when in range, otherwise chase.
@@ -946,6 +994,7 @@ impl SimWorld {
         let mut proposal = MotionProposal::new(actor, policy);
         if !self.is_entity_available_for_combat(actor.owner, target_id) {
             proposal.end_attack();
+            self.coast(entry, actor, &mut proposal)?;
             return Ok(proposal);
         }
         let target = self
@@ -957,6 +1006,7 @@ impl SimWorld {
             })?;
         let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
             proposal.end_attack();
+            self.coast(entry, actor, &mut proposal)?;
             return Ok(proposal);
         };
         if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
@@ -987,6 +1037,8 @@ impl SimWorld {
             pathfinder: &mut self.pathfinder,
             movement: &mut self.movement,
             current_tick: self.current_tick,
+            route_groups: &self.route_groups,
+            lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
@@ -1119,6 +1171,10 @@ struct MotionScene<'a> {
     pathfinder: &'a mut Pathfinder,
     movement: &'a mut MovementWorkspace,
     current_tick: u32,
+    /// The world's route groups (plan `2026-11-10-group-routing`).
+    route_groups: &'a [super::groups::RouteGroup],
+    /// The catalog's lane tolerance in permille; 0 switches group routing off.
+    lane_tolerance: u16,
 }
 
 impl MotionScene<'_> {
@@ -1231,7 +1287,7 @@ impl MotionDraft<'_> {
         check_route: bool,
         map_news: bool,
     ) -> Result<(), MovementInvariant> {
-        self.brake()?;
+        self.brake(SimScalar::ZERO)?;
         if self.upkeep_route(scene, check_route)?.is_break() {
             return Ok(());
         }
@@ -1259,9 +1315,10 @@ impl MotionDraft<'_> {
         self.propose_step(&context, next, gap)
     }
 
-    /// Lowers this tick's step so a unit with a finite deceleration can stop on its goal,
-    /// measuring the way left along its stored route and on to the goal.
-    fn brake(&mut self) -> Result<(), MovementInvariant> {
+    /// Lowers this tick's step so a unit with a finite deceleration can stop `short` world units
+    /// before its goal (zero for a walk's destination, the weapon's reach between centres for a
+    /// chase), measuring the way left along its stored route and on to the goal.
+    fn brake(&mut self, short: SimScalar) -> Result<(), MovementInvariant> {
         let Some(deceleration) = self.entry.deceleration else {
             return Ok(());
         };
@@ -1274,6 +1331,7 @@ impl MotionDraft<'_> {
                 .ok_or_else(|| arithmetic(self.entry.id, MovementMathError::Unrepresentable))?;
             from = point;
         }
+        let remaining = remaining.saturating_sub(short).max(SimScalar::ZERO);
         let limit = braking_speed(remaining, deceleration).map_err(self.fault())?;
         self.entry.step = self.entry.step.min(limit);
         Ok(())
@@ -1328,7 +1386,18 @@ impl MotionDraft<'_> {
             actor.owner.0,
         );
         let path = match search {
-            RouteSearch::Found(path) => path,
+            // A member of a route group may take its group's lane instead (group-routing D-4).
+            RouteSearch::Found(path) => super::groups::GroupedSearch {
+                groups: scene.route_groups,
+                tolerance: scene.lane_tolerance,
+                pathfinder: scene.pathfinder,
+                map: scene.map,
+                request: &self.request,
+                events: &mut scene.movement.route_outcomes,
+                searches: &mut scene.movement.path_searches,
+                tick: self.tick,
+            }
+            .decide(actor, self.goal, path),
             RouteSearch::Retargeted(reachable, path) => {
                 scene.movement.route_outcomes.push(RouteOutcome {
                     tick: self.tick,
@@ -1532,6 +1601,9 @@ impl MotionDraft<'_> {
         if self.ground && self.cooled_down && stale {
             self.proposal.drop_route();
         }
+        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39).
+        let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
+        self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         let context = StepContext {
             surround: self.entry.surround_walk.then_some(Some(pursuit.target)),

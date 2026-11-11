@@ -153,6 +153,7 @@ fn every_public_entity_field_changes_the_world_checksum() {
             weapon_phase => WeaponPhase::Cooldown,
             weapon_cooldown_remaining => 7,
             pending_strikes => Some(sim_core::PendingStrikes { target_id: EntityId(2), plane: MoverType::Ground, remaining: 1, ticks_until_next: 5, channeled: false }),
+            pending_line => Some(sim_core::PendingLine { points: vec![point(1, 2)], ticks_until_next: 2, plane: MoverType::Ground, angle: SimAngle::PI, primary: EntityId(2), struck: vec![EntityId(3)], view: sim_core::PendingLineView { effect: sim_types::EffectSource::default(), line: None, count: 2 } }),
             active_buffs => vec![ActiveBuff { buff_id: 1, remaining_ticks: 2, speed_multiplier: SimScalar::ONE, attack_rate_multiplier: SimScalar::ONE }],
             production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, paid_minerals: 5, paid_gas: 6 }].into(),
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
@@ -281,6 +282,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
         origin: sim_types::SplashLineOrigin::Attacker,
         axis: sim_types::SplashLineAxis::Along,
         offsets: vec![SimScalar::ONE],
+        period_ticks: 0,
     };
     assert_mutations(
         &original,
@@ -327,6 +329,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 origin: sim_types::SplashLineOrigin::Attacker,
                 axis: sim_types::SplashLineAxis::Along,
                 offsets: vec![SimScalar::ONE],
+                period_ticks: 0,
             }),
             friendly_fire => true,
         },
@@ -347,6 +350,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             origin => sim_types::SplashLineOrigin::Target,
             axis => sim_types::SplashLineAxis::Across,
             offsets => vec![SimScalar::HALF],
+            period_ticks => 2,
         },
         |line| {
             let mut weapon = original.clone();

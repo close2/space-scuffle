@@ -1,11 +1,11 @@
 //! Filesystem boundary for complete external simulation rule bundles.
 //!
-//! Loads the four selected files in fixed order (`factions.ron` first, because the others name
-//! its factions and classes) and returns a bundle only after all parse and authored-data checks
+//! Loads the five selected files in fixed order (`factions.ron` first, because the others name
+//! its factions and classes; `movement_rules.ron` last) and returns a bundle only after all parse and authored-data checks
 //! succeed. Errors preserve the failing file path; no embedded definitions or alternate
 //! directories replace missing inputs.
 
-use super::{FactionCatalog, UnitCatalog};
+use super::{FactionCatalog, MovementRules, UnitCatalog};
 use crate::error::SimCoreError;
 use crate::upgrades::UpgradeCatalog;
 use std::path::{Path, PathBuf};
@@ -44,7 +44,9 @@ pub enum CatalogLoadError {
 }
 
 impl RuntimeCatalogs {
-    /// Loads `factions.ron`, `units.ron`, `structures.ron`, and `upgrades.ron` from `directory`.
+    /// Loads `factions.ron`, `units.ron`, `structures.ron`, `upgrades.ron` and
+    /// `movement_rules.ron` from `directory`; the movement rules travel in the unit catalog
+    /// ([`UnitCatalog::movement_rules`]).
     ///
     /// The directory is the catalog directory itself, typically `asset_root/catalog`.
     /// Definitions are read at call time, so restarting the same binary observes edits.
@@ -98,6 +100,14 @@ impl RuntimeCatalogs {
                 path: upgrades_path,
                 source,
             })?;
+        let rules_path = directory.join("movement_rules.ron");
+        let rules = MovementRules::from_ron_str(&read(&rules_path)?).map_err(|source| {
+            CatalogLoadError::Invalid {
+                path: rules_path,
+                source,
+            }
+        })?;
+        units.set_movement_rules(rules);
         Ok(Self { units, upgrades })
     }
 }

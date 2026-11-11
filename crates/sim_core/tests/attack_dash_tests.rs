@@ -17,7 +17,7 @@
 )]
 
 use sim_core::{SimWorld, UnitArchetype, UpgradeCatalog, WeaponSpec};
-use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
     AttackDashSpec, AttributeBonuses, AttributeFlags, EntityId, PlayerId, SimAngle, SimScalar,
     SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId, WeaponVisualKind,
@@ -163,7 +163,16 @@ impl Duel {
         target_x: f64,
         order: impl FnOnce(EntityId) -> UnitOrder,
     ) -> Self {
-        let mut world = flat_world();
+        Self::on(flat_world(), spec, target_x, order)
+    }
+
+    /// As [`Self::new`], in `world`.
+    fn on(
+        mut world: SimWorld,
+        spec: Option<AttackDashSpec>,
+        target_x: f64,
+        order: impl FnOnce(EntityId) -> UnitOrder,
+    ) -> Self {
         let dasher_type = register_dasher(&mut world, spec);
         let target_type = register_target(&mut world);
         let dasher = world
@@ -445,4 +454,114 @@ fn b43_the_shipped_zealot_analogue_carries_charge_and_dashes_once_researched() {
     // 3.375 Normal = 4.725 Faster = 0.189 a tick with Charge's speed, × 2.2 = 0.4158.
     let (dashed, dashing) = shipped_zealot_first_step(true);
     assert!(dashing && close(dashed, 0.4158), "{dashed} {dashing}");
+}
+
+/// Issues `order` to the dasher now, replacing its orders.
+fn order_now(duel: &mut Duel, order: UnitOrder) {
+    duel.world
+        .entities
+        .get_mut(&duel.dasher)
+        .expect("dasher")
+        .issue_order(order, false)
+        .expect("order admitted");
+}
+
+#[test]
+fn q0071_an_explicit_non_attack_order_ends_a_running_dash() {
+    // The owner's engine note on Q0071: `Charging` ends when the player cancels the attack with
+    // `Move`, `Stop` or `HoldPosition`.
+    let orders = [
+        UnitOrder::Move {
+            target: at(10.0, 20.0),
+        },
+        UnitOrder::Stop,
+        UnitOrder::HoldPosition,
+    ];
+    for order in orders {
+        let mut duel = Duel::new(Some(dash(40, 100)), 13.9, UnitOrder::attack);
+        let trace = duel.steps(1);
+        assert!(trace[0].1, "dashing before the order: {trace:?}");
+        order_now(&mut duel, order.clone());
+        assert!(
+            !duel.world.entities[&duel.dasher].is_attack_dashing(),
+            "{order:?} ends the dash at once"
+        );
+        let after = duel.steps(3);
+        assert!(
+            after.iter().all(|&(_, dashing, _)| !dashing),
+            "{order:?}: {after:?}"
+        );
+        assert_eq!(
+            duel.world.entities[&duel.dasher].attack_dash_cooldown,
+            100 - 3,
+            "{order:?} leaves the cooldown running from the dash's start"
+        );
+    }
+}
+
+#[test]
+fn q0071_an_attack_retarget_or_attack_move_keeps_a_running_dash() {
+    for retarget in [true, false] {
+        let mut duel = Duel::new(Some(dash(40, 100)), 13.9, UnitOrder::attack);
+        let other_type = duel.world.entities[&duel.target].unit_type_id;
+        let other = duel
+            .world
+            .spawn_unit(other_type, PlayerId(1), at(10.0, 16.0))
+            .expect("spawn a second target");
+        let trace = duel.steps(1);
+        assert!(trace[0].1, "dashing before the order: {trace:?}");
+        let order = if retarget {
+            UnitOrder::attack(other)
+        } else {
+            UnitOrder::AttackMove {
+                target: at(10.0, 30.0),
+            }
+        };
+        order_now(&mut duel, order.clone());
+        assert!(
+            duel.world.entities[&duel.dasher].is_attack_dashing(),
+            "{order:?} keeps the dash"
+        );
+        let after = duel.steps(2);
+        assert!(
+            after.iter().all(|&(_, dashing, _)| dashing),
+            "{order:?}: {after:?}"
+        );
+    }
+}
+
+/// A flat world with a wall of unpathable cells at column 11, rows 0 to 12: between a dasher at
+/// (10, 10) and a target at (13.5, 10) the straight line is 3.5 and the walk round the wall's end
+/// about 9.3.
+fn walled_world() -> SimWorld {
+    let cell = MapCell::default_ground(CliffLevel(0));
+    let mut map = GameMap::new(64, 64, cell).expect("invariant: valid map");
+    for y in 0..=12 {
+        map.cell_mut(11, y).expect("in bounds").flags = CellFlags::empty();
+    }
+    sim_fixtures::world(map, 0x0b43)
+}
+
+#[test]
+fn q0071_the_maximum_is_the_walk_not_the_straight_line() {
+    // `ChargeMaxDistance` compares with `Pathing 1` (`liberty` ValidatorData:1697-1704): the
+    // owner's engine note on Q0071 reads it as the ground path distance.
+    let mut duel = Duel::on(walled_world(), Some(dash(40, 300)), 13.5, UnitOrder::attack);
+    let mut trace = Vec::new();
+    let mut start = None;
+    for _ in 0..60 {
+        let step = duel.step();
+        trace.push(step);
+        if step.1 {
+            start = Some(duel.world.entities[&duel.dasher].position);
+            break;
+        }
+    }
+    let start = start.expect("a dash once the walk left is below 4");
+    // Walking 0.2 a tick, the dasher must cover more than 5 of the 9.3 first.
+    assert!(trace.len() > 25, "{}: {trace:?}", trace.len());
+    assert!(
+        start.y > SimScalar::from_num(12),
+        "the dash starts round the wall's end, not through it: {start:?}"
+    );
 }

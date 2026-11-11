@@ -53,7 +53,11 @@ use std::path::PathBuf;
 /// whether each splash is centred on its target's edge.
 /// Re-recorded for checksum schema 25 (plan 2026-11-09-friendly-blocking WP3, B-104, B-105), which
 /// encodes each unit's surround-walk state, all at its defaults at spawn.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_815_478_854_166_671_532;
+/// Re-recorded for checksum schema 26 (B-85), which encodes each splash line's search period
+/// and each unit's pending line searches, none at spawn.
+/// Re-recorded for checksum schema 27 (plan 2026-11-10-group-routing WP3), which encodes each
+/// unit's count of route orders issued (0 at spawn) and the world's route groups (none).
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_298_638_387_780_327_088;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
@@ -124,6 +128,10 @@ fn embedded_catalogs_are_the_shipped_files() -> Result<(), Box<dyn Error>> {
             .collect::<Vec<_>>()
     };
     assert_eq!(slugs(&embedded), slugs(&on_disk));
+    assert_eq!(
+        embedded.units.movement_rules(),
+        on_disk.units.movement_rules()
+    );
     assert_eq!(
         embedded
             .upgrades

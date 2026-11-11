@@ -49,7 +49,7 @@ replaces the unit's orders) and `885002a` (a queued switch reaches an anchored u
 the whole matrix, battle 33 and the golden replays; `99a97c8` (the catalog's `leave_name`, `PlayerView` mode states and
 ability locks); `11a5874` (client admission with the direction checked again at the tick); `a007e4c` (card entries
 and the `Transforming` lock); `372b165` (`battle_mode_tests`, through input alone); `c0d4ca8` (records). Keys stay
-positional meanwhile ([Q0072](../open/0072-per-ability-hotkeys.md)).
+positional meanwhile ([Q0072](0072-per-ability-hotkeys.md)).
 
 **Remaining gap: media.** The Lurker analogue (`burrow_scorpion`) has no media yet
 (`assets/textures/burrow_scorpion.flipbook.ron` is absent), and the client stops a battle that would present it, so a

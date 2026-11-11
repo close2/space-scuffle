@@ -1,0 +1,14 @@
+// Movement rules that are not a property of one unit archetype.
+//
+// `group_routing.lane_tolerance_permille`: group-consistent routing (plan
+// `docs/plans/2026-11-10-group-routing.md`, D-7; owner answer Q0079, option 2; sanctioned
+// deviation S-7 of plan `2026-11-05-sc2-deviation-fixes`). Ground units given one Move or
+// AttackMove command together take the lane (the side of every terrain obstacle) of the
+// group's leader whenever that route is at most this many thousandths longer than the unit's
+// own shortest route. 0 switches the rule off: every unit routes on its own, as in
+// StarCraft II. Allowed range 0 to 1000.
+(
+    group_routing: (
+        lane_tolerance_permille: 75,
+    ),
+)

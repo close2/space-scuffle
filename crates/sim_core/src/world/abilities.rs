@@ -624,7 +624,7 @@ impl SimWorld {
             if let Ok(Some(flee_target)) = flee {
                 if let Some(unit) = self.entities.get_mut(&id) {
                     unit.order_queue.clear();
-                    unit.order_queue.push_back(UnitOrder::Move {
+                    unit.enqueue_order(UnitOrder::Move {
                         target: flee_target,
                     });
                     unit.current_funnel_waypoints.clear();

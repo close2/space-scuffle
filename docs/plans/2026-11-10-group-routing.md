@@ -1,6 +1,6 @@
 # Blueprint: Group-Consistent Routing (a group ordered together keeps one lane)
 
-The owner answered [Q0079](../questions/open/0079-group-consistent-routing.md) on 2026-11-10 with option 2. Units
+The owner answered [Q0079](../questions/closed/0079-group-consistent-routing.md) on 2026-11-10 with option 2. Units
 that receive one order together take the lane of the group's centroid or leader whenever that route is within a
 small configurable relative tolerance (about 5 to 10 %) of the unit's own shortest route. Units that are genuinely
 separated still take their own shorter routes. The rule is an "allows more" deviation under Q0051.
@@ -382,7 +382,7 @@ throughput bench, and the golden traces with per-tick state dumps.
 | WP3 | new `assets/catalog/movement_rules.ron`, `crates/sim_core/src/catalog/runtime.rs` (and `catalog.rs` or `world.rs` per D-7), `crates/sim_core/src/error.rs`, `crates/sim_core/src/entity.rs`, new `crates/sim_core/src/movement/groups.rs`, `crates/sim_core/src/movement/mod.rs`, `crates/sim_core/src/scenario.rs`, `crates/sim_core/src/target_acquisition.rs`, `crates/sim_core/src/world/abilities.rs`, `crates/sim_core/src/economy/mod.rs`, `crates/sim_core/src/checksum.rs`, `crates/sim_core/src/checksum/encoding.rs`, `crates/sim_core/src/lib.rs` (`test_support`), `crates/sim_fixtures/src/*` (embedded catalog), `crates/sim_core/tests/fixtures/golden_replay*.ron`, new `crates/sim_core/tests/group_routing_tests.rs` |
 | WP4 | `crates/sim_core/src/movement/groups.rs`, `crates/sim_core/src/movement/locomotion.rs` (the `upkeep_route` hook only), `crates/sim_core/src/movement/mod.rs` (`RouteOutcomeKind`), `crates/sim_fixtures/src/trace/route.rs`, `crates/sim_core/examples/route_trace.rs`, `crates/sim_core/tests/group_routing_tests.rs` |
 | WP5 | `assets/catalog/movement_rules.ron`, goldens, new `docs/evidence/2026-11-10-group-routing.md` |
-| WP6 | `DESIGN.md`, `docs/plans/2026-11-05-sc2-deviation-fixes.md` (amendment: S-7), `docs/questions/open/0079-group-consistent-routing.md` → `docs/questions/closed/` with its resolution, `docs/plans/README.md` |
+| WP6 | `DESIGN.md`, `docs/plans/2026-11-05-sc2-deviation-fixes.md` (amendment: S-7), `docs/questions/closed/0079-group-consistent-routing.md` → `docs/questions/closed/` with its resolution, `docs/plans/README.md` |
 
 **Boundary with the friendly-blocking plan.** That plan's §4 split of `locomotion.rs` stays as it is. This plan
 adds one call in `upkeep_route`, which replaces the direct `search_route` call for grouped route orders. All group
@@ -558,3 +558,22 @@ Each item is recorded under Q0002 and can be brought back.
   leader dies, or when the group's shape changes.
 - **Air units.** They do not path.
 - **Per-player or per-match tolerance**, for example a lobby option. The tolerance is one catalog value.
+
+---
+
+## Amendment 1 (WP3 to WP6 implementation, 2026-11-10): what landed differently
+
+Recorded under Q0002; each item can be brought back.
+
+1. **Checksum schema 27, not 26.** The branch was built on the deviation follow-ups, whose B-85 already took schema 26.
+2. **Carrier of the rules (D-7):** a field of `UnitCatalog` (`movement_rules`, `set_movement_rules`), which changes
+   none of the twenty `SimWorld::with_catalogs` call sites. A catalog built from unit definitions alone carries
+   `MovementRules::PER_UNIT` (0); `RuntimeCatalogs::load_from_directory` always reads the file, with no fallback.
+3. **The lane polyline** is the leader's route waypoints, which already start at its position.
+4. **A member retargeted** to a reachable point (its goal no longer the group's target) routes alone.
+5. **Goldens at WP5** moved by the hashed group state alone; the per-tick state is unchanged (`default_arena` has no
+   lane cut). §1 expected them to move only where a group straddles a fork.
+6. **G-3 on the goldens** is a test in `golden_replay_tests.rs` (orders fixture, tolerance 0, squads against
+   single-unit commands, every tick); the canyon script and the flat arena at 75 ‰ are in `group_routing_tests.rs`.
+7. **`route_trace`** gains `--order` and `--lane-tolerance`, so the G-1 fixture and pre-data-change measurements need
+   no file under `assets/`; group measures go to `groups.md` and `lanes.csv`.

@@ -24,9 +24,17 @@
 //! - `Charging` lasts 3.5 Normal s, multiplies speed by 2.2, and is removed once the weapon
 //!   fires (`liberty` BehaviorData:967-975, ValidatorData:3007-3011).
 //!
-//! How the engine measures the two distances, when the autocast looks, and whether a new order
-//! ends the buff are not stated; this module reads them as [`AttackDashSpec`] documents (owner
-//! question Q0071, default this reading).
+//! What the data name but do not define, the owner's engine notes on Q0071 settle:
+//! - the 0.6 is measured edge to edge ([`AttackDashSpec::min_gap`]), as weapon ranges are;
+//! - the autocast looks on every tick of the attack order, until the window holds;
+//! - the 4 (`Pathing 1`) is the ground path distance: the length of the route the dasher's
+//!   disc walks on the navigation mesh to the target's centre. Where no route query is
+//!   possible (a map without a mesh, a dasher that does not walk on the ground, a dasher or a
+//!   target centre where the dasher's disc does not fit, such as a structure), the straight
+//!   line between the centres stands in; a target the dasher cannot walk to at all is never
+//!   in the window;
+//! - an explicit `Move`, `Stop` or `HoldPosition` order ends a running dash
+//!   ([`crate::entity::Entity::end_attack_dash`]), and a retarget to another attack keeps it.
 //!
 //! # Invariants
 //! - A dash starts only for a living, completed unit in the world whose dash is unlocked for
@@ -36,12 +44,12 @@
 //!   order units are visited in.
 
 use crate::entity::Entity;
-use crate::movement::MovementInvariant;
+use crate::movement::{MovementInvariant, MovementLayer};
 use crate::upgrades::ATTACK_DASH_ABILITY_SLUG;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::SimWorld;
-use sim_map::VisibilityState;
-use sim_types::{AttackDashSpec, EntityId, Tick, UnitOrder};
+use sim_map::{MapError, PathRequestWithVision, VisibilityState};
+use sim_types::{AttackDashSpec, EntityId, SimScalar, Tick, UnitOrder};
 
 impl SimWorld {
     /// Starts the attack dash of every unit whose trigger window holds this tick.
@@ -62,6 +70,9 @@ impl SimWorld {
                 .iter()
                 .filter_map(|(&id, entity)| self.attack_dash_ready(entity).map(|spec| (id, spec))),
         );
+        // The straight line is never longer than the walk, so only the units it admits are
+        // measured along the ground.
+        starting.retain(|&(id, spec)| self.is_walk_shorter_than(id, spec.max_distance));
         for &(id, spec) in &starting {
             let Some(entity) = self.entities.get_mut(&id) else {
                 continue;
@@ -103,6 +114,57 @@ impl SimWorld {
             && self.is_visible_enemy_target(entity, *target)
             && self.is_ability_unlocked(arch, entity.owner, ATTACK_DASH_ABILITY_SLUG))
         .then_some(spec)
+    }
+
+    /// Whether the ground path from unit `id` to the target of its attack order is shorter than
+    /// `limit` world units (`ChargeMaxDistance`'s `Pathing 1`, the owner's engine note on
+    /// Q0071), seen through the owner's knowledge of the map as its routes are.
+    ///
+    /// `true` where no route query is possible, so the straight line the caller checked stands
+    /// (see the module docs); `false` when the dasher cannot walk to the target at all.
+    fn is_walk_shorter_than(&mut self, id: EntityId, limit: SimScalar) -> bool {
+        let Some(entity) = self.entities.get(&id) else {
+            return false;
+        };
+        let Some(&UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front() else {
+            return false;
+        };
+        let Some(goal) = self.entities.get(&target).map(|t| t.position) else {
+            return false;
+        };
+        let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
+            return false;
+        };
+        if MovementLayer::from_mover(arch.mover_type) != MovementLayer::Ground
+            || self.pathfinder.navmesh().is_none()
+        {
+            return true;
+        }
+        let knowledge = entity
+            .owner
+            .slot()
+            .filter(|_| self.vision_aware_pathfinding)
+            .map(|owner| (&self.vision_maps[owner], &self.known_blocked_cells[owner]));
+        let request = PathRequestWithVision {
+            start: entity.position,
+            goal,
+            radius: arch.collision_radius,
+            vision: knowledge.map(|(vision, _)| vision),
+            block_unexplored_ramps: false,
+            known_structures: knowledge.map(|(_, known)| known.as_slice()),
+        };
+        // An open straight line is the walk; only a blocked one needs a route.
+        if self
+            .pathfinder
+            .segment_is_passable(&self.map, &request, request.start, goal)
+        {
+            return true;
+        }
+        match self.pathfinder.find_path_with_vision(&self.map, &request) {
+            Ok(path) => path.total_length < limit,
+            Err(MapError::NoPathFound { .. }) => false,
+            Err(_) => true,
+        }
     }
 
     /// Whether `entity`'s owner sees `target` and may attack it: the autocast's `Visible`

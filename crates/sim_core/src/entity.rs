@@ -12,9 +12,9 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EntityId, MoverType,
-    OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2,
-    Tick, UnitModeSpec, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
+    EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
+    SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -101,6 +101,53 @@ pub enum WeaponPhase {
     },
     /// Weapon is on cooldown following an attack. Unit can move and perform other actions.
     Cooldown,
+}
+
+/// The searches of a spaced line area that land after its release tick (plan
+/// `2026-11-05-sc2-deviation-fixes` Amendment 24, B-85).
+///
+/// In `StarCraft` II the Lurker's spines are a `CEffectCreatePersistent` whose periods search
+/// one point of the line each, 0.125 Normal s apart (`void` EffectData:297-307), while the
+/// Lurker is alive and burrowed (`PeriodicValidator` `CasterIsAliveandBurrowedLurker`,
+/// `voidmulti` EffectData:813). Combat resolution lands the first search on the release tick and
+/// keeps the rest here, one every [`sim_types::SplashLine::period_ticks`]. The points are fixed
+/// where the release laid them out; a unit standing in a search when it lands is struck, unless
+/// an earlier search of the same line struck it (the game's `noMarkers`). The attacker's death,
+/// boarding a transport, a mode change starting (channeling, such as unburrowing) or losing the
+/// weapon ends the line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingLine {
+    /// Centres of the searches still to land, world units, the next first.
+    pub points: Vec<SimVec2>,
+    /// Ticks until the next search lands, at least 1 between ticks.
+    pub ticks_until_next: u16,
+    /// Combat plane of the struck target: the weapon is resolved against it again for each
+    /// search, and only units on it are struck.
+    pub plane: MoverType,
+    /// Direction the attack came from, for the struck units' hit feedback.
+    pub angle: SimAngle,
+    /// The attack's target, struck directly on the release tick and spared by the searches.
+    pub primary: EntityId,
+    /// Units an earlier search of this line struck, in the order they were struck.
+    pub struck: Vec<EntityId>,
+    /// What the renderer is told about each search as it lands; presentation only, not hashed.
+    pub view: PendingLineView,
+}
+
+/// The presentation of a [`PendingLine`]'s searches (plan `2026-11-09-effect-visualization`):
+/// each search, when it lands, is published as a `SplashVisual` numbered by its place in the
+/// whole line, as the searches of an instant line are.
+///
+/// Not hashed: no simulation decision reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingLineView {
+    /// The attacker's type and weapon that released the line.
+    pub effect: EffectSource,
+    /// The whole line in world units: the point its offsets are measured from, that point moved
+    /// by the largest offset, and the spacing of its first two offsets.
+    pub line: Option<(SimVec2, SimVec2, SimScalar)>,
+    /// How many searches the whole line has, the first included.
+    pub count: u8,
 }
 
 /// The strikes of an attack that land after its release tick (plan
@@ -391,6 +438,8 @@ pub struct Entity {
     /// Strikes of the last attack still to land on later ticks; `None` when its every strike
     /// has landed or the weapon lands all of them on the release tick.
     pub pending_strikes: Option<PendingStrikes>,
+    /// Searches of the last spaced line area still to land; `None` when none are pending.
+    pub pending_line: Option<PendingLine>,
     /// Active temporary stat buffs and debuffs.
     pub active_buffs: Vec<ActiveBuff>,
     /// The damage-absorbing barrier's window, remaining absorption and cooldown (B-41).
@@ -465,6 +514,12 @@ pub struct Entity {
     pub(crate) transport_carrier: Option<EntityId>,
     /// Invulnerability flag (e.g. Stasis field, Phase Shift, Recall, Divine Shield).
     pub is_invulnerable: bool,
+    /// How many `Move` and `AttackMove` orders have ever entered [`Self::order_queue`], wrapping
+    /// (plan `2026-11-10-group-routing`, D-1). An order's ordinal is this count before it
+    /// entered, so the active route order's ordinal is this count minus the route orders still
+    /// queued ([`Self::active_route_ordinal`]); route groups bind members by it. Only
+    /// [`Self::enqueue_order`] changes it.
+    pub route_orders_issued: u32,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
     /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
@@ -549,6 +604,7 @@ impl Entity {
             barrier: BarrierState::default(),
             attack_dash_cooldown: 0,
             pending_strikes: None,
+            pending_line: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,
@@ -579,6 +635,7 @@ impl Entity {
             is_completed: true,
             transport_carrier: None,
             is_invulnerable: false,
+            route_orders_issued: 0,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
     }
@@ -639,8 +696,7 @@ impl Entity {
                 // ABORT: Shot was winding up; moving cancels the shot with zero damage.
                 self.weapon_phase = WeaponPhase::Ready;
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -650,15 +706,13 @@ impl Entity {
                 // The weapon cooldown continues to tick down in the background.
                 self.weapon_phase = WeaponPhase::Cooldown;
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
             _ => {
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -690,6 +744,34 @@ impl Entity {
         Ok(true)
     }
 
+    /// Appends `order` to the back of [`Self::order_queue`], counting it in
+    /// [`Self::route_orders_issued`] when it is a `Move` or `AttackMove`.
+    ///
+    /// Every insertion of a route order goes through here, so a route group's ordinal binding
+    /// (plan `2026-11-10-group-routing`, D-1) stays exact. Other orders may be pushed through it
+    /// too; they leave the counter alone.
+    pub fn enqueue_order(&mut self, order: UnitOrder) {
+        if is_route_order(&order) {
+            self.route_orders_issued = self.route_orders_issued.wrapping_add(1);
+        }
+        self.order_queue.push_back(order);
+    }
+
+    /// The ordinal of the active route order: the first `Move` or `AttackMove` in the queue, or,
+    /// with none queued, the ordinal the next one will get (plan `2026-11-10-group-routing`,
+    /// D-1). Route orders leave the queue only from the front or by clearing, so this is exact.
+    #[must_use]
+    pub fn active_route_ordinal(&self) -> u32 {
+        let queued = self
+            .order_queue
+            .iter()
+            .filter(|o| is_route_order(o))
+            .count();
+        // A queue never holds 2^32 orders; saturation keeps the arithmetic total regardless.
+        self.route_orders_issued
+            .wrapping_sub(u32::try_from(queued).unwrap_or(u32::MAX))
+    }
+
     /// Infallible concrete movement commit after world selection preflight.
     pub(crate) fn commit_movement_order(&mut self, target: SimVec2, attack: bool, queue: bool) {
         let order = if attack {
@@ -704,13 +786,22 @@ impl Entity {
     // helper only constructs Move/AttackMove. No fallible work follows admission.
     fn commit_order(&mut self, order: UnitOrder, queue: bool) {
         if queue {
-            self.order_queue.push_back(order);
+            self.enqueue_order(order);
             return;
         }
 
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
+        // An explicit non-attack order cancels the attack, and with it a running dash; an
+        // attack on another target or an attack-move keeps it (the owner's engine note on
+        // Q0071).
+        if matches!(
+            order,
+            UnitOrder::Move { .. } | UnitOrder::Stop | UnitOrder::HoldPosition
+        ) {
+            self.end_attack_dash();
+        }
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);
@@ -719,7 +810,7 @@ impl Entity {
                 self.is_holding_position = true;
                 self.velocity = SimVec2::ZERO;
                 self.order_queue.clear();
-                self.order_queue.push_back(UnitOrder::HoldPosition);
+                self.enqueue_order(UnitOrder::HoldPosition);
                 self.current_funnel_waypoints.clear();
             }
             UnitOrder::Stop => {
@@ -739,8 +830,7 @@ impl Entity {
                 }
                 self.current_target = Some(target);
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::AttackTarget { target, origin });
+                self.enqueue_order(UnitOrder::AttackTarget { target, origin });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -749,7 +839,7 @@ impl Entity {
                     self.weapon_phase = WeaponPhase::Ready;
                 }
                 self.order_queue.clear();
-                self.order_queue.push_back(order);
+                self.enqueue_order(order);
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -876,7 +966,8 @@ impl Entity {
 
     /// Ends a running attack dash, as the unit's weapon starting a swing does in `StarCraft` II
     /// (`Charging`'s remove validator `ChargeTargetAttacked`, `liberty` BehaviorData:967-975,
-    /// ValidatorData:3007-3011). Leaves its cooldown running; does nothing without a dash.
+    /// ValidatorData:3007-3011), and as an explicit move, stop or hold-position order does (the
+    /// owner's engine note on Q0071). Leaves its cooldown running; does nothing without a dash.
     pub(crate) fn end_attack_dash(&mut self) {
         self.active_buffs
             .retain(|buff| buff.buff_id != ATTACK_DASH_BUFF_ID);
@@ -1135,6 +1226,12 @@ impl Entity {
     pub fn attack_rate_multiplier(&self) -> Result<AttackRate, InvalidBuffAttackRate> {
         combined_attack_rate(&self.active_buffs)
     }
+}
+
+/// Whether `order` is a route order: a `Move` or `AttackMove`, the orders route groups bind to.
+#[must_use]
+pub const fn is_route_order(order: &UnitOrder) -> bool {
+    matches!(order, UnitOrder::Move { .. } | UnitOrder::AttackMove { .. })
 }
 
 fn fold_speed(
