@@ -335,6 +335,7 @@ SuiteCatalog(
             "sim_core/flee_and_evasion_tests",
             "sim_core/fog_of_war_pathfinding_tests",
             "sim_core/full_match_tests",
+            "sim_core/fungal_growth_tests",
             "sim_core/golden_replay_tests",
             "sim_core/harvest_income_tests",
             "sim_core/high_ground_combat_tests",

@@ -2947,3 +2947,153 @@ fn abduct_values_follow_starcraft() -> TestResult {
     assert!(spec.period_ticks.is_none() && status.initial_effect.is_none());
     Ok(())
 }
+
+/// Fungal Growth as authored (plan `2026-11-10-spellcaster-mechanics` §3.3, §5): the Infestor
+/// analogue's ability, its missile, search and set, and the two statuses, each value cited from
+/// `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn fungal_growth_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, AttributeBonuses, EffectAnchor, FilterAlliance,
+        MissileView, StructureRule,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Infestor")
+        .ok_or("the Infestor analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Fungal Growth")
+        .ok_or("Fungal Growth")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 75.0, "liberty AbilData:486");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "the Leech link has no time, liberty AbilData:487"
+    );
+    assert_close(ability.cast_range, 10.0, "void AbilData:674");
+    assert_eq!(
+        ability.cast_backswing_ticks, 0,
+        "no CastOutroTime in the chain"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Fungal Growth runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let EffectNode::LaunchMissile {
+        to: EffectAnchor::TargetPoint,
+        speed,
+        view: MissileView::Projectile,
+        impact,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a missile to the point, void EffectData:1141-1146".into());
+    };
+    assert_close(speed, 0.672, "12 x 1.4 / 25, void MoverData:18");
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(impact)?
+    else {
+        return Err("the impact searches, liberty EffectData:728-735".into());
+    };
+    assert_close(radius, 2.25, "voidmulti EffectData:1559");
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::Enemy,
+        "liberty EffectData:731"
+    );
+    assert!(filter.ground && filter.air);
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    let EffectNode::Set { first, len: 3 } = node(child)? else {
+        return Err("FungalGrowthSet and the search dummy, liberty EffectData:714-741".into());
+    };
+    let child = |index| spells.set_child(first, index).ok_or("a child");
+    let EffectNode::ApplyStatus { status: damage } = node(child(0)?)? else {
+        return Err("FungalGrowthApplyBehavior, liberty EffectData:720-723".into());
+    };
+    let EffectNode::ApplyStatus { status: slow } = node(child(1)?)? else {
+        return Err("FungalGrowthSlowMovementApplyBehavior, voidmulti EffectData:1562".into());
+    };
+    let EffectNode::Damage {
+        amount,
+        attribute_bonus,
+        responses,
+    } = node(child(2)?)?
+    else {
+        return Err("FungalGrowthSearchDummy, liberty EffectData:736-741".into());
+    };
+    assert_close(amount, 0.0, "a dummy");
+    assert_eq!(attribute_bonus, AttributeBonuses::NONE);
+    assert!(
+        responses.acquire && responses.flee,
+        "liberty EffectData:738-739"
+    );
+
+    let damage = spells.status(damage).ok_or("the damage status")?;
+    assert_eq!(damage.spec.name, "fungal_growth");
+    assert_close(
+        damage.spec.duration_ticks,
+        71.428_57,
+        "4 Normal s, swarm BehaviorData:839",
+    );
+    assert_close(
+        damage.spec.period_ticks.ok_or("a period")?,
+        4.464_286,
+        "0.25 Normal s, swarm BehaviorData:840",
+    );
+    assert!(
+        damage.spec.reveal,
+        "SuppressCloak, liberty BehaviorData:332"
+    );
+    assert!(
+        damage.spec.suppress_blink,
+        "CasterNotFungalGrowthed, swarm ValidatorData:537-541"
+    );
+    assert!(damage.initial_effect.is_none());
+    let EffectNode::Damage {
+        amount,
+        attribute_bonus,
+        responses,
+    } = node(damage.periodic_effect.ok_or("periodic damage")?)?
+    else {
+        return Err("FungalGrowthDamage".into());
+    };
+    assert_close(amount, 1.5625, "voidmulti EffectData:2389");
+    assert_eq!(
+        attribute_bonus,
+        AttributeBonuses::NONE,
+        "Armored 0, void EffectData:1139"
+    );
+    assert!(!responses.acquire && !responses.flee);
+
+    let slow = spells.status(slow).ok_or("the slow")?;
+    assert_eq!(slow.spec.name, "fungal_growth_slow");
+    assert_close(
+        slow.spec.duration_ticks,
+        71.428_57,
+        "4 Normal s, voidmulti BehaviorData:696",
+    );
+    assert_close(
+        slow.spec.move_speed_factor,
+        0.25,
+        "voidmulti BehaviorData:697",
+    );
+    assert!(
+        slow.spec.suppress_boarding,
+        "SuppressPassenger, voidmulti BehaviorData:698"
+    );
+    assert!(slow.spec.period_ticks.is_none() && slow.periodic_effect.is_none());
+    Ok(())
+}

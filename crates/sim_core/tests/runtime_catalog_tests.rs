@@ -708,3 +708,66 @@ fn an_edited_flight_changes_an_abduct_without_recompiling() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP4: a weaker slow in a copied `statuses.ron`
+/// changes what Fungal Growth does to a unit's speed, with no recompilation.
+#[test]
+fn an_edited_status_changes_a_fungal_slow_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("fungal")?;
+    let statuses = std::fs::read_to_string(bundle.directory.join(FILES[4]))?;
+    assert_eq!(
+        statuses.matches("move_speed_factor:").count(),
+        1,
+        "the slow is the one status that changes speed"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[4]),
+        replace_first_field(&statuses, "move_speed_factor", "0.5"),
+    )?;
+    let mut factors = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "fungal_growth")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Fungal Growth caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_speed > SimScalar::ZERO
+                    && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("a mobile unit")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        for _ in 0..12 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(world.current_tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+        }
+        factors.push(world.entities[&victim].status_modifiers().move_speed_factor);
+    }
+    assert_eq!(
+        factors,
+        [SimScalar::from_num(0.25), SimScalar::from_num(0.5)],
+        "the shipped slow, then the edited one"
+    );
+    bundle.finish()?;
+    Ok(())
+}
