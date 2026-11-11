@@ -113,7 +113,7 @@ impl SimWorld {
                 || self.map.structures().contains_key(&entry.id),
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
-            ghost: actor.is_mineral_walking,
+            ghost: actor.is_mineral_walking || actor.status_modifiers().suppress_collision,
             idle: actor.is_idle(),
         }
     }
@@ -283,7 +283,7 @@ impl SimWorld {
             let ids: Vec<EntityId> = self
                 .entities
                 .values()
-                .filter(|e| e.is_alive() && !e.is_loaded_in_transport())
+                .filter(|e| e.takes_part_in_movement())
                 .map(|e| e.id)
                 .collect();
             for id in ids {

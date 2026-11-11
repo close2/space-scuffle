@@ -342,6 +342,20 @@ fn gate_step_by_facing(hull: Option<HullGate>, origin: SimVec2, proposal: &mut M
     }
 }
 
+/// `point` moved, if need be, into the full-radius domain of `policy`'s body on `map`.
+fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimVec2 {
+    let r = policy.radius;
+    let clamp = |value: SimScalar, extent: u32| {
+        let high = SimScalar::from_num(extent).saturating_sub(r);
+        if high < r {
+            SimScalar::from_num(extent).saturating_mul(SimScalar::HALF)
+        } else {
+            value.clamp(r, high)
+        }
+    };
+    SimVec2::new(clamp(point.x, map.width()), clamp(point.y, map.height()))
+}
+
 fn arithmetic(id: EntityId, source: MovementMathError) -> MovementInvariant {
     MovementInvariant::Arithmetic {
         entity: id,
@@ -609,6 +623,7 @@ impl SimWorld {
                 base.checked_mul(actor.speed_multiplier()?)
                     .ok_or(MovementMathError::Unrepresentable)
             })
+            .map(|speed| actor.status_modifiers().move_speed(speed))
             .map_err(|e| arithmetic(id, e))?;
         let step = accelerated_speed(speed, arch.acceleration, arch.max_speed, actor.velocity);
         let deceleration = (arch.deceleration < arch.max_speed).then_some(arch.deceleration);
@@ -673,7 +688,7 @@ impl SimWorld {
         ids.extend(
             self.entities
                 .values()
-                .filter(|e| e.is_alive() && !e.is_loaded_in_transport())
+                .filter(|e| e.takes_part_in_movement())
                 .map(|e| e.id),
         );
         self.movement.largest_radius = [SimScalar::ZERO; super::BODY_CLASSES];
@@ -683,7 +698,11 @@ impl SimWorld {
         for &id in &ids {
             match self.motion_entry(id) {
                 Ok(entry) => {
-                    if let Some(actor) = self.entities.get(&id).filter(|a| !a.is_mineral_walking) {
+                    // A body without collision (mining, or a status's suppression) is no
+                    // obstacle anyone steers around.
+                    if let Some(actor) = self.entities.get(&id).filter(|a| {
+                        !a.is_mineral_walking && !a.status_modifiers().suppress_collision
+                    }) {
                         let obstacle = self.obstacle_of(entry, actor);
                         let class = entry.policy.body_class();
                         self.movement.obstacles[class].push(obstacle);
@@ -862,6 +881,16 @@ impl SimWorld {
         mut proposal: MotionProposal,
     ) -> Result<ControlFlow<MotionAction, (MotionProposal, SimVec2)>, MovementInvariant> {
         let id = entry.id;
+        if actor.is_action_locked() {
+            // Stunned or locked after a cast (plan `2026-11-10-spellcaster-mechanics` D-7.4):
+            // the unit stands, keeping its orders for when the lock ends.
+            proposal.clear_route = false;
+            proposal.velocity = SimVec2::ZERO;
+            if proposal.anim == AnimState::Walk {
+                proposal.anim = AnimState::Idle;
+            }
+            return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
+        }
         if actor.is_on_hold() || actor.is_immobile || actor.channeling_remaining_ticks > 0 {
             // A cast queued behind an anchored unit's orders runs when it reaches the front
             // (plan `2026-11-09-client-mode-commands` D-6b): a sieged tank told to focus and
@@ -912,17 +941,24 @@ impl SimWorld {
             Some(UnitOrder::AttackTarget { target, origin }) => {
                 return Ok(ControlFlow::Break(MotionAction::Pursue(*target, *origin)))
             }
-            Some(UnitOrder::CastAbility {
+            Some(&UnitOrder::CastAbility {
                 ability_index,
                 target_pos,
                 target_entity,
             }) => {
-                return Ok(ControlFlow::Break(MotionAction::Cast((
-                    id,
-                    *ability_index,
-                    *target_pos,
-                    *target_entity,
-                ))))
+                // An effect ability out of range walks toward its target first (plan
+                // `2026-11-10-spellcaster-mechanics` D-7.1); the goal stays inside the domain.
+                match self.cast_approach_goal(actor, ability_index, target_pos, target_entity) {
+                    Some(goal) => clamp_into_domain(entry.policy, &self.map, goal),
+                    None => {
+                        return Ok(ControlFlow::Break(MotionAction::Cast((
+                            id,
+                            ability_index,
+                            target_pos,
+                            target_entity,
+                        ))))
+                    }
+                }
             }
             _ => {
                 self.coast(entry, actor, &mut proposal)?;
@@ -1087,6 +1123,7 @@ impl SimWorld {
         let max = weapon
             .max_range
             .checked_add(delta)
+            .map(|range| actor.status_modifiers().weapon_range(range, weapon.melee))
             .ok_or_else(|| arithmetic(id, MovementMathError::Unrepresentable))?;
         if max < SimScalar::ZERO || weapon.min_range < SimScalar::ZERO {
             return Err(arithmetic(id, MovementMathError::InvalidDistance));

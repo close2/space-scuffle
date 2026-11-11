@@ -1,0 +1,79 @@
+// Timed per-unit effects applied by `ApplyStatus` nodes of ability_effects.ron (plan
+// 2026-11-10-spellcaster-mechanics, Amendment 1, D-3, D-20). Times are 25 Hz ticks
+// (Normal s × 17.857143), exact; pulses round per pulse (D-4). Damage and healing are effect
+// references into ability_effects.ron. Every value cites SC2GameData 5.0.14 (5444e12f13).
+(
+    statuses: [
+        (
+            // PsiStorm buff, liberty BehaviorData:709-716. One per unit (MaxStackCount 1, core
+            // BehaviorData:43): a later search refreshes it without repeating the initial damage, so a
+            // unit inside throughout takes 10 at 0 and at 10, 20, 31, 41, 51, 61 and 71 ticks: 80.
+            name: "psionic_storm",
+            duration_ticks: 11.901786,                          // Duration 0.6665 Normal s, :713
+            period_ticks: Some(10.196429),                      // Period 0.571 Normal s, :714
+            initial_effect: Some("psionic_storm_damage_initial"),   // InitialEffect, :715
+            periodic_effect: Some("psionic_storm_damage"),      // PeriodicEffect, :716
+            presentation: [DamageOverTime],
+        ),
+        (
+            // Yoink buff, swarm BehaviorData:1074-1088, applied by Abduct's contact set
+            // (YoinkApplyBehavior, swarm EffectData:1532-1537) and removed at landing by the
+            // Displace node's on_land (YoinkRemoveBehavior, :1601-1605). YoinkTentacle (CAbilAttack
+            // disabled, voidmulti BehaviorData:562-566) is subsumed by the stun (plan D-8).
+            name: "abducted",
+            duration_ticks: 35.714286,                          // Duration 2 Normal s, :1087
+            stun: true,                                         // StateFlags Stun, :1078
+            reveal: true,                                       // StateFlags SuppressCloak, :1079
+            suppress_collision: true,                           // StateFlags SuppressCollision, :1080
+            suppress_boarding: true,                            // StateFlags SuppressPassenger, :1084
+            presentation: [Stunned],
+        ),
+        (
+            // FungalGrowth buff: liberty BehaviorData:328-338, timing from swarm :838-841 (void
+            // :69-73 changes validators only). One per unit (MaxStackCount 1, core BehaviorData:43):
+            // a recast refreshes it with its phase kept. 16 pulses of 1.5625 on ticks 4, 9, …, 71
+            // after the impact: 25 (plan §3.3).
+            name: "fungal_growth",
+            duration_ticks: 71.428571,                          // Duration 4 Normal s, swarm :839
+            period_ticks: Some(4.464286),                       // Period 0.25 Normal s, swarm :840
+            periodic_effect: Some("fungal_growth_damage"),      // PeriodicEffect, liberty :337
+            reveal: true,                                       // StateFlags SuppressCloak, liberty :332
+            // Blink's validator CasterNotFungalGrowthed (swarm EffectData:2180-2182) counts this
+            // buff (swarm ValidatorData:537-541; Liquipedia Infestor (LotV), patch 4.7.1).
+            suppress_blink: true,
+            presentation: [DamageOverTime, Revealed],
+        ),
+        (
+            // FungalGrowthSlowMovement buff, voidmulti BehaviorData:691-705, which replaces the
+            // root (FungalGrowthMovement) in FungalGrowthSet at 5.0.14 (voidmulti EffectData:1561-
+            // 1563): a slow, not a root (plan D-2).
+            name: "fungal_growth_slow",
+            duration_ticks: 71.428571,                          // Duration 4 Normal s, :696
+            move_speed_factor: 0.25,                            // MoveSpeedMultiplier, :697
+            suppress_boarding: true,                            // StateFlags SuppressPassenger, :698
+            presentation: [Slowed],
+        ),
+        (
+            // BlindingCloud buff, swarm BehaviorData:994-1000, its modification replaced at
+            // voidmulti BehaviorData:1067-1069 (WeaponRange 0, RangedWeaponRange -20): ranged
+            // weapons only, melee untouched (WeaponSpec::melee, plan D-14). One per unit
+            // (MaxStackCount 1, core BehaviorData:43): every search of the cloud that finds the
+            // unit refreshes it. A range reduced below the floor stops at 0.1 (range_floor's
+            // default, plan SU-2).
+            name: "blinding_cloud",
+            duration_ticks: 11.160714,                          // Duration 0.625 Normal s, swarm :997
+            ranged_weapon_range_delta: -20.0,                   // RangedWeaponRange, voidmulti :1068
+            presentation: [RangeReduced],
+        ),
+        (
+            // BlindingCloudStructure buff, swarm BehaviorData:19-26 (no later layer changes it):
+            // every weapon of a structure, melee included, and its detection. RadarArc 0 has no
+            // counterpart (no radar mechanic, plan §16).
+            name: "blinding_cloud_structure",
+            duration_ticks: 11.160714,                          // Duration 0.625 Normal s, :24
+            weapon_range_delta: -20.0,                          // WeaponRange, :25
+            suppress_detection: true,                           // DetectArc 0, :25
+            presentation: [RangeReduced],
+        ),
+    ],
+)

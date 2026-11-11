@@ -1,4 +1,4 @@
-//! # StarCraft II Threat Response: Helpless Unit Flee & Hazard Evasion Integration Tests
+//! # StarCraft II Threat Response: Helpless Unit Flee & Storm Evasion Integration Tests
 //!
 //! Verifies:
 //! 1. `test_idle_ground_only_unit_flees_when_attacked_by_air_unit`:
@@ -7,8 +7,8 @@
 //!    HoldPosition acts as an absolute invariant anchor; a holding unit never flees even when bombarded.
 //! 3. `test_idle_unit_flees_undetected_cloaked_attacker`:
 //!    Idle combatant attacked by an undetected cloaked unit flees because the attacker is untargetable.
-//! 4. `test_idle_unit_flees_psionic_storm_hazard_zone`:
-//!    Idle units caught inside an active AoE hazard zone evacuate radially outward outside the hazard radius.
+//! 4. `test_idle_unit_flees_psionic_storm`:
+//!    An idle unit caught in a storm it cannot answer flees from the storm's centre, out of its radius.
 
 #![allow(
     clippy::unwrap_used,
@@ -17,7 +17,11 @@
     clippy::doc_markdown
 )]
 
-use sim_core::{ActiveHazardZone, SimWorld};
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::{open_storm, ScratchStorm};
+use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -214,11 +218,15 @@ fn test_idle_unit_flees_undetected_cloaked_attacker() {
     );
 }
 
-/// Test 4: Idle Unit Flees Psionic Storm Hazard Zone.
-/// An idle mobile unit caught in a hazard zone evacuates radially outward outside the storm radius.
+/// Test 4: Idle Unit Flees Psionic Storm.
+/// An idle mobile unit that cannot strike back at the storm's caster flees from the storm's
+/// centre and leaves its radius: the storm's initial damage raises the `flee` response (plan
+/// `2026-11-10-spellcaster-mechanics` D-9, which replaced the hazard's "radius + 2" evacuation,
+/// B-78).
 #[test]
-fn test_idle_unit_flees_psionic_storm_hazard_zone() {
+fn test_idle_unit_flees_psionic_storm() {
     let mut world = create_test_world();
+    ScratchStorm::GAME.install(&mut world);
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
 
@@ -228,27 +236,16 @@ fn test_idle_unit_flees_psionic_storm_hazard_zone() {
         .expect("rhino_beetle");
 
     let storm_center = SimVec2::new(SimScalar::from_num(15), SimScalar::from_num(15));
-    let storm_radius = SimScalar::from_num(3);
+    let storm_radius = SimScalar::from_num(1.5);
+    let start = SimVec2::new(SimScalar::from_num(15.5), SimScalar::from_num(15));
 
     let roach_id = world
-        .spawn_unit(roach_type, player_red, storm_center)
+        .spawn_unit(roach_type, player_red, start)
         .expect("spawn roach");
 
-    // Spawn an active Psionic Storm hazard zone
-    world.active_hazards.push(ActiveHazardZone {
-        id: 1,
-        owner: player_blue,
-        center: storm_center,
-        radius: storm_radius,
-        delay_ticks: 0,
-        remaining_ticks: 60,
-        interval_ticks: 10,
-        ticks_until_next_interval: 1,
-        damage_per_interval: SimScalar::from_num(10),
-        targets_friendly: false,
-    });
+    // A storm with no casting unit: the roach has nothing to strike back at.
+    open_storm(&mut world, player_blue, storm_center);
 
-    // Step simulation for 50 ticks
     for tick in 0..50 {
         world.step(&empty_bundle(tick));
     }
@@ -258,8 +255,14 @@ fn test_idle_unit_flees_psionic_storm_hazard_zone() {
 
     assert!(
         dist_from_center > storm_radius,
-        "Roach must have evacuated outside storm radius (radius {}, dist {})",
+        "Roach must have fled outside storm radius (radius {}, dist {})",
         storm_radius.to_f32(),
         dist_from_center.to_f32()
+    );
+    assert!(
+        roach.position.x > start.x,
+        "it flees away from the centre: {} -> {}",
+        start.x.to_f32(),
+        roach.position.x.to_f32()
     );
 }

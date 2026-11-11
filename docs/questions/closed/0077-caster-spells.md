@@ -23,3 +23,17 @@ Options:
 **Option 1 (Build presentation contracts `RenderSnapshot::areas` and `links` now; implement simulation mechanics in a dedicated follow-up plan in StarCraft II order of impact: `Psionic Storm`, `Abduct`, `Fungal Growth`, `Blinding Cloud`).**
 
 **Engine insight:** Landing the `RenderSnapshot::areas` (persistent AoE zones) and `RenderSnapshot::links` (tethers/beams such as Viper `Abduct`) rendering contracts in the effect visualization plan keeps visual infrastructure cleanly decoupled from simulation checksums, and scheduling a dedicated spellcaster mechanics plan next (`Psionic Storm` → `Abduct` → `Fungal Growth` → `Blinding Cloud`) brings StarCraft II's four signature area/displacement spells online in order of combat impact.
+
+## Resolution
+
+2026-11-11. Option 1. The presentation contracts (`RenderSnapshot::areas` and `links`) landed with plan
+[`2026-11-09-effect-visualization`](../../plans/2026-11-09-effect-visualization.md), and plan
+[`2026-11-10-spellcaster-mechanics`](../../plans/2026-11-10-spellcaster-mechanics.md) built the mechanics of all four
+spells in the order asked, as data on a composable effect tree (owner decision, the plan's Amendment 1): the spell
+catalog (WP1a `7ab0364`), its state and checksum schema 28 (WP1b `a9335d7`), the effect-tree engine (WP1c
+`ac8e204`), the cast pipeline (WP1d `5eb71d9`) and the client's targeted casts (WP1e `5f7029a`); hazard zones
+removed, schema 29 (`8708292`); Psionic Storm (WP2b `4b47bef`), Abduct (`9729753`, `57f2747`, battles 37a/37b
+`1a4d07a`), Fungal Growth (WP4b `5c97064`) and Blinding Cloud (melee weapons `4f62d8c`, WP5b `83c74de`), each with
+its 5.0.14 values cited and a matrix battle pair. Their drawing (the plan's WP2c to WP5c) waits on
+[Q0080](../open/0080-effect-review-outcome.md). Evidence:
+[`2026-11-10-spellcaster-mechanics.md`](../../evidence/2026-11-10-spellcaster-mechanics.md).

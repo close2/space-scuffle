@@ -37,9 +37,9 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::SimWorld;
 use sim_types::enums::ShapeKind;
-use sim_types::{EntityId, PlayerId, ResourceNodeId, UnitOrder};
+use sim_types::{EntityId, PlayerId, ResourceNodeId, SimVec2, UnitOrder};
 
-use crate::battle_pipeline::commands::SubmissionError;
+use crate::battle_pipeline::commands::{CastOrder, SubmissionError};
 use crate::battle_pipeline::fog::{presence_of, BattleFog};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
@@ -61,7 +61,7 @@ use crate::terrain::{pick_terrain, TerrainState};
 use command_mode::{orders_open, CommandMode};
 use context_order::{context_order, resolve_target, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
-use order_marker::OrderMarkers;
+use order_marker::{OrderMarkerKind, OrderMarkers};
 
 /// Extra pick radius in world units, so small units stay clickable from a zoomed-out camera.
 const PICK_RADIUS_PADDING: f32 = 0.15;
@@ -458,7 +458,8 @@ fn handle_normal_pointer(
     }
 }
 
-/// A left press issues the armed mode's order at the ground, and a right press cancels the mode.
+/// A left press issues the armed mode's order at the ground, or aims its cast at the ground or
+/// the unit under the pointer ([`cast_target`]), and a right press cancels the mode.
 ///
 /// Only an accepted order ends the mode, and Shift keeps it for the next site. A refusal leaves it
 /// armed, so the player can try elsewhere. No gesture begins, so the selection stays as it is.
@@ -481,12 +482,21 @@ fn handle_targeting_pointer(
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
-    let ground = frame
-        .cursor
-        .and_then(|cursor| view.ray(cursor))
-        .and_then(|ray| view.ground_point(ray));
+    let ray = frame.cursor.and_then(|cursor| view.ray(cursor));
+    let ground = ray.and_then(|ray| view.ground_point(ray));
     let (world, queue) = session.world_and_commands();
     let result = world.ok_or(SubmissionError::NotReady).and_then(|world| {
+        if let Some(key) = mode.cast_key() {
+            let target = cast_target(view, world, frame.owner, *mode, ray, ground)?;
+            let cast = CastOrder {
+                key,
+                target_pos: target.pos,
+                target_entity: target.unit,
+                queued: frame.shift,
+            };
+            queue.submit_cast(world, frame.owner, selection.ids(), cast)?;
+            return Ok((OrderMarkerKind::Attack, target.marker));
+        }
         let ground = ground.ok_or(SubmissionError::NoDestination)?;
         let (order, kind, position) = mode.order_at(world, frame.owner, ground)?;
         queue.submit_selection(world, frame.owner, selection.ids(), order, frame.shift)?;
@@ -501,6 +511,48 @@ fn handle_targeting_pointer(
         }
         Err(error) => queue.reject(&error),
     }
+}
+
+/// Where a cast click landed: the simulation's target and the Bevy world point of its marker.
+#[derive(Debug, Clone, Copy)]
+struct CastAim {
+    /// The ground point of a point cast, in world units.
+    pos: Option<SimVec2>,
+    /// The unit of a unit cast.
+    unit: Option<EntityId>,
+    /// Where the order marker shows.
+    marker: Vec3,
+}
+
+/// What a left click along `ray` aims the armed cast at.
+///
+/// A point cast takes the ground under the pointer; a unit cast takes the nearest unit the viewer
+/// may pick there, with the same fog rules as selection ([`BattleView::pick_unit`]), so a hidden
+/// unit cannot be aimed at. Range is not judged: the caster walks into range.
+fn cast_target(
+    view: &BattleView<'_, '_>,
+    world: &SimWorld,
+    owner: PlayerId,
+    mode: CommandMode,
+    ray: Option<Ray3d>,
+    ground: Option<Vec3>,
+) -> Result<CastAim, SubmissionError> {
+    if let CommandMode::CastOnUnit(_) = mode {
+        let unit = ray
+            .and_then(|ray| view.pick_unit(world, owner, ray))
+            .ok_or(SubmissionError::NoCastTarget)?;
+        return Ok(CastAim {
+            pos: None,
+            unit: Some(unit.id),
+            marker: unit.ground,
+        });
+    }
+    let ground = ground.ok_or(SubmissionError::NoDestination)?;
+    Ok(CastAim {
+        pos: Some(context_order::sim_point(ground)),
+        unit: None,
+        marker: ground,
+    })
 }
 
 /// Applies a click at `position`. A click on nothing clears the selection unless Shift is held.

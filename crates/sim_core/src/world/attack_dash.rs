@@ -94,6 +94,7 @@ impl SimWorld {
             || !entity.is_completed
             || entity.is_loaded_in_transport()
             || entity.channeling_remaining_ticks > 0
+            || entity.is_action_locked()
             || entity.attack_dash_cooldown > 0
             || entity.is_on_hold()
         {

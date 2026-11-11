@@ -27,7 +27,153 @@
 > Everything else stands: the 5.0.14 values (§3), the cast pipeline (D-7), the hazard replacement (D-12), the
 > matrix battles (§10) and the scope (§16).
 
-The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
+> **Amendment 2 (implementation decisions, 2026-11-10, WP1 engine gaps and WP1d as built; Q0002).**
+>
+> - **Status modifiers** are folded into an unhashed cache, `Entity::status_modifiers`, refreshed by the engine on
+>   every status insertion, removal and expiry; neutral modifiers leave every reader unchanged. Stun, the after-cast
+>   lock and a displacement share one rule, `Entity::is_action_locked`: no walk, weapon, acquisition, dash or cast;
+>   orders wait (SU-3). A displaced unit is left out of the movement and collision phases. Weapon cooldowns do not
+>   count down while a unit is locked, as during a mode channel today (recorded difference, minor).
+> - **The D-7 pipeline governs `Effect` abilities only.** Blink keeps its immediate path (the game's Blink does not
+>   approach), hazard zones keep theirs until WP2b removes them, and mode toggles are unchanged. The backswing lock
+>   applies to any ability with `cast_backswing_ticks > 0` (none shipped). The lock counts down after the weapon
+>   phase, so a lock of *n* set on tick *t* holds ticks *t* … *t + n − 1* wherever the cast ran.
+> - **Approach to a unit target** walks toward the target's current position each tick (re-pathing as a move order
+>   does) rather than through the weapon pursuit, which needs a weapon band; the goal is clamped into the caster's
+>   domain. A cast that cannot reach is dropped as a move that cannot reach is.
+> - **Target vision** requires the target's cell visible to the caster's owner (where it has a vision map) and, for a
+>   concealed unit, detection; own units are always admitted. **Origin placement** for a point cast places for the
+>   caster's own movement layer (no spell uses it).
+> - **Allocation test (D-18)** counts with DHAT scoped by call stack (no counting allocator, Q0011): engine blocks are
+>   compared between 0 and 200 measured ticks, because DHAT attributes a `realloc` to the block's first allocation.
+
+> **Amendment 3 (WP1e as built, 2026-11-10; Q0002).**
+>
+> - **Card.** A cast is interned as a `CastId` by ability name and target kind, in catalog order, like a `ModeId`;
+>   archetypes sharing one share the entry. `CardLabel::Cast(CastId)`; the entry's action is the existing
+>   `CardAction::Mode(CommandMode::CastAtPoint | CastOnUnit)`, so no separate `CardAction::Cast` (the panel's armed
+>   highlight works unchanged). Locks: research, then transforming, cooldown, energy; the entry is enabled when any
+>   holder is free, otherwise it shows the reason of the holder nearest to casting.
+> - **View.** `PlayerView` had no per-unit energy or cooldown; it gains `cast_states: Vec<CastStateView { entity,
+>   ability_index, cooldown_ticks, short_of_energy }>` for the viewer's completed units' `Effect` abilities, unhashed.
+> - **Modes.** The cast modes carry a `CastKey { holder, ability_index }` (the first declaring archetype) and are
+>   submitted per ability index through `BattleCommandQueue::submit_cast`. A click with no visible unit under the
+>   pointer is refused (`NoCastTarget`); a target the simulation refuses for every holder is `CastRefused`.
+> - **Revalidation** drops, at the tick, the members of a pending cast that would no longer take it (an earlier cast
+>   spent their energy) instead of failing the whole command; it fails only when none is left.
+> - **Targeting ring deferred.** No existing indicator draws a ring at the cursor, so `CommandMode::targeting_radius`
+>   exposes the radius and the ring is drawn with the area ring once Q0080 is answered (D-11). Tether indicators wait
+>   for WP3 likewise.
+
+> **Amendment 4 (WP2a and WP2b as built, 2026-11-11; Q0002).**
+>
+> - **Commit order.** The hazard removal is its own commit before the storm data, as D-12 asks. Battle 13 cannot
+>   run between the two (its hazard is gone and no unit casts yet), so the removal commit takes it out of the matrix
+>   and the data commit brings it back as a real cast. The removal commit also carries the §10.1 fixture
+>   extensions (`Squad::energy`, `Side::casts`), because dropping `Battle::hazard` is the same fixture edit.
+> - **Scratch spells next to shipped ones.** `UnitCatalog::set_spell_catalog` requires every shipped ability's
+>   effect to resolve, so once the High Templar analogue names `psionic_storm` a scratch table alone no longer
+>   installs. `sim_fixtures::spells_with` appends a test's scratch statuses and effects to the shipped tables;
+>   scratch names must not meet shipped ones. Every scratch catalog a test installs goes through it.
+> - **Tests first.** `psionic_storm_tests.rs` was written against the shipped values before the data; without
+>   the data every test fails at its first step (no ability named Psionic Storm). Its first run with the data
+>   failed five tests on the test's own placement (the caster's 6-range Psi-Bolt reached the victims, a dome
+>   spawned as a unit); the casters stand 8.5 away and the dome is placed by cell. No engine change was needed.
+> - **The hazard tests' replacement.** A scratch storm of the game's shape with test-chosen radius and damage
+>   (`crates/sim_core/tests/support/scratch_storm.rs`) replaces the hazard in the nine files of D-12; the
+>   producer killed in phase 2 uses a one-pulse scratch area that admits structures. No property was dropped.
+> - **Area ids.** With the hazards gone an area's id is its persistent's id; the high bit that kept the two id
+>   spaces apart is dropped. `AreaView::source` stays an `Option` (no area lacks one now; the type is the
+>   client's contract).
+> - **Scripted cast targets** are resolved on their tick: `EnemyCentroid` is the mean position of the living
+>   enemies in fixed point, and a cast whose caster or target no longer lives is not issued. A cast naming an
+>   ability that no unit of the side has fails the setup (`MatchupError::NoCastAbility`).
+> - **D-11 ring.** The HUD's area ring waits on Q0080 with the targeting ring (Amendment 3); WP2b publishes the
+>   storm in `RenderSnapshot::areas` only.
+
+> **Amendment 5 (WP3a and WP3b as built, 2026-11-11; Q0002).**
+>
+> - **Engine fix, own commit.** Origin placement and landing ignored units only in this plan's text: the engine
+>   placed both through the Blink and unload validator, which refuses a point another unit of the same body
+>   class overlaps. An air target's landing point under the hovering Viper analogue moved to the ring because of
+>   the Viper's own body. `first_valid_placement` now checks terrain and structure footprints only
+>   (`validate_placement_terrain`, `PlacementIgnoreBlockers`, `swarm` EffectData:1453); Blink and unload keep
+>   the occupancy check.
+> - **Data as the game names it.** The tree is four named nodes, `abduct` (`YoinkLaunchMissile`),
+>   `abduct_contact` (`YoinkSet`), `abduct_delay` (`YoinkDelayPersistent`) and `abduct_flight`
+>   (`YoinkLaunchTarget`), the §5.2 tree with its inline nodes named. Citations corrected against the local copy:
+>   `PeriodCount` is :1543 and `PeriodicEffectArray` :1544 (§5.2 had :1544 and none), `ImpactEffect` :1490,
+>   `PathMode Flying` MoverData:170.
+> - **Recorded differences (minor).** (1) The game's `YoinkCancelOrders` skips Siege Tanks, Hellions, Thors and
+>   Warp Prisms (validator `YoinkCancelOrder`, `swarm` ValidatorData:971-979); ours clears every target's orders,
+>   since a filter cannot name a unit type (C5). A sieged tank keeps its mode either way; only its hold and queue
+>   differ. (2) §7's "tongue in flight is dropped" when the caster dies is not built: the engine follows D-8 and
+>   `YoinkLaunchMissile` (:1486-1494) has no caster validator, so the tongue flies on.
+> - **Fixture.** A side's `mode` now sieges only the units that have the switch (tanks among marines), and
+>   `Squad::order` gives a squad its own standing order (a Viper analogue that waits). Both are test data
+>   (§10.1); no existing battle uses either.
+> - **Battles 37a/37b not landed.** No measured arrangement of the plan's armies, nor of up to 20 zerglings, made
+>   the control and the spell battle end on opposite sides on all 20 seeds; the evidence file §3 records the
+>   arrangements and what limits them. The battles wait for a continuation of WP3.
+
+> **Amendment 6 (orchestrator decision, 2026-11-11; Q0002): a spell battle may claim the spell's own effect.**
+>
+> - **Rule.** §10.2 asks each spell battle and its control to end on opposite sides. For a spell whose effect is
+>   local rather than army-deciding (Abduct; possibly Blinding Cloud), the pair may instead claim the spell's
+>   **own measurable effect**: for battle 37a, the pulled sieged tank dies; for 37b, the control without Abduct,
+>   that tank survives. The claim is written in the matrix's expectation format (survivor counts, and the fate of
+>   a side's first unit where the claim names one unit), and must hold on every seed like any other.
+> - **Fixture extension (generic, §10.1).** `Expected` gains `blue_lead_alive` and `red_lead_alive:
+>   Option<bool>`: whether that side's first unit in spawn order must be alive (or dead) when the battle ends.
+>   The existing lead hull ranges cannot say this, because they hold vacuously for a dead lead. A battle that
+>   claims one unit's fate spawns that unit first.
+> - **Other spells keep the rule of §10.2.** Fungal Growth's battles 38a and 38b claim opposite winners; a WP
+>   that cannot separate its pair that way may use this amendment, and records why.
+
+> **Amendment 7 (WP4a and WP4b as built, 2026-11-11; Q0002).**
+>
+> - **Data only.** No engine change was needed. The tree is three named nodes, `fungal_growth`
+>   (`FungalGrowthLaunchMissile`), `fungal_growth_search` (`FungalGrowthSearch` with `FungalGrowthSet`) and
+>   `fungal_growth_damage`, the §5.2 tree with its search named.
+> - **Blink is forbidden by the damage status, not the slow.** §5.1 put `suppress_blink` on
+>   `fungal_growth_slow`, citing Liquipedia. The game data has the rule: Blink's `CEffectTeleport` carries the
+>   validator `CasterNotFungalGrowthed` (`swarm` EffectData:2180-2182), which counts the `FungalGrowth` buff
+>   (`swarm` ValidatorData:537-541). The flag sits on `fungal_growth`. The two statuses last equally long, so
+>   no outcome differs.
+> - **D-7.5 verified.** No `CastIntroTime` or `CastOutroTime` exists for `FungalGrowth` in `liberty` AbilData:482-491,
+>   `swarm` :530-532, `void` :672-675 or `voidmulti` :412-416, nor in the `CAbilEffect` default (`core`
+>   AbilData:34-88): no backswing. SU-6: `ToSelection` (`voidmulti` AbilData:414) is a command-card flag and
+>   changes no rule here. SU-7 is the default (a burrowed unit is cloaked in our model, so the reveal shows it).
+>   SU-10 keeps its default: the game's search dummy is a sibling of the search in `FungalGrowthInitialSet`
+>   (`liberty` EffectData:416-420) with the search's own filters (`void` EffectData:221-223), so its responses
+>   reach the same enemies; ours runs once per unit found.
+> - **Impact tick.** A cast issued between ticks is first stepped in the next tick, which is its cast tick
+>   (D-16 item 3); the tests count the impact `1 + ceil(d / 0.672)` steps after such a cast, as
+>   `effect_tree_tests.rs` does.
+
+> **Amendment 8 (WP5 and WP6 as built, 2026-11-11; Q0002).**
+>
+> - **WP5a, melee.** Eight catalog weapons carry `melee: true` (SCV, Probe, Zealot, Dark Templar, Drone,
+>   Zergling, Baneling, Ultralisk analogues). D-14's **verify** is settled: `WeaponSpec::melee` is hashed only in
+>   the copies held by projectiles and siege weapons, and no melee weapon has either, so goldens, matrix and
+>   battle 33 are bit-identical. SU-2 keeps its default (floor 0.1): no game value was found, and in battle 39a
+>   any floor under the tank's minimum range 2 gives the same outcome.
+> - **WP5b, data only.** No engine change was needed. The tree is two named nodes, `blinding_cloud`
+>   (`BlindingCloudCP`) and `blinding_cloud_search` (`BlindingCloudSearch` with `BlindingCloudSwitch` as the
+>   set of two filtered branches), the §5.2 tree. The period is authored as **8.928572**, not §5.2's 8.928571:
+>   the eighth search's exact time is 62.5 ticks, which rounds half up to 63, and the truncated value lands it on
+>   62 (as Fungal's period, 4.464286, is rounded up). Both statuses are as §5.1 has them.
+> - **Battles 39a/39b** separate as §10.2 asks (opposite winners on every seed), with the plan's armies; only
+>   the placement and the cast tick were tuned (evidence §5.2). Amendment 6 was not needed.
+> - **WP5c** waits on Q0080 with WP2c to WP4c.
+> - **WP6.** The throughput benchmark gains a spell scenario as data (`throughput_scenarios.ron`: casters,
+>   ability names, energy, cadence; the casts are `PlayerCommand`s inside the measured ticks) and prints the
+>   live areas and statuses it measured. The steady-state allocation test gains a child with the four shipped
+>   spells recast throughout its window. The client's `sync_steady_state_tests.rs` and
+>   `sync_allocation_count_tests.rs` windows are not extended: the engine's own count covers the simulation side
+>   and the client's views of areas, links and statuses are unchanged since WP1e (recorded, Q0002).
+
+The owner answered [Q0077](../questions/closed/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
 combat impact: **Psionic Storm, then Abduct, then Fungal Growth, then Blinding Cloud**. This is that plan.
@@ -52,7 +198,7 @@ the quoted symbol. Claims not confirmed while planning are marked **verify**.
 
 | Question | State | Where in this plan |
 |---|---|---|
-| Q0077, when the caster spells are built | Answered: option 1, this plan, in the order Storm, Abduct, Fungal, Blinding Cloud. Closed by WP7 | All |
+| Q0077, when the caster spells are built | Answered: option 1, this plan, in the order Storm, Abduct, Fungal, Blinding Cloud. Closed by WP7 (2026-11-11) | All |
 | Q0051 (charter §8), mechanics follow StarCraft II 5.0.14 | Standing rule | §3, D-2, D-3 |
 | Q0052, sanctioned deviations (S-5: 25 ticks per Faster second with whole-tick rounding) | Standing rule | D-4 |
 | Q0080, outcome of the effect review gate | Open; its answer decides whether the spell effects are reviewed art or stay unused | D-11, WP2c to WP5c |

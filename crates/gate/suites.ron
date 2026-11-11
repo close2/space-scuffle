@@ -66,6 +66,7 @@ SuiteCatalog(
         "client/battle_card_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_card_path_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_mode_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_cast_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_context_order_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_flipbook_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_fog_tests": (class: Slow, test_threads: Some(2)),
@@ -128,6 +129,11 @@ SuiteCatalog(
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
             "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**}",
         ]),
+        // Valgrind: counts the effect engine's steady-state allocations (plan
+        // 2026-11-10-spellcaster-mechanics D-18).
+        "sim_core/effect_tree_allocation_tests": (class: Valgrind, triggers: [
+            "crates/sim_core/src/{effects.rs,effects/**,world/snapshot.rs,world/presentation.rs}",
+        ]),
     },
 
     // Path rules (blueprint section 4.2). The "test support" rule of the blueprint needs no
@@ -186,6 +192,7 @@ SuiteCatalog(
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
                 "client/battle_mode_tests",
+                "client/battle_cast_tests",
                 "client/concealment_gpu_tests",
                 // `effects.ron` and the units' presentation blocks.
                 "client/effect_catalog_tests",
@@ -279,6 +286,8 @@ SuiteCatalog(
             "client/battle_flipbook_tests",
             // The client proof of mode admission (`would_admit_cast`, `settled_mode`).
             "client/battle_mode_tests",
+            // The client proof of cast admission (`would_accept_cast_order`, `cast_states`).
+            "client/battle_cast_tests",
         ],
         // Every target whose code calls `sim_fixtures::` (its own files or a support file it
         // loads); the catalog test keeps this list equal to the sources.
@@ -290,6 +299,7 @@ SuiteCatalog(
             "asset_baker/veo_reliability_tests",
             "asset_baker/veo_tests",
             "client/lib",
+            "client/battle_cast_tests",
             "client/battle_flipbook_tests",
             "client/editor_core_tests",
             "client/effect_catalog_tests",
@@ -299,12 +309,14 @@ SuiteCatalog(
             "client/round2_visual_tests",
             "client/skirmish_match_tests",
             "client_diagnostics/lib",
+            "sim_core/abduct_tests",
             "sim_core/acceleration_tests",
             "sim_core/attack_dash_tests",
             "sim_core/attack_move_simulation_tests",
             "sim_core/attack_swing_snapshot_tests",
             "sim_core/attribute_bonus_tests",
             "sim_core/barrier_tests",
+            "sim_core/blinding_cloud_tests",
             "sim_core/burrow_attack_tests",
             "sim_core/catalog_reference_values_tests",
             "sim_core/catalog_serialization_compatibility",
@@ -317,10 +329,14 @@ SuiteCatalog(
             "sim_core/damage_and_shields_tests",
             "sim_core/determinism_lockstep_tests",
             "sim_core/effect_snapshot_tests",
+            "sim_core/effect_tree_allocation_tests",
+            "sim_core/effect_tree_properties",
+            "sim_core/effect_tree_tests",
             "sim_core/fixed_body_transactions_tests",
             "sim_core/flee_and_evasion_tests",
             "sim_core/fog_of_war_pathfinding_tests",
             "sim_core/full_match_tests",
+            "sim_core/fungal_growth_tests",
             "sim_core/golden_replay_tests",
             "sim_core/harvest_income_tests",
             "sim_core/high_ground_combat_tests",
@@ -328,10 +344,12 @@ SuiteCatalog(
             "sim_core/load_orders_tests",
             "sim_core/match_result_tests",
             "sim_core/movement_contact_tests",
+            "sim_core/movement_layers_tests",
             "sim_core/multi_strike_timing_tests",
             "sim_core/player_view_tests",
             "sim_core/production_timer_tests",
             "sim_core/production_transactions_tests",
+            "sim_core/psionic_storm_tests",
             "sim_core/published_actions_tests",
             "sim_core/push_priority_tests",
             "sim_core/ramp_movement_tests",
@@ -344,9 +362,12 @@ SuiteCatalog(
             "sim_core/scenario_tests",
             "sim_core/second_line_tests",
             "sim_core/snapshot_output_tests",
+            "sim_core/spellcaster_pipeline_tests",
             "sim_core/spells_and_abilities_tests",
+            "sim_core/status_modifier_tests",
             "sim_core/stutter_step_tests",
             "sim_core/target_selection_tests",
+            "sim_core/transport_ownership_tests",
             "sim_core/turret_tracking_tests",
             "sim_core/upgrades_and_tech_tree_tests",
             "sim_core/watchtower_tick_tests",

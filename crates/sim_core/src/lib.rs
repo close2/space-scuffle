@@ -23,6 +23,7 @@ pub mod checksum;
 pub mod combat;
 pub(crate) mod combat_resolution;
 pub mod economy;
+pub mod effects;
 pub mod entity;
 pub mod error;
 pub mod match_state;
@@ -63,7 +64,7 @@ pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId};
 pub use weapon_timing::{
     AttackRate, InvalidAttackRate, InvalidBuffAttackRate, SimulationDiagnostic,
 };
-pub use world::{ActiveHazardZone, PlayerResources, SimWorld};
+pub use world::{PlayerResources, SimWorld};
 
 /// The shipped catalogs, embedded for this crate's own unit tests only.
 ///
@@ -103,6 +104,15 @@ pub(crate) mod test_support {
             ))
             .expect("invariant: the shipped movement_rules.ron is valid"),
         );
+        units
+            .set_spell_catalog(
+                crate::catalog::SpellCatalog::from_ron_strs(
+                    include_str!("../../../assets/catalog/statuses.ron"),
+                    include_str!("../../../assets/catalog/ability_effects.ron"),
+                )
+                .expect("invariant: the shipped spell tables are valid"),
+            )
+            .expect("invariant: the shipped abilities name only shipped effects");
         RuntimeCatalogs { units, upgrades }
     }
 

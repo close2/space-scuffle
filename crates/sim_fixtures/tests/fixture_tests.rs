@@ -57,7 +57,12 @@ use std::path::PathBuf;
 /// and each unit's pending line searches, none at spawn.
 /// Re-recorded for checksum schema 27 (plan 2026-11-10-group-routing WP3), which encodes each
 /// unit's count of route orders issued (0 at spawn) and the world's route groups (none).
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_298_638_387_780_327_088;
+/// Re-recorded for checksum schema 28 (plan `2026-11-10-spellcaster-mechanics`, package 1b), which
+/// encodes each weapon's melee flag, each unit's cast lock and displacement (none) and the
+/// world's effect state (empty).
+/// Re-recorded for checksum schema 29 (the same plan, package 2b, D-12), which no longer encodes
+/// the hazard zones (none), the next hazard id or each unit's last storm damage tick (none).
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_650_891_098_077_756_775;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
@@ -132,6 +137,7 @@ fn embedded_catalogs_are_the_shipped_files() -> Result<(), Box<dyn Error>> {
         embedded.units.movement_rules(),
         on_disk.units.movement_rules()
     );
+    assert_eq!(embedded.units.spells(), on_disk.units.spells());
     assert_eq!(
         embedded
             .upgrades

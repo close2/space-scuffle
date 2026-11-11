@@ -14,7 +14,9 @@
 //!
 //! # Invariants
 //! - Units are spawned, then ordered through `TickBundle` commands on the first tick, exactly as
-//!   a player would. The one fixture a command cannot express is a hazard, placed directly.
+//!   a player would; a side's scripted casts are commands on their own ticks. The one setting a
+//!   command cannot express is a squad's starting energy, written once after it spawns, as
+//!   research is completed before it (plan `2026-11-10-spellcaster-mechanics` §10.1).
 //! - The simulation draws no randomness in these battles, so every seed after the first nudges
 //!   each spawn point with [`Jitter`]; the first seed plays the authored positions unchanged.
 //! - A setup that cannot be built whole (unknown unit or upgrade, a spawn off the map) is an
@@ -24,11 +26,11 @@
 
 use serde::Deserialize;
 use sim_core::catalog::RuntimeCatalogs;
-use sim_core::{ActiveHazardZone, SimCoreError, SimWorld};
+use sim_core::{SimCoreError, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AbilityEffectSpec, EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick,
-    TickBundle, UnitOrder,
+    AbilityEffectSpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar,
+    SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 /// The shipped matchup matrix, `crates/sim_core/tests/fixtures/matchup_matrix.ron`.
@@ -83,6 +85,9 @@ pub enum MatchupError {
         /// The mode name from the fixture.
         mode: String,
     },
+    /// A side scripts a cast of an ability that none of its units has.
+    #[error("no unit of the casting side has an ability named `{0}`")]
+    NoCastAbility(String),
 }
 
 /// The whole matrix: seeds, jitter and battles.
@@ -143,9 +148,6 @@ pub struct Battle {
     pub blue: Side,
     /// Player 1's forces and orders.
     pub red: Side,
-    /// An area hazard already on the map, if any.
-    #[serde(default)]
-    pub hazard: Option<HazardFixture>,
     /// The recorded result.
     pub expect: Expected,
 }
@@ -164,11 +166,39 @@ pub struct Side {
     /// Issues `UseStim` to the whole side on the first tick.
     #[serde(default)]
     pub stim: bool,
-    /// On the first tick, after the standing order, every unit casts its ability that switches
-    /// it into this mode (catalog `mode_name`), as a player would burrow a unit that attacks only
-    /// burrowed. `None` casts nothing.
+    /// On the first tick, before the standing order, every unit that has an ability switching
+    /// it into this mode (catalog `mode_name`) casts it, as a player would burrow a unit that
+    /// attacks only burrowed or siege the tanks of a mixed army. `None` casts nothing.
     #[serde(default)]
     pub mode: Option<String>,
+    /// Targeted casts on later ticks, each given to the side's first living unit that has the
+    /// ability, after the standing order (plan `2026-11-10-spellcaster-mechanics` §10.1).
+    #[serde(default)]
+    pub casts: Vec<ScriptedCast>,
+}
+
+/// One cast a side makes on a given tick, as a player would click it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScriptedCast {
+    /// The tick (from 0, the tick of the standing orders) the command is issued on.
+    pub tick: u32,
+    /// The ability's catalog `name`; the fixture names it, never production Rust (C5).
+    pub ability: String,
+    /// Where the cast is aimed.
+    pub at: CastTarget,
+}
+
+/// Where a scripted cast is aimed, resolved on its tick from the units alive then.
+#[derive(Debug, Clone, Deserialize)]
+pub enum CastTarget {
+    /// A world point, in world units.
+    Point(f32, f32),
+    /// The mean position of the living enemy units.
+    EnemyCentroid,
+    /// The enemy side's first living unit in spawn order.
+    FirstEnemy,
+    /// The enemy side's first living unit of this catalog slug.
+    FirstEnemyOfType(String),
 }
 
 /// A rectangular group of identical units.
@@ -184,6 +214,14 @@ pub struct Squad {
     pub origin: (f32, f32),
     /// Distance between neighbouring grid points, in world units.
     pub spacing: f32,
+    /// Energy each unit starts with instead of its archetype's `start_energy`, so a caster can
+    /// cast on the first tick; `None` keeps the archetype's.
+    #[serde(default)]
+    pub energy: Option<f32>,
+    /// A standing order for this squad instead of its side's (a caster that waits while the
+    /// army attacks); `None` follows [`Side::order`].
+    #[serde(default)]
+    pub order: Option<SideOrder>,
 }
 
 /// The side's standing order, issued once on the first tick.
@@ -200,21 +238,6 @@ pub enum SideOrder {
     HoldPosition,
 }
 
-/// An area hazard already on the map, owned by the blue player.
-#[derive(Debug, Clone, Deserialize)]
-pub struct HazardFixture {
-    /// Centre in world units.
-    pub center: (f32, f32),
-    /// Radius in world units.
-    pub radius: i32,
-    /// Ticks the hazard lasts.
-    pub remaining_ticks: u16,
-    /// Ticks between damage pulses.
-    pub interval_ticks: u16,
-    /// Damage per pulse, in hit points.
-    pub damage_per_interval: i32,
-}
-
 /// The recorded result of a battle.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Expected {
@@ -228,11 +251,21 @@ pub struct Expected {
     /// Inclusive hull range of red's first unit, when it survives.
     #[serde(default)]
     pub red_lead_hp: Option<(f32, f32)>,
+    /// Whether blue's first unit must be alive (`true`) or dead (`false`) at the end, for a
+    /// claim about one unit's fate (plan `2026-11-10-spellcaster-mechanics` Amendment 6);
+    /// `None` claims nothing.
+    #[serde(default)]
+    pub blue_lead_alive: Option<bool>,
+    /// Whether red's first unit must be alive (`true`) or dead (`false`) at the end; `None`
+    /// claims nothing.
+    #[serde(default)]
+    pub red_lead_alive: Option<bool>,
 }
 
 impl Expected {
-    /// Whether `outcome` meets this expectation: both survivor counts inside their ranges, and
-    /// each side's lead hull inside its range when both the range and a living lead unit exist.
+    /// Whether `outcome` meets this expectation: both survivor counts inside their ranges, each
+    /// side's lead hull inside its range when both the range and a living lead unit exist, and
+    /// each side's lead alive or dead as recorded.
     ///
     /// The one judgement of a battle, shared by the matrix test and the trace tool's matrix
     /// mode, so the tool reports exactly the failures the test would.
@@ -242,7 +275,15 @@ impl Expected {
             && (self.red.0..=self.red.1).contains(&outcome.red)
             && within(self.blue_lead_hp, outcome.blue_lead_hull)
             && within(self.red_lead_hp, outcome.red_lead_hull)
+            && fate(self.blue_lead_alive, outcome.blue_lead_hull)
+            && fate(self.red_lead_alive, outcome.red_lead_hull)
     }
+}
+
+/// Whether a lead unit whose hull is `hull` (`None` once it died) meets the recorded `alive`
+/// claim; true when nothing is recorded.
+fn fate(alive: Option<bool>, hull: Option<SimScalar>) -> bool {
+    alive.is_none_or(|alive| alive == hull.is_some())
 }
 
 /// Whether `value` lies in the inclusive `range`; true when either is absent (no range recorded,
@@ -402,50 +443,85 @@ pub fn spawn_side(
                     unit: squad.unit.clone(),
                     source,
                 })?;
+            if let (Some(energy), Some(entity)) = (squad.energy, world.entities.get_mut(&unit)) {
+                entity.energy = SimScalar::from_f32_lossy(energy);
+            }
             units.push(unit);
         }
     }
     Ok(units)
 }
 
-/// The commands that give `side`'s `units` their standing order (and stim) on the first tick.
+/// The commands that give `side`'s `units` their standing order (and stim) on the first tick:
+/// one command for the units that follow [`Side::order`], then one for each squad with its own
+/// [`Squad::order`], in squad order. `units` are in spawn order, squad by squad.
 ///
 /// # Errors
-/// [`MatchupError::NoEnemyToFocus`] if the order is `AttackFirstEnemy` and `enemies` is empty.
+/// [`MatchupError::NoEnemyToFocus`] if an order is `AttackFirstEnemy` and `enemies` is empty.
 pub fn side_commands(
     owner: PlayerId,
     side: &Side,
     units: &[EntityId],
     enemies: &[EntityId],
 ) -> Result<Vec<PlayerCommand>, MatchupError> {
-    let command = |order| PlayerCommand {
+    let command = |entities: Vec<EntityId>, order| PlayerCommand {
         player_id: owner,
-        entities: units.to_vec(),
+        entities,
         order,
         queue: false,
     };
-    let order = match side.order {
-        SideOrder::None => None,
-        SideOrder::AttackMove(x, y) => Some(UnitOrder::AttackMove {
-            target: point(x, y),
-        }),
-        SideOrder::AttackFirstEnemy => Some(UnitOrder::attack(
-            *enemies.first().ok_or(MatchupError::NoEnemyToFocus)?,
-        )),
-        SideOrder::HoldPosition => Some(UnitOrder::HoldPosition),
+    let unit_order = |order: SideOrder| -> Result<Option<UnitOrder>, MatchupError> {
+        Ok(match order {
+            SideOrder::None => None,
+            SideOrder::AttackMove(x, y) => Some(UnitOrder::AttackMove {
+                target: point(x, y),
+            }),
+            SideOrder::AttackFirstEnemy => Some(UnitOrder::attack(
+                *enemies.first().ok_or(MatchupError::NoEnemyToFocus)?,
+            )),
+            SideOrder::HoldPosition => Some(UnitOrder::HoldPosition),
+        })
     };
-    let mut commands: Vec<_> = order.into_iter().map(command).collect();
+    // Each squad's units, by the squads' counts in spawn order; units beyond them follow the side.
+    let mut own_orders = Vec::new();
+    let mut followers = Vec::new();
+    let mut start = 0_usize;
+    for squad in &side.squads {
+        let end = start
+            .saturating_add(usize::try_from(squad.count).unwrap_or(usize::MAX))
+            .min(units.len());
+        let members = units.get(start..end).unwrap_or_default();
+        match squad.order {
+            Some(order) => own_orders.push((members.to_vec(), order)),
+            None => followers.extend_from_slice(members),
+        }
+        start = end;
+    }
+    followers.extend_from_slice(units.get(start..).unwrap_or_default());
+    let mut commands = Vec::new();
+    if let Some(order) = unit_order(side.order)? {
+        if !followers.is_empty() {
+            commands.push(command(followers, order));
+        }
+    }
+    for (members, order) in own_orders {
+        if let Some(order) = unit_order(order)? {
+            commands.push(command(members, order));
+        }
+    }
     if side.stim {
-        commands.push(command(UnitOrder::UseStim));
+        commands.push(command(units.to_vec(), UnitOrder::UseStim));
     }
     Ok(commands)
 }
 
-/// The first tick's casts that switch `side`'s `units` into its [`Side::mode`], one command a
-/// unit (each unit's archetype places the ability at its own index); empty without a mode.
+/// The first tick's casts that switch `side`'s `units` into its [`Side::mode`], one command for
+/// each unit that has such an ability (each unit's archetype places the ability at its own
+/// index), so sieged tanks may stand among marines; empty without a mode.
 ///
 /// # Errors
-/// [`MatchupError::NoModeAbility`] if a unit has no ability that switches to the mode.
+/// [`MatchupError::NoModeAbility`] if no unit of the side has an ability that switches to the
+/// mode (it names the first unit's archetype).
 pub fn mode_commands(
     world: &SimWorld,
     owner: PlayerId,
@@ -455,55 +531,43 @@ pub fn mode_commands(
     let Some(mode) = &side.mode else {
         return Ok(Vec::new());
     };
-    units
+    let archetype_of = |unit: &EntityId| {
+        world
+            .entities
+            .get(unit)
+            .and_then(|entity| world.catalog.get(entity.unit_type_id).ok())
+    };
+    let commands: Vec<PlayerCommand> = units
         .iter()
-        .map(|unit| {
-            let archetype = world
-                .entities
-                .get(unit)
-                .and_then(|entity| world.catalog.get(entity.unit_type_id).ok());
-            let index = archetype.and_then(|archetype| {
-                archetype.abilities.iter().position(|ability| {
-                    matches!(
-                        &ability.effect,
-                        AbilityEffectSpec::SwitchMode { mode_name } if mode_name == mode
-                    )
-                })
-            });
-            let ability_index = index
-                .and_then(|index| u8::try_from(index).ok())
-                .ok_or_else(|| MatchupError::NoModeAbility {
-                    unit: archetype.map_or_else(String::new, |archetype| archetype.slug.clone()),
-                    mode: mode.clone(),
-                })?;
-            Ok(PlayerCommand {
+        .filter_map(|unit| {
+            let index = archetype_of(unit)?.abilities.iter().position(|ability| {
+                matches!(
+                    &ability.effect,
+                    AbilityEffectSpec::SwitchMode { mode_name } if mode_name == mode
+                )
+            })?;
+            Some(PlayerCommand {
                 player_id: owner,
                 entities: vec![*unit],
                 order: UnitOrder::CastAbility {
-                    ability_index,
+                    ability_index: u8::try_from(index).ok()?,
                     target_pos: None,
                     target_entity: None,
                 },
                 queue: false,
             })
         })
-        .collect()
-}
-
-/// Places `hazard`, owned by the blue player, directly on the map.
-fn place_hazard(world: &mut SimWorld, hazard: &HazardFixture) {
-    world.active_hazards.push(ActiveHazardZone {
-        id: 1,
-        owner: BLUE,
-        center: point(hazard.center.0, hazard.center.1),
-        radius: SimScalar::from_num(hazard.radius),
-        delay_ticks: 0,
-        remaining_ticks: hazard.remaining_ticks,
-        interval_ticks: hazard.interval_ticks,
-        ticks_until_next_interval: 1,
-        damage_per_interval: SimScalar::from_num(hazard.damage_per_interval),
-        targets_friendly: false,
-    });
+        .collect();
+    if commands.is_empty() {
+        return Err(MatchupError::NoModeAbility {
+            unit: units
+                .first()
+                .and_then(archetype_of)
+                .map_or_else(String::new, |archetype| archetype.slug.clone()),
+            mode: mode.clone(),
+        });
+    }
+    Ok(commands)
 }
 
 /// Number of `units` that exist and are alive in `world`.
@@ -520,6 +584,110 @@ pub fn living(world: &SimWorld, units: &[EntityId]) -> usize {
         .count()
 }
 
+/// The index of the ability named `ability` in the archetype of `unit`, if it has one.
+fn ability_index(
+    world: &SimWorld,
+    unit: EntityId,
+    ability: &str,
+) -> Option<(u8, AbilityTargetKind)> {
+    let entity = world.entities.get(&unit)?;
+    let archetype = world.catalog.get(entity.unit_type_id).ok()?;
+    let index = archetype
+        .abilities
+        .iter()
+        .position(|spec| spec.name == ability)?;
+    let kind = archetype.abilities.get(index)?.target_kind;
+    Some((u8::try_from(index).ok()?, kind))
+}
+
+/// The mean position of the living `units`, in world units; `None` when none lives.
+fn centroid(world: &SimWorld, units: &[EntityId]) -> Option<SimVec2> {
+    let (mut sum, mut count) = (SimVec2::ZERO, 0_i32);
+    for unit in units {
+        if let Some(entity) = world.entities.get(unit).filter(|e| e.is_alive()) {
+            sum += entity.position;
+            count += 1;
+        }
+    }
+    (count > 0).then(|| SimVec2::new(sum.x / count, sum.y / count))
+}
+
+/// The command of `cast` by `owner`'s first living unit among `units` that has the ability,
+/// aimed per [`CastTarget`] at the living `enemies`; `None` when no such caster or target lives
+/// on the tick.
+fn cast_command(
+    world: &SimWorld,
+    owner: PlayerId,
+    cast: &ScriptedCast,
+    units: &[EntityId],
+    enemies: &[EntityId],
+) -> Option<PlayerCommand> {
+    let (caster, (ability_index, kind)) = units.iter().find_map(|&unit| {
+        let alive = world
+            .entities
+            .get(&unit)
+            .is_some_and(sim_core::Entity::is_alive);
+        alive
+            .then(|| ability_index(world, unit, &cast.ability))
+            .flatten()
+            .map(|found| (unit, found))
+    })?;
+    let first_enemy = |slug: Option<&str>| {
+        enemies.iter().copied().find(|id| {
+            world.entities.get(id).is_some_and(|e| {
+                e.is_alive()
+                    && slug.is_none_or(|slug| {
+                        world
+                            .catalog
+                            .get(e.unit_type_id)
+                            .is_ok_and(|arch| arch.slug == slug)
+                    })
+            })
+        })
+    };
+    let (point, unit) = match &cast.at {
+        CastTarget::Point(x, y) => (point(*x, *y), None),
+        CastTarget::EnemyCentroid => (centroid(world, enemies)?, None),
+        CastTarget::FirstEnemy => {
+            let id = first_enemy(None)?;
+            (world.entities.get(&id)?.position, Some(id))
+        }
+        CastTarget::FirstEnemyOfType(slug) => {
+            let id = first_enemy(Some(slug))?;
+            (world.entities.get(&id)?.position, Some(id))
+        }
+    };
+    let (target_pos, target_entity) = if kind == AbilityTargetKind::TargetEntity {
+        (None, Some(unit?))
+    } else {
+        (Some(point), None)
+    };
+    Some(PlayerCommand {
+        player_id: owner,
+        entities: vec![caster],
+        order: UnitOrder::CastAbility {
+            ability_index,
+            target_pos,
+            target_entity,
+        },
+        queue: false,
+    })
+}
+
+/// Fails with [`MatchupError::NoCastAbility`] when one of `side`'s scripted casts names an
+/// ability none of `units` has.
+fn check_casts(world: &SimWorld, side: &Side, units: &[EntityId]) -> Result<(), MatchupError> {
+    for cast in &side.casts {
+        if !units
+            .iter()
+            .any(|&unit| ability_index(world, unit, &cast.ability).is_some())
+        {
+            return Err(MatchupError::NoCastAbility(cast.ability.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// One battle in progress: the world, both sides' units and the first tick's commands.
 pub struct BattleRun {
     /// The battle's world; read it between steps, never mutate it.
@@ -530,6 +698,8 @@ pub struct BattleRun {
     pub red: Vec<EntityId>,
     /// Commands issued on the next tick: the standing orders before the first tick, then none.
     commands: Vec<PlayerCommand>,
+    /// Both sides' scripted casts with the casting player, issued on their ticks.
+    casts: Vec<(PlayerId, ScriptedCast)>,
     /// Ticks stepped so far.
     ticks_played: u32,
     /// The tick limit.
@@ -558,10 +728,11 @@ impl BattleRun {
         let (blue_centre, red_centre) = (side_centre(&battle.blue), side_centre(&battle.red));
         let blue = spawn_side(&mut world, BLUE, &battle.blue, red_centre, &mut nudges)?;
         let red = spawn_side(&mut world, RED, &battle.red, blue_centre, &mut nudges)?;
-        // Rule fixture: no shipped unit casts a hazard, so the storm is placed directly.
-        if let Some(hazard) = &battle.hazard {
-            place_hazard(&mut world, hazard);
-        }
+        check_casts(&world, &battle.blue, &blue)?;
+        check_casts(&world, &battle.red, &red)?;
+        let casts = (battle.blue.casts.iter().map(|cast| (BLUE, cast.clone())))
+            .chain(battle.red.casts.iter().map(|cast| (RED, cast.clone())))
+            .collect();
         // A player switches modes, then gives the order: a mode switch given without Shift
         // replaces the unit's orders (plan `2026-11-09-client-mode-commands` D-6a).
         let mut commands = mode_commands(&world, BLUE, &battle.blue, &blue)?;
@@ -573,6 +744,7 @@ impl BattleRun {
             blue,
             red,
             commands,
+            casts,
             ticks_played: 0,
             tick_limit: battle.ticks,
         })
@@ -600,9 +772,22 @@ impl BattleRun {
         if self.is_finished() {
             return Vec::new();
         }
+        let mut commands = std::mem::take(&mut self.commands);
+        for (owner, cast) in self
+            .casts
+            .iter()
+            .filter(|(_, c)| c.tick == self.ticks_played)
+        {
+            let (units, enemies) = if *owner == BLUE {
+                (&self.blue, &self.red)
+            } else {
+                (&self.red, &self.blue)
+            };
+            commands.extend(cast_command(&self.world, *owner, cast, units, enemies));
+        }
         self.world.step(&TickBundle {
             tick: Tick(self.ticks_played),
-            commands: std::mem::take(&mut self.commands),
+            commands,
             state_checksum: None,
         });
         self.ticks_played += 1;
@@ -664,6 +849,8 @@ mod tests {
             red: (0, 0),
             blue_lead_hp: Some((10.0, 20.0)),
             red_lead_hp: Some((1.0, 2.0)),
+            blue_lead_alive: None,
+            red_lead_alive: None,
         };
         assert!(expected.holds(&outcome(1, 0, Some(10.0))));
         assert!(expected.holds(&outcome(2, 0, Some(20.0))));
@@ -675,6 +862,34 @@ mod tests {
         assert!(!expected.holds(&outcome(1, 0, Some(20.5))));
     }
 
+    #[test]
+    fn a_recorded_lead_fate_must_match_and_an_absent_one_claims_nothing() {
+        let alive = Expected {
+            blue: (0, 5),
+            red: (0, 0),
+            blue_lead_hp: None,
+            red_lead_hp: None,
+            blue_lead_alive: Some(true),
+            red_lead_alive: None,
+        };
+        assert!(alive.holds(&outcome(1, 0, Some(1.0))));
+        assert!(!alive.holds(&outcome(1, 0, None)), "the lead died");
+        let dead = Expected {
+            blue_lead_alive: Some(false),
+            ..alive.clone()
+        };
+        assert!(dead.holds(&outcome(1, 0, None)));
+        assert!(!dead.holds(&outcome(1, 0, Some(1.0))), "the lead lives");
+        // The survivor counts still apply on top of the fate.
+        assert!(!dead.holds(&outcome(6, 0, None)));
+        let unclaimed = Expected {
+            blue_lead_alive: None,
+            ..alive
+        };
+        assert!(unclaimed.holds(&outcome(1, 0, None)));
+        assert!(unclaimed.holds(&outcome(1, 0, Some(1.0))));
+    }
+
     /// A side of one squad of `count` units in one row from `origin`, 2 world units apart.
     fn row(origin: (f32, f32), count: u32) -> Side {
         Side {
@@ -684,11 +899,14 @@ mod tests {
                 columns: count,
                 origin,
                 spacing: 2.0,
+                energy: None,
+                order: None,
             }],
             order: SideOrder::None,
             research: Vec::new(),
             stim: false,
             mode: None,
+            casts: Vec::new(),
         }
     }
 
@@ -730,6 +948,7 @@ mod tests {
             research: Vec::new(),
             stim: false,
             mode: None,
+            casts: Vec::new(),
         };
         assert!(matches!(
             side_commands(BLUE, &side, &[], &[]),
@@ -796,6 +1015,62 @@ mod tests {
                 "the switch did not clear the order given after it"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_squad_with_its_own_order_gets_it_and_the_rest_follow_the_side() -> Result<(), MatchupError>
+    {
+        let mut side = row((10.0, 10.0), 2);
+        side.order = SideOrder::HoldPosition;
+        let mut waiting = side.squads[0].clone();
+        waiting.count = 1;
+        waiting.order = Some(SideOrder::None);
+        side.squads.insert(0, waiting);
+        let mut charging = side.squads[1].clone();
+        charging.order = Some(SideOrder::AttackMove(30.0, 30.0));
+        side.squads.push(charging);
+        let units: Vec<_> = (1..=5).map(EntityId).collect();
+        let commands = side_commands(BLUE, &side, &units, &[])?;
+        let orders: Vec<_> = commands
+            .iter()
+            .map(|command| (command.entities.clone(), command.order.clone()))
+            .collect();
+        assert_eq!(
+            orders,
+            vec![
+                (vec![EntityId(2), EntityId(3)], UnitOrder::HoldPosition),
+                (
+                    vec![EntityId(4), EntityId(5)],
+                    UnitOrder::AttackMove {
+                        target: point(30.0, 30.0)
+                    }
+                ),
+            ],
+            "the side's order first, then each squad's own; a squad told None gets nothing"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_units_that_have_the_mode_switch_into_it() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
+        battle.blue = row((10.0, 10.0), 2);
+        let mut tanks = battle.blue.squads[0].clone();
+        tanks.unit = "railgun_crawler".to_owned();
+        tanks.origin = (10.0, 20.0);
+        battle.blue.squads.push(tanks);
+        battle.blue.mode = Some("siege_mode".to_owned());
+        battle.red = row((40.0, 40.0), 1);
+        let run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
+        let casts = run
+            .commands
+            .iter()
+            .filter(|command| matches!(command.order, UnitOrder::CastAbility { .. }))
+            .count();
+        assert_eq!(casts, 2, "the two tanks, not the two workers");
         Ok(())
     }
 

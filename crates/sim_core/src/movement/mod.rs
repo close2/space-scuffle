@@ -499,6 +499,23 @@ impl SimWorld {
         id: EntityId,
         point: SimVec2,
     ) -> Result<(), DisplacementAdmissionError> {
+        self.validate_placement_terrain(id, point)?;
+        self.validate_placement_unoccupied(id, point)
+    }
+
+    /// Validates `point` for `id`'s movement layer against terrain and structure footprints
+    /// only, ignoring every other unit: the placement of an effect that sets
+    /// `PlacementIgnoreBlockers` (`StarCraft` II `CEffectCreateUnit`; Abduct's landing point,
+    /// plan `2026-11-10-spellcaster-mechanics` D-8). Structures block through the map's
+    /// footprint cells; the overlap of units is resolved afterwards by separation.
+    ///
+    /// # Errors
+    /// Returns a typed destination rejection or malformed live-state invariant.
+    pub(crate) fn validate_placement_terrain(
+        &self,
+        id: EntityId,
+        point: SimVec2,
+    ) -> Result<(), DisplacementAdmissionError> {
         let actor = self
             .entities
             .get(&id)
@@ -518,6 +535,20 @@ impl SimWorld {
         {
             return Err(DisplacementAdmissionError::Terrain(id));
         }
+        Ok(())
+    }
+
+    /// Validates that no other live unit of `id`'s body class overlaps `point`.
+    fn validate_placement_unoccupied(
+        &self,
+        id: EntityId,
+        point: SimVec2,
+    ) -> Result<(), DisplacementAdmissionError> {
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(DisplacementAdmissionError::MissingEntity(id))?;
+        let policy = MotionPolicy::resolve(&self.catalog, &self.map, actor)?;
         for other in self
             .entities
             .values()

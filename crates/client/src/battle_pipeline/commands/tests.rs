@@ -335,7 +335,8 @@ fn absent_session_and_unsupported_capability_are_explicit() -> TestResult {
     queue.activate(SessionGeneration::FIRST)?;
     assert_eq!(
         queue.submit(&world, command(id, owner, cast_ability(), false)),
-        Err(SubmissionError::UnsupportedOrder)
+        Err(SubmissionError::Capability(id)),
+        "a cast that is no targeted effect-tree ability"
     );
     assert_eq!(queue.pending_len(), 0);
     Ok(())
@@ -1318,16 +1319,124 @@ fn a_unit_that_switched_meanwhile_is_rejected_at_its_tick() -> TestResult {
 }
 
 #[test]
-fn the_generic_paths_still_refuse_a_cast() -> TestResult {
+fn the_generic_paths_still_refuse_a_mode_switch() -> TestResult {
     let (mut world, mut queue) = role_fixture()?;
     let (tank, _) = moder(&mut world, 0)?;
     assert_eq!(
         queue.submit_selection(&world, ME, &[tank], cast_ability(), false),
-        Err(SubmissionError::UnsupportedOrder)
+        Err(SubmissionError::EmptySelection)
     );
     assert_eq!(
         queue.submit(&world, command(tank, ME, cast_ability(), false)),
-        Err(SubmissionError::UnsupportedOrder)
+        Err(SubmissionError::Capability(tank))
+    );
+    Ok(())
+}
+
+/// A scratch point cast of `zone`, which hits every unit within 1 of the point.
+fn install_scratch_cast(
+    world: &mut SimWorld,
+) -> Result<(UnitTypeId, u8), Box<dyn std::error::Error>> {
+    // Appended to the shipped tables, which the shipped casters name.
+    let spells = sim_fixtures::spells_with(
+        "(statuses: [])",
+        "(effects: [(name: \"zone\", node: Search((radius: 1.0, child: Damage((amount: 1.0)))))])",
+    )?;
+    world.catalog.set_spell_catalog(spells)?;
+    let kind = type_where(world, |a| {
+        !is_dome(a)
+            && a.max_speed > SimScalar::ZERO
+            && a.abilities.len() <= 3
+            && !a.capabilities.can_construct
+    })?;
+    let archetype = world.catalog.get_mut(kind)?;
+    archetype.max_energy = SimScalar::from_i32(200);
+    archetype.energy_regen_per_tick = SimScalar::ZERO;
+    archetype.abilities.push(AbilitySpec {
+        name: "Scratch zone".to_owned(),
+        target_kind: AbilityTargetKind::TargetPosition,
+        energy_cost: SimScalar::from_i32(50),
+        cooldown_ticks: 10,
+        cast_range: SimScalar::from_i32(5),
+        effect: AbilityEffectSpec::Effect("zone".to_owned()),
+        leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
+    });
+    Ok((kind, u8::try_from(archetype.abilities.len() - 1)?))
+}
+
+fn scratch_caster(
+    world: &mut SimWorld,
+    kind: UnitTypeId,
+    slot: i32,
+    energy: i32,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let at = SimVec2::new(SimScalar::from_i32(8 + 3 * slot), SimScalar::from_i32(10));
+    let id = world.spawn_unit(kind, ME, at)?;
+    world.entities.get_mut(&id).ok_or("spawned")?.energy = SimScalar::from_i32(energy);
+    Ok(id)
+}
+
+#[test]
+fn a_cast_is_sent_to_the_capable_members_and_revalidated_member_by_member() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (kind, index) = install_scratch_cast(&mut world)?;
+    let rich = scratch_caster(&mut world, kind, 0, 100)?;
+    let other = scratch_caster(&mut world, kind, 1, 100)?;
+    let poor = scratch_caster(&mut world, kind, 2, 10)?;
+    let bystander = builder(&mut world, 3)?;
+    let key = CastKey {
+        holder: kind,
+        ability_index: index,
+    };
+    let at = Some(SimVec2::new(
+        SimScalar::from_i32(20),
+        SimScalar::from_i32(20),
+    ));
+    let cast = CastOrder {
+        key,
+        target_pos: at,
+        target_entity: None,
+        queued: false,
+    };
+    assert!(any_caster(&world, ME, &[bystander, poor], key));
+    assert!(!any_caster(&world, ME, &[bystander], key));
+    queue.submit_cast(&world, ME, &[rich, other, poor, bystander], cast)?;
+    let sent: Vec<_> = queue.pending_commands().map(|(_, c)| c.clone()).collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].entities,
+        [rich, other],
+        "the poor caster and the bystander are left out"
+    );
+    assert_eq!(
+        sent[0].order,
+        UnitOrder::CastAbility {
+            ability_index: index,
+            target_pos: at,
+            target_entity: None,
+        }
+    );
+    // One caster spends its energy before the tick takes the command: the other still casts.
+    world.entities.get_mut(&rich).ok_or("rich")?.energy = SimScalar::ZERO;
+    let (mut input, mut sequences, mut rejected) = (bundle(), Vec::new(), Vec::new());
+    queue.prepare_tick(&world, &mut input, &mut sequences, &mut rejected)?;
+    assert_eq!(rejected, []);
+    assert_eq!(input.commands.len(), 1);
+    assert_eq!(input.commands[0].entities, [other]);
+
+    assert_eq!(
+        queue.submit_cast(&world, ME, &[poor], cast),
+        Err(SubmissionError::CastRefused),
+        "a holder that cannot cast now"
+    );
+    assert_eq!(
+        queue.submit_cast(&world, ME, &[bystander], cast),
+        Err(SubmissionError::EmptySelection),
+        "nobody holds the cast"
     );
     Ok(())
 }

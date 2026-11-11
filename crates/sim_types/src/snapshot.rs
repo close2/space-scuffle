@@ -3,7 +3,8 @@
 use crate::enums::{AnimState, ResourceKind, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId, MAX_PLAYERS};
 use crate::presentation::{
-    AreaView, Concealment, EffectSource, LineView, LinkView, StanceView, StatusFlags,
+    AreaView, Concealment, EffectSource, LineView, LinkView, SpellMissileView, StanceView,
+    StatusFlags,
 };
 use serde::{Deserialize, Serialize};
 
@@ -331,12 +332,16 @@ pub struct RenderSnapshot {
     /// Every map resource node in identifier order, including exhausted ones.
     #[serde(default)]
     pub resource_nodes: Vec<ResourceNodeView>,
-    /// Persistent areas on the ground (hazard zones), by area ID.
+    /// Persistent areas on the ground (searching effect persistents), by area ID.
     #[serde(default)]
     pub areas: Vec<AreaView>,
     /// Tethers between entities; empty until a mechanic makes one.
     #[serde(default)]
     pub links: Vec<LinkView>,
+    /// Spell missiles in flight presented as projectiles; empty when there are none, and then
+    /// left out of the serialized frame so frames without spells keep their bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spell_missiles: Vec<SpellMissileView>,
 }
 
 impl RenderSnapshot {

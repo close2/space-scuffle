@@ -19,5 +19,25 @@
         // Terrain: the showcase canyon's ramps and plateau, 400 units marching between the
         // bases through the route planner (sc2 pathfinding WP8).
         (map_cells: 64, units: 400, map_file: Some("showcase_canyon.scmap.ron")),
+        // Spells (plan 2026-11-10-spellcaster-mechanics WP6): the 64x64 battle of 400 units with
+        // the first army's spellcasters casting at the second army throughout: Blinding Clouds
+        // and Psionic Storms (live areas), Fungal Growths (missiles, two statuses per unit).
+        // A cast needs the point in sight, so 250 warm ticks bring the armies together first;
+        // then about 14 areas and 100 statuses are live on a measured tick, until the casters'
+        // energy runs low (the benchmark prints the measured means). Casters wait below the first
+        // army and fly or walk into cast range on their own.
+        (
+            map_cells: 64,
+            units: 400,
+            warm_ticks: 250,
+            spells: [
+                (caster_slug: "tongue_chameleon", ability: "Blinding Cloud", casters: 29, energy: 200,
+                 every_ticks: 6, spread: 3),
+                (caster_slug: "cerebral_elder", ability: "Psionic Storm", research: Some("psionic_storm"),
+                 casters: 19, energy: 200, every_ticks: 12, spread: 3),
+                (caster_slug: "mycelium_shaman", ability: "Fungal Growth", casters: 19, energy: 200,
+                 every_ticks: 10, spread: 2),
+            ],
+        ),
     ],
 )

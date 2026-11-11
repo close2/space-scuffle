@@ -1,11 +1,11 @@
 //! Flee goals and ground-segment pathability.
 //!
 //! # Responsibility
-//! Finds a reachable point away from a threat for units that evacuate a hazard or flee an
+//! Finds a reachable point away from a threat for units that flee a spell's source point or an
 //! attacker, and answers whether a straight ground move between two points is passable.
 //!
 //! # How it fits
-//! Called by hazard evacuation in phase 2, by target acquisition in phase 4, and by collision
+//! Called by spell damage responses in phase 2, by target acquisition in phase 4, and by collision
 //! and movement admission, which use [`SimWorld::is_position_pathable`] for ground segments.
 //!
 //! # Invariants

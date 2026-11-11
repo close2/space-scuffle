@@ -1,54 +1,24 @@
-//! Active abilities and the hazard zones they leave behind.
+//! Active abilities: admission, payment and effect of a cast.
 //!
 //! # Responsibility
-//! Owns [`ActiveHazardZone`], ability casting (admission, payment and effect), the
-//! world-level overclock used by the stim order, and the phase 2 step of hazard zones.
+//! Owns ability casting (admission, payment and effect) and the world-level overclock used by
+//! the stim order. An `Effect` ability starts a walk of its effect tree, which the effect
+//! engine (`crate::effects`) evaluates and steps in phase 2.
 //!
 //! # How it fits
 //! Casts run in phase 1 (`process_commands`) and when a queued cast reaches the front of an
-//! order queue during movement. `world.rs` re-exports [`ActiveHazardZone`], so its public path
-//! is unchanged.
+//! order queue during movement.
 //!
 //! # Invariants
 //! - Every fallible check of a cast runs before any write: a refused or failed cast leaves
 //!   energy, cooldowns and the entity untouched.
-//! - Hazard IDs come from `next_hazard_id` and are never reused within a world.
 
-use super::presentation::AreaRecord;
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, PreparedOverclock};
 use crate::movement::{DisplacementAdmissionError, MovementInvariant, MovementMathError};
 use crate::SimWorld;
 use rand::Rng;
-use sim_types::{
-    AbilityEffectSpec, AbilitySource, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick,
-    UnitModeSpec, UnitOrder,
-};
-
-/// Active continuous hazard/AoE zone (e.g. Psionic Storm) ticking in the world.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveHazardZone {
-    /// Monotonically increasing hazard ID.
-    pub id: u32,
-    /// Player owner handle.
-    pub owner: PlayerId,
-    /// Center world coordinates.
-    pub center: SimVec2,
-    /// Circular radius of effect.
-    pub radius: SimScalar,
-    /// Initial detonation delay in ticks before first damage application.
-    pub delay_ticks: u16,
-    /// Total lifetime remaining ticks.
-    pub remaining_ticks: u16,
-    /// Ticks between consecutive periodic damage pulses.
-    pub interval_ticks: u16,
-    /// Ticks remaining until the next damage pulse.
-    pub ticks_until_next_interval: u16,
-    /// Damage applied per interval pulse.
-    pub damage_per_interval: SimScalar,
-    /// If true, friendly entities also suffer damage.
-    pub targets_friendly: bool,
-}
+use sim_types::{AbilityEffectSpec, AbilitySource, EntityId, SimScalar, SimVec2, UnitModeSpec};
 
 /// Everything an admitted cast will write, computed without mutation.
 struct PreparedCast {
@@ -62,8 +32,11 @@ struct PreparedCast {
     overclock: Option<PreparedOverclock>,
     /// The effect to apply.
     effect: AbilityEffectSpec,
-    /// The caster's owner, who owns any hazard zone the cast opens.
-    owner: PlayerId,
+    /// Ticks the caster stays locked after the cast (`cast_backswing_ticks`, plan D-7.4).
+    backswing_ticks: u16,
+    /// The effect tree's origin, placed at admission (plan D-6); the caster's position for
+    /// every other ability.
+    origin: SimVec2,
 }
 
 /// The verdict of an ability effect's own admission checks.
@@ -72,22 +45,6 @@ enum EffectAdmission {
     Refused,
     /// The cast may proceed, with the prepared buff of an overclock effect (`None` otherwise).
     Admitted(Option<PreparedOverclock>),
-}
-
-/// The authored parameters of one hazard zone, as a storm ability states them.
-struct HazardSpec {
-    /// Radius of effect in world units.
-    radius: SimScalar,
-    /// Ticks before the first damage pulse.
-    delay_ticks: u16,
-    /// Lifetime in ticks.
-    duration_ticks: u16,
-    /// Ticks between damage pulses.
-    interval_ticks: u16,
-    /// Damage of each pulse.
-    damage_per_interval: SimScalar,
-    /// Whether the owner's own entities are also damaged.
-    friendly_fire: bool,
 }
 
 /// The channel, in ticks, of entering `spec` (or of leaving it when `leaving`): the direction's
@@ -112,6 +69,19 @@ fn mode_channel_ticks(spec: &UnitModeSpec, leaving: bool, rng: &mut impl Rng) ->
     // Q32.32: adding one half and shifting down by 32 rounds half up to whole ticks.
     let whole = extra.saturating_add(SimScalar::HALF).raw() >> 32;
     u16::try_from(i64::from(base).saturating_add(whole)).unwrap_or(u16::MAX)
+}
+
+/// Toggles `entity`'s cloak; a burrowing cloak also anchors it while hidden and stops it.
+fn toggle_cloak(entity: &mut Entity, is_burrow: bool) {
+    entity.is_cloaked = !entity.is_cloaked;
+    if is_burrow {
+        entity.is_immobile = entity.is_cloaked;
+        entity.unpushable = entity.is_cloaked;
+        if entity.is_cloaked {
+            entity.velocity = SimVec2::ZERO;
+            entity.current_funnel_waypoints.clear();
+        }
+    }
 }
 
 impl SimWorld {
@@ -206,7 +176,8 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
         target_entity: Option<EntityId>,
     ) -> Result<bool, MovementInvariant> {
-        let Some(cast) = self.admit_cast(entity_id, ability_index, target_pos)? else {
+        let Some(cast) = self.admit_cast(entity_id, ability_index, target_pos, target_entity)?
+        else {
             return Ok(false);
         };
         Ok(self.commit_cast(entity_id, cast, target_pos, target_entity))
@@ -216,8 +187,9 @@ impl SimWorld {
     /// world units, would be admitted now: the simulation's own admission, run without mutation
     /// and without drawing from the generator.
     ///
-    /// `false` for every ordinary refusal (dead, carried, channelling, unknown or locked
-    /// ability, cooldown, energy, range or placement) and also for malformed authored data,
+    /// `false` for every ordinary refusal (dead, carried, channelling, stunned or locked after a
+    /// cast, unknown or locked ability, cooldown, energy, range, target or placement) and also
+    /// for malformed authored data,
     /// which a real cast reports as a tick diagnostic. The client asks this before it submits
     /// a mode switch, so its admission cannot drift from the tick's (plan
     /// `2026-11-09-client-mode-commands` D-4).
@@ -227,9 +199,10 @@ impl SimWorld {
         entity_id: EntityId,
         ability_index: u8,
         target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
     ) -> bool {
         matches!(
-            self.admit_cast(entity_id, ability_index, target_pos),
+            self.admit_cast(entity_id, ability_index, target_pos, target_entity),
             Ok(Some(_))
         )
     }
@@ -243,13 +216,17 @@ impl SimWorld {
         entity_id: EntityId,
         ability_index: u8,
         target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
     ) -> Result<Option<PreparedCast>, MovementInvariant> {
         let entity = match self.entities.get(&entity_id) {
             Some(e) if e.is_alive() => e,
             _ => return Ok(None),
         };
 
-        if entity.is_loaded_in_transport() || entity.channeling_remaining_ticks > 0 {
+        if entity.is_loaded_in_transport()
+            || entity.channeling_remaining_ticks > 0
+            || entity.is_action_locked()
+        {
             return Ok(None);
         }
 
@@ -289,7 +266,22 @@ impl SimWorld {
             return Ok(None);
         }
 
-        if ability.cast_range > SimScalar::ZERO {
+        let mut origin = entity.position;
+        if matches!(ability.effect, AbilityEffectSpec::Effect(_)) {
+            // The cast pipeline of plan `2026-11-10-spellcaster-mechanics` D-7: the target
+            // suits the ability and is seen, it stands in range of the caster's edge, and the
+            // origin finds a place (D-6).
+            let targets = (target_pos, target_entity);
+            if !self.cast_target_admitted(entity, ability, ability_index, targets)
+                || self.cast_in_range(entity, ability, targets) != Some(true)
+            {
+                return Ok(None);
+            }
+            match self.place_cast_origin(entity, ability, target_entity) {
+                Some(placed) => origin = placed,
+                None => return Ok(None),
+            }
+        } else if ability.cast_range > SimScalar::ZERO {
             if let Some(pos) = target_pos {
                 if !crate::movement::math::within_distance(
                     entity.position,
@@ -317,7 +309,8 @@ impl SimWorld {
             cooldown_ticks: ability.cooldown_ticks,
             overclock,
             effect: ability.effect.clone(),
-            owner: entity.owner,
+            backswing_ticks: ability.cast_backswing_ticks,
+            origin,
         }))
     }
 
@@ -358,7 +351,9 @@ impl SimWorld {
             | AbilityEffectSpec::CloakToggle { .. }
             | AbilityEffectSpec::SwitchMode { .. } => {}
             AbilityEffectSpec::BlinkTeleport { max_range, .. } => {
-                let Some(dest) = target_pos else {
+                // A status may forbid Blink (plan `2026-11-10-spellcaster-mechanics` §6.3).
+                let Some(dest) = target_pos.filter(|_| !entity.status_modifiers().suppress_blink)
+                else {
                     return Ok(EffectAdmission::Refused);
                 };
                 if *max_range < SimScalar::ZERO {
@@ -384,8 +379,10 @@ impl SimWorld {
                     return Ok(EffectAdmission::Refused);
                 }
             }
-            AbilityEffectSpec::SpawnHazardZone { .. } => {
-                if target_pos.is_none() {
+            // The target, range and origin were admitted by `admit_cast` (`casts.rs`); the root
+            // must exist in the loaded spell catalog.
+            AbilityEffectSpec::Effect(key) => {
+                if self.catalog.spells().effect_id(key).is_none() {
                     return Ok(EffectAdmission::Refused);
                 }
             }
@@ -417,19 +414,22 @@ impl SimWorld {
             cooldown_ticks,
             overclock,
             effect,
-            owner,
+            backswing_ticks,
+            origin,
         } = cast;
+        entity.cast_lock_ticks = backswing_ticks;
         if let Some(prepared) = overclock {
             entity.commit_overclock(prepared);
         }
         entity.energy = energy;
-        if (ability_index as usize) < entity.ability_cooldowns.len() {
-            entity.ability_cooldowns[ability_index as usize] = cooldown_ticks;
+        if let Some(cooldown) = entity.ability_cooldowns.get_mut(usize::from(ability_index)) {
+            *cooldown = cooldown_ticks;
         }
 
         match effect {
-            AbilityEffectSpec::Overclock(_) => {
-                // The prepared buff committed atomically with resources above.
+            AbilityEffectSpec::Overclock(_) | AbilityEffectSpec::Effect(_) => {
+                // The prepared buff committed atomically with resources above; an effect's
+                // walk starts below, once the caster is no longer borrowed.
             }
             AbilityEffectSpec::SiegeModeToggle { cast_ticks, .. } => {
                 if cast_ticks > 0 {
@@ -465,172 +465,54 @@ impl SimWorld {
                     entity.current_funnel_waypoints.clear();
                 }
             }
-            AbilityEffectSpec::SpawnHazardZone {
-                radius,
-                delay_ticks,
-                duration_ticks,
-                interval_ticks,
-                damage_per_interval,
-                friendly_fire,
-            } => {
-                if let Some(pos) = target_pos {
-                    let spec = HazardSpec {
-                        radius,
-                        delay_ticks,
-                        duration_ticks,
-                        interval_ticks,
-                        damage_per_interval,
-                        friendly_fire,
-                    };
-                    let caster = AbilitySource {
-                        unit_type: entity.unit_type_id,
-                        ability: ability_index,
-                    };
-                    self.spawn_hazard_zone(owner, pos, &spec, caster);
-                }
-            }
-            AbilityEffectSpec::CloakToggle { is_burrow, .. } => {
-                entity.is_cloaked = !entity.is_cloaked;
-                if is_burrow {
-                    entity.is_immobile = entity.is_cloaked;
-                    entity.unpushable = entity.is_cloaked;
-                    if entity.is_cloaked {
-                        entity.velocity = SimVec2::ZERO;
-                        entity.current_funnel_waypoints.clear();
-                    }
-                }
-            }
+            AbilityEffectSpec::CloakToggle { is_burrow, .. } => toggle_cloak(entity, is_burrow),
         }
 
+        if let AbilityEffectSpec::Effect(key) = &effect {
+            self.start_cast_walk(
+                entity_id,
+                ability_index,
+                key,
+                origin,
+                (target_pos, target_entity),
+            );
+        }
         true
     }
 
-    /// Opens a hazard zone of `spec` owned by `owner` at `center`, taking the next hazard ID,
-    /// and records `caster` as its source for the render snapshot.
-    fn spawn_hazard_zone(
+    /// Starts the walk of an `Effect` ability's root for a committed cast: the target unit if
+    /// one was given, else the target point; `origin` is the point admission placed (plan
+    /// `2026-11-10-spellcaster-mechanics` D-6) and the source point the caster's position.
+    fn start_cast_walk(
         &mut self,
-        owner: PlayerId,
-        center: SimVec2,
-        spec: &HazardSpec,
-        caster: AbilitySource,
+        caster: EntityId,
+        ability_index: u8,
+        key: &str,
+        origin: SimVec2,
+        (target_pos, target_entity): (Option<SimVec2>, Option<EntityId>),
     ) {
-        let h_id = self.next_hazard_id;
-        self.presentation.record_area(
-            h_id,
-            AreaRecord {
-                source: caster,
-                total_ticks: spec.duration_ticks,
+        let target = match (target_entity, target_pos) {
+            (Some(unit), _) => sim_types::EffectTarget::Unit(unit),
+            (None, Some(point)) => sim_types::EffectTarget::Point(point),
+            (None, None) => return,
+        };
+        let (Some(root), Some(entity)) = (
+            self.catalog.spells().effect_id(key),
+            self.entities.get(&caster),
+        ) else {
+            return;
+        };
+        let context = sim_types::EffectContext {
+            owner: entity.owner,
+            caster: Some(caster),
+            ability: AbilitySource {
+                unit_type: entity.unit_type_id,
+                ability: ability_index,
             },
-        );
-        self.next_hazard_id = self.next_hazard_id.wrapping_add(1);
-        self.active_hazards.push(ActiveHazardZone {
-            id: h_id,
-            owner,
-            center,
-            radius: spec.radius,
-            delay_ticks: spec.delay_ticks,
-            remaining_ticks: spec.duration_ticks,
-            interval_ticks: spec.interval_ticks,
-            ticks_until_next_interval: spec.delay_ticks,
-            damage_per_interval: spec.damage_per_interval,
-            targets_friendly: spec.friendly_fire,
-        });
-    }
-
-    /// Phase 2: ages each hazard zone, applies its damage pulses, and sends idle mobile
-    /// victims out of its radius. Expired zones are removed after the pass.
-    pub(super) fn step_hazards(&mut self) {
-        let cur_tick = self.current_tick;
-        let mut expired_hazards = Vec::new();
-        let mut hazard_flee_candidates = Vec::new();
-        for (h_idx, hazard) in self.active_hazards.iter_mut().enumerate() {
-            if hazard.remaining_ticks == 0 {
-                expired_hazards.push(h_idx);
-                continue;
-            }
-            hazard.remaining_ticks = hazard.remaining_ticks.saturating_sub(1);
-
-            if hazard.ticks_until_next_interval > 0 {
-                hazard.ticks_until_next_interval =
-                    hazard.ticks_until_next_interval.saturating_sub(1);
-            }
-
-            if hazard.ticks_until_next_interval == 0 {
-                hazard.ticks_until_next_interval = hazard.interval_ticks;
-
-                for (&entity_id, entity) in &mut self.entities {
-                    if !Self::is_damageable(entity) {
-                        continue;
-                    }
-                    if !hazard.targets_friendly && entity.owner == hazard.owner {
-                        continue;
-                    }
-                    if entity.last_storm_damage_tick == Some(Tick(cur_tick)) {
-                        continue;
-                    }
-                    let dist = hazard.center.distance(entity.position);
-                    if dist <= hazard.radius {
-                        // The barrier absorbs spell damage too (B-41).
-                        let barrier = self
-                            .catalog
-                            .get(entity.unit_type_id)
-                            .ok()
-                            .and_then(|arch| arch.capabilities.barrier.as_ref());
-                        let dmg = entity.barrier.absorb(barrier, hazard.damage_per_interval);
-                        if dmg < hazard.damage_per_interval {
-                            self.presentation.record_barrier_hit(entity_id);
-                        }
-                        if dmg > SimScalar::ZERO {
-                            let (shield_dmg, life_dmg) = if entity.shields >= dmg {
-                                (dmg, SimScalar::ZERO)
-                            } else {
-                                let s = entity.shields;
-                                (s, dmg - s)
-                            };
-                            entity.apply_damage(shield_dmg, life_dmg, SimAngle::ZERO);
-                        }
-                        entity.last_storm_damage_tick = Some(Tick(cur_tick));
-
-                        // Idle mobile units evacuate the persistent hazard zone
-                        if matches!(entity.order_queue.front(), None | Some(UnitOrder::Idle))
-                            && !entity.is_holding_position
-                            && !entity.is_immobile
-                            && !entity.is_loaded_in_transport()
-                        {
-                            hazard_flee_candidates.push((
-                                entity_id,
-                                entity.position,
-                                hazard.center,
-                                hazard.radius,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        for h_idx in expired_hazards.into_iter().rev() {
-            let closed = self.active_hazards.remove(h_idx);
-            self.presentation.forget_area(closed.id);
-        }
-
-        // Direct hazard evacuation moves outside the affected radius
-        for (id, _pos, center, radius) in hazard_flee_candidates {
-            let flee_dist = radius + SimScalar::from_num(2);
-            let flee = self.compute_entity_flee_destination_prevalidated(id, center, flee_dist);
-            if let Err(source) = flee {
-                self.report_movement_invariant(source);
-                continue;
-            }
-            if let Ok(Some(flee_target)) = flee {
-                if let Some(unit) = self.entities.get_mut(&id) {
-                    unit.order_queue.clear();
-                    unit.enqueue_order(UnitOrder::Move {
-                        target: flee_target,
-                    });
-                    unit.current_funnel_waypoints.clear();
-                    unit.current_target = None;
-                }
-            }
-        }
+            origin,
+            source_point: entity.position,
+            target,
+        };
+        self.run_effect_walk(root, context);
     }
 }

@@ -421,7 +421,7 @@ impl SimWorld {
                     radius,
                     mover,
                     damageable: Self::is_damageable(entity),
-                    cloaked: entity.is_cloaked,
+                    cloaked: entity.is_concealed(),
                 },
             ));
         }
@@ -453,6 +453,7 @@ impl SimWorld {
             Self::advance_pending_strikes(&context, combat, *id, entity, attack_mult);
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
+                || entity.is_action_locked()
                 || entity.is_loaded_in_transport()
                 || !entity.is_completed
             {
@@ -664,8 +665,12 @@ impl SimWorld {
         attack_rate: AttackRate,
     ) -> Option<ResolvedWeapon<'a>> {
         let spec = arch.weapon_against(target_mover, entity.active_siege_weapon())?;
-        let max_range =
-            Self::effective_range_from_upgrades(upgrades, spec, &arch.slug, entity.owner);
+        // Statuses change the range after upgrades (plan `2026-11-10-spellcaster-mechanics`
+        // §6.4); neutral modifiers leave it as it is.
+        let max_range = entity.status_modifiers().weapon_range(
+            Self::effective_range_from_upgrades(upgrades, spec, &arch.slug, entity.owner),
+            spec.melee,
+        );
         let delta = Self::upgrades_of(upgrades, entity.owner)
             .unit_stat_modifiers
             .get(&arch.slug)

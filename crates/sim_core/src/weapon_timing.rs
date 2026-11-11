@@ -86,6 +86,16 @@ pub enum SimulationDiagnostic {
         /// Exact transaction invariant that failed.
         source: crate::production::ProductionInvariant,
     },
+    /// An effect walk reached a node deeper than the evaluator's fixed stack; the node and its
+    /// subtree did not run. Catalog validation (plan `2026-11-10-spellcaster-mechanics` D-17)
+    /// makes this unreachable for a loaded catalog.
+    #[error("simulation tick {tick:?}: effect node {node:?} is deeper than the walk stack")]
+    EffectWalkTooDeep {
+        /// Tick of the walk.
+        tick: Tick,
+        /// The node that was not run.
+        node: sim_types::EffectId,
+    },
     /// An invalid buff prevented this entity's weapon update during the tick.
     #[error("simulation tick {tick:?}, entity {entity:?}: {source}")]
     InvalidBuffAttackRate {

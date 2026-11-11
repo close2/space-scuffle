@@ -97,6 +97,7 @@ fn custom_projectile_weapon(
         max_projectile_lifetime_ticks: max_lifetime,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     }
 }
 
