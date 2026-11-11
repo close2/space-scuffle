@@ -399,3 +399,20 @@ unchanged, first difference at tick 265, "blue_column" pulse bot entity 14 at (3
 above the ramp, whose slide along the wall kept 0.013 of its 0.126 step; it now waits. The test
 still finds both phase-order situations. Pass in debug, release and on `wasm32-wasip1`
 (wasmtime).
+
+### 4b. Throughput (D-8)
+
+`cargo bench -p sim_core --bench throughput`, release, each run under the gate lock; base `34a92e7`
+(WP2, before the rule) and the candidate `ae3082b` alternated, five rounds each. The server was
+not at low load (1-minute load average 20 to 33 on 16 cores; the first base run at 33 after a
+burst of 220), so single figures scatter by up to 20 %. Ticks per second:
+
+| Scenario | Base runs | Base median | Candidate runs | Candidate median |
+|---|---|---:|---|---:|
+| `showcase_canyon`, 400 units | 104, 125, 124, 120, 115 | 120 | 109, 102, 90, 117, 111 | 109 |
+
+Every scenario of every run is far above 25 ticks per second (the lowest candidate figure is 81,
+the empty 256x256 map in a loaded first round). `showcase_canyon` is 9 % below the base by the
+medians and 10 % by the means (117.6 against 105.8): at the plan's bound. The spell scenario is
+within noise (candidate 223 to 230). Not yet decided: a re-measurement at low load, and if it
+stays near the bound, D-5's exact early-out; `DESIGN.md` §5 is not yet updated.
