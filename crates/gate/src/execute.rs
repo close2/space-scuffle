@@ -26,7 +26,7 @@
 
 use crate::catalog::TestClass;
 use crate::memory::{kill_tree, MemorySource, Sampler, KILL_GRACE};
-use crate::schedule::{Job, Lane, Scheduler};
+use crate::schedule::{Job, Lane, MemoryLimits, Scheduler};
 use crate::workspace::{TargetId, TargetKind, Workspace};
 use crate::GateError;
 use serde_json::Value;
@@ -708,6 +708,51 @@ pub fn run_targets(run: &LaneRun<'_>, scheduler: Scheduler) -> LaneOutcome {
         stopped: stop.load(Ordering::SeqCst),
         results,
     }
+}
+
+/// Reruns, once and alone on one lane, every job of `jobs` whose result in `results` failed or
+/// timed out, with the same time limit; logs go to `rerun/` under the first run's log
+/// directory. `None` when nothing failed.
+///
+/// # Errors
+/// [`GateError::Io`] if the rerun log directory cannot be created.
+pub fn rerun_alone(
+    first: &LaneRun<'_>,
+    jobs: &[Job],
+    results: &[TargetResult],
+) -> Result<Option<LaneOutcome>, GateError> {
+    let failed: Vec<Job> = jobs
+        .iter()
+        .filter(|job| {
+            results.iter().any(|result| {
+                result.target == job.target
+                    && matches!(result.outcome, Outcome::Failed { .. } | Outcome::TimedOut)
+            })
+        })
+        .cloned()
+        .collect();
+    if failed.is_empty() {
+        return Ok(None);
+    }
+    let rerun_dir = first.log_dir.join("rerun");
+    std::fs::create_dir_all(&rerun_dir).map_err(|source| GateError::Io {
+        path: rerun_dir.clone(),
+        source,
+    })?;
+    println!(
+        "rerunning {} failed target(s) once, alone, to tell a flake from a failure",
+        failed.len()
+    );
+    let rerun = LaneRun {
+        log_dir: &rerun_dir,
+        memory: first.memory.clone(),
+        stop_file: first.stop_file.clone(),
+        ..*first
+    };
+    Ok(Some(run_targets(
+        &rerun,
+        Scheduler::new(1, failed, MemoryLimits::UNLIMITED),
+    )))
 }
 
 /// How often the sampler scans `/proc` (plan §3.3).

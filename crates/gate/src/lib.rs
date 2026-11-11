@@ -59,9 +59,9 @@ pub use crash::{
     compiler_crashed, crash_log, incremental_dirs, run_with_crash_retry, StepRun, COMPILER_PANIC,
 };
 pub use execute::{
-    build_invocations, failed_tests, gib, lanes_tsv, mark_flakes, overlapping, run_targets,
-    stop_path, stop_request, stop_requested, time_limit, LaneOutcome, LaneRecord, LaneRun, Outcome,
-    TargetResult,
+    build_invocations, failed_tests, gib, lanes_tsv, mark_flakes, overlapping, rerun_alone,
+    run_targets, stop_path, stop_request, stop_requested, time_limit, LaneOutcome, LaneRecord,
+    LaneRun, Outcome, TargetResult,
 };
 pub use explain::render_selection;
 pub use gate_lock::{

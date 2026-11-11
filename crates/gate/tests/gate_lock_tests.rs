@@ -6,6 +6,10 @@
 //! has the lock and prints one line naming it; it proceeds once the lock is released; a gate
 //! started inside a gate (marker [`HELD_VAR`] naming the same file) or under `flock` on the lock
 //! does not wait for its ancestor; and `explain`, which builds nothing, never takes the lock.
+//! It also proves `cargo gate stop` (plan `docs/plans/2026-11-11-faster-gates.md` §3.4): with
+//! no holder it says so; with one it writes a request the holder obeys, ending red without a
+//! stamp; a stale request is removed by the next holder; and a new holder warns about live
+//! processes of the previous holder's group.
 //!
 //! # How it fits
 //! Each test uses a private lock file, pointed to by [`LOCK_PATH_VAR`], so it never touches the
@@ -23,7 +27,10 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
-use gate::{GateLock, Holder, HELD_VAR, LOCK_PATH_VAR};
+use gate::{
+    group_members, read_process_table, stale_group_warning, stop_path, stop_request, GateLock,
+    Holder, HELD_VAR, LOCK_PATH_VAR,
+};
 use std::ffi::OsStr;
 use std::fs::{OpenOptions, TryLockError};
 use std::io::{BufRead, BufReader};
@@ -357,4 +364,214 @@ fn dropping_the_holder_leaves_no_process_of_its_group() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Runs `gate <args>` in `dir` with the lock at `lock` to completion, within [`PATIENCE`].
+fn gate_output(args: &[&str], dir: &Path, lock: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_gate"))
+        .args(args)
+        .current_dir(dir)
+        .env(LOCK_PATH_VAR, lock)
+        .env_remove(HELD_VAR)
+        .output()
+        .expect("invariant: the gate binary was built")
+}
+
+#[test]
+fn stop_with_no_holder_says_so_and_exits_zero() {
+    let (_dir, lock, work) = sandbox();
+    let output = gate_output(&["stop"], &work, &lock);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("no gate holds"), "{stdout}");
+    assert!(
+        !stop_path(&lock).exists(),
+        "nothing to ask, nothing written"
+    );
+}
+
+#[test]
+fn a_stale_stop_request_is_removed_when_the_next_gate_takes_the_lock() {
+    let (_dir, lock, work) = sandbox();
+    std::fs::write(stop_path(&lock), stop_request(1)).expect("invariant: writable");
+    let held = GateLock::acquire(&lock, None, &Holder::this_process("full", &work), |_| {})
+        .expect("invariant: a free lock is taken at once");
+    assert!(!stop_path(&lock).exists(), "the stale request is gone");
+    drop(held);
+}
+
+#[test]
+fn a_new_holder_warns_about_live_processes_of_the_previous_holders_group() {
+    let (_dir, lock, work) = sandbox();
+    let mut orphan = Command::new("sleep")
+        .arg(HOLDER_BACKSTOP_SECONDS)
+        .process_group(0)
+        .spawn()
+        .expect("invariant: sleep(1) exists");
+    let group = orphan.id();
+    let previous = Holder {
+        pid: 999_999,
+        tier: "full".to_string(),
+        worktree: work.clone(),
+        started_unix_s: 0,
+        pgid: Some(group),
+    };
+    // A gate killed by its pid leaves its record behind (it never cleared it).
+    std::fs::write(&lock, previous.to_record()).expect("invariant: writable");
+    let table = read_process_table();
+    let alive = group_members(&table, group);
+    assert_eq!(alive, [group]);
+    let warning = stale_group_warning(previous.pid, group, &alive)
+        .expect("invariant: a live member makes a warning");
+    assert!(
+        warning.contains(&format!("kill -TERM -- -{group}")),
+        "{warning}"
+    );
+    assert!(warning.contains(&group.to_string()), "{warning}");
+    assert_eq!(stale_group_warning(previous.pid, group, &[]), None);
+    let mut gate = GateChild::start(&[], &["package"], &work, &lock, None);
+    let line = gate
+        .next_line(PATIENCE)
+        .expect("the new holder must warn about the previous holder's group");
+    assert!(line.contains("left processes of its group"), "{line}");
+    assert!(line.contains(&group.to_string()), "{line}");
+    assert_eq!(
+        gate.exit_within(PATIENCE).and_then(|status| status.code()),
+        Some(NOT_A_REPOSITORY),
+        "it warns and goes on, killing nothing"
+    );
+    assert!(
+        read_process_table().contains_key(&group),
+        "nothing was killed"
+    );
+    orphan.kill().ok();
+    orphan.wait().ok();
+}
+
+/// A Git repository with one crate whose only test sleeps for a minute, and the catalog the gate
+/// needs, committed so the tree is clean.
+fn slow_repository(root: &Path) {
+    let write = |path: &str, text: &str| {
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().expect("invariant: a file has a parent"))
+            .expect("invariant: writable");
+        std::fs::write(full, text).expect("invariant: writable");
+    };
+    write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/slow\"]\nresolver = \"2\"\n",
+    );
+    write(
+        "crates/slow/Cargo.toml",
+        "[package]\nname = \"slow\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(
+        "crates/slow/src/lib.rs",
+        "//! A crate whose test waits.\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn waits() {\n        std::thread::sleep(std::time::Duration::from_secs(60));\n    }\n}\n",
+    );
+    write(
+        "crates/gate/suites.ron",
+        "SuiteCatalog(global: [], docs: [])\n",
+    );
+    write(".gitignore", "/target\n");
+    let run = |program: &str, args: &[&str]| {
+        let status = Command::new(program)
+            .args(args)
+            .current_dir(root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("invariant: git and cargo exist");
+        assert!(status.success(), "{program} {args:?} failed");
+    };
+    run("cargo", &["generate-lockfile", "--offline"]);
+    run("git", &["init", "--quiet"]);
+    run("git", &["add", "-A"]);
+    run(
+        "git",
+        &[
+            "-c",
+            "user.name=gate",
+            "-c",
+            "user.email=gate@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "slow",
+        ],
+    );
+}
+
+#[test]
+fn stop_writes_a_request_naming_the_holder_and_the_holder_ends_red_without_a_stamp() {
+    let (dir, lock, work) = sandbox();
+    slow_repository(&work);
+    let stamps = dir.path().join("stamps");
+    let logs = dir.path().join("logs");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gate"))
+        .args(["full", "--stamp-dir"])
+        .arg(&stamps)
+        .arg("--log-dir")
+        .arg(&logs)
+        .current_dir(&work)
+        .process_group(0)
+        .env(LOCK_PATH_VAR, &lock)
+        .env("CARGO_TARGET_DIR", dir.path().join("target"))
+        .env_remove(HELD_VAR)
+        .env_remove("SPACE_SCUFFLE_GATE_JOBS")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("invariant: the gate binary was built");
+    let stdout = child.stdout.take().expect("invariant: stdout was piped");
+    let (sender, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(240);
+    let mut seen = Vec::new();
+    while !seen.iter().any(|line: &String| line.starts_with("[start]")) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let Ok(line) = lines.recv_timeout(left) else {
+            kill_group(&mut child);
+            panic!("the gate never started its test: {seen:#?}");
+        };
+        seen.push(line);
+    }
+    let output = gate_output(&["stop"], &work, &lock);
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{said}");
+    assert!(
+        said.contains(&format!("asked gate {}", child.id())),
+        "{said}"
+    );
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("invariant: the child is ours") {
+            break status;
+        }
+        if started.elapsed() > PATIENCE {
+            kill_group(&mut child);
+            panic!("the gate did not stop within {PATIENCE:?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(status.code(), Some(2), "a stopped gate exits with status 2");
+    let rest: Vec<String> = lines.try_iter().collect();
+    assert!(
+        rest.iter().any(|line| line.contains("RED (stopped")),
+        "{rest:#?}"
+    );
+    let written = std::fs::read_dir(&stamps).map_or(0, Iterator::count);
+    assert_eq!(written, 0, "a stopped run writes no stamp");
+    assert!(
+        !stop_path(&lock).exists(),
+        "the answered request is removed"
+    );
 }

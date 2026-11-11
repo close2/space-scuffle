@@ -376,3 +376,55 @@ fn full_selects_every_test_target_cargo_lists() -> Result<(), GateError> {
     assert!(builds[0].contains(&"--workspace".to_string()));
     Ok(())
 }
+
+/// The `exclusive: true` entries of catalog `text` whose line, or the comment lines right above
+/// it, name no evidence: a `docs/evidence/` file, a `.log` or a `lanes.tsv`.
+fn exclusive_without_evidence(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let names_evidence = |line: &str| {
+        line.split_once("//").is_some_and(|(_, comment)| {
+            comment.contains("docs/evidence/")
+                || comment.contains(".log")
+                || comment.contains("lanes.tsv")
+        })
+    };
+    let mut findings = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line
+            .split("//")
+            .next()
+            .unwrap_or("")
+            .contains("exclusive: true")
+        {
+            continue;
+        }
+        let mut comments_above = lines[..index]
+            .iter()
+            .rev()
+            .take_while(|above| above.trim_start().starts_with("//"));
+        if !names_evidence(line) && !comments_above.any(|above| names_evidence(above)) {
+            findings.push(format!("line {}: {}", index + 1, line.trim()));
+        }
+    }
+    findings
+}
+
+#[test]
+fn every_exclusive_target_names_its_evidence_in_a_comment() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let full = repo.root.join(CATALOG_PATH);
+    let text = std::fs::read_to_string(&full).map_err(|source| GateError::Io {
+        path: full.clone(),
+        source,
+    })?;
+    assert_clean("exclusive evidence", &exclusive_without_evidence(&text));
+    let bare = "    \"a/x_tests\": (class: Slow, exclusive: true),\n";
+    assert_eq!(
+        exclusive_without_evidence(bare).len(),
+        1,
+        "the check finds a bare mark"
+    );
+    let cited = "    // Fails under load: docs/evidence/2026-11-12-gate-lanes.md.\n    \"a/x_tests\": (class: Slow, exclusive: true),\n";
+    assert_eq!(exclusive_without_evidence(cited), Vec::<String>::new());
+    Ok(())
+}

@@ -33,8 +33,8 @@ use crate::cli::{Command, RunOptions};
 use crate::cli::{CEILING_MARGIN_MIB, DEFAULT_MEMORY_BUDGET_MIB};
 use crate::crash::{crash_log, incremental_dirs, run_with_crash_retry};
 use crate::execute::{
-    build_targets, gib, lanes_tsv, mark_flakes, overlapping, run_logged, run_targets, time_limit,
-    LaneRun, Outcome, TargetResult,
+    build_targets, gib, lanes_tsv, mark_flakes, overlapping, rerun_alone, run_logged, run_targets,
+    time_limit, LaneRun, Outcome, TargetResult,
 };
 use crate::explain::render_selection;
 use crate::memory::{own_process_group, MemorySource};
@@ -912,7 +912,7 @@ fn run_tests(
         .collect();
     let memory = MemorySource::discover();
     let limits = memory_limits(options, &memory);
-    let scheduler = Scheduler::new(options.jobs, jobs, limits);
+    let scheduler = Scheduler::new(options.jobs, jobs.clone(), limits);
     let run = LaneRun {
         root,
         workspace: &context.workspace,
@@ -930,7 +930,7 @@ fn run_tests(
     if report.stopped {
         return Ok(());
     }
-    rerun_failures(context, &run, report)?;
+    rerun_failures(&run, &jobs, report)?;
     note_overlapping_flakes(report, options.jobs);
     run_extras(context, selection, log_dir, report)
 }
@@ -978,57 +978,20 @@ fn note_overlapping_flakes(report: &mut RunReport, jobs: usize) {
     report.notes.extend(notes);
 }
 
-/// Reruns every failed target once, at once and alone, and marks those that pass as flaky
-/// (blueprint §3.5). Rerun logs go to `<log dir>/rerun/`, beside the first run's.
+/// Reruns every failed or timed-out target once, alone, after the lanes, and marks those that
+/// pass as flaky (blueprint §3.5, plan §3.1 L-7).
 ///
 /// # Errors
 /// [`GateError::Io`] if the rerun log directory cannot be created.
 fn rerun_failures(
-    context: &Context,
     first: &LaneRun<'_>,
+    jobs: &[Job],
     report: &mut RunReport,
 ) -> Result<(), GateError> {
-    let failed: Vec<Job> = report
-        .targets
-        .iter()
-        .filter(|result| matches!(result.outcome, Outcome::Failed { .. } | Outcome::TimedOut))
-        .map(|result| {
-            let record = result.lane.as_ref();
-            Job {
-                target: result.target.clone(),
-                class: result.class,
-                expected: result.wall,
-                test_threads: context.catalog.test_threads_of(&result.target),
-                estimate_mib: record.and_then(|r| r.peak_anon_mib.or(r.estimate_mib)),
-                exclusive: true,
-                timeout: Some(time_limit(
-                    result.wall,
-                    context.catalog.timeout_of(&result.target),
-                )),
-            }
-        })
-        .collect();
-    if failed.is_empty() {
-        return Ok(());
+    if let Some(reruns) = rerun_alone(first, jobs, &report.targets)? {
+        report.stopped |= reruns.stopped;
+        mark_flakes(&mut report.targets, &reruns.results);
     }
-    let rerun_dir = first.log_dir.join("rerun");
-    std::fs::create_dir_all(&rerun_dir).map_err(|source| GateError::Io {
-        path: rerun_dir.clone(),
-        source,
-    })?;
-    println!(
-        "rerunning {} failed target(s) once, alone, to tell a flake from a failure",
-        failed.len()
-    );
-    let rerun = LaneRun {
-        log_dir: &rerun_dir,
-        memory: first.memory.clone(),
-        stop_file: first.stop_file.clone(),
-        ..*first
-    };
-    let reruns = run_targets(&rerun, Scheduler::new(1, failed, MemoryLimits::UNLIMITED));
-    report.stopped |= reruns.stopped;
-    mark_flakes(&mut report.targets, &reruns.results);
     Ok(())
 }
 
