@@ -184,3 +184,5 @@ is cited in the RON from SC2GameData 5.0.14 (`5444e12f13`), checked against the 
   seeds of record, 3 over all seeds (the same three).
 - **Battle 33**, 64 seeds plus the four of record: all 206 trace files byte-identical to the WP3 run of
   `57f2747`.
+- **Goldens** unchanged (no caster in either script), passing in debug, release and `wasm32-wasip1`
+  (wasmtime). The DHAT allocation test (`effect_tree_allocation_tests.rs`) passes.
