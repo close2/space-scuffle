@@ -10,7 +10,9 @@
 //! - T-B3: a body overlapping a wall walks past the wall's end without being thrown;
 //! - T-B4: a body spawned into a wall leaves along its route, and a push does not deepen it;
 //! - T-B5: the showcase's pulse bot 7 rounds the ramp E corner (bug B-113's reproduction);
-//! - T-B6: walking a route's legs never needs a projection, on both shipped maps.
+//! - T-B6: walking a route's legs never needs a projection, on both shipped maps;
+//! - T-B9: a body touching a wall's end walks round it without near-stalling (steering's disc
+//!   probe and its slide along the wall, risk R-3).
 //!
 //! Units are picked from the shipped catalog by radius, never by name (charter §3.3), except
 //! that T-B5 follows the entity the bug was traced on.
@@ -322,6 +324,62 @@ fn showcase_pulse_bot_rounds_the_ramp_e_corner() {
     );
     let turn = total_turn_degrees(&track);
     assert!(turn <= 180.0, "turned {turn:.0}° over ticks 740 to 800");
+}
+
+/// T-B9 (plan D-3, risk R-3; the showcase's pulse bot 18 at the ramp E corner): a body touching
+/// a wall's end from below the line its route takes round it, ordered to a point behind the
+/// wall, walks round the end without near-stalling. Heading straight for its next point would
+/// press its disc into the corner, which the settle cuts to nothing; steering's disc probe slides
+/// the step along the corner instead. Until the body is round the end its step never shrinks (it
+/// accelerates from rest to its speed), it is round within 20 ticks, and it never goes deeper.
+#[test]
+fn a_body_heading_past_a_wall_end_walks_round_it_without_stalling() {
+    // The wall is every cell west of x = 10 and south of y = 12: its end is the vertex (10, 12).
+    let map = walled(24, |x, y| x < 10 && y < 12);
+    let mut world = sim_fixtures::world(map, 0xC0_4E9);
+    let radius = 0.375;
+    // Touching the vertex, 0.072 below the line y = 12 + radius + margin the route rounds it on.
+    let start = at(10.126, 12.0 + (radius * radius - 0.126 * 0.126_f64).sqrt());
+    let body = spawn(&mut world, 0, start);
+    let kind = world.entities[&body].unit_type_id;
+    let speed = f64::from(
+        world
+            .catalog
+            .get(kind)
+            .expect("registered")
+            .max_speed
+            .to_f32(),
+    );
+    order(
+        &mut world,
+        0,
+        vec![body],
+        UnitOrder::Move {
+            target: at(4.0, 13.0),
+        },
+    );
+    let mut previous = world.entities[&body].position;
+    let mut last_step = 0.0_f64;
+    let mut rounded = None;
+    for tick in 0..60_u32 {
+        step_never_deeper(&mut world, &[body], 1, "rounding");
+        let now = world.entities[&body].position;
+        let moved = f64::from(now.distance(previous).to_f32());
+        if rounded.is_none() {
+            // The unit accelerates from rest, so its step grows to its speed; a stall shrinks it.
+            assert!(
+                moved >= last_step.min(speed) - 1e-3,
+                "tick {tick}: stepped {moved:.4} after {last_step:.4} at {now:?}"
+            );
+        }
+        if rounded.is_none() && now.x < s(9.5) {
+            rounded = Some(tick);
+        }
+        previous = now;
+        last_step = moved;
+    }
+    let rounded = rounded.expect("the body got round the wall's end");
+    assert!(rounded <= 20, "round the end by tick {rounded}");
 }
 
 /// A seeded uniform draw in `[low, high)` (splitmix64), so the test needs no random crate.

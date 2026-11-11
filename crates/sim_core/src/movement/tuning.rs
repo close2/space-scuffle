@@ -102,3 +102,8 @@ pub(crate) const SOFT_PUSH_FLOOR: SimScalar = ratio(15, 1000);
 pub(crate) const WALL_CONTACT_TOLERANCE: SimScalar = SimScalar::from_raw(1 << 12);
 /// Projections at most per settled move: one per wall pressing at a concave corner, plus one.
 pub(crate) const WALL_CONTACT_PASSES: usize = 3;
+/// Slack of steering's disc probe, in world units (2⁻¹⁴, four units of the mesh predicate's Q16
+/// lattice): a body touching a wall is probed at its clearance less this much, so the
+/// predicate's rounding of the point down and of the radius up to that lattice cannot refuse a
+/// step along the wall (plan `2026-11-11-contact-and-missiles` D-3, R-3).
+pub(crate) const WALL_PROBE_SLACK: SimScalar = SimScalar::from_raw(1 << 18);

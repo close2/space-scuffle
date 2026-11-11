@@ -200,3 +200,104 @@ dasher does not get round the wall's end at (11, 13)),
 `movement_contact_tests::melee_pursuit_takes_the_ramp_and_reaches_the_enemy` and
 `movement_contact_tests::pursuit_rounds_a_single_blocked_cell_promptly`. These are implementation defects
 to fix (the probe's disc test, D-3) before any acceptance decision.
+
+### 3a. WP3 continued: steering's probes get the disc test (R-3; still held: the winner flips)
+
+The orchestrator's decision after §3: fix the implementation gap of D-3 and R-3 first, then
+re-measure.
+
+**Change.** `movement/contact.rs` gains two functions, and steering's look-ahead uses them:
+
+- `probe_permits(map, pathfinder, policy, from, to)`: the centre rule, and for a ground body the
+  segment predicate (`Pathfinder::segment_is_passable`) for its disc of `terrain_radius()`, under
+  the physical request; when that disc does not fit along the step, the sweep is retried at the
+  body's clearance at `from` less `WALL_PROBE_SLACK` (2⁻¹⁴, four units of the predicate's Q16
+  lattice, so its rounding cannot refuse a step along a wall the body touches). A body touching
+  or overlapping a wall is so refused only a step that goes deeper, as `settle_on_terrain` is.
+  Air bodies, a centre on the wall and a map without a mesh keep the centre rule.
+- `slide_along_wall(map, pathfinder, policy, from, velocity)`: the step with its part into the
+  nearest wall within `terrain_radius + |step|` removed (the tangent of a straight wall, of the
+  circle round a corner's vertex), when the probe admits the result.
+
+Probe sites moved to `probe_permits`: the snap onto a goal within one step (`upkeep_route`), the
+finish onto the goal after the last waypoint (`propose_step`), `aim_past_parked_body`'s aim, the
+arrival step and the steered step of `step_toward`, the surround walk's side step, and
+`keep_terrain_view`'s step. In `step_toward` a disc-refused step slides along the wall; it counts
+as refused (the caller drops a refused route or re-routes a chase) when the slide keeps less than
+half the step, the surround walk's half step.
+
+Left on the centre test, with the reason:
+
+- `slide_target` and `route_is_usable` (movement admission and route rules, D-4), and
+  `propose_step`'s check that drops a route whose first leg terrain refuses: a route's first leg
+  is held to the centre rule (`route_is_usable`, the start-triangle rule), so a disc test there
+  dropped the route of a body the crowd had pushed below it, and the body then walked straight at
+  its far goal for a repath cooldown (measured: pulse bot 18, 25 ticks south along the ramp E
+  wall).
+- `drop_passed_waypoints`' terrain view: it already tests the disc, with the wedged exemption D-4
+  keeps.
+- `coast` (a glide is a step, not a probe; `walking_goal` holds `&self` and no pathfinder; the
+  settle slides it) and `flee_destination` (it picks a `Move` goal, which the disc-radius route
+  reaches; `compute_flee_destination` and `compute_entity_flee_destination` are `&self` public
+  APIs pinned by `world_api_surface_tests`).
+
+Per-tick cost: one predicate flood per probe of a ground body, plus a contact flood and a second
+sweep only when the first sweep is refused; no allocation (the predicate's retained scratch).
+Throughput is measured in WP4.
+
+**Tests.** T-B9 `wall_contact_tests::a_body_heading_past_a_wall_end_walks_round_it_without_stalling`
+(pulse bot 18's geometry: touching the end of a wall 0.072 below the line round it, ordered to a
+point behind it; until it is round, its step never shrinks while it accelerates, it is round within
+20 ticks, never deeper): red on `702fc9b` (tick 2: stepped 0.0032 after 0.0230), green here. Unit
+tests in `contact.rs`: the probe refuses a disc sweep the centre rule admits, admits a step along a
+touching wall and along a spawn's overlap, refuses one deeper, and leaves air bodies to the centre
+rule; the slide keeps a step's part along a straight wall and the tangent round a vertex, and none
+for a step away from the wall or in the open. The four red tests of §3:
+`attack_dash_tests::q0071_the_maximum_is_the_walk_not_the_straight_line`,
+`movement_contact_tests::melee_pursuit_takes_the_ramp_and_reaches_the_enemy` and
+`movement_contact_tests::pursuit_rounds_a_single_blocked_cell_promptly` pass; T-B5 stays red,
+because pulse bot 7 dies in the lane fight (below), not at the corner.
+
+**Measurements** (base: WP2; tools built from this tree).
+
+| | Base (WP2) | WP3 (§3) | WP3 with the probes |
+|---|---|---|---|
+| Ramp W foot P0 ratio, turn (mean / max) | 1.301 / 1.473, 157° / 301° | 1.325 / 1.473, 158° / 230° | 1.333 / 1.473, 189° / 341° |
+| Ramp W foot P1 | — | 1.513 / 1.528, 116° / 131° (4) | 1.510 / 1.523, 112° / 128° (5) |
+| Ramp E foot P0 | 1.198 / 1.300, 190° / 454° (6) | no pass | no pass: P0's army is dead |
+| Ramp E foot P1 | 1.149 / 1.168, 81° / 152° | 1.209 / 1.352, 204° / 590° | 1.154 / 1.173, 77° / 83° |
+| Reversals P0 / P1 | 17 / 7 | 4 / 28 | 20 / 25 |
+| Stall give-ups P0 / P1 | 0 / 0 | 0 / 0 | 1 / 0 |
+| Near-stalls on a route (≥ 6 ticks under 0.005), ticks ≤ 1,000 | bot 11 in the fight | bots 17, 18 at the ramp E corner, 11, 18, 21 in the fight | bots 4, 11 in the fight |
+| Deeper unit-ticks | 118 / 74 | 0 / 0 | 0 / 0 |
+| Outcome | P0 wins at 1,693 | P1 wins at 2,216 | P1 wins at 1,943 |
+| Seeds 1 to 8 | P0 all eight | P1 3, P0 1, 4 never end | P1 seeds 2 to 8, P0 seed 1; all end |
+
+Matrix: bit-identical to WP2 (`--compare`); battle 33: `seeds.csv` byte-identical.
+
+**What the probes fixed.** The ramp E corner: P1's column now crosses it as on the base (1.154 /
+77° against 1.149 / 81°; pulse bot 18 rounds the vertex (38, 52) at full speed where it crawled
+for ten ticks in §3), and no body near-stalls at a wall. The four seeds that did not end now end.
+
+**The flip remains, and is the rule's.** The run diverges from the base at the same two places as
+§3 and variant E: player 1's spawn (tick 9: welder drone 16, pulse bots 17 to 24, pressed into
+the spawn's walls on the base and sliding here) and the ramp W wall end (29, 12) at tick 156. On
+the base player 0's column cut that wall end with its centres at about (29.0, 12.1), its discs
+0.3 to 0.37 into the wall; here they go round it at the disc's radius, (29.4, 11.9), and queue in
+the narrower passage (pulse bot 6 steps 0.02 to 0.05 a tick for ticks 162 to 181 behind its
+friends, not against a wall). Leaving the ramp W box, pulse bots 4 to 9 are 5 to 9 ticks later
+than on the base (exit ticks 221, 215, 203, 190, 208, 196 against 213, 206, 198, 184, 199, 191);
+at tick 340 player 0's column is 0.6 to 1.3 behind, player 1's within 0.2 to 0.5 of the base. That
+delay turns the near-tied lane fight (ticks 310 to 640, round (22–28, 30–38)): player 0's ten
+attackers die between 413 and 626 and player 1 keeps five pulse bots, which walk to player 0's
+base. The remaining reversals are in the fight (cosine below −0.3 on position steps, ticks 304 to
+606, and welder drone 16 at its spawn), the one give-up is welder drone 2 at its own base giving up
+an automatic chase of pulse bot 20 beyond its leash at tick 946, after the flip, and the ramp W
+turn rises in that queue. The flip now holds on seven of eight seeds, so it is systematic, not the
+fight's noise: discs that may no longer overlap the wall end narrow the lane, which is the game's
+rule (C1, D-1). Held under D-9, 4 for the orchestrator's decision.
+
+**Observation, no rule change.** In §3's tree some seeds never ended once only unarmed welder
+drones remained on both sides: the scenario ends a match only when a side has no units, and
+workers do not attack. StarCraft II ends a melee game when a player has no structures, a separate
+topic from this plan.

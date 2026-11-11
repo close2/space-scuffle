@@ -29,7 +29,7 @@
 //!   route, and its velocity is zero. Collision pushes are not its own motion and are not gated. Every other unit moves
 //!   along its path at once while its hull follows.
 
-use super::contact::settle_on_terrain;
+use super::contact::{probe_permits, settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
@@ -1373,7 +1373,7 @@ impl MotionDraft<'_> {
             ControlFlow::Continue(on_last_leg) => on_last_leg,
             ControlFlow::Break(()) => return Ok(()),
         };
-        let (next, gap) = self.next_waypoint(&context)?;
+        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         let routes = &mut scene.movement.route_outcomes;
         if self
             .check_progress(routes, on_last_leg, gap, map_news)?
@@ -1381,7 +1381,7 @@ impl MotionDraft<'_> {
         {
             return Ok(());
         }
-        self.propose_step(&context, next, gap)
+        self.propose_step(&context, scene.pathfinder, next, gap)
     }
 
     /// Lowers this tick's step so a unit with a finite deceleration can stop `short` world units
@@ -1433,7 +1433,13 @@ impl MotionDraft<'_> {
             return Ok(Stage::Continue(()));
         }
         if distance(actor.position, self.goal).map_err(self.fault())? <= self.entry.step
-            && policy.permits_segment(scene.map, actor.position, self.goal)
+            && probe_permits(
+                scene.map,
+                scene.pathfinder,
+                policy,
+                actor.position,
+                self.goal,
+            )
         {
             if self.may_snap_to(self.goal)? {
                 self.proposal.position = self.goal;
@@ -1545,6 +1551,7 @@ impl MotionDraft<'_> {
     fn next_waypoint(
         &mut self,
         context: &StepContext<'_>,
+        pathfinder: &mut Pathfinder,
     ) -> Result<(SimVec2, SimScalar), MovementInvariant> {
         let actor = self.actor;
         let next = match *self.proposal.route(actor) {
@@ -1560,7 +1567,7 @@ impl MotionDraft<'_> {
                     .find(|&point| !within_distance(point, corner, i128::from(reach.raw())))
                     .unwrap_or(subsequent);
                 let mut sense = self.proposal.memory.corner_round;
-                let aim = aim_past_parked_body(context, corner, subsequent, &mut sense)
+                let aim = aim_past_parked_body(context, pathfinder, corner, subsequent, &mut sense)
                     .map_err(self.fault())?;
                 self.proposal.memory.corner_round = sense;
                 aim.unwrap_or(corner)
@@ -1620,12 +1627,13 @@ impl MotionDraft<'_> {
     fn propose_step(
         &mut self,
         context: &StepContext<'_>,
+        pathfinder: &mut Pathfinder,
         next: SimVec2,
         gap: SimScalar,
     ) -> Result<(), MovementInvariant> {
         let (policy, actor, map) = (self.entry.policy, self.actor, context.map);
-        let refused =
-            step_toward(context, &mut self.proposal, next, gap, None).map_err(self.fault())?;
+        let refused = step_toward(context, pathfinder, &mut self.proposal, next, gap, None)
+            .map_err(self.fault())?;
         if refused
             && self.ground
             && self.cooled_down
@@ -1638,7 +1646,7 @@ impl MotionDraft<'_> {
         if self.proposal.route(actor).is_empty()
             && self.proposal.position == next
             && distance(next, self.goal).map_err(self.fault())? <= self.entry.step
-            && policy.permits_segment(map, next, self.goal)
+            && probe_permits(map, pathfinder, policy, next, self.goal)
         {
             self.proposal.position = self.goal;
             self.proposal.finish(self.goal);
@@ -1686,13 +1694,14 @@ impl MotionDraft<'_> {
             &mut self.proposal,
         )
         .map_err(self.fault())?;
-        let (next, gap) = self.next_waypoint(&context)?;
+        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         let routes = &mut scene.movement.route_outcomes;
         if self.check_pursuit_progress(routes, pursuit)?.is_break() {
             return Ok(());
         }
         let refused = step_toward(
             &context,
+            scene.pathfinder,
             &mut self.proposal,
             next,
             gap,
@@ -1827,6 +1836,7 @@ fn parked_on_corner<'n>(
 /// side rule would send it back. The route is never written: this is a steering aim.
 fn aim_past_parked_body(
     context: &StepContext<'_>,
+    pathfinder: &mut Pathfinder,
     corner: SimVec2,
     subsequent: SimVec2,
     sense: &mut i8,
@@ -1882,9 +1892,7 @@ fn aim_past_parked_body(
     } else {
         clockwise
     };
-    Ok(policy
-        .permits_segment(context.map, body.pos, aim)
-        .then_some(aim))
+    Ok(probe_permits(context.map, pathfinder, policy, body.pos, aim).then_some(aim))
 }
 
 /// Drops leading waypoints the unit no longer needs to touch.
@@ -1990,6 +1998,7 @@ fn braking_speed(
 /// Returns whether terrain refused the step as planned, so the caller can check its route.
 fn step_toward(
     context: &StepContext<'_>,
+    pathfinder: &mut Pathfinder,
     proposal: &mut MotionProposal,
     next: SimVec2,
     gap: SimScalar,
@@ -2005,7 +2014,7 @@ fn step_toward(
         ..
     } = *context;
     let origin = body.pos;
-    if gap <= speed && policy.permits_segment(map, origin, next) {
+    if gap <= speed && probe_permits(map, pathfinder, policy, origin, next) {
         proposal.position = next;
         proposal.velocity = checked_vec_sub(next, origin)?;
         proposal.anim = AnimState::Walk;
@@ -2015,19 +2024,38 @@ fn step_toward(
     let heading = steer_body(body, next, ignored, neighbours)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
-        velocity = keep_terrain_view(context, next, gap, velocity)?;
+        velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
     }
     let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
     if let Some(target) = context.surround {
-        velocity = surround_walk(context, proposal, next, velocity, target)?;
+        velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
     }
     if is_waiting(velocity, speed) {
         proposal.velocity = SimVec2::ZERO;
         proposal.anim = AnimState::Idle;
         return Ok(false);
     }
+    // The probe is the disc's (plan `2026-11-11-contact-and-missiles` D-3, R-3): a step that
+    // would press the disc into a wall slides along it instead. A slide that keeps at least half
+    // the step walks along the wall; one that keeps less meets the wall nearly head-on, and the
+    // step counts as refused as planned, so the caller looks at its route (the same half step at
+    // which a blocked attacker starts its surround walk). Where a step that cannot slide goes is
+    // still the centre rule's slide, which the settle then completes.
+    let mut refused = !probe_permits(
+        map,
+        pathfinder,
+        policy,
+        origin,
+        checked_vec_add(origin, velocity)?,
+    );
+    if refused {
+        if let Some(slid) = slide_along_wall(map, pathfinder, policy, origin, velocity)? {
+            let half = velocity.length().saturating_mul(SimScalar::HALF);
+            refused = within_distance(slid, SimVec2::ZERO, i128::from(half.raw()));
+            velocity = slid;
+        }
+    }
     let wanted = checked_vec_add(origin, velocity)?;
-    let refused = !policy.permits_segment(map, origin, wanted);
     if let Some(position) = slide_target(map, policy, origin, wanted) {
         proposal.position = position;
         proposal.velocity = velocity;
@@ -2066,6 +2094,7 @@ fn is_waiting(velocity: SimVec2, speed: SimScalar) -> bool {
 /// wait (plan Amendment 4 records the changes to D-2 and D-3).
 fn surround_walk(
     context: &StepContext<'_>,
+    pathfinder: &mut Pathfinder,
     proposal: &mut MotionProposal,
     next: SimVec2,
     velocity: SimVec2,
@@ -2137,7 +2166,13 @@ fn surround_walk(
     };
     let step = remove_blocked_velocity(body, checked_vec_scale(across, speed)?, neighbours)?;
     let open = !is_waiting(step, speed)
-        && policy.permits_segment(map, body.pos, checked_vec_add(body.pos, step)?);
+        && probe_permits(
+            map,
+            pathfinder,
+            policy,
+            body.pos,
+            checked_vec_add(body.pos, step)?,
+        );
     if open {
         memory.flank_blocked_ticks = 0;
         memory.flank_walked = memory.flank_walked.saturating_add(step.length());
@@ -2209,6 +2244,7 @@ fn friend_blocks_ahead(
 /// Only the stretch of leg just ahead is compared, which is all a single step can affect.
 fn keep_terrain_view(
     context: &StepContext<'_>,
+    pathfinder: &mut Pathfinder,
     next: SimVec2,
     gap: SimScalar,
     velocity: SimVec2,
@@ -2224,7 +2260,7 @@ fn keep_terrain_view(
         checked_vec_scale(straight, gap.min(TERRAIN_GUARD_HORIZON))?,
     )?;
     let stepped = checked_vec_add(origin, velocity)?;
-    let loses_view = context.policy.permits_segment(map, origin, stepped)
+    let loses_view = probe_permits(map, pathfinder, context.policy, origin, stepped)
         && map.ground_segment_is_connected(origin, horizon, |_, _| true)
         && !map.ground_segment_is_connected(stepped, horizon, |_, _| true);
     Ok(if loses_view {

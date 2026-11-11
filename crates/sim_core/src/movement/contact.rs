@@ -28,10 +28,10 @@
 //! - Air bodies are untouched: terrain does not reach them.
 
 use super::math::{
-    checked_normalize, checked_vec_add, checked_vec_scale, checked_vec_sub, squared_distance,
-    MovementMathError,
+    checked_dot, checked_normalize, checked_vec_add, checked_vec_scale, checked_vec_sub,
+    squared_distance, MovementMathError,
 };
-use super::tuning::{WALL_CONTACT_PASSES, WALL_CONTACT_TOLERANCE};
+use super::tuning::{WALL_CONTACT_PASSES, WALL_CONTACT_TOLERANCE, WALL_PROBE_SLACK};
 use super::{MotionPolicy, MovementLayer};
 use sim_map::{PathRequestWithVision, Pathfinder, SimMap, WallContact};
 use sim_types::{SimScalar, SimVec2};
@@ -154,6 +154,89 @@ pub(crate) fn settle_on_terrain(
         }
     }
     Ok(None)
+}
+
+/// Whether steering may expect a walking step of a body under `policy` from `from` to `to` to be
+/// taken as it is (plan D-3, risk R-3): the centre rule, and for a ground body the sweep of its
+/// disc. Steering's look-ahead probes ask this, so that a step the settle would cut to a sliver
+/// along a wall counts as refused, and the unit steers, re-routes or slides instead of pressing
+/// on into the wall.
+///
+/// The disc swept is the body's terrain radius or, when that does not fit along the step, its
+/// clearance at `from` less [`WALL_PROBE_SLACK`]. A body touching a wall, or one that a spawn or
+/// a placement left overlapping it, is then refused only a step that goes deeper, which is what
+/// [`settle_on_terrain`] refuses. A body whose centre lies on the wall, and a map without a mesh,
+/// keep the centre rule alone. Positions are world units.
+pub(crate) fn probe_permits(
+    map: &SimMap,
+    pathfinder: &mut Pathfinder,
+    policy: MotionPolicy,
+    from: SimVec2,
+    to: SimVec2,
+) -> bool {
+    if !policy.permits_segment(map, from, to) {
+        return false;
+    }
+    if policy.layer != MovementLayer::Ground || from == to || pathfinder.navmesh().is_none() {
+        return true;
+    }
+    let radius = policy.terrain_radius();
+    if pathfinder.segment_is_passable(map, &contact_request(from, radius), from, to) {
+        return true;
+    }
+    let (allowed, _) = clearance(map, pathfinder, radius, from);
+    let swept = allowed.saturating_sub(WALL_PROBE_SLACK);
+    swept <= SimScalar::ZERO
+        || pathfinder.segment_is_passable(map, &contact_request(from, swept), from, to)
+}
+
+/// The step `velocity` (world units per tick) of a ground body at `from` with the part that
+/// presses into the nearest wall removed, when [`probe_permits`] refuses the step itself and
+/// accepts the slid one; `None` otherwise (plan D-3, risk R-3).
+///
+/// Steering heads for its next point; a body the crowd pushed off its route towards a wall, or
+/// one rounding a wall's end, would head into the wall, and [`settle_on_terrain`] cuts such a
+/// step to a sliver or refuses it. The step here keeps only its part along the wall: the
+/// tangent of a straight wall, the tangent of the circle round a corner's vertex, as `StarCraft`
+/// II's units slide round terrain (§2.1). The wall is the nearest within the body's terrain
+/// radius plus the step's length, and its normal is the direction from its nearest point to the
+/// body, or the edge's open-side normal for a centre on the wall.
+///
+/// # Errors
+/// An unrepresentable vector operation.
+pub(crate) fn slide_along_wall(
+    map: &SimMap,
+    pathfinder: &mut Pathfinder,
+    policy: MotionPolicy,
+    from: SimVec2,
+    velocity: SimVec2,
+) -> Result<Option<SimVec2>, MovementMathError> {
+    if policy.layer != MovementLayer::Ground || velocity == SimVec2::ZERO {
+        return Ok(None);
+    }
+    let reach = policy
+        .terrain_radius()
+        .checked_add(velocity.length())
+        .ok_or(MovementMathError::Unrepresentable)?;
+    let Some(contact) = pathfinder.wall_contact(map, &contact_request(from, reach), from) else {
+        return Ok(None);
+    };
+    let away = checked_vec_sub(from, contact.point)?;
+    let normal = if away == SimVec2::ZERO {
+        contact.normal
+    } else {
+        checked_normalize(away)?
+    };
+    let into = checked_dot(velocity, normal)?;
+    if into >= SimScalar::ZERO {
+        return Ok(None);
+    }
+    let slid = checked_vec_sub(velocity, checked_vec_scale(normal, into)?)?;
+    if slid == SimVec2::ZERO {
+        return Ok(None);
+    }
+    let to = checked_vec_add(from, slid)?;
+    Ok(probe_permits(map, pathfinder, policy, from, to).then_some(slid))
 }
 
 #[cfg(test)]
@@ -310,5 +393,106 @@ mod tests {
             }
         }
         assert!(projected >= 20, "{projected} moves were projected");
+    }
+
+    /// The probe refuses a step whose centre stays clear of a wall but whose disc would sweep
+    /// into it, admits a step along a wall the body touches, and leaves air bodies to the centre
+    /// rule.
+    #[test]
+    fn the_probe_tests_the_disc_and_admits_a_step_along_a_touching_wall() {
+        let map = walled(20, |x, _| x >= 10);
+        let mut pathfinder = Pathfinder::new(&map);
+        let policy = ground(0.375);
+        // The centre stays 0.2 from the wall at x = 10: the centre rule passes, the disc does not.
+        let (from, into) = (at(9.0, 5.0), at(9.8, 5.0));
+        assert!(policy.permits_segment(&map, from, into));
+        assert!(!probe_permits(&map, &mut pathfinder, policy, from, into));
+        assert!(probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            from,
+            at(9.5, 5.0)
+        ));
+        // A body touching the wall walks along it, and is refused a step deeper.
+        let touching = at(10.0 - 0.375, 5.0);
+        assert!(probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            touching,
+            at(9.625, 5.1)
+        ));
+        assert!(!probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            touching,
+            at(9.65, 5.1)
+        ));
+        // A body a spawn left 0.2 deep may move along at its depth, not deeper.
+        let wedged = at(9.825, 5.0);
+        assert!(probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            wedged,
+            at(9.82, 5.1)
+        ));
+        assert!(!probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            wedged,
+            at(9.9, 5.1)
+        ));
+        let air = MotionPolicy {
+            layer: MovementLayer::Air,
+            ..policy
+        };
+        assert!(probe_permits(&map, &mut pathfinder, air, from, into));
+    }
+
+    /// The slide keeps a step's part along a straight wall and the tangent part round a wall's
+    /// end; a step away from the wall, or one the probe already admits, needs none.
+    #[test]
+    fn the_slide_keeps_the_part_of_a_step_along_the_wall() {
+        let map = walled(20, |x, y| x < 10 && y < 12);
+        let mut pathfinder = Pathfinder::new(&map);
+        let policy = ground(0.375);
+        // Touching the wall's top (y = 12) from above, stepping down and west: the west part stays.
+        let above = at(6.0, 12.375);
+        let slid = slide_along_wall(&map, &mut pathfinder, policy, above, at(-0.1, -0.1))
+            .expect("representable")
+            .expect("slides");
+        assert!(close(slid, at(-0.1, 0.0)), "{slid:?}");
+        // Away from the wall there is nothing to remove.
+        let away = slide_along_wall(&map, &mut pathfinder, policy, above, at(0.0, 0.1))
+            .expect("representable");
+        assert_eq!(away, None);
+        // Touching the end (10, 12) below the line round it, stepping west: the step turns onto
+        // the tangent of the circle round the vertex, and goes no deeper.
+        let corner = at(10.126, 12.0 + (0.375_f64 * 0.375 - 0.126 * 0.126).sqrt());
+        let step = at(-0.126, 0.0);
+        assert!(!probe_permits(
+            &map,
+            &mut pathfinder,
+            policy,
+            corner,
+            corner + step
+        ));
+        let slid = slide_along_wall(&map, &mut pathfinder, policy, corner, step)
+            .expect("representable")
+            .expect("slides");
+        assert!(
+            slid.x < SimScalar::ZERO && slid.y > SimScalar::ZERO,
+            "{slid:?}"
+        );
+        let (after, _) = clearance(&map, &mut pathfinder, s(0.375), corner + slid);
+        assert!(after >= s(0.375) - WALL_CONTACT_TOLERANCE, "{after:?}");
+        // A body in the open has no wall in reach.
+        let open = slide_along_wall(&map, &mut pathfinder, policy, at(15.0, 15.0), step)
+            .expect("representable");
+        assert_eq!(open, None);
     }
 }
