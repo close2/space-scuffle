@@ -370,6 +370,7 @@ SuiteCatalog(
             "sim_core/transport_ownership_tests",
             "sim_core/turret_tracking_tests",
             "sim_core/upgrades_and_tech_tree_tests",
+            "sim_core/wall_contact_tests",
             "sim_core/watchtower_tick_tests",
             "sim_core/weapon_cadence_tests",
             "sim_core/weapon_catalog_rules_tests",

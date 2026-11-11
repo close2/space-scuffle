@@ -13,6 +13,7 @@
 //!   because bodies of two sides must never overlap by choice.
 //! - A body that may not move receives exactly zero correction.
 
+use super::contact::settle_on_terrain;
 use super::locomotion::{slide_target, MotionEntry};
 use super::math::{
     checked_normalize, checked_vec_add, checked_vec_scale, checked_vec_sub, within_distance,
@@ -214,18 +215,39 @@ impl SimWorld {
                 return;
             }
         };
-        if let Some(actor) = self.entities.get_mut(&id) {
-            // The whole tick's travel must be walkable, not just this correction: a unit may not
-            // reach by two short hops a spot it could not have walked to in one step.
-            let accepted =
-                slide_target(&self.map, entry.policy, actor.position, proposed).filter(|&end| {
-                    entry
-                        .policy
-                        .permits_segment(&self.map, actor.pos_at_tick_start, end)
+        let Some(actor) = self.entities.get(&id) else {
+            return;
+        };
+        let (tick_start, from) = (actor.pos_at_tick_start, actor.position);
+        // The whole tick's travel must be walkable, not just this correction: a unit may not
+        // reach by two short hops a spot it could not have walked to in one step.
+        let Some(accepted) = slide_target(&self.map, entry.policy, from, proposed)
+            .filter(|&end| entry.policy.permits_segment(&self.map, tick_start, end))
+        else {
+            return;
+        };
+        // A push may not press the disc deeper into a wall; it slides along it instead (plan
+        // `2026-11-11-contact-and-missiles` D-3, B-113).
+        let settled = match settle_on_terrain(
+            &self.map,
+            &mut self.pathfinder,
+            entry.policy,
+            tick_start,
+            from,
+            accepted,
+        ) {
+            Ok(settled) => settled,
+            Err(source) => {
+                self.report_movement_invariant(MovementInvariant::Arithmetic {
+                    entity: id,
+                    operation: "wall contact",
+                    source,
                 });
-            if let Some(position) = accepted {
-                actor.position = position;
+                return;
             }
+        };
+        if let (Some(position), Some(actor)) = (settled, self.entities.get_mut(&id)) {
+            actor.position = position;
         }
     }
 

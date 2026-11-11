@@ -29,6 +29,7 @@
 //!   route, and its velocity is zero. Collision pushes are not its own motion and are not gated. Every other unit moves
 //!   along its path at once while its hull follows.
 
+use super::contact::settle_on_terrain;
 use super::grid::BodyGrid;
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
@@ -745,7 +746,8 @@ impl SimWorld {
         self.prepare_movement_snapshot(&mut entries);
         for &entry in &entries {
             match self.prepare_actor_motion(entry) {
-                Ok(MotionAction::Commit(proposal)) => {
+                Ok(MotionAction::Commit(mut proposal)) => {
+                    self.settle_proposal(entry, &mut proposal);
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
                         proposal.commit(actor, entry.turn_rate);
                     }
@@ -780,7 +782,8 @@ impl SimWorld {
         }
         for (entry, target, origin) in pursuits.drain(..) {
             match self.prepare_pursuit(entry, target, origin) {
-                Ok(proposal) => {
+                Ok(mut proposal) => {
+                    self.settle_proposal(entry, &mut proposal);
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
                         proposal.commit(actor, entry.turn_rate);
                     }
@@ -793,6 +796,35 @@ impl SimWorld {
         self.movement.pursuits = pursuits;
         self.movement.casts = casts;
         self.movement.recheck_routes = PerPlayer::from_array([false; MAX_PLAYERS]);
+    }
+
+    /// Settles the end of a walking proposal on the terrain before it is committed (plan
+    /// `2026-11-11-contact-and-missiles` D-3, B-113): whatever steering mode produced it, the
+    /// step may not press the body's disc deeper into a wall. A step that would slides along the
+    /// wall, or the body stays where it is, as a refused step does.
+    fn settle_proposal(&mut self, entry: MotionEntry, proposal: &mut MotionProposal) {
+        let Some(from) = self.entities.get(&entry.id).map(|actor| actor.position) else {
+            return;
+        };
+        match settle_on_terrain(
+            &self.map,
+            &mut self.pathfinder,
+            entry.policy,
+            from,
+            from,
+            proposal.position,
+        ) {
+            Ok(Some(end)) => proposal.position = end,
+            Ok(None) => proposal.position = from,
+            Err(source) => {
+                proposal.position = from;
+                self.report_movement_invariant(MovementInvariant::Arithmetic {
+                    entity: entry.id,
+                    operation: "wall contact",
+                    source,
+                });
+            }
+        }
     }
 
     /// Whether this tick is one on which `id`'s route gets looked at.

@@ -118,3 +118,85 @@ same two places: a spawn overlap must stay where it is, and the column at (29, 1
 
 **Bit-identical.** The matrix (`--compare` against WP1: bit-identical), battle 33's `seeds.csv` and the
 showcase's `units.csv` are unchanged; the goldens pass unchanged.
+
+## 3. WP3: the non-deepening contact rule (held: the showcase's winner flips)
+
+**Change.** `crates/sim_core/src/movement/contact.rs`, `settle_on_terrain` (D-1, D-2), called before
+`MotionProposal::commit` (both commit sites of `advance_checked_movement`, so every steering mode) and in
+the collision phase's `apply_correction` (friendly and hostile pushes) (D-3).
+`MotionPolicy::terrain_radius()` returns the collision radius (B-116). `WALL_CONTACT_TOLERANCE` = 2⁻²⁰,
+`WALL_CONTACT_PASSES` = 3. Distances come from the query's exact squared distance by integer square root.
+No early-out was written (D-5): it waits for the throughput measurement, which the stop rule deferred.
+
+**Other position writers** (`grep "\.position = "` in `crates/sim_core/src`): the Abduct flight and landing
+(`effects/step.rs`), transport unload (`transport/mod.rs`), the mode teleport (`world/abilities.rs`) are
+placements; `steering::resolve_push_interaction` has no caller in the tick (tests and the public API only).
+None is a walk, so none settles.
+
+**Tests** (`crates/sim_core/tests/wall_contact_tests.rs`; T-B7 and T-B8 are unit tests in `contact.rs`,
+because `settle_on_terrain` is crate-private). On the base, without the rule: T-B1 fails (body 4 pressed to
+0.064 at tick 37 round the corner), T-B2 fails (pressed to 0.080), T-B5 fails (pulse bot 7 at 0.357 from
+(35, 52) at trace tick 756), T-B6 fails as first written (a wedged start's route leaves through ground
+narrower than its disc: the start-triangle exemption of D-4; the test now draws only starts clear of
+walls). T-B3 and T-B4 pass on the base. With the rule all six pass, but T-B5 only because pulse bot 7 dies
+at tick 479 in the lane fight, before the corner; the test now also requires the bot alive through ticks
+740 to 800, so it is red on this tree. T-B7 (2,400 seeded moves on random wall blocks) and T-B8 (a
+concave corner converges in two passes; a centre on the wall uses the open-side normal; an overflowing
+projection is an error) pass.
+
+**Measurements** (base: WP2).
+
+- **Matrix**: bit-identical (`--compare`). **Battle 33**: `seeds.csv` byte-identical. The arenas have no
+  walls a body reaches, as the plan expected.
+- **Wall overlap**: the rule holds. Deeper unit-ticks 118 / 74 → 0 / 0; overlapping unit-ticks 555 / 1,079
+  → 15 / 156, all at depth 0.000 (within the tolerance).
+- **Showcase: the winner flips** (stop rule D-9, 4).
+
+| | Base (WP2) | WP3 |
+|---|---|---|
+| Ramp W foot P0 ratio / turn (mean / max) | 1.301 / 1.473, 157° / 301° | 1.325 / 1.473, 158° / 230° |
+| Ramp W foot P1 | — | 4 units, 1.513 / 1.528, 116° / 131° |
+| Ramp E foot P0 | 1.198 / 1.300, 190° / 454° (6 units) | no pass: P0's army is dead |
+| Ramp E foot P1 | 1.149 / 1.168, 81° / 152° | 1.209 / 1.352, 204° / 590° (pulse bot 18) |
+| Reversals P0 / P1 | 17 / 7 | 4 / 28 |
+| Blocked attacker ticks P0 / P1 | 137 / 107 | 305 / 323 |
+| Stall give-ups | 0 / 0 | 0 / 0 |
+| In range at tick 900 P0 / P1 | 0 of 6 / 0 of 0 | 0 of 0 / 0 of 4 |
+| Outcome | player 0 wins at 1,693 | player 1 wins at 2,216 |
+
+- **Seeds 1 to 8** (to the end of the match): base P0 wins all eight. WP3: P1 wins seeds 1, 4 and 6 (2,618,
+  2,185, 2,199), P0 wins seed 3 (2,150), and seeds 2, 5, 7 and 8 do not end by tick 5,000.
+
+**Trace of the flip.** The first divergence from the base is at trace tick 9 at player 1's spawn round
+(53, 52) (welder drone 16, pulse bots 17 to 24: bodies spawned against the base's walls are pushed apart
+by sliding instead of into the walls; 0.5 apart by ticks 36 and 44), and at tick 156 at the ramp W wall end
+(29, 12), where player 0's column was pressed into the wall end on the base and now slides past it (pulse
+bots 4 to 9 are 0.5 apart by ticks 169 to 190). These are the same two places, at the same ticks, as
+variant E's divergence (§2), although this rule throws nothing. The lane fight then plays differently: on
+the base player 0 keeps six attackers to tick 900; here player 0's ten attackers die between ticks 382 and
+639 round (22–26, 32–38), player 1 loses six there (356 to 611), and player 1's four surviving pulse bots
+walk to player 0's base and kill its two workers (1,159, 1,204).
+
+**Liveness.** No match is stalled. In the four seeds that do not end, both armies have killed each other
+and only the unarmed welder drones are left (seed 2: two of each side; seed 5: two and one), idle at their
+bases: the scenario ends a match only when a side has no units, and workers do not attack. This is a battle
+shape (an even trade), not a movement stall.
+
+**Classification.** The flip begins with the rule itself: bodies no longer pressed into the walls at player
+1's spawn and at the ramp W wall end change the timing of both columns before the lane fight (C1 is the
+cited reason). But the measurements also show an implementation weakness that the plan names as R-3:
+player 1's reversals rise from 7 to 28 (the acceptance allows base + 10), and pulse bot 18 near-stalls at
+(38.08, 52.37), against the wall, for ten ticks (158 to 168, under 0.002 a tick) before it slides away along
+it; its ramp E pass turns 590°. Steering's probes still test the centre only, so they propose steps into the
+wall that the settled step then reduces to a sliver of slide. D-3 says such a probe gains a disc test in
+this WP; that was not done before the stop rule applied, so the flip cannot yet be called purely
+rule-caused. Held for the orchestrator.
+
+**Quick tier on this tree.** fmt, workspace clippy, `workspace_checks`, the suite catalog and the
+`wasm32-unknown-unknown` check pass. Red in `sim_core`: the two goldens (expected; WP4 re-records them),
+T-B5 (above), and three walks round a wall that the rule now slows or stops, the same R-3 signature:
+`attack_dash_tests::q0071_the_maximum_is_the_walk_not_the_straight_line` (no dash within 60 ticks: the
+dasher does not get round the wall's end at (11, 13)),
+`movement_contact_tests::melee_pursuit_takes_the_ramp_and_reaches_the_enemy` and
+`movement_contact_tests::pursuit_rounds_a_single_blocked_cell_promptly`. These are implementation defects
+to fix (the probe's disc test, D-3) before any acceptance decision.
