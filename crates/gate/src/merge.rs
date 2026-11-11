@@ -20,6 +20,7 @@
 //!   change to every crate (uncertain means more).
 
 use crate::catalog::SuiteCatalog;
+use crate::select::is_judged_by_content;
 use crate::stamp::Stamp;
 use crate::workspace::Workspace;
 use crate::GateError;
@@ -62,7 +63,9 @@ pub fn changed_crates(
     let every: BTreeSet<String> = workspace.packages.keys().cloned().collect();
     let mut out = BTreeSet::new();
     for path in paths {
-        if catalog.global.iter().any(|glob| glob.matches(path)) {
+        if catalog.global.iter().any(|glob| glob.matches(path))
+            || is_judged_by_content(path, workspace)
+        {
             return every;
         }
         if catalog.docs.iter().any(|glob| glob.matches(path)) {
@@ -77,7 +80,11 @@ pub fn changed_crates(
             if rule.paths.iter().any(|glob| glob.matches(path)) {
                 covered = true;
                 out.extend(rule.crates.iter().cloned());
-                out.extend(rule.targets.iter().map(|r| r.package().to_string()));
+                out.extend(
+                    rule.targets
+                        .iter()
+                        .filter_map(|r| r.package().map(ToString::to_string)),
+                );
             }
         }
         if !covered {
@@ -117,6 +124,10 @@ mod tests {
             flakes: Vec::new(),
             retries: Vec::new(),
             reused: None,
+            slice_peak_anon_mib: None,
+            jobs: None,
+            test_wall_ms: None,
+            overlapped_flakes: Vec::new(),
         }
     }
 

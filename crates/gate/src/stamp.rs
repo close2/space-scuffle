@@ -39,6 +39,11 @@ pub struct StampTarget {
     pub cpu_ms: Option<u64>,
     /// Whether it passed.
     pub passed: bool,
+    /// The peak anonymous memory of its process tree in MiB, as the lane sampler measured it
+    /// (plan 2026-11-11-faster-gates §3.3). Stamps written before this field existed read as
+    /// `None`.
+    #[serde(default)]
+    pub peak_anon_mib: Option<u64>,
 }
 
 /// The record of one green tier run.
@@ -75,6 +80,50 @@ pub struct Stamp {
     /// written before this field existed read as `None`.
     #[serde(default)]
     pub reused: Option<String>,
+    /// The largest `anon` of the user slice during the test phase, in MiB. Older stamps read as
+    /// `None`.
+    #[serde(default)]
+    pub slice_peak_anon_mib: Option<u64>,
+    /// The lanes the run used (`--jobs`). Older stamps read as `None`.
+    #[serde(default)]
+    pub jobs: Option<usize>,
+    /// The test phase's wall time in milliseconds (the lane run, without reruns). Older stamps
+    /// read as `None`.
+    #[serde(default)]
+    pub test_wall_ms: Option<u64>,
+    /// The flaky targets of [`Stamp::flakes`] whose failed run overlapped other targets on the
+    /// lanes. Older stamps read as none.
+    #[serde(default)]
+    pub overlapped_flakes: Vec<String>,
+}
+
+/// How many recent runs of a target on this host its memory estimate looks back over.
+pub const ESTIMATE_RUNS: usize = 5;
+
+/// Each target's memory estimate in MiB: the largest `peak_anon_mib` among its
+/// [`ESTIMATE_RUNS`] most recent recorded peaks in stamps of `host` (plan §3.3). Targets with
+/// no recorded peak on this host are absent.
+#[must_use]
+pub fn peak_estimates(stamps: &[Stamp], host: &str) -> std::collections::BTreeMap<String, u64> {
+    let mut ours: Vec<&Stamp> = stamps.iter().filter(|s| s.host == host).collect();
+    ours.sort_by_key(|s| std::cmp::Reverse(s.finished_unix_s));
+    let mut seen: std::collections::BTreeMap<String, (usize, u64)> =
+        std::collections::BTreeMap::new();
+    for stamp in ours {
+        for target in &stamp.targets {
+            let Some(peak) = target.peak_anon_mib else {
+                continue;
+            };
+            let (runs, largest) = seen.entry(target.target.clone()).or_insert((0, 0));
+            if *runs < ESTIMATE_RUNS {
+                *runs += 1;
+                *largest = (*largest).max(peak);
+            }
+        }
+    }
+    seen.into_iter()
+        .map(|(target, (_, largest))| (target, largest))
+        .collect()
 }
 
 /// A green stamp of the tree at `HEAD` that a `merge` or `full` run may stand on (blueprint
@@ -296,11 +345,16 @@ mod tests {
                 wall_ms: 120_000,
                 cpu_ms: Some(400_000),
                 passed: true,
+                peak_anon_mib: None,
             }],
             commands: vec!["golden-replay-release".into()],
             flakes: vec!["client/x_tests".into()],
             retries: vec!["clippy".into()],
             reused: None,
+            slice_peak_anon_mib: None,
+            jobs: None,
+            test_wall_ms: None,
+            overlapped_flakes: Vec::new(),
         }
     }
 
@@ -326,11 +380,57 @@ mod tests {
         stamp.flakes.clear();
         stamp.retries.clear();
         let text = stamp.to_ron()?;
-        let old = text.replace("flakes: [],", "").replace("retries: [],", "");
+        let old = text
+            .replace("overlapped_flakes: [],", "")
+            .replace("flakes: [],", "")
+            .replace("retries: [],", "");
         assert!(!old.contains("flakes"), "{old}");
         assert!(!old.contains("retries"), "{old}");
         assert_eq!(Stamp::from_ron(&old, Path::new("old.ron"))?, stamp);
         Ok(())
+    }
+
+    #[test]
+    fn a_stamp_without_peaks_still_parses() -> Result<(), GateError> {
+        let stamp = sample();
+        let text = stamp.to_ron()?;
+        let old = text
+            .replace("slice_peak_anon_mib: None,", "")
+            .replace("peak_anon_mib: None,", "")
+            .replace("jobs: None,", "")
+            .replace("test_wall_ms: None,", "")
+            .replace("overlapped_flakes: [],", "");
+        assert!(!old.contains("peak"), "{old}");
+        assert_eq!(Stamp::from_ron(&old, Path::new("old.ron"))?, stamp);
+        Ok(())
+    }
+
+    #[test]
+    fn the_estimate_is_the_largest_peak_of_the_last_five_runs_of_this_host() {
+        let run = |host: &str, finished: u64, peak: Option<u64>| {
+            let mut stamp = sample();
+            stamp.host = host.to_string();
+            stamp.finished_unix_s = finished;
+            for target in &mut stamp.targets {
+                target.peak_anon_mib = peak;
+            }
+            stamp
+        };
+        let name = sample().targets[0].target.clone();
+        // Oldest first: the 9 GiB peak is the sixth most recent, so it has aged out.
+        let mut stamps = vec![run("here", 1, Some(9_000))];
+        for (finished, peak) in [(2, 3_000), (3, 4_000), (4, 3_500), (5, 2_000), (6, 1_000)] {
+            stamps.push(run("here", finished, Some(peak)));
+        }
+        stamps.push(run("here", 7, None));
+        stamps.push(run("elsewhere", 8, Some(20_000)));
+        let estimates = peak_estimates(&stamps, "here");
+        assert_eq!(estimates.get(&name), Some(&4_000));
+        assert_eq!(
+            peak_estimates(&stamps, "nowhere").get(&name),
+            None,
+            "another host's stamps are ignored"
+        );
     }
 
     #[test]

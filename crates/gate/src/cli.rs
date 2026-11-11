@@ -10,7 +10,9 @@
 //!
 //! # Invariants
 //! - An unknown subcommand, option or extra argument is an error, never ignored.
-//! - `--jobs` defaults to 1, the sequential run of `cargo test` (blueprint §2.6).
+//! - Lanes come from `--jobs`, else [`JOBS_VAR`], else 1, the sequential run of `cargo test`
+//!   (blueprint §2.6; plan 2026-11-11-faster-gates §3.2). The environment is read once, by
+//!   [`parse_args`]; [`parse_args_with`] takes it as a value, so parsing stays testable.
 
 use crate::tier::Tier;
 use crate::GateError;
@@ -32,15 +34,35 @@ usage:
   cargo gate suspects [<target>...] [--from-log <file>] [--base <rev>]
                                   the red rule's suspect list for failing targets, named or read
                                   from a `cargo test` log (a red CI run)
+  cargo gate stop                 ask the gate holding the gate lock to kill its running tests,
+                                  skip the rest and exit red without a stamp; never waits
 
 options:
   --base <rev>        compare with this revision (default: `git merge-base HEAD <main>`)
   --main <ref>        the main branch (default: main)
-  --jobs <n>          concurrent test executables (default 1; GPU targets get their own lane)
+  --jobs <n>          concurrent test executables: one GPU lane and n-1 general lanes (default
+                      $SPACE_SCUFFLE_GATE_JOBS, else 1)
+  --memory-budget-gib <x>   most the running targets' recorded peaks may sum to (default 40)
+  --memory-ceiling-gib <x>  most the slice's live anon plus a starting target's peak may reach
+                      (default: the cgroup limit minus 10 GiB)
+  --no-reuse          test even when a green stamp of this tree exists
   --log-dir <dir>     logs (default ~/scratch/logs/gate/<tree-hash>/)
   --stamp-dir <dir>   stamps (default ~/scratch/gate-stamps/)
   --no-run            select and build only
   --from-log <file>   timings and suspects only: read a `cargo test` log";
+
+/// The environment variable that sets the lanes when `--jobs` is absent.
+pub const JOBS_VAR: &str = "SPACE_SCUFFLE_GATE_JOBS";
+
+/// The lanes when neither `--jobs` nor [`JOBS_VAR`] sets them.
+pub const DEFAULT_JOBS: usize = 1;
+
+/// The memory budget when `--memory-budget-gib` is absent, in MiB (plan §3.2).
+pub const DEFAULT_MEMORY_BUDGET_MIB: u64 = 40 * 1024;
+
+/// What the live ceiling stays below the cgroup limit when `--memory-ceiling-gib` is absent, in
+/// MiB (plan §3.2).
+pub const CEILING_MARGIN_MIB: u64 = 10 * 1024;
 
 /// Options shared by the commands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +79,14 @@ pub struct RunOptions {
     pub stamp_dir: Option<PathBuf>,
     /// Build without running.
     pub no_run: bool,
+    /// The memory budget of admission in MiB, if not the default.
+    pub memory_budget_mib: Option<u64>,
+    /// The live memory ceiling of admission in MiB, if not the cgroup limit minus the margin.
+    pub memory_ceiling_mib: Option<u64>,
+    /// Test even when a green stamp of the same tree could be reused.
+    pub no_reuse: bool,
+    /// The stop request file the gate polls; set by `main.rs` once it holds the gate lock.
+    pub stop_file: Option<PathBuf>,
 }
 
 impl Default for RunOptions {
@@ -64,10 +94,14 @@ impl Default for RunOptions {
         Self {
             base: None,
             main_ref: "main".to_string(),
-            jobs: 1,
+            jobs: DEFAULT_JOBS,
             log_dir: None,
             stamp_dir: None,
             no_run: false,
+            memory_budget_mib: None,
+            memory_ceiling_mib: None,
+            no_reuse: false,
+            stop_file: None,
         }
     }
 }
@@ -114,18 +148,55 @@ pub enum Command {
         /// Shared options; `--base` starts the search instead of the last green full stamp.
         options: RunOptions,
     },
+    /// Ask the gate that holds the gate lock to stop (plan §3.4).
+    Stop,
 }
 
-/// Parses `args` (without the program name).
-///
-/// # Errors
-/// [`GateError::Usage`] for anything that is not one of the forms in [`USAGE`].
-pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
+/// A positive number of GiB as MiB.
+fn gib_option(name: &str, text: &str) -> Result<u64, GateError> {
+    text.parse::<f64>()
+        .ok()
+        .filter(|gib| gib.is_finite() && *gib > 0.0 && *gib < 1.0e6)
+        .map(|gib| {
+            // The filter bounds the value, so the rounded MiB fit a u64.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let mib = (gib * 1024.0).round() as u64;
+            mib.max(1)
+        })
+        .ok_or_else(|| GateError::Usage(format!("{name} needs a positive number, not `{text}`")))
+}
+
+/// The lanes [`JOBS_VAR`] asks for, if it is set to a positive number.
+fn jobs_from_env(value: Option<&str>) -> Result<Option<usize>, GateError> {
+    value
+        .map(|text| {
+            text.trim()
+                .parse()
+                .ok()
+                .filter(|jobs| *jobs > 0)
+                .ok_or_else(|| {
+                    GateError::Usage(format!(
+                        "{JOBS_VAR} must be a positive number, not `{text}`"
+                    ))
+                })
+        })
+        .transpose()
+}
+
+/// The options and positional arguments after the command word.
+struct Flags {
+    options: RunOptions,
+    jobs_given: bool,
+    tier: Tier,
+    from_log: Option<PathBuf>,
+    positional: Vec<String>,
+}
+
+/// Parses the options and positional arguments after the command word.
+fn parse_flags(rest: &[String]) -> Result<Flags, GateError> {
     let usage = |message: String| GateError::Usage(message);
-    let (word, rest) = args
-        .split_first()
-        .ok_or_else(|| usage("no command given".to_string()))?;
     let mut options = RunOptions::default();
+    let mut jobs_given = false;
     let mut tier = Tier::Package;
     let mut from_log = None;
     let mut positional = Vec::new();
@@ -144,7 +215,17 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
                 options.jobs = text.parse().ok().filter(|jobs| *jobs > 0).ok_or_else(|| {
                     usage(format!("--jobs needs a positive number, not `{text}`"))
                 })?;
+                jobs_given = true;
             }
+            "--memory-budget-gib" => {
+                let text = value("--memory-budget-gib")?;
+                options.memory_budget_mib = Some(gib_option("--memory-budget-gib", &text)?);
+            }
+            "--memory-ceiling-gib" => {
+                let text = value("--memory-ceiling-gib")?;
+                options.memory_ceiling_mib = Some(gib_option("--memory-ceiling-gib", &text)?);
+            }
+            "--no-reuse" => options.no_reuse = true,
             "--log-dir" => options.log_dir = Some(PathBuf::from(value("--log-dir")?)),
             "--stamp-dir" => options.stamp_dir = Some(PathBuf::from(value("--stamp-dir")?)),
             "--no-run" => options.no_run = true,
@@ -163,6 +244,39 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
             other => positional.push(other.to_string()),
         }
     }
+    Ok(Flags {
+        options,
+        jobs_given,
+        tier,
+        from_log,
+        positional,
+    })
+}
+
+/// Parses `args` (without the program name), reading [`JOBS_VAR`] from the environment.
+///
+/// # Errors
+/// [`GateError::Usage`] for anything that is not one of the forms in [`USAGE`].
+pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
+    parse_args_with(args, std::env::var(JOBS_VAR).ok().as_deref())
+}
+
+/// Parses `args` (without the program name) with `jobs_var` as the value of [`JOBS_VAR`].
+///
+/// # Errors
+/// As [`parse_args`].
+pub fn parse_args_with(args: &[String], jobs_var: Option<&str>) -> Result<Command, GateError> {
+    let usage = |message: String| GateError::Usage(message);
+    let (word, rest) = args
+        .split_first()
+        .ok_or_else(|| usage("no command given".to_string()))?;
+    let Flags {
+        mut options,
+        jobs_given,
+        tier,
+        from_log,
+        positional,
+    } = parse_flags(rest)?;
     let extra = |count: usize| {
         if positional.len() > count {
             Err(usage(format!(
@@ -173,6 +287,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
             Ok(())
         }
     };
+    if !jobs_given {
+        if let Some(jobs) = jobs_from_env(jobs_var)? {
+            options.jobs = jobs;
+        }
+    }
     if from_log.is_some() && !matches!(word.as_str(), "timings" | "suspects") {
         return Err(usage(format!(
             "--from-log belongs to timings and suspects, not {word}"
@@ -194,6 +313,14 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
                 .cloned()
                 .ok_or_else(|| usage("merge needs the merged branch".to_string()))?;
             Ok(Command::Merge { branch, options })
+        }
+        "stop" => {
+            extra(0)?;
+            if rest.is_empty() {
+                Ok(Command::Stop)
+            } else {
+                Err(usage("stop takes no options".to_string()))
+            }
         }
         "timings" => {
             extra(0)?;
@@ -227,7 +354,55 @@ mod tests {
 
     fn parse(line: &str) -> Result<Command, GateError> {
         let args: Vec<String> = line.split_whitespace().map(ToString::to_string).collect();
-        parse_args(&args)
+        parse_args_with(&args, None)
+    }
+
+    fn options_of(command: Result<Command, GateError>) -> Option<RunOptions> {
+        match command {
+            Ok(Command::Run { options, .. }) => Some(options),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn jobs_come_from_the_flag_then_the_variable_then_the_default() {
+        let args = |line: &str| -> Vec<String> {
+            line.split_whitespace().map(ToString::to_string).collect()
+        };
+        let jobs = |line: &str, var: Option<&str>| {
+            options_of(parse_args_with(&args(line), var)).map(|o| o.jobs)
+        };
+        assert_eq!(jobs("full --jobs 3", Some("1")), Some(3));
+        assert_eq!(jobs("full", Some("2")), Some(2));
+        assert_eq!(jobs("full", None), Some(DEFAULT_JOBS));
+        assert!(parse_args_with(&args("full"), Some("zero")).is_err());
+        assert!(parse_args_with(&args("full"), Some("0")).is_err());
+    }
+
+    #[test]
+    fn memory_options_and_no_reuse_parse() {
+        let options = options_of(parse(
+            "full --memory-budget-gib 40 --memory-ceiling-gib 55.5 --no-reuse",
+        ));
+        let expected = RunOptions {
+            memory_budget_mib: Some(40 * 1024),
+            memory_ceiling_mib: Some(56_832),
+            no_reuse: true,
+            ..RunOptions::default()
+        };
+        assert_eq!(options, Some(expected));
+        for bad in ["0", "-3", "x", "inf"] {
+            assert!(parse(&format!("full --memory-budget-gib {bad}")).is_err());
+            assert!(parse(&format!("full --memory-ceiling-gib {bad}")).is_err());
+        }
+    }
+
+    #[test]
+    fn stop_parses_with_no_options() -> Result<(), GateError> {
+        assert_eq!(parse("stop")?, Command::Stop);
+        assert!(parse("stop --jobs 2").is_err());
+        assert!(parse("stop now").is_err());
+        Ok(())
     }
 
     #[test]

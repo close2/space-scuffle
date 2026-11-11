@@ -30,13 +30,21 @@
 use crate::catalog::SuiteCatalog;
 use crate::changes::{cargo_program, ChangeSpec, Git};
 use crate::cli::{Command, RunOptions};
+use crate::cli::{CEILING_MARGIN_MIB, DEFAULT_MEMORY_BUDGET_MIB};
 use crate::crash::{crash_log, incremental_dirs, run_with_crash_retry};
-use crate::execute::{build_targets, mark_flakes, run_logged, run_targets, Outcome, TargetResult};
+use crate::execute::{
+    build_targets, gib, lanes_tsv, mark_flakes, overlapping, rerun_alone, run_logged, run_targets,
+    time_limit, LaneRun, Outcome, TargetResult,
+};
 use crate::explain::render_selection;
+use crate::memory::{own_process_group, MemorySource};
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
-use crate::schedule::{Job, Scheduler};
-use crate::select::{select, ClippyScope, Inputs, Reason, Selected, Selection};
+use crate::schedule::{Job, MemoryLimits, Scheduler};
+use crate::select::{
+    is_judged_by_content, select_change, Change, ClippyScope, Inputs, Reason, Selected, Selection,
+};
 use crate::sources::SourceIndex;
+use crate::stamp::peak_estimates;
 use crate::stamp::{Reuse, Stamp, StampTarget, StampTree};
 use crate::suspects::suspect_report;
 use crate::tier::Tier;
@@ -90,7 +98,8 @@ impl Context {
     }
 
     /// The change a spec names (default: everything since the merge base with `main`), with a
-    /// description for the report.
+    /// description for the report. The files the selection judges by content come with both of
+    /// their versions.
     ///
     /// # Errors
     /// Git errors.
@@ -98,7 +107,7 @@ impl Context {
         &self,
         spec: Option<&str>,
         main_ref: &str,
-    ) -> Result<(BTreeSet<String>, String), GateError> {
+    ) -> Result<(Change, String), GateError> {
         let spec = match spec {
             Some(text) => ChangeSpec::parse(text),
             None => ChangeSpec::Since(self.git.merge_base("HEAD", main_ref)?),
@@ -107,8 +116,37 @@ impl Context {
             ChangeSpec::Since(base) => format!("changes since {}", short(base)),
             ChangeSpec::Between(from, to) => format!("changes {from}..{to}"),
         };
-        Ok((self.git.changed_paths(&spec)?, what))
+        Ok((self.change(&spec)?, what))
     }
+
+    /// The change `spec` names, with both versions of every changed file judged by content.
+    ///
+    /// # Errors
+    /// Git errors.
+    pub fn change(&self, spec: &ChangeSpec) -> Result<Change, GateError> {
+        let paths = self.git.changed_paths(spec)?;
+        let mut contents = BTreeMap::new();
+        for path in paths
+            .iter()
+            .filter(|path| is_judged_by_content(path, &self.workspace))
+        {
+            contents.insert(path.clone(), self.git.versions(spec, path)?);
+        }
+        Ok(Change { paths, contents })
+    }
+}
+
+/// `n` with a comma between groups of three digits (`6,534`).
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// The first 12 characters of a hash, for reports.
@@ -146,13 +184,20 @@ pub struct RunReport {
     pub stamp: Result<PathBuf, String>,
     /// Lines printed after the stamp: the time saved, flake findings, the red rule's suspects.
     pub notes: Vec<String>,
+    /// The test phase's wall time (the lane run, without reruns), when tests ran.
+    pub test_wall: Option<Duration>,
+    /// The largest live `anon` of the slice during the test phase, in MiB.
+    pub slice_peak_anon_mib: Option<u64>,
+    /// Whether `cargo gate stop` ended the run (red, no stamp, exit status 2).
+    pub stopped: bool,
 }
 
 impl RunReport {
     /// Whether every step and every target passed.
     #[must_use]
     pub fn passed(&self) -> bool {
-        self.steps.iter().all(|step| step.passed)
+        !self.stopped
+            && self.steps.iter().all(|step| step.passed)
             && self
                 .targets
                 .iter()
@@ -194,14 +239,13 @@ impl RunReport {
             );
         }
         out.push_str(&self.render_failures());
-        let total: Duration = self.steps.iter().map(|s| s.wall).sum::<Duration>()
-            + self.targets.iter().map(|t| t.wall).sum::<Duration>();
         let verdict = if self.passed() { "GREEN" } else { "RED" };
-        let _ = writeln!(
-            out,
-            "\n{verdict}: {:.1} s in steps and tests.",
-            total.as_secs_f64()
-        );
+        let stopped = if self.stopped {
+            " (stopped by `cargo gate stop`)"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "\n{verdict}{stopped}: {}.", self.time_line());
         match &self.stamp {
             Ok(path) => {
                 let _ = writeln!(out, "Stamp: {}", path.display());
@@ -214,6 +258,44 @@ impl RunReport {
             let _ = writeln!(out, "{note}");
         }
         out
+    }
+
+    /// The report's time summary: `steps 101 s, tests 2,410 s wall (6,534 s of executables,
+    /// overlap 2.7×), slice anon peak 24.8 GiB` (plan §3.5).
+    #[must_use]
+    pub fn time_line(&self) -> String {
+        let steps: Duration = self.steps.iter().map(|s| s.wall).sum();
+        let executables: Duration = self.targets.iter().map(|t| t.wall).sum();
+        let mut line = format!("steps {} s", thousands(steps.as_secs()));
+        let Some(wall) = self.test_wall else {
+            return line;
+        };
+        let overlap = if wall.is_zero() {
+            "-".to_string()
+        } else {
+            format!("{:.1}", executables.as_secs_f64() / wall.as_secs_f64())
+        };
+        let _ = write!(
+            line,
+            ", tests {} s wall ({} s of executables, overlap {overlap}×)",
+            thousands(wall.as_secs()),
+            thousands(executables.as_secs())
+        );
+        if let Some(peak) = self.slice_peak_anon_mib {
+            let _ = write!(line, ", slice anon peak {}", gib(peak));
+        }
+        line
+    }
+
+    /// The flaky targets whose failed run overlapped other targets on the lanes.
+    #[must_use]
+    pub fn overlapped_flakes(&self) -> Vec<String> {
+        self.targets
+            .iter()
+            .filter(|t| matches!(t.outcome, Outcome::Flaky { .. }))
+            .filter(|t| !overlapping(&self.targets, &t.target).is_empty())
+            .map(|t| t.target.to_string())
+            .collect()
     }
 
     /// The targets that failed and then passed on their immediate rerun, by name.
@@ -276,7 +358,7 @@ impl RunReport {
         }
         for result in &self.targets {
             match &result.outcome {
-                Outcome::Passed => {}
+                Outcome::Passed | Outcome::Skipped => {}
                 Outcome::Failed { tests } => {
                     let _ = writeln!(out, "\nFAILED {}: {}", result.target, result.log.display());
                     for test in tests {
@@ -285,6 +367,14 @@ impl RunReport {
                 }
                 Outcome::Error(why) => {
                     let _ = writeln!(out, "\nERROR {}: {why}", result.target);
+                }
+                Outcome::TimedOut => {
+                    let _ = writeln!(
+                        out,
+                        "\nTIMED OUT {}: its process tree was killed at its time limit: {}",
+                        result.target,
+                        result.log.display()
+                    );
                 }
                 Outcome::Flaky { tests } => {
                     let _ = writeln!(
@@ -352,24 +442,31 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
     if let Some(report) = reuse_green_stamp(&context, command)? {
         return Ok(report);
     }
+    if let Some(pgid) = own_process_group() {
+        println!(
+            "process group {pgid}: stop with `cargo gate stop`, or `kill -TERM -- -{pgid}` for \
+             the gate and every test it runs"
+        );
+    }
     match command {
         Command::Run { tier, options } => {
-            let (changed, what) = if *tier == Tier::Full {
-                (BTreeSet::new(), "complete suite".to_string())
+            let (change, what) = if *tier == Tier::Full {
+                (Change::default(), "complete suite".to_string())
             } else {
                 context.changes(options.base.as_deref(), &options.main_ref)?
             };
-            let selection = select(*tier, context.inputs(), &changed)?;
+            let selection = select_change(*tier, context.inputs(), &change)?;
             println!("{}", render_selection(&selection, &what));
-            let mut report = execute(&context, &selection, options, &[])?;
-            if *tier == Tier::Full && report.red_only_by_flakes() {
+            let mut report = execute(&context, &selection, options, &[], &[])?;
+            if *tier == Tier::Full && !report.stopped && report.red_only_by_flakes() {
                 let flakes = report.flaky_targets();
+                let overlapped = report.overlapped_flakes();
                 println!(
                     "full: red only by flaky target(s) {}; repeating the full run once \
                      (blueprint §3.5)",
                     flakes.join(", ")
                 );
-                report = execute(&context, &selection, options, &flakes)?;
+                report = execute(&context, &selection, options, &flakes, &overlapped)?;
                 report.notes.push(format!(
                     "The first attempt was red only by flakes ({}); this repeat records them in \
                      its stamp.",
@@ -381,13 +478,16 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
         }
         Command::Merge { branch, options } => {
             let selection = merge_selection(&context, branch, options)?;
-            let mut report = execute(&context, &selection, options, &[])?;
+            let mut report = execute(&context, &selection, options, &[], &[])?;
             annotate(&context, &mut report, options)?;
             Ok(report)
         }
-        Command::Explain { .. } | Command::Timings { .. } | Command::Suspects { .. } => Err(
-            GateError::Usage("explain, timings and suspects run nothing".to_string()),
-        ),
+        Command::Explain { .. }
+        | Command::Timings { .. }
+        | Command::Suspects { .. }
+        | Command::Stop => Err(GateError::Usage(
+            "explain, timings, suspects and stop run no tier".to_string(),
+        )),
     }
 }
 
@@ -401,11 +501,12 @@ fn reuse_green_stamp(context: &Context, command: &Command) -> Result<Option<RunR
     let (tier, options) = match command {
         Command::Run { tier, options } => (*tier, options),
         Command::Merge { options, .. } => (Tier::Merge, options),
-        Command::Explain { .. } | Command::Timings { .. } | Command::Suspects { .. } => {
-            return Ok(None)
-        }
+        Command::Explain { .. }
+        | Command::Timings { .. }
+        | Command::Suspects { .. }
+        | Command::Stop => return Ok(None),
     };
-    if options.no_run {
+    if options.no_run || options.no_reuse {
         return Ok(None);
     }
     let dir = stamp_dir(options)?;
@@ -420,6 +521,9 @@ fn reuse_green_stamp(context: &Context, command: &Command) -> Result<Option<RunR
         targets: Vec::new(),
         stamp: write_reuse_stamp(context, &reuse, tier, options, &dir),
         notes: vec![message],
+        test_wall: None,
+        slice_peak_anon_mib: None,
+        stopped: false,
     }))
 }
 
@@ -452,6 +556,10 @@ fn write_reuse_stamp(
         flakes: Vec::new(),
         retries: Vec::new(),
         reused,
+        slice_peak_anon_mib: None,
+        jobs: None,
+        test_wall_ms: None,
+        overlapped_flakes: Vec::new(),
     };
     stamp.write(dir).map_err(|error| error.to_string())
 }
@@ -552,8 +660,8 @@ fn merge_selection(
     };
     let Some(stamp) = valid else {
         println!("merge: {branch} has no valid package stamp; running the package tier on the merge result");
-        let changed = git.changed_paths(&ChangeSpec::Between(parent.clone(), "HEAD".into()))?;
-        let mut selection = select(Tier::Package, context.inputs(), &changed)?;
+        let change = context.change(&ChangeSpec::Between(parent.clone(), "HEAD".into()))?;
+        let mut selection = select_change(Tier::Package, context.inputs(), &change)?;
         selection.tier = Tier::Merge;
         println!(
             "{}",
@@ -691,6 +799,7 @@ fn execute(
     selection: &Selection,
     options: &RunOptions,
     flakes: &[String],
+    overlapped: &[String],
 ) -> Result<RunReport, GateError> {
     let tree = context.git.tree("HEAD")?;
     let log_dir = match &options.log_dir {
@@ -710,6 +819,9 @@ fn execute(
         targets: Vec::new(),
         stamp: Err("the run is not green".to_string()),
         notes: Vec::new(),
+        test_wall: None,
+        slice_peak_anon_mib: None,
+        stopped: false,
     };
     let cargo = cargo_program();
     let none = BTreeMap::new();
@@ -739,7 +851,9 @@ fn execute(
         run_tests(context, selection, options, &log_dir, &mut report)?;
     }
     if report.passed() {
-        report.stamp = stamp_run(context, selection, options, &report, flakes);
+        report.stamp = stamp_run(context, selection, options, &report, (flakes, overlapped));
+    } else if report.stopped {
+        report.stamp = Err("stopped by `cargo gate stop`".to_string());
     }
     Ok(report)
 }
@@ -779,72 +893,105 @@ fn run_tests(
         report.stamp = Err("--no-run builds only".to_string());
         return Ok(());
     }
-    let expected = last_timings(options);
+    let (expected, estimates) = recorded(options);
     let jobs: Vec<Job> = selection
         .targets
         .iter()
-        .map(|(id, selected)| Job {
-            target: id.clone(),
-            class: selected.class,
-            expected: expected.get(&id.to_string()).copied().unwrap_or_default(),
-            test_threads: context.catalog.test_threads_of(id),
+        .map(|(id, selected)| {
+            let expected = expected.get(&id.to_string()).copied().unwrap_or_default();
+            Job {
+                target: id.clone(),
+                class: selected.class,
+                expected,
+                test_threads: context.catalog.test_threads_of(id),
+                estimate_mib: estimates.get(&id.to_string()).copied(),
+                exclusive: context.catalog.exclusive_of(id),
+                timeout: Some(time_limit(expected, context.catalog.timeout_of(id))),
+            }
         })
         .collect();
-    let total = jobs.len();
-    let scheduler = Scheduler::new(options.jobs, jobs);
-    report.targets = run_targets(
+    let memory = MemorySource::discover();
+    let limits = memory_limits(options, &memory);
+    let scheduler = Scheduler::new(options.jobs, jobs.clone(), limits);
+    let run = LaneRun {
         root,
-        &context.workspace,
-        scheduler,
-        &executables,
+        workspace: &context.workspace,
+        executables: &executables,
         log_dir,
-        total,
-    );
-    rerun_failures(context, &executables, log_dir, report)?;
+        memory,
+        stop_file: options.stop_file.clone(),
+    };
+    let lanes = run_targets(&run, scheduler);
+    write_lanes_tsv(log_dir, &lanes.results)?;
+    report.targets = lanes.results;
+    report.test_wall = Some(lanes.wall);
+    report.slice_peak_anon_mib = lanes.slice_peak_mib;
+    report.stopped = lanes.stopped;
+    if report.stopped {
+        return Ok(());
+    }
+    rerun_failures(&run, &jobs, report)?;
+    note_overlapping_flakes(report, options.jobs);
     run_extras(context, selection, log_dir, report)
 }
 
-/// Reruns every failed target once, at once and alone, and marks those that pass as flaky
-/// (blueprint §3.5). Rerun logs go to `<log dir>/rerun/`, beside the first run's.
+/// The admission limits of this run: the budget and ceiling options, else the defaults.
+fn memory_limits(options: &RunOptions, memory: &MemorySource) -> MemoryLimits {
+    let ceiling = options.memory_ceiling_mib.or_else(|| {
+        memory
+            .cgroup
+            .as_ref()
+            .and(memory.limit_bytes)
+            .map(|limit| crate::memory::mib(limit).saturating_sub(CEILING_MARGIN_MIB))
+    });
+    let budget = options
+        .memory_budget_mib
+        .unwrap_or(DEFAULT_MEMORY_BUDGET_MIB);
+    MemoryLimits::new(budget, ceiling)
+}
+
+/// Writes `lanes.tsv` into the log directory.
+fn write_lanes_tsv(log_dir: &Path, results: &[TargetResult]) -> Result<(), GateError> {
+    let path = log_dir.join("lanes.tsv");
+    std::fs::write(&path, lanes_tsv(results)).map_err(|source| GateError::Io { path, source })
+}
+
+/// Adds a note naming, for each flaky target of a run on several lanes, the targets that
+/// overlapped its failed run (plan §3.6).
+fn note_overlapping_flakes(report: &mut RunReport, jobs: usize) {
+    if jobs <= 1 {
+        return;
+    }
+    let notes: Vec<String> = report
+        .targets
+        .iter()
+        .filter(|t| matches!(t.outcome, Outcome::Flaky { .. }))
+        .map(|t| {
+            let others = overlapping(&report.targets, &t.target);
+            if others.is_empty() {
+                format!("FLAKY {} ran alone", t.target)
+            } else {
+                format!("FLAKY {} overlapped {}", t.target, others.join(", "))
+            }
+        })
+        .collect();
+    report.notes.extend(notes);
+}
+
+/// Reruns every failed or timed-out target once, alone, after the lanes, and marks those that
+/// pass as flaky (blueprint §3.5, plan §3.1 L-7).
 ///
 /// # Errors
 /// [`GateError::Io`] if the rerun log directory cannot be created.
 fn rerun_failures(
-    context: &Context,
-    executables: &BTreeMap<TargetId, PathBuf>,
-    log_dir: &Path,
+    first: &LaneRun<'_>,
+    jobs: &[Job],
     report: &mut RunReport,
 ) -> Result<(), GateError> {
-    let failed: Vec<Job> = report
-        .targets
-        .iter()
-        .filter(|result| matches!(result.outcome, Outcome::Failed { .. }))
-        .map(|result| Job {
-            target: result.target.clone(),
-            class: result.class,
-            expected: result.wall,
-            test_threads: context.catalog.test_threads_of(&result.target),
-        })
-        .collect();
-    if failed.is_empty() {
-        return Ok(());
+    if let Some(reruns) = rerun_alone(first, jobs, &report.targets)? {
+        report.stopped |= reruns.stopped;
+        mark_flakes(&mut report.targets, &reruns.results);
     }
-    let rerun_dir = log_dir.join("rerun");
-    std::fs::create_dir_all(&rerun_dir).map_err(|source| GateError::Io {
-        path: rerun_dir.clone(),
-        source,
-    })?;
-    let total = failed.len();
-    println!("rerunning {total} failed target(s) once, to tell a flake from a failure");
-    let reruns = run_targets(
-        context.git.root(),
-        &context.workspace,
-        Scheduler::new(1, failed),
-        executables,
-        &rerun_dir,
-        total,
-    );
-    mark_flakes(&mut report.targets, &reruns);
     Ok(())
 }
 
@@ -901,18 +1048,20 @@ fn run_extras(
     Ok(())
 }
 
-/// Each target's wall time in its most recent stamp, for longest-first ordering.
-fn last_timings(options: &RunOptions) -> BTreeMap<String, Duration> {
-    let stamps = stamp_dir(options)
+/// Each target's wall time in its most recent stamp, for longest-first ordering and time
+/// limits, and its memory estimate from this host's recent stamps (plan §3.3).
+fn recorded(options: &RunOptions) -> (BTreeMap<String, Duration>, BTreeMap<String, u64>) {
+    let mut stamps = stamp_dir(options)
         .and_then(|dir| Stamp::read_all(&dir))
         .unwrap_or_default();
-    let mut out = BTreeMap::new();
-    for stamp in stamps {
-        for target in stamp.targets {
-            out.insert(target.target, Duration::from_millis(target.wall_ms));
+    stamps.sort_by_key(|stamp| stamp.finished_unix_s);
+    let mut timings = BTreeMap::new();
+    for stamp in &stamps {
+        for target in &stamp.targets {
+            timings.insert(target.target.clone(), Duration::from_millis(target.wall_ms));
         }
     }
-    out
+    (timings, peak_estimates(&stamps, &host_name()))
 }
 
 /// Writes the stamp of a green run, or says why there is none.
@@ -921,7 +1070,7 @@ fn stamp_run(
     selection: &Selection,
     options: &RunOptions,
     report: &RunReport,
-    flakes: &[String],
+    (flakes, overlapped): (&[String], &[String]),
 ) -> Result<PathBuf, String> {
     if selection.tier == Tier::Quick {
         return Err("the quick tier writes no stamp".to_string());
@@ -950,12 +1099,17 @@ fn stamp_run(
                 wall_ms: millis(result.wall),
                 cpu_ms: result.cpu.map(millis),
                 passed: result.outcome == Outcome::Passed,
+                peak_anon_mib: result.lane.as_ref().and_then(|lane| lane.peak_anon_mib),
             })
             .collect(),
         commands: selection.commands.keys().cloned().collect(),
         flakes: flakes.to_vec(),
         retries: report.retried_steps(),
         reused: None,
+        slice_peak_anon_mib: report.slice_peak_anon_mib,
+        jobs: Some(options.jobs),
+        test_wall_ms: report.test_wall.map(millis),
+        overlapped_flakes: overlapped.to_vec(),
     };
     let dir = stamp_dir(options).map_err(|error| error.to_string())?;
     stamp.write(&dir).map_err(|error| error.to_string())
@@ -1010,6 +1164,9 @@ mod tests {
             targets: Vec::new(),
             stamp: Err("the run is not green".into()),
             notes: Vec::new(),
+            test_wall: None,
+            slice_peak_anon_mib: None,
+            stopped: false,
         };
         assert!(report.passed(), "a crash cured by the retry is green");
         assert_eq!(report.retried_steps(), ["clippy"]);
@@ -1024,6 +1181,99 @@ mod tests {
             text.contains("the first log is /l/build.crash.log"),
             "{text}"
         );
+    }
+
+    fn lane_result(name: &str, start_s: u64, wall_s: u64, outcome: Outcome) -> TargetResult {
+        TargetResult {
+            target: TargetId::test("c", name),
+            class: TestClass::Slow,
+            wall: Duration::from_secs(wall_s),
+            cpu: None,
+            outcome,
+            log: PathBuf::from(format!("{name}.log")),
+            lane: Some(crate::execute::LaneRecord {
+                lane: crate::schedule::Lane::General(1),
+                start: Duration::from_secs(start_s),
+                peak_anon_mib: Some(1024),
+                estimate_mib: Some(1000),
+            }),
+        }
+    }
+
+    fn lane_report(targets: Vec<TargetResult>) -> RunReport {
+        RunReport {
+            tier: Tier::Full,
+            steps: vec![StepResult {
+                name: "build".into(),
+                passed: true,
+                wall: Duration::from_secs(101),
+                log: PathBuf::from("build.log"),
+                retried: false,
+            }],
+            targets,
+            stamp: Err("the run is not green".into()),
+            notes: Vec::new(),
+            test_wall: Some(Duration::from_secs(2_410)),
+            slice_peak_anon_mib: Some(25_395),
+            stopped: false,
+        }
+    }
+
+    #[test]
+    fn the_final_line_shows_test_phase_wall_the_executables_sum_and_the_overlap() {
+        let report = lane_report(vec![
+            lane_result("a", 0, 4_000, Outcome::Passed),
+            lane_result("b", 0, 2_534, Outcome::Passed),
+        ]);
+        assert_eq!(
+            report.time_line(),
+            "steps 101 s, tests 2,410 s wall (6,534 s of executables, overlap 2.7×), \
+             slice anon peak 24.7 GiB"
+        );
+        assert!(report
+            .render()
+            .contains("GREEN: steps 101 s, tests 2,410 s wall"));
+        let mut unrun = report.clone();
+        unrun.test_wall = None;
+        assert_eq!(unrun.time_line(), "steps 101 s");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+        assert_eq!(thousands(999), "999");
+    }
+
+    #[test]
+    fn a_stopped_run_writes_no_stamp_and_is_red() {
+        let mut report = lane_report(vec![
+            lane_result("a", 0, 10, Outcome::Skipped),
+            lane_result("b", 0, 10, Outcome::Passed),
+        ]);
+        report.stopped = true;
+        report.stamp = Err("stopped by `cargo gate stop`".into());
+        assert!(!report.passed());
+        let text = report.render();
+        assert!(
+            text.contains("RED (stopped by `cargo gate stop`)"),
+            "{text}"
+        );
+        assert!(text.contains("No stamp: stopped"), "{text}");
+        assert!(text.contains("SKIP"), "{text}");
+    }
+
+    #[test]
+    fn a_flake_under_lanes_names_the_targets_that_overlapped_it() {
+        let mut report = lane_report(vec![
+            lane_result("flaky", 10, 20, Outcome::Flaky { tests: vec![] }),
+            lane_result("during", 25, 50, Outcome::Passed),
+            lane_result("after", 31, 5, Outcome::Passed),
+            lane_result("timeout", 0, 5, Outcome::TimedOut),
+        ]);
+        note_overlapping_flakes(&mut report, 3);
+        assert_eq!(report.notes, ["FLAKY c/flaky overlapped c/during"]);
+        assert_eq!(report.overlapped_flakes(), ["c/flaky"]);
+        assert!(report.render().contains("TIMED OUT c/timeout"));
+        let mut alone = report.clone();
+        alone.notes.clear();
+        note_overlapping_flakes(&mut alone, 1);
+        assert!(alone.notes.is_empty(), "one lane names no overlap");
     }
 
     #[test]
@@ -1046,9 +1296,13 @@ mod tests {
                     tests: vec!["a::b".into()],
                 },
                 log: PathBuf::from("core__lib.log"),
+                lane: None,
             }],
             stamp: Err("the run is not green".into()),
             notes: vec!["Time saved: 1.0 min".into()],
+            test_wall: None,
+            slice_peak_anon_mib: None,
+            stopped: false,
         };
         assert!(!report.passed());
         let text = report.render();

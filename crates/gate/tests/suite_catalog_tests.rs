@@ -4,8 +4,8 @@
 //! Holds the suite catalog to the workspace (blueprint §5.4): every target it names exists and
 //! every class group has a member; every file that runs GPU children or valgrind is classed
 //! `gpu` or `valgrind`, and every `gpu` target really uses the harness; every downstream contract
-//! points into a reverse dependency; the `sim_fixtures` contract lists exactly the targets whose
-//! code calls `sim_fixtures::`; every glob matches a tracked file; every tracked path is covered
+//! points into a reverse dependency; the `sim_fixtures` contract is the computed `@callers`, and
+//! the computation equals an independent scan of the targets whose code calls `sim_fixtures::`; every glob matches a tracked file; every tracked path is covered
 //! by some entry; and `full` selects every test target `cargo metadata` lists.
 //!
 //! # How it fits
@@ -20,7 +20,7 @@
 use gate::{
     build_invocations, invokes_valgrind, mentions_path_root, select, uses_gpu_harness,
     CompleteCause, GateError, Git, Inputs, SourceIndex, SuiteCatalog, TargetId, TargetRef,
-    TestClass, Tier, Workspace,
+    TestClass, Tier, Workspace, CALLERS, CATALOG_PATH,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -87,7 +87,11 @@ impl Repo {
         }
         for (krate, list) in &self.catalog.downstream {
             let place = format!("downstream `{krate}`");
-            out.extend(list.iter().map(|r| (place.clone(), r.clone())));
+            out.extend(
+                list.iter()
+                    .filter(|r| **r != TargetRef::Callers)
+                    .map(|r| (place.clone(), r.clone())),
+            );
         }
         out
     }
@@ -190,10 +194,22 @@ fn downstream_contracts_point_into_reverse_dependencies() -> Result<(), GateErro
             continue;
         }
         let reverse = repo.workspace.reverse_dependencies(krate);
+        let mut packages: BTreeSet<String> = BTreeSet::new();
         for reference in list {
-            if !reverse.contains(reference.package()) {
+            match reference {
+                TargetRef::Callers => packages.extend(
+                    repo.sources
+                        .callers_of(krate)
+                        .into_iter()
+                        .map(|id| id.package),
+                ),
+                other => packages.extend(other.package().map(ToString::to_string)),
+            }
+        }
+        for package in packages {
+            if !reverse.contains(&package) {
                 findings.push(format!(
-                    "downstream `{krate}`: `{reference}` is not in a crate that depends on it"
+                    "downstream `{krate}`: `{package}` does not depend on it"
                 ));
             }
         }
@@ -203,9 +219,15 @@ fn downstream_contracts_point_into_reverse_dependencies() -> Result<(), GateErro
 }
 
 #[test]
-fn the_sim_fixtures_contract_lists_exactly_its_callers() -> Result<(), GateError> {
+fn the_sim_fixtures_contract_is_computed_from_its_callers() -> Result<(), GateError> {
     let repo = Repo::load()?;
-    let mut callers = BTreeSet::new();
+    assert_eq!(
+        repo.catalog.downstream.get("sim_fixtures"),
+        Some(&vec![TargetRef::Callers]),
+        "downstream `sim_fixtures` must be [\"{CALLERS}\"]"
+    );
+    // The oracle: an independent scan of every target's files, not the index's own pass.
+    let mut scanned = BTreeSet::new();
     for target in repo.workspace.test_targets() {
         if target.id.package == "sim_fixtures" {
             continue;
@@ -214,30 +236,62 @@ fn the_sim_fixtures_contract_lists_exactly_its_callers() -> Result<(), GateError
             let full = repo.root.join(&file);
             let text = std::fs::read_to_string(&full).unwrap_or_default();
             if is_rust(&file) && mentions_path_root(&text, "sim_fixtures") {
-                callers.insert(target.id.clone());
+                scanned.insert(target.id.clone());
             }
         }
     }
-    let mut listed = BTreeSet::new();
-    for reference in repo
-        .catalog
-        .downstream
-        .get("sim_fixtures")
-        .into_iter()
-        .flatten()
-    {
-        listed.extend(repo.catalog.resolve(reference, &repo.workspace)?);
-    }
-    let mut findings: Vec<String> = callers
-        .difference(&listed)
-        .map(|id| format!("`{id}` calls sim_fixtures:: but downstream `sim_fixtures` omits it"))
+    let computed = repo.sources.callers_of("sim_fixtures");
+    let mut findings: Vec<String> = scanned
+        .difference(&computed)
+        .map(|id| format!("`{id}` calls sim_fixtures:: but `callers_of` omits it"))
         .collect();
     findings.extend(
-        listed
-            .difference(&callers)
-            .map(|id| format!("downstream `sim_fixtures` lists `{id}`, which does not call it")),
+        computed
+            .difference(&scanned)
+            .map(|id| format!("`callers_of` lists `{id}`, which does not call sim_fixtures::")),
     );
     assert_clean("sim_fixtures contract", &findings);
+    assert!(
+        scanned.len() >= 50,
+        "about 80 targets call sim_fixtures, found {}",
+        scanned.len()
+    );
+    Ok(())
+}
+
+#[test]
+fn callers_is_accepted_only_as_a_downstream_value() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let full = repo.root.join(CATALOG_PATH);
+    let text = std::fs::read_to_string(&full).map_err(|source| GateError::Io {
+        path: full.clone(),
+        source,
+    })?;
+    let path = Path::new(CATALOG_PATH);
+    let in_always = text.replacen(
+        "\"workspace_checks/@fast\",\n    ],",
+        "\"workspace_checks/@fast\",\n        \"@callers\",\n    ],",
+        1,
+    );
+    assert_ne!(in_always, text, "the `always` list must be found");
+    assert!(matches!(
+        SuiteCatalog::parse(&in_always, path),
+        Err(GateError::Catalog(_))
+    ));
+    let in_rule = text.replacen("targets: [\"client/@gpu\"]", "targets: [\"@callers\"]", 1);
+    assert_ne!(in_rule, text, "a rule's targets must be found");
+    assert!(matches!(
+        SuiteCatalog::parse(&in_rule, path),
+        Err(GateError::Catalog(_))
+    ));
+    for (krate, list) in &repo.catalog.downstream {
+        if list.contains(&TargetRef::Callers) {
+            assert_eq!(
+                krate, "sim_fixtures",
+                "`@callers` is not offered for `{krate}`: every client target names it"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -320,5 +374,57 @@ fn full_selects_every_test_target_cargo_lists() -> Result<(), GateError> {
     let builds = build_invocations(&selected, full.complete.is_some());
     assert_eq!(builds.len(), 1);
     assert!(builds[0].contains(&"--workspace".to_string()));
+    Ok(())
+}
+
+/// The `exclusive: true` entries of catalog `text` whose line, or the comment lines right above
+/// it, name no evidence: a `docs/evidence/` file, a `.log` or a `lanes.tsv`.
+fn exclusive_without_evidence(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let names_evidence = |line: &str| {
+        line.split_once("//").is_some_and(|(_, comment)| {
+            comment.contains("docs/evidence/")
+                || comment.contains(".log")
+                || comment.contains("lanes.tsv")
+        })
+    };
+    let mut findings = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line
+            .split("//")
+            .next()
+            .unwrap_or("")
+            .contains("exclusive: true")
+        {
+            continue;
+        }
+        let mut comments_above = lines[..index]
+            .iter()
+            .rev()
+            .take_while(|above| above.trim_start().starts_with("//"));
+        if !names_evidence(line) && !comments_above.any(|above| names_evidence(above)) {
+            findings.push(format!("line {}: {}", index + 1, line.trim()));
+        }
+    }
+    findings
+}
+
+#[test]
+fn every_exclusive_target_names_its_evidence_in_a_comment() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let full = repo.root.join(CATALOG_PATH);
+    let text = std::fs::read_to_string(&full).map_err(|source| GateError::Io {
+        path: full.clone(),
+        source,
+    })?;
+    assert_clean("exclusive evidence", &exclusive_without_evidence(&text));
+    let bare = "    \"a/x_tests\": (class: Slow, exclusive: true),\n";
+    assert_eq!(
+        exclusive_without_evidence(bare).len(),
+        1,
+        "the check finds a bare mark"
+    );
+    let cited = "    // Fails under load: docs/evidence/2026-11-12-gate-lanes.md.\n    \"a/x_tests\": (class: Slow, exclusive: true),\n";
+    assert_eq!(exclusive_without_evidence(cited), Vec::<String>::new());
     Ok(())
 }

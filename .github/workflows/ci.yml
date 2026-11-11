@@ -148,9 +148,12 @@ jobs:
       # each target's log under ~/scratch/logs/gate/ and prints the result table. A background
       # sampler prints the memory every 30 s into this step's log, not the gate's, so a runner that
       # dies still shows how close it came. `shell: bash` runs the step with pipefail, so a red gate
-      # fails it.
+      # fails it. CI keeps one lane (docs/plans/2026-11-11-faster-gates.md §3.2): lanes on CI need
+      # lavapipe peaks measured on this runner first.
       - name: Run the complete suite with the catalog's thread caps (cargo gate full)
         shell: bash
+        env:
+          SPACE_SCUFFLE_GATE_JOBS: 1
         run: |
           # The sleep holds no descriptor of the step's output, so killing the sampler at exit
           # leaves nothing that keeps the step's log open.
