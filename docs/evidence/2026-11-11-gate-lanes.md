@@ -94,3 +94,84 @@ The GPU and valgrind binaries were audited by reading the code only.
 
 Outside the three crates: `sim_core/effect_tree_allocation_tests` writes dhat output under fixed names in
 `CARGO_TARGET_TMPDIR/effect_tree_allocation/`; only that binary writes there, and valgrind jobs run alone.
+
+## 3. WP6: the A/B of `--jobs 1` against `--jobs 3`
+
+### 3.1 Protocol
+
+One clean tree, `main` at `3c98e71` (tree `ffbc8f49576785322730d9289f801518dd5c1167`), in an agent worktree with its
+own `CARGO_TARGET_DIR` (`~/scratch/cargo-target/gate-ab`). The script, outputs, `lanes.tsv` files, stamps and
+sampler logs are kept in `~/scratch/gate-ab/2026-11-11/` (`ab.sh`, `analyze.py`, `gate-{warm,A,B}.out`,
+`{A,B}/lanes.tsv`, `sampler-{A,B}.log`, `A-stamp/`, `stamps/`).
+
+1. Warm build: `cargo gate full --no-run` (green, 1,270 s).
+2. Run A: `cargo gate full --jobs 1 --no-reuse --stamp-dir …/stamps --log-dir …/A`.
+3. Run B: `cargo gate full --jobs 3 --no-reuse` with the same stamp directory, so its estimates and order came
+   from A's stamp, and `--log-dir …/B`.
+4. During each run a sampler under `timeout 4h` logged, every 30 s, the load average, the slice's `anon` and
+   `file`, and `/proc/pressure/io`; it was killed when its run ended.
+
+The gate lock was free and no other gate ran. One other agent (effects, round 2) built and rendered in parallel
+without the gate lock, so the background load differed between A and B (§3.3).
+
+### 3.2 Results
+
+| Quantity | A (`--jobs 1`) | B (`--jobs 3`) |
+|---|---|---|
+| Result | GREEN, 199 of 199 targets pass | GREEN, 199 of 199 targets pass |
+| Test-phase wall time (`lanes.tsv`) | **7,076 s** | **2,842 s (−59.8 %)** |
+| Sum of executable wall times | 7,066 s | 7,055 s (overlap 2.5×) |
+| Whole gate (start to end) | 7,950 s | 3,947 s |
+| Steps (fmt, clippy, build, doc tests, commands) | 855 s | 1,062 s |
+| `FLAKY` / `TIMEOUT` | none | none |
+| Slice `anon` peak (gate report) | 38.2 GiB | 38.5 GiB |
+| Load average, median / p90 / max | 33.0 / 52.9 / 110.8 | 23.6 / 32.1 / 41.5 |
+| `/proc/pressure/io` some avg60, median / max | 69.5 / 92.8 | 72.1 / 95.4 |
+| Slice `file` at start | 51.0 GiB | 31.4 GiB |
+
+The steps differ by cache state, not by lanes: A's clippy was warm (7 s) and its doc tests and replays rebuilt
+(699 s, 139 s); B's clippy rebuilt (919 s) and its doc tests and replays were warm (13 s, 5 s). Steps are outside the
+acceptance (plan §7).
+
+B in detail:
+
+- 92 targets ran exclusive first (valgrind, and every target with no recorded peak, mostly small and fast) for
+  600 s in total; then the GPU lane ran 19 binaries in 2,242 s and the two general lanes 42 and 46 binaries in
+  2,108 s and 2,105 s.
+- The slice `anon` peak of both runs is `client/sync_allocation_count_tests` under valgrind, whose process tree
+  peaked at 37.0 GiB. It ran alone in both runs (L-2). The largest sum of estimates that ran together on the lanes
+  was 28.5 GiB (measured peaks 29.8 GiB), below the 40 GiB budget; the ceiling (56 GiB) was never reached and the
+  gate never held a target back for memory.
+- GPU lane: its 19 binaries took 2,242 s in B against 2,637 s in A (15 % faster, within the 15 % criterion). Every
+  GPU binary passed, so no child reached the harness's 120 s run limit or its 290 s lock wait.
+- No target slowed more than 2×. The largest ratios: `client/smog_golden_tests` 25.9 → 46.6 s (1.80×, beside
+  `round2_visual_tests`, `headless_tests`, `pipeline_presentation_tests` and `lab_scene_tests`),
+  `client/simulation_diagnostics_tests` 24.0 → 41.1 s (1.71×), `gate/suite_catalog_tests` 22.8 → 34.9 s (1.53×).
+  The long battle drivers slowed 7 to 22 % (`battle_input_tests` 540 → 579 s, `battle_hud_tests` 443 → 507 s,
+  `battle_card_tests` 380 → 440 s, `battle_context_order_tests` 202 → 247 s); the GPU and valgrind binaries got
+  faster (`effect_slice_gpu_tests` 658 → 568 s, `skirmish_match_tests` 243 → 140 s,
+  `sync_allocation_count_tests` 337 → 217 s).
+
+### 3.3 Background load
+
+The load was higher during A (median 33.0) than during B (23.6), and B's own lanes add about three running binaries
+to its figure, so the outside load was roughly 31 during A and 19 during B: it favoured B. I/O pressure was the
+same in both runs (median 69.5 and 72.1). The difference in the medians is 1.4×, below the plan's factor of two
+that would repeat the pair.
+
+It does not change the verdict:
+
+- A was not slowed by the load. Its heaviest binaries ran at or below their figures in the evaluation's window
+  (`battle_input_tests` 540 s against 605 s, `editor_app_tests` 445 against 500, `battle_hud_tests` 443 against
+  461, `battle_fog_tests` 418 against 475, `battle_card_tests` 380 against 456).
+- The sum of executable times is the same in both runs (7,066 s and 7,055 s): B's saving is the 2.5× overlap of its
+  lanes, not faster binaries.
+- For B to miss the 40 % threshold, A's test phase would have to have been 4,737 s or less, that is A's binaries
+  33 % faster than they ran, which their agreement with the historical figures rules out.
+
+### 3.4 Verdict
+
+**Accepted.** Every criterion of plan §7 holds: test-phase wall time −59.8 % (at least 40 % required); every target
+that passed in A passed in B, with no `FLAKY` and no `TIMEOUT`; B's slice `anon` peak 38.5 GiB, below 56 GiB, with at
+most 28.5 GiB of estimates on the lanes at once; no GPU child at its limits and the GPU lane 15 % faster than in A;
+no target slowed more than 2×. The default becomes `--jobs 3` (WP7). CI stays at one lane.
