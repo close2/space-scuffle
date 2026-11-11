@@ -89,3 +89,31 @@ Baseline: 426 effects spawned by the battle, 168 live on the frame, 78 cards, 1 
 of the screen, summed area 0.32 screens, at most 17 over one cell.
 stress_capture_400_detail.png and stress_capture_400_baseline_detail.png: the middle of each frame (x 1010..1410,
 y 180..440 of the window) enlarged twice with nearest-neighbour scaling. Cropped to x 360..1280 as before.
+
+Scale-out round 3 (2026-11-11, plan Amendment 6): the crowd frames are re-taken at a fixed step of one simulation
+tick per frame (`frame_budget --frame-step-ms 40`), so consecutive captures are 40 ms of game time apart, with
+eight consecutive frames from tick 150 (`--capture-frames 8`); otherwise as in round 2 (debug build, lavapipe under
+Xvfb, 1280x720, 200 splashes a second over all seven effects, the scratch assets copy with the lab-only blocks and
+the round-2 battle loadout). The previous rounds ran about five ticks per drawn frame (the debug simulation of 400
+units takes about 3 s a frame), which spawns fewer effects between frames and understated the decal load.
+stress_capture_400.png (and _detail.png): tick 150. 912 live effects, 754 cards, 4 296 decals; footprints cover
+32.5 % of the screen (upper bound), summed area 2.27 screens, at most 38 footprints over one cell. Over the run:
+1 400 splashes sent, 1 842 effects spawned, none refused, no Critical instance without a slot, 2 310 Detail
+instances skipped for room, 147 effects retired.
+stress_degradation_400.png: the middle of the frame (x 650..1050, y 180..440) at ticks 150 to 157, left to right,
+top to bottom. Over these eight frames six more effects were retired (detail eroded out over 0.1 s) and Detail
+instances kept being skipped for room; the frames draw 4 296, 4 289, 4 256, 4 254, 4 234, 4 220, 4 207 and 4 206
+decals.
+Decal pool: those 4 206 to 4 296 decals a frame are above round 2's pool of 4 096, so the pool is now 6 144 (about
+30 % headroom at this load). What happens at the cap is shown by a scratch run with the pool forced to 2 048 and
+nothing else changed, stress_decal_cap_400.png (same crop and ticks): Detail decals give way first (17 767 skipped
+over the run), then Critical decals are written up to the capacity and the rest are dropped, about 2 050 a frame
+(227 543 over the run); which ones are dropped changes from frame to frame with the order of the live instances, so
+lasting marks (acid stains, scorch, bands) flicker in and out between consecutive frames. The pool must therefore
+not be reached at the stress load.
+stress_jets_400.png: the battle without the stream at the battle camera's default distance (`--camera-distance 22`,
+the in-view check waived; the spec's camera is 75 units away), ticks 200 to 209, left to right, top to bottom,
+cropped to x 360..1280 and halved. 204 live effects, 95 cards, 1 289 decals on the first frame; 584 effects spawned
+by the battle so far, 85 layers skipped as smaller than 6 pixels. The jets show as a thin orange core with the
+legacy tracer and their scorched bands, without fire: more than 96 Major effects are alive (a flame line lives
+3.5 s for its band), so a new jet's Detail layers are retired at birth (plan Amendment 6).

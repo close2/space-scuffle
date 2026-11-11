@@ -1095,6 +1095,39 @@ fn a_front_ring_needs_its_breakup_noise() {
         &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&with_noise)),
     )
     .expect("a front with noise resolves");
+    // A ragged leading edge (scale-out review 2): a fraction, and only on a front.
+    let ragged = with_noise.replace("mapping: Front,", "mapping: Front, edge_noise: 0.5,");
+    load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&ragged)),
+    )
+    .expect("a ragged front resolves");
+    for (bad, why) in [
+        (
+            with_noise.replace("mapping: Front,", "mapping: Front, edge_noise: 1.0,"),
+            "an edge bitten through",
+        ),
+        (
+            with_noise.replace("mapping: Front,", "mapping: Polar, edge_noise: 0.5,"),
+            "a ragged edge on a ring that is not a front",
+        ),
+    ] {
+        let error = load(
+            dir.path(),
+            &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&bad)),
+        )
+        .expect_err(why);
+        assert!(
+            matches!(
+                &error,
+                EffectCatalogError::InvalidValue {
+                    field: "edge_noise",
+                    ..
+                }
+            ),
+            "{why}: {error}"
+        );
+    }
 }
 
 #[test]

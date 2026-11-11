@@ -381,6 +381,14 @@ pub enum BlockDef {
         /// Noise breakup of the erosion and edges (required by `mapping: Front`).
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// `mapping: Front` only: how deep the leading edge is bitten by its own noise, as a
+        /// fraction of the band's width, in [0, 1). 0 keeps a round leading edge (a pressure
+        /// front); above it the edge recedes where the noise is low, by up to this share of the
+        /// band, so the front is a run of clumps whose farthest parts stay on the radius and
+        /// whose outline differs per instance (a dust skirt; scale-out review 2). The footprint
+        /// test allows its rays to end inside the reach by this bite.
+        #[serde(default)]
+        edge_noise: f32,
     },
     /// A ground mark projected through the depth buffer.
     Decal {

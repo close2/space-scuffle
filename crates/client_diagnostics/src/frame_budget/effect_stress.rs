@@ -35,7 +35,7 @@ use client::effects::catalog::{EffectCatalog, UnitEffectTables};
 use client::effects::instances::{
     DecalInstance, SpriteInstance, ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_VERTICAL,
 };
-use client::effects::runtime::EffectRuntime;
+use client::effects::runtime::{EffectRuntime, EffectStats};
 use client::vfx::CombatVisualEvent;
 use client::{CatalogResource, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
@@ -169,6 +169,8 @@ pub struct StressConfig {
     pub capture: Option<PathBuf>,
     /// Simulation tick of the captured frame.
     pub capture_tick: u32,
+    /// Consecutive frames captured from that frame on, at least 1.
+    pub capture_frames: u32,
 }
 
 /// What the stress mode did, for the report.
@@ -237,6 +239,8 @@ pub struct EffectStress {
     pub sequence: u64,
     /// The captured frame, once taken.
     pub capture: Option<CaptureSummary>,
+    /// Frames captured so far (the first and the consecutive ones after it).
+    captured_frames: u32,
     /// Where the report section leaves the App.
     handle: StressHandle,
 }
@@ -274,6 +278,7 @@ impl EffectStress {
             owed: 0.0,
             sequence: 0,
             capture: None,
+            captured_frames: 0,
             handle,
         }
     }
@@ -506,7 +511,32 @@ fn capture_stressed_frame(
     let Some(tick) = session.world().map(|world| world.current_tick) else {
         return;
     };
-    if stress.capture.is_some() || tick < stress.config.capture_tick {
+    if tick < stress.config.capture_tick {
+        return;
+    }
+    if stress.capture.is_some() {
+        // The consecutive frames after the first: screenshots only.
+        if stress.captured_frames < stress.config.capture_frames {
+            let path = consecutive_path(&path, stress.captured_frames);
+            let (stats, decals) = runtime
+                .as_deref()
+                .map_or((EffectStats::default(), 0), |runtime| {
+                    (runtime.stats, runtime.frame.decals.len())
+                });
+            info!(
+                "frame_budget: consecutive capture {} at tick {tick}: {} ({decals} decals; so far \
+                 {} retired, {} Detail skipped, {} Critical without a slot)",
+                stress.captured_frames,
+                path.display(),
+                stats.retired,
+                stats.detail_skipped,
+                stats.critical_overflow
+            );
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path));
+            stress.captured_frames += 1;
+        }
         return;
     }
     let Ok((camera, transform)) = cameras.get_single() else {
@@ -551,6 +581,20 @@ fn capture_stressed_frame(
         .handle
         .update(|summary| summary.capture = Some(published));
     stress.capture = Some(capture);
+    stress.captured_frames = 1;
+}
+
+/// The path of consecutive capture `index` (> 0) beside `first`: `<stem>_<index>.<ext>`.
+#[must_use]
+pub fn consecutive_path(first: &std::path::Path, index: u32) -> PathBuf {
+    let stem = first
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+    let name = match first.extension() {
+        Some(extension) => format!("{stem}_{index}.{}", extension.to_string_lossy()),
+        None => format!("{stem}_{index}"),
+    };
+    first.with_file_name(name)
 }
 
 /// The camera's right and up vectors in world space, for camera-facing cards.
@@ -762,6 +806,19 @@ mod tests {
             Some((0, [10.0, 20.0, 0.0], [19.0, 20.0, 0.0]))
         );
         Ok(())
+    }
+
+    #[test]
+    fn consecutive_captures_sit_beside_the_first() {
+        let first = PathBuf::from("/tmp/x/stress_capture_400.png");
+        assert_eq!(
+            consecutive_path(&first, 3),
+            PathBuf::from("/tmp/x/stress_capture_400_3.png")
+        );
+        assert_eq!(
+            consecutive_path(&PathBuf::from("frame"), 1),
+            PathBuf::from("frame_1")
+        );
     }
 
     #[test]

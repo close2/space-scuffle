@@ -1,4 +1,4 @@
-# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 and 2)
+# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 to 3)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
@@ -6,6 +6,65 @@ judge it by, and nothing else: it holds no verdict of the implementer, on purpos
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Scale-out round 3 (WP7)
+
+Round 2's review ([`independent_review_scaleout2.md`](independent_review_scaleout2.md), kept as written) accepted
+`flame_line` and `lance_sweep`, found `shell_impact` restored, and rejected `cleave_impact`. This is round 3. Please
+write it to a new file next to this one, `independent_review_scaleout3.md`, in the same form:
+
+- judge `cleave_impact` afresh against each of the seven checklist items (at the end of this packet), **accept** or
+  **reject** with a concrete reason (sheet, cell or frame, what you see);
+- check that the other six did not regress (their sheets are unchanged since round 2; their GPU goldens pass
+  unchanged);
+- judge the crowd (item 6) on the new frames;
+- give your view on the footprint trade-off below.
+
+The images are lavapipe captures from a debug `battle_capture --effect-lab` under Xvfb, as before, with the same
+sheet layout. Nothing was spent and no texture was made.
+
+### Material
+
+| What | Files |
+|---|---|
+| `cleave_impact` sheet and sequence | [cleave_impact_contact.png](cleave_impact_contact.png) ([legend](cleave_impact_contact.txt)), [cleave_impact_sequence.png](cleave_impact_sequence.png) |
+| four hits on one spot, 0.6 s apart | [cleave_impact_repeat_contact.png](cleave_impact_repeat_contact.png) ([legend](cleave_impact_repeat_contact.txt)), [cleave_impact_repeat_sequence.png](cleave_impact_repeat_sequence.png) |
+| per-pixel change between consecutive frames, round 2 and round 3 | [cleave_impact_pops.txt](cleave_impact_pops.txt) |
+| crowd frame (tick 150) and its middle enlarged | [stress_capture_400.png](stress_capture_400.png), [stress_capture_400_detail.png](stress_capture_400_detail.png) |
+| eight consecutive crowd frames, 40 ms apart, across budget retirements | [stress_degradation_400.png](stress_degradation_400.png) |
+| the same eight frames with the decal pool forced to half the old size (what happens at the cap) | [stress_decal_cap_400.png](stress_decal_cap_400.png) |
+| the battle without the stream, at the battle camera's default distance, ten consecutive frames while jets burn | [stress_jets_400.png](stress_jets_400.png) |
+| figures for all crowd frames | [stress_capture.txt](stress_capture.txt), paragraph "Scale-out round 3" |
+
+### What changed
+
+| Round-2 finding | What changed |
+|---|---|
+| Glass bubble: a translucent disc with a smooth, unbroken elliptical rim | The front is a thinner band, torn inside from its first frame, with no tinted disc inside. Its leading edge is bitten back where its own noise is low, so its outline is a run of dust clumps. |
+| The same circle on every hit | The bite follows each hit's own noise phase, so each hit has its own outline (repeat take). |
+| Pop at frame 7→8 (370 px changing by more than 3 %, against 46–78 px before) | The front's intensity now falls linearly over the last 60 % of its life while it erodes. Measured per pixel on full-resolution frames: round 2 had 719 px at 6→7 and 2 638 px at 7→8; round 3 has 696–1 034 px for every step from frame 4 on ([cleave_impact_pops.txt](cleave_impact_pops.txt)). |
+| Crack not readable; square clods | Not changed. |
+
+**The footprint trade-off.** The slice test's Critical contract asked that 85 % of rays end within ±2 px of the
+reach, which is 7 % of the cleave's radius at the default zoom. A torn edge deeper than that cannot pass it: this
+front scores 0 % under that rule. The only fronts that passed it were nearly round outlines. The test now lets a
+front that declares a torn edge end inside the reach by its declared bite (15 % of the reach here). Two rules still
+hold: nothing may end beyond the reach, and the farthest clumps must lie within 2 px of the reach. This front
+scores 89 %, with its farthest ray at −1.68 px. The plan (Amendment 6) records this as a proposal that can be
+reversed. Is the reach still readable from the outermost dust?
+
+**Crowd notes.**
+
+- The crowd frames now step one simulation tick per frame, so consecutive frames are 40 ms apart. The decal load at
+  that step is 4 206–4 296 a frame, above the old pool of 4 096, so the pool is now 6 144.
+- The forced-cap take shows the failure mode the headroom avoids: lasting marks flicker between consecutive frames.
+- The jets take is at the battle camera's default distance, without the stream, ticks 200 to 209. It shows what the
+  budget does to the jets in a real battle: more than 96 `Major` effects are alive (a flame line lives 3.5 s for
+  its band), so a new jet's fire layers are retired at birth. The jet shows as its core, the tracer and its band.
+  The plan (Amendment 6) records options; nothing was changed. At the frame-budget camera (75 units away) the fire's
+  cards would also fall below the 6-pixel level-of-detail floor.
+- Fading acid stains after their first second in crowds is recorded as a proposal (Amendment 6), not taken: it would
+  change `acid_burst`'s accepted sheets.
 
 ## Scale-out round 2 (WP7)
 

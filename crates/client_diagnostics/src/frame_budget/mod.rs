@@ -110,6 +110,23 @@ pub struct FrameBudgetOptions {
     /// fight thins out as it goes on; an early tick shows the crowd).
     #[arg(long, value_name = "TICK")]
     pub capture_tick: Option<u32>,
+    /// Screenshots of this many consecutive frames from the `--capture` frame on (default 1):
+    /// frame `k > 0` is written beside it as `<stem>_<k>.png`, so a budget retirement or a
+    /// pool at its cap can be followed frame by frame.
+    #[arg(long, value_name = "FRAMES")]
+    pub capture_frames: Option<u32>,
+    /// Review captures only: advance game time by exactly this many milliseconds per frame,
+    /// whatever the frame took, so consecutive captures are a fixed step apart (40 is one tick
+    /// of the 25 Hz simulation). Frame times are then not real time, so such a run is never a
+    /// figure of record.
+    #[arg(long, value_name = "MS")]
+    pub frame_step_ms: Option<u32>,
+    /// Review captures only: the camera's distance in world units instead of the spec's (the
+    /// battle camera's default is 22; the spec's wide view culls small effect layers by their
+    /// size on screen), looking at the spec's target. It frames only part of the battle, so
+    /// the check that every unit is in view is waived. Never a figure of record.
+    #[arg(long, value_name = "UNITS")]
+    pub camera_distance: Option<f32>,
     /// The plan's D-11 experiment: an HDR camera with a bloom only values above 1.0 feed
     /// ([`crate::hdr_bloom`]).
     #[arg(long)]
@@ -464,8 +481,17 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
             warmup_frames,
             window,
             camera_target: Vec2::new(spec.camera.target.0, spec.camera.target.1),
-            camera_distance: spec.camera.distance,
-            min_in_view_fraction: spec.min_in_view_fraction,
+            camera_distance: options
+                .camera_distance
+                .filter(|distance| distance.is_finite() && *distance > 0.0)
+                .unwrap_or(spec.camera.distance),
+            // A closer review camera frames only part of the battle, so it waives the check
+            // that the whole army is in view.
+            min_in_view_fraction: if options.camera_distance.is_some() {
+                0.0
+            } else {
+                spec.min_in_view_fraction
+            },
             capacity: usize::try_from(spec.max_recorded_frames).unwrap_or(usize::MAX),
             gpu_passes: options.render_diagnostics,
         },
@@ -520,6 +546,11 @@ fn add_variant(
     if options.hdr_bloom {
         app.add_plugins(crate::hdr_bloom::HdrBloomPlugin);
     }
+    if let Some(step) = options.frame_step_ms {
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(u64::from(step)),
+        ));
+    }
     let stressed = options.effect_stress.is_some() || options.capture.is_some();
     stressed.then(|| {
         effect_stress::install(
@@ -527,6 +558,7 @@ fn add_variant(
             effect_stress::StressConfig {
                 rate_per_second: options.effect_stress.unwrap_or(0),
                 capture: options.capture.clone(),
+                capture_frames: options.capture_frames.unwrap_or(1).max(1),
                 capture_tick: options.capture_tick.unwrap_or_else(|| {
                     options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0)
                 }),

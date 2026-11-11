@@ -48,7 +48,7 @@ pub const NO_NOISE: u32 = u32::MAX;
 // PERFORMANCE RATIONALE:
 // Why: Thousands of cards are written and uploaded every frame; one draw per run of cards
 // needs them in one contiguous GPU array the vertex shader indexes by instance.
-// What: A `Pod` record of nine 16-byte rows matching the WGSL struct, written into a retained
+// What: A `Pod` record of ten 16-byte rows matching the WGSL struct, written into a retained
 // vector and copied to the storage buffer with one `write_buffer`.
 // Trade-off: Fields are packed for alignment rather than grouped by meaning, and orientation
 // and shape are codes rather than an enum.
@@ -117,6 +117,11 @@ pub struct SpriteInstance {
     pub taper_tail: f32,
     /// Share of a ribbon's drawn length over which it narrows at its head (end).
     pub taper_head: f32,
+    /// Depth of a [`SHAPE_FRONT`] ring's leading-edge noise, as a fraction of its band's
+    /// width; 0 for a round leading edge.
+    pub front_edge: f32,
+    /// Padding to a whole 16-byte row; zero.
+    pub reserved: [f32; 3],
 }
 
 /// One decal box.
@@ -210,7 +215,8 @@ mod tests {
 
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
-        assert_eq!(size_of::<SpriteInstance>(), 144);
+        assert_eq!(size_of::<SpriteInstance>(), 160);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, front_edge), 144);
         assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
         assert_eq!(size_of::<DecalInstance>(), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);

@@ -127,14 +127,27 @@ fn front_texel(card: SpriteInstance, centred: vec2<f32>, radius: f32, edge: f32,
     let waver_raw = noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.37) + offset, card.noise_layer, level);
     let waver = clamp((waver_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
     let inner = card.ring_inner - width * card.noise_amount * (waver - 0.5) * 2.0;
-    let across = clamp((radius - inner) / max(1.0 - inner, 1e-4), 0.0, 1.0);
+    // A torn skirt (`front_edge` > 0): the leading edge is bitten back where a third read of
+    // the noise (its own row, the same whole repeats around the circle, so no seam) is low, by
+    // up to `front_edge` of the band's width, so its outline is a run of clumps whose farthest
+    // parts stay on the radius and differs per instance. A round front (0) keeps its whole edge
+    // on the radius.
+    var leading = 1.0;
+    if (card.front_edge > 0.0) {
+        let bite_raw = noise_sample(
+            atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.71) + offset.yx, card.noise_layer, level,
+        );
+        let bite = clamp((bite_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
+        leading = 1.0 - width * card.front_edge * (1.0 - smoothstep(0.0, 1.0, bite));
+    }
+    let across = clamp((radius - inner) / max(leading - inner, 1e-4), 0.0, 1.0);
     let grain = noise_sample(
         atlas, atlas_sampler, vec2<f32>(angle * repeats * 2.0, across * 0.5) + offset.yx, card.noise_layer, level,
     );
     let lead = across * across;
     let shading = lead * (0.55 + 0.45 * grain) * (0.8 + 0.4 * (waver - 0.5));
     let coverage = smoothstep(0.0, 0.5, across) * (0.55 + 0.45 * grain);
-    let outer = 1.0 - smoothstep(1.0 - edge * 1.5, 1.0, radius);
+    let outer = 1.0 - smoothstep(leading - edge * 1.5, leading, radius);
     let trailing = smoothstep(inner - edge, inner + edge, radius);
     return vec4<f32>(shading, coverage, grain, outer * trailing);
 }

@@ -769,6 +769,67 @@ impl Resolver<'_> {
         })
     }
 
+    /// Resolves a ring block.
+    fn ring_block(&self, at: &Site, ring: &RingFields<'_>) -> Result<Block, EffectCatalogError> {
+        let RingFields {
+            texture,
+            ramp,
+            orient,
+            thickness,
+            erosion,
+            mapping,
+            height,
+            sort_bias,
+            breakup,
+            edge_noise,
+        } = *ring;
+        self.at_least(at, "height", *height, 0.0)?;
+        self.fraction(at, "edge_noise", *edge_noise)?;
+        if *edge_noise > 0.0 && *mapping != super::schema::RingMapping::Front {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "edge_noise",
+                value: *edge_noise,
+                rule: "only a `Front` ring has a leading edge to break",
+            });
+        }
+        let breakup = self.breakup(breakup.as_ref(), at)?;
+        if *mapping == super::schema::RingMapping::Front && breakup.is_none() {
+            return Err(EffectCatalogError::FrontWithoutBreakup {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+            });
+        }
+        self.positive_fraction(at, "thickness", *thickness)?;
+        Ok(Block::Ring {
+            look: CardLook {
+                element: self.element(texture, at)?,
+                ramp: RampId(self.id(NameKind::Ramp, ramp, at)?),
+                orient: *orient,
+                soft_depth: 0.0,
+                frame_blend: true,
+                rotation: super::schema::RotationDef::Fixed,
+                erosion: self.curve(erosion.as_ref(), at)?,
+                drift: Vec3::ZERO,
+                fps: None,
+                frame_curve: None,
+                lift: None,
+                mapping: *mapping,
+                lift_curve: None,
+                lean: 0.0,
+                spread: 0.0,
+                sort_bias: *sort_bias,
+                clip_to_line: false,
+                shape: super::schema::CardShape::Texture,
+                breakup,
+            },
+            thickness: *thickness,
+            height: *height,
+            edge_noise: *edge_noise,
+        })
+    }
+
     /// Resolves a ring or a decal.
     fn masked_block(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
         match block {
@@ -782,42 +843,22 @@ impl Resolver<'_> {
                 height,
                 sort_bias,
                 breakup,
-            } => {
-                self.at_least(at, "height", *height, 0.0)?;
-                let breakup = self.breakup(breakup.as_ref(), at)?;
-                if *mapping == super::schema::RingMapping::Front && breakup.is_none() {
-                    return Err(EffectCatalogError::FrontWithoutBreakup {
-                        path: self.path.to_path_buf(),
-                        site: at.clone(),
-                    });
-                }
-                self.positive_fraction(at, "thickness", *thickness)?;
-                Ok(Block::Ring {
-                    look: CardLook {
-                        element: self.element(texture, at)?,
-                        ramp: RampId(self.id(NameKind::Ramp, ramp, at)?),
-                        orient: *orient,
-                        soft_depth: 0.0,
-                        frame_blend: true,
-                        rotation: super::schema::RotationDef::Fixed,
-                        erosion: self.curve(erosion.as_ref(), at)?,
-                        drift: Vec3::ZERO,
-                        fps: None,
-                        frame_curve: None,
-                        lift: None,
-                        mapping: *mapping,
-                        lift_curve: None,
-                        lean: 0.0,
-                        spread: 0.0,
-                        sort_bias: *sort_bias,
-                        clip_to_line: false,
-                        shape: super::schema::CardShape::Texture,
-                        breakup,
-                    },
-                    thickness: *thickness,
-                    height: *height,
-                })
-            }
+                edge_noise,
+            } => self.ring_block(
+                at,
+                &RingFields {
+                    texture,
+                    ramp,
+                    orient,
+                    thickness,
+                    erosion,
+                    mapping,
+                    height,
+                    sort_bias,
+                    breakup,
+                    edge_noise,
+                },
+            ),
             BlockDef::Decal {
                 texture,
                 ramp,
@@ -1091,7 +1132,30 @@ impl Resolver<'_> {
     }
 }
 
-/// A [`Site`] for `owner` and an optional layer.
+/// The fields of a `Ring` block definition, borrowed for [`Resolver::ring_block`].
+struct RingFields<'a> {
+    /// Texture element name.
+    texture: &'a String,
+    /// Ramp name.
+    ramp: &'a String,
+    /// Card orientation.
+    orient: &'a super::schema::Orient,
+    /// Thickness as a fraction of the radius.
+    thickness: &'a f32,
+    /// Erosion curve name.
+    erosion: &'a Option<String>,
+    /// Texture mapping.
+    mapping: &'a super::schema::RingMapping,
+    /// Height above the placed point.
+    height: &'a f32,
+    /// Sort bias.
+    sort_bias: &'a f32,
+    /// Noise breakup.
+    breakup: &'a Option<BreakupDef>,
+    /// Depth of a front's leading-edge noise.
+    edge_noise: &'a f32,
+}
+
 /// The 32-bit FNV-1a hash of `name`.
 fn name_hash(name: &str) -> u32 {
     name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
@@ -1099,6 +1163,7 @@ fn name_hash(name: &str) -> u32 {
     })
 }
 
+/// A [`Site`] for `owner` and an optional layer.
 fn site(owner: &str, layer: Option<usize>) -> Site {
     Site {
         owner: owner.to_owned(),

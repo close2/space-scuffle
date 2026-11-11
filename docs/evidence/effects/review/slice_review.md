@@ -669,3 +669,53 @@ because the new bands are made of several decals each; no Critical instance lack
 
 **Scale-out round 2 result (implementer):** the three reworked effects and the restored `shell_impact` are ready
 for the independent review (packet section "Scale-out round 2"); the implementer does not accept its own work.
+
+## Scale-out round 3 (WP7, plan Amendment 6)
+
+Acts on the independent review of round 2 ([`independent_review_scaleout2.md`](independent_review_scaleout2.md)):
+`flame_line` and `lance_sweep` accepted, `cleave_impact` rejected (a clean-rimmed translucent "bubble", the same
+circle on every hit, a pop at frame 7→8), crowd points open (decal headroom, degradation frames, jets burning).
+Evidence (lavapipe, debug `battle_capture`, Xvfb, 2026-11-11): [`cleave_impact_contact.png`](cleave_impact_contact.png),
+[`cleave_impact_sequence.png`](cleave_impact_sequence.png), the repeat take
+[`cleave_impact_repeat_contact.png`](cleave_impact_repeat_contact.png) and its sequence, the per-pixel pop counts
+[`cleave_impact_pops.txt`](cleave_impact_pops.txt), and the crowd frames of [`stress_capture.txt`](stress_capture.txt)
+("Scale-out round 3"). No texture was made and nothing was spent.
+
+### `cleave_impact`
+
+- **Front:** a `Front` ring with a declared torn leading edge (`edge_noise: 0.5`): the edge is bitten back where its
+  own noise is low, so the front is a run of dust clumps whose farthest parts stay on the reach, and whose outline
+  differs per hit. Thinner band (0.3 of the radius), torn inside from the first frame, no tinted disc inside it.
+- **Fade:** intensity 1.35 while it races out, falling linearly over the last 60 % of its 0.5 s while it erodes.
+- **Pops, per pixel** (pixels changing by more than 3 % between consecutive 40 ms frames over the sheet's cell, full
+  resolution): round 2 had 719 at frame 6→7 and **2 638 at 7→8**; now every step from frame 4 on lies between 696 and
+  1 034, each within 1.3 times its neighbours. In the repeat take the only larger steps are the next hits landing.
+- **Footprint:** on radv and lavapipe, 89 % of 72 rays end within the tolerance under the rule of Amendment 6 (±2 px,
+  or inside by up to the declared bite of 15 % of the reach), mean error −5.4 px, farthest ray −1.68 px, nothing
+  beyond the reach. Under the round-2 rule (±2 px only) this front fails (0 %); the trade-off and the proposal are in
+  plan Amendment 6. Coverage 88 %, largest whole-frame mean change 0.75/255, nothing left after the end.
+- **Goldens:** re-recorded on both drivers; every other subject's goldens pass unchanged on both drivers with the
+  ten-row card record (100.00 % within, mean 0.000/255), so the round fronts of `shell_impact`, `acid_burst` and
+  `flak_burst` draw exactly as before.
+
+### Crowd
+
+- **Degradation frames:** eight consecutive frames at one tick per frame (`stress_degradation_400.png`): six
+  retirements happen across them; the retired effects' detail erodes out and no lasting mark disappears.
+- **Decal pool:** 4 206 to 4 296 decals per frame at the stress load (above the old 4 096; round 2 measured at five
+  ticks per frame). The pool is now 6 144. At a forced cap of 2 048 (`stress_decal_cap_400.png`) Detail decals go
+  first and then about 2 050 Critical decals a frame are dropped, a different set each frame, so stains and bands
+  flicker: the cap must not be reached.
+- **Jets burning** (`stress_jets_400.png`, the battle without the stream at the battle camera's default distance,
+  ticks 200 to 209): the jets show as a thin orange core, the tracer and their bands, without billowing fire. Their
+  Detail layers are retired at birth because more than 96 `Major` effects are alive (a flame line lives 3.5 s for
+  its band). Not changed this round; the options are in plan Amendment 6. At the frame-budget camera (75 units) the
+  fire's cards are also below the 6-pixel level-of-detail floor.
+- **Acid in crowds:** the review's suggestion (fade stains after their first second) would change `acid_burst`'s
+  accepted sheets, so it is recorded as a proposal in Amendment 6, not taken.
+
+Not taken (recorded in Amendment 6): the optional notes on `flame_line` (jet rod in frames 1–4, oxblood pockets) and
+`lance_sweep` (wedge-shaped groove, larger spatter).
+
+**Scale-out round 3 result (implementer):** `cleave_impact` and the crowd evidence are ready for a fresh independent
+review (packet section "Scale-out round 3"); the implementer does not accept its own work.

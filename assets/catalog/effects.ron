@@ -279,8 +279,8 @@
             (0.00, (0.00, 0.00, 0.00, 0.00)),
             (0.25, (0.035, 0.028, 0.020, 0.35)),
             (0.60, (0.10, 0.082, 0.060, 0.48)),
-            (0.90, (0.19, 0.16, 0.12, 0.56)),
-            (1.00, (0.23, 0.20, 0.15, 0.55)),
+            (0.90, (0.19, 0.16, 0.12, 0.66)),
+            (1.00, (0.23, 0.20, 0.15, 0.72)),
         ],
         // Dust and soil thrown up by a heavy blow (alpha): dark soil in its thin parts, lighter
         // dust where dense, so it has value and reads on both grounds.
@@ -397,10 +397,13 @@
         // it thins).
         "flame_die": [(0.00, 1.00, Linear), (0.30, 0.85, EaseInQuad), (1.00, 0.25, Linear)],
         "torch_break": [(0.00, 0.42, Linear), (0.50, 0.50, EaseInQuad), (1.00, 1.00, Linear)],
-        // Intensity of a dust front: thick (an intensity above 1 fills its thin, noise-broken
-        // parts, so its leading edge holds on the reach), then thinning out over its last six
-        // frames while its erosion eats it (no pop).
-        "skirt_fade": [(0.00, 1.80, Linear), (0.45, 1.60, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity of a dust skirt: a little above 1 while it races out (it fills the thin
+        // parts of its clumps, so their outer edge holds on the reach), then falling linearly
+        // over the last 60 % of its life while its erosion eats it (no pop; scale-out round 3).
+        "skirt_fade": [(0.00, 1.35, Linear), (0.40, 1.20, Linear), (1.00, 0.00, Linear)],
+        // Erosion of a dust skirt: torn into clumps and gaps from the start, then eaten from
+        // its thin parts until nothing is left.
+        "skirt_break": [(0.00, 0.25, Linear), (0.35, 0.29, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: nothing, then eating the element from its thin parts.
         "erode_late": [(0.00, 0.00, Linear), (0.45, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: from the start, slowly at first.
@@ -1095,16 +1098,18 @@
                 ),
                 (block: Particles(emitter: "blast_sparks"), size: (scale: 0.1)),
                 (
-                    // The dust front: noise-broken and wavering, lighter dust at its leading
-                    // edge and darker soil behind, racing to the reach, held thick so its edge
-                    // stays on the reach, then thinning out over six frames as it erodes (no
-                    // pop). Critical: the cleave's area.
+                    // The dust front: a thin skirt of dust clumps at the leading edge, torn
+                    // into clumps and gaps by the noise from the first frame (no outline, no
+                    // tinted disc inside), each hit with its own noise phase; the clumps shrink
+                    // and break apart from the inside out as it ends (no pop). Critical: the
+                    // cleave's area, marked by the clumps' outer edge.
                     block: Ring(texture: "smoke_puff", ramp: "cleave_front", orient: Ground,
-                        thickness: 0.5, mapping: Front, height: 0.03, erosion: "front_break",
-                        breakup: (noise: "noise_tile", scale: 6.0, amount: 0.6, softness: 0.25)),
+                        thickness: 0.3, mapping: Front, height: 0.03, erosion: "skirt_break",
+                        edge_noise: 0.5,
+                        breakup: (noise: "noise_tile", scale: 5.0, amount: 0.8, softness: 0.15)),
                     radius: (from: (bind: SplashFull, scale: 0.9), to: (bind: SplashReach, scale: 1.0),
                         curve: "front_fast"),
-                    size_curve: "thin_out", duration: 0.42, curve: "skirt_fade", priority: Critical,
+                    duration: 0.5, curve: "skirt_fade", priority: Critical,
                 ),
                 (
                     // The ground cracked under the blow.
@@ -1186,11 +1191,15 @@
     // with the 8 s scorch and 6 s stain): no effect refused and no Critical instance without a
     // slot. The class caps stay low, so in such a crowd the Detail layers of the oldest Major
     // effects retire (eroded out) and the Critical layers carry the picture. Round 2 adds the
-    // acid flecks (Minor, 16 per burst, 4.5 s) to the effect pool.
+    // acid flecks (Minor, 16 per burst, 4.5 s) to the effect pool. Scale-out round 3: the
+    // flame and lance bands are several decals each, and the round-2 stress frame with all
+    // seven effects drew 3 921 decals, 96 % of the old 4 096; the pool is now 6 144, about a
+    // third of headroom at that load (at the cap, Detail decals give way first and Critical
+    // ones are written up to the capacity; docs/evidence/effects/review/stress_capture.txt).
     budget: (
         particles: 30000,
         sprites: 4096,
-        decals: 4096,
+        decals: 6144,
         lights: 16,
         effects: 2048,
         classes: { Major: 96, Minor: 512, Ambient: 128 },

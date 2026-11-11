@@ -10,6 +10,6 @@ Default-zoom cells show the middle half of the frame, close-zoom cells its middl
 (a line's close-zoom cells the whole frame).
 cleave_impact_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
 40 ms, read left to right, top to bottom.
-Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-11; scale-out round 2
-(plan Amendment 5; docs/evidence/effects/review/slice_review.md, "Scale-out round 2"). Scale-out round 1 is in
-commit f3d08f3.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-11; scale-out round 3
+(plan Amendment 6; docs/evidence/effects/review/slice_review.md, "Scale-out round 3"). Scale-out round 2 is in
+commit 0988f84, round 1 in f3d08f3.

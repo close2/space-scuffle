@@ -35,8 +35,8 @@ use super::catalog::schema::{
     RotationDef,
 };
 use super::catalog::{
-    Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
-    RibbonLook,
+    Block, Breakup, CardLook, CurveId, DecalLook, DistortionLook, EffectCatalog, EffectId,
+    ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA,
@@ -652,12 +652,21 @@ impl EffectRuntime {
         }
         match &layer.block {
             Block::Sprite(look) => self.push_card(
-                context, look, position, extent, age, life, intensity, seed, 0.0,
+                context,
+                look,
+                position,
+                extent,
+                age,
+                life,
+                intensity,
+                seed,
+                RingShape::NONE,
             ),
             Block::Ring {
                 look,
                 thickness,
                 height,
+                edge_noise,
             } => self.push_card(
                 context,
                 look,
@@ -667,36 +676,19 @@ impl EffectRuntime {
                 life,
                 intensity,
                 seed,
-                1.0 - (thickness * catalog.sample(layer.size_curve, life, 1.0)).clamp(0.01, 0.99),
+                RingShape {
+                    inner: 1.0
+                        - (thickness * catalog.sample(layer.size_curve, life, 1.0))
+                            .clamp(0.01, 0.99),
+                    edge_noise: *edge_noise,
+                },
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
             }
             Block::Ribbon(look) => self.push_ribbon(context, look, extent, age, life, intensity),
             Block::Distortion(look) => {
-                if self.frame.distortions.len() == self.frame.distortions.capacity() {
-                    return Written::Full;
-                }
-                let phase = Vec2::new(
-                    unit_float(hash3(seed, 0xD157_0001, 0)),
-                    unit_float(hash3(seed, 0xD157_0002, 0)),
-                ) + look.scroll * age;
-                self.frame.distortions.push(SpriteInstance {
-                    center: (position + Vec3::Y * look.height).to_array(),
-                    half_size: extent,
-                    intensity,
-                    orient: if look.ground {
-                        ORIENT_GROUND
-                    } else {
-                        ORIENT_CAMERA
-                    },
-                    noise_offset: phase.to_array(),
-                    noise_scale: look.scale,
-                    noise_amount: look.strength,
-                    noise_layer: look.noise_layer,
-                    ..SpriteInstance::default()
-                });
-                Written::Yes
+                self.push_distortion(look, position, extent, age, intensity, seed)
             }
             Block::Light {
                 color,
@@ -733,8 +725,9 @@ impl EffectRuntime {
         life: f32,
         intensity: f32,
         seed: u32,
-        ring_inner: f32,
+        ring: RingShape,
     ) -> Written {
+        let ring_inner = ring.inner;
         if self.frame.cards.len() == self.frame.cards.capacity() {
             return Written::Full;
         }
@@ -799,10 +792,50 @@ impl EffectRuntime {
             clip_min: clip[2],
             clip_max: clip[3],
             shape,
+            front_edge: if shape == SHAPE_FRONT {
+                ring.edge_noise
+            } else {
+                0.0
+            },
             ..surface.card()
         };
         self.push_sorted_card(card, context.camera, look.sort_bias);
         self.frame.card_count += 1;
+        Written::Yes
+    }
+
+    /// Pushes a distortion disc of radius `extent` at `position`.
+    fn push_distortion(
+        &mut self,
+        look: &DistortionLook,
+        position: Vec3,
+        extent: f32,
+        age: f32,
+        intensity: f32,
+        seed: u32,
+    ) -> Written {
+        if self.frame.distortions.len() == self.frame.distortions.capacity() {
+            return Written::Full;
+        }
+        let phase = Vec2::new(
+            unit_float(hash3(seed, 0xD157_0001, 0)),
+            unit_float(hash3(seed, 0xD157_0002, 0)),
+        ) + look.scroll * age;
+        self.frame.distortions.push(SpriteInstance {
+            center: (position + Vec3::Y * look.height).to_array(),
+            half_size: extent,
+            intensity,
+            orient: if look.ground {
+                ORIENT_GROUND
+            } else {
+                ORIENT_CAMERA
+            },
+            noise_offset: phase.to_array(),
+            noise_scale: look.scale,
+            noise_amount: look.strength,
+            noise_layer: look.noise_layer,
+            ..SpriteInstance::default()
+        });
         Written::Yes
     }
 
@@ -1030,6 +1063,23 @@ impl EffectRuntime {
             .sorted
             .extend(frame.order.iter().map(|index| cards[*index as usize]));
     }
+}
+
+/// The ring mask of a card: none for a sprite.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RingShape {
+    /// Inner radius as a fraction of the card's half size; 0 for a plain card.
+    inner: f32,
+    /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
+    edge_noise: f32,
+}
+
+impl RingShape {
+    /// A plain card.
+    const NONE: Self = Self {
+        inner: 0.0,
+        edge_noise: 0.0,
+    };
 }
 
 /// Outcome of writing one instance.

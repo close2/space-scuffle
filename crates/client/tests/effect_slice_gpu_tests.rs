@@ -10,7 +10,9 @@
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
-//!   within ±2 px on most rays and never beyond it, and once every non-decal layer has ended
+//!   within ±2 px on most rays and never beyond it (a front that declares a torn leading edge,
+//!   `edge_noise`, may end inside by its declared bite as well, on most rays, while its
+//!   farthest clumps stay within ±2 px of the reach: scale-out round 3), and once every non-decal layer has ended
 //!   the visible edge of its lasting `Critical` marks (the acid stain, held at full size)
 //!   lies on the reach, within ±2 px on most rays and never more than 2 px beyond it (review
 //!   round 5; round 4 checked only that it stayed inside); a line's marks start and end at
@@ -455,20 +457,56 @@ fn reach_errors(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage
     errors
 }
 
+/// The projected reach in pixels along each of `rays` rays from the anchor.
+fn reach_pixels(view: &View, ground: &Ground, rays: usize) -> Vec<f32> {
+    let centre = view.project(ground.anchor);
+    (0..rays)
+        .map(|ray| {
+            let angle = ray as f32 / rays as f32 * std::f32::consts::TAU;
+            let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+            view.project(ground.anchor + direction * ground.reach)
+                .distance(centre)
+        })
+        .collect()
+}
+
+/// The declared bite of `effect`'s torn `Critical` front, as a share of its reach: the
+/// largest `edge_noise · thickness` of its critical rings (0 for round fronts).
+fn front_bite(effect: &Effect) -> f32 {
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.priority == Priority::Critical)
+        .filter_map(|layer| match layer.block {
+            Block::Ring {
+                thickness,
+                edge_noise,
+                ..
+            } => Some(thickness * edge_noise),
+            _ => None,
+        })
+        .fold(0.0, f32::max)
+}
+
 /// Splash footprint: the front's outermost lit pixel per ray against the projected reach, and
 /// the lasting marks (`late`, once every non-decal layer has ended) never beyond it.
 fn check_front(
     view: &View,
     ground: &Ground,
-    critical: &RgbImage,
-    late: &RgbImage,
-    bg: &RgbImage,
+    (critical, late, bg): (&RgbImage, &RgbImage, &RgbImage),
+    bite: f32,
 ) -> String {
     let errors = reach_errors(view, ground, critical, bg);
     let rays = errors.len();
+    // A torn front may end inside the reach by its declared bite (a share of the reach),
+    // projected per ray; a round front (bite 0) keeps the plain tolerance.
+    let reach_px = reach_pixels(view, ground, rays);
     let within = errors
         .iter()
-        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .zip(&reach_px)
+        .filter(|(error, reach)| {
+            **error <= TOLERANCE_PX && **error >= -(TOLERANCE_PX + bite * **reach)
+        })
         .count();
     let worst_beyond = errors
         .iter()
@@ -515,12 +553,22 @@ fn check_front(
     );
     assert!(
         share >= FRONT_RAYS_WITHIN,
-        "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (errors {errors:?})",
+        "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (bite {bite}; errors {errors:?})",
         share * 100.0
     );
+    // The farthest-reaching clumps of a torn front still mark the reach.
+    assert!(
+        bite <= 0.0 || worst_beyond >= -TOLERANCE_PX,
+        "the torn front's farthest clump ends {worst_beyond:.2} px inside the reach"
+    );
     format!(
-        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
+        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach{}, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
         share * 100.0,
+        if bite > 0.0 {
+            format!(" (or inside it by up to its declared bite, {:.0} % of the reach)", bite * 100.0)
+        } else {
+            String::new()
+        },
         late_beyond.map_or_else(
             || "none (no lasting critical mark)".to_owned(),
             |beyond| format!(
@@ -884,7 +932,7 @@ fn check_subject(index: usize) -> TestResult {
         check_line(&view, &ground, &critical, &bg)
     } else {
         let late = capture(directory.path(), "critical_late");
-        check_front(&view, &ground, &critical, &late, &bg)
+        check_front(&view, &ground, (&critical, &late, &bg), front_bite(effect))
     };
     let frames: Vec<RgbImage> = (0..sequence_frames())
         .map(|frame| capture(directory.path(), &format!("seq_{frame:03}")))

@@ -232,6 +232,8 @@ pub enum Block {
         thickness: f32,
         /// Height above the placed point, world units.
         height: f32,
+        /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
+        edge_noise: f32,
     },
     /// A projected ground mark.
     Decal(DecalLook),

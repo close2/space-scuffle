@@ -1237,3 +1237,87 @@ airborne units and a ground weapon's only on the ground (`strikes_plane`).
 
 **Gate.** The implementer checklist is in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out
 round 2"), the material in the packet's section "Scale-out round 2"; the orchestrator runs the independent review.
+
+## Amendment 6: scale-out round 3 (2026-11-11, short note, charter §6)
+
+**Why.** The independent review of round 2
+([`independent_review_scaleout2.md`](../evidence/effects/review/independent_review_scaleout2.md)) accepted
+`flame_line` and `lance_sweep`, confirmed `shell_impact` equal to `main`, and rejected `cleave_impact`: its front was a
+translucent disc with a smooth, unbroken elliptical rim (a "glass bubble"), the same circle on every hit, and it
+popped out in one frame (frame 7 to 8). It also asked for degradation frames in the crowd, a frame with jets burning,
+and headroom in the decal pool. Presentation data, one shader branch, the effect lab, the stress tool and one
+footprint rule change; no simulation state, golden replay or checksum (D-1 holds).
+
+**`cleave_impact`.**
+
+- **A torn front.** A `Front` ring may declare `edge_noise` (schema `BlockDef::Ring`, in [0, 1)): where a third read of
+  its own noise is low, its leading edge is bitten back by up to that share of the band's width, so the front is a
+  run of dust clumps whose farthest parts stay on the reach and whose outline differs per hit (the noise phase is the
+  instance's own). The card record gains a tenth row (`front_edge` and padding); with `edge_noise` 0 the shader takes
+  the old path, so the round fronts of `shell_impact`, `acid_burst` and `flak_burst` draw exactly as before (their
+  goldens pass unchanged, mean difference 0.000/255, on both drivers). The cleave's front is thinner (0.3 of the
+  radius), torn from its first frame (`skirt_break`), with no tinted disc inside.
+- **No pop.** The front's intensity no longer holds above 1 and drops at the end: it falls linearly over the last
+  60 % of its 0.5 s while its erosion eats it (`skirt_fade`). Measured per pixel (pixels changing by more than 3 %
+  between consecutive 40 ms frames, over the cell the sheet shows, full-resolution lavapipe frames): round 2 had
+  719 at frame 6→7 and 2 638 at 7→8 (the pop); now every step after the impact (frame 4 on) lies between 696 and
+  1 034, each within 1.3 times its neighbours ([`cleave_impact_pops.txt`](../evidence/effects/review/cleave_impact_pops.txt)).
+
+**The footprint trade-off, and the proposal.** The slice test asks that at least 85 % of 72 rays end within ±2 px of
+the projected reach. At the default zoom the cleave's 1.5 reach is about 29 px, so ±2 px is 7 % of the radius: any
+torn edge deeper than that fails. Measured on radv:
+
+| Front | Rays within ±2 px | Look |
+|---|---|---|
+| round 2 (thickness 0.5, intensity 1.6–1.8, no bite) | 93 % | the "glass bubble" the review rejected |
+| thin (0.3) and broken inside, intensity 1.35, round edge | passes | still a smooth elliptical outline around the clumps |
+| torn, `edge_noise` 0.5 (shipped here) | 0 % under the old rule; 89 % under the new one (farthest ray −1.68 px) | a ragged skirt of clumps, a different outline per hit |
+| an edge on the reach with notched gaps | 83 % (gaps in about a fifth of the circle) to 85 % (fewer gaps, and the outline is smooth again) | a cog wheel with straight-sided notches |
+
+So under the old rule the look must give: only a nearly round edge passes. **Proposal (taken here, reversible):**
+the test gives, narrowly. A front that declares `edge_noise` may end inside the reach by its declared bite
+(`edge_noise × thickness` of the reach, projected per ray) on most rays, while (a) no ray may end beyond the reach
+by more than 2 px, as before, and (b) its farthest-reaching clumps must lie within 2 px of the reach (the largest
+ray error is at least −2 px). The contract a player relies on (the drawn area never claims more than the reach, and
+the reach's outline is shown by the outermost dust) is kept; what is given up is that every ray touches the reach.
+Round fronts (bite 0) keep the old rule unchanged. If the orchestrator or the owner prefers the old rule, the
+fallback is the second row (thin and broken, no bite), which passes but keeps a smooth outline.
+
+**Crowd and budget.**
+
+- `frame_budget` can take review captures at a fixed step (`--frame-step-ms 40`: one simulation tick per frame,
+  whatever the frame took; never a figure of record) and several consecutive screenshots (`--capture-frames N`,
+  written `<stem>_<k>.png`), each logged with the frame's decal count and the running budget counters.
+- **The decal pool is now 6 144** (was 4 096). At one tick per frame the stress load draws 4 206 to 4 289 decals a
+  frame (round 2's 3 921 was taken at five ticks a frame, which spawns fewer per drawn frame), which is above the old
+  pool; 6 144 leaves about 30 % headroom. At the cap, Detail decals give way first; Critical ones are then written up
+  to the pool's capacity and the rest of them are dropped for that frame. A scratch run with the pool forced to
+  2 048 shows what that means: about 2 000 Critical decals dropped every frame, and which ones changes from frame to
+  frame with the order of the live instances, so lasting marks flicker in and out. That is why the pool must not be
+  reached at the stress load ([`stress_capture.txt`](../evidence/effects/review/stress_capture.txt), "Scale-out round 3").
+- **Jets in a real battle draw only their Critical layers (finding; proposal, not taken).** A capture of the battle
+  without the stream, at the battle camera's default distance (`--camera-distance 22`), ten consecutive frames
+  from tick 200 ([`stress_jets_400.png`](../evidence/effects/review/stress_jets_400.png)), shows the jets as a thin
+  orange core with the legacy tracer and their scorched bands, but no billowing fire. Cause: the class cap of live
+  `Major` effects (96). A flame line lives 3.5 s for its band, so the battle's napalm wheelers and anti-air bursts
+  keep more than 96 `Major` instances alive, and a jet born over the cap has its Detail layers (the fire) retired
+  at birth. Both effects look as reviewed in the lab; this is the budget at work. Options: count an instance
+  against its class cap only while it has live Detail layers (a lasting band then holds no slot), or raise the
+  `Major` cap. Either changes the budget rules the slice's crowd was accepted under, so it waits for the
+  orchestrator. (At the frame-budget camera, 75 units away, the fire's cards are also below the 6-pixel
+  level-of-detail floor.)
+- **Acid stains in a crowd (review suggestion): recorded as a proposal, not taken.** Fading the stain's saturation
+  or opacity after its first second would change `acid_burst`'s accepted look on its own sheets (the stain holds its
+  full disc and wet colour to about 1.8 s by design, rounds 4 and 5). Options for a later round: a crowd-only rule
+  (fade a stain's Detail layers when many stains overlap a cell), or a shorter hold reviewed as an acid change.
+
+**Not taken (optional notes of round 2, recorded under Q0002):** `flame_line`'s jet rod with regular notches in
+frames 1–4, the oxblood pockets in its billows, `lance_sweep`'s wedge-shaped cooled groove and its larger spatter.
+Each would reopen an accepted effect's review; they wait for a polish round.
+
+**Tests.** `effect_slice_gpu_tests.rs`: the footprint rule above (`front_bite`), all seven subjects on radv and
+lavapipe, `cleave_impact`'s goldens re-recorded on both; `effect_catalog_tests.rs`: `edge_noise` must be a fraction
+and only on a `Front` ring; `instances.rs`: the card record is ten rows; `effect_stress.rs`: consecutive capture paths.
+
+**Gate.** Implementer checklist in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round
+3"), packet section "Scale-out round 3"; the orchestrator runs the independent review.
