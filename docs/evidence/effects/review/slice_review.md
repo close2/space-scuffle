@@ -487,7 +487,8 @@ Xvfb, 2026-11-11: the slice's path), judged cell by cell and on the full-resolut
 nothing was spent this round (ledger unchanged: 251 Veo requests at $0.40 and 84 image requests, $106.45 of $200).
 
 GPU figures (`effect_slice_gpu_tests.rs` through the harness, lavapipe, 2026-11-11, with the name-salted random
-choices; RADV_NOTE):
+choices; radv agrees within 0.8 px on footprints and 1 point of coverage, all seven pass there too with its own
+goldens):
 
 | Effect | Footprint | Coverage of the full-damage disc at peak | Pop | Lingering |
 |---|---|---|---|---|
