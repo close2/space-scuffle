@@ -648,3 +648,63 @@ fn an_edited_effect_value_changes_a_storm_without_recompiling() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP3: shortening Abduct's flight in a copied
+/// `ability_effects.ron` shortens the pull, with no recompilation.
+#[test]
+fn an_edited_flight_changes_an_abduct_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("abduct")?;
+    let effects = std::fs::read_to_string(bundle.directory.join(FILES[5]))?;
+    std::fs::write(
+        bundle.directory.join(FILES[5]),
+        replace_first_field(&effects, "flight_ticks", "6"),
+    )?;
+    let mut flights = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "abduct")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Abduct caster")?;
+        let victim_kind = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.max_hp > SimScalar::from_i32(30)
+                    && archetype.max_speed > SimScalar::ZERO
+                    && archetype.weapon.is_none()
+                    && !matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("an unarmed mobile unit")?
+            .unit_type_id;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim = world.spawn_unit(victim_kind, PlayerId(0), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, None, Some(victim)));
+        let mut flying = 0;
+        for _ in 0..60 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(world.current_tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+            if world.entities[&victim].displacement.is_some() {
+                flying += 1;
+            }
+        }
+        flights.push(flying);
+    }
+    // The tick a flight starts the unit is still at its start; it lands on the last tick.
+    assert_eq!(flights, [18, 6], "the shipped flight, then the edited one");
+    bundle.finish()?;
+    Ok(())
+}

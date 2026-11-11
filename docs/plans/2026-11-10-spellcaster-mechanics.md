@@ -91,6 +91,31 @@
 > - **D-11 ring.** The HUD's area ring waits on Q0080 with the targeting ring (Amendment 3); WP2b publishes the
 >   storm in `RenderSnapshot::areas` only.
 
+> **Amendment 5 (WP3a and WP3b as built, 2026-11-11; Q0002).**
+>
+> - **Engine fix, own commit.** Origin placement and landing ignored units only in this plan's text: the engine
+>   placed both through the Blink and unload validator, which refuses a point another unit of the same body
+>   class overlaps. An air target's landing point under the hovering Viper analogue moved to the ring because of
+>   the Viper's own body. `first_valid_placement` now checks terrain and structure footprints only
+>   (`validate_placement_terrain`, `PlacementIgnoreBlockers`, `swarm` EffectData:1453); Blink and unload keep
+>   the occupancy check.
+> - **Data as the game names it.** The tree is four named nodes, `abduct` (`YoinkLaunchMissile`),
+>   `abduct_contact` (`YoinkSet`), `abduct_delay` (`YoinkDelayPersistent`) and `abduct_flight`
+>   (`YoinkLaunchTarget`), the §5.2 tree with its inline nodes named. Citations corrected against the local copy:
+>   `PeriodCount` is :1543 and `PeriodicEffectArray` :1544 (§5.2 had :1544 and none), `ImpactEffect` :1490,
+>   `PathMode Flying` MoverData:170.
+> - **Recorded differences (minor).** (1) The game's `YoinkCancelOrders` skips Siege Tanks, Hellions, Thors and
+>   Warp Prisms (validator `YoinkCancelOrder`, `swarm` ValidatorData:971-979); ours clears every target's orders,
+>   since a filter cannot name a unit type (C5). A sieged tank keeps its mode either way; only its hold and queue
+>   differ. (2) §7's "tongue in flight is dropped" when the caster dies is not built: the engine follows D-8 and
+>   `YoinkLaunchMissile` (:1486-1494) has no caster validator, so the tongue flies on.
+> - **Fixture.** A side's `mode` now sieges only the units that have the switch (tanks among marines), and
+>   `Squad::order` gives a squad its own standing order (a Viper analogue that waits). Both are test data
+>   (§10.1); no existing battle uses either.
+> - **Battles 37a/37b not landed.** No measured arrangement of the plan's armies, nor of up to 20 zerglings, made
+>   the control and the spell battle end on opposite sides on all 20 seeds; the evidence file §3 records the
+>   arrangements and what limits them. The battles wait for a continuation of WP3.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of

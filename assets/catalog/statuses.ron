@@ -15,5 +15,18 @@
             periodic_effect: Some("psionic_storm_damage"),      // PeriodicEffect, :716
             presentation: [DamageOverTime],
         ),
+        (
+            // Yoink buff, swarm BehaviorData:1074-1088, applied by Abduct's contact set
+            // (YoinkApplyBehavior, swarm EffectData:1532-1537) and removed at landing by the
+            // Displace node's on_land (YoinkRemoveBehavior, :1601-1605). YoinkTentacle (CAbilAttack
+            // disabled, voidmulti BehaviorData:562-566) is subsumed by the stun (plan D-8).
+            name: "abducted",
+            duration_ticks: 35.714286,                          // Duration 2 Normal s, :1087
+            stun: true,                                         // StateFlags Stun, :1078
+            reveal: true,                                       // StateFlags SuppressCloak, :1079
+            suppress_collision: true,                           // StateFlags SuppressCollision, :1080
+            suppress_boarding: true,                            // StateFlags SuppressPassenger, :1084
+            presentation: [Stunned],
+        ),
     ],
 )

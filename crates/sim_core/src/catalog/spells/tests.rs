@@ -37,7 +37,7 @@ fn chain(name: &str, depth: usize) -> String {
 }
 
 #[test]
-fn the_shipped_files_load_with_psionic_storm() {
+fn the_shipped_files_load_with_psionic_storm_and_abduct() {
     let catalogs = shipped_catalogs();
     let spells = catalogs.units.spells();
     let root = spells
@@ -48,7 +48,13 @@ fn the_shipped_files_load_with_psionic_storm() {
     assert_eq!(facts.targeting_radius, Some(SimScalar::from_num(1.5)));
     // Persistent, search, apply status, then the status's initial damage (plan D-17).
     assert_eq!(facts.sync_depth, 4);
-    assert_eq!(spells.status_count(), 1);
+    let abduct = spells
+        .effect_id("abduct")
+        .and_then(|root| spells.facts(root))
+        .expect("invariant: the shipped Abduct tree");
+    assert!(abduct.needs_origin, "Abduct lands at its origin (plan D-6)");
+    assert_eq!(abduct.targeting_radius, None);
+    assert_eq!(spells.status_count(), 2, "psionic_storm and abducted");
 }
 
 #[test]

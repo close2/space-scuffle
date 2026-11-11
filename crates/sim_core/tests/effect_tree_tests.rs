@@ -495,5 +495,7 @@ fn an_effect_ability_cast_pays_and_starts_its_walk() {
     let before = hp(&w, target);
     assert!(w.execute_ability(caster, index, None, Some(target)));
     assert_eq!(hp(&w, target), before - SimScalar::from_i32(10));
-    assert_eq!(effect(&w, "bolt"), sim_types::EffectId(0));
+    // Named effects take ids in name order, the scratch ones among the shipped ones.
+    assert!(effect(&w, "abduct") < effect(&w, "bolt"));
+    assert!(effect(&w, "bolt") < effect(&w, "psionic_storm"));
 }

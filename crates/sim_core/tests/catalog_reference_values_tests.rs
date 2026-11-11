@@ -2811,3 +2811,139 @@ fn psionic_storm_values_follow_starcraft() -> TestResult {
     )));
     Ok(())
 }
+
+/// Abduct as authored (plan `2026-11-10-spellcaster-mechanics` §3.2, §5): the Viper analogue's
+/// ability, its target filter and origin placement, its effect tree and the `abducted` status,
+/// each value cited from `SC2GameData` 5.0.14 in the RON files.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn abduct_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, EffectAnchor, FilterAlliance, MissileView,
+        StructureRule, TargetPlane,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Viper")
+        .ok_or("the Viper analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Abduct")
+        .ok_or("Abduct")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetEntity);
+    assert_close(ability.energy_cost, 75.0, "swarm AbilData:1230");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "no cooldown, swarm AbilData:1222-1239"
+    );
+    assert_close(ability.cast_range, 9.0, "swarm AbilData:1233");
+    assert_eq!(
+        ability.cast_backswing_ticks, 14,
+        "0.8 Normal s, voidmulti AbilData:1754"
+    );
+    assert!(ability.single_caster);
+    let filter = ability.target_filter.as_ref().ok_or("a target filter")?;
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::AnyButSelf,
+        "voidmulti AbilData:1755"
+    );
+    assert!(
+        filter.planes.contains(&TargetPlane::Ground) && filter.planes.contains(&TargetPlane::Air)
+    );
+    assert_eq!(filter.structures, StructureRule::Exclude);
+    assert_eq!(
+        filter.without_status.as_deref(),
+        Some("abducted"),
+        "NoYoink"
+    );
+    let origin = ability.origin.ok_or("origin placement")?;
+    assert_close(
+        origin.forward_offset,
+        0.1,
+        "SpawnOffset, swarm EffectData:1460",
+    );
+    assert_close(
+        origin.search_range,
+        2.0,
+        "SpawnRange, swarm EffectData:1459",
+    );
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Abduct runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let node = |id| spells.node(id).map(|node| node.kind).ok_or("a node");
+    let EffectNode::LaunchMissile {
+        to: EffectAnchor::TargetUnit,
+        speed,
+        view: MissileView::Tether,
+        impact,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a homing tether missile, swarm EffectData:1486-1494".into());
+    };
+    assert_close(speed, 1.05, "18.75 x 1.4 / 25, swarm MoverData:147");
+    let EffectNode::Set { first, len: 3 } = node(impact)? else {
+        return Err("the contact set of three, swarm EffectData:1498-1509".into());
+    };
+    let child = |index| spells.set_child(first, index).ok_or("a child");
+    assert_eq!(
+        node(child(0)?)?,
+        EffectNode::CancelOrders {
+            force_unburrow: true
+        },
+        "YoinkCancelOrders and InstantUnburrow, swarm EffectData:1503-1504"
+    );
+    let EffectNode::ApplyStatus { status: applied } = node(child(1)?)? else {
+        return Err("the contact applies the status".into());
+    };
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetUnit,
+        initial: None,
+        periodic: Some(flight),
+        period_ticks,
+        count: 1,
+    } = node(child(2)?)?
+    else {
+        return Err("a one-pulse delay on the target, swarm EffectData:1539-1547".into());
+    };
+    assert_close(
+        period_ticks,
+        1.785_714,
+        "0.1 Normal s, swarm EffectData:1545",
+    );
+    let EffectNode::Displace {
+        flight_ticks: 18,
+        tether: true,
+        on_land: Some(on_land),
+    } = node(flight)?
+    else {
+        return Err("an 18-tick tethered flight, swarm MoverData:167".into());
+    };
+    assert_eq!(
+        node(on_land)?,
+        EffectNode::RemoveStatus { status: applied },
+        "YoinkRemoveBehavior, swarm EffectData:1601-1605"
+    );
+
+    let status = spells.status(applied).ok_or("the status")?;
+    assert_eq!(status.spec.name, "abducted");
+    assert_close(
+        status.spec.duration_ticks,
+        35.714_286,
+        "2 Normal s, swarm BehaviorData:1087",
+    );
+    let spec = &status.spec;
+    assert!(
+        spec.stun && spec.reveal && spec.suppress_collision && spec.suppress_boarding,
+        "Stun, SuppressCloak, SuppressCollision, SuppressPassenger, swarm BehaviorData:1078-1084"
+    );
+    assert!(spec.period_ticks.is_none() && status.initial_effect.is_none());
+    Ok(())
+}

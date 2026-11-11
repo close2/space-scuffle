@@ -3533,6 +3533,36 @@
             build_time_ticks: 714,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: None,
+            abilities: [
+                (
+                    // Yoink, swarm AbilData:1222-1239 (CAbilEffectTarget); voidmulti AbilData:1753-1756.
+                    // No cooldown in the chain. The cast may start while moving (Flags
+                    // AllowMovement, swarm :1227, plan D-7.5); once cast the caster cannot cancel
+                    // the pull (UninterruptibleArray Cast, Channel, Finish, :1236-1238).
+                    name: "Abduct",
+                    target_kind: TargetEntity,
+                    energy_cost: 75.0,                  // Cost Vital Energy 75, swarm :1230
+                    cooldown_ticks: 0,
+                    cast_range: 9.0,                    // Range 9 edge to edge, swarm :1233; core AbilData:48
+                    cast_backswing_ticks: 14,           // CastOutroTime 0.8 Normal s, voidmulti :1754 = 14.29
+                    // TargetFilters "-;Self,Neutral,Structure,Heroic,Missile,Destructible,Stasis,
+                    // Dead,Hidden,Invulnerable", voidmulti :1755: own and enemy, ground and air,
+                    // massive allowed; target vision required (RequireTargetVision, core
+                    // AbilData:50). A unit already abducted is refused (validator NoYoink, swarm
+                    // EffectData:1468).
+                    target_filter: Some((
+                        alliance: AnyButSelf,
+                        planes: [Ground, Air],
+                        structures: Exclude,
+                        without_status: Some("abducted"),
+                    )),
+                    // YoinkStartCreatePlaceholder, swarm EffectData:1447-1471: the landing point is
+                    // placed on the cast 0.1 ahead of the caster (SpawnOffset 0,0.1, :1460), within
+                    // SpawnRange 2 (:1459), units ignored (PlacementIgnoreBlockers, :1453).
+                    origin: Some((forward_offset: 0.1, search_range: 2.0)),
+                    effect: Effect("abduct"),           // Effect YoinkStartSwitch, swarm :1225 -> YoinkLaunchMissile
+                ),
+            ],
             is_detector: false,
             capabilities: (
                 overclock: None,

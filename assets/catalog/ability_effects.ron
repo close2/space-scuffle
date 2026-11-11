@@ -44,5 +44,61 @@
             name: "psionic_storm_damage",
             node: Damage((amount: 10.0)),                       // :2100
         ),
+
+        // ---- Abduct: swarm EffectData:1447-1611 (voidmulti :1035-1045) ----
+        (
+            // YoinkLaunchMissile, :1486-1494: the tongue from the caster to the target, homing
+            // (guidance driver), whose impact runs YoinkSet on the target. The landing point is
+            // the ability's origin placement (YoinkStartCreatePlaceholder, :1447-1471; units.ron).
+            // A tongue whose target dies, loads or turns untargetable is dropped (plan D-8).
+            name: "abduct",
+            node: LaunchMissile((
+                to: TargetUnit,
+                speed: 1.05,                                    // YoinkMissile MaxSpeed 18.75 (x 1.4 / 25), swarm MoverData:147
+                view: Tether,
+                impact: Use("abduct_contact"),                  // ImpactEffect YoinkSet, :1490
+            )),
+        ),
+        (
+            // YoinkSet, :1498-1509 (voidmulti :1035-1037 adds a validator for a unit we lack).
+            // RemoveRecallingBehavior and RemoveCoreRecallingBehavior (:1500-1501) touch
+            // behaviours no catalog unit has; YoinkApplyTentacleBehavior (:1502) is subsumed by
+            // the abducted status's stun (plan D-8).
+            name: "abduct_contact",
+            node: Set((children: [
+                // YoinkCancelOrders, :1525-1531 (Count 32, Uninterruptible), then InstantUnburrow
+                // (:1504, swarm :222-225). A mode channel in progress continues and a settled mode
+                // stays, so a sieged tank lands sieged (plan D-8).
+                CancelOrders((force_unburrow: true)),
+                ApplyStatus((status: "abducted")),              // YoinkApplyBehavior, :1532-1537
+                Use("abduct_delay"),                            // YoinkDelayPersistent, :1539-1547
+            ])),
+        ),
+        (
+            // YoinkDelayPersistent, :1539-1547: on the target, pulse 0.1 Normal s later (1.79,
+            // so 2 ticks) launches the target. Its PeriodCount 50 (:1543) are retries until the
+            // launch succeeds; ours succeeds on the first pulse (plan D-8), so one pulse.
+            name: "abduct_delay",
+            node: Persistent((
+                anchor: TargetUnit,                             // WhichLocation TargetUnit, :1541
+                periodic: Some(Use("abduct_flight")),           // PeriodicEffectArray, :1544
+                period_ticks: 1.785714,                         // PeriodicPeriodArray 0.1 Normal s, :1545
+                count: 1,
+            )),
+        ),
+        (
+            // YoinkLaunchTarget, :1554-1565 (and its Air and Glide cases, :1566-1589, which differ
+            // in height only): the target flies to the placeholder (ImpactLocation
+            // Effect="YoinkStartSet", :1557), a straight line in the plane over any terrain
+            // (YoinkMover PathMode Flying, swarm MoverData:170; the arc is presentation).
+            name: "abduct_flight",
+            node: Displace((
+                to: Origin,
+                flight_ticks: 18,                               // YoinkMover FlightTime 1 Normal s = 17.86, swarm MoverData:167
+                tether: true,
+                // FinishEffect YoinkImpactSet, :1560 and :1595-1600: YoinkRemoveBehavior, :1601-1605.
+                on_land: Some(RemoveStatus((status: "abducted"))),
+            )),
+        ),
     ],
 )
