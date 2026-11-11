@@ -1,8 +1,8 @@
 # CI disk guard tripped: free preinstalled runner software before the build
 
-Date: 2026-11-04. Status: Partly done (Azure figures recorded; waiting for an AWS run). Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
+Date: 2026-11-04. Status: Done (closed by the owner on 2026-11-11 on the Azure evidence: 30 GiB freed; no AWS run is awaited). Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
 [`2026-11-03-ci-disk-budget.md`](2026-11-03-ci-disk-budget.md). No Rust source, no Cargo configuration, no test
-layout changes. Owner question: [Q0034](../questions/open/0034-client-test-consolidation-after-guard-trip.md).
+layout changes. Owner question: [Q0034](../questions/closed/0034-client-test-consolidation-after-guard-trip.md).
 
 ## 1. Problem
 
@@ -229,7 +229,7 @@ A run cannot be sent to the AWS class on purpose. Verification therefore has two
    25 to 30 GiB at the guard and 17 to 22 GiB after the build. When this run is green, set this plan's status to
    `Done` in `docs/plans/README.md`.
 
-Until an AWS run has passed, the status is `Partly done`, with the Azure figures as evidence.
+Until an AWS run has passed, the status was `Partly done`, with the Azure figures as evidence. The owner closed the plan on 2026-11-11 (Q0034) on the Azure figures alone; an AWS run is no longer awaited, and §7 stays the guide if one ever trips the guard.
 
 ## 7. What red looks like
 

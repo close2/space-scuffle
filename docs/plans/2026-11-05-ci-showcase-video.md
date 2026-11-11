@@ -20,7 +20,7 @@ Estimates not yet measured are marked **estimate**. No cargo command was run whi
 |---|---|---|
 | Q0056 (new, WP0) Enable GitHub Pages for `close2/space-scuffle` to host the showcase? | To be asked, non-blocking. Default: the agent enables Pages with source "GitHub Actions" in WP5 | D-10, WP0, WP5 |
 | [Q0020](../questions/closed/0020-smog-velocity-quiescence.md) and the owner's standing rule that visual choices are the agent's | Visual choices in this plan are the agent's (caller's brief) | D-6, §4 |
-| [Q0034](../questions/open/0034-client-test-consolidation-after-guard-trip.md) CI disk guard | Open. The showcase runs on its own runner and keeps its own disk guard; it changes nothing in `ci.yml` | D-12 |
+| [Q0034](../questions/closed/0034-client-test-consolidation-after-guard-trip.md) CI disk guard | Open. The showcase runs on its own runner and keeps its own disk guard; it changes nothing in `ci.yml` | D-12 |
 | [Q0009](../questions/closed/0009-terrain-anisotropy-test-override.md) terrain anisotropy on old lavapipe | Closed; the showcase applies the same rule as the GPU harness | D-12, WP2 |
 
 ---
