@@ -116,6 +116,20 @@
 >   the control and the spell battle end on opposite sides on all 20 seeds; the evidence file §3 records the
 >   arrangements and what limits them. The battles wait for a continuation of WP3.
 
+> **Amendment 6 (orchestrator decision, 2026-11-11; Q0002): a spell battle may claim the spell's own effect.**
+>
+> - **Rule.** §10.2 asks each spell battle and its control to end on opposite sides. For a spell whose effect is
+>   local rather than army-deciding (Abduct; possibly Blinding Cloud), the pair may instead claim the spell's
+>   **own measurable effect**: for battle 37a, the pulled sieged tank dies; for 37b, the control without Abduct,
+>   that tank survives. The claim is written in the matrix's expectation format (survivor counts, and the fate of
+>   a side's first unit where the claim names one unit), and must hold on every seed like any other.
+> - **Fixture extension (generic, §10.1).** `Expected` gains `blue_lead_alive` and `red_lead_alive:
+>   Option<bool>`: whether that side's first unit in spawn order must be alive (or dead) when the battle ends.
+>   The existing lead hull ranges cannot say this, because they hold vacuously for a dead lead. A battle that
+>   claims one unit's fate spawns that unit first.
+> - **Other spells keep the rule of §10.2.** Fungal Growth's battles 38a and 38b claim opposite winners; a WP
+>   that cannot separate its pair that way may use this amendment, and records why.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
