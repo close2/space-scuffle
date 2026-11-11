@@ -524,10 +524,10 @@
                     // by about ±2 % of the radius (about ±2 px at default zoom), not the
                     // texture's ragged outline and deep noise bites (round 4: the visible edge
                     // lay at 0.87 of the reach while the box was 0.98). Sized so that the mean
-                    // edge lies on the reach (1 / (1 - edge_noise)) and its peaks at most
-                    // about 1 px beyond it; the deep bites come only with the drying erosion
-                    // after about 1.8 s.
-                    size: (bind: SplashReach, scale: 1.01), size_curve: "stain_spread",
+                    // edge lies on the reach (about 1 / (1 - edge_noise), measured: 1.01 left the
+                    // held edge a mean 1.4 px inside it on lavapipe) and its peaks within 2 px; the
+                    // deep bites come only with the drying erosion after about 1.8 s.
+                    size: (bind: SplashReach, scale: 1.025), size_curve: "stain_spread",
                     ramp_curve: "dry", duration: 6.0, curve: "stain_in", priority: Critical,
                 ),
                 (
