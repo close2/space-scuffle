@@ -246,6 +246,7 @@ pub fn render_log_timings(
                 wall_ms: ms,
                 cpu_ms: None,
                 passed: binary.passed == Some(true),
+                peak_anon_mib: None,
             });
         }
         rows.push((millis, binary.label(target.as_ref()), class, result));
@@ -290,6 +291,10 @@ fn render_contradictions(targets: Vec<StampTarget>) -> String {
         flakes: Vec::new(),
         retries: Vec::new(),
         reused: None,
+        slice_peak_anon_mib: None,
+        jobs: None,
+        test_wall_ms: None,
+        overlapped_flakes: Vec::new(),
     };
     let findings = class_report(&[run]);
     let mut out = String::from(

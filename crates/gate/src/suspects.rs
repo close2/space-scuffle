@@ -226,11 +226,16 @@ mod tests {
                 wall_ms: 1,
                 cpu_ms: None,
                 passed,
+                peak_anon_mib: None,
             }],
             commands: Vec::new(),
             flakes: Vec::new(),
             retries: Vec::new(),
             reused: None,
+            slice_peak_anon_mib: None,
+            jobs: None,
+            test_wall_ms: None,
+            overlapped_flakes: Vec::new(),
         }
     }
 

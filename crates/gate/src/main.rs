@@ -15,9 +15,10 @@
 //!   their first step until they end; `explain`, `timings` and `suspects` never take it.
 
 use gate::{
-    class_report, failing_targets, lock_path, parse_args, parse_test_log, render_log_timings,
-    render_selection, repeated_flakes, run_tier, select_change, stamp_dir, suspect_report, Command,
-    Context, GateError, GateLock, Holder, Stamp, TargetId, FLAKE_LIMIT, HELD_VAR,
+    class_report, current_holder, failing_targets, lock_path, parse_args, parse_test_log,
+    render_log_timings, render_selection, repeated_flakes, run_tier, select_change, stamp_dir,
+    stop_path, stop_request, suspect_report, Command, Context, GateError, GateLock, Holder, Stamp,
+    TargetId, FLAKE_LIMIT, HELD_VAR,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -74,8 +75,9 @@ fn timings(
         .map_or(0, |elapsed| elapsed.as_secs());
     for flake in repeated_flakes(&stamps, now) {
         println!(
-            "  {:<48} flaked {} times in 7 days (limit {FLAKE_LIMIT}): a bug to fix, not to rerun",
-            flake.target, flake.count
+            "  {:<48} flaked {} times in 7 days ({} with other targets running; limit \
+             {FLAKE_LIMIT}): a bug to fix, not to rerun",
+            flake.target, flake.count, flake.overlapped
         );
     }
     if findings.is_empty() {
@@ -146,8 +148,63 @@ fn take_gate_lock(what: &str, cwd: &Path) -> Result<GateLock, GateError> {
     Ok(lock)
 }
 
-/// Runs the command; `Ok(true)` is green.
-fn run(args: &[String]) -> Result<bool, GateError> {
+/// `cargo gate stop`: asks the gate holding the lock to stop, without waiting for the lock.
+fn stop() -> Result<(), GateError> {
+    let path = lock_path()?;
+    match current_holder(&path)? {
+        None => println!("cargo gate stop: no gate holds {}", path.display()),
+        Some(holder) => {
+            let request = stop_path(&path);
+            std::fs::write(&request, stop_request(holder.pid)).map_err(|source| GateError::Io {
+                path: request.clone(),
+                source,
+            })?;
+            println!(
+                "cargo gate stop: asked gate {} ({} in {}) to stop; it kills its running \
+                 tests, skips the rest and exits red without a stamp",
+                holder.pid,
+                holder.tier,
+                holder.worktree.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// How a run ended.
+enum Verdict {
+    /// Green.
+    Green,
+    /// Red.
+    Red,
+    /// Ended by `cargo gate stop`.
+    Stopped,
+}
+
+/// Runs a tier or `merge` under the gate lock and prints its report.
+fn run_locked(what: &str, command: &Command, cwd: &Path) -> Result<Verdict, GateError> {
+    let lock = take_gate_lock(what, cwd)?;
+    let mut command = command.clone();
+    if let Command::Run { options, .. } | Command::Merge { options, .. } = &mut command {
+        options.stop_file = Some(stop_path(lock.path()));
+    }
+    let report = run_tier(&command, cwd)?;
+    print!("{}", report.render());
+    if report.stopped {
+        // The request is answered; the next gate must not see it.
+        std::fs::remove_file(stop_path(lock.path())).ok();
+        return Ok(Verdict::Stopped);
+    }
+    Ok(if report.passed() {
+        Verdict::Green
+    } else {
+        Verdict::Red
+    })
+}
+
+/// Runs the command.
+fn run(args: &[String]) -> Result<Verdict, GateError> {
+    let green = |()| Verdict::Green;
     let command = parse_args(args)?;
     let cwd = std::env::current_dir().map_err(|source| GateError::Io {
         path: ".".into(),
@@ -158,35 +215,27 @@ fn run(args: &[String]) -> Result<bool, GateError> {
             spec,
             tier,
             options,
-        } => explain(&cwd, spec.as_deref(), *tier, &options.main_ref).map(|()| true),
+        } => explain(&cwd, spec.as_deref(), *tier, &options.main_ref).map(green),
         Command::Timings { from_log, options } => {
-            timings(&cwd, from_log.as_deref(), options).map(|()| true)
+            timings(&cwd, from_log.as_deref(), options).map(green)
         }
         Command::Suspects {
             targets,
             from_log,
             options,
-        } => suspects(&cwd, targets, from_log.as_deref(), options).map(|()| true),
-        Command::Run { tier, .. } => {
-            let _lock = take_gate_lock(tier.name(), &cwd)?;
-            let report = run_tier(&command, &cwd)?;
-            print!("{}", report.render());
-            Ok(report.passed())
-        }
-        Command::Merge { branch, .. } => {
-            let _lock = take_gate_lock(&format!("merge {branch}"), &cwd)?;
-            let report = run_tier(&command, &cwd)?;
-            print!("{}", report.render());
-            Ok(report.passed())
-        }
+        } => suspects(&cwd, targets, from_log.as_deref(), options).map(green),
+        Command::Stop => stop().map(green),
+        Command::Run { tier, .. } => run_locked(tier.name(), &command, &cwd),
+        Command::Merge { branch, .. } => run_locked(&format!("merge {branch}"), &command, &cwd),
     }
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::from(1),
+        Ok(Verdict::Green) => ExitCode::SUCCESS,
+        Ok(Verdict::Red) => ExitCode::from(1),
+        Ok(Verdict::Stopped) => ExitCode::from(2),
         Err(error) => {
             eprintln!("cargo gate: {error}");
             ExitCode::from(2)

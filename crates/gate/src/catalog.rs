@@ -16,7 +16,7 @@
 //! - A target the catalog does not list is [`TestClass::Fast`].
 //! - Keys of `targets` name single targets, never a `@class` group.
 //! - Unknown fields are rejected, so a misspelt key cannot silently select nothing.
-//! - A `test_threads` cap is at least 1.
+//! - A `test_threads` cap is at least 1, and so is a `timeout_s` limit.
 
 use crate::glob::Glob;
 use crate::sources::SourceIndex;
@@ -187,6 +187,12 @@ pub struct TargetEntry {
     /// libtest's default of one per CPU. Bounds the peak memory of a binary whose tests each
     /// hold a whole Bevy app (blueprint Amendment 2).
     pub test_threads: Option<u32>,
+    /// Whether the target must run alone, with no other executable running: a test proven
+    /// load-sensitive (plan 2026-11-11-faster-gates §3.6, L-2).
+    pub exclusive: bool,
+    /// Its time limit in seconds, replacing the limit computed from its last wall time
+    /// (`execute.rs`), or `None` for the computed limit.
+    pub timeout_s: Option<u64>,
 }
 
 /// A path rule: a change under `paths` selects `targets` and the `fast`/`slow` targets of
@@ -263,6 +269,10 @@ struct RawEntry {
     triggers: Vec<String>,
     #[serde(default)]
     test_threads: Option<u32>,
+    #[serde(default)]
+    exclusive: bool,
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -321,10 +331,17 @@ impl SuiteCatalog {
                     "`{key}`: test_threads must be at least 1"
                 )));
             }
+            if entry.timeout_s == Some(0) {
+                return Err(GateError::Catalog(format!(
+                    "`{key}`: timeout_s must be at least 1"
+                )));
+            }
             let entry = TargetEntry {
                 class: entry.class,
                 triggers: globs(&entry.triggers)?,
                 test_threads: entry.test_threads,
+                exclusive: entry.exclusive,
+                timeout_s: entry.timeout_s,
             };
             targets.insert(id, entry);
         }
@@ -404,6 +421,23 @@ impl SuiteCatalog {
             .and_then(|entry| entry.test_threads)
     }
 
+    /// Whether `target` is marked `exclusive: true`.
+    #[must_use]
+    pub fn exclusive_of(&self, target: &TargetId) -> bool {
+        self.targets
+            .get(target)
+            .is_some_and(|entry| entry.exclusive)
+    }
+
+    /// The `timeout_s` limit of `target`, if the catalog sets one.
+    #[must_use]
+    pub fn timeout_of(&self, target: &TargetId) -> Option<std::time::Duration> {
+        self.targets
+            .get(target)
+            .and_then(|entry| entry.timeout_s)
+            .map(std::time::Duration::from_secs)
+    }
+
     /// The targets `reference` names in `workspace`, in target order.
     ///
     /// # Errors
@@ -480,6 +514,7 @@ mod tests {
             "app/gpu_tests": (class: Gpu, triggers: ["crates/app/src/render/**"]),
             "app/lib": (class: Slow),
             "app/heavy_tests": (class: Slow, test_threads: Some(2)),
+            "app/touchy_tests": (class: Slow, exclusive: true, timeout_s: Some(600)),
         },
         rules: [(name: "shaders", paths: ["assets/shaders/**"], targets: ["app/@gpu"])],
         downstream: {"core": ["app/headless_tests"]},
@@ -504,6 +539,13 @@ mod tests {
             Some(2)
         );
         assert_eq!(catalog.test_threads_of(&lib), None);
+        let touchy = TargetId::test("app", "touchy_tests");
+        assert!(catalog.exclusive_of(&touchy) && !catalog.exclusive_of(&lib));
+        assert_eq!(
+            catalog.timeout_of(&touchy),
+            Some(std::time::Duration::from_secs(600))
+        );
+        assert_eq!(catalog.timeout_of(&lib), None);
         assert_eq!(catalog.test_threads_of(&TargetId::test("app", "x")), None);
         Ok(())
     }
@@ -587,6 +629,11 @@ mod tests {
         let no_threads = SAMPLE.replace("test_threads: Some(2)", "test_threads: Some(0)");
         assert!(matches!(
             SuiteCatalog::parse(&no_threads, Path::new("s")),
+            Err(GateError::Catalog(_))
+        ));
+        let no_time = SAMPLE.replace("timeout_s: Some(600)", "timeout_s: Some(0)");
+        assert!(matches!(
+            SuiteCatalog::parse(&no_time, Path::new("s")),
             Err(GateError::Catalog(_))
         ));
         let group_key = SAMPLE.replace("\"app/lib\"", "\"app/@slow\"");

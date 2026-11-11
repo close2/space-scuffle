@@ -235,6 +235,7 @@ impl OtherHolder {
             tier: "full".to_string(),
             worktree: worktree.to_path_buf(),
             started_unix_s: 0,
+            pgid: None,
         };
         std::fs::write(lock, record.to_record()).expect("invariant: the lock file is writable");
         holder

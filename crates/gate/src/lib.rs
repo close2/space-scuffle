@@ -33,6 +33,7 @@ mod gate_lock;
 mod glob;
 mod lockfile;
 mod manifest_diff;
+mod memory;
 mod merge;
 mod runner;
 mod schedule;
@@ -50,19 +51,33 @@ pub use catalog::{
 };
 pub use catalog_diff::{CatalogDiff, RuleChange};
 pub use changes::{capture, ChangeSpec, Git};
-pub use cli::{parse_args, Command, RunOptions, USAGE};
+pub use cli::{
+    parse_args, parse_args_with, Command, RunOptions, CEILING_MARGIN_MIB, DEFAULT_JOBS,
+    DEFAULT_MEMORY_BUDGET_MIB, JOBS_VAR, USAGE,
+};
 pub use crash::{
     compiler_crashed, crash_log, incremental_dirs, run_with_crash_retry, StepRun, COMPILER_PANIC,
 };
-pub use execute::{build_invocations, failed_tests, mark_flakes, Outcome, TargetResult};
+pub use execute::{
+    build_invocations, failed_tests, gib, lanes_tsv, mark_flakes, overlapping, run_targets,
+    stop_path, stop_request, stop_requested, time_limit, LaneOutcome, LaneRecord, LaneRun, Outcome,
+    TargetResult,
+};
 pub use explain::render_selection;
-pub use gate_lock::{lock_path, waiting_message, GateLock, Holder, HELD_VAR, LOCK_PATH_VAR};
+pub use gate_lock::{
+    current_holder, lock_path, stale_group_warning, waiting_message, GateLock, Holder, HELD_VAR,
+    LOCK_PATH_VAR,
+};
 pub use glob::Glob;
 pub use lockfile::{LockDiff, LockEntry};
 pub use manifest_diff::{classify_manifest, parse_toml, ManifestChange, TomlError, TomlValue};
+pub use memory::{
+    descendants, group_members, kill_tree, own_process_group, read_process_table, MemorySource,
+    ProcessInfo, ProcessTable, Sampler,
+};
 pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 pub use runner::{check_target_dir, run_tier, stamp_dir, Context, RunReport, StepResult};
-pub use schedule::{Job, Lane, Scheduler};
+pub use schedule::{Job, Lane, MemoryLimits, Scheduler};
 pub use select::{
     is_judged_by_content, select, select_change, Change, ClippyScope, CompleteCause, FileVersions,
     Inputs, PathMatch, Reason, Selected, Selection, LOCKFILE_PATH,
@@ -71,7 +86,9 @@ pub use sources::{
     blank, invokes_valgrind, mentioned_path_roots, mentions_path_root, uses_gpu_harness, Blanking,
     SourceIndex,
 };
-pub use stamp::{accepted_tiers, Reuse, Stamp, StampTarget, StampTree};
+pub use stamp::{
+    accepted_tiers, peak_estimates, Reuse, Stamp, StampTarget, StampTree, ESTIMATE_RUNS,
+};
 pub use suspects::{
     changes_since, last_green_full, render_suspects, suspect_report, suspects_for, MainCommit,
     HISTORY_LIMIT,

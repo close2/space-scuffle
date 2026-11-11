@@ -97,6 +97,8 @@ pub struct FlakeFinding {
     pub target: String,
     /// Its flakes within the window.
     pub count: usize,
+    /// How many of them happened while other targets ran on the lanes.
+    pub overlapped: usize,
 }
 
 /// Every target recorded as a flake at least [`FLAKE_LIMIT`] times in stamps finished within
@@ -104,18 +106,21 @@ pub struct FlakeFinding {
 #[must_use]
 pub fn repeated_flakes(stamps: &[Stamp], now_unix_s: u64) -> Vec<FlakeFinding> {
     let since = now_unix_s.saturating_sub(FLAKE_WINDOW_S);
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for stamp in stamps.iter().filter(|s| s.finished_unix_s >= since) {
         for target in &stamp.flakes {
-            *counts.entry(target.as_str()).or_default() += 1;
+            let entry = counts.entry(target.as_str()).or_default();
+            entry.0 += 1;
+            entry.1 += usize::from(stamp.overlapped_flakes.contains(target));
         }
     }
     counts
         .into_iter()
-        .filter(|(_, count)| *count >= FLAKE_LIMIT)
-        .map(|(target, count)| FlakeFinding {
+        .filter(|(_, (count, _))| *count >= FLAKE_LIMIT)
+        .map(|(target, (count, overlapped))| FlakeFinding {
             target: target.to_string(),
             count,
+            overlapped,
         })
         .collect()
 }
@@ -173,12 +178,17 @@ mod tests {
                     wall_ms: *ms,
                     cpu_ms: None,
                     passed: true,
+                    peak_anon_mib: None,
                 })
                 .collect(),
             commands: Vec::new(),
             flakes: Vec::new(),
             retries: Vec::new(),
             reused: None,
+            slice_peak_anon_mib: None,
+            jobs: None,
+            test_wall_ms: None,
+            overlapped_flakes: Vec::new(),
         }
     }
 
@@ -209,6 +219,9 @@ mod tests {
                 let mut s = stamp(&[]);
                 s.finished_unix_s = 30 * day - age_days * day;
                 s.flakes = vec![(*target).to_string()];
+                if *age_days == 1 {
+                    s.overlapped_flakes = s.flakes.clone();
+                }
                 s
             })
             .collect();
@@ -222,7 +235,8 @@ mod tests {
             repeated_flakes(&stamps, 30 * day),
             vec![FlakeFinding {
                 target: "a/x".into(),
-                count: 2
+                count: 2,
+                overlapped: 1,
             }]
         );
     }

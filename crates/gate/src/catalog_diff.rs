@@ -60,9 +60,13 @@ fn entry_text(entry: Option<&TargetEntry>) -> String {
             let threads = entry
                 .test_threads
                 .map_or_else(|| "default".to_string(), |n| n.to_string());
+            let timeout = entry
+                .timeout_s
+                .map_or_else(|| "computed".to_string(), |s| format!("{s} s"));
             format!(
-                "class {}, test_threads {threads}, triggers [{}]",
+                "class {}, test_threads {threads}, exclusive {}, timeout {timeout}, triggers [{}]",
                 entry.class,
+                entry.exclusive,
                 triggers.join(", ")
             )
         },
