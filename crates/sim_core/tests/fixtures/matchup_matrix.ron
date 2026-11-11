@@ -455,24 +455,6 @@
         expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
     (
-        name: "13_storm_vs_held_lings",
-        claim: "A storm wipes zerglings held inside it",
-        map_cells: 64,
-        ticks: 70,
-        blue: (
-            squads: [],
-            order: None,
-        ),
-        red: (
-            squads: [
-                (unit: "razor_mantis", count: 8, columns: 3, origin: (14.6, 31.6), spacing: 0.4),
-            ],
-            order: HoldPosition,
-        ),
-        hazard: Some((center: (15.0, 32.0), radius: 3, remaining_ticks: 60, interval_ticks: 10, damage_per_interval: 20)),
-        expect: (blue: (0, 0), red: (0, 0)),
-    ),
-    (
         name: "14_thor_vs_ultralisk",
         // Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 (Amendment 15): the Thor's armour is
         // StarCraft II 5.0.14's 1 (liberty UnitData:5208), not 2. The Ultralisk's 35-damage blades

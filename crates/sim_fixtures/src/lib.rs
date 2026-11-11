@@ -94,6 +94,32 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
     RuntimeCatalogs { units, upgrades }
 }
 
+/// The shipped spell tables with the scratch statuses and effects of `statuses_ron` and
+/// `effects_ron` (each a whole `statuses.ron` or `ability_effects.ron` text) appended, flattened
+/// and validated as one catalog.
+///
+/// A test installs it with `UnitCatalog::set_spell_catalog`, which requires every shipped
+/// ability's effect to resolve: the shipped tables stay in, so the scratch entries must use
+/// names of their own.
+///
+/// # Errors
+/// The scratch text's parse error, or the first rule of the merged catalog it violates.
+///
+/// # Panics
+/// Panics if the shipped `statuses.ron` or `ability_effects.ron` does not parse.
+pub fn spells_with(
+    statuses_ron: &str,
+    effects_ron: &str,
+) -> Result<SpellCatalog, sim_core::SimCoreError> {
+    let mut statuses = SpellCatalog::parse_statuses(STATUSES_RON)
+        .expect("invariant: the shipped statuses.ron parses");
+    let mut effects = SpellCatalog::parse_effects(ABILITY_EFFECTS_RON)
+        .expect("invariant: the shipped ability_effects.ron parses");
+    statuses.extend(SpellCatalog::parse_statuses(statuses_ron)?);
+    effects.extend(SpellCatalog::parse_effects(effects_ron)?);
+    Ok(SpellCatalog::from_defs(statuses, effects)?)
+}
+
 /// Removes the random firing delay (plan `2026-11-05-sc2-deviation-fixes` WP11, B-3) from every
 /// weapon of `catalog`, mode overrides included, for tests that pin a weapon's exact period,
 /// which the delay spreads by a few ticks a shot.

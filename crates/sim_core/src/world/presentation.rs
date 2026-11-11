@@ -5,43 +5,34 @@
 //! Owns the rules that turn a unit's state into the effect contract of `sim_types::presentation`:
 //! its concealment, stance, status flags and barrier fraction, and the [`EffectSource`] of a
 //! weapon it fires. Also owns [`PresentationWorkspace`], the provenance the tick records for
-//! events that outlive their cause: the source of each projectile in flight, the caster of
-//! each hazard zone, and which barriers absorbed damage this tick.
+//! events that outlive their cause: the source of each projectile in flight and which
+//! barriers absorbed damage this tick.
 //!
 //! # How it fits
 //! Combat resolution asks [`weapon_source`] when a weapon releases and records projectile
-//! sources; abilities record hazard casters; the snapshot writer (tick phase 10) reads the rest.
+//! sources; the snapshot writer (tick phase 10) reads the rest.
 //! Nothing here names a unit, mode or effect: modes and abilities are indices into the source
 //! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::burrowed`.
 //!
 //! # Invariants
 //! - Presentation only: nothing here is hashed, consumes randomness or is read by a tick
 //!   decision, so recording or dropping it cannot move a checksum (plan D-1).
-//! - The workspace holds one entry per live projectile and hazard zone it was told about;
-//!   entries leave with their projectile or zone.
+//! - The workspace holds one entry per live projectile it was told about; entries leave
+//!   with their projectile.
 //! - Its buffers keep their capacity, so a warmed workspace allocates nothing in steady state.
 
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, ATTACK_DASH_BUFF_ID, OVERCLOCK_BUFF_ID};
 use sim_types::{
-    AbilityEffectSpec, AbilitySource, Concealment, EffectSource, EntityId, ModeTransitionView,
-    ShapeKind, SimScalar, StanceView, StatusFlags, WeaponKey, WeaponSlot, WeaponSpec,
+    AbilityEffectSpec, Concealment, EffectSource, EntityId, ModeTransitionView, ShapeKind,
+    SimScalar, StanceView, StatusFlags, WeaponKey, WeaponSlot, WeaponSpec,
 };
 
-/// The caster and full length of a hazard zone, recorded when it opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AreaRecord {
-    /// The caster type and ability that opened the zone.
-    pub source: AbilitySource,
-    /// Ticks (25 Hz) the zone lasts in all.
-    pub total_ticks: u16,
-}
-
 // PERFORMANCE RATIONALE:
-// Why: Projectile and hazard provenance is needed when a projectile lands or a frame is
-// written, but must stay out of the hashed `ActiveProjectile` and `ActiveHazardZone`.
-// What: Small flat lists keyed by projectile or hazard ID, searched linearly; the oldest
-// projectile, found first, is the one most likely to land, and hazard zones are few.
+// Why: Projectile provenance is needed when a projectile lands or a frame is written, but
+// must stay out of the hashed `ActiveProjectile`.
+// What: A small flat list keyed by projectile ID, searched linearly; the oldest projectile,
+// found first, is the one most likely to land.
 // Trade-off: O(n) lookups over the entries in flight instead of a map, with no allocation once
 // the lists have grown to the battle's high-water mark.
 /// Unhashed provenance the tick records for the render snapshot.
@@ -49,8 +40,6 @@ pub(crate) struct AreaRecord {
 pub(crate) struct PresentationWorkspace {
     /// The source of each projectile in flight, in launch order.
     projectile_sources: Vec<(u32, EffectSource)>,
-    /// The caster of each open hazard zone, in opening order.
-    area_records: Vec<(u32, AreaRecord)>,
     /// Entities whose barrier absorbed damage since the last snapshot, possibly repeated.
     barrier_hits: Vec<EntityId>,
 }
@@ -68,24 +57,6 @@ impl PresentationWorkspace {
             .iter()
             .position(|&(entry, _)| entry == id)?;
         Some(self.projectile_sources.remove(index).1)
-    }
-
-    /// Records the caster of the hazard zone `id` just opened.
-    pub(crate) fn record_area(&mut self, id: u32, record: AreaRecord) {
-        self.area_records.push((id, record));
-    }
-
-    /// Forgets hazard zone `id`, which has closed.
-    pub(crate) fn forget_area(&mut self, id: u32) {
-        self.area_records.retain(|&(entry, _)| entry != id);
-    }
-
-    /// The caster record of hazard zone `id`, if it was opened by a cast.
-    pub(crate) fn area(&self, id: u32) -> Option<AreaRecord> {
-        self.area_records
-            .iter()
-            .find(|&&(entry, _)| entry == id)
-            .map(|&(_, record)| record)
     }
 
     /// Notes that the barrier of `entity` absorbed damage this tick.
@@ -303,22 +274,6 @@ mod tests {
         assert_eq!(workspace.take_projectile_source(5), Some(source(2)));
         assert_eq!(workspace.take_projectile_source(5), None);
         assert_eq!(workspace.take_projectile_source(4), Some(source(1)));
-    }
-
-    #[test]
-    fn an_area_record_lasts_until_forgotten() {
-        let mut workspace = PresentationWorkspace::default();
-        let record = AreaRecord {
-            source: AbilitySource {
-                unit_type: UnitTypeId(3),
-                ability: 1,
-            },
-            total_ticks: 71,
-        };
-        workspace.record_area(9, record);
-        assert_eq!(workspace.area(9), Some(record));
-        workspace.forget_area(9);
-        assert_eq!(workspace.area(9), None);
     }
 
     #[test]

@@ -2,7 +2,8 @@
 //!
 //! # Responsibility
 //! Writes the world's visible state into a [`RenderSnapshot`]: player status, resource nodes,
-//! one bubble per entity not carried in a transport, the open hazard zones, and the tick's
+//! one bubble per entity not carried in a transport, the effect engine's areas, links and
+//! spell missiles, and the tick's
 //! visual events. A bubble's attack cycle (`AttackSwing`) is derived from the weapon state
 //! machine through the same weapon resolution combat uses, with no state of its own; its
 //! concealment, stance, status and barrier fraction come from `world::presentation`.
@@ -14,7 +15,7 @@
 //! # Invariants
 //! - Writing a snapshot changes no authoritative state and no checksum; it only drains
 //!   `pending_events` and the tick's barrier hits.
-//! - Bubbles are ordered by entity ID, areas by opening order (hazard ID order).
+//! - Bubbles are ordered by entity ID, areas by persistent id.
 
 use super::presentation;
 use super::AIR_UNIT_ALTITUDE;
@@ -67,7 +68,6 @@ impl SimWorld {
         output.match_result = self.match_state.result;
         self.write_player_views(output);
         self.write_resource_nodes(output);
-        self.write_areas(output);
         self.write_effect_views(output);
 
         self.presentation.settle_barrier_hits();
@@ -89,40 +89,14 @@ impl SimWorld {
         output.combat_events.append(&mut self.pending_events);
     }
 
-    /// Replaces the area list with the open hazard zones, in opening order.
-    ///
-    /// A zone opened by a cast carries its caster and full length; one placed otherwise has no
-    /// source and counts its remaining ticks as its length.
-    fn write_areas(&self, output: &mut RenderSnapshot) {
-        output.areas.clear();
-        output.links.clear();
-        output
-            .areas
-            .extend(self.active_hazards.iter().map(|hazard| {
-                let record = self.presentation.area(hazard.id);
-                AreaView {
-                    id: hazard.id,
-                    owner: hazard.owner,
-                    center: [
-                        hazard.center.x.to_f32(),
-                        hazard.center.y.to_f32(),
-                        self.map.terrain_altitude_at(hazard.center),
-                    ],
-                    radius: hazard.radius.to_f32(),
-                    remaining_ticks: hazard.remaining_ticks,
-                    total_ticks: record.map_or(hazard.remaining_ticks, |record| record.total_ticks),
-                    source: record.map(|record| record.source),
-                }
-            }));
-    }
-
-    /// Appends the effect engine's views (plan `2026-11-10-spellcaster-mechanics` D-19): an
+    /// Replaces the effect engine's views (plan `2026-11-10-spellcaster-mechanics` D-19): an
     /// area per point-anchored persistent that searches, a spell missile per projectile
     /// missile, and a link per tether missile, tethered waiting persistent and tethered
-    /// displacement whose caster lives. Areas of persistents carry the high bit in their id so
-    /// they never share one with a hazard zone (removed in work package 2b).
+    /// displacement whose caster lives. An area's id is its persistent's.
     fn write_effect_views(&self, output: &mut RenderSnapshot) {
         let spells = self.catalog.spells();
+        output.areas.clear();
+        output.links.clear();
         output.spell_missiles.clear();
         for persistent in self.effects.persistents() {
             let (Some(node), Some(facts)) =
@@ -148,7 +122,7 @@ impl SimWorld {
                     let elapsed = self.current_tick.wrapping_sub(persistent.created_tick.0);
                     let elapsed = u16::try_from(elapsed).unwrap_or(u16::MAX);
                     output.areas.push(AreaView {
-                        id: persistent.id | crate::effects::PERSISTENT_AREA_ID_BIT,
+                        id: persistent.id,
                         owner: persistent.context.owner,
                         center: [
                             center.x.to_f32(),

@@ -10,7 +10,7 @@
 //! ## How it fits
 //! `SimWorld::effects` holds an [`EffectWorld`] (hashed); `SimWorld::effect_scratch` holds
 //! the reused, unhashed buffers. Casts of an `Effect` ability start a walk in phase 1 or in
-//! movement; phase 2 runs [`SimWorld::step_effects`] after the hazard zones. The render
+//! movement; phase 2 runs [`SimWorld::step_effects`] after the per-entity timers. The render
 //! snapshot reads the instances (D-19).
 //!
 //! ## Invariants
@@ -44,10 +44,6 @@ pub use step::pulse_offset;
 
 use crate::SimWorld;
 use sim_types::{EntityId, SimAngle, SimScalar, SimVec2};
-
-/// The high bit of an area id taken by a persistent's area, so it never equals a hazard
-/// zone's id in the same frame while both kinds exist (hazard zones go in work package 2b).
-pub const PERSISTENT_AREA_ID_BIT: u32 = 1 << 31;
 
 /// How far from its destination a landing unit may be placed when the destination itself is
 /// no longer valid (Abduct's `SpawnRange`, plan D-8), in world units.

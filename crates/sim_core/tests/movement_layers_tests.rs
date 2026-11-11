@@ -2,6 +2,10 @@
 //! Fixtures select authored capabilities rather than identity strings and preserve
 //! captured supply lifecycle. Direct phase tests isolate displacement boundaries.
 
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::{open_storm, ScratchStorm};
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::movement::{DisplacementAdmissionError, MovementAdmissionError};
 use sim_core::transport::TransportAdmissionError;
@@ -396,26 +400,17 @@ fn air_foundation_collision_preserves_registered_footprint_position() -> TestRes
 }
 
 #[test]
-fn actual_air_hazard_escape_crosses_ground_only_obstruction() -> TestResult {
+fn actual_air_storm_escape_crosses_ground_only_obstruction() -> TestResult {
     let mut f = Fixture::new()?;
+    // The storm's flee response (plan `2026-11-10-spellcaster-mechanics` D-9) sends a helpless
+    // air unit away from the centre over a cliff no ground unit could cross.
+    ScratchStorm::GAME.install(&mut f.world);
     let id = f.spawn(f.air, 0, 5.5, 8.5)?;
     for y in 0..32 {
         f.world.map.cell_mut(6, y)?.flags = CellFlags::UNPASSABLE_CLIFF;
     }
     f.world.pathfinder.recompute_clearance(&f.world.map);
-    f.world.active_hazards.push(sim_core::ActiveHazardZone {
-        id: 1,
-        owner: PlayerId(1),
-        center: point(5.0, 8.5),
-        radius: SimScalar::ONE,
-        delay_ticks: 0,
-        remaining_ticks: 4,
-        interval_ticks: 1,
-        ticks_until_next_interval: 0,
-        damage_per_interval: SimScalar::ONE,
-        targets_friendly: false,
-    });
-    f.step(vec![]);
+    open_storm(&mut f.world, PlayerId(1), point(5.0, 8.5));
     assert!(
         matches!(f.world.entities[&id].order_queue.front(),Some(UnitOrder::Move{target}) if target.x>SimScalar::from_num(6))
     );

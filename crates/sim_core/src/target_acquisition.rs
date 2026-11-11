@@ -195,7 +195,7 @@ impl SimWorld {
         self.apply_combat_retaliation_prevalidated(victim_id, attacker_id);
     }
 
-    // Called from valid combat/hazard phases; no relation fields are mutated.
+    // Called from valid combat/effect phases; no relation fields are mutated.
     pub(crate) fn apply_combat_retaliation_prevalidated(
         &mut self,
         victim_id: EntityId,

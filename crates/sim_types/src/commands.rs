@@ -225,22 +225,6 @@ pub enum AbilityEffectSpec {
         /// Cooldown ticks incurred on cast.
         cooldown_ticks: u16,
     },
-    /// Spawns a periodic area-of-effect damage hazard zone at the target point.
-    SpawnHazardZone {
-        /// Circular radius of effect.
-        radius: SimScalar,
-        /// Initial detonation delay in ticks before first damage application.
-        delay_ticks: u16,
-        /// Total lifetime duration of the hazard zone in ticks.
-        duration_ticks: u16,
-        /// Ticks between consecutive periodic damage pulses.
-        interval_ticks: u16,
-        /// Damage applied per interval pulse.
-        damage_per_interval: SimScalar,
-        /// If true, friendly entities also suffer damage.
-        #[serde(default = "default_true", alias = "targets_friendly")]
-        friendly_fire: bool,
-    },
     /// Tactical cloaking or subterranean burrowing.
     CloakToggle {
         /// Energy drain per second while active.

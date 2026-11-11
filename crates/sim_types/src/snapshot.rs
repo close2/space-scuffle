@@ -332,7 +332,7 @@ pub struct RenderSnapshot {
     /// Every map resource node in identifier order, including exhausted ones.
     #[serde(default)]
     pub resource_nodes: Vec<ResourceNodeView>,
-    /// Persistent areas on the ground (hazard zones), by area ID.
+    /// Persistent areas on the ground (searching effect persistents), by area ID.
     #[serde(default)]
     pub areas: Vec<AreaView>,
     /// Tethers between entities; empty until a mechanic makes one.

@@ -243,7 +243,8 @@ pub struct LineView {
     pub count: u8,
 }
 
-/// A persistent area on the ground (a hazard zone), refreshed every frame.
+/// A persistent area on the ground (a point-anchored effect persistent that searches, such as a
+/// storm), refreshed every frame.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaView {

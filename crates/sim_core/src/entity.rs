@@ -14,7 +14,7 @@ use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRa
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
     EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec, UnitOrder, UnitTypeId,
+    SimAngle, SimScalar, SimVec2, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -501,8 +501,6 @@ pub struct Entity {
     pub pending_ability: Option<(u8, Option<SimVec2>, Option<EntityId>)>,
     /// Independent ability cooldown timers for up to 4 ability slots.
     pub ability_cooldowns: [u16; 4],
-    /// Last tick at which this unit sustained damage from an active hazard zone (Psionic Storm non-stacking).
-    pub last_storm_damage_tick: Option<Tick>,
     /// Cloaking / subterranean invisibility flag.
     pub is_cloaked: bool,
     /// Maximum hull hit points including upgrades.
@@ -638,7 +636,6 @@ impl Entity {
             channeling_remaining_ticks: 0,
             pending_ability: None,
             ability_cooldowns: [0; 4],
-            last_storm_damage_tick: None,
             is_cloaked: false,
             max_hp: archetype.max_hp,
             is_completed: true,

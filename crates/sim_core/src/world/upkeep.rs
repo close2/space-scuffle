@@ -1,13 +1,14 @@
-//! Tick phase 2: production, per-entity timers and regeneration, and hazard zones.
+//! Tick phase 2: production, per-entity timers and regeneration, and the effect engine.
 //!
 //! # Responsibility
 //! Advances production, then each living entity's channel, cooldown, buff, damage-delay,
-//! regeneration, mode-drain and hit-flash timers, then the active hazard zones (stepped by the
-//! `abilities` module, which owns them), then completes production.
+//! regeneration, mode-drain and hit-flash timers, then the effect engine's missiles, persistents, statuses
+//! and displacements (stepped by `crate::effects`, which owns them), then completes
+//! production.
 //!
 //! # How it fits
 //! The second phase of `step_into`, after commands and before unit tasks. Damage (phase 9,
-//! hazards here) resets `Entity::ticks_since_last_damage` through `Entity::apply_damage`; this
+//! effects here) resets `Entity::ticks_since_last_damage` through `Entity::apply_damage`; this
 //! phase counts it up and gates life and shield regeneration on the archetype's catalog delays
 //! (`hp_regen_delay_ticks`, `shield_regen_delay_ticks`).
 //!
@@ -45,10 +46,9 @@ impl SimWorld {
             upkeep_entity(entity, catalog);
         }
 
-        self.step_hazards();
         self.step_effects();
 
-        // Hazards may have killed a ready producer; completion rechecks its life.
+        // Effects may have killed a ready producer; completion rechecks its life.
         self.complete_production();
     }
 }

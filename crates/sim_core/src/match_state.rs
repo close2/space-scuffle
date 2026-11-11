@@ -19,7 +19,7 @@
 //!
 //! # Invariants
 //! - The evaluation reads the map's registered structures after reaping, so every way of
-//!   losing a structure, weapon, hazard or cancellation, passes through this one check.
+//!   losing a structure, weapon, spell or cancellation, passes through this one check.
 //! - The result is set once and never changes, nor do defeats after it.
 //! - All of this state is authoritative and part of the world checksum.
 

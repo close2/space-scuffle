@@ -274,8 +274,14 @@
 // unchanged on the trees of Amendment 24's Charge (93dffe7) and braking (cd02e88 with 993ee14)
 // rules, which hash nothing new; the Lurker analogue, whose data the round changed, is not in
 // this replay.
+// Re-recorded for checksum schema 29 (plan 2026-11-10-spellcaster-mechanics D-12, D-13 item 2),
+// which no longer encodes the hazard zones, the next hazard id or each unit's last storm damage
+// tick; every checkpoint changed from checkpoint 1 and no behaviour did. Traced tick by tick against
+// schema 28 (5a79962): Debug dumps of every entity, projectile, player's resources, the effect state
+// and the render snapshot after every tick are byte-identical once the removed field's lines are
+// dropped, but for each snapshot's checksum.
 (
-    checksum_schema: 28,
+    checksum_schema: 29,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -301,25 +307,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x1513007c3a69b448,
-        0x65b42f64f3231cae,
-        0x48241e5ee73367fb,
-        0xc834a3347068b4ae,
-        0x0972c555cf96a2a7,
-        0x8dc7b41a33c7f913,
-        0xbcfaf2d3398e889f,
-        0x95a5f29470d74949,
-        0xf7affbb13f162695,
-        0x345d80868bf9d4d5,
-        0x76eff16f7b03b83f,
-        0x4263a647e7709e98,
-        0x8f5e5501dfd8ec8e,
-        0x4a6dcca31a69d065,
-        0xd1f00b14176ef548,
-        0x0add13e63f3af799,
-        0x1ac471705c42367c,
-        0x1e6128e8f1bc9ce3,
-        0x6a56101cfa2125d6,
-        0x7706997062f5421d,
+        0x14190d65eff736c8,
+        0xaedbd3380b9aec1b,
+        0x4e75572844f7482e,
+        0x09fc5c5d19c3852f,
+        0xa40d593d5ee4c92d,
+        0xa930abf4b044d9f4,
+        0x9c20b5cd583d4e3a,
+        0x031d68f1e9d46bd0,
+        0xc8c9c96e3afafc4c,
+        0x97ca1d35a9548794,
+        0xcf682aece095af65,
+        0x115d41782f2d2531,
+        0xa0562bb7f03e6335,
+        0xec7fb6f1e8ade744,
+        0x70a3099423b9859b,
+        0x7333cdaf842a3474,
+        0xe1688510c39c7d62,
+        0x332ef5b01d5e4bb0,
+        0xd7478144274ba66e,
+        0xe3f72e9d957a9b39,
     ],
 )

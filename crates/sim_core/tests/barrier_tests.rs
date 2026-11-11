@@ -14,6 +14,10 @@
     clippy::unnecessary_wraps
 )]
 
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::{open_storm, ScratchStorm};
 use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -332,34 +336,31 @@ fn b41_the_barrier_absorbs_splash() {
 
 #[test]
 fn b41_the_barrier_absorbs_storm_damage() {
-    use sim_core::ActiveHazardZone;
     let mut world = flat_world();
+    // The storm's tree with pulses of 40 (plan `2026-11-10-spellcaster-mechanics` D-9, D-12:
+    // spell damage meets the barrier first).
+    ScratchStorm {
+        radius: "2.0",
+        damage: "40.0",
+        structures: false,
+    }
+    .install(&mut world);
     let target = register_target(&mut world, 0, barrier(100, 54, 804));
     let victim = world
         .spawn_unit(target, PlayerId(1), at(13, 10))
         .expect("spawn target");
-    // Holding, so it stays in the storm instead of evacuating.
+    // Holding, so it stays in the storm instead of fleeing it.
     world
         .entities
         .get_mut(&victim)
         .expect("target exists")
         .issue_order(UnitOrder::HoldPosition, false)
         .expect("hold admitted");
-    world.active_hazards.push(ActiveHazardZone {
-        id: 0,
-        owner: PlayerId(0),
-        center: at(13, 10),
-        radius: n(2),
-        delay_ticks: 0,
-        remaining_ticks: 40,
-        interval_ticks: 10,
-        ticks_until_next_interval: 0,
-        damage_per_interval: n(40),
-        targets_friendly: false,
-    });
     let start = world.entities[&victim].hp;
+    open_storm(&mut world, PlayerId(0), at(13, 10));
     let mut losses = Vec::new();
-    let mut hp = start;
+    let mut hp = world.entities[&victim].hp;
+    assert_eq!(hp, start, "the first pulse is absorbed whole");
     for tick in 0..40 {
         world.step(&empty(tick));
         let now = world.entities[&victim].hp;
@@ -368,7 +369,8 @@ fn b41_the_barrier_absorbs_storm_damage() {
             hp = now;
         }
     }
-    // Pulses of 40: two absorbed whole, the third has 20 absorbed, the fourth lands whole.
+    // Pulses of 40 at 0, 10, 20 and 31: two absorbed whole, the third has 20 absorbed, the
+    // fourth lands whole.
     assert_eq!(losses, vec![n(20), n(40)], "{losses:?}");
 }
 

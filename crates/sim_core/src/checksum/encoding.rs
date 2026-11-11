@@ -16,7 +16,7 @@ use crate::match_state::MatchState;
 use crate::movement::groups::{GroupLane, LaneState, RouteGroup, RouteGroupId, RouteGroupKind};
 use crate::production::construction::Construction;
 use crate::production::{ProductionItem, ProductionJob};
-use crate::world::{ActiveHazardZone, PlayerResources};
+use crate::world::PlayerResources;
 use sim_map::navmesh::lanes::LaneWord;
 use sim_map::{
     CellFlags, CliffLevel, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
@@ -353,7 +353,6 @@ fields!(Entity {
     channeling_remaining_ticks,
     pending_ability,
     ability_cooldowns,
-    last_storm_damage_tick,
     is_cloaked,
     max_hp,
     is_completed,
@@ -622,18 +621,6 @@ fields!(UnitStatDeltas {
     attack_cooldown_delta,
     bonus_damage_delta,
 });
-fields!(ActiveHazardZone {
-    id,
-    owner,
-    center,
-    radius,
-    delay_ticks,
-    remaining_ticks,
-    interval_ticks,
-    ticks_until_next_interval,
-    damage_per_interval,
-    targets_friendly,
-});
 fields!(MapCell {
     cliff_level,
     ramp,
@@ -880,7 +867,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 29, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -956,7 +943,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 29, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -979,7 +966,7 @@ mod tests {
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
         // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 29, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -987,7 +974,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 29, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

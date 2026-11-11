@@ -6,7 +6,6 @@
 
 #![allow(dead_code, clippy::expect_used)]
 
-use sim_core::catalog::SpellCatalog;
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -14,12 +13,13 @@ use sim_types::{
     SimScalar, SimVec2, Tick, TickBundle, UnitTypeId,
 };
 
-/// A 64 × 64 flat world with the shipped catalogs and the scratch spell tables.
+/// A 64 × 64 flat world with the shipped catalogs and the scratch spell tables appended to the
+/// shipped ones.
 pub fn world(statuses: &str, effects: &str) -> SimWorld {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: a flat map");
     let mut world = sim_fixtures::world(map, 11);
-    let spells = SpellCatalog::from_ron_strs(
+    let spells = sim_fixtures::spells_with(
         &format!("(statuses: [{statuses}])"),
         &format!("(effects: [{effects}])"),
     )

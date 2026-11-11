@@ -6,7 +6,11 @@ use sim_core::catalog::RuntimeCatalogs;
 use sim_core::movement::{DisplacementAdmissionError, MovementAdmissionError};
 use sim_core::production::ProductionAdmissionError;
 use sim_core::transport::{TransportAction, TransportAdmissionError};
-use sim_core::{ActiveHazardZone, SimWorld, UnitCatalog, UpgradeCatalog, WeaponPhase, WeaponSpec};
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::{open_storm, ScratchStorm};
+use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog, WeaponPhase, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AnimState, CombatEventVisual, EntityId,
@@ -326,7 +330,7 @@ fn busy_passenger_loading_does_not_cancel_or_refund_paid_work() -> TestResult {
 }
 
 #[test]
-fn cargo_has_no_vision_hazard_presence_or_snapshot_but_returns_at_exact_endpoint() -> TestResult {
+fn cargo_has_no_vision_storm_presence_or_snapshot_but_returns_at_exact_endpoint() -> TestResult {
     let mut f = Fixture::new()?;
     let passenger = f.spawn(0, 4, 4)?;
     let carrier = f.spawn(0, 24, 24)?;
@@ -336,19 +340,17 @@ fn cargo_has_no_vision_hazard_presence_or_snapshot_but_returns_at_exact_endpoint
         VisibilityState::Visible
     );
     f.world.try_load_unit_into_transport(passenger, carrier)?;
-    f.world.active_hazards.push(ActiveHazardZone {
-        id: 7,
-        owner: PlayerId(1),
-        center: point(4, 4),
-        radius: SimScalar::from_num(2),
-        delay_ticks: 0,
-        remaining_ticks: 3,
-        interval_ticks: 1,
-        ticks_until_next_interval: 0,
-        damage_per_interval: SimScalar::from_num(30),
-        targets_friendly: true,
-    });
+    // A storm on the passenger's spot finds nothing: a carried unit is hidden (plan
+    // `2026-11-10-spellcaster-mechanics` §7; the hazard zone's replacement, D-12).
+    ScratchStorm {
+        radius: "2.0",
+        damage: "30.0",
+        structures: false,
+    }
+    .install(&mut f.world);
+    open_storm(&mut f.world, PlayerId(1), point(4, 4));
     f.tick(vec![]);
+    assert_eq!(f.world.effects().statuses_of(passenger).len(), 0);
     assert_ne!(
         f.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(4, 4),
         VisibilityState::Visible

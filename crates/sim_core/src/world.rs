@@ -15,7 +15,7 @@
 //! This file owns the [`SimWorld`] state, its construction, spawning and the tick sequence.
 //! Each phase that is more than a call lives in a private child module with its own
 //! `impl SimWorld` block: `commands` (phase 1), `upkeep` (phase 2), `vision` (phase 3),
-//! `snapshot` (phase 10), plus `abilities` (casting and hazard zones), `casts` (the cast
+//! `snapshot` (phase 10), plus `abilities` (casting), `casts` (the cast
 //! pipeline of effect abilities; its after-cast locks count down after the weapons), `attack_dash` (the dash
 //! an attack order triggers, after acquisition), `upgrade_stats`
 //! (research and effective stats) and `sandbox` (the Visual Lab scene). Children see the
@@ -31,7 +31,6 @@ mod upgrade_stats;
 mod upkeep;
 mod vision;
 
-pub use abilities::ActiveHazardZone;
 use vision::VisionWorkspace;
 
 use crate::catalog::UnitCatalog;
@@ -137,10 +136,6 @@ pub struct SimWorld {
     /// Authoritative standing of the match: participants, defeats and result.
     pub match_state: crate::match_state::MatchState,
     pub(crate) combat: crate::combat_resolution::CombatWorkspace,
-    /// Active continuous hazard/AoE zones (e.g. Psionic Storm) ticking in the world.
-    pub active_hazards: Vec<ActiveHazardZone>,
-    /// Monotonically increasing hazard ID generator.
-    pub next_hazard_id: u32,
     /// Whether pathfinding respects fog-of-war vision and known obstacles.
     pub vision_aware_pathfinding: bool,
     /// Per-player known blocked cells (structures seen in visible cells and remembered through fog).
@@ -163,7 +158,7 @@ pub struct SimWorld {
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
     /// The id the next route group gets; hashed.
     pub(crate) next_route_group: u32,
-    /// Unhashed provenance for the render snapshot: projectile and hazard sources and this
+    /// Unhashed provenance for the render snapshot: projectile sources and this
     /// tick's barrier hits (plan `2026-11-09-effect-visualization` D-1).
     pub(crate) presentation: presentation::PresentationWorkspace,
 }
@@ -221,8 +216,6 @@ impl SimWorld {
             economy: crate::economy::EconomyWorkspace::default(),
             match_state: crate::match_state::MatchState::default(),
             combat: crate::combat_resolution::CombatWorkspace::default(),
-            active_hazards: Vec::new(),
-            next_hazard_id: 1,
             vision_aware_pathfinding: true,
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),

@@ -14,7 +14,7 @@
 //! here, so a cast now and an order for later apply one rule. Phase 1 (`commands.rs`) orders
 //! the cast and picks the single caster; movement walks a caster whose target is out of range
 //! ([`SimWorld::cast_approach_goal`]) and casts once it is in range. Other abilities (mode
-//! toggles, Blink, hazard zones) keep their immediate path: none of this applies to them, save
+//! toggles, Blink) keep their immediate path: none of this applies to them, save
 //! the lock, whose length is 0 unless authored.
 //!
 //! # Invariants

@@ -1,6 +1,6 @@
 //! Canonical dynamic-state digests for lockstep verification.
 //!
-//! Covers persistent entities, projectiles, economy, upgrades, hazards, live RNG,
+//! Covers persistent entities, projectiles, economy, upgrades, effects, live RNG,
 //! terrain, fog memory and exposed navigation clearance. Catalogs must match
 //! separately; this is not a content compatibility handshake. A noncryptographic
 //! 64-bit digest can collide. Integers use fixed-width little-endian encodings;
@@ -64,7 +64,10 @@ use std::collections::BTreeMap;
 /// each weapon's melee flag, each unit's cast lock and displacement, and the world's effect
 /// state: the next persistent and missile ids, then the statuses, persistents and missiles, each
 /// with its node or status id, timing and effect context.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 28;
+/// Schema 29 removes the hazard zones the effect engine replaced (plan
+/// `2026-11-10-spellcaster-mechanics` D-12, D-13 item 2): the next hazard id, the hazard list
+/// and each unit's last storm damage tick.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 29;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -111,7 +114,6 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.rng.get_word_pos().encode(&mut encoder);
     world.next_entity_id.encode(&mut encoder);
     world.next_projectile_id.encode(&mut encoder);
-    world.next_hazard_id.encode(&mut encoder);
     world.vision_aware_pathfinding.encode(&mut encoder);
 
     "entities".encode(&mut encoder);
@@ -122,8 +124,6 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.player_resources.as_slice().encode(&mut encoder);
     world.player_upgrades.as_slice().encode(&mut encoder);
     world.match_state.encode(&mut encoder);
-    "hazards".encode(&mut encoder);
-    world.active_hazards.encode(&mut encoder);
     "effects".encode(&mut encoder);
     world.effects.encode(&mut encoder);
     "route-groups".encode(&mut encoder);

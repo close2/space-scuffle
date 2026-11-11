@@ -1,4 +1,4 @@
-//! # Integration Tests: Tactical Spells, Active Abilities & Hazard Zones
+//! # Integration Tests: Tactical Spells and Active Abilities
 //!
 //! Verifies:
 //! 1. Overclock (Stimpack): HP deduction, speed multiplier, cooldown, and refusal unless life
@@ -6,7 +6,8 @@
 //! 2. Siege Mode: Transformation channeling, mobility lock, long-range splash cannon, and unsiege toggle;
 //!    entering and leaving each take their own time plus a seeded random extra (WP11, B-4).
 //! 3. Blink Teleport: Instant Euclidean relocation across unpathable cliff chasms and rejection of invalid terrain.
-//! 4. Psionic Storm: Continuous AoE hazard zone with strict non-stacking damage invariant.
+//! 4. Psionic Storm: an area effect tree (a scratch storm) damages its radius once per pulse;
+//!    overlapping storms do not stack.
 //! 5. Tactical Cloak & Detector Reveal: Invisibility under enemy line-of-sight and detection reveal.
 
 #![allow(
@@ -17,6 +18,10 @@
     clippy::too_many_lines
 )]
 
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::ScratchStorm;
 use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::AttributeBonuses;
@@ -501,23 +506,28 @@ fn test_blink_teleport_across_cliff_chasm() {
     );
 }
 
-/// Test 13: Psionic Storm hazard zone AoE damage and non-stacking damage invariant.
+/// Test 13: an area spell in the shape of Psionic Storm damages every unit in its radius, and
+/// two overlapping storms do not stack: both apply the one status, whose second application
+/// refreshes it without repeating its damage (plan `2026-11-10-spellcaster-mechanics` D-5,
+/// D-12; the effect tree replaced the hazard zone).
 #[test]
-fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
+fn test_psionic_storm_area_damage_and_non_stacking() {
     let width = 32;
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
     let mut world = sim_fixtures::world(map, 0x4444);
+    ScratchStorm::GAME.install(&mut world);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
 
     let caster_type_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
+    // Armour 1 and no regeneration, so every point of spell damage shows in its life.
     let target_type_id = world
         .catalog
-        .id_by_slug("rhino_beetle")
-        .expect("rhino_beetle");
+        .id_by_slug("shock_golem")
+        .expect("shock_golem");
 
     let caster_id = world
         .spawn_unit(
@@ -527,7 +537,7 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
         )
         .expect("spawn caster");
 
-    // Spawn 2 target enemies within storm radius at (15.0, 15.0) and (16.0, 15.0)
+    // Two targets inside the 1.5 radius around (15, 15), one outside it.
     let t1 = world
         .spawn_unit(
             target_type_id,
@@ -542,21 +552,29 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
             SimVec2::new(SimScalar::from_num(16), SimScalar::from_num(15)),
         )
         .expect("spawn t2");
+    let outside = world
+        .spawn_unit(
+            target_type_id,
+            player_red,
+            SimVec2::new(SimScalar::from_num(18), SimScalar::from_num(15)),
+        )
+        .expect("spawn outside");
+    for id in [t1, t2, outside] {
+        world
+            .entities
+            .get_mut(&id)
+            .unwrap()
+            .issue_order(UnitOrder::HoldPosition, false)
+            .expect("hold admitted");
+    }
 
     let storm_ability = AbilitySpec {
-        name: "Psionic Storm".to_string(),
+        name: "Scratch Storm".to_string(),
         target_kind: AbilityTargetKind::TargetPosition,
         energy_cost: SimScalar::ZERO,
         cooldown_ticks: 50,
         cast_range: SimScalar::from_num(10),
-        effect: AbilityEffectSpec::SpawnHazardZone {
-            radius: SimScalar::from_num(3),
-            delay_ticks: 0,
-            duration_ticks: 60,
-            interval_ticks: 10,
-            damage_per_interval: SimScalar::from_num(14),
-            friendly_fire: true,
-        },
+        effect: AbilityEffectSpec::Effect("scratch_storm".to_string()),
         leave_name: None,
         cast_backswing_ticks: 0,
         single_caster: true,
@@ -567,45 +585,44 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
     world.catalog.get_mut(caster_type_id).unwrap().abilities = vec![storm_ability];
 
     let storm_center = SimVec2::new(SimScalar::from_num(15), SimScalar::from_num(15));
+    let start = world.entities.get(&t1).unwrap().hp;
 
-    // Spawn TWO overlapping storms at the EXACT same center coordinate
-    world.execute_ability(caster_id, 0, Some(storm_center), None);
+    // Two storms at the EXACT same centre: the second cast refreshes the status.
+    assert!(world.execute_ability(caster_id, 0, Some(storm_center), None));
     world
         .entities
         .get_mut(&caster_id)
         .unwrap()
         .ability_cooldowns[0] = 0;
-    world.execute_ability(caster_id, 0, Some(storm_center), None);
+    assert!(world.execute_ability(caster_id, 0, Some(storm_center), None));
 
     assert_eq!(
-        world.active_hazards.len(),
+        world.effects().persistents().len(),
         2,
-        "Two active hazard zones must be present in the world"
+        "Two storms must be open in the world"
     );
+    for id in [t1, t2] {
+        assert_eq!(
+            start - world.entities.get(&id).unwrap().hp,
+            SimScalar::from_num(10),
+            "the initial damage must land once, not once per storm"
+        );
+    }
 
-    let t1_hp_before = world.entities.get(&t1).unwrap().hp;
-    let t2_hp_before = world.entities.get(&t2).unwrap().hp;
-
-    // Advance 1 tick to trigger interval damage
-    world.step(&empty_bundle(1));
-
-    let t1_hp_after = world.entities.get(&t1).unwrap().hp;
-    let t2_hp_after = world.entities.get(&t2).unwrap().hp;
-
-    // Both units must take exactly 14 damage (from ONE storm pulse), NOT 28 damage from both storms!
-    // Invariant: Non-Stacking! Multiple overlapping storms do not double-damage in the same tick.
-    let t1_damage = t1_hp_before - t1_hp_after;
-    let t2_damage = t2_hp_before - t2_hp_after;
-
+    for tick in 0..90 {
+        world.step(&empty_bundle(tick));
+    }
+    for id in [t1, t2] {
+        assert_eq!(
+            start - world.entities.get(&id).unwrap().hp,
+            SimScalar::from_num(80),
+            "overlapping storms deal one storm's 80, armour ignored"
+        );
+    }
     assert_eq!(
-        t1_damage,
-        SimScalar::from_num(14),
-        "Unit inside overlapping storms must sustain exactly 14 damage due to non-stacking invariant"
-    );
-    assert_eq!(
-        t2_damage,
-        SimScalar::from_num(14),
-        "Unit inside overlapping storms must sustain exactly 14 damage due to non-stacking invariant"
+        world.entities.get(&outside).unwrap().hp,
+        start,
+        "a unit outside the radius takes nothing"
     );
 }
 
