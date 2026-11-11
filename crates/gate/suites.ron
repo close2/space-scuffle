@@ -17,7 +17,13 @@
 // - a `gpu` or `valgrind` target runs when a changed path is one of its own source files (its
 //   test file and every support file it loads with `#[path]`), matches one of its `triggers`, or
 //   when a rule or downstream contract names it;
-// - `rules` add targets for paths outside or across crates; `commands` add the golden replays.
+// - `rules` add targets for paths outside or across crates; `commands` add the golden replays;
+// - a change to this file selects what its parsed difference against the base revision changes
+//   (crates/gate/src/catalog_diff.rs): a changed `targets` entry selects that target, a changed
+//   rule the targets and crates of both versions, a gained downstream reference that reference,
+//   a changed command that command; a change to `global`, `docs` or `always`, or a base that does
+//   not parse, selects the complete suite. Comments and ordering select nothing beyond the gate
+//   crate itself.
 //
 // A `targets` entry may set `test_threads: Some(n)`: the gate then runs that executable with
 // `--test-threads=n` instead of libtest's one thread per CPU, to bound its peak memory.
@@ -35,8 +41,9 @@ SuiteCatalog(
         "clippy.toml",
         "crates/*/Cargo.toml",
         "crates/*/clippy.toml",
-        ".github/workflows/**",
-        "crates/gate/**",
+        // The runner decides how every executable runs, so a gate source change runs them all.
+        // The gate's tests are a crate change, and this catalog is judged by its content.
+        "crates/gate/src/**",
         "third_party/**",
         "tools/renderer_compatibility/**",
     ],
@@ -141,6 +148,13 @@ SuiteCatalog(
     // entry: a support file is an own file of every target that loads it, so a change to it
     // selects those targets whatever their class.
     rules: [
+        (
+            // C16 and C24 read ci.yml and showcase.yml. No local test runs a workflow: the push's
+            // CI run does, and a broken one is fixed forward or reverted within the hour (§4.3).
+            name: "CI workflows",
+            paths: [".github/workflows/**"],
+            targets: ["workspace_checks/@fast"],
+        ),
         (
             name: "GPU renderer",
             paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,effects/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],

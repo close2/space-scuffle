@@ -11,9 +11,16 @@
 //! file and starts no process, the tier semantics are unit-tested on synthetic catalogs here and
 //! on the real catalog by `tests/selection_tests.rs`.
 //!
+//! Some files are judged by their content, not their path (plan 2026-11-11-faster-gates §4):
+//! the suite catalog `crates/gate/suites.ron` selects what its semantic diff
+//! (`catalog_diff.rs`) changes. Their two versions arrive in a [`Change`]; the runner fills them
+//! from Git, so this module still reads no file.
+//!
 //! # Invariants
 //! - Uncertain means more (P3): a changed path that no `global`, `docs`, crate, rule, trigger,
 //!   command or own-file entry covers selects the complete suite, and so does any `global` path.
+//! - A file judged by content whose two versions are not both known (the path-only form
+//!   [`select`], an unreadable base) selects the complete suite.
 //! - A crate change selects the crate's `fast` and `slow` targets and its downstream contracts;
 //!   `gpu` and `valgrind` targets only when a changed path is one of their own files or matches
 //!   one of their triggers, a path rule names them, or a downstream contract does.
@@ -21,7 +28,8 @@
 //!   paths is docs-only: fmt and the `always` targets, no clippy.
 //! - `full` selects every test target of the workspace and every catalog command.
 
-use crate::catalog::{SuiteCatalog, TargetRef, TestClass};
+use crate::catalog::{SuiteCatalog, TargetRef, TestClass, CATALOG_PATH};
+use crate::catalog_diff::CatalogDiff;
 use crate::sources::SourceIndex;
 use crate::tier::Tier;
 use crate::workspace::{TargetId, Workspace};
@@ -48,6 +56,8 @@ pub enum Reason {
     Trigger(String),
     /// One of the target's own source files changed.
     OwnFile(String),
+    /// A difference of the suite catalog against its base, as `explain` describes it.
+    Catalog(String),
 }
 
 impl fmt::Display for Reason {
@@ -61,6 +71,7 @@ impl fmt::Display for Reason {
             Self::Rule(name) => write!(f, "rule `{name}`"),
             Self::Trigger(glob) => write!(f, "trigger `{glob}`"),
             Self::OwnFile(path) => write!(f, "own file {path}"),
+            Self::Catalog(what) => write!(f, "suites.ron: {what}"),
         }
     }
 }
@@ -82,6 +93,14 @@ pub enum CompleteCause {
         /// The changed path.
         path: String,
     },
+    /// A file judged by its content changed in a way that reaches every crate, or its versions
+    /// are not both known.
+    Content {
+        /// The changed path.
+        path: String,
+        /// Why its change selects everything, for example `catalog scope changed`.
+        why: String,
+    },
 }
 
 impl fmt::Display for CompleteCause {
@@ -90,6 +109,7 @@ impl fmt::Display for CompleteCause {
             Self::Tier => f.write_str("the tier runs the complete suite"),
             Self::Global { path, glob } => write!(f, "{path} matches global `{glob}`"),
             Self::Unmatched { path } => write!(f, "no catalog entry covers {path}"),
+            Self::Content { path, why } => write!(f, "{path}: {why}"),
         }
     }
 }
@@ -195,6 +215,45 @@ impl Builder<'_> {
     }
 }
 
+/// One file's text on both sides of a change; `None` where the file does not exist.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileVersions {
+    /// The text at the base revision.
+    pub before: Option<String>,
+    /// The text after the change (the working tree, or the second revision).
+    pub after: Option<String>,
+}
+
+/// A change: the changed paths, and the two versions of every changed file the selection judges
+/// by content ([`is_judged_by_content`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Change {
+    /// Every changed path, relative to the repository root.
+    pub paths: BTreeSet<String>,
+    /// The versions of the changed files judged by content; a file missing here selects the
+    /// complete suite.
+    pub contents: BTreeMap<String, FileVersions>,
+}
+
+impl Change {
+    /// A change known only by its paths: every file judged by content selects the complete
+    /// suite.
+    #[must_use]
+    pub fn paths_only(paths: BTreeSet<String>) -> Self {
+        Self {
+            paths,
+            contents: BTreeMap::new(),
+        }
+    }
+}
+
+/// Whether the selection judges a change to `path` by its content rather than its path: the
+/// suite catalog.
+#[must_use]
+pub fn is_judged_by_content(path: &str) -> bool {
+    path == CATALOG_PATH
+}
+
 /// Inputs of [`select`] that describe the repository.
 #[derive(Clone, Copy, Debug)]
 pub struct Inputs<'a> {
@@ -206,30 +265,15 @@ pub struct Inputs<'a> {
     pub sources: &'a SourceIndex,
 }
 
-/// Judges one changed path: what covers it, and what it selects.
-fn judge_path(
+/// Adds what the rules, commands, triggers and own files covering `path` select, and records
+/// each in `covered_by`.
+fn cover_by_entries(
     builder: &mut Builder<'_>,
     sources: &SourceIndex,
     path: &str,
-    changed_crates: &mut BTreeSet<String>,
-) -> Result<(PathMatch, Option<CompleteCause>, bool), GateError> {
+    covered_by: &mut Vec<String>,
+) -> Result<(), GateError> {
     let catalog = builder.catalog;
-    let mut covered_by = Vec::new();
-    let mut complete = None;
-    if let Some(glob) = catalog.global.iter().find(|g| g.matches(path)) {
-        covered_by.push(format!("global `{glob}`: complete suite"));
-        complete = Some(CompleteCause::Global {
-            path: path.to_string(),
-            glob: glob.to_string(),
-        });
-    }
-    let docs = catalog.docs.iter().find(|g| g.matches(path));
-    if let Some(glob) = docs {
-        covered_by.push(format!("docs `{glob}`"));
-    } else if let Some(package) = builder.workspace.package_of_path(path) {
-        covered_by.push(format!("crate {}", package.name));
-        changed_crates.insert(package.name.clone());
-    }
     for rule in &catalog.rules {
         if rule.paths.iter().any(|g| g.matches(path)) {
             covered_by.push(format!("rule `{}`", rule.name));
@@ -261,6 +305,45 @@ fn judge_path(
             builder.add(id, Reason::OwnFile(path.to_string()));
         }
     }
+    Ok(())
+}
+
+/// Judges one changed path: what covers it, and what it selects.
+fn judge_path(
+    builder: &mut Builder<'_>,
+    inputs: Inputs<'_>,
+    change: &Change,
+    path: &str,
+    changed_crates: &mut BTreeSet<String>,
+) -> Result<(PathMatch, Option<CompleteCause>, bool), GateError> {
+    let catalog = builder.catalog;
+    let mut covered_by = Vec::new();
+    let mut complete = None;
+    if let Some(glob) = catalog.global.iter().find(|g| g.matches(path)) {
+        covered_by.push(format!("global `{glob}`: complete suite"));
+        complete = Some(CompleteCause::Global {
+            path: path.to_string(),
+            glob: glob.to_string(),
+        });
+    }
+    if is_judged_by_content(path) {
+        let why = judge_content(builder, inputs, change, path, &mut covered_by);
+        if let (None, Some(why)) = (&complete, why) {
+            covered_by.push(format!("{why}: complete suite"));
+            complete = Some(CompleteCause::Content {
+                path: path.to_string(),
+                why,
+            });
+        }
+    }
+    let docs = catalog.docs.iter().find(|g| g.matches(path));
+    if let Some(glob) = docs {
+        covered_by.push(format!("docs `{glob}`"));
+    } else if let Some(package) = builder.workspace.package_of_path(path) {
+        covered_by.push(format!("crate {}", package.name));
+        changed_crates.insert(package.name.clone());
+    }
+    cover_by_entries(builder, inputs.sources, path, &mut covered_by)?;
     if covered_by.is_empty() {
         covered_by.push("nothing: complete suite".to_string());
         complete = Some(CompleteCause::Unmatched {
@@ -275,7 +358,90 @@ fn judge_path(
     Ok((entry, complete, is_docs))
 }
 
-/// The selection of `tier` for the changed paths `changed`.
+/// Judges a file by its two versions: adds what its difference selects, records each
+/// difference in `covered_by`, and returns why the complete suite is needed, if it is.
+fn judge_content(
+    builder: &mut Builder<'_>,
+    inputs: Inputs<'_>,
+    change: &Change,
+    path: &str,
+    covered_by: &mut Vec<String>,
+) -> Option<String> {
+    let Some(versions) = change.contents.get(path) else {
+        return Some("no base version to compare".to_string());
+    };
+    judge_catalog(builder, inputs, versions, covered_by)
+}
+
+/// Judges a change of the suite catalog by its semantic diff (plan §4.2).
+fn judge_catalog(
+    builder: &mut Builder<'_>,
+    inputs: Inputs<'_>,
+    versions: &FileVersions,
+    covered_by: &mut Vec<String>,
+) -> Option<String> {
+    let parse = |text: &Option<String>| {
+        text.as_deref()
+            .and_then(|text| SuiteCatalog::parse(text, std::path::Path::new(CATALOG_PATH)).ok())
+    };
+    let Some(before) = parse(&versions.before) else {
+        return Some("base catalog unreadable".to_string());
+    };
+    let Some(after) = parse(&versions.after) else {
+        return Some("catalog unreadable".to_string());
+    };
+    let diff = CatalogDiff::between(&before, &after);
+    covered_by.extend(diff.descriptions.iter().cloned());
+    if !diff.scope.is_empty() {
+        return Some(format!("catalog scope changed ({})", diff.scope.join(", ")));
+    }
+    let edit = |what: &str| Reason::Catalog(what.to_string());
+    for id in &diff.targets {
+        if inputs.workspace.test_targets().any(|t| &t.id == id) {
+            builder.add(id.clone(), edit("targets entry changed"));
+        }
+    }
+    for rule in &diff.rules {
+        let reason = edit(&format!("rule `{}` changed", rule.name));
+        for reference in &rule.targets {
+            for id in inputs
+                .catalog
+                .resolve(reference, inputs.workspace)
+                .unwrap_or_default()
+            {
+                builder.add(id, reason.clone());
+            }
+        }
+        for krate in &rule.crates {
+            if inputs.workspace.package(krate).is_some() {
+                // A crate the workspace has always resolves.
+                builder.add_crate(krate, &reason).ok();
+            }
+        }
+    }
+    for (key, added) in &diff.downstream_added {
+        let reason = edit(&format!("downstream `{key}` gained it"));
+        for reference in added {
+            let ids = inputs
+                .catalog
+                .resolve_downstream(key, reference, inputs.workspace, inputs.sources)
+                .unwrap_or_default();
+            for id in ids {
+                builder.add(id, reason.clone());
+            }
+        }
+    }
+    for name in &diff.commands {
+        if inputs.catalog.commands.iter().any(|c| &c.name == name) {
+            let reasons = builder.commands.entry(name.clone()).or_default();
+            reasons.insert(edit("command changed"));
+        }
+    }
+    None
+}
+
+/// The selection of `tier` for the changed paths `changed`, known by path only: a change to a
+/// file judged by content selects the complete suite ([`Change::paths_only`]).
 ///
 /// [`Tier::Merge`] selects like [`Tier::Package`]: the `merge` tier decides separately whether
 /// to run that selection at all (`merge.rs`).
@@ -287,6 +453,44 @@ pub fn select(
     inputs: Inputs<'_>,
     changed: &BTreeSet<String>,
 ) -> Result<Selection, GateError> {
+    select_change(tier, inputs, &Change::paths_only(changed.clone()))
+}
+
+/// Adds the downstream contracts of the changed crate `krate`.
+fn add_downstream(
+    builder: &mut Builder<'_>,
+    inputs: Inputs<'_>,
+    krate: &str,
+) -> Result<(), GateError> {
+    for reference in inputs.catalog.downstream.get(krate).into_iter().flatten() {
+        let reason = if *reference == TargetRef::Callers {
+            Reason::Callers(krate.to_string())
+        } else {
+            Reason::Downstream(krate.to_string())
+        };
+        let ids = inputs.catalog.resolve_downstream(
+            krate,
+            reference,
+            inputs.workspace,
+            inputs.sources,
+        )?;
+        for id in ids {
+            builder.add(id, reason.clone());
+        }
+    }
+    Ok(())
+}
+
+/// The selection of `tier` for `change`, judging the catalog by its content where both of its
+/// versions are known.
+///
+/// # Errors
+/// As [`select`].
+pub fn select_change(
+    tier: Tier,
+    inputs: Inputs<'_>,
+    change: &Change,
+) -> Result<Selection, GateError> {
     let mut builder = Builder {
         catalog: inputs.catalog,
         workspace: inputs.workspace,
@@ -297,12 +501,12 @@ pub fn select(
         builder.add_ref(reference, &Reason::Always)?;
     }
     let mut complete = (tier == Tier::Full).then_some(CompleteCause::Tier);
-    let mut docs_only = !changed.is_empty();
+    let mut docs_only = !change.paths.is_empty();
     let mut changed_crates = BTreeSet::new();
     let mut paths = Vec::new();
-    for path in changed {
+    for path in &change.paths {
         let (entry, cause, is_docs) =
-            judge_path(&mut builder, inputs.sources, path, &mut changed_crates)?;
+            judge_path(&mut builder, inputs, change, path, &mut changed_crates)?;
         paths.push(entry);
         docs_only &= is_docs;
         if complete.is_none() {
@@ -310,24 +514,8 @@ pub fn select(
         }
     }
     for krate in &changed_crates {
-        let reason = Reason::Crate(krate.clone());
-        builder.add_crate(krate, &reason)?;
-        for reference in inputs.catalog.downstream.get(krate).into_iter().flatten() {
-            let reason = if *reference == TargetRef::Callers {
-                Reason::Callers(krate.clone())
-            } else {
-                Reason::Downstream(krate.clone())
-            };
-            let ids = inputs.catalog.resolve_downstream(
-                krate,
-                reference,
-                inputs.workspace,
-                inputs.sources,
-            )?;
-            for id in ids {
-                builder.add(id, reason.clone());
-            }
-        }
+        builder.add_crate(krate, &Reason::Crate(krate.clone()))?;
+        add_downstream(&mut builder, inputs, krate)?;
     }
     if complete.is_some() {
         docs_only = false;

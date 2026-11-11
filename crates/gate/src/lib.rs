@@ -23,6 +23,7 @@
 //!   same inputs print the same text.
 
 mod catalog;
+mod catalog_diff;
 mod changes;
 mod cli;
 mod crash;
@@ -45,6 +46,7 @@ mod workspace;
 pub use catalog::{
     CommandStep, PathRule, SuiteCatalog, TargetEntry, TargetRef, TestClass, CALLERS, CATALOG_PATH,
 };
+pub use catalog_diff::{CatalogDiff, RuleChange};
 pub use changes::{capture, ChangeSpec, Git};
 pub use cli::{parse_args, Command, RunOptions, USAGE};
 pub use crash::{
@@ -58,7 +60,8 @@ pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 pub use runner::{check_target_dir, run_tier, stamp_dir, Context, RunReport, StepResult};
 pub use schedule::{Job, Lane, Scheduler};
 pub use select::{
-    select, ClippyScope, CompleteCause, Inputs, PathMatch, Reason, Selected, Selection,
+    is_judged_by_content, select, select_change, Change, ClippyScope, CompleteCause, FileVersions,
+    Inputs, PathMatch, Reason, Selected, Selection,
 };
 pub use sources::{
     blank, invokes_valgrind, mentioned_path_roots, mentions_path_root, uses_gpu_harness, Blanking,
@@ -66,7 +69,7 @@ pub use sources::{
 };
 pub use stamp::{accepted_tiers, Reuse, Stamp, StampTarget, StampTree};
 pub use suspects::{
-    changes_since, last_green_full, render_suspects, suspect_report, suspects_for, Change,
+    changes_since, last_green_full, render_suspects, suspect_report, suspects_for, MainCommit,
     HISTORY_LIMIT,
 };
 pub use test_log::{

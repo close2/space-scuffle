@@ -16,7 +16,7 @@
 
 use gate::{
     class_report, failing_targets, lock_path, parse_args, parse_test_log, render_log_timings,
-    render_selection, repeated_flakes, run_tier, select, stamp_dir, suspect_report, Command,
+    render_selection, repeated_flakes, run_tier, select_change, stamp_dir, suspect_report, Command,
     Context, GateError, GateLock, Holder, Stamp, TargetId, FLAKE_LIMIT, HELD_VAR,
 };
 use std::collections::BTreeSet;
@@ -32,8 +32,8 @@ fn explain(
     main_ref: &str,
 ) -> Result<(), GateError> {
     let context = Context::load(cwd)?;
-    let (changed, what) = context.changes(spec, main_ref)?;
-    let selection = select(tier, context.inputs(), &changed)?;
+    let (change, what) = context.changes(spec, main_ref)?;
+    let selection = select_change(tier, context.inputs(), &change)?;
     print!("{}", render_selection(&selection, &what));
     Ok(())
 }

@@ -20,6 +20,7 @@
 //!   change to every crate (uncertain means more).
 
 use crate::catalog::SuiteCatalog;
+use crate::select::is_judged_by_content;
 use crate::stamp::Stamp;
 use crate::workspace::Workspace;
 use crate::GateError;
@@ -62,7 +63,7 @@ pub fn changed_crates(
     let every: BTreeSet<String> = workspace.packages.keys().cloned().collect();
     let mut out = BTreeSet::new();
     for path in paths {
-        if catalog.global.iter().any(|glob| glob.matches(path)) {
+        if catalog.global.iter().any(|glob| glob.matches(path)) || is_judged_by_content(path) {
             return every;
         }
         if catalog.docs.iter().any(|glob| glob.matches(path)) {

@@ -35,7 +35,9 @@ use crate::execute::{build_targets, mark_flakes, run_logged, run_targets, Outcom
 use crate::explain::render_selection;
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 use crate::schedule::{Job, Scheduler};
-use crate::select::{select, ClippyScope, Inputs, Reason, Selected, Selection};
+use crate::select::{
+    is_judged_by_content, select_change, Change, ClippyScope, Inputs, Reason, Selected, Selection,
+};
 use crate::sources::SourceIndex;
 use crate::stamp::{Reuse, Stamp, StampTarget, StampTree};
 use crate::suspects::suspect_report;
@@ -90,7 +92,8 @@ impl Context {
     }
 
     /// The change a spec names (default: everything since the merge base with `main`), with a
-    /// description for the report.
+    /// description for the report. The files the selection judges by content come with both of
+    /// their versions.
     ///
     /// # Errors
     /// Git errors.
@@ -98,7 +101,7 @@ impl Context {
         &self,
         spec: Option<&str>,
         main_ref: &str,
-    ) -> Result<(BTreeSet<String>, String), GateError> {
+    ) -> Result<(Change, String), GateError> {
         let spec = match spec {
             Some(text) => ChangeSpec::parse(text),
             None => ChangeSpec::Since(self.git.merge_base("HEAD", main_ref)?),
@@ -107,7 +110,20 @@ impl Context {
             ChangeSpec::Since(base) => format!("changes since {}", short(base)),
             ChangeSpec::Between(from, to) => format!("changes {from}..{to}"),
         };
-        Ok((self.git.changed_paths(&spec)?, what))
+        Ok((self.change(&spec)?, what))
+    }
+
+    /// The change `spec` names, with both versions of every changed file judged by content.
+    ///
+    /// # Errors
+    /// Git errors.
+    pub fn change(&self, spec: &ChangeSpec) -> Result<Change, GateError> {
+        let paths = self.git.changed_paths(spec)?;
+        let mut contents = BTreeMap::new();
+        for path in paths.iter().filter(|path| is_judged_by_content(path)) {
+            contents.insert(path.clone(), self.git.versions(spec, path)?);
+        }
+        Ok(Change { paths, contents })
     }
 }
 
@@ -354,12 +370,12 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
     }
     match command {
         Command::Run { tier, options } => {
-            let (changed, what) = if *tier == Tier::Full {
-                (BTreeSet::new(), "complete suite".to_string())
+            let (change, what) = if *tier == Tier::Full {
+                (Change::default(), "complete suite".to_string())
             } else {
                 context.changes(options.base.as_deref(), &options.main_ref)?
             };
-            let selection = select(*tier, context.inputs(), &changed)?;
+            let selection = select_change(*tier, context.inputs(), &change)?;
             println!("{}", render_selection(&selection, &what));
             let mut report = execute(&context, &selection, options, &[])?;
             if *tier == Tier::Full && report.red_only_by_flakes() {
@@ -552,8 +568,8 @@ fn merge_selection(
     };
     let Some(stamp) = valid else {
         println!("merge: {branch} has no valid package stamp; running the package tier on the merge result");
-        let changed = git.changed_paths(&ChangeSpec::Between(parent.clone(), "HEAD".into()))?;
-        let mut selection = select(Tier::Package, context.inputs(), &changed)?;
+        let change = context.change(&ChangeSpec::Between(parent.clone(), "HEAD".into()))?;
+        let mut selection = select_change(Tier::Package, context.inputs(), &change)?;
         selection.tier = Tier::Merge;
         println!(
             "{}",
