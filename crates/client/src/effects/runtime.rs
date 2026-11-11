@@ -646,6 +646,11 @@ impl EffectRuntime {
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
         let standing = matches!(look.orient, Orient::VerticalAlongLine | Orient::Upright);
+        // A standing card clipped to its line stands whole inside it (review round 5).
+        let (position, extent) = match line {
+            Some(line) if standing && look.clip_to_line => fit_inside_line(line, position, extent),
+            _ => (position, extent),
+        };
         let lift = match look.lift_curve {
             Some(curve) => catalog.sample(Some(curve), life, 0.0),
             None => look.lift.unwrap_or(if standing { 1.0 } else { 0.0 }),
@@ -765,6 +770,8 @@ impl EffectRuntime {
             gloss: look.liquid.map_or(1.0, |liquid| liquid.gloss),
             value_noise: look.liquid.map_or(0.0, |liquid| liquid.value_noise),
             dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
+            outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
+            outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
         Written::Yes
@@ -912,6 +919,34 @@ pub fn line_clip_window(line: WorldLine) -> LineClip {
     let axis = along / length;
     let start = axis.dot(Vec2::new(line.from.x, line.from.z));
     [axis.x, axis.y, start, start + length]
+}
+
+/// A standing card of half width `extent` (world units) at `position` on `line`, made smaller
+/// and moved inward when the line's nearer end would cut it, so that it stands whole between
+/// the line's ends (review round 5: the first clump, cut at the line's start, read as a lone
+/// spike). Such a card keeps its far edge and spans from the end to that edge, so it stays
+/// over its own point; it is never wider than the line. Returns the card's position and half
+/// width; unchanged when the card already fits or the line has no horizontal length.
+#[must_use]
+pub fn fit_inside_line(line: WorldLine, position: Vec3, extent: f32) -> (Vec3, f32) {
+    let window = line_clip_window(line);
+    if window == NO_CLIP {
+        return (position, extent);
+    }
+    let [x, z, start, end] = window;
+    let along = x * position.x + z * position.z;
+    let (behind, ahead) = ((along - start).max(0.0), (end - along).max(0.0));
+    if behind >= extent && ahead >= extent {
+        return (position, extent);
+    }
+    let room = behind.min(ahead);
+    let fitted = (0.5 * (extent + room)).min(0.5 * (end - start));
+    let centre = if behind <= ahead {
+        start + fitted
+    } else {
+        end - fitted
+    };
+    (position + Vec3::new(x, 0.0, z) * (centre - along), fitted)
 }
 
 /// The clip window of an instance at `position` of a layer that `clips` to the event's
@@ -1202,6 +1237,41 @@ mod tests {
             line_clip_window(vertical),
             NO_CLIP,
             "no horizontal length, no clip"
+        );
+    }
+
+    #[test]
+    fn a_standing_card_at_a_line_end_is_fitted_whole_inside_the_line() {
+        let line = WorldLine::whole(Vec3::new(2.0, 0.0, 1.0), Vec3::new(2.0, 0.0, 9.0));
+        let middle = Vec3::new(2.0, 0.0, 5.0);
+        assert_eq!(
+            fit_inside_line(line, middle, 0.9),
+            (middle, 0.9),
+            "a card that fits is unchanged"
+        );
+        // At the first point: half as wide, spanning from the start to its old far edge.
+        let (position, extent) = fit_inside_line(line, Vec3::new(2.0, 0.0, 1.0), 0.9);
+        assert!((extent - 0.45).abs() < 1e-6, "{extent}");
+        assert!(
+            position.distance(Vec3::new(2.0, 0.0, 1.45)) < 1e-5,
+            "{position}"
+        );
+        // Near the last point, 0.3 short of it: it keeps its far edge 0.9 behind its point.
+        let (position, extent) = fit_inside_line(line, Vec3::new(2.0, 0.0, 8.7), 0.9);
+        assert!((extent - 0.6).abs() < 1e-6, "{extent}");
+        assert!(
+            (position.z - 8.4).abs() < 1e-5 && (position.z - extent - 7.8).abs() < 1e-5,
+            "{position}"
+        );
+        // Never wider than a short line.
+        let short = WorldLine::whole(Vec3::ZERO, Vec3::new(0.6, 0.0, 0.0));
+        let (position, extent) = fit_inside_line(short, Vec3::ZERO, 0.9);
+        assert!((extent - 0.3).abs() < 1e-6 && (position.x - 0.3).abs() < 1e-6);
+        // A line without horizontal length leaves the card alone.
+        let vertical = WorldLine::whole(Vec3::ZERO, Vec3::Y);
+        assert_eq!(
+            fit_inside_line(vertical, Vec3::ZERO, 0.9),
+            (Vec3::ZERO, 0.9)
         );
     }
 

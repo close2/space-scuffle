@@ -14,7 +14,7 @@
 use super::error::{EffectCatalogError, NameKind, Site};
 use super::schema::{
     BlockDef, BreakupDef, EffectClass, EffectDefRaw, EffectsFile, EmitterDef, EventKind, LayerDef,
-    LiquidDef, PlacementDef, SpawnDef, ValueDef,
+    LiquidDef, OutlineDef, PlacementDef, SpawnDef, ValueDef,
 };
 use super::textures::TextureAtlas;
 use super::{
@@ -252,6 +252,34 @@ impl Resolver<'_> {
             softness: def.softness,
             shade: def.shade,
         }))
+    }
+
+    /// Checks a decal's disc outline against the ranges [`OutlineDef`] states.
+    fn outline(&self, at: &Site, outline: &OutlineDef) -> Result<(), EffectCatalogError> {
+        let checks: [(&'static str, f32, bool, &'static str); 2] = [
+            (
+                "outline.edge_noise",
+                outline.edge_noise,
+                (0.0..=0.25).contains(&outline.edge_noise),
+                "it must be in [0, 0.25]",
+            ),
+            (
+                "outline.fill",
+                outline.fill,
+                (0.25..=1.0).contains(&outline.fill),
+                "it must be in [0.25, 1]",
+            ),
+        ];
+        match checks.into_iter().find(|(_, _, ok, _)| !ok) {
+            None => Ok(()),
+            Some((field, value, _, rule)) => Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field,
+                value,
+                rule,
+            }),
+        }
     }
 
     /// Checks a decal's liquid material against the ranges [`LiquidDef`] states.
@@ -763,11 +791,15 @@ impl Resolver<'_> {
                 clip_feather,
                 breakup,
                 liquid,
+                outline,
             } => {
                 self.at_least(at, "depth", *depth, 0.01)?;
                 self.at_least(at, "clip_feather", *clip_feather, 0.005)?;
                 if let Some(liquid) = liquid {
                     self.liquid(at, liquid)?;
+                }
+                if let Some(outline) = outline {
+                    self.outline(at, outline)?;
                 }
                 self.decal_width(at, *width)?;
                 if !(0.0..1.0).contains(grazing) {
@@ -791,6 +823,7 @@ impl Resolver<'_> {
                     clip_feather: *clip_feather,
                     breakup: self.breakup(breakup.as_ref(), at)?,
                     liquid: *liquid,
+                    outline: *outline,
                 }))
             }
             BlockDef::Sprite { .. } | BlockDef::Light { .. } | BlockDef::Particles { .. } => {

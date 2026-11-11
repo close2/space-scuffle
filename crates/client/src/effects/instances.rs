@@ -108,7 +108,7 @@ pub struct SpriteInstance {
 /// One decal box.
 // PERFORMANCE RATIONALE:
 // Why: As for cards: decals are drawn by one instanced draw from a retained storage buffer.
-// What: A `Pod` record of seven 16-byte rows matching the WGSL struct.
+// What: A `Pod` record of nine 16-byte rows matching the WGSL struct.
 // Trade-off: Fields are packed for alignment rather than grouped by meaning, and the noise
 // offset is two scalars in WGSL (a `vec2` there would need 8-byte alignment).
 #[repr(C)]
@@ -167,6 +167,14 @@ pub struct DecalInstance {
     /// Ramp factor at and below which the liquid is dry (no sheen, no relief light); the
     /// sheen grows linearly from there to a ramp factor of 1.
     pub dry_below: f32,
+    /// Depth of a disc outline's edge noise as a fraction of the half length; 0 with
+    /// `outline_fill` 0 for none (the texture's own outline).
+    pub outline_noise: f32,
+    /// Share of the texture's half width read across a disc outline's radius; 0 for no disc
+    /// outline.
+    pub outline_fill: f32,
+    /// Padding to a whole 16-byte row; always zero.
+    pub padding: [f32; 2],
 }
 
 /// A point light requested this frame.
@@ -189,7 +197,8 @@ mod tests {
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
         assert_eq!(size_of::<SpriteInstance>(), 128);
-        assert_eq!(size_of::<DecalInstance>(), 128);
+        assert_eq!(size_of::<DecalInstance>(), 144);
+        assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_feather), 104);
         assert_eq!(std::mem::offset_of!(DecalInstance, dry_below), 124);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_axis), 96);

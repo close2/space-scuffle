@@ -13,6 +13,11 @@
 //   clip-art): two generated stills, top-down, an irregular puddle with a thin middle and a
 //   thick wet rim; variants. One stain covers the whole reach; flecks reuse it small.
 // - droplet: one generated still, a teardrop moving towards +x (tail to the left).
+// - acid_glob (review round 5): three generated stills, side-on, of thick liquid flying
+//   towards +x: a round glob with a blunt trailing bulge, a glob tearing in two along a thin
+//   neck, and a stretched glob with a ragged tail; dark body, one small highlight; silhouette
+//   key (`Solid`) so the dark bodies stay opaque (a luminance key left only their rims); variants
+//   for the burst's globs (the round-4 review read one droplet sprite as identical stickers).
 // - acid_bubbles: not shipped (both clips rejected, the WP's clip cap reached; see the review).
 (
     set: "fx_acid",
@@ -42,6 +47,15 @@
             name: "droplet",
             look: Lit,
             source: Still(file: "fx_acid.droplet.20261110T004336Z-2243079-1.on_black.png"),
+        ),
+        (
+            name: "acid_glob",
+            look: Solid,
+            source: Variants(pictures: [
+                Still(file: "fx_acid.acid_glob.20261111T015700Z-3779566-1.on_black.png"),
+                Still(file: "fx_acid.acid_glob.20261111T015727Z-3781340-1.on_black.png"),
+                Still(file: "fx_acid.acid_glob.20261111T015751Z-3783637-1.on_black.png"),
+            ]),
         ),
     ],
 )

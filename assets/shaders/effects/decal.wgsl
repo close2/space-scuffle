@@ -2,7 +2,9 @@
 // (client::effects::render). Each box is drawn by its back faces with no depth test; the
 // fragment reconstructs the scene's world position, keeps it only inside the box, samples the
 // texture in the box's local XZ at the mip its screen footprint needs, breaks its erosion up
-// with noise of its own phase and fades on faces steeper than the decal's grazing cosine.
+// with noise of its own phase and fades on faces steeper than the decal's grazing cosine. A
+// decal with a disc outline is bounded by a disc of its half length with a shallow noise edge
+// and reads its texture's middle inside it (review round 5).
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     DecalInstance, ramp_lookup, erosion_step, breakup_order, self_shade, noise_sample, clip_fade,
@@ -51,6 +53,16 @@ const LIQUID_RIM_ORDER: f32 = 0.10;
 const LIQUID_RIM_MIPS: f32 = 3.5;
 const LIQUID_RIM_COVERAGE: vec2<f32> = vec2<f32>(0.70, 0.995);
 const LIQUID_RIM_DARK: vec3<f32> = vec3<f32>(0.24, 0.44, 0.24);
+// The wet rim inside a disc outline (review round 5): this wide, as a fraction of the half
+// length, darkest at the edge.
+const LIQUID_OUTLINE_RIM: f32 = 0.09;
+// Contrast of the disc outline's edge noise around its middle, so the edge uses the whole
+// depth `outline_noise` allows instead of the noise's narrow middle range.
+const OUTLINE_NOISE_CONTRAST: f32 = 2.0;
+// Frequency of the disc outline's edge noise against the breakup noise's scale: many small
+// irregularities within the shallow depth, so the edge reads as liquid and not as a smooth
+// ellipse with a few soft bulges.
+const OUTLINE_NOISE_FREQUENCY: f32 = 3.0;
 
 @group(0) @binding(0) var<uniform> view: View;
 #ifdef MULTISAMPLED
@@ -120,7 +132,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let world = world_h.xyz / world_h.w;
     let normal = normalize(cross(dpdy(world), dpdx(world)));
     let local = rotate_yaw(world - decal.center, -decal.yaw) / decal.half_extents;
-    let uv = local.xz * 0.5 + 0.5;
+    // A disc outline (DecalInstance::outline_fill > 0) reads the texture's middle, so the
+    // texture's own outline lies outside the disc that bounds the mark.
+    let disc = decal.outline_fill > 0.0;
+    let uv = local.xz * (0.5 * select(1.0, decal.outline_fill, disc)) + 0.5;
+    let radius = length(local.xz);
+    let radius_step = max(fwidth(radius), 1e-4);
     // Derivatives in uniform control flow, before anything is discarded: the mip that matches
     // the decal's footprint on screen keeps its eroded edges from stair-stepping.
     let level = derivative_mip_level(f32(textureDimensions(atlas).x), dpdx(uv), dpdy(uv));
@@ -153,8 +170,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let grazing = clamp((abs(normal.y) - decal.grazing) / max(1.0 - decal.grazing, 1e-3), 0.0, 1.0);
     let height_fade = 1.0 - smoothstep(0.7, 1.0, abs(local.y));
     let survive = erosion_step(order, decal.erosion, decal.softness, noisy);
+    // The disc outline's edge (unbounded without one) and its anti-aliased mask.
+    var edge = 2.0;
+    if (disc) {
+        edge = outline_edge(decal, local.xz, radius, level, noise_offset);
+    }
+    let outline = 1.0 - smoothstep(edge - radius_step, edge, radius);
     // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
-    let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0);
+    let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0) * outline;
     if (!inside || coverage <= 0.0) {
         discard;
     }
@@ -190,17 +213,37 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let specular = pow(max(dot(mirrored, key), 0.0), decal.gloss) * decal.sheen * wet;
     let base = premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
     // The wet rim: the band of erosion order just inside the erosion step, and a band inside the
-    // texture's own outline, darkened and saturated.
+    // texture's own outline or the disc outline, darkened and saturated.
     let step_top = decal.erosion + max(decal.softness, 1e-3);
     let blurred = flipbook_sample(
         atlas, atlas_sampler, uv, decal.layer_a, decal.layer_b, decal.frame_mix, level + LIQUID_RIM_MIPS,
     ).g;
     let rim = max(
-        1.0 - smoothstep(step_top, step_top + LIQUID_RIM_ORDER, order),
-        1.0 - smoothstep(LIQUID_RIM_COVERAGE.x, LIQUID_RIM_COVERAGE.y, blurred),
+        max(
+            1.0 - smoothstep(step_top, step_top + LIQUID_RIM_ORDER, order),
+            1.0 - smoothstep(LIQUID_RIM_COVERAGE.x, LIQUID_RIM_COVERAGE.y, blurred),
+        ),
+        smoothstep(edge - LIQUID_OUTLINE_RIM, edge, radius),
     );
     let rimmed = base.rgb * mix(vec3<f32>(1.0), LIQUID_RIM_DARK, rim);
     return vec4<f32>(rimmed * diffuse + LIQUID_SHEEN_COLOR * specular * coverage * (1.0 - rim), base.a);
+}
+
+// The radius of a disc outline's edge, in half lengths, at the box's local XZ point `local`
+// (`radius` its length): 1 less the edge noise, so the edge wavers between
+// 1 - 2 * outline_noise and 1. The noise is the breakup noise read on the circle of the
+// direction to `local`, so the edge's waver follows the direction only and the edge is one
+// closed line (review round 5: a Critical stain's visible edge on its reach).
+fn outline_edge(decal: DecalInstance, local: vec2<f32>, radius: f32, level: f32, noise_offset: vec2<f32>) -> f32 {
+    if (decal.noise_amount <= 0.0) {
+        return 1.0 - decal.outline_noise;
+    }
+    let direction = local / max(radius, 1e-5);
+    let scale = decal.noise_scale * OUTLINE_NOISE_FREQUENCY;
+    let noise_uv = (direction * 0.5 + 0.5) * scale + noise_offset;
+    let noise = noise_sample(atlas, atlas_sampler, noise_uv, decal.noise_layer, level + log2(max(scale, 1.0)));
+    let waver = clamp(0.5 + OUTLINE_NOISE_CONTRAST * (noise - 0.5), 0.0, 1.0);
+    return 1.0 - 2.0 * decal.outline_noise * waver;
 }
 
 // The liquid surface at `uv`: xy the thickness field's slope per world unit along the box's

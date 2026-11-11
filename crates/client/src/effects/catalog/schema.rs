@@ -419,6 +419,10 @@ pub enum BlockDef {
         /// Draws the mark as a wet liquid (a stain): see [`LiquidDef`].
         #[serde(default)]
         liquid: Option<LiquidDef>,
+        /// Draws the mark inside a disc of the box's half length with a shallow noise edge,
+        /// instead of the texture's own outline: see [`OutlineDef`].
+        #[serde(default)]
+        outline: Option<OutlineDef>,
     },
     /// A short point light.
     Light {
@@ -473,6 +477,26 @@ pub struct LiquidDef {
     pub value_noise: f32,
     /// Ramp factor at which the liquid counts as dry, in [0, 1).
     pub dry_below: f32,
+}
+
+/// A decal whose visible edge is a disc instead of its texture's outline (review round 5): a
+/// `Critical` mark of an area (the acid stain) must end on the bound radius it marks, which a
+/// texture's ragged outline and deep erosion bites cannot promise.
+///
+/// The disc's radius is the box's half length (an ellipse for `width` other than 1), less a
+/// shallow noise: the edge wavers between `1 - 2 * edge_noise` and 1 of the half length, read
+/// from the layer's breakup noise along the edge, so a mark sized `1 / (1 - edge_noise)` of a
+/// radius has its mean edge on that radius. Inside the disc the texture is drawn from its
+/// middle (`fill` of its half width across the disc's radius), so its own outline lies outside
+/// the disc; its erosion order still erodes the mark from its edge and from holes as the
+/// layer's erosion curve rises.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineDef {
+    /// Depth of the edge's noise as a fraction of the half length, in [0, 0.25].
+    pub edge_noise: f32,
+    /// Share of the texture's half width read across the disc's radius, in [0.25, 1].
+    pub fill: f32,
 }
 
 /// Whether a layer may be dropped by the budget.

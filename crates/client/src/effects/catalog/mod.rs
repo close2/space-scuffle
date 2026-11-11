@@ -165,6 +165,8 @@ pub struct DecalLook {
     pub breakup: Option<Breakup>,
     /// The wet-liquid material, if the mark is a liquid.
     pub liquid: Option<schema::LiquidDef>,
+    /// The disc outline, if the mark's visible edge is a disc and not its texture's outline.
+    pub outline: Option<schema::OutlineDef>,
 }
 
 /// A layer's block, resolved.

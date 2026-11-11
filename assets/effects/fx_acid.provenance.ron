@@ -1,13 +1,13 @@
 (
     format_version: 1,
     set: "fx_acid",
-    manifest_sha256: "ad9b63b0a59e9512431ca583ccd54075231daa12439c5859e11446709d40ad53",
+    manifest_sha256: "77e9cf5c060b676438458427d802bcc8d1ab84f76ce92a45592df5c85383c409",
     mip_sha256: {
-        "fx_acid.mip1.png": "46b261a3aca6768f08d47408dfe8eadd2d2185676b7d08ee63f8ecbd92a48d6a",
-        "fx_acid.mip2.png": "bde326be2b1657fa648a349146b06619068e8a2335df4c6dc5a861f602861166",
-        "fx_acid.mip3.png": "3cc7016d17c15bdee7e2c1f36ec5983f1e38a9ec9ede49c7d82f3822637dcbcf",
-        "fx_acid.mip4.png": "5e7bc0b3709942db7debf962586d944565af307da6bad036a32a7e6880b42cbf",
-        "fx_acid.png": "4ed93ac119b3f2dc1508ab171a48c51f825597e51f1acda7983f9705416834dd",
+        "fx_acid.mip1.png": "44154bc55d1583d679affb71079c726e696e439dfcc75fc8fcbc518091cc962f",
+        "fx_acid.mip2.png": "cc7fbe1496c57109a7a867c17c26a8ad7b0460cf910163b03c13dee2ebc1d8c8",
+        "fx_acid.mip3.png": "972759fe0a479091faeb3d300f47b3df9491af2d572b9e39e9ea343c038a919d",
+        "fx_acid.mip4.png": "dab42c2180acd3fe7df3e996fc4a863834c8580e51aaa9965a08b884613e32ca",
+        "fx_acid.png": "1bc50ce4818fb84a10e289adbd2537bbb4d990353cdd6cb74f0bedc78bf2ad7e",
     },
     erosion: Some((
         noise: (
@@ -82,6 +82,53 @@
                     feather_permille: 0,
                 )),
             )),
+        ),
+        "acid_glob": (
+            origin: GeneratedImage(
+                sources: [
+                    (
+                        role: OnBlack,
+                        file: "fx_acid.acid_glob.20261111T015700Z-3779566-1.on_black.png",
+                        sha256: "4dac811f4ae06d0a80244a136a2c7285450b9f84e50ed8966fc18b089bed0993",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "9983d640885155c16062ce96bd50ef12d333dcdb6a79a9e59c3dec1b4395a966",
+                        request_id: "20261111T015700Z-3779566/1",
+                        ledger_line: 1338,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_acid.acid_glob.20261111T015727Z-3781340-1.on_black.png",
+                        sha256: "f9f3dc35f4aceb4be1ceda122b5a0d0f55da7f52dd1b5dc1650d253ba35d55a4",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "1c0e078d68b3d023a274ba44f6d343405c74e48196a383ddcaeb8def6681904b",
+                        request_id: "20261111T015727Z-3781340/1",
+                        ledger_line: 1340,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_acid.acid_glob.20261111T015751Z-3783637-1.on_black.png",
+                        sha256: "eec745b35b0118ddf4b6a967141e5079547913230d2058f781ce2866fa8f2039",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "862f941e0c6bd4b87b31a864f56fb2b1dd8eee190672d57af81023528f1a426f",
+                        request_id: "20261111T015751Z-3783637/1",
+                        ledger_line: 1342,
+                    ),
+                ],
+            ),
+            keying: (
+                method: SilhouetteKey,
+                levels: Some((
+                    black: 3,
+                    white: 212,
+                )),
+                black_check: Some((
+                    band_px: 32,
+                    lit_border_permille: (1, 5, 1, 1),
+                    darkest_level: 0,
+                )),
+                matte: None,
+            ),
+            span: None,
         ),
         "acid_stain": (
             origin: GeneratedImage(

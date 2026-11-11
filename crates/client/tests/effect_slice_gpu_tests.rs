@@ -11,8 +11,10 @@
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
 //!   within ±2 px on most rays and never beyond it, and once every non-decal layer has ended
-//!   its lasting `Critical` marks (the acid stain, dried darker) still end within 2 px of the
-//!   reach; a line's marks start and end at the line's projected ends within ±2 px;
+//!   the visible edge of its lasting `Critical` marks (the acid stain, held at full size)
+//!   lies on the reach, within ±2 px on most rays and never more than 2 px beyond it (review
+//!   round 5; round 4 checked only that it stayed inside); a line's marks start and end at
+//!   the line's projected ends within ±2 px;
 //! - **coverage**: within 80 ms of the event (of each search point, for a line), at least 60 %
 //!   of the projected full-damage disc is changed by the effect;
 //! - **no pop**: at the 40 ms step, the mean luminance of the effect's region changes by at
@@ -472,10 +474,29 @@ fn check_front(
         .copied()
         .filter(|error| error.is_finite())
         .fold(f32::MIN, f32::max);
-    let late_beyond = reach_errors(view, ground, late, bg)
-        .into_iter()
+    let late_errors = reach_errors(view, ground, late, bg);
+    let late_beyond = late_errors
+        .iter()
+        .copied()
         .filter(|error| error.is_finite())
         .reduce(f32::max);
+    // Review round 5: a lasting mark's visible edge lies on the reach, not only inside it.
+    let late_within = late_errors
+        .iter()
+        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .count() as f32
+        / rays as f32;
+    let late_finite: Vec<f32> = late_errors
+        .iter()
+        .copied()
+        .filter(|error| error.is_finite())
+        .collect();
+    let late_mean = late_finite.iter().sum::<f32>() / late_finite.len().max(1) as f32;
+    assert!(
+        late_finite.is_empty() || late_within >= FRONT_RAYS_WITHIN,
+        "only {:.0} % of rays of the lasting critical marks end within {TOLERANCE_PX} px of the reach (errors {late_errors:?})",
+        late_within * 100.0
+    );
     let share = within as f32 / rays as f32;
     let finite: Vec<f32> = errors
         .iter()
@@ -497,11 +518,14 @@ fn check_front(
         share * 100.0
     );
     format!(
-        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' largest overshoot {}",
+        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
         share * 100.0,
         late_beyond.map_or_else(
             || "none (no lasting critical mark)".to_owned(),
-            |beyond| format!("{beyond:+.2} px")
+            |beyond| format!(
+                "{:.0} % of rays within ±{TOLERANCE_PX} px, mean error {late_mean:+.2} px, largest overshoot {beyond:+.2} px",
+                late_within * 100.0
+            )
         )
     )
 }

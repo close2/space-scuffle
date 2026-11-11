@@ -1045,3 +1045,30 @@ applies its ranked changes in the client, the catalog's presentation data, the e
 Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 4"),
 [`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 4"), the packet's "Round 4"
 section. The independent round-4 review is next.
+
+**Round 5 (2026-11-11, short note, charter §6; the last of Q0080's five rounds).** The independent round-4
+review ([`independent_review_round4.md`](../evidence/effects/review/independent_review_round4.md)) accepted
+`shell_impact` and `spine_line` and rejected `acid_burst` narrowly: its stain's visible edge lay at 0.87 of the
+reach (the texture's ragged outline and deep noise bites inside a box of 0.98), and a pale, see-through band lay
+between the stain and the front's lip. Round 5 changes the client, the catalog's presentation data, the decal
+shader and one texture element (no simulation state, golden replay or checksum change; D-1 holds). Decisions
+(Q0002, reversible):
+
+- `acid_burst`: a decal may have a **disc outline** (`outline: (edge_noise, fill)`): its visible edge is a disc
+  of the box's half length whose shallow noise edge wavers by `edge_noise` (±2 % of the radius for the stain),
+  and the texture is read from its middle inside it, so its own outline lies outside. The stain is sized so its
+  mean edge lies on the reach and holds it without erosion until about 1.8 s; the drying erosion's deep bites
+  come after. The footprint test now measures the held stain's visible edge against the reach (±2 px on most
+  rays), not only that it stays inside. The front's lip is thickened (intensity above 1) and its inner side is
+  the stain's wet emerald. Globs get their own element of three variants (three image-model stills, $0.33),
+  the fumes are thinner and yellow-green, the crown is larger.
+- `spine_line` (accepted; polish only): a standing card clipped to its line is made smaller and moved inward
+  at the line's ends instead of being cut (the first clump no longer reads as a lone spike); the clumps fade
+  over their last 15 % as they sink; the scar's ramp darkens any ground (colours below its opacity times the
+  teal ground's darkest channel).
+- `shell_impact` (accepted; optional): the blast mark comes in once the shock ring has passed the reach
+  (0.12 s), ending as before.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 5"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 5"), the packet's "Round 5"
+section. The independent round-5 review is next.

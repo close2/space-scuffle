@@ -442,7 +442,18 @@ fn liquid_feather_and_repeat_values_are_range_checked() {
         &vocabulary(&manifest, "", &splash_effect(&decal(", width: 4.0")), ""),
     )
     .expect("a decal four times as wide as long loads (review round 4)");
+    let outline =
+        |noise: f32, fill: f32| decal(&format!(", outline: (edge_noise: {noise}, fill: {fill})"));
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&outline(0.02, 0.76)), ""),
+    )
+    .expect("a decal with a disc outline loads (review round 5)");
     for (layer, field) in [
+        (outline(-0.01, 0.76), "outline.edge_noise"),
+        (outline(0.3, 0.76), "outline.edge_noise"),
+        (outline(0.02, 0.2), "outline.fill"),
+        (outline(0.02, 1.1), "outline.fill"),
         (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
         (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
         (liquid(0.05, 1.0, 0.5, 0.5, 0.5), "liquid.gloss"),

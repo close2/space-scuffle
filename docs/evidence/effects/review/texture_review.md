@@ -129,6 +129,23 @@ Spend of round 4: 3 `image_request_started` (two more attempts were refused loca
 `global`); no Veo clip. Ledger after round 4: **$106.12** of $200 (image model in all: 52 paid, $5.72, within
 Q0078's target of about $25 and its cap below $50).
 
+## Review round 5: new element
+
+The independent review of round 4 ([`independent_review_round4.md`](independent_review_round4.md)) read the
+burst's globs as one teardrop sprite drawn as identical pale-lime commas, "like tadpoles", and asked for three or
+more glob shapes with a darker body and a single small highlight. `fx_acid` is rebaked
+([`../recipes/fx_acid.bake.ron`](../recipes/fx_acid.bake.ron)) with a new element; the 27 existing layers are
+byte-identical to round 4 (compared pixel by pixel). Sheet: [fx_acid_texture_sheet.png](fx_acid_texture_sheet.png),
+strips: [fx_acid_frames.png](fx_acid_frames.png).
+
+| Set / element | Layers | Source | Verdict | Reasons |
+|---|---|---|---|---|
+| `fx_acid/acid_glob` (new) | 3 variants | 3 image-model stills side-on, silhouette key (`Solid`: a luminance key left only the bright rims of the dark bodies) | Accept | Thick glossy liquid flying towards +x, as `droplet`: a round, slightly flattened glob with a blunt trailing bulge; a glob tearing in two, a larger blob in front joined by a thin stretched neck to a small one behind; a stretched glob, rounded in front and narrowing to a ragged tail. Dark grey bodies with one small highlight near the front, so the new `acid_glob` ramp maps them to a dark wet emerald with lime only on the highlight. |
+
+Spend of round 5: 3 `image_request_started`, **3 paid × $0.11 = $0.33** (`gemini-nano-banana-2.1`, `global`); no
+Veo clip. Ledger after round 5: **$106.45** of $200 (image model in all: 55 paid, $6.05, within Q0078's target of
+about $25 and its cap below $50).
+
 ## Not shipped
 
 - `fx_acid/acid_bubbles`: both clips rejected and the WP's cap of 10 Veo clips reached. The slice's acid
