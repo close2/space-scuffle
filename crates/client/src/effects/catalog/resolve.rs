@@ -255,7 +255,7 @@ impl Resolver<'_> {
     }
 
     /// Checks a decal's disc outline against the ranges [`OutlineDef`] states.
-    fn outline(&self, at: &Site, outline: &OutlineDef) -> Result<(), EffectCatalogError> {
+    fn outline(&self, at: &Site, outline: OutlineDef) -> Result<(), EffectCatalogError> {
         let checks: [(&'static str, f32, bool, &'static str); 2] = [
             (
                 "outline.edge_noise",
@@ -799,7 +799,7 @@ impl Resolver<'_> {
                     self.liquid(at, liquid)?;
                 }
                 if let Some(outline) = outline {
-                    self.outline(at, outline)?;
+                    self.outline(at, *outline)?;
                 }
                 self.decal_width(at, *width)?;
                 if !(0.0..1.0).contains(grazing) {

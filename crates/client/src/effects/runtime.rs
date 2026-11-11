@@ -940,7 +940,7 @@ pub fn fit_inside_line(line: WorldLine, position: Vec3, extent: f32) -> (Vec3, f
         return (position, extent);
     }
     let room = behind.min(ahead);
-    let fitted = (0.5 * (extent + room)).min(0.5 * (end - start));
+    let fitted = f32::midpoint(extent, room).min(0.5 * (end - start));
     let centre = if behind <= ahead {
         start + fitted
     } else {
