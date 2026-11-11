@@ -28,6 +28,10 @@
 //!   releases it if the process dies, so a crashed gate never leaves a stale lock.
 //! - The holder record names the process that holds the lock or is empty: it is written only
 //!   after the lock is taken and cleared before it is released.
+//! - A gate that takes the lock deletes any stop request beside it (`<lock>.stop`): a request
+//!   names the holder it was written for, which has ended. It warns, without killing anything,
+//!   when processes of the previous holder's process group are still alive (plan
+//!   2026-11-11-faster-gates §3.4).
 //! - A nested call skips the lock only when the marker names the very file it would lock, or
 //!   when `/proc/locks` names one of its ancestors as the holder (a gate started under
 //!   `flock ~/scratch/gate.lock`); it never skips a lock another process tree holds.
@@ -61,6 +65,9 @@ pub struct Holder {
     pub worktree: PathBuf,
     /// When it took the lock, in seconds since the Unix epoch.
     pub started_unix_s: u64,
+    /// Its process group, which its test executables share; `None` in records written before
+    /// the field existed or where `/proc` is missing.
+    pub pgid: Option<u32>,
 }
 
 impl Holder {
@@ -72,14 +79,19 @@ impl Holder {
             tier: tier.to_string(),
             worktree: worktree.to_path_buf(),
             started_unix_s: unix_now(),
+            pgid: crate::memory::own_process_group(),
         }
     }
 
-    /// The record as one tab-separated line: `pid=…\ttier=…\tworktree=…\tstarted=…`.
+    /// The record as one tab-separated line: `pid=…\ttier=…\tworktree=…\tstarted=…`, then
+    /// `\tpgid=…` when the process group is known.
     #[must_use]
     pub fn to_record(&self) -> String {
+        let pgid = self
+            .pgid
+            .map_or_else(String::new, |pgid| format!("\tpgid={pgid}"));
         format!(
-            "pid={}\ttier={}\tworktree={}\tstarted={}\n",
+            "pid={}\ttier={}\tworktree={}\tstarted={}{pgid}\n",
             self.pid,
             self.tier,
             self.worktree.display(),
@@ -95,6 +107,7 @@ impl Holder {
         let mut tier = None;
         let mut worktree = None;
         let mut started = None;
+        let mut pgid = None;
         for field in line.split('\t') {
             let (key, value) = field.split_once('=')?;
             match key {
@@ -102,6 +115,7 @@ impl Holder {
                 "tier" => tier = Some(value.to_string()),
                 "worktree" => worktree = Some(PathBuf::from(value)),
                 "started" => started = value.parse().ok(),
+                "pgid" => pgid = value.parse().ok(),
                 _ => return None,
             }
         }
@@ -110,6 +124,7 @@ impl Holder {
             tier: tier?,
             worktree: worktree?,
             started_unix_s: started?,
+            pgid,
         })
     }
 }
@@ -256,6 +271,18 @@ impl GateLock {
             }
             Err(TryLockError::Error(source)) => return Err(io(source)),
         }
+        let mut previous = String::new();
+        // An unreadable record only loses the warning about the previous holder's processes.
+        if file.seek(SeekFrom::Start(0)).is_err() || file.read_to_string(&mut previous).is_err() {
+            previous.clear();
+        }
+        warn_about_previous_group(Holder::parse(&previous).as_ref(), holder);
+        // A stop request beside the lock was written for an earlier holder: stale.
+        match std::fs::remove_file(crate::execute::stop_path(path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(io(source)),
+        }
         file.set_len(0).map_err(io)?;
         file.seek(SeekFrom::Start(0)).map_err(io)?;
         file.write_all(holder.to_record().as_bytes()).map_err(io)?;
@@ -276,6 +303,64 @@ impl GateLock {
     #[must_use]
     pub fn is_inherited(&self) -> bool {
         matches!(self.hold, Hold::Inherited)
+    }
+}
+
+/// Prints a warning when processes of `previous`'s process group are still alive: a gate killed
+/// by its PID alone leaves its test executables running (plan §3.4). Nothing is killed.
+fn warn_about_previous_group(previous: Option<&Holder>, current: &Holder) {
+    let Some((pid, pgid)) = previous.and_then(|p| p.pgid.map(|pgid| (p.pid, pgid))) else {
+        return;
+    };
+    if Some(pgid) == current.pgid {
+        return;
+    }
+    let table = crate::memory::read_process_table();
+    let alive = crate::memory::group_members(&table, pgid);
+    if let Some(message) = stale_group_warning(pid, pgid, &alive) {
+        eprintln!("{message}");
+    }
+}
+
+/// The warning about the live processes `alive` of the previous holder `pid`'s group `pgid`,
+/// or `None` when none is alive.
+#[must_use]
+pub fn stale_group_warning(pid: u32, pgid: u32, alive: &[u32]) -> Option<String> {
+    if alive.is_empty() {
+        return None;
+    }
+    let pids: Vec<String> = alive.iter().map(ToString::to_string).collect();
+    Some(format!(
+        "cargo gate: the previous gate (pid {pid}) left processes of its group {pgid} running: \
+         {}. They no longer hold the lock but still use memory and the GPU; end them with \
+         `kill -TERM -- -{pgid}`",
+        pids.join(" ")
+    ))
+}
+
+/// The gate holding the lock at `path`, without waiting: `None` when no process holds it.
+///
+/// # Errors
+/// [`GateError::Io`] when the file exists but cannot be opened or read.
+pub fn current_holder(path: &Path) -> Result<Option<Holder>, GateError> {
+    let io = |source| GateError::Io {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io(source)),
+    };
+    match file.try_lock_shared() {
+        // Free: nobody holds it. The shared lock ends when `file` closes.
+        Ok(()) => Ok(None),
+        Err(TryLockError::WouldBlock) => {
+            let mut record = String::new();
+            file.read_to_string(&mut record).map_err(io)?;
+            Ok(Holder::parse(&record))
+        }
+        Err(TryLockError::Error(source)) => Err(io(source)),
     }
 }
 
@@ -415,6 +500,7 @@ mod tests {
             tier: tier.to_string(),
             worktree: PathBuf::from("/home/u/repo/.claude/worktrees/agent-x"),
             started_unix_s: 1_000,
+            pgid: None,
         }
     }
 

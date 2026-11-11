@@ -16,9 +16,10 @@
 //! - A target the catalog does not list is [`TestClass::Fast`].
 //! - Keys of `targets` name single targets, never a `@class` group.
 //! - Unknown fields are rejected, so a misspelt key cannot silently select nothing.
-//! - A `test_threads` cap is at least 1.
+//! - A `test_threads` cap is at least 1, and so is a `timeout_s` limit.
 
 use crate::glob::Glob;
+use crate::sources::SourceIndex;
 use crate::workspace::{TargetId, TargetKind, Workspace};
 use crate::GateError;
 use serde::{Deserialize, Serialize};
@@ -71,9 +72,14 @@ impl fmt::Display for TestClass {
     }
 }
 
-/// A name for one target or for every target of one class in one crate.
+/// The text of [`TargetRef::Callers`] in the catalog.
+pub const CALLERS: &str = "@callers";
+
+/// A name for one target, for every target of one class in one crate, or (as a downstream
+/// value only) for every target that calls the contract's crate.
 ///
-/// Written `crate/lib`, `crate/bin/<name>`, `crate/<integration test>` or `crate/@<class>`.
+/// Written `crate/lib`, `crate/bin/<name>`, `crate/<integration test>`, `crate/@<class>` or
+/// `@callers`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TargetRef {
     /// Exactly one target.
@@ -85,6 +91,10 @@ pub enum TargetRef {
         /// The class all named targets have.
         class: TestClass,
     },
+    /// Every target outside the downstream key's crate whose own files (support files
+    /// included) name `<key>::` in code, computed from the sources
+    /// ([`crate::SourceIndex::callers_of`]). Valid only as a `downstream` value.
+    Callers,
 }
 
 impl TargetRef {
@@ -94,6 +104,9 @@ impl TargetRef {
     /// [`GateError::Catalog`] when the text has no `/`, an empty part, or an unknown class.
     pub fn parse(text: &str) -> Result<Self, GateError> {
         let bad = |why: &str| GateError::Catalog(format!("target reference `{text}` {why}"));
+        if text == CALLERS {
+            return Err(bad("is valid only as a `downstream` value"));
+        }
         let (package, rest) = text
             .split_once('/')
             .ok_or_else(|| bad("must be `crate/target`"))?;
@@ -127,12 +140,27 @@ impl TargetRef {
         }))
     }
 
-    /// The crate the reference points into.
+    /// Parses a `downstream` value: any reference [`TargetRef::parse`] accepts, or
+    /// `@callers`.
+    ///
+    /// # Errors
+    /// As [`TargetRef::parse`].
+    pub fn parse_downstream(text: &str) -> Result<Self, GateError> {
+        if text == CALLERS {
+            Ok(Self::Callers)
+        } else {
+            Self::parse(text)
+        }
+    }
+
+    /// The crate the reference points into; `None` for [`TargetRef::Callers`], whose targets
+    /// lie in whichever crates call the key.
     #[must_use]
-    pub fn package(&self) -> &str {
+    pub fn package(&self) -> Option<&str> {
         match self {
-            Self::Target(id) => &id.package,
-            Self::Class { package, .. } => package,
+            Self::Target(id) => Some(&id.package),
+            Self::Class { package, .. } => Some(package),
+            Self::Callers => None,
         }
     }
 }
@@ -142,13 +170,14 @@ impl fmt::Display for TargetRef {
         match self {
             Self::Target(id) => write!(f, "{id}"),
             Self::Class { package, class } => write!(f, "{package}/@{class}"),
+            Self::Callers => f.write_str(CALLERS),
         }
     }
 }
 
 /// A target that is not `fast`: its class, the extra paths that trigger it, and its test
 /// thread cap.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetEntry {
     /// The target's class.
     pub class: TestClass,
@@ -158,11 +187,17 @@ pub struct TargetEntry {
     /// libtest's default of one per CPU. Bounds the peak memory of a binary whose tests each
     /// hold a whole Bevy app (blueprint Amendment 2).
     pub test_threads: Option<u32>,
+    /// Whether the target must run alone, with no other executable running: a test proven
+    /// load-sensitive (plan 2026-11-11-faster-gates §3.6, L-2).
+    pub exclusive: bool,
+    /// Its time limit in seconds, replacing the limit computed from its last wall time
+    /// (`execute.rs`), or `None` for the computed limit.
+    pub timeout_s: Option<u64>,
 }
 
 /// A path rule: a change under `paths` selects `targets` and the `fast`/`slow` targets of
 /// `crates`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathRule {
     /// The rule's name, printed by `explain`.
     pub name: String,
@@ -175,7 +210,7 @@ pub struct PathRule {
 }
 
 /// An extra command of the `package` and `full` tiers, such as a golden replay in release.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandStep {
     /// The step's name, printed by `explain` and in the result table.
     pub name: String,
@@ -234,6 +269,10 @@ struct RawEntry {
     triggers: Vec<String>,
     #[serde(default)]
     test_threads: Option<u32>,
+    #[serde(default)]
+    exclusive: bool,
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -292,10 +331,17 @@ impl SuiteCatalog {
                     "`{key}`: test_threads must be at least 1"
                 )));
             }
+            if entry.timeout_s == Some(0) {
+                return Err(GateError::Catalog(format!(
+                    "`{key}`: timeout_s must be at least 1"
+                )));
+            }
             let entry = TargetEntry {
                 class: entry.class,
                 triggers: globs(&entry.triggers)?,
                 test_threads: entry.test_threads,
+                exclusive: entry.exclusive,
+                timeout_s: entry.timeout_s,
             };
             targets.insert(id, entry);
         }
@@ -314,7 +360,13 @@ impl SuiteCatalog {
         let downstream = raw
             .downstream
             .iter()
-            .map(|(krate, list)| Ok((krate.clone(), refs(list)?)))
+            .map(|(krate, list)| {
+                let list = list
+                    .iter()
+                    .map(|text| TargetRef::parse_downstream(text))
+                    .collect::<Result<_, GateError>>()?;
+                Ok((krate.clone(), list))
+            })
             .collect::<Result<_, GateError>>()?;
         let commands = raw
             .commands
@@ -369,21 +421,43 @@ impl SuiteCatalog {
             .and_then(|entry| entry.test_threads)
     }
 
+    /// Whether `target` is marked `exclusive: true`.
+    #[must_use]
+    pub fn exclusive_of(&self, target: &TargetId) -> bool {
+        self.targets
+            .get(target)
+            .is_some_and(|entry| entry.exclusive)
+    }
+
+    /// The `timeout_s` limit of `target`, if the catalog sets one.
+    #[must_use]
+    pub fn timeout_of(&self, target: &TargetId) -> Option<std::time::Duration> {
+        self.targets
+            .get(target)
+            .and_then(|entry| entry.timeout_s)
+            .map(std::time::Duration::from_secs)
+    }
+
     /// The targets `reference` names in `workspace`, in target order.
     ///
     /// # Errors
-    /// [`GateError::Catalog`] when the crate or the single target does not exist. A class
-    /// group with no member resolves to nothing; the catalog test reports that separately.
+    /// [`GateError::Catalog`] when the crate or the single target does not exist, or for
+    /// [`TargetRef::Callers`], which only [`SuiteCatalog::resolve_downstream`] resolves. A
+    /// class group with no member resolves to nothing; the catalog test reports that
+    /// separately.
     pub fn resolve(
         &self,
         reference: &TargetRef,
         workspace: &Workspace,
     ) -> Result<Vec<TargetId>, GateError> {
-        let package = workspace
-            .package(reference.package())
-            .ok_or_else(|| GateError::Catalog(format!("`{reference}` names no workspace crate")))?;
+        let package = |name: &str| {
+            workspace.package(name).ok_or_else(|| {
+                GateError::Catalog(format!("`{reference}` names no workspace crate"))
+            })
+        };
         match reference {
             TargetRef::Target(id) => {
+                let package = package(&id.package)?;
                 if package.targets.iter().any(|target| &target.id == id) {
                     Ok(vec![id.clone()])
                 } else {
@@ -393,12 +467,37 @@ impl SuiteCatalog {
                     )))
                 }
             }
-            TargetRef::Class { class, .. } => Ok(package
+            TargetRef::Class {
+                package: name,
+                class,
+            } => Ok(package(name)?
                 .targets
                 .iter()
                 .filter(|target| self.class_of(&target.id) == *class)
                 .map(|target| target.id.clone())
                 .collect()),
+            TargetRef::Callers => Err(GateError::Catalog(format!(
+                "`{reference}` is valid only as a `downstream` value"
+            ))),
+        }
+    }
+
+    /// The targets `reference`, a value of the downstream contract of crate `key`, names:
+    /// [`TargetRef::Callers`] resolves to `sources.callers_of(key)`, anything else as
+    /// [`SuiteCatalog::resolve`].
+    ///
+    /// # Errors
+    /// As [`SuiteCatalog::resolve`].
+    pub fn resolve_downstream(
+        &self,
+        key: &str,
+        reference: &TargetRef,
+        workspace: &Workspace,
+        sources: &SourceIndex,
+    ) -> Result<Vec<TargetId>, GateError> {
+        match reference {
+            TargetRef::Callers => Ok(sources.callers_of(key).into_iter().collect()),
+            other => self.resolve(other, workspace),
         }
     }
 }
@@ -415,6 +514,7 @@ mod tests {
             "app/gpu_tests": (class: Gpu, triggers: ["crates/app/src/render/**"]),
             "app/lib": (class: Slow),
             "app/heavy_tests": (class: Slow, test_threads: Some(2)),
+            "app/touchy_tests": (class: Slow, exclusive: true, timeout_s: Some(600)),
         },
         rules: [(name: "shaders", paths: ["assets/shaders/**"], targets: ["app/@gpu"])],
         downstream: {"core": ["app/headless_tests"]},
@@ -439,6 +539,13 @@ mod tests {
             Some(2)
         );
         assert_eq!(catalog.test_threads_of(&lib), None);
+        let touchy = TargetId::test("app", "touchy_tests");
+        assert!(catalog.exclusive_of(&touchy) && !catalog.exclusive_of(&lib));
+        assert_eq!(
+            catalog.timeout_of(&touchy),
+            Some(std::time::Duration::from_secs(600))
+        );
+        assert_eq!(catalog.timeout_of(&lib), None);
         assert_eq!(catalog.test_threads_of(&TargetId::test("app", "x")), None);
         Ok(())
     }
@@ -465,6 +572,54 @@ mod tests {
     }
 
     #[test]
+    fn callers_parses_only_as_a_downstream_value() -> Result<(), GateError> {
+        assert!(matches!(
+            TargetRef::parse(CALLERS),
+            Err(GateError::Catalog(why)) if why.contains("downstream")
+        ));
+        assert_eq!(TargetRef::parse_downstream(CALLERS)?, TargetRef::Callers);
+        assert_eq!(TargetRef::Callers.to_string(), CALLERS);
+        assert_eq!(TargetRef::Callers.package(), None);
+        let callers = SAMPLE.replace("\"app/headless_tests\"]", "\"@callers\"]");
+        let catalog = SuiteCatalog::parse(&callers, Path::new("s"))?;
+        assert_eq!(catalog.downstream["core"], vec![TargetRef::Callers]);
+        for misplaced in [
+            SAMPLE.replace("[\"checks/@fast\"]", "[\"@callers\"]"),
+            SAMPLE.replace("targets: [\"app/@gpu\"]", "targets: [\"@callers\"]"),
+        ] {
+            assert!(matches!(
+                SuiteCatalog::parse(&misplaced, Path::new("s")),
+                Err(GateError::Catalog(_))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn callers_resolves_from_the_source_index() -> Result<(), GateError> {
+        let catalog = SuiteCatalog::parse(SAMPLE, Path::new("s"))?;
+        let mut workspace = Workspace::default();
+        workspace.packages.insert(
+            "app".to_string(),
+            crate::workspace::Package {
+                name: "app".to_string(),
+                version: "0.1.0".to_string(),
+                dir: "crates/app".to_string(),
+                dependencies: BTreeMap::new(),
+                targets: Vec::new(),
+            },
+        );
+        let caller = TargetId::test("app", "x_tests");
+        let sources = SourceIndex::from_files(BTreeMap::new())
+            .with_callers("core", std::collections::BTreeSet::from([caller.clone()]));
+        let resolved =
+            catalog.resolve_downstream("core", &TargetRef::Callers, &workspace, &sources)?;
+        assert_eq!(resolved, vec![caller]);
+        assert!(catalog.resolve(&TargetRef::Callers, &workspace).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn unknown_fields_and_class_keys_are_rejected() {
         let typo = SAMPLE.replace("downstream:", "downstraem:");
         assert!(matches!(
@@ -474,6 +629,11 @@ mod tests {
         let no_threads = SAMPLE.replace("test_threads: Some(2)", "test_threads: Some(0)");
         assert!(matches!(
             SuiteCatalog::parse(&no_threads, Path::new("s")),
+            Err(GateError::Catalog(_))
+        ));
+        let no_time = SAMPLE.replace("timeout_s: Some(600)", "timeout_s: Some(0)");
+        assert!(matches!(
+            SuiteCatalog::parse(&no_time, Path::new("s")),
             Err(GateError::Catalog(_))
         ));
         let group_key = SAMPLE.replace("\"app/lib\"", "\"app/@slow\"");

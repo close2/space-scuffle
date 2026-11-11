@@ -2707,6 +2707,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "toml_edit 0.25.17+spec-1.1.0",
 ]
 
 [[package]]
