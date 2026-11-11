@@ -65,3 +65,32 @@ failed (11199385904259833432 against 5326919497195356506); with the real body bo
 | `#[cfg(test)]` modules of `crates/client/src` | relational only (sparse equals dense); no recorded hash constant | client code | none needed |
 
 No contract was missing, so `suites.ron` is unchanged by WP4.
+
+## 2. WP5a: shared paths between test binaries
+
+Lanes run binaries of the same crate at once (plan §3.7). No path is written by two different test binaries of
+`client`, `client_diagnostics` or `asset_baker`, or written by one while another reads it, so WP5a changes no file.
+
+Method: (1) a source read of every write in their `tests/**` (support files included) and `#[cfg(test)]` modules:
+`fs::write`, `File::create`, `create_dir*`, `.save(`, `OpenOptions`, `copy`, `rename`, `remove_*`, and every
+`CARGO_BIN_EXE_*` call whose output paths default to relative locations; (2) all 68 general (not GPU, not valgrind)
+test executables run one after another under `strace -f --seccomp-bpf`, recording every file-creating syscall of
+the executable and its children (the `asset_baker` CLI, ffmpeg, the `client` binary). All 68 passed, and after
+removing `/proc`, `/dev`, `/sys` and per-test `tempfile` directories, the only writes left were symlinks inside
+tempdirs that point at `assets/`. The traces and scripts are kept in `~/scratch/gate-ab/2026-11-11-wp5a-traces/`.
+The GPU and valgrind binaries were audited by reading the code only.
+
+| File | Path written | Other binaries writing or reading it | Verdict |
+|---|---|---|---|
+| All 68 general targets of `client`, `client_diagnostics`, `asset_baker` | only per-test `tempfile` directories (confirmed by strace, children included) | none | safe |
+| `asset_baker/tests/common/cli.rs` and every `CARGO_BIN_EXE_asset_baker` call | every output directory and ledger inside a tempdir; calls relying on relative defaults set `current_dir` to a tempdir | none | safe |
+| `client/tests/sync_allocation_count_tests.rs` (valgrind) | its own kept tempdir, passed to its children | its own children; valgrind runs alone (L-2) | safe |
+| `client/tests/support/gpu_run.rs`: `/run/lock/gpu.lock` | the GPU lock file | every GPU child and `with-gpu-lock`, through `flock` | safe, shared by design |
+| `gpu_run.rs`: `SPACE_SCUFFLE_GPU_RUN_LEDGER`, `SPACE_SCUFFLE_GPU_RUN_LOG_DIR` | opt-in; one `O_APPEND` write per line, or `<label>-<pid>-<n>.log` | never set by the gate; names unique per process | safe |
+| `gpu_run.rs`: Xvfb display and `xvfb-run` auth | display numbered from the pid, then `-a`; auth directory from `mktemp` | only `gpu` binaries start Xvfb, one at a time on the GPU lane | safe |
+| GPU children: Mesa shader cache | driver-managed, safe for concurrent processes | general binaries build no render device (C21) | safe |
+| `client/tests/effect_slice_gpu_tests.rs` goldens | `tests/data/effects/<driver>/`, written only with `SPACE_SCUFFLE_EFFECT_GOLDEN_UPDATE` | no other binary reads them | safe |
+| Other GPU tests of `client` and `client_diagnostics` | child output, screenshots and reports in the parent's tempdir | none | safe |
+
+Outside the three crates: `sim_core/effect_tree_allocation_tests` writes dhat output under fixed names in
+`CARGO_TARGET_TMPDIR/effect_tree_allocation/`; only that binary writes there, and valgrind jobs run alone.
