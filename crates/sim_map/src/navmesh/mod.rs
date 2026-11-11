@@ -38,7 +38,7 @@ pub mod predicates;
 pub mod search;
 pub mod segment;
 
-use sim_types::{EntityId, SimVec2, VisibilityState};
+use sim_types::{EntityId, SimScalar, SimVec2, VisibilityState};
 use thiserror::Error;
 
 use crate::grid::{CellFlags, GameMap, RampDir};
@@ -135,6 +135,10 @@ pub struct NavMesh {
     widths: Vec<[SquaredWidth; 3]>,
     /// Whether each vertex touches an edge that blocks when every structure is known.
     vertex_obstacle: Vec<bool>,
+    /// Per cell, row-major: whether the cell is open and none of its four sides blocks when
+    /// every structure is known (the contact query's early-out, plan
+    /// `2026-11-11-contact-and-missiles` D-5).
+    contact_free: Vec<bool>,
     runs: Vec<ConstraintRun>,
 }
 
@@ -231,6 +235,42 @@ impl EdgeGrid {
 
     fn south(&self, x: usize, y: usize) -> Option<EdgeKind> {
         y.checked_sub(1).and_then(|y| self.north(x, y))
+    }
+
+    /// Per cell, row-major: whether the cell is usable, holds no structure, and none of its four
+    /// sides blocks a request that knows every structure. A side blocks such a request when it
+    /// is a wall (the map border included) or a seam to a structure cell; every other seam joins
+    /// two open triangles. The mesh's blocking edges lie on such sides only: an edge between two
+    /// open cells' triangles is free or a passable seam.
+    fn contact_free_cells(&self, map: &GameMap) -> Vec<bool> {
+        let class = |x: usize, y: usize| classify_cell(map, x, y);
+        let blocks = |kind: Option<EdgeKind>, neighbour: Option<(usize, usize)>| match kind {
+            Some(EdgeKind::Wall) => true,
+            Some(EdgeKind::Seam) => neighbour.is_some_and(|(x, y)| class(x, y).structure),
+            Some(EdgeKind::Free) | None => false,
+        };
+        let (w, h) = (self.width, self.height);
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let own = class(x, y);
+                own.usable
+                    && !own.structure
+                    && !blocks(self.horizontal[y * w + x], y.checked_sub(1).map(|y| (x, y)))
+                    && !blocks(
+                        self.horizontal[(y + 1) * w + x],
+                        (y + 1 < h).then_some((x, y + 1)),
+                    )
+                    && !blocks(
+                        self.vertical[y * (w + 1) + x],
+                        x.checked_sub(1).map(|x| (x, y)),
+                    )
+                    && !blocks(
+                        self.vertical[y * (w + 1) + x + 1],
+                        (x + 1 < w).then_some((x + 1, y)),
+                    )
+            })
+            .collect()
     }
 
     /// Whether lattice point `(x, y)` must be a mesh vertex: a constraint ends, turns, branches
@@ -344,10 +384,16 @@ impl NavMesh {
             }
         }
         tri.make_delaunay();
-        Ok(Self::finish(map, tri, runs))
+        let contact_free = edges.contact_free_cells(map);
+        Ok(Self::finish(map, tri, runs, contact_free))
     }
 
-    fn finish(map: &GameMap, tri: Triangulation, runs: Vec<ConstraintRun>) -> Self {
+    fn finish(
+        map: &GameMap,
+        tri: Triangulation,
+        runs: Vec<ConstraintRun>,
+        contact_free: Vec<bool>,
+    ) -> Self {
         let mut mesh = Self {
             width: map.width(),
             height: map.height(),
@@ -360,6 +406,7 @@ impl NavMesh {
             cell_triangle: Vec::new(),
             widths: Vec::new(),
             vertex_obstacle: Vec::new(),
+            contact_free,
             runs,
         };
         mesh.labels = (0..mesh.triangles.len())
@@ -607,6 +654,42 @@ impl NavMesh {
     pub(crate) fn edge_blocks(&self, t: u32, k: usize, open: impl Fn(u32) -> bool) -> bool {
         let n = self.adjacent[t as usize][k];
         n == NONE || self.kinds[t as usize][k] == EdgeKind::Wall || !open(t) || !open(n)
+    }
+
+    /// Whether no edge that blocks a request knowing every structure lies within the square of
+    /// half-side `radius` world units round `p`: every cell the square touches (its boundary
+    /// included) is open with no blocking side. `false` when the square leaves the map or a
+    /// coordinate overflows. Exact: `true` implies that no blocking edge lies within `radius`
+    /// of `p`; `false` decides nothing. `Pathfinder::wall_contact` answers `None` without a flood
+    /// when this holds for an all-known request; public so tests compare it with the exhaustive
+    /// reference.
+    #[must_use]
+    pub fn contact_free_near(&self, map: &GameMap, p: SimVec2, radius: SimScalar) -> bool {
+        let corner = |sign_add: bool| {
+            let shift = |v: SimScalar| {
+                if sign_add {
+                    v.checked_add(radius)
+                } else {
+                    v.checked_sub(radius)
+                }
+            };
+            Some(SimVec2::new(shift(p.x)?, shift(p.y)?))
+        };
+        let (Some(low), Some(high)) = (corner(false), corner(true)) else {
+            return false;
+        };
+        let (Ok((x0, y0)), Ok((x1, y1))) = (map.world_to_cell(low), map.world_to_cell(high)) else {
+            return false;
+        };
+        let width = self.width as usize;
+        (y0..=y1).all(|y| {
+            (x0..=x1).all(|x| {
+                self.contact_free
+                    .get(y as usize * width + x as usize)
+                    .copied()
+                    .unwrap_or(false)
+            })
+        })
     }
 
     /// Whether some edge at vertex `v` blocks: whether `v` is an obstacle point.

@@ -6,7 +6,8 @@
 //! it. These tests pin the geometry on small synthetic maps (a straight wall, a convex and a
 //! concave corner, a structure, a ramp, the map border, a centre on the wall, no wall in reach)
 //! and check the flood against the exhaustive reference over every blocking edge on both
-//! shipped maps.
+//! shipped maps, and the flood's exact early-out (an open neighbourhood has no wall) against
+//! the same reference, with and without structures.
 
 #![allow(clippy::expect_used)]
 
@@ -231,5 +232,64 @@ fn the_flood_equals_the_exhaustive_reference_on_both_shipped_maps() {
             }
         }
         assert!(touching >= 100, "{name}: {touching} points touch a wall");
+    }
+}
+
+/// The early-out of D-5: wherever `NavMesh::contact_free_near` claims an open neighbourhood, the
+/// exhaustive reference finds no blocking edge within the radius, and `wall_contact` answers
+/// `None`. On both shipped maps, bare and with seeded 2 × 2 structures, at 2,000 seeded points
+/// each with radii from 0.25 to 1.5; the early-out must also fire often, or it saves nothing.
+#[test]
+fn the_early_out_never_hides_a_wall_on_both_shipped_maps() {
+    for name in ["default_arena.scmap.ron", "showcase_canyon.scmap.ron"] {
+        for with_structures in [false, true] {
+            let mut map = shipped(name);
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0x0EA2_10F7);
+            let (width, height) = (map.width(), map.height());
+            let mut placed = 0_u32;
+            if with_structures {
+                for _ in 0..40 {
+                    let (x, y) = (rng.gen_range(1..width - 3), rng.gen_range(1..height - 3));
+                    if map
+                        .place_structure(EntityId(1_000 + placed), x, y, 2, 2)
+                        .is_ok()
+                    {
+                        placed += 1;
+                    }
+                }
+                assert!(placed >= 10, "{name}: {placed} structures placed");
+            }
+            let mut pathfinder = Pathfinder::new(&map);
+            let mesh = pathfinder
+                .navmesh()
+                .expect("a shipped map has a mesh")
+                .clone();
+            let (fw, fh) = (f64::from(width), f64::from(height));
+            let mut free = 0;
+            for _ in 0..2_000 {
+                let p = at(rng.gen_range(0.0..fw), rng.gen_range(0.0..fh));
+                let radius = s(rng.gen_range(0.25..1.5));
+                let request = request(p, radius);
+                let reference = pathfinder.wall_contact_exhaustive(&map, &request, p);
+                let found = pathfinder.wall_contact(&map, &request, p);
+                assert_eq!(
+                    found.map(|c| c.distance_sq),
+                    reference.map(|c| c.distance_sq),
+                    "{name} ({placed} structures) at {p:?}, radius {radius:?}"
+                );
+                if mesh.contact_free_near(&map, p, radius) {
+                    free += 1;
+                    assert_eq!(
+                        reference, None,
+                        "{name} ({placed} structures): the early-out hides a wall at {p:?}, \
+                         radius {radius:?}"
+                    );
+                }
+            }
+            assert!(
+                free >= 400,
+                "{name} ({placed} structures): early-out on {free} of 2,000"
+            );
+        }
     }
 }

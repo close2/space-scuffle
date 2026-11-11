@@ -755,6 +755,17 @@ pub fn wall_contact(
     p: SimVec2,
 ) -> Option<WallContact> {
     let access = Access::new(mesh, map, request);
+    // PERFORMANCE RATIONALE:
+    // Why: Every moving ground body asks for its wall contact once or twice a tick; in the
+    //      400-unit canyon scenario that is up to 800 floods per tick, most in open ground.
+    // What: An exact early-out: if every cell the disc's bounding square touches is open with no
+    //      blocking side (one look-up per cell of a per-cell table built with the mesh), no wall
+    //      is within the radius and the flood is skipped. Only for all-known requests.
+    // Trade-off: A second code path that must agree with the flood; a property test compares it
+    //      with the exhaustive reference on both shipped maps, with and without structures.
+    if access.is_all_known() && mesh.contact_free_near(map, p, request.radius) {
+        return None;
+    }
     nearest_blocking_point(mesh, &access, &mut search.segment, p, request.radius)
 }
 
