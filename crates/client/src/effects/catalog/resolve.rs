@@ -487,7 +487,7 @@ impl Resolver<'_> {
             layers,
             lifetime,
             repeat: effect.repeat,
-            name_hash: name_hash(name),
+            salt: effect.seed.unwrap_or_else(|| name_hash(name)),
         })
     }
 

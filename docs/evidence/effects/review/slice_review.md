@@ -577,3 +577,95 @@ the three shipped effects' sheets are re-taken, so the reviewer can check them f
 
 **Scale-out round 1 result (implementer):** `flame_line`, `lance_sweep` and `flak_burst` accepted with the watch
 points above; `cleave_impact` rejected on item 4; crowd behaviour (item 6) not measured for the new effects.
+
+## Scale-out round 2 (WP7, plan Amendment 5)
+
+Acts on the independent review of round 1 ([`independent_review_scaleout1.md`](independent_review_scaleout1.md)).
+Evidence: the contact sheets and sequences of this round in this directory (lavapipe, debug `battle_capture`,
+Xvfb, 2026-11-11): [`flame_line_contact.png`](flame_line_contact.png) with its fog take
+[`flame_line_fog_contact.png`](flame_line_fog_contact.png), [`lance_sweep_contact.png`](lance_sweep_contact.png),
+[`cleave_impact_contact.png`](cleave_impact_contact.png) with its repeat take
+[`cleave_impact_repeat_contact.png`](cleave_impact_repeat_contact.png) (four hits 0.6 s apart on one spot), the
+`_sequence.png` beside each, the restored [`shell_impact_contact.png`](shell_impact_contact.png) and the crowd frame
+[`stress_capture_400.png`](stress_capture_400.png) ([`stress_capture.txt`](stress_capture.txt), "Scale-out round
+2"). Bindings as in round 1. No texture was made and nothing was spent (ledger unchanged).
+
+### `shell_impact`: restored, equal to `main`
+
+The regression came from Amendment 4's name-hash salt, which drew new random choices for every effect. The effect
+now pins its round-5 salt (`seed: Some(2)`, its dense id then). Proof that its output equals `main`'s:
+
+- Goldens: the six `shell_impact_*.png` goldens are `main`'s files, unchanged (`git diff main` shows none of them);
+  `slice_effect_5` passes against them on radv and lavapipe with 100.00 % of pixels within 8/255 and a mean
+  difference of 0.000/255 at all three ages.
+- Sheets: a fresh lavapipe capture of its contact sheet and sequence differs from `main`'s round-5 files
+  (`docs/evidence/effects/review/shell_impact_contact.png`, `_sequence.png` at `main`) in 0 pixels
+  (`compare -metric AE`); round 1's sheet differed from it in 139 680 pixels. The files here are `main`'s.
+
+The round-1 fixes are kept: the two line merges (a line's search points merged by their shared far end, and a
+line whose searches land on several ticks joining its live effect instead of spawning a late copy per search,
+tested in `effect_runtime_tests.rs`), and the name salt for every effect that pins no seed
+(`an_effects_salt_survives_other_effects_being_added`, which now also checks that a pinned seed is the salt).
+
+### GPU figures
+
+`effect_slice_gpu_tests.rs` through the harness, 2026-11-11 (radv with the shared lock, and lavapipe; the figures
+agree on both drivers within 0.01 px and 1 point):
+
+| Effect | Footprint | Coverage of the full-damage disc at peak | Pop | Lingering |
+|---|---|---|---|---|
+| `flame_line` | marks start −0.90 px and end −0.09 px from the line's projected ends | 97 % (least point 58 %) | 0.63/255 | 0/255 after the end |
+| `lance_sweep` | marks start −0.03 px and end +0.39 px | 92 % (least point 72 %) | 0.30/255 | 0/255 |
+| `cleave_impact` | 93 % of 72 rays within ±2 px of the reach, mean −1.15 px, largest overshoot +0.19 px | 88 % | 0.85/255 | 0/255 |
+| `shell_impact` | 99 % of rays within ±2 px, mean −0.66 px | 100 % | 1.22/255 | 0/255; goldens equal to `main`'s |
+
+Fog (R6, masked line from the fifth point on, radv; lavapipe within 40 px): `flame_line` 3 791 px from that point
+and 0 px more than 1 unit before it, `lance_sweep` 1 000 and 0, `spine_line` 3 256 and 0. Every subject's goldens
+pass on both drivers (the three reworked effects re-recorded on both with this cause, the other four unchanged:
+100.00 % within, mean 0.000/255).
+
+### `flame_line` (Hellion analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The jet (Critical) races to the line's end in about 0.16 s; the scorched band (Critical) marks the line for 3 s; marks within 0.9 px of the line's ends. Nothing is drawn behind the first search point (all fire layers cut at the line's ends; the fog take shows the jet starting at the first seen point). |
+| 2 | Layered | Accept | Jet, body of fire, rolling fire billows, flame tongues, burning droplets, napalm embers in the band, scorched band, smoke, heat haze. |
+| 3 | Timing | Accept | Peak by frame 2; the billows die to soot and erode by about 0.55 s; embers out by 0.6 s; the band erodes at the end of its 3 s. |
+| 4 | No tells of cheapness | Accept, with a watch point | Close zoom 0.1–0.3 s: billowing fire with soft-eroding edges, no ring-outlined holes; the band is one continuous strip of uneven width. Watch point: in its last tenth of a second the thinning fire turns a translucent salmon on the bright ground before it is gone. |
+| 5 | Value and colour | Accept | Saturated orange body on both grounds, yellow-white only on the jet's axis for two frames, oxblood and soot as it dies; the band is darker than both grounds. |
+| 6 | Crowd | Accept | Crowd frame: the battle's own jets cross and the bands read as thin dark lines; units stay visible. |
+| 7 | Fog | Accept | Fog take and the masked test. |
+
+### `lance_sweep` (Colossus analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The stroke (Critical) sweeps across in 0.21 s; the groove (Critical) marks the line for 2.5 s; marks within 0.4 px of the line's ends. |
+| 2 | Layered | Accept | Stroke, flares at the head, molten spatter (now spawned: its level-of-detail radius was too small in round 1), glowing groove, glowing cracks, groove, scorched halo, smoke, heat haze. |
+| 3 | Timing | Accept | The head sweeps in five frames; the glow shrinks into the groove over 1.1 s, the cracks outlast it to 1.5 s; the groove erodes by 2.5 s. |
+| 4 | No tells of cheapness | Accept | Close zoom 0.086 s: a hot, torn head with sparks thrown off it, no capsule; 1.4 s: a groove of varying width with ragged edges; the smoke puffs differ in size, place and height. |
+| 5 | Value and colour | Accept | The head is the brightest point, saturated orange body, cherry-red glow, a dark groove. |
+| 6 | Crowd | Accept (stream only) | The attacker has no unit media, so its sweeps come from the stream; they read as short dark lines with a glow. |
+| 7 | Fog | Accept | Masked test. |
+
+### `cleave_impact` (Ultralisk analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The flash is the focal point at frames 0–1; the dust front (Critical) is on the reach (93 % of rays within ±2 px). |
+| 2 | Layered | Accept | Light, flash, sparks, dust front, crack, churned earth, dust burst, dust puffs, dust skirt, clods, chips. |
+| 3 | Timing | Accept | Frame 0 shows the blow; the front is at the reach by 0.13 s and thins out over its last six frames while it erodes (largest frame-to-frame change 0.85/255); everything is gone by 0.9 s, so hits 0.6 s apart overlap only in their last dust and never build a mark (repeat take). |
+| 4 | No tells of cheapness | Accept, with a watch point | The repeat take shows four different silhouettes, none radial. Watch point: at close zoom on teal the front still reads partly as a smooth ellipse; making it more broken lets it fall inside the reach (the footprint test then fails), so the front is as broken as the footprint allows. |
+| 5 | Value and colour | Accept | Warm flash and sparks, dark clods and crack, mid-value dust. |
+| 6 | Crowd | Accept (stream only) | As for the lance. |
+| 7 | Fog | Accept | Anchored where it lands. |
+
+### Crowd (item 6), all seven
+
+The battle fields real napalm jets and anti-air bursts among air units; the stream adds all seven effects at 200 a
+second. On the captured frame the effects cover 31.5 % of the screen (upper bound) and units stay visible; flak
+bursts are drawn at the air units' altitude. Watch point: the frame drew 3 921 ground decals of a pool of 4 096,
+because the new bands are made of several decals each; no Critical instance lacked a slot over the run.
+
+**Scale-out round 2 result (implementer):** the three reworked effects and the restored `shell_impact` are ready
+for the independent review (packet section "Scale-out round 2"); the implementer does not accept its own work.

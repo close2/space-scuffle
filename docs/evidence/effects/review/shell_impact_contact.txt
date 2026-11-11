@@ -10,3 +10,6 @@ Default-zoom cells show the middle half of the frame, close-zoom cells its middl
 (a line's close-zoom cells the whole frame).
 shell_impact_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
 40 ms, read left to right, top to bottom.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-11; review round 5
+(docs/evidence/effects/review/slice_review.md, "Round 5"). Round 4 is in commit b72b693, round 3 in fd24c31, round 2 in
+d03ed19, round 1 in bb5a61c, round 0 (WP6b, radv) in 1eaaf64.

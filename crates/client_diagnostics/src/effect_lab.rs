@@ -24,7 +24,7 @@ use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::{Binding, EventKind};
 use client::effects::catalog::{EffectCatalog, EFFECTS_CATALOG_PATH};
 use client::effects::lab::{
-    lab_app, LabGround, LabProgram, LabSubject, LabZoom, CONTACT_AGES, SEQUENCE_STEP,
+    lab_app, LabGround, LabProgram, LabRepeat, LabSubject, LabZoom, CONTACT_AGES, SEQUENCE_STEP,
 };
 use client::ResolvedAssetsRoot;
 use image::{imageops, RgbImage};
@@ -55,6 +55,27 @@ pub struct EffectLabOptions {
     pub hdr_bloom: bool,
     /// The fog take of a line ([`fog_subject`]): the first search point the viewer sees.
     pub fog_seen_from: Option<u32>,
+    /// The repeat take: `<count>x<seconds>` ([`parse_repeat`]).
+    pub repeat: Option<String>,
+}
+
+/// Parses a repeat take, `<count>x<seconds>`: at least one spawn, a positive finite gap.
+///
+/// # Errors
+/// [`CaptureError::InvalidScript`] naming the malformed value.
+pub fn parse_repeat(text: &str) -> Result<LabRepeat, CaptureError> {
+    let invalid = || {
+        CaptureError::InvalidScript(format!(
+            "repeat {text:?}: expected COUNTxSECONDS, such as 4x0.6"
+        ))
+    };
+    let (count, every) = text.split_once('x').ok_or_else(invalid)?;
+    let count: u32 = count.trim().parse().map_err(|_| invalid())?;
+    let every: f32 = every.trim().parse().map_err(|_| invalid())?;
+    if count == 0 || !(every.is_finite() && every > 0.0) {
+        return Err(invalid());
+    }
+    Ok(LabRepeat { count, every })
 }
 
 /// Parses `Binding=value` pairs into bound values.
@@ -97,6 +118,7 @@ pub fn subject(effect: &str, kind: EventKind, bound: BoundValues) -> LabSubject 
         line_to,
         line_seen: u64::MAX,
         fog_below_x: None,
+        repeat: None,
     }
 }
 
@@ -144,9 +166,15 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
     let line = subject
         .line_to
         .map(|to| client::effects::placement::WorldLine::whole(subject.anchor, to));
-    let lifetime = effect.lifetime + client::effects::runtime::max_line_delay(&effect.layers, line);
+    let mut lifetime =
+        effect.lifetime + client::effects::runtime::max_line_delay(&effect.layers, line);
     if let Some(seen_from) = options.fog_seen_from {
         subject = fog_subject(subject, seen_from);
+    }
+    if let Some(text) = &options.repeat {
+        let repeat = parse_repeat(text)?;
+        lifetime += repeat.span();
+        subject.repeat = Some(repeat);
     }
     std::fs::create_dir(&options.out).map_err(|source| CaptureError::Io {
         path: options.out.clone(),
@@ -167,6 +195,8 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
         Look::HdrBloom
     } else if options.fog_seen_from.is_some() {
         Look::Fog
+    } else if options.repeat.is_some() {
+        Look::Repeat
     } else {
         Look::Ldr
     };
@@ -221,6 +251,8 @@ enum Look {
     HdrBloom,
     /// The shipped camera, with the line running out of the fog ([`fog_subject`]).
     Fog,
+    /// The shipped camera, the effect spawned several times on one spot ([`parse_repeat`]).
+    Repeat,
 }
 
 impl Look {
@@ -230,6 +262,7 @@ impl Look {
             Self::Ldr => "",
             Self::HdrBloom => "_hdr",
             Self::Fog => "_fog",
+            Self::Repeat => "_repeat",
         }
     }
 
@@ -245,6 +278,12 @@ impl Look {
                  the viewer's fog (`--fog-seen-from`), the fogged ground darkened to a quarter with a \
                  hard edge as the battle terrain draws it, and only the seen points admitted (plan \
                  Amendment 2, R6)"
+            }
+            Self::Repeat => {
+                "shipped camera; the effect spawned on the same spot several times as an \
+                 attacker's consecutive hits (`--repeat`), each with its own instance seed as \
+                 consecutive events in a battle have; the lifetime runs from the first to the end \
+                 of the last"
             }
         }
     }
@@ -384,6 +423,16 @@ mod tests {
             "SplashReach=-1",
         ] {
             assert!(parse_bindings(&[bad.into()]).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_repeat_take_parses_and_refuses_garbage() {
+        let repeat = parse_repeat("4x0.6").expect("a valid repeat");
+        assert_eq!(repeat.count, 4);
+        assert!((repeat.every - 0.6).abs() < 1e-6);
+        for bad in ["4", "0x0.6", "4x0", "4x-1", "x0.6", "4xnan", "four x 0.6"] {
+            assert!(parse_repeat(bad).is_err(), "{bad}");
         }
     }
 

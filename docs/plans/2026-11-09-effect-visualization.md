@@ -1185,3 +1185,55 @@ checks; `effect_runtime_tests.rs`: the two line merges; `gpu_validation_tests.rs
 **Gate.** Each new effect and each polished one gets its implementer checklist in
 [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 1") and a packet section; the
 orchestrator runs the independent review.
+
+## Amendment 5: scale-out round 2 (2026-11-11, short note, charter §6)
+
+**Why.** The independent review of scale-out round 1
+([`independent_review_scaleout1.md`](../evidence/effects/review/independent_review_scaleout1.md)) accepted
+`flak_burst`, rejected `flame_line`, `lance_sweep` and `cleave_impact`, found that `shell_impact` had regressed (its
+scoured blast mark 45 to 55 % weaker) and asked for a crowd frame with all seven effects and a fog sheet for
+`flame_line`. This round acts on each point. It changes presentation data, the effect lab and the stress tool only
+(no simulation state, golden replay or checksum; D-1 holds).
+
+**`shell_impact` restored.** Its regression came from Amendment 4's name-hash salt, which gave it a new draw of its
+random choices. An effect definition may now pin its salt (`seed: Some(n)`, schema `EffectDefRaw::seed`; without it
+the salt stays the FNV-1a hash of the name). `shell_impact` pins 2, its dense id when round 5 accepted it, so its
+pictures equal `main`'s pixel for pixel; the other round-1 fixes (the line merges, the name salt for every other
+effect) are kept. Proof: its goldens are `main`'s files again, unchanged, and pass on both drivers with every pixel
+equal (mean difference 0.000/255); its lavapipe contact sheet and sequence equal `main`'s round-5 files with 0
+differing pixels.
+
+**Effects reworked** (each point of the review; textures unchanged, nothing spent):
+
+- `flame_line`: the jet and the body of fire have opaque, saturated orange ramps (the additive cream core washed out
+  on bright ground and under the tone mapper), yellow-white on the axis only for its first two frames (`flame_cool`);
+  the bubbly fireball tongues are replaced by soft-eroding billows of the smoke element in a fire ramp that dies to
+  soot (`flame_tongue`, `flame_die`) and by flame tongues, smoke-element particles stretched along their rising
+  velocity (`napalm_tongues`, buoyant); the streak is one continuous scorched band of uneven width (`earth_scar`
+  pieces more than twice the spacing long, `scorch_band`) with napalm embers glowing in it for 0.6 s; every fire
+  layer is cut at the line's ends, so nothing burns behind the first search point; every line placement travels
+  with the jet (40 units per second), so no card appears ahead of its tip.
+- `lance_sweep`: the scar is a burnt groove of torn ground whose pieces vary twofold in length and width, in a
+  fading scorched halo, glowing from the inside (its thin parts erode first) and through short glowing cracks that
+  outlast the glow; the stroke and the flares at its head are torn by the fire noise from their first frame
+  (`torch_break`, no capsule; the wide round glow ribbon is removed) and a saturated orange (`lance_hot`); molten
+  spatter is thrown off every point (the burst's level-of-detail radius was too small to spawn it); smoke puffs vary
+  in size, place, time and drift.
+- `cleave_impact`: frame 0 shows the blow (a warm flash, a short light, sparks); a crack and churned earth under it,
+  dark clods on arcs; the front is a noise-broken dust skirt, wider, held thick (intensity 1.8) so its edge stays
+  on the reach, then thinning out over its last six frames while it erodes (`skirt_fade`, no pop), with small
+  dust puffs kicked out behind it; the dust is a dense burst at the struck point and puffs of their own size and place,
+  barely pushed outward (no radial star), drawn per hit.
+
+**Decisions (Q0002, reversible).** The review asked for the cleave's dust to be thrown in a cone along the blow's
+direction. A splash event carries no direction (`SplashVisual` has a centre and zones); the dust is instead
+irregular per hit. Recorded for WP11 with the option of a presentation-only facing in `SplashVisual`. Real flame
+flipbooks are not made (no media this round); the fire is built from the smoke element and computed shapes.
+
+**Tools.** The effect lab can spawn its subject several times on one spot (`LabSubject::repeat`, `battle_capture
+--effect-lab <effect> --repeat <count>x<seconds>`, sheets `<effect>_repeat_*`), each with its own instance seed as
+consecutive events in a battle have. The stress stream of `frame_budget` bursts an air weapon's splash only at
+airborne units and a ground weapon's only on the ground (`strikes_plane`).
+
+**Gate.** The implementer checklist is in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out
+round 2"), the material in the packet's section "Scale-out round 2"; the orchestrator runs the independent review.

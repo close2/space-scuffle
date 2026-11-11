@@ -1,8 +1,8 @@
 Effect contact sheet of 'cleave_impact' (plan 2026-11-09-effect-visualization §6.5), made by
 `battle_capture --effect-lab cleave_impact` on the production effect plugin and shaders.
-Bindings: SplashFull=0.5, SplashMid=1, SplashReach=1.5. Lifetime: 0.900 s. Capture 1280x720, battle camera at 58° pitch.
+Bindings: SplashFull=0.5, SplashMid=1, SplashReach=1.5. Lifetime: 0.950 s. Capture 1280x720, battle camera at 58° pitch.
 Camera: shipped camera (no HDR, no bloom).
-cleave_impact_contact.png columns: ages 0 (0.000 s), 0.03 (0.027 s), 0.08 (0.072 s), 0.15 (0.135 s), 0.3 (0.270 s), 0.5 (0.450 s), 0.75 (0.675 s), 1 (0.900 s).
+cleave_impact_contact.png columns: ages 0 (0.000 s), 0.03 (0.028 s), 0.08 (0.076 s), 0.15 (0.142 s), 0.3 (0.285 s), 0.5 (0.475 s), 0.75 (0.712 s), 1 (0.950 s).
 Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
 damage, yellow reach; for a line, the line and the full radius at each search point), bright
 close zoom, its reference, dark default, its reference, dark close, its reference.
@@ -10,3 +10,6 @@ Default-zoom cells show the middle half of the frame, close-zoom cells its middl
 (a line's close-zoom cells the whole frame).
 cleave_impact_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
 40 ms, read left to right, top to bottom.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-11; scale-out round 2
+(plan Amendment 5; docs/evidence/effects/review/slice_review.md, "Scale-out round 2"). Scale-out round 1 is in
+commit f3d08f3.

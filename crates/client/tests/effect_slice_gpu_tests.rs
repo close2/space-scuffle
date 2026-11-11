@@ -173,6 +173,7 @@ fn lab_subject(subject: &SplashSubject) -> LabSubject {
         line_to,
         line_seen: u64::MAX,
         fog_below_x: None,
+        repeat: None,
     }
 }
 

@@ -118,6 +118,42 @@ pub struct LabSubject {
     /// draws it (the ground darkened to a quarter, a hard edge); `None` for no fog. Used with
     /// [`Self::line_seen`] to show a line running out of the fog into sight.
     pub fog_below_x: Option<f32>,
+    /// Further spawns of the subject after the first, as an attacker's consecutive hits on
+    /// one spot (scale-out review 1: a frequent effect must not stack or repeat its
+    /// silhouette); `None` spawns it once.
+    pub repeat: Option<LabRepeat>,
+}
+
+/// Consecutive spawns of a lab subject: `count` spawns in all, `every` seconds apart, each
+/// with its own instance seed as consecutive events in a battle have.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LabRepeat {
+    /// Spawns in all, at least 1.
+    pub count: u32,
+    /// Seconds between consecutive spawns, positive.
+    pub every: f32,
+}
+
+impl LabRepeat {
+    /// Seconds from the first spawn to the last.
+    #[must_use]
+    pub fn span(self) -> f32 {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a handful of spawns is exact in f32"
+        )]
+        let gaps = self.count.saturating_sub(1) as f32;
+        gaps * self.every
+    }
+
+    /// The delay of each spawn after the first, seconds.
+    pub fn delays(self) -> impl Iterator<Item = f32> {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a handful of spawns is exact in f32"
+        )]
+        (0..self.count).map(move |index| index as f32 * self.every)
+    }
 }
 
 impl LabSubject {
@@ -323,7 +359,25 @@ mod tests {
             line_to: Some(Vec3::new(4.0, 0.0, 0.0)),
             line_seen: u64::MAX,
             fog_below_x: None,
+            repeat: None,
         }
+    }
+
+    #[test]
+    fn a_repeat_spans_its_gaps() {
+        let repeat = LabRepeat {
+            count: 4,
+            every: 0.6,
+        };
+        assert!((repeat.span() - 1.8).abs() < 1e-6);
+        let delays: Vec<f32> = repeat.delays().collect();
+        assert_eq!(delays.len(), 4);
+        assert!((delays[3] - 1.8).abs() < 1e-6);
+        let once = LabRepeat {
+            count: 1,
+            every: 0.6,
+        };
+        assert!(once.span().abs() < f32::EPSILON);
     }
 
     #[test]

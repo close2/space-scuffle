@@ -7,7 +7,9 @@
 //!   splash effect, with the zone radii and line the simulation would publish for it.
 //! - [`spawn_stress_events`] sends `--effect-stress <rate>` splash events per second of
 //!   `Time<Virtual>` while the battle runs, round-robin over those sources, each at a live unit
-//!   of the presented snapshot chosen by a hash of its sequence number. The events go through
+//!   of the presented snapshot chosen by a hash of its sequence number, on the plane the weapon
+//!   strikes ([`strikes_plane`]: an air weapon's splash bursts among air units, a ground
+//!   weapon's on the ground). The events go through
 //!   the production wiring (`client::effects::systems::spawn_effects_from_events`), so budget,
 //!   level of detail and pools act as in a battle.
 //! - [`capture_stressed_frame`] takes a screenshot at the chosen tick and measures the effect
@@ -48,6 +50,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 /// Side of one coverage cell in pixels.
 pub const COVERAGE_CELL_PX: u32 = 4;
+
+/// Height above its ground, world units, from which the stream counts a unit as airborne. Air
+/// units fly several units up and ground units stand on their ground, so any value between
+/// separates them; half a unit also tolerates a ground unit on a slope's edge.
+pub const AIRBORNE_HEIGHT: f32 = 0.5;
 
 /// One weapon whose splash the stream repeats.
 #[derive(Debug, Clone, PartialEq)]
@@ -319,6 +326,19 @@ pub fn install(app: &mut App, config: StressConfig) -> StressHandle {
     handle
 }
 
+/// Whether a unit `height` world units above its ground lies on the plane `slot`'s weapon
+/// strikes: an air weapon only airborne units, a ground weapon only units on the ground, a
+/// primary weapon (which may strike both) any unit.
+#[must_use]
+pub fn strikes_plane(slot: WeaponSlot, height: f32) -> bool {
+    let airborne = height > AIRBORNE_HEIGHT;
+    match slot {
+        WeaponSlot::Air => airborne,
+        WeaponSlot::Ground => !airborne,
+        WeaponSlot::Primary => true,
+    }
+}
+
 /// A 32-bit mix of `value` (`SplitMix64`'s finaliser), for choosing units and angles.
 #[must_use]
 pub const fn mix(value: u64) -> u64 {
@@ -425,9 +445,11 @@ fn spawn_stress_events(
         return;
     };
     let bubbles = &session.frames.presented().bubbles;
-    let live = |index: usize| {
+    let live = |index: usize, slot: WeaponSlot| {
         bubbles.get(index).filter(|bubble| {
-            matches!(bubble.shape, ShapeKind::UnitSphere) && bubble.anim_state != AnimState::Die
+            matches!(bubble.shape, ShapeKind::UnitSphere)
+                && bubble.anim_state != AnimState::Die
+                && strikes_plane(slot, bubble.world_pos[2] - bubble.ground_z)
         })
     };
     if bubbles.is_empty() {
@@ -441,13 +463,13 @@ fn spawn_stress_events(
         let hash = mix(sequence);
         let source = &sources[usize::try_from(sequence % sources.len() as u64).unwrap_or(0)];
         let start = usize::try_from(hash % bubbles.len() as u64).unwrap_or(0);
-        // The first live unit at or after the hashed index; a frame of only dying units
-        // streams nothing.
+        // The first live unit on the weapon's plane at or after the hashed index; a frame
+        // without one skips this source's event.
         let Some(bubble) = (0..bubbles.len())
             .map(|step| (start + step) % bubbles.len())
-            .find_map(live)
+            .find_map(|index| live(index, source.source.weapon.slot))
         else {
-            return;
+            continue;
         };
         #[allow(
             clippy::cast_precision_loss,
@@ -740,6 +762,16 @@ mod tests {
             Some((0, [10.0, 20.0, 0.0], [19.0, 20.0, 0.0]))
         );
         Ok(())
+    }
+
+    #[test]
+    fn an_air_weapon_strikes_only_airborne_units() {
+        assert!(strikes_plane(WeaponSlot::Air, 3.0));
+        assert!(!strikes_plane(WeaponSlot::Air, 0.0));
+        assert!(strikes_plane(WeaponSlot::Ground, 0.1));
+        assert!(!strikes_plane(WeaponSlot::Ground, 3.0));
+        assert!(strikes_plane(WeaponSlot::Primary, 0.0));
+        assert!(strikes_plane(WeaponSlot::Primary, 3.0));
     }
 
     #[test]

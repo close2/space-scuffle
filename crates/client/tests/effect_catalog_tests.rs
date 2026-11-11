@@ -1162,8 +1162,19 @@ fn an_effects_salt_survives_other_effects_being_added() {
     );
     assert_ne!(id_one, id_two, "the dense id moves");
     assert_eq!(
-        one.effect(id_one).map(|effect| effect.name_hash),
-        two.effect(id_two).map(|effect| effect.name_hash),
+        one.effect(id_one).map(|effect| effect.salt),
+        two.effect(id_two).map(|effect| effect.salt),
         "the salt does not"
+    );
+    let pinned =
+        format!(r#""boom": (class: Major, event: Splash, seed: Some(2), layers: [ {SPRITE} ])"#);
+    let pinned = load(dir.path(), &vocabulary(&manifest, "", &pinned, "")).expect("pinned seed");
+    assert_eq!(
+        pinned
+            .effect_id("boom")
+            .and_then(|id| pinned.effect(id))
+            .map(|effect| effect.salt),
+        Some(2),
+        "a pinned seed is the salt"
     );
 }

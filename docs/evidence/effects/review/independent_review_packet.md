@@ -1,4 +1,4 @@
-# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Round 1)
+# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 and 2)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
@@ -6,6 +6,70 @@ judge it by, and nothing else: it holds no verdict of the implementer, on purpos
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Scale-out round 2 (WP7)
+
+Scale-out round 1's review ([`independent_review_scaleout1.md`](independent_review_scaleout1.md), kept as written)
+accepted `flak_burst`, rejected `flame_line`, `lance_sweep` and `cleave_impact`, and found that `shell_impact` had
+regressed. This is round 2. Please write it to a new file next to this one, `independent_review_scaleout2.md`, in the
+same form: judge `flame_line`, `lance_sweep` and `cleave_impact` afresh against each of the seven checklist items
+(at the end of this packet), **accept** or **reject** with a concrete reason (sheet, cell or frame, what you see);
+check `shell_impact` against its round-5 pictures; judge the crowd (item 6) for all seven effects and the fog
+sheet of `flame_line`; and say whether the seven are consistent with each other. The images are lavapipe captures
+from a debug `battle_capture --effect-lab` under Xvfb, as before; the sheets' layout is unchanged (eight ages across;
+rows: bright ground default zoom, the same with the 1-unit grid and the bound extent in red, bright close zoom and
+its reference, then the same four rows on dark teal ground). The meaning of each effect and its simulated extent
+are in the table of "Scale-out round 1" below. Nothing was spent and no texture was made this round: the new looks
+are built from the existing texture sets.
+
+### Material
+
+| Effect | Contact sheet | Sequence (40 ms steps) | Extra |
+|---|---|---|---|
+| `flame_line` | [flame_line_contact.png](flame_line_contact.png) ([legend](flame_line_contact.txt)) | [flame_line_sequence.png](flame_line_sequence.png) | fog take: [flame_line_fog_contact.png](flame_line_fog_contact.png) ([legend](flame_line_fog_contact.txt)), [flame_line_fog_sequence.png](flame_line_fog_sequence.png) |
+| `lance_sweep` | [lance_sweep_contact.png](lance_sweep_contact.png) ([legend](lance_sweep_contact.txt)) | [lance_sweep_sequence.png](lance_sweep_sequence.png) | |
+| `cleave_impact` | [cleave_impact_contact.png](cleave_impact_contact.png) ([legend](cleave_impact_contact.txt)) | [cleave_impact_sequence.png](cleave_impact_sequence.png) | four consecutive hits on one spot, 0.6 s apart (the attacker's cadence): [cleave_impact_repeat_contact.png](cleave_impact_repeat_contact.png) ([legend](cleave_impact_repeat_contact.txt)), [cleave_impact_repeat_sequence.png](cleave_impact_repeat_sequence.png) |
+| `shell_impact` | [shell_impact_contact.png](shell_impact_contact.png) ([legend](shell_impact_contact.txt)) | [shell_impact_sequence.png](shell_impact_sequence.png) | |
+
+**The fog take** shows the flame line with the viewer seeing its search points from the fifth on; the points
+before it and the attacker behind them lie in the fog (the ground there darkened to a quarter with a hard edge, as
+the battle terrain draws fog).
+
+**The repeat take** spawns the cleave four times on one spot, 0.6 s apart, each with its own random draw as
+consecutive hits in a battle have; its columns span from the first hit to the end of the last (2.75 s).
+
+### What changed, point by point
+
+| Effect | Round-1 finding | What changed |
+|---|---|---|
+| `flame_line` | Bubble outlines on the flames (foam) | The fireball-flipbook tongues are gone. The fire is soft-eroding billows of the smoke element in a fire ramp, and flame tongues stretched along their rising velocity; both are born hot and die to soot. |
+| | Pale cream, not fire | The jet and the body of fire have opaque, saturated orange ramps. The jet is yellow-white on its axis only for its first two frames. |
+| | Beaded streak | One continuous scorched band of torn ground, of uneven width, with napalm embers glowing in it for about 0.6 s. |
+| | Flames behind the first search point; overshoot past the end | Every fire layer is cut at the line's ends. Every line placement travels with the jet, so nothing appears ahead of its tip. |
+| `lance_sweep` | Ruler-line scar | A burnt groove of torn ground whose pieces vary about twofold in length and width, in a fading scorched halo. It glows from the inside as it cools (the glow shrinks into the groove's middle) and through short glowing cracks that outlast the glow. |
+| | Capsule head, no airborne part | The stroke and the flares at its head are torn by noise from the first frame. The wide round glow is removed. Molten spatter is thrown off every point (in round 1 its burst was too small to spawn at all). |
+| | Dotted row of smoke | Puffs of their own size, place, time and drift. |
+| `cleave_impact` | No punch at frame 0 | A warm flash, a short light and sparks at the struck point, a crack and churned earth under it, dark clods on arcs. |
+| | Pencil ring that pops | The front is a wider, noise-broken dust skirt with small dust puffs kicked out behind it. It thins out over its last six frames while it erodes. |
+| | Pinwheel of dust | A dense burst at the struck point and puffs of their own size and place, barely pushed outward. Each hit draws its own. A cone along the blow's direction is not possible: a splash event carries no direction (plan Amendment 5). |
+| | One value | The flash and the sparks are the bright focal point at frames 0–1. The clods and the crack are the darkest, the dust lies between. |
+| `shell_impact` | Regressed: blast mark 45–55 % weaker | Restored: it draws its round-5 random choices again. Its sheet and sequence here are the round-5 files, and a fresh capture equals them pixel for pixel. |
+
+Not changed this round: `flak_burst` (accepted; its polish items are open), `acid_burst` and `spine_line` (no
+regression found), and the shell's own polish items (a new blast-mark texture, the ring's width variation).
+
+### Crowd capture (item 6), scale-out round 2
+
+[`stress_capture_400.png`](stress_capture_400.png) is the 400-unit battle at tick 150 with 200 splashes a second
+streamed round-robin over all seven effects. The battle is changed for this round so that it fields
+`napalm_wheeler` (real jets that cross), `sky_bastion` and `vector_interceptor` (real anti-air bursts among air
+units). The stream now bursts `flak_burst` only at airborne units, in their plane.
+[`stress_capture_400_baseline.png`](stress_capture_400_baseline.png) is the same tick without the stream; it still
+shows the battle's own jets and bursts. [`stress_capture_400_detail.png`](stress_capture_400_detail.png) and
+[`stress_capture_400_baseline_detail.png`](stress_capture_400_baseline_detail.png) enlarge the middle of each twice.
+Figures (coverage, peak footprints per cell, retired instances): [`stress_capture.txt`](stress_capture.txt),
+paragraph "Scale-out round 2". The cleave's attacker and the lance's cannot take part in a battle yet (they have no
+unit media), so their effects come from the stream; the repeat take above shows the cleave at its real cadence.
 
 ## Scale-out round 1 (WP7)
 

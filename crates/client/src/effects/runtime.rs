@@ -256,7 +256,7 @@ impl EffectRuntime {
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
-            seed: hash3(self.sequence, 0x5EED_0F1E, effect.name_hash),
+            seed: hash3(self.sequence, 0x5EED_0F1E, effect.salt),
             detail_retired_at: over_cap.then_some(birth),
             has_detail: effect
                 .layers

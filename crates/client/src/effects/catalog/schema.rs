@@ -693,6 +693,11 @@ pub struct EffectDefRaw {
     /// `moving` slot, unused elsewhere.
     #[serde(default)]
     pub repeat: Option<f32>,
+    /// The salt of its instances' random choices (rotations, placements, variants, noise
+    /// phases), when a review accepted the pictures of one draw and the effect must keep it;
+    /// any `u32`. Without it the salt is the FNV-1a hash of the effect's name.
+    #[serde(default)]
+    pub seed: Option<u32>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.
