@@ -344,6 +344,38 @@ fn a_displacement_flies_linearly_lands_at_the_origin_and_runs_on_land() {
 }
 
 #[test]
+fn a_displacement_lands_on_a_point_another_unit_stands_on() {
+    // PlacementIgnoreBlockers (swarm EffectData:1453, plan D-8): only terrain and structures
+    // move a landing point; a unit standing there does not, and separation parts them after.
+    let mut w = world(
+        NO_STATUSES,
+        r#"(name: "pull", node: Displace((flight_ticks: 4)))"#,
+    );
+    let caster = unit(&mut w, 0, 10, 10);
+    let blocker = unit(&mut w, 1, 14, 10);
+    let target = unit(&mut w, 0, 18, 10);
+    let mut ctx = context(&w, Some(caster), EffectTarget::Unit(target));
+    ctx.origin = w.entities.get(&blocker).expect("alive").position;
+    run(&mut w, "pull", ctx);
+    for _ in 0..4 {
+        step(&mut w);
+    }
+    let landed = w.entities.get(&target).expect("alive");
+    assert!(landed.displacement.is_none());
+    // It landed on the blocker's point, and separation on the same tick parted the two
+    // evenly about it; a landing moved aside by the blocker would leave their midpoint off it.
+    let pair = [
+        landed.position,
+        w.entities.get(&blocker).expect("alive").position,
+    ];
+    let midpoint = (pair[0] + pair[1]) * SimScalar::HALF;
+    assert!(
+        midpoint.distance(SimVec2::from_i32(14, 10)) < SimScalar::from_num(0.01),
+        "landed on the occupied point: {pair:?}"
+    );
+}
+
+#[test]
 fn a_require_filter_skips_the_node_and_its_children() {
     let mut w = world(
         NO_STATUSES,

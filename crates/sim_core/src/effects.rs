@@ -109,16 +109,15 @@ impl SimWorld {
 
     /// The first point valid for `id`'s movement layer among `centre`, then the eight
     /// directions (counter-clockwise from +x) at 0.5, 1.0, … up to `range` world units.
+    /// Only terrain and structures count; other units never block the point
+    /// (`PlacementIgnoreBlockers`, plan D-8), and separation resolves any overlap after landing.
     pub(crate) fn first_valid_placement(
         &self,
         id: EntityId,
         centre: SimVec2,
         range: SimScalar,
     ) -> Option<SimVec2> {
-        if self
-            .validate_displacement_destination_prevalidated(id, centre)
-            .is_ok()
-        {
+        if self.validate_placement_terrain(id, centre).is_ok() {
             return Some(centre);
         }
         let mut distance = RING_STEP;
@@ -126,10 +125,7 @@ impl SimWorld {
             for step in 0..8 {
                 let angle = SimAngle::from_degrees(45 * step);
                 let point = centre + SimVec2::new(angle.cos(), angle.sin()) * distance;
-                if self
-                    .validate_displacement_destination_prevalidated(id, point)
-                    .is_ok()
-                {
+                if self.validate_placement_terrain(id, point).is_ok() {
                     return Some(point);
                 }
             }
