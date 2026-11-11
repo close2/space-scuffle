@@ -123,6 +123,14 @@
 //!   `concealment.is_concealed()`, false for every bubble here). With the old spelling
 //!   substituted back (the text cut at `, stance: ` and `concealment: None` read as
 //!   `cloaked: false`), all four reproduced their previous values, so no smog output changed.
+//! - The spellcaster status flags (plan `2026-11-10-spellcaster-mechanics` WP1a) re-recorded the
+//!   four system goldens (glibc 2.41, `x86_64`) because `StatusFlags` gained `damage_over_time`,
+//!   `stunned`, `range_reduced` and `revealed`, which lengthens every bubble record's `Debug`
+//!   text. With `, damage_over_time: false, stunned: false, range_reduced: false, revealed:
+//!   false` cut from that text, all seventeen tests passed on the previous values (the bubble
+//!   uniform bytes are hashed unchanged), so no smog output changed. Old values: startup
+//!   `0x7c1d_cfbb_0f5a_8a85`, Visual Lab `0xac8a_ffb3_30dc_18f2`, swarm `0xd5f6_b250_61a5_4171`,
+//!   live battle `0xb4a5_3438_4cb2_65cf`.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -870,11 +878,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x7c1d_cfbb_0f5a_8a85;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xac23_14d4_13dd_e3ed;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xac8a_ffb3_30dc_18f2;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xd5f6_b250_61a5_4171;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xb4a5_3438_4cb2_65cf;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x5150_d25b_ae37_bbfc;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xb9ec_a555_c65c_d6cf;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xb986_235a_dab0_bdd5;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {
