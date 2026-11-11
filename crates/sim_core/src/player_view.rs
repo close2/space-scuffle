@@ -25,9 +25,10 @@ use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    AbilityLockView, CarrierView, CommandOptionView, CommandSubject, ModeStateView, PlayerId,
-    PlayerStatusView, PlayerView, QueuedItem, QueuedJobView, ResourceNodeId, ShapeKind,
-    SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
+    AbilityEffectSpec, AbilityLockView, CarrierView, CastStateView, CommandOptionView,
+    CommandSubject, ModeStateView, PlayerId, PlayerStatusView, PlayerView, QueuedItem,
+    QueuedJobView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick, UnitTypeId,
+    VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -137,9 +138,33 @@ impl SimWorld {
                     channeling: entity.channeling_remaining_ticks > 0,
                 });
             }
+            if entity.is_completed {
+                Self::record_cast_states(entity, arch, out);
+            }
         }
         if entity.is_completed {
             out.completed_types.push(entity.unit_type_id);
+        }
+    }
+
+    /// Adds the readiness of each effect-tree ability of `entity` to `out.cast_states`, in
+    /// ability order (plan `2026-11-10-spellcaster-mechanics` D-10). The cooldown is the one
+    /// `would_accept_cast_order` reads, and the energy test is its comparison.
+    fn record_cast_states(entity: &Entity, arch: &crate::UnitArchetype, out: &mut PlayerView) {
+        for (ability, index) in arch.abilities.iter().zip(0_u8..) {
+            if !matches!(ability.effect, AbilityEffectSpec::Effect(_)) {
+                continue;
+            }
+            out.cast_states.push(CastStateView {
+                entity: entity.id,
+                ability_index: index,
+                cooldown_ticks: entity
+                    .ability_cooldowns
+                    .get(usize::from(index))
+                    .copied()
+                    .unwrap_or(0),
+                short_of_energy: entity.energy < ability.energy_cost,
+            });
         }
     }
 

@@ -66,6 +66,7 @@ SuiteCatalog(
         "client/battle_card_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_card_path_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_mode_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_cast_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_context_order_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_flipbook_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_fog_tests": (class: Slow, test_threads: Some(2)),
@@ -191,6 +192,7 @@ SuiteCatalog(
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
                 "client/battle_mode_tests",
+                "client/battle_cast_tests",
                 "client/concealment_gpu_tests",
                 // `effects.ron` and the units' presentation blocks.
                 "client/effect_catalog_tests",
@@ -284,6 +286,8 @@ SuiteCatalog(
             "client/battle_flipbook_tests",
             // The client proof of mode admission (`would_admit_cast`, `settled_mode`).
             "client/battle_mode_tests",
+            // The client proof of cast admission (`would_accept_cast_order`, `cast_states`).
+            "client/battle_cast_tests",
         ],
         // Every target whose code calls `sim_fixtures::` (its own files or a support file it
         // loads); the catalog test keeps this list equal to the sources.

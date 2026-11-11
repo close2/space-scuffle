@@ -73,6 +73,12 @@ pub struct PlayerView {
     /// `2026-11-09-effect-visualization` D-5). Never holds the viewer's own entities.
     #[serde(default)]
     pub revealed: Vec<EntityId>,
+    /// Readiness of every effect-tree ability (`AbilityEffectSpec::Effect`) of the viewer's
+    /// living, uncarried, completed units, sorted by entity ID and then ability index (plan
+    /// `2026-11-10-spellcaster-mechanics` D-10). The command card reads its cooldown and energy
+    /// locks here.
+    #[serde(default)]
+    pub cast_states: Vec<CastStateView>,
 }
 
 impl PlayerView {
@@ -95,6 +101,7 @@ impl PlayerView {
         self.mode_states.clear();
         self.ability_locks.clear();
         self.revealed.clear();
+        self.cast_states.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -183,6 +190,19 @@ pub struct AbilityLockView {
     pub unit_type: UnitTypeId,
     /// Index into the type's `abilities`.
     pub ability_index: u8,
+}
+
+/// Whether one of the viewer's units could pay for and repeat one of its effect-tree abilities.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CastStateView {
+    /// The unit.
+    pub entity: EntityId,
+    /// Index into its archetype's `abilities`.
+    pub ability_index: u8,
+    /// Ticks, at 25 Hz, until the ability is off cooldown; zero when it is ready.
+    pub cooldown_ticks: u16,
+    /// Whether the unit has less energy than the ability costs.
+    pub short_of_energy: bool,
 }
 
 /// One resource node in sight of the viewer.
@@ -356,6 +376,12 @@ mod tests {
                 ability_index: 1,
             }],
             revealed: vec![EntityId(14), EntityId(20)],
+            cast_states: vec![CastStateView {
+                entity: EntityId(12),
+                ability_index: 2,
+                cooldown_ticks: 40,
+                short_of_energy: true,
+            }],
         }
     }
 
@@ -363,8 +389,9 @@ mod tests {
     fn a_view_written_before_revealed_existed_still_reads() {
         let mut view = populated();
         view.revealed.clear();
+        view.cast_states.clear();
         let text = ron::to_string(&view).expect("the view has no unserializable field");
-        let legacy = text.replace(",revealed:[]", "");
+        let legacy = text.replace(",revealed:[],cast_states:[]", "");
         assert_ne!(legacy, text, "the field was removed from the text");
         let back: PlayerView = ron::from_str(&legacy).expect("a missing list reads as empty");
         assert_eq!(back, view);

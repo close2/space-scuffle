@@ -56,8 +56,9 @@ pub use ids::{
 };
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use player_view::{
-    AbilityLockView, CarrierView, CommandOptionView, CommandSubject, ModeStateView, OptionLock,
-    PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView, VisibleNodeView,
+    AbilityLockView, CarrierView, CastStateView, CommandOptionView, CommandSubject, ModeStateView,
+    OptionLock, PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView,
+    VisibleNodeView,
 };
 pub use presentation::{
     AbilitySource, AreaView, Concealment, EffectSource, LineView, LinkView, ModeTransitionView,

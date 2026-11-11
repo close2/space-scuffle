@@ -10,7 +10,7 @@ use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId,
-    SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
+    SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -102,6 +102,13 @@ pub enum SubmissionError {
     /// A key pressed a disabled command card entry. Holds the sentence its tooltip shows.
     #[error("the card entry is locked: {0}")]
     CardLocked(String),
+    /// A cast that needs a unit was aimed where the viewer sees none.
+    #[error("no unit to cast on there")]
+    NoCastTarget,
+    /// No selected caster would take the cast at that target now: the target is invalid,
+    /// unseen or refused by the ability's filter.
+    #[error("no selected unit can cast that there")]
+    CastRefused,
 }
 
 impl SubmissionError {
@@ -122,6 +129,57 @@ pub enum ModeDirection {
     Enter,
     /// Out of the mode: the ability's `leave_name`, for example Tank Mode or Unburrow.
     Leave,
+}
+
+/// What a targeted effect-tree ability aims at (plan `2026-11-10-spellcaster-mechanics` D-10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CastTarget {
+    /// A point on the ground: `AbilityTargetKind::TargetPosition`.
+    Point,
+    /// A unit: `AbilityTargetKind::TargetEntity`.
+    Unit,
+}
+
+/// Names one targeted cast of the catalog by the first archetype that declares it.
+///
+/// The ability's `name` at `ability_index` of `holder` is the cast's identity: every archetype
+/// whose first cast ability of that name and target kind ([`cast_ability_index`]) is in the
+/// selection takes part, whatever its own index. The key holds no string, so a command mode
+/// that carries it stays `Copy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CastKey {
+    /// The archetype the catalog first found the ability on.
+    pub holder: UnitTypeId,
+    /// Index of the ability in `holder`'s `abilities`.
+    pub ability_index: u8,
+}
+
+impl CastKey {
+    /// The ability this key names in `world`'s catalog, with its target, if it is a targeted
+    /// effect-tree ability there.
+    #[must_use]
+    pub fn ability(self, world: &SimWorld) -> Option<(&AbilitySpec, CastTarget)> {
+        let ability = world
+            .catalog
+            .get(self.holder)
+            .ok()?
+            .abilities
+            .get(usize::from(self.ability_index))?;
+        cast_of_ability(ability).map(|target| (ability, target))
+    }
+}
+
+/// One cast as the player aimed it, for [`BattleCommandQueue::submit_cast`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CastOrder {
+    /// The cast.
+    pub key: CastKey,
+    /// The point aimed at, in world units, for a point cast.
+    pub target_pos: Option<SimVec2>,
+    /// The unit aimed at, for a unit cast.
+    pub target_entity: Option<EntityId>,
+    /// Whether Shift queues it after the casters' current orders.
+    pub queued: bool,
 }
 
 /// What a pending mode switch must still hold when its tick takes it.
@@ -333,6 +391,84 @@ impl BattleCommandQueue {
         last
     }
 
+    /// Sends the cast `key` names, at `target_pos` (world units) or on `target_entity`, to every
+    /// member of `selection` that would take it now, one command per distinct ability index, in
+    /// ascending index order.
+    ///
+    /// A member takes part when it is owned, alive, finished and not carried, its archetype's
+    /// first cast ability of the key's name and target kind is at that index
+    /// ([`cast_ability_index`]), and the simulation would accept the order
+    /// ([`SimWorld::would_accept_cast_order`]: unlock, cooldown, energy, target). Range is not
+    /// asked: the caster walks into range. The whole capable group is sent, and the simulation
+    /// picks the one caster of a non-queued single-caster ability. Returns the sequence of the
+    /// last command. Allocation belongs to the user action.
+    /// # Errors
+    /// [`SubmissionError::CastRefused`] if a member has the ability but none would take the
+    /// cast, [`SubmissionError::EmptySelection`] if no member has it, a closed match, a missing
+    /// archetype or identity exhaustion.
+    pub fn submit_cast(
+        &mut self,
+        world: &SimWorld,
+        player: PlayerId,
+        selection: &[EntityId],
+        cast: CastOrder,
+    ) -> Result<SubmissionSequence, SubmissionError> {
+        let generation = self.generation.ok_or(SubmissionError::NotReady)?;
+        accepts_orders(world, player)?;
+        if player.slot().is_none() {
+            return Err(SubmissionError::InvalidPlayer(player));
+        }
+        let (ability, target) = cast
+            .key
+            .ability(world)
+            .ok_or(SubmissionError::UnsupportedOrder)?;
+        // (ability index, recipients), kept sorted by index.
+        let mut groups: Vec<(u8, Vec<EntityId>)> = Vec::new();
+        let mut holders = false;
+        for id in selection {
+            let Some(entity) = world.entities.get(id).filter(|entity| {
+                entity.owner == player && can_receive_order(entity, &UnitOrder::Idle)
+            }) else {
+                continue;
+            };
+            let archetype = world
+                .catalog
+                .get(entity.unit_type_id)
+                .map_err(|_| SubmissionError::MissingArchetype(*id))?;
+            let Some(index) = cast_ability_index(archetype, &ability.name, target) else {
+                continue;
+            };
+            holders = true;
+            if !world.would_accept_cast_order(*id, index, cast.target_pos, cast.target_entity) {
+                continue;
+            }
+            match groups.binary_search_by_key(&index, |(group, _)| *group) {
+                Ok(at) => groups[at].1.push(*id),
+                Err(at) => groups.insert(at, (index, vec![*id])),
+            }
+        }
+        let mut last = Err(if holders {
+            SubmissionError::CastRefused
+        } else {
+            SubmissionError::EmptySelection
+        });
+        for (ability_index, entities) in groups {
+            let command = PlayerCommand {
+                player_id: player,
+                entities,
+                order: UnitOrder::CastAbility {
+                    ability_index,
+                    target_pos: cast.target_pos,
+                    target_entity: cast.target_entity,
+                },
+                queue: cast.queued,
+            };
+            validate(world, &command)?;
+            last = Ok(self.capture(generation, command, None)?);
+        }
+        last
+    }
+
     /// Selects current owned capable actors for the existing roster-level controls.
     /// Selection allocation belongs to a new user action, not frame synchronization.
     /// # Errors
@@ -345,7 +481,6 @@ impl BattleCommandQueue {
         queued: bool,
     ) -> Result<SubmissionSequence, SubmissionError> {
         accepts_orders(world, player)?;
-        supported(&order)?;
         let subject = order_subject(world, player, &order)?;
         let mut recipients = Vec::new();
         for entity in world
@@ -389,7 +524,6 @@ impl BattleCommandQueue {
         queued: bool,
     ) -> Result<SubmissionSequence, SubmissionError> {
         accepts_orders(world, player)?;
-        supported(&order)?;
         let subject = order_subject(world, player, &order)?;
         let mut recipients = Vec::with_capacity(selection.len());
         for id in selection {
@@ -447,7 +581,8 @@ impl BattleCommandQueue {
         bundle.state_checksum = None;
         bundle.commands.clear();
         sequences.clear();
-        while let Some(pending) = self.pending.pop_front() {
+        while let Some(mut pending) = self.pending.pop_front() {
+            retain_casters(world, &mut pending);
             let result = if pending.generation == generation {
                 validate_pending(world, &pending)
             } else {
@@ -527,34 +662,6 @@ fn accepts_orders(world: &SimWorld, player: PlayerId) -> Result<(), SubmissionEr
     Ok(())
 }
 
-/// Whether the battle queue carries `order` at all. Exhaustive, so a new order cannot be
-/// refused by accident: it fails to compile until someone decides here.
-const fn supported(order: &UnitOrder) -> Result<(), SubmissionError> {
-    match order {
-        UnitOrder::Idle
-        | UnitOrder::Move { .. }
-        | UnitOrder::AttackMove { .. }
-        | UnitOrder::AttackTarget { .. }
-        | UnitOrder::HoldPosition
-        | UnitOrder::Stop
-        | UnitOrder::UseStim
-        | UnitOrder::Produce { .. }
-        | UnitOrder::Harvest { .. }
-        | UnitOrder::ReturnCargo
-        | UnitOrder::Build { .. }
-        | UnitOrder::Construct { .. }
-        | UnitOrder::CancelConstruction
-        | UnitOrder::Research { .. }
-        | UnitOrder::CancelProduction { .. }
-        | UnitOrder::Load { .. }
-        | UnitOrder::UnloadAll => Ok(()),
-        // A cast needs a direction, which only `submit_mode_switch` carries and checks again
-        // at its tick, so the generic paths refuse it (plan `2026-11-09-client-mode-commands`
-        // D-4). Other abilities have no command yet (B-69).
-        UnitOrder::CastAbility { .. } => Err(SubmissionError::UnsupportedOrder),
-    }
-}
-
 /// Whether `archetype` carries any weapon. The one rule client admission and the card share.
 #[must_use]
 pub const fn is_armed(archetype: &UnitArchetype) -> bool {
@@ -616,7 +723,27 @@ fn capable(
                 && MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground
         }
         UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
-        UnitOrder::CastAbility { .. } => false,
+        // Only a targeted effect-tree cast (plan `2026-11-10-spellcaster-mechanics` D-10). A
+        // mode switch needs a direction, which only `submit_mode_switch` carries and checks
+        // again at its tick (plan `2026-11-09-client-mode-commands` D-4). Other abilities have
+        // no command yet (B-69).
+        UnitOrder::CastAbility {
+            ability_index,
+            target_pos,
+            target_entity,
+        } => {
+            archetype
+                .abilities
+                .get(usize::from(*ability_index))
+                .and_then(cast_of_ability)
+                .is_some()
+                && world.would_accept_cast_order(
+                    entity.id,
+                    *ability_index,
+                    *target_pos,
+                    *target_entity,
+                )
+        }
     }
 }
 
@@ -727,6 +854,79 @@ pub fn mode_ability_index(archetype: &UnitArchetype, mode_name: &str) -> Option<
         .and_then(|index| u8::try_from(index).ok())
 }
 
+/// What `ability` aims at, if it is a targeted effect-tree ability: a `TargetPosition` or
+/// `TargetEntity` ability whose effect is `AbilityEffectSpec::Effect`. The one rule the command
+/// card, the command modes and admission share; it reads mechanics, never a name.
+#[must_use]
+pub const fn cast_of_ability(ability: &AbilitySpec) -> Option<CastTarget> {
+    match (&ability.target_kind, &ability.effect) {
+        (AbilityTargetKind::TargetPosition, AbilityEffectSpec::Effect(_)) => {
+            Some(CastTarget::Point)
+        }
+        (AbilityTargetKind::TargetEntity, AbilityEffectSpec::Effect(_)) => Some(CastTarget::Unit),
+        _ => None,
+    }
+}
+
+/// Index of `archetype`'s first targeted effect-tree ability called `name` that aims at
+/// `target`, if it has one.
+#[must_use]
+pub fn cast_ability_index(archetype: &UnitArchetype, name: &str, target: CastTarget) -> Option<u8> {
+    archetype
+        .abilities
+        .iter()
+        .position(|ability| ability.name == name && cast_of_ability(ability) == Some(target))
+        .and_then(|index| u8::try_from(index).ok())
+}
+
+/// Whether a member of `selection` owned by `player` is in play and holds the cast `key` names.
+///
+/// Whether it could cast now is not asked: that needs the target, which the click gives. The
+/// question [`CommandMode::reconcile`](crate::battle_input::command_mode::CommandMode::reconcile)
+/// asks on every frame, without allocating.
+#[must_use]
+pub fn any_caster(
+    world: &SimWorld,
+    player: PlayerId,
+    selection: &[EntityId],
+    key: CastKey,
+) -> bool {
+    let Some((ability, target)) = key.ability(world) else {
+        return false;
+    };
+    selection.iter().any(|id| {
+        world
+            .entities
+            .get(id)
+            .filter(|entity| entity.owner == player && can_receive_order(entity, &UnitOrder::Idle))
+            .and_then(|entity| world.catalog.get(entity.unit_type_id).ok())
+            .is_some_and(|archetype| cast_ability_index(archetype, &ability.name, target).is_some())
+    })
+}
+
+/// Leaves out of a pending targeted cast the recipients that would no longer take it.
+///
+/// An earlier cast of the group may have spent a member's energy or started its cooldown
+/// between submission and this tick; the others still cast. The command fails at
+/// [`validate`] only when none is left. A mode switch, and every other order, is untouched.
+fn retain_casters(world: &SimWorld, pending: &mut PendingCommand) {
+    let UnitOrder::CastAbility {
+        ability_index,
+        target_pos,
+        target_entity,
+    } = pending.command.order
+    else {
+        return;
+    };
+    if pending.mode.is_some() {
+        return;
+    }
+    pending
+        .command
+        .entities
+        .retain(|id| world.would_accept_cast_order(*id, ability_index, target_pos, target_entity));
+}
+
 /// Whether `entity`, of `archetype`, can switch `mode_name` in `direction` now with the ability
 /// at `ability_index`: the simulation would admit the cast, and the unit's settled mode is the
 /// one the direction leaves from.
@@ -811,7 +1011,6 @@ fn validate_mode_switch(
 
 fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionError> {
     accepts_orders(world, command.player_id)?;
-    supported(&command.order)?;
     if command.player_id.slot().is_none() {
         return Err(SubmissionError::InvalidPlayer(command.player_id));
     }

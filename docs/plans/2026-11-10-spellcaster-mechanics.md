@@ -47,6 +47,24 @@
 > - **Allocation test (D-18)** counts with DHAT scoped by call stack (no counting allocator, Q0011): engine blocks are
 >   compared between 0 and 200 measured ticks, because DHAT attributes a `realloc` to the block's first allocation.
 
+> **Amendment 3 (WP1e as built, 2026-11-10; Q0002).**
+>
+> - **Card.** A cast is interned as a `CastId` by ability name and target kind, in catalog order, like a `ModeId`;
+>   archetypes sharing one share the entry. `CardLabel::Cast(CastId)`; the entry's action is the existing
+>   `CardAction::Mode(CommandMode::CastAtPoint | CastOnUnit)`, so no separate `CardAction::Cast` (the panel's armed
+>   highlight works unchanged). Locks: research, then transforming, cooldown, energy; the entry is enabled when any
+>   holder is free, otherwise it shows the reason of the holder nearest to casting.
+> - **View.** `PlayerView` had no per-unit energy or cooldown; it gains `cast_states: Vec<CastStateView { entity,
+>   ability_index, cooldown_ticks, short_of_energy }>` for the viewer's completed units' `Effect` abilities, unhashed.
+> - **Modes.** The cast modes carry a `CastKey { holder, ability_index }` (the first declaring archetype) and are
+>   submitted per ability index through `BattleCommandQueue::submit_cast`. A click with no visible unit under the
+>   pointer is refused (`NoCastTarget`); a target the simulation refuses for every holder is `CastRefused`.
+> - **Revalidation** drops, at the tick, the members of a pending cast that would no longer take it (an earlier cast
+>   spent their energy) instead of failing the whole command; it fails only when none is left.
+> - **Targeting ring deferred.** No existing indicator draws a ring at the cursor, so `CommandMode::targeting_radius`
+>   exposes the radius and the ring is drawn with the area ring once Q0080 is answered (D-11). Tether indicators wait
+>   for WP3 likewise.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
