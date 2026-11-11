@@ -120,7 +120,10 @@ impl Context {
     pub fn change(&self, spec: &ChangeSpec) -> Result<Change, GateError> {
         let paths = self.git.changed_paths(spec)?;
         let mut contents = BTreeMap::new();
-        for path in paths.iter().filter(|path| is_judged_by_content(path)) {
+        for path in paths
+            .iter()
+            .filter(|path| is_judged_by_content(path, &self.workspace))
+        {
             contents.insert(path.clone(), self.git.versions(spec, path)?);
         }
         Ok(Change { paths, contents })

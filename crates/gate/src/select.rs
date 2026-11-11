@@ -13,14 +13,19 @@
 //!
 //! Some files are judged by their content, not their path (plan 2026-11-11-faster-gates §4):
 //! the suite catalog `crates/gate/suites.ron` selects what its semantic diff
-//! (`catalog_diff.rs`) changes. Their two versions arrive in a [`Change`]; the runner fills them
-//! from Git, so this module still reads no file.
+//! (`catalog_diff.rs`) changes; a member manifest changed only in its dev sections
+//! (`manifest_diff.rs`) selects its crate without downstream contracts; `Cargo.lock` changed only
+//! in members' dependency lists (`lockfile.rs`) adds nothing beyond those members' dev-only
+//! manifest changes. Their two versions arrive in a [`Change`]; the runner fills them from Git,
+//! so this module still reads no file.
 //!
 //! # Invariants
 //! - Uncertain means more (P3): a changed path that no `global`, `docs`, crate, rule, trigger,
 //!   command or own-file entry covers selects the complete suite, and so does any `global` path.
 //! - A file judged by content whose two versions are not both known (the path-only form
 //!   [`select`], an unreadable base) selects the complete suite.
+//! - An external package change in `Cargo.lock`, and any change of a member manifest outside its
+//!   dev sections, selects the complete suite.
 //! - A crate change selects the crate's `fast` and `slow` targets and its downstream contracts;
 //!   `gpu` and `valgrind` targets only when a changed path is one of their own files or matches
 //!   one of their triggers, a path rule names them, or a downstream contract does.
@@ -30,6 +35,8 @@
 
 use crate::catalog::{SuiteCatalog, TargetRef, TestClass, CATALOG_PATH};
 use crate::catalog_diff::CatalogDiff;
+use crate::lockfile::LockDiff;
+use crate::manifest_diff::{classify_manifest, ManifestChange};
 use crate::sources::SourceIndex;
 use crate::tier::Tier;
 use crate::workspace::{TargetId, Workspace};
@@ -58,6 +65,8 @@ pub enum Reason {
     OwnFile(String),
     /// A difference of the suite catalog against its base, as `explain` describes it.
     Catalog(String),
+    /// A dev-only change of the crate's manifest touched this target's `[[test]]` entry.
+    Manifest(String),
 }
 
 impl fmt::Display for Reason {
@@ -72,6 +81,7 @@ impl fmt::Display for Reason {
             Self::Trigger(glob) => write!(f, "trigger `{glob}`"),
             Self::OwnFile(path) => write!(f, "own file {path}"),
             Self::Catalog(what) => write!(f, "suites.ron: {what}"),
+            Self::Manifest(path) => write!(f, "[[test]] entry changed in {path}"),
         }
     }
 }
@@ -178,6 +188,8 @@ struct Builder<'a> {
     workspace: &'a Workspace,
     targets: BTreeMap<TargetId, Selected>,
     commands: BTreeMap<String, BTreeSet<Reason>>,
+    /// Crates whose manifest changed only in its dev sections.
+    dev_only: BTreeSet<String>,
 }
 
 impl Builder<'_> {
@@ -247,11 +259,22 @@ impl Change {
     }
 }
 
+/// Where the lockfile lives, relative to the repository root.
+pub const LOCKFILE_PATH: &str = "Cargo.lock";
+
+/// The workspace crate whose manifest `path` is, if it is one.
+fn manifest_owner<'a>(path: &str, workspace: &'a Workspace) -> Option<&'a str> {
+    workspace
+        .package_of_path(path)
+        .filter(|package| path == format!("{}/Cargo.toml", package.dir))
+        .map(|package| package.name.as_str())
+}
+
 /// Whether the selection judges a change to `path` by its content rather than its path: the
-/// suite catalog.
+/// suite catalog, the lockfile, and the manifest of a workspace crate.
 #[must_use]
-pub fn is_judged_by_content(path: &str) -> bool {
-    path == CATALOG_PATH
+pub fn is_judged_by_content(path: &str, workspace: &Workspace) -> bool {
+    path == CATALOG_PATH || path == LOCKFILE_PATH || manifest_owner(path, workspace).is_some()
 }
 
 /// Inputs of [`select`] that describe the repository.
@@ -326,7 +349,7 @@ fn judge_path(
             glob: glob.to_string(),
         });
     }
-    if is_judged_by_content(path) {
+    if is_judged_by_content(path, builder.workspace) {
         let why = judge_content(builder, inputs, change, path, &mut covered_by);
         if let (None, Some(why)) = (&complete, why) {
             covered_by.push(format!("{why}: complete suite"));
@@ -340,8 +363,17 @@ fn judge_path(
     if let Some(glob) = docs {
         covered_by.push(format!("docs `{glob}`"));
     } else if let Some(package) = builder.workspace.package_of_path(path) {
-        covered_by.push(format!("crate {}", package.name));
-        changed_crates.insert(package.name.clone());
+        let dev_only = manifest_owner(path, builder.workspace)
+            .is_some_and(|owner| builder.dev_only.contains(owner));
+        if dev_only {
+            covered_by.push(format!(
+                "crate {} (dev-only manifest change: no downstream contract)",
+                package.name
+            ));
+        } else {
+            covered_by.push(format!("crate {}", package.name));
+            changed_crates.insert(package.name.clone());
+        }
     }
     cover_by_entries(builder, inputs.sources, path, &mut covered_by)?;
     if covered_by.is_empty() {
@@ -370,7 +402,90 @@ fn judge_content(
     let Some(versions) = change.contents.get(path) else {
         return Some("no base version to compare".to_string());
     };
-    judge_catalog(builder, inputs, versions, covered_by)
+    if path == CATALOG_PATH {
+        judge_catalog(builder, inputs, versions, covered_by)
+    } else if path == LOCKFILE_PATH {
+        judge_lockfile(inputs.workspace, change, versions, covered_by)
+    } else {
+        judge_manifest(builder, path, versions, covered_by)
+    }
+}
+
+/// How a member manifest changed, when both of its versions are known.
+fn manifest_change(versions: &FileVersions) -> Option<ManifestChange> {
+    match (&versions.before, &versions.after) {
+        (Some(before), Some(after)) => Some(classify_manifest(before, after)),
+        _ => None,
+    }
+}
+
+/// Judges a change of the member manifest `path` (plan §4.4): a dev-only change selects the
+/// crate without its downstream contracts, plus every `[[test]]` target whose entry changed.
+fn judge_manifest(
+    builder: &mut Builder<'_>,
+    path: &str,
+    versions: &FileVersions,
+    covered_by: &mut Vec<String>,
+) -> Option<String> {
+    let owner = manifest_owner(path, builder.workspace)?.to_string();
+    match manifest_change(versions) {
+        None => Some("manifest added or removed".to_string()),
+        Some(ManifestChange::Runtime { section }) => Some(format!("{section} changed")),
+        Some(ManifestChange::DevOnly { tests }) => {
+            covered_by.push("dev sections changed only".to_string());
+            for name in tests {
+                let id = TargetId::test(&owner, &name);
+                if builder.workspace.test_targets().any(|t| t.id == id) {
+                    builder.add(id, Reason::Manifest(path.to_string()));
+                }
+            }
+            builder.dev_only.insert(owner);
+            None
+        }
+    }
+}
+
+/// Judges a change of `Cargo.lock` (plan §4.4): only members' dependency lists may differ, and
+/// each such member's manifest must have changed in its dev sections only.
+fn judge_lockfile(
+    workspace: &Workspace,
+    change: &Change,
+    versions: &FileVersions,
+    covered_by: &mut Vec<String>,
+) -> Option<String> {
+    let (Some(before), Some(after)) = (&versions.before, &versions.after) else {
+        return Some("lockfile added or removed".to_string());
+    };
+    let members = match LockDiff::between(before, after) {
+        LockDiff::Unreadable => return Some("lockfile unreadable".to_string()),
+        LockDiff::External(package) => {
+            return Some(format!("external package {package} changed"));
+        }
+        LockDiff::Membership(member) => {
+            return Some(format!("workspace member {member} added or removed"));
+        }
+        LockDiff::Other => return Some("lockfile format or metadata changed".to_string()),
+        LockDiff::MembersOnly(members) => members,
+    };
+    for member in &members {
+        let dev_only = workspace
+            .package(member)
+            .map(|package| format!("{}/Cargo.toml", package.dir))
+            .and_then(|manifest| change.contents.get(&manifest))
+            .and_then(manifest_change)
+            .is_some_and(|change| matches!(change, ManifestChange::DevOnly { .. }));
+        if !dev_only {
+            return Some(format!(
+                "{member} dependencies changed without a dev-only manifest change"
+            ));
+        }
+    }
+    let names: Vec<&str> = members.iter().map(String::as_str).collect();
+    covered_by.push(format!(
+        "members' dependency lists only ({}), each with a dev-only manifest change",
+        names.join(", ")
+    ));
+    None
 }
 
 /// Judges a change of the suite catalog by its semantic diff (plan §4.2).
@@ -496,6 +611,7 @@ pub fn select_change(
         workspace: inputs.workspace,
         targets: BTreeMap::new(),
         commands: BTreeMap::new(),
+        dev_only: BTreeSet::new(),
     };
     for reference in &inputs.catalog.always {
         builder.add_ref(reference, &Reason::Always)?;
@@ -516,6 +632,11 @@ pub fn select_change(
     for krate in &changed_crates {
         builder.add_crate(krate, &Reason::Crate(krate.clone()))?;
         add_downstream(&mut builder, inputs, krate)?;
+    }
+    // A dev-dependency never reaches a dependent: no downstream contract (plan §4.4).
+    for krate in std::mem::take(&mut builder.dev_only) {
+        builder.add_crate(&krate, &Reason::Crate(krate.clone()))?;
+        changed_crates.insert(krate);
     }
     if complete.is_some() {
         docs_only = false;

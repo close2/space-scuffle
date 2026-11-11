@@ -31,6 +31,8 @@ mod execute;
 mod explain;
 mod gate_lock;
 mod glob;
+mod lockfile;
+mod manifest_diff;
 mod merge;
 mod runner;
 mod schedule;
@@ -56,12 +58,14 @@ pub use execute::{build_invocations, failed_tests, mark_flakes, Outcome, TargetR
 pub use explain::render_selection;
 pub use gate_lock::{lock_path, waiting_message, GateLock, Holder, HELD_VAR, LOCK_PATH_VAR};
 pub use glob::Glob;
+pub use lockfile::{LockDiff, LockEntry};
+pub use manifest_diff::{classify_manifest, parse_toml, ManifestChange, TomlError, TomlValue};
 pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 pub use runner::{check_target_dir, run_tier, stamp_dir, Context, RunReport, StepResult};
 pub use schedule::{Job, Lane, Scheduler};
 pub use select::{
     is_judged_by_content, select, select_change, Change, ClippyScope, CompleteCause, FileVersions,
-    Inputs, PathMatch, Reason, Selected, Selection,
+    Inputs, PathMatch, Reason, Selected, Selection, LOCKFILE_PATH,
 };
 pub use sources::{
     blank, invokes_valgrind, mentioned_path_roots, mentions_path_root, uses_gpu_harness, Blanking,

@@ -18,7 +18,7 @@
 use gate::{
     select, select_change, Change, ClippyScope, CompleteCause, FileVersions, GateError, Inputs,
     Reason, Selection, SourceIndex, SuiteCatalog, TargetId, TestClass, Tier, Workspace,
-    CATALOG_PATH,
+    CATALOG_PATH, LOCKFILE_PATH,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -280,7 +280,7 @@ fn docs_only_runs_the_charter_checks_alone() -> Result<(), GateError> {
 #[test]
 fn a_workspace_input_selects_the_complete_suite() -> Result<(), GateError> {
     let repo = Repo::load()?;
-    let selection = repo.select(Tier::Package, &["Cargo.lock"])?;
+    let selection = repo.select(Tier::Package, &["Cargo.toml"])?;
     assert!(matches!(
         selection.complete,
         Some(CompleteCause::Global { .. })
@@ -528,7 +528,7 @@ fn a_gate_test_change_selects_only_the_gate_crate() -> Result<(), GateError> {
 fn the_path_only_form_still_selects_the_complete_suite_for_the_catalog_and_the_lockfile(
 ) -> Result<(), GateError> {
     let repo = Repo::load()?;
-    for path in [CATALOG_PATH, "Cargo.lock"] {
+    for path in [CATALOG_PATH, LOCKFILE_PATH, "crates/sim_core/Cargo.toml"] {
         let selection = repo.select(Tier::Package, &[path])?;
         assert!(selection.complete.is_some(), "{path}");
         assert_eq!(
@@ -536,5 +536,177 @@ fn the_path_only_form_still_selects_the_complete_suite_for_the_catalog_and_the_l
             repo.workspace.test_targets().count()
         );
     }
+    Ok(())
+}
+
+/// The real `Cargo.lock` and `crates/sim_core/Cargo.toml`, and their versions without the
+/// dev-dependency `proptest` of `sim_core`.
+struct ProptestEdit {
+    lock: String,
+    lock_before: String,
+    manifest: String,
+    manifest_before: String,
+}
+
+const SIM_CORE_MANIFEST: &str = "crates/sim_core/Cargo.toml";
+
+impl ProptestEdit {
+    fn new() -> Result<Self, GateError> {
+        let lock = real_text(LOCKFILE_PATH)?;
+        let lock_before = edited(
+            &lock,
+            "name = \"sim_core\"\nversion = \"0.1.0\"\ndependencies = [\n \"proptest\",\n",
+            "name = \"sim_core\"\nversion = \"0.1.0\"\ndependencies = [\n",
+        );
+        let manifest = real_text(SIM_CORE_MANIFEST)?;
+        let manifest_before = edited(&manifest, "proptest.workspace = true\n", "");
+        Ok(Self {
+            lock,
+            lock_before,
+            manifest,
+            manifest_before,
+        })
+    }
+
+    fn lock_versions(&self) -> FileVersions {
+        FileVersions {
+            before: Some(self.lock_before.clone()),
+            after: Some(self.lock.clone()),
+        }
+    }
+
+    fn manifest_versions(&self) -> FileVersions {
+        FileVersions {
+            before: Some(self.manifest_before.clone()),
+            after: Some(self.manifest.clone()),
+        }
+    }
+}
+
+/// The complete-suite cause's text, or a note that the selection is narrower.
+fn cause(selection: &Selection) -> String {
+    selection
+        .complete
+        .as_ref()
+        .map_or_else(|| "narrower".to_string(), ToString::to_string)
+}
+
+#[test]
+fn a_dev_dependency_only_change_selects_the_member_crate_not_the_complete_suite(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH, SIM_CORE_MANIFEST],
+        [
+            (LOCKFILE_PATH, edit.lock_versions()),
+            (SIM_CORE_MANIFEST, edit.manifest_versions()),
+        ],
+    )?;
+    assert!(selection.complete.is_none(), "{}", cause(&selection));
+    assert!(has(&selection, "sim_core/lib"));
+    assert!(has(
+        &selection,
+        "sim_core/sc2_who_wins_matchup_matrix_tests"
+    ));
+    assert!(selection.commands.contains_key("golden-replay-release"));
+    assert_eq!(
+        crates(&selection),
+        BTreeSet::from(["sim_core".to_string(), "workspace_checks".to_string()])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dev_only_change_selects_no_downstream_contract() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[SIM_CORE_MANIFEST],
+        [(SIM_CORE_MANIFEST, edit.manifest_versions())],
+    )?;
+    assert!(selection.complete.is_none(), "{}", cause(&selection));
+    for unwanted in [
+        "sim_fixtures/lib",
+        "client/skirmish_match_tests",
+        "asset_baker/runtime_catalog_tests",
+    ] {
+        assert!(!has(&selection, unwanted), "{unwanted} is downstream");
+    }
+    assert!(selection.changed_crates.contains("sim_core"));
+    Ok(())
+}
+
+#[test]
+fn a_runtime_dependency_change_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let manifest = real_text(SIM_CORE_MANIFEST)?;
+    let before = edited(&manifest, "ron.workspace = true\n", "");
+    let selection = repo.select_change(
+        Tier::Package,
+        &[SIM_CORE_MANIFEST],
+        [(
+            SIM_CORE_MANIFEST,
+            FileVersions {
+                before: Some(before),
+                after: Some(manifest),
+            },
+        )],
+    )?;
+    assert_eq!(
+        cause(&selection),
+        "crates/sim_core/Cargo.toml: [dependencies] changed"
+    );
+    assert_eq!(
+        selection.targets.len(),
+        repo.workspace.test_targets().count()
+    );
+    Ok(())
+}
+
+#[test]
+fn an_external_version_change_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let lock = real_text(LOCKFILE_PATH)?;
+    let before = edited(
+        &lock,
+        "name = \"toml_edit\"\nversion = \"0.22.27\"\n",
+        "name = \"toml_edit\"\nversion = \"0.22.26\"\n",
+    );
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH],
+        [(
+            LOCKFILE_PATH,
+            FileVersions {
+                before: Some(before),
+                after: Some(lock),
+            },
+        )],
+    )?;
+    assert!(
+        cause(&selection).starts_with("Cargo.lock: external package toml_edit 0.22.2"),
+        "{}",
+        cause(&selection)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_lock_change_without_a_dev_only_manifest_change_selects_the_complete_suite(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH],
+        [(LOCKFILE_PATH, edit.lock_versions())],
+    )?;
+    assert_eq!(
+        cause(&selection),
+        "Cargo.lock: sim_core dependencies changed without a dev-only manifest change"
+    );
     Ok(())
 }
