@@ -479,6 +479,10 @@ mod tests {
     fn targeted_effect_abilities_become_casts_shared_by_name_and_target() -> TestResult {
         use sim_types::AbilityTargetKind::{TargetEntity, TargetPosition};
         let (mut units, upgrades) = shipped();
+        // The shipped casts, so the count below holds whatever spells the catalog ships.
+        let shipped_casts = CommandCatalog::build(&units, &upgrades, |_| None)
+            .cast_ids()
+            .count();
         let kinds: Vec<UnitTypeId> = units
             .archetypes()
             .filter(|archetype| archetype.abilities.is_empty())
@@ -523,7 +527,11 @@ mod tests {
             3,
             "a unit cast of the same name is a cast of its own"
         );
-        assert_eq!(catalog.cast_ids().count(), 3);
+        assert_eq!(
+            catalog.cast_ids().count(),
+            shipped_casts + 3,
+            "three scratch casts: the shared point zone, the bolt and the unit zone"
+        );
         Ok(())
     }
 

@@ -37,7 +37,7 @@ fn chain(name: &str, depth: usize) -> String {
 }
 
 #[test]
-fn the_shipped_files_load_with_psionic_storm_abduct_and_fungal_growth() {
+fn the_shipped_files_load_with_the_four_spells() {
     let catalogs = shipped_catalogs();
     let spells = catalogs.units.spells();
     let root = spells
@@ -62,10 +62,18 @@ fn the_shipped_files_load_with_psionic_storm_abduct_and_fungal_growth() {
     assert_eq!(fungal.targeting_radius, Some(SimScalar::from_num(2.25)));
     assert_eq!(fungal.area_radius, None);
     assert!(!fungal.needs_origin);
+    let cloud = spells
+        .effect_id("blinding_cloud")
+        .and_then(|root| spells.facts(root))
+        .expect("invariant: the shipped Blinding Cloud tree");
+    assert_eq!(cloud.area_radius, Some(SimScalar::from_num(2)));
+    assert_eq!(cloud.targeting_radius, Some(SimScalar::from_num(2)));
+    assert!(!cloud.needs_origin);
     assert_eq!(
         spells.status_count(),
-        4,
-        "psionic_storm, abducted, fungal_growth and fungal_growth_slow"
+        6,
+        "psionic_storm, abducted, fungal_growth, fungal_growth_slow, blinding_cloud and \
+         blinding_cloud_structure"
     );
 }
 
