@@ -3592,6 +3592,18 @@
                     origin: Some((forward_offset: 0.1, search_range: 2.0)),
                     effect: Effect("abduct"),           // Effect YoinkStartSwitch, swarm :1225 -> YoinkLaunchMissile
                 ),
+                (
+                    // BlindingCloud, swarm AbilData:1197-1209 (CAbilEffectTarget); no entry in
+                    // void or voidmulti AbilData. No cooldown and no CastIntroTime or
+                    // CastOutroTime in the chain or the CAbilEffect default (core AbilData:34-88):
+                    // no backswing. The cast may start while moving (Flags AllowMovement, :1199).
+                    name: "Blinding Cloud",
+                    target_kind: TargetPosition,
+                    energy_cost: 100.0,                 // Cost Vital Energy 100, swarm :1202
+                    cooldown_ticks: 0,
+                    cast_range: 10.0,                   // Range 10 from the caster's edge, swarm :1204; core AbilData:48
+                    effect: Effect("blinding_cloud"),   // Effect BlindingCloudCP, swarm :1207
+                ),
             ],
             is_detector: false,
             capabilities: (

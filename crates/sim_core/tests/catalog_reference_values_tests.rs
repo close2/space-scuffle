@@ -3147,3 +3147,156 @@ fn fungal_growth_values_follow_starcraft() -> TestResult {
     assert!(slow.spec.period_ticks.is_none() && slow.periodic_effect.is_none());
     Ok(())
 }
+
+/// Blinding Cloud (plan `2026-11-10-spellcaster-mechanics` §3.4, WP5): the ability, the tree
+/// and both statuses as authored, against `SC2GameData` 5.0.14 (`5444e12f13`).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn blinding_cloud_values_follow_starcraft() -> TestResult {
+    use sim_core::catalog::EffectNode;
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, EffectAnchor, FilterAlliance, StructureRule,
+    };
+
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let caster = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Viper")
+        .ok_or("the Viper analogue")?;
+    let ability = caster
+        .abilities
+        .iter()
+        .find(|ability| ability.name == "Blinding Cloud")
+        .ok_or("Blinding Cloud")?;
+    assert_eq!(ability.target_kind, AbilityTargetKind::TargetPosition);
+    assert_close(ability.energy_cost, 100.0, "swarm AbilData:1202");
+    assert_eq!(
+        ability.cooldown_ticks, 0,
+        "no cooldown, swarm AbilData:1197-1209"
+    );
+    assert_close(ability.cast_range, 10.0, "swarm AbilData:1204");
+    assert_eq!(
+        ability.cast_backswing_ticks, 0,
+        "no CastOutroTime in the chain"
+    );
+    assert!(ability.single_caster && ability.target_filter.is_none() && ability.origin.is_none());
+    let AbilityEffectSpec::Effect(root) = &ability.effect else {
+        return Err("Blinding Cloud runs an effect tree".into());
+    };
+
+    let spells = catalogs.units.spells();
+    let flat = |id| spells.node(id).ok_or("a node");
+    let node = |id| flat(id).map(|node| node.kind);
+    let EffectNode::Persistent {
+        anchor: EffectAnchor::TargetPoint,
+        initial: Some(initial),
+        periodic: Some(periodic),
+        period_ticks,
+        count: 15,
+    } = node(spells.effect_id(root).ok_or("the root")?)?
+    else {
+        return Err("a point persistent of 15 pulses, voidmulti EffectData:158".into());
+    };
+    assert_eq!(initial, periodic, "one search, swarm EffectData:238, :240");
+    assert_close(
+        period_ticks,
+        8.928_571,
+        "0.5 Normal s, swarm EffectData:241",
+    );
+    let EffectNode::Search {
+        radius,
+        filter,
+        max_count: None,
+        child,
+    } = node(initial)?
+    else {
+        return Err("BlindingCloudSearch, swarm EffectData:243-248".into());
+    };
+    assert_close(radius, 2.0, "swarm EffectData:247");
+    assert_eq!(
+        filter.alliance,
+        FilterAlliance::AnyButSelf,
+        "swarm EffectData:246"
+    );
+    assert!(
+        filter.ground && !filter.air,
+        "Ground required, swarm EffectData:246"
+    );
+    assert_eq!(filter.structures, StructureRule::Include);
+    let EffectNode::Set { first, len: 2 } = node(child)? else {
+        return Err("BlindingCloudSwitch, swarm EffectData:254-258".into());
+    };
+    let mut seen = Vec::new();
+    for index in 0..2 {
+        let branch = flat(spells.set_child(first, index).ok_or("a child")?)?;
+        let EffectNode::ApplyStatus { status } = branch.kind else {
+            return Err("an ApplyStatus branch".into());
+        };
+        let rule = branch.require.ok_or("a filtered branch")?.structures;
+        let name = spells.status(status).ok_or("a status")?.spec.name.clone();
+        seen.push((name, rule));
+    }
+    assert_eq!(
+        seen,
+        [
+            ("blinding_cloud".to_owned(), StructureRule::Exclude),
+            ("blinding_cloud_structure".to_owned(), StructureRule::Only),
+        ],
+        "CaseDefault BlindingCloudAB and Case IsStructure, swarm EffectData:256-257"
+    );
+
+    let units = spells
+        .status(
+            spells
+                .status_id("blinding_cloud")
+                .ok_or("the unit status")?,
+        )
+        .ok_or("listed")?;
+    assert_close(
+        units.spec.duration_ticks,
+        11.160_714,
+        "0.625 Normal s, swarm BehaviorData:997",
+    );
+    assert_close(
+        units.spec.ranged_weapon_range_delta,
+        -20.0,
+        "voidmulti BehaviorData:1068",
+    );
+    assert_close(
+        units.spec.weapon_range_delta,
+        0.0,
+        "WeaponRange 0, voidmulti BehaviorData:1068",
+    );
+    assert_close(units.spec.range_floor, 0.1, "SU-2");
+    assert!(!units.spec.suppress_detection && units.periodic_effect.is_none());
+
+    let structures = spells
+        .status(
+            spells
+                .status_id("blinding_cloud_structure")
+                .ok_or("the structure status")?,
+        )
+        .ok_or("listed")?;
+    assert_close(
+        structures.spec.duration_ticks,
+        11.160_714,
+        "0.625 Normal s, swarm BehaviorData:24",
+    );
+    assert_close(
+        structures.spec.weapon_range_delta,
+        -20.0,
+        "swarm BehaviorData:25",
+    );
+    assert_close(
+        structures.spec.ranged_weapon_range_delta,
+        0.0,
+        "every weapon instead",
+    );
+    assert!(
+        structures.spec.suppress_detection,
+        "DetectArc 0, swarm BehaviorData:25"
+    );
+    assert!(structures.periodic_effect.is_none());
+    Ok(())
+}

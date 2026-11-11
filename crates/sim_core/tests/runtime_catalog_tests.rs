@@ -771,3 +771,69 @@ fn an_edited_status_changes_a_fungal_slow_without_recompiling() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-10-spellcaster-mechanics` D-3, WP5: a smaller reduction in a copied
+/// `statuses.ron` changes what Blinding Cloud leaves of a ranged weapon's range, with no
+/// recompilation.
+#[test]
+fn an_edited_status_changes_a_blinding_cloud_range_without_recompiling() -> TestResult {
+    let bundle = Bundle::new("blinding")?;
+    let statuses = std::fs::read_to_string(bundle.directory.join(FILES[4]))?;
+    assert_eq!(
+        statuses.matches("ranged_weapon_range_delta:").count(),
+        1,
+        "the cloud's unit status is the one that reduces ranged weapons only"
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[4]),
+        replace_first_field(&statuses, "ranged_weapon_range_delta", "-2.0"),
+    )?;
+    let mut ranges = Vec::new();
+    for catalogs in [
+        RuntimeCatalogs::load_from_directory(catalog_directory())?,
+        bundle.load()?,
+    ] {
+        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let (caster_kind, index) = world
+            .catalog
+            .archetypes()
+            .find_map(|archetype| {
+                let index = archetype.abilities.iter().position(|ability| {
+                    matches!(&ability.effect, sim_types::AbilityEffectSpec::Effect(key) if key == "blinding_cloud")
+                })?;
+                Some((archetype.unit_type_id, u8::try_from(index).ok()?))
+            })
+            .ok_or("a shipped Blinding Cloud caster")?;
+        // A mobile ground unit whose only weapon is ranged with range 5.
+        let shooter = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.mover_type == sim_types::MoverType::Ground
+                    && archetype.max_speed > SimScalar::ZERO
+                    && archetype.weapon.as_ref().is_some_and(|weapon| {
+                        !weapon.melee && weapon.max_range == SimScalar::from_i32(5)
+                    })
+            })
+            .ok_or("a ranged ground unit")?
+            .clone();
+        let weapon = shooter.weapon.clone().ok_or("armed")?;
+        let caster = world.spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        world.entities.get_mut(&caster).ok_or("caster")?.energy = SimScalar::from_i32(200);
+        let victim =
+            world.spawn_unit(shooter.unit_type_id, PlayerId(1), SimVec2::from_i32(15, 10))?;
+        assert!(world.execute_ability(caster, index, Some(SimVec2::from_i32(15, 10)), None));
+        let entity = world.entities[&victim].clone();
+        ranges.push(world.entity_weapon_range(&entity, &weapon, &shooter.slug));
+    }
+    assert_eq!(
+        ranges,
+        [
+            SimScalar::ONE.saturating_div(SimScalar::from_i32(10)),
+            SimScalar::from_i32(3)
+        ],
+        "the shipped reduction to the floor, then the edited one"
+    );
+    bundle.finish()?;
+    Ok(())
+}

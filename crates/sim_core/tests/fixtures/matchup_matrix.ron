@@ -1227,5 +1227,59 @@
         ),
         expect: (blue: (1, 1), red: (5, 8)),
     ),
+    // Battles 39a/39b (plan 2026-11-10-spellcaster-mechanics §10.2): Blinding Cloud flips a fight.
+    // Three sieged tanks hold in a column 1.8 apart, every one within 2 of their centroid; eight
+    // roaches attack-move into them from 18 away while the Viper analogue waits 9 from the tanks
+    // (they cannot shoot air), and on tick 40 clouds the tanks' centroid as the roaches come into the
+    // tanks' range. For the cloud's 146 ticks the tanks' range is 0.1, inside their minimum range
+    // 2, so they cannot fire, and the roaches close and shoot unanswered. 39a: the roaches win
+    // all 20 matrix seeds with 6 to 8 left (blue 7 to 9 with the caster), ending on ticks 260
+    // to 298; on 52 seeds blue keeps 5 to 9.
+    (
+        name: "39a_cloud_on_tanks",
+        claim: "A Blinding Cloud on sieged tanks turns a fight the tanks win into a roach win",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (47.0, 45.8), spacing: 1.0, energy: Some(100.0), order: Some(None)),
+                (unit: "rhino_beetle", count: 8, columns: 2, origin: (38.0, 44.5), spacing: 1.1),
+            ],
+            order: AttackMove(60, 46),
+            casts: [(tick: 40, ability: "Blinding Cloud", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (5, 9), red: (0, 0)),
+    ),
+    // Control of 39a: no cast. The tanks win all 20 seeds with 2 or 3 left (11 and 9 seeds), as on
+    // 52 seeds; every roach dies and the Viper analogue, out of reach in the air, outlives the
+    // 600-tick limit.
+    (
+        name: "39b_tanks_beat_roaches_without_cloud",
+        claim: "Control of 39a: without Blinding Cloud the same sieged tanks beat the roaches",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (47.0, 45.8), spacing: 1.0, energy: Some(100.0), order: Some(None)),
+                (unit: "rhino_beetle", count: 8, columns: 2, origin: (38.0, 44.5), spacing: 1.1),
+            ],
+            order: AttackMove(60, 46),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (2, 3)),
+    ),
     ],
 )

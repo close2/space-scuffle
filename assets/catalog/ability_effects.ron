@@ -143,5 +143,43 @@
             name: "fungal_growth_damage",
             node: Damage((amount: 1.5625)),                     // Amount, voidmulti :2389
         ),
+        // ---- Blinding Cloud: swarm EffectData:3-12, :232-258; voidmulti :157-159 ----
+        (
+            // BlindingCloudCP, swarm :236-242 (PeriodCount 19 at swarm :239, 27 at void
+            // EffectData:1012-1014, 15 at voidmulti :157-159): the cloud opens at the target
+            // point on the cast tick (the ability's effect, swarm AbilData:1207; no missile) and
+            // searches at once, then 15 times every 0.5 Normal s: round(k × 8.928571), ticks 0,
+            // 9, 18, 27, 36, 45, 54, 63, 71, 80, 89, 98, 107, 116, 125, 134 (plan §5.2). The
+            // period is authored rounded up, as Fungal's is: 8.928571 would land the eighth
+            // search on 62 instead of the exact product's 62.5, which rounds half up to 63.
+            name: "blinding_cloud",
+            node: Persistent((
+                anchor: TargetPoint,                            // ImpactLocation TargetPoint, :245
+                initial: Some(Use("blinding_cloud_search")),    // InitialEffect, :238
+                periodic: Some(Use("blinding_cloud_search")),   // PeriodicEffectArray, :240
+                period_ticks: 8.928572,                         // PeriodicPeriodArray 0.5 Normal s, :241
+                count: 15,                                      // PeriodCount, voidmulti :158
+            )),
+        ),
+        (
+            // BlindingCloudSearch, swarm :243-248: ground units and structures of every owner
+            // but the caster itself, cloaked and burrowed alike (SearchFilters
+            // "Ground;Self,Neutral,Missile,Dead", :246). Its child is BlindingCloudSwitch
+            // (:254-258), a switch on IsStructure, written as a set of two filtered branches.
+            // The structure branch's BlindingCloudStructureSet (:3-7) also enumerates a bunker's
+            // passengers (BlindingCloudTransportIterateTransport, :8-12); no bunker analogue
+            // exists (plan §16).
+            name: "blinding_cloud_search",
+            node: Search((
+                radius: 2.0,                                    // AreaArray Radius, :247
+                filter: (alliance: AnyButSelf, planes: [Ground], structures: Include),
+                child: Set((children: [
+                    // CaseDefault BlindingCloudAB, :257 and :232-235.
+                    ApplyStatus((status: "blinding_cloud", require: Some((structures: Exclude)))),
+                    // Case IsStructure, :256: BlindingCloudStructureAB, :249-253.
+                    ApplyStatus((status: "blinding_cloud_structure", require: Some((structures: Only)))),
+                ])),
+            )),
+        ),
     ],
 )
