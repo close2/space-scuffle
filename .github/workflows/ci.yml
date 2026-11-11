@@ -240,7 +240,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Test simulation crates (debug profile)
-        run: cargo test -p sim_types -p sim_map -p sim_core --locked
+        # The DHAT allocation count needs valgrind, which these cross-platform runners lack (and
+        # Windows and macOS cannot install); the workspace job installs valgrind and runs it in
+        # `cargo gate full`. These jobs exist to prove the simulation's results per platform.
+        run: >-
+          cargo test -p sim_types -p sim_map -p sim_core --locked --
+          --skip effect_engine_allocates_nothing_in_steady_state
 
       - name: Replay golden fixture (release profile)
         run: cargo test -p sim_core --test golden_replay_tests --locked --release
