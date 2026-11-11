@@ -244,6 +244,8 @@ Amendment 5). The slowest scenario runs at about five times real time. The figur
 `throughput` job runs the benchmark with `--floor 25`, the tick rate: a scenario below real time fails the job, and
 every run's table is published in the job summary (charter §3.1).
 
+Re-measured on 2026-11-11 after plan `2026-11-11-contact-and-missiles` (bodies are discs against walls, with the contact query's exact early-out), medians of three runs at load average 25 to 37: 3360, 953, 165, 196 and 210 ticks/s on the flat rows, 122 on `showcase_canyon` and 236 on the 67-caster battle below, within 5 % of the tree before the plan measured alongside ([evidence](docs/evidence/2026-11-11-contact-and-missiles.md) §4b).
+
 A seventh row (plan `2026-11-10-spellcaster-mechanics` WP6) adds 67 spellcasters to the 64x64 battle of 400
 units, casting Blinding Cloud, Psionic Storm and Fungal Growth throughout (13.7 live areas and 101 statuses per
 measured tick): 243 ticks/s on 2026-11-11, when the other rows measured within 3 % of the table above

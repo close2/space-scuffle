@@ -302,7 +302,7 @@ drones remained on both sides: the scenario ends a match only when a side has no
 workers do not attack. StarCraft II ends a melee game when a player has no structures, a separate
 topic from this plan.
 
-## 4. WP4: goldens, T-B5 restated (in progress)
+## 4. WP4: goldens, T-B5 restated
 
 Amendment 1 accepted the rule and the probe fix with the showcase's flip.
 
@@ -414,8 +414,45 @@ burst of 220), so single figures scatter by up to 20 %. Ticks per second:
 Every scenario of every run is far above 25 ticks per second (the lowest candidate figure is 81,
 the empty 256x256 map in a loaded first round). `showcase_canyon` is 9 % below the base by the
 medians and 10 % by the means (117.6 against 105.8): at the plan's bound. The spell scenario is
-within noise (candidate 223 to 230). Not yet decided: a re-measurement at low load, and if it
-stays near the bound, D-5's exact early-out; `DESIGN.md` §5 is not yet updated.
+within noise (candidate 223 to 230).
+
+**Second measurement, and D-5's early-out.** Three rounds, alternated base `34a92e7`, candidate
+`319dd52` (simulation code of `ae3082b`) and the early-out tree `62ac8f9`, each run under the gate
+lock. Low load was not reached: another agent's package gate held the lock for about 90 minutes
+and the 1-minute load average stayed at 25 to 37 on 16 cores during the runs. Medians of the three
+runs, ticks per second (each run is itself the median of three repeats):
+
+| Scenario | Base | Candidate | Early-out | Candidate vs base | Early-out vs base |
+|---|---:|---:|---:|---:|---:|
+| 64x64, 0 units | 3318 | 3365 | 3360 | +1 % | +1 % |
+| 64x64, 100 units | 1002 | 906 | 953 | −10 % | −5 % |
+| 64x64, 400 units | 169 | 151 | 165 | −11 % | −2 % |
+| 128x128, 400 units | 201 | 178 | 196 | −11 % | −2 % |
+| 256x256, 0 units | 211 | 210 | 210 | 0 % | 0 % |
+| `showcase_canyon`, 400 units | 124 | 111 | 122 | −10.5 % | −1.6 % |
+| 64x64, 400 units with 67 casters | 246 | 224 | 236 | −9 % | −4 % |
+
+`showcase_canyon` runs: base 124, 86, 124; candidate 73, 112, 111; early-out 121, 123, 122. The
+base's 86 and the candidate's 73 (and its 131 on the empty 256x256 map in the same run) are load
+outliers; the medians drop them. The candidate alone is at the plan's bound (−10.5 %), and it
+costs about 10 % on the flat 400-unit battles too: most bodies there walk in open ground, where
+each still ran the contact flood.
+
+**Decision: the early-out is kept** (`62ac8f9`, orchestrator). `NavMesh` keeps a per-cell table,
+built with the mesh: a cell is contact-free when it is open, holds no structure, and none of its
+four sides blocks a request that knows every structure (a wall, the map border, or a seam to a
+structure cell). When every cell under the disc's bounding square is contact-free,
+`wall_contact` answers `None` without the flood; the shortcut applies to all-known requests only,
+as the contact request is. It is exact: the mesh's blocking edges lie on such sides only. The
+property test `the_early_out_never_hides_a_wall_on_both_shipped_maps`
+(`crates/sim_map/tests/wall_contact_tests.rs`) checks, on both shipped maps, bare and with seeded
+2 × 2 structures, at 2,000 seeded points each with radii 0.25 to 1.5, that wherever the early-out
+claims open ground the exhaustive reference finds no wall, that `wall_contact` still equals the
+reference, and that the early-out fires on at least 400 of the 2,000 points. No behaviour change:
+the matrix is bit-identical, battle 33's `seeds.csv` and the showcase `route_trace` (summary and
+`units.csv`) are byte-identical, and the goldens pass unchanged in debug, release and on
+`wasm32-wasip1`. With it, every scenario is within 5 % of the base and far above 25 ticks per
+second. `DESIGN.md` §5 records the early-out figures.
 
 ### 4c. Showcase render check
 
