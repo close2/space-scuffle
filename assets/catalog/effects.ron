@@ -486,9 +486,13 @@
                     block: Decal(texture: "acid_stain", ramp: "acid_stain", erosion: "stain_dry", depth: 0.6,
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.45, softness: 0.14, shade: 0.25),
                         liquid: (relief: 0.4, sheen: 1.6, gloss: 30.0, value_noise: 0.75, dry_below: 0.5)),
-                    // Round 4: the texture's ragged coverage edge lies at the reach at this
-                    // scale, and the erosion holds the full disc until about 1.8 s.
-                    size: (bind: SplashReach, scale: 1.14), size_curve: "stain_spread",
+                    // Round 4: the erosion holds the full disc until about 1.8 s. As a Critical
+                    // layer the stain must not mark ground beyond the reach (plan §10.2), wet or
+                    // dried darker: at this scale its ragged edge lies just inside the reach at
+                    // every age (at 1.14 it overshot it by up to 11 px of 87 at default zoom,
+                    // and at 1.02 its dried fringe still by about 4 px), and the front's dark
+                    // lip marks the reach itself.
+                    size: (bind: SplashReach, scale: 0.98), size_curve: "stain_spread",
                     ramp_curve: "dry", duration: 6.0, curve: "stain_in", priority: Critical,
                 ),
                 (

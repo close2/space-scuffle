@@ -10,8 +10,9 @@
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
-//!   within ±2 px on most rays and never beyond it; a line's marks start and end at the line's
-//!   projected ends within ±2 px;
+//!   within ±2 px on most rays and never beyond it, and once every non-decal layer has ended
+//!   its lasting `Critical` marks (the acid stain, dried darker) still end within 2 px of the
+//!   reach; a line's marks start and end at the line's projected ends within ±2 px;
 //! - **coverage**: within 80 ms of the event (of each search point, for a line), at least 60 %
 //!   of the projected full-damage disc is changed by the effect;
 //! - **no pop**: at the 40 ms step, the mean luminance of the effect's region changes by at
@@ -291,7 +292,10 @@ fn program(index: usize, part: u32, out: PathBuf) -> LabProgram {
             true,
             Some(Priority::Critical),
             SEQUENCE_STEP,
-            &[("critical", timing.footprint_age)],
+            &[
+                ("critical", timing.footprint_age),
+                ("critical_late", timing.non_decal_end),
+            ],
         ));
         let mut stills: Vec<(String, f32)> = GOLDEN_AGES
             .iter()
@@ -419,11 +423,10 @@ impl Ground {
     }
 }
 
-/// Splash footprint: the front's outermost lit pixel per ray against the projected reach.
-fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage) -> String {
+/// Signed distance, in pixels, of the outermost lit pixel from the projected reach on each of
+/// 72 rays from the anchor (NaN where a ray has no lit pixel).
+fn reach_errors(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage) -> Vec<f32> {
     let rays = 72;
-    let mut within = 0;
-    let mut worst_beyond = f32::MIN;
     let mut errors = Vec::with_capacity(rays);
     for ray in 0..rays {
         let angle = ray as f32 / rays as f32 * std::f32::consts::TAU;
@@ -444,13 +447,35 @@ fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage)
             continue;
         };
         let centre = view.project(ground.anchor);
-        let signed = outer.distance(centre) - edge.distance(centre);
-        worst_beyond = worst_beyond.max(signed);
-        if signed.abs() <= TOLERANCE_PX {
-            within += 1;
-        }
-        errors.push(signed);
+        errors.push(outer.distance(centre) - edge.distance(centre));
     }
+    errors
+}
+
+/// Splash footprint: the front's outermost lit pixel per ray against the projected reach, and
+/// the lasting marks (`late`, once every non-decal layer has ended) never beyond it.
+fn check_front(
+    view: &View,
+    ground: &Ground,
+    critical: &RgbImage,
+    late: &RgbImage,
+    bg: &RgbImage,
+) -> String {
+    let errors = reach_errors(view, ground, critical, bg);
+    let rays = errors.len();
+    let within = errors
+        .iter()
+        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .count();
+    let worst_beyond = errors
+        .iter()
+        .copied()
+        .filter(|error| error.is_finite())
+        .fold(f32::MIN, f32::max);
+    let late_beyond = reach_errors(view, ground, late, bg)
+        .into_iter()
+        .filter(|error| error.is_finite())
+        .reduce(f32::max);
     let share = within as f32 / rays as f32;
     let finite: Vec<f32> = errors
         .iter()
@@ -463,13 +488,21 @@ fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage)
         "the front reaches {worst_beyond:.2} px beyond the reach"
     );
     assert!(
+        late_beyond.is_none_or(|beyond| beyond <= TOLERANCE_PX),
+        "the lasting critical marks reach {late_beyond:?} px beyond the reach"
+    );
+    assert!(
         share >= FRONT_RAYS_WITHIN,
         "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (errors {errors:?})",
         share * 100.0
     );
     format!(
-        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px",
-        share * 100.0
+        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' largest overshoot {}",
+        share * 100.0,
+        late_beyond.map_or_else(
+            || "none (no lasting critical mark)".to_owned(),
+            |beyond| format!("{beyond:+.2} px")
+        )
     )
 }
 
@@ -615,13 +648,18 @@ fn check_pop(region: &[(u32, u32)], frames: &[RgbImage]) -> String {
     )
 }
 
-/// Largest extent of the effect's decals: their size times jitter, on a splash or a line.
+/// Largest extent of the effect's decals: their size times jitter, on a splash or a line, out
+/// to the corner of the projection box (half extents the size and the size times the width,
+/// turned to any yaw), since a decal's texture may reach into the box's corners.
 fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) -> f32 {
     effect
         .layers
         .iter()
-        .filter(|layer| matches!(layer.block, Block::Decal(_)))
-        .map(|layer| {
+        .filter_map(|layer| match &layer.block {
+            Block::Decal(look) => Some((layer, look.width)),
+            _ => None,
+        })
+        .map(|(layer, width)| {
             let grow = (0..=20)
                 .map(|step| catalog.sample(layer.size_curve, step as f32 / 20.0, 1.0))
                 .fold(0.0, f32::max);
@@ -633,7 +671,12 @@ fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) 
                     _ => 0.0,
                 })
                 .fold(0.0, f32::max);
-            offset + resolve_value(&layer.size, &subject.bound) * (1.0 + layer.size_jitter) * grow
+            let corner = (1.0 + width * width).sqrt();
+            offset
+                + resolve_value(&layer.size, &subject.bound)
+                    * (1.0 + layer.size_jitter)
+                    * grow
+                    * corner
         })
         .fold(0.0, f32::max)
 }
@@ -815,7 +858,8 @@ fn check_subject(index: usize) -> TestResult {
     let footprint = if lab.line_to.is_some() {
         check_line(&view, &ground, &critical, &bg)
     } else {
-        check_front(&view, &ground, &critical, &bg)
+        let late = capture(directory.path(), "critical_late");
+        check_front(&view, &ground, &critical, &late, &bg)
     };
     let frames: Vec<RgbImage> = (0..sequence_frames())
         .map(|frame| capture(directory.path(), &format!("seq_{frame:03}")))
