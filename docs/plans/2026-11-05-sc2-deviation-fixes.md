@@ -819,7 +819,7 @@ requires.
 | B-66 | A blocked exit stalls production | (i) | WP17 |
 | B-67 | Next-patch radius 12, task reach 0.75, site patience 50 ticks, boarding reach 1.0 | (i), narrowed | WP17 for the next-patch radius, which decides where workers go when a patch mines out. Task reach, site patience and boarding reach are (ii): tolerances of our own movers that decide when an order counts as arrived, with no observable game counterpart (as U-23) |
 | B-68 | 14 upgrades with no effect | (i) | WP13d, WP18; Psionic Storm unlocks the storm since plan `2026-11-10-spellcaster-mechanics` WP2b |
-| B-69 | Missing abilities | (i) | WP18; Psionic Storm and Abduct shipped by plan `2026-11-10-spellcaster-mechanics` WP2b and WP3b, Fungal Growth and Blinding Cloud of that plan follow |
+| B-69 | Missing abilities | (i) | WP18; Psionic Storm, Abduct and Fungal Growth shipped by plan `2026-11-10-spellcaster-mechanics` WP2b, WP3b and WP4b, Blinding Cloud of that plan follows |
 | B-70 | No Graviton Beam | (i) | WP18 |
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
 | B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |

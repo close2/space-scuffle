@@ -100,5 +100,48 @@
                 on_land: Some(RemoveStatus((status: "abducted"))),
             )),
         ),
+
+        // ---- Fungal Growth: liberty EffectData:416-420, :603-607, :714-741; void :221-223,
+        // :1138-1146; voidmulti :407-409, :693-695, :1558-1572, :2388-2390 ----
+        (
+            // FungalGrowthLaunchMissile, void :1141-1146: a missile to the point, whose impact
+            // runs FungalGrowthInitialSet (liberty :416-420; its SurfaceForSpellcast step is
+            // removed at voidmulti :693-695). The missile flies on if its caster dies.
+            name: "fungal_growth",
+            node: LaunchMissile((
+                to: TargetPoint,                                // ImpactLocation TargetPoint, void :1143
+                speed: 0.672,                                   // FungalGrowthWeapon MaxSpeed 12 (x 1.4 / 25), void MoverData:18
+                view: Projectile,                               // AmmoUnit FungalGrowthMissile, void :1145
+                impact: Use("fungal_growth_search"),            // ImpactEffect FungalGrowthInitialSet, void :1144
+            )),
+        ),
+        (
+            // FungalGrowthSearch, liberty :728-735: enemies only, ground and air, cloaked and
+            // burrowed alike; never structures (SearchFilters "-;Player,Ally,Neutral,Structure,
+            // Missile,Stasis,Dead,Hidden,Invulnerable", :731).
+            name: "fungal_growth_search",
+            node: Search((
+                radius: 2.25,                                   // AreaArray Radius, voidmulti :1559
+                filter: (alliance: Enemy, planes: [Ground, Air], structures: Exclude),
+                // FungalGrowthSet, liberty :714-719, with voidmulti :1562's slow in slot 1. The
+                // set's sibling FungalGrowthSearchDummy (liberty :736-741; radius 2.25, voidmulti
+                // :407-409; the same filters, void :221-223) only raises responses, so it runs
+                // here, once per unit found (plan SU-10).
+                child: Set((children: [
+                    ApplyStatus((status: "fungal_growth")),     // FungalGrowthApplyBehavior, liberty :720-723
+                    ApplyStatus((status: "fungal_growth_slow")),   // FungalGrowthSlowMovementApplyBehavior, voidmulti :1569-1572
+                    Damage((
+                        amount: 0.0,                            // no Amount: a dummy
+                        responses: (acquire: true, flee: true), // ResponseFlags Acquire, Flee, liberty :738-739
+                    )),
+                ])),
+            )),
+        ),
+        (
+            // FungalGrowthDamage, liberty :603-607: spell damage on the buff's pulse, without
+            // responses; armoured bonus 0 (void :1138-1140, over swarm's 0.625).
+            name: "fungal_growth_damage",
+            node: Damage((amount: 1.5625)),                     // Amount, voidmulti :2389
+        ),
     ],
 )

@@ -131,3 +131,56 @@ from SC2GameData 5.0.14 (`5444e12f13`), checked against the local copy:
   all 20 with 94 to 175 life, red 6, blue 1. On 52 seeds the same split held (lead dead on all 52 with Abduct,
   alive on all 52 without). Against the base (`57f2747`, `--compare`) only 37a and 37b are new; every other
   battle is bit-identical. Expectation failures 0 on the seeds of record, 3 over all seeds (the same three).
+
+## 4. WP4: Fungal Growth
+
+Fungal Growth is data: the `mycelium_shaman` ability (`units.ron`), three named nodes in `ability_effects.ron` and
+the `fungal_growth` and `fungal_growth_slow` statuses in `statuses.ron`. No engine change was needed. Every value
+is cited in the RON from SC2GameData 5.0.14 (`5444e12f13`), checked against the local copy:
+
+| Value | Game data | Ours |
+|---|---|---|
+| Energy | `liberty` AbilData:486 (75) | 75 |
+| Cooldown | `liberty` AbilData:487, the `Leech` link with no time | 0 |
+| Range | `void` AbilData:674 (10; `liberty` :488 had 9) | 10 from the caster's edge |
+| Backswing | no `CastIntroTime` or `CastOutroTime` in the chain or the `CAbilEffect` default (`core` AbilData:34-88) | 0 (D-7.5 verified) |
+| Missile | `FungalGrowthLaunchMissile`, `void` EffectData:1141-1146; `FungalGrowthWeapon` MaxSpeed 12, `void` MoverData:18 | to the point, 0.672 per tick |
+| Impact | `FungalGrowthInitialSet`, `liberty` EffectData:416-420, `SurfaceForSpellcast` removed at `voidmulti` :693-695 | search, then the set |
+| Search | `liberty` EffectData:728-735 (filters :731); radius `voidmulti` :1559 | 2.25, enemies, ground and air, no structures |
+| Set | `FungalGrowthSet`, `liberty` :714-719; slot 1 the slow, `voidmulti` :1562 | `fungal_growth`, `fungal_growth_slow` |
+| Responses | `FungalGrowthSearchDummy`, `liberty` :736-741 (radius 2.25 `voidmulti` :407-409, filters `void` :221-223) | `Damage(0)`, acquire and flee |
+| Damage status | `FungalGrowth` buff, `liberty` BehaviorData:328-338 (SuppressCloak :332, PeriodicEffect :337); Duration 4 and Period 0.25, `swarm` :838-841 | 71.428571 ticks, period 4.464286, reveal, no Blink |
+| Pulse | `FungalGrowthDamage` 1.5625, `voidmulti` EffectData:2389; armoured bonus 0, `void` :1139 | 1.5625 × 16 = 25 |
+| Slow | `FungalGrowthSlowMovement`, `voidmulti` BehaviorData:691-705 (Duration :696, MoveSpeedMultiplier 0.25 :697, SuppressPassenger :698) | 71.428571 ticks, × 0.25, no boarding |
+| No Blink | `Blink` validator `CasterNotFungalGrowthed`, `swarm` EffectData:2180-2182, ValidatorData:537-541 | on `fungal_growth` (plan Amendment 7) |
+
+- **Tests.** `crates/sim_core/tests/fungal_growth_tests.rs` (14 tests): the missile lands 13 ticks after its
+  cast tick for 8.5 world units (`ceil(8.5 / 0.672)`) and is published in `spell_missiles` with its source while
+  it flies; 25 in 16 pulses on ticks 4, 9, 13, 18, 22, 27, 31, 36, 40, 45, 49, 54, 58, 63, 67 and 71 after the
+  impact, armour ignored; the search takes an enemy 2.2 away and air units, and misses an enemy 2.3 away, an own
+  unit inside and a structure inside; a carried unit untouched while its carrier is hit; walking speed × 0.25
+  (measured ratio within 0.01) with the `Slowed`, `DamageOverTime` and `Revealed` flags published; Blink and
+  boarding refused while affected and allowed once both statuses end, together, on the 72nd tick; a cloaked
+  enemy revealed (a blue marine without detection shoots it) and hidden again on the 72nd tick; a burrowed enemy
+  revealed while it stays burrowed (SU-7); a recast refreshes both statuses with the first phase kept, one
+  pulse per due tick and no damage at the second impact; an armed idle victim answers the caster (the dummy's
+  `Acquire`); the missile lands after its caster died; 75 energy, no cooldown, no lock; range 10.625 from the
+  caster's centre; a cast order out of range walks into range and casts there.
+  `catalog_reference_values_tests.rs` checks every value above as authored; `runtime_catalog_tests.rs` changes
+  the slow from 0.25 to 0.5 in a copied `statuses.ron` without recompiling.
+- **Red runs.** Before the data every Fungal test failed at its first step (no ability named Fungal Growth), as
+  did the reference and runtime tests. With the data, 3 of 14 failed on the tests' own setup, fixed in the
+  tests: the impact counted from the step after a between-ticks cast (Amendment 7), the expiry stepped one tick
+  short, and armed red and blue units placed side by side fought each other.
+- **Battles 38a/38b** (the plan's armies, untuned but for placement): ten marines hold in a clump at (50, 42.5);
+  sixteen zerglings attack-move from (30, 42.5); the Infestor analogue waits at (41, 45), 9 from the marines and
+  out of their range (`Squad::order`), and casts at the marines' centroid on tick 70 as the zerglings arrive.
+  38a: the zerglings win all 20 matrix seeds with 2 to 7 left (blue 3 to 8 with the caster; 6 left on 8 seeds),
+  ending on ticks 222 to 286. 38b (no cast): the marines win all 20 with 6 to 8 left (10, 9 and 1 seeds); every
+  zergling dies and the idle caster outlives the 400-tick limit. On 52 seeds the split held on every seed (38b
+  once with 5 marines left, inside its range), and with the cast on tick 65 or 75 as well.
+- **Matrix.** Against the base (`57f2747`, `--compare`) only 37a, 37b, 38a and 38b are new; every other battle
+  is bit-identical, and 37a/37b are identical to their run before the Fungal data. Expectation failures 0 on the
+  seeds of record, 3 over all seeds (the same three).
+- **Battle 33**, 64 seeds plus the four of record: all 206 trace files byte-identical to the WP3 run of
+  `57f2747`.

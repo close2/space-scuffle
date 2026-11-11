@@ -37,7 +37,7 @@ fn chain(name: &str, depth: usize) -> String {
 }
 
 #[test]
-fn the_shipped_files_load_with_psionic_storm_and_abduct() {
+fn the_shipped_files_load_with_psionic_storm_abduct_and_fungal_growth() {
     let catalogs = shipped_catalogs();
     let spells = catalogs.units.spells();
     let root = spells
@@ -54,7 +54,19 @@ fn the_shipped_files_load_with_psionic_storm_and_abduct() {
         .expect("invariant: the shipped Abduct tree");
     assert!(abduct.needs_origin, "Abduct lands at its origin (plan D-6)");
     assert_eq!(abduct.targeting_radius, None);
-    assert_eq!(spells.status_count(), 2, "psionic_storm and abducted");
+    let fungal = spells
+        .effect_id("fungal_growth")
+        .and_then(|root| spells.facts(root))
+        .expect("invariant: the shipped Fungal Growth tree");
+    // The ring shows the impact's search; a missile's impact is no area (plan D-19).
+    assert_eq!(fungal.targeting_radius, Some(SimScalar::from_num(2.25)));
+    assert_eq!(fungal.area_radius, None);
+    assert!(!fungal.needs_origin);
+    assert_eq!(
+        spells.status_count(),
+        4,
+        "psionic_storm, abducted, fungal_growth and fungal_growth_slow"
+    );
 }
 
 #[test]

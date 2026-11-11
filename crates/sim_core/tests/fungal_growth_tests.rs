@@ -191,8 +191,11 @@ fn the_missile_lands_ceil_distance_over_speed_later_and_is_published_while_it_fl
             ability: index,
         }
     );
-    // 8.5 at 0.672 a tick (FungalGrowthWeapon MaxSpeed 12, void MoverData:18): 12.65, so 13.
-    assert_eq!(step_to_impact(&mut world, victim), 13);
+    // 8.5 at 0.672 a tick (FungalGrowthWeapon MaxSpeed 12, void MoverData:18): 12.65, so 13
+    // ticks after the cast tick. A cast between ticks is stepped first in the next tick, as a
+    // cast in that tick's phase 1 would be: that tick is the cast tick, so the impact comes on
+    // the 14th step (the convention of `effect_tree_tests.rs`).
+    assert_eq!(step_to_impact(&mut world, victim), 1 + 13);
     assert!(world.effects().missiles().is_empty(), "the missile is gone");
     assert!(world.build_render_snapshot().spell_missiles.is_empty());
 }
@@ -219,10 +222,11 @@ fn a_unit_inside_takes_25_in_16_pulses_on_the_fungal_ticks_armour_ignored() {
 fn the_search_takes_enemies_within_2_25_ground_and_air_but_no_own_unit_or_structure() {
     let mut world = world();
     let caster = infestor(&mut world, 7.5, 20.0);
-    let inside = held(&mut world, "shock_golem", RED, 18.2, 20.0);
-    let outside = held(&mut world, "shock_golem", RED, 13.7, 20.0);
-    let own = held(&mut world, "shock_golem", BLUE, 16.0, 21.2);
-    let air = held(&mut world, "vector_interceptor", RED, 16.0, 20.0);
+    // Units without weapons, so nothing but the spell touches them.
+    let inside = held(&mut world, "mycelium_shaman", RED, 18.2, 20.0);
+    let outside = held(&mut world, "mycelium_shaman", RED, 13.7, 20.0);
+    let own = held(&mut world, "mycelium_shaman", BLUE, 16.0, 21.2);
+    let air = held(&mut world, "repair_shuttle", RED, 16.0, 20.0);
     let dome = world
         .catalog
         .id_by_slug("capacitor_dome")
@@ -235,6 +239,7 @@ fn the_search_takes_enemies_within_2_25_ground_and_air_but_no_own_unit_or_struct
     assert!(fungal(&mut world, caster, 16.0, 20.0));
     step_to_impact(&mut world, inside);
     assert!(fungaled(&world, air), "air units");
+    assert!(has(&world, inside, "fungal_growth_slow"), "2.2 away: hit");
     for id in [outside, own, structure] {
         assert!(
             world.effects().statuses_of(id).is_empty(),
@@ -242,7 +247,8 @@ fn the_search_takes_enemies_within_2_25_ground_and_air_but_no_own_unit_or_struct
         );
     }
     steps(&mut world, 80);
-    assert_eq!(starts[0] - vitals(&world, inside), n(25), "2.2 away: hit");
+    // The Infestor analogue regenerates between pulses; it took the 25.
+    assert!(starts[0] - vitals(&world, inside) > n(23), "2.2 away: hit");
     assert_eq!(vitals(&world, outside), starts[1], "2.3 away: missed");
     assert_eq!(vitals(&world, own), starts[2], "own units never");
     assert_eq!(vitals(&world, structure), starts[3], "structures never");
@@ -358,7 +364,7 @@ fn blink_and_boarding_are_refused_until_both_statuses_expire_on_the_same_tick() 
         "no boarding (SuppressPassenger, voidmulti BehaviorData:698)"
     );
     // Both last 71.43 ticks from the impact: present on the 71st, gone on the 72nd.
-    steps(&mut world, EXPIRY - 2);
+    steps(&mut world, EXPIRY - 1);
     assert!(fungaled(&world, victim) && has(&world, victim, "fungal_growth_slow"));
     step(&mut world);
     assert!(!fungaled(&world, victim) && !has(&world, victim, "fungal_growth_slow"));

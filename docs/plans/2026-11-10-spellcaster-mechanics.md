@@ -130,6 +130,27 @@
 > - **Other spells keep the rule of §10.2.** Fungal Growth's battles 38a and 38b claim opposite winners; a WP
 >   that cannot separate its pair that way may use this amendment, and records why.
 
+> **Amendment 7 (WP4a and WP4b as built, 2026-11-11; Q0002).**
+>
+> - **Data only.** No engine change was needed. The tree is three named nodes, `fungal_growth`
+>   (`FungalGrowthLaunchMissile`), `fungal_growth_search` (`FungalGrowthSearch` with `FungalGrowthSet`) and
+>   `fungal_growth_damage`, the §5.2 tree with its search named.
+> - **Blink is forbidden by the damage status, not the slow.** §5.1 put `suppress_blink` on
+>   `fungal_growth_slow`, citing Liquipedia. The game data has the rule: Blink's `CEffectTeleport` carries the
+>   validator `CasterNotFungalGrowthed` (`swarm` EffectData:2180-2182), which counts the `FungalGrowth` buff
+>   (`swarm` ValidatorData:537-541). The flag sits on `fungal_growth`. The two statuses last equally long, so
+>   no outcome differs.
+> - **D-7.5 verified.** No `CastIntroTime` or `CastOutroTime` exists for `FungalGrowth` in `liberty` AbilData:482-491,
+>   `swarm` :530-532, `void` :672-675 or `voidmulti` :412-416, nor in the `CAbilEffect` default (`core`
+>   AbilData:34-88): no backswing. SU-6: `ToSelection` (`voidmulti` AbilData:414) is a command-card flag and
+>   changes no rule here. SU-7 is the default (a burrowed unit is cloaked in our model, so the reveal shows it).
+>   SU-10 keeps its default: the game's search dummy is a sibling of the search in `FungalGrowthInitialSet`
+>   (`liberty` EffectData:416-420) with the search's own filters (`void` EffectData:221-223), so its responses
+>   reach the same enemies; ours runs once per unit found.
+> - **Impact tick.** A cast issued between ticks is first stepped in the next tick, which is its cast tick
+>   (D-16 item 3); the tests count the impact `1 + ceil(d / 0.672)` steps after such a cast, as
+>   `effect_tree_tests.rs` does.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of

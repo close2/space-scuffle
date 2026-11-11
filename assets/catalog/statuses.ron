@@ -28,5 +28,30 @@
             suppress_boarding: true,                            // StateFlags SuppressPassenger, :1084
             presentation: [Stunned],
         ),
+        (
+            // FungalGrowth buff: liberty BehaviorData:328-338, timing from swarm :838-841 (void
+            // :69-73 changes validators only). One per unit (MaxStackCount 1, core BehaviorData:43):
+            // a recast refreshes it with its phase kept. 16 pulses of 1.5625 on ticks 4, 9, …, 71
+            // after the impact: 25 (plan §3.3).
+            name: "fungal_growth",
+            duration_ticks: 71.428571,                          // Duration 4 Normal s, swarm :839
+            period_ticks: Some(4.464286),                       // Period 0.25 Normal s, swarm :840
+            periodic_effect: Some("fungal_growth_damage"),      // PeriodicEffect, liberty :337
+            reveal: true,                                       // StateFlags SuppressCloak, liberty :332
+            // Blink's validator CasterNotFungalGrowthed (swarm EffectData:2180-2182) counts this
+            // buff (swarm ValidatorData:537-541; Liquipedia Infestor (LotV), patch 4.7.1).
+            suppress_blink: true,
+            presentation: [DamageOverTime, Revealed],
+        ),
+        (
+            // FungalGrowthSlowMovement buff, voidmulti BehaviorData:691-705, which replaces the
+            // root (FungalGrowthMovement) in FungalGrowthSet at 5.0.14 (voidmulti EffectData:1561-
+            // 1563): a slow, not a root (plan D-2).
+            name: "fungal_growth_slow",
+            duration_ticks: 71.428571,                          // Duration 4 Normal s, :696
+            move_speed_factor: 0.25,                            // MoveSpeedMultiplier, :697
+            suppress_boarding: true,                            // StateFlags SuppressPassenger, :698
+            presentation: [Slowed],
+        ),
     ],
 )

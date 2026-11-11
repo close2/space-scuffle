@@ -3478,6 +3478,20 @@
             build_time_ticks: 893,
             armor_class: Some("swarm_ground_carapace"),
             weapon: None,
+            abilities: [
+                (
+                    // FungalGrowth, liberty AbilData:482-491 (CAbilEffectTarget); void AbilData:672-675,
+                    // voidmulti AbilData:412-416. No CastIntroTime or CastOutroTime anywhere in the chain
+                    // or in the CAbilEffect default (core AbilData:34-88), so no backswing (plan D-7.5).
+                    // ToSelection on the command button (voidmulti :414) changes no rule here (SU-6).
+                    name: "Fungal Growth",
+                    target_kind: TargetPosition,
+                    energy_cost: 75.0,                  // Cost Vital Energy 75, liberty :486
+                    cooldown_ticks: 0,                  // Cooldown Link Abil/Leech with no time, liberty :487
+                    cast_range: 10.0,                   // Range 10 from the caster's edge, void :674; core AbilData:48
+                    effect: Effect("fungal_growth"),    // Effect FungalGrowthLaunchMissile, void :673
+                ),
+            ],
             is_detector: false,
             capabilities: (
                 overclock: None,

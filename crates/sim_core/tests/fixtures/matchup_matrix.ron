@@ -1178,5 +1178,54 @@
         ),
         expect: (blue: (1, 1), red: (6, 6), red_lead_alive: Some(true)),
     ),
+    // Battles 38a/38b (plan 2026-11-10-spellcaster-mechanics §10.2): Fungal Growth flips a fight.
+    // Ten marines hold in a clump; sixteen zerglings attack-move into them while the Infestor
+    // analogue waits 9 from the marines, out of their range, and on tick 70 casts at their
+    // centroid as the zerglings arrive: 25 damage over 2.86 s and the slow on every marine. 38a:
+    // the zerglings win all 20 matrix seeds with 2 to 7 left (blue 3 to 8 with the caster),
+    // ending on ticks 222 to 286.
+    (
+        name: "38a_fungal_turns_zerglings",
+        claim: "A Fungal Growth on the marine clump turns a fight the marines win into a zergling win",
+        map_cells: 96,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "mycelium_shaman", count: 1, columns: 1, origin: (41.0, 45.0), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 16, columns: 4, origin: (30.0, 42.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 45),
+            casts: [(tick: 70, ability: "Fungal Growth", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 10, columns: 5, origin: (50.0, 42.5), spacing: 0.8),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (3, 8), red: (0, 0)),
+    ),
+    // Control of 38a: no cast. The marines win all 20 seeds with 6 to 8 left (5 once in 52
+    // seeds); every zergling dies and the idle caster outlives the 400-tick limit.
+    (
+        name: "38b_marines_beat_zerglings_without_fungal",
+        claim: "Control of 38a: without Fungal Growth the same marines beat the zerglings",
+        map_cells: 96,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "mycelium_shaman", count: 1, columns: 1, origin: (41.0, 45.0), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 16, columns: 4, origin: (30.0, 42.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 45),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 10, columns: 5, origin: (50.0, 42.5), spacing: 0.8),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (5, 8)),
+    ),
     ],
 )
