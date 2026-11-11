@@ -3588,13 +3588,14 @@
                     // TargetFilters "-;Self,Neutral,Structure,Heroic,Missile,Destructible,Stasis,
                     // Dead,Hidden,Invulnerable", voidmulti :1755: own and enemy, ground and air,
                     // massive allowed; target vision required (RequireTargetVision, core
-                    // AbilData:50). A unit already abducted is refused (validator NoYoink, swarm
-                    // EffectData:1468).
+                    // AbilData:50). A unit marked by an Abduct cast in the last 2 s is refused
+                    // (validator NoYoink on the YoinkMarker buff, swarm EffectData:1468,
+                    // ValidatorData:812-815; the mark is the status abduct_mark).
                     target_filter: Some((
                         alliance: AnyButSelf,
                         planes: [Ground, Air],
                         structures: Exclude,
-                        without_status: Some("abducted"),
+                        without_status: Some("abduct_mark"),
                     )),
                     // YoinkStartCreatePlaceholder, swarm EffectData:1447-1471: the landing point is
                     // placed on the cast 0.1 ahead of the caster (SpawnOffset 0,0.1, :1460), within

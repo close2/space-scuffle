@@ -322,3 +322,49 @@ recorded as B-114 in `DESIGN.md` for a WP3 follow-up. The test now recasts only 
 **Client checks** (asked by the orchestrator): `cargo test -p client --lib` failed on a hard-coded count of shipped
 casts (`battle_hud::catalog`, 4 against 3 since Psionic Storm shipped); the test now counts the shipped casts first
 (`84902a6`). `client --lib` (380), `battle_card_tests` (28) and `battle_cast_tests` (6) pass.
+
+## 7. B-114 fixed: Abduct's mark (plan Amendment 9)
+
+Base: `spells-cloud` head `fc4c811` (schema 29). Outputs under `~/scratch/bugfix-113/` (not committed).
+
+**What the game does** (SC2GameData 5.0.14, `swarm` layer; no later layer touches these entries).
+The ability's effect `YoinkStartSwitch` runs `YoinkStartCreatePlaceholder` (EffectData:1447-1471),
+whose validators include `NoYoink` (:1468): a `CValidatorUnitCompareBehaviorCount` on the buff
+`YoinkMarker`, failing with "Can't target multiple Abduct" (ValidatorData:812-815). Its spawn effect
+`YoinkStartSet` (:1472-1478) applies `YoinkMarker` to the target (`YoinkMarkerBehavior`, :1482-1485)
+before it launches the tongue. `YoinkMarker` (BehaviorData:1089-1096) is hidden, has no
+modification and lasts 2 Normal s (35.71 ticks). The tongue's flight (at most about 12 ticks at cast
+range), the delay (2) and the flight (18) all end within it, so the game never lets a second tongue
+reach a unit whose pull is under way. The `Yoink` buff itself refreshes (one stack) and
+`YoinkRemoveBehavior` removes it at landing whoever applied it, as our engine already does.
+
+**Cause.** Our D-8 put `without_status: "abducted"` on the ability: `abducted` (the `Yoink` buff)
+starts only at contact, so a second cast was admitted before the first contact (and a direct walk
+at any time). A second tongue reaching the unit late in the first flight refreshed `abducted`; the
+first landing removed it; the second delay then launched a flight without the status.
+
+**Fix (data only).** Status `abduct_mark` (`YoinkMarker`); root `abduct` a `Set` with `require:
+without_status abduct_mark` (`NoYoink`) whose children apply the mark and launch the tongue
+(`abduct_tongue`); the ability's target filter asks the same mark.
+
+**Tests** (`abduct_tests.rs`). `a_second_tongue_never_meets_a_unit_whose_pull_is_under_way` walks
+the tree a second time 0 to 35 ticks after a first walk that lands the unit where it stands (the
+allocation child's case), with the tongue from the far side. Red on the base: offset 19, the unit
+flies from tick 28 without `abducted` (the second contact refreshed it before the first landing on
+tick 27 removed it); green after. `a_second_abduct_is_refused_while_the_first_casts_mark_lasts`
+(red on the base: no mark status) checks a second Viper refused on the cast tick and through the
+pull, then admitted once the mark expires, its pull keeping the status. The catalog reference test
+checks the new nodes and the mark's values. All `sim_core` tests pass, the allocation test under
+valgrind included.
+
+**Measurements** against the base build. Matrix (`--seeds 16`, 1,160 runs): bit-identical, 0
+expectation failures on the seeds of record, 3 over all seeds as before. Battle 33 (`--seeds 64`):
+every file identical. Showcase (`route_trace --ticks 1800`): `units.csv` and `summary.md`
+identical. Golden replays pass unchanged (no Abduct in them); no re-recording.
+
+**Found while tracing: B-115.** A homing missile steps `min(speed, gap)`, which puts it exactly at
+contact, and impacts only when the next tick's check finds the gap at most 2^-20. A target that moved
+away in between is never reached: in the trace the second tongue trailed the flying unit at contact
+distance for 20 ticks and landed two ticks after it stopped. By the same step rule a unit walking
+away from a tongue escapes it until it stops (not traced). Registered in `DESIGN.md`, not fixed here
+(it changes every tongue's timing).

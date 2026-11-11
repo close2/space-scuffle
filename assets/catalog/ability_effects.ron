@@ -47,11 +47,29 @@
 
         // ---- Abduct: swarm EffectData:1447-1611 (voidmulti :1035-1045) ----
         (
+            // YoinkStartCreatePlaceholder, :1447-1471, then YoinkStartSet, :1472-1478. The cast
+            // is refused on a unit that carries the mark of an Abduct cast less than 2 s ago
+            // (ValidatorArray NoYoink, :1468; swarm ValidatorData:812-815, "Can't target multiple
+            // Abduct"); otherwise it marks the target (YoinkMarkerBehavior, :1482-1485, on the
+            // placeholder effect's target) and launches the tongue. The mark outlasts every pull
+            // (tongue, delay and flight end within 2 s), so no second tongue reaches a unit whose
+            // pull is under way (bug B-114). The ability's target filter (units.ron) refuses the
+            // order on the same mark.
+            name: "abduct",
+            node: Set((
+                require: Some((without_status: Some("abduct_mark"))),
+                children: [
+                    ApplyStatus((status: "abduct_mark")),       // YoinkMarkerBehavior, :1475, :1482-1485
+                    Use("abduct_tongue"),                       // YoinkLaunchMissile, :1476
+                ],
+            )),
+        ),
+        (
             // YoinkLaunchMissile, :1486-1494: the tongue from the caster to the target, homing
             // (guidance driver), whose impact runs YoinkSet on the target. The landing point is
             // the ability's origin placement (YoinkStartCreatePlaceholder, :1447-1471; units.ron).
             // A tongue whose target dies, loads or turns untargetable is dropped (plan D-8).
-            name: "abduct",
+            name: "abduct_tongue",
             node: LaunchMissile((
                 to: TargetUnit,
                 speed: 1.05,                                    // YoinkMissile MaxSpeed 18.75 (x 1.4 / 25), swarm MoverData:147

@@ -755,3 +755,134 @@ fn the_tether_is_a_link_from_launch_to_landing_without_a_gap() {
     let expected = flight.saturating_ceil().saturating_to_u32() + 1 + DELAY + FLIGHT;
     assert_eq!(shown, expected, "every tick from the cast to the landing");
 }
+
+/// Whether `id` carries the shipped status `name`.
+fn has_status(world: &SimWorld, id: EntityId, name: &str) -> bool {
+    let status = world
+        .catalog
+        .spells()
+        .status_id(name)
+        .expect("a shipped status");
+    world.effects().has_status(id, status)
+}
+
+/// Steps once and checks the rule bug B-114 broke: a unit in flight carries `abducted`.
+fn step_checking_flight(world: &mut SimWorld, target: EntityId, label: &str) {
+    step(world);
+    let flying = world.entities[&target].displacement.is_some();
+    assert!(
+        !flying || abducted(world, target),
+        "{label}, tick {}: the unit flies without the abducted status",
+        world.current_tick
+    );
+}
+
+/// Ticks the `YoinkMarker` buff lasts, rounded up: 2 Normal s = 35.71 (`swarm`
+/// BehaviorData:1092).
+const MARK: u32 = 36;
+
+/// Bug B-114 through the cast: a second Viper ordered on the tick of the first cast, from the
+/// far side so that its tongue would chase the unit while it flies away, is refused (the
+/// game's `NoYoink`: the first cast marked the target, `swarm` EffectData:1468, :1482-1485), and
+/// stays refused on every tick of the pull; once the 2 s mark has expired the second cast is
+/// admitted and its pull carries the status throughout.
+#[test]
+fn a_second_abduct_is_refused_while_the_first_casts_mark_lasts() {
+    let mut world = world();
+    let near = viper(&mut world, BLUE, 14.0, 20.0);
+    let far = viper(&mut world, BLUE, 22.0, 20.0);
+    let target = held(&mut world, "shock_golem", RED, 18.0, 20.0);
+    steps(&mut world, 2);
+    let index = abduct_index(&world, far);
+    let cast_tick = world.current_tick;
+    assert!(abduct(&mut world, near, target));
+    assert!(
+        has_status(&world, target, "abduct_mark"),
+        "the cast marks its target"
+    );
+    assert!(
+        !abduct(&mut world, far, target),
+        "NoYoink on the cast's tick"
+    );
+    assert_eq!(world.entities[&far].energy, n(200), "nothing paid");
+    while world.current_tick < cast_tick + MARK - 1 {
+        assert!(
+            !world.would_accept_cast_order(far, index, None, Some(target)),
+            "tick {}: refused while the mark lasts",
+            world.current_tick
+        );
+        step_checking_flight(&mut world, target, "first pull");
+    }
+    assert!(
+        world.entities[&target].displacement.is_none() && !abducted(&world, target),
+        "the first pull landed within the mark"
+    );
+    while has_status(&world, target, "abduct_mark") {
+        step_checking_flight(&mut world, target, "after the landing");
+        assert!(
+            world.current_tick <= cast_tick + MARK + 1,
+            "the mark expires"
+        );
+    }
+    assert!(
+        abduct(&mut world, far, target),
+        "admitted once the mark ended"
+    );
+    let contact = step_to_contact(&mut world, target);
+    assert!(contact >= cast_tick + MARK - 1);
+    for _ in 0..=DELAY + FLIGHT {
+        step_checking_flight(&mut world, target, "second pull");
+    }
+    assert!(
+        world.entities[&target].displacement.is_none() && !abducted(&world, target),
+        "the second pull landed"
+    );
+}
+
+/// Bug B-114 in the effect engine, whatever the cast pipeline admits: a second walk of the
+/// Abduct tree started on any tick of a first pull is refused by the tree's own validator
+/// (`NoYoink` on `YoinkStartCreatePlaceholder`, `swarm` EffectData:1468). The first pull lands
+/// where the unit stands, as in the allocation child that found the bug, so the second tongue
+/// reaches the unit on a tick the offset chooses: during the first tongue's flight, the 2-tick
+/// delay, the 18-tick flight, or on the landing tick itself. There the first landing used to
+/// remove the `abducted` status the second contact had just refreshed, and the unit then flew
+/// the second pull without it (no stun, collision rule or boarding ban). The unit never flies
+/// without the status, and is never pulled to the second walk's origin.
+#[test]
+fn a_second_tongue_never_meets_a_unit_whose_pull_is_under_way() {
+    let mut pulled_twice = Vec::new();
+    for offset in 0..MARK {
+        let label = format!("second walk {offset} ticks after the first");
+        let mut world = world();
+        let target = held(&mut world, "shock_golem", RED, 18.0, 20.0);
+        steps(&mut world, 2);
+        let root = world
+            .catalog
+            .spells()
+            .effect_id("abduct")
+            .expect("the shipped Abduct tree");
+        let walk = |source: SimVec2, origin: SimVec2| sim_types::EffectContext {
+            owner: BLUE,
+            caster: None,
+            ability: AbilitySource::default(),
+            origin,
+            source_point: source,
+            target: sim_types::EffectTarget::Unit(target),
+        };
+        world.run_effect(root, walk(at(14.0, 20.0), at(18.0, 20.0)));
+        for _ in 0..offset {
+            step_checking_flight(&mut world, target, &label);
+        }
+        world.run_effect(root, walk(at(22.0, 20.0), at(23.0, 20.0)));
+        for _ in 0..2 * MARK {
+            step_checking_flight(&mut world, target, &label);
+        }
+        if world.entities[&target].position.x >= n(20) {
+            pulled_twice.push(offset);
+        }
+    }
+    assert!(
+        pulled_twice.is_empty(),
+        "pulled to the second walk's origin after offsets {pulled_twice:?}"
+    );
+}

@@ -29,6 +29,15 @@
             presentation: [Stunned],
         ),
         (
+            // YoinkMarker buff, swarm BehaviorData:1089-1096: hidden (InfoFlags Hidden, :1091),
+            // no modification (commented out at :1093-1095), 2 Normal s. Applied to Abduct's
+            // target when the cast starts (YoinkMarkerBehavior, swarm EffectData:1482-1485) and
+            // counted by the validator NoYoink (swarm ValidatorData:812-815), which refuses a
+            // second Abduct on the unit while it lasts (bug B-114).
+            name: "abduct_mark",
+            duration_ticks: 35.714286,                          // Duration 2 Normal s, :1092
+        ),
+        (
             // FungalGrowth buff: liberty BehaviorData:328-338, timing from swarm :838-841 (void
             // :69-73 changes validators only). One per unit (MaxStackCount 1, core BehaviorData:43):
             // a recast refreshes it with its phase kept. 16 pulses of 1.5625 on ticks 4, 9, …, 71

@@ -173,6 +173,21 @@
 >   `sync_allocation_count_tests.rs` windows are not extended: the engine's own count covers the simulation side
 >   and the client's views of areas, links and statuses are unchanged since WP1e (recorded, Q0002).
 
+> **Amendment 9 (B-114 fixed, 2026-11-11; orchestrator short note under charter §6).** The game guards Abduct with
+> a mark, not with the `Yoink` buff: `YoinkStartSet` (`swarm` EffectData:1472-1478) applies the hidden 2 s buff
+> `YoinkMarker` (BehaviorData:1089-1096, no modification) to the target when the cast starts, and the validator
+> `NoYoink` on the tree's first effect, `YoinkStartCreatePlaceholder` (EffectData:1468), refuses any unit that
+> carries it (ValidatorData:812-815, error "Can't target multiple Abduct"); no later layer changes either. The
+> mark outlasts every pull (tongue at most about 12 ticks, delay 2, flight 18, all within 35.7), so no second
+> tongue can reach a unit whose pull is under way. D-8's `without_status: "abducted"` checked a status that only
+> starts at contact, which let a second cast in before the first contact, and a direct walk in at any time; when
+> its tongue arrived late in the flight, the first landing removed the refreshed `abducted` and the unit flew the
+> second pull without it. As built: a status `abduct_mark` (YoinkMarker); the root `abduct` is a `Set` with
+> `require: without_status abduct_mark` whose children apply the mark and launch the tongue (`abduct_tongue`);
+> the ability's `target_filter` asks the same mark. No engine change: the engine's refresh and removal follow
+> `CBehavior` already, and the fix is the game's own data (§6.2 item 4 now reads "a unit that carries the mark").
+> Evidence §7.
+
 The owner answered [Q0077](../questions/closed/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
@@ -1274,9 +1289,10 @@ of §11 assert them.
    set of D-8. After a one-pulse persistent of 2 ticks, the 18-tick `Displace` runs, then landing.
 3. While `abducted`: no movement of its own, no attack, no cast, no boarding, not pushed, no collision; orders
    given meanwhile are queued and start on landing (SU-3); visible to every player with vision (reveal).
-4. A second Abduct on a unit that carries `abducted` is refused at admission by the target filter's
-   `without_status` (game: validator `NoYoink`, `swarm` EffectData:1468). A `Displace` on a unit that is already
-   displaced does nothing (D-16).
+4. A second Abduct on a unit that carries the mark of an Abduct cast in the last 2 s (`abduct_mark`, the game's
+   `YoinkMarker`, applied when the cast starts) is refused at admission by the target filter's `without_status`
+   and in the tree by the root's `require` (game: validator `NoYoink`, `swarm` EffectData:1468; Amendment 9). A
+   `Displace` on a unit that is already displaced does nothing (D-16).
 
 ### 6.3 Fungal Growth
 
