@@ -138,7 +138,9 @@ fn a_point_missile_impacts_after_ceil_distance_over_speed() {
             impact = Some(w.current_tick - cast);
         }
     }
-    assert_eq!(impact, Some(3));
+    // Its third step (the cast tick's included) reaches the point, and it impacts on that step
+    // (plan `2026-11-11-contact-and-missiles` D-6), two ticks after the cast tick.
+    assert_eq!(impact, Some(2));
     assert_eq!(w.effects().missiles().len(), 0);
 }
 

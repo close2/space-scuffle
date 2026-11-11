@@ -149,7 +149,9 @@
 >   reach the same enemies; ours runs once per unit found.
 > - **Impact tick.** A cast issued between ticks is first stepped in the next tick, which is its cast tick
 >   (D-16 item 3); the tests count the impact `1 + ceil(d / 0.672)` steps after such a cast, as
->   `effect_tree_tests.rs` does.
+>   `effect_tree_tests.rs` does. *Superseded by plan `2026-11-11-contact-and-missiles` D-6 (B-115): the
+>   missile now impacts on the step that reaches contact, its `ceil(d / 0.672)`-th, the cast tick's step
+>   included; the `1 +` was the extra step of B-115.*
 
 > **Amendment 8 (WP5 and WP6 as built, 2026-11-11; Q0002).**
 >

@@ -192,10 +192,11 @@ fn the_missile_lands_ceil_distance_over_speed_later_and_is_published_while_it_fl
         }
     );
     // 8.5 at 0.672 a tick (FungalGrowthWeapon MaxSpeed 12, void MoverData:18): 12.65, so 13
-    // ticks after the cast tick. A cast between ticks is stepped first in the next tick, as a
-    // cast in that tick's phase 1 would be: that tick is the cast tick, so the impact comes on
-    // the 14th step (the convention of `effect_tree_tests.rs`).
-    assert_eq!(step_to_impact(&mut world, victim), 1 + 13);
+    // steps. A cast between ticks is stepped first in the next tick, as a cast in that tick's
+    // phase 1 would be: that tick is the cast tick and the missile's first step. It impacts on
+    // the step that reaches the point (plan `2026-11-11-contact-and-missiles` D-6, B-115), the
+    // 13th; it used to impact one step later, on the 14th.
+    assert_eq!(step_to_impact(&mut world, victim), 13);
     assert!(world.effects().missiles().is_empty(), "the missile is gone");
     assert!(
         world.build_render_snapshot().spell_missiles.is_empty(),

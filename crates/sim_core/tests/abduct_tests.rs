@@ -14,6 +14,9 @@
 
 #![allow(clippy::expect_used, clippy::too_many_lines)]
 
+#[path = "support/effect_world.rs"]
+mod effect_support;
+
 use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -206,11 +209,15 @@ fn the_tongue_lands_ceil_gap_over_speed_later_and_the_pull_ends_twenty_ticks_aft
         .saturating_div(speed)
         .saturating_ceil()
         .saturating_to_u32();
+    // A cast between ticks is first stepped on the tick numbered `cast_tick` (spellcaster
+    // D-16 item 3), and the tongue impacts on the step that reaches contact (plan
+    // `2026-11-11-contact-and-missiles` D-6, B-115): its `flight`-th step, which runs at
+    // `cast_tick + flight - 1`. It used to impact one step later.
     let contact = step_to_contact(&mut world, target);
     assert_eq!(
-        contact - cast_tick,
+        contact - cast_tick + 1,
         flight,
-        "contact = cast + ceil(gap / 1.05)"
+        "contact on the tongue's ceil(gap / 1.05)-th step"
     );
     // Two ticks of delay: the target is held in place, stunned.
     for _ in 0..DELAY {
@@ -750,9 +757,11 @@ fn the_tether_is_a_link_from_launch_to_landing_without_a_gap() {
         "the tether ends with the landing"
     );
     let flight = (n(8) - radius(&world, target)).saturating_div(SimScalar::from_num(1.05));
-    // The tongue on the cast tick and each tick until contact, the two ticks of delay, then the
-    // eighteen of flight; the landing tick shows none.
-    let expected = flight.saturating_ceil().saturating_to_u32() + 1 + DELAY + FLIGHT;
+    // The tongue when cast and after each of its steps before the one that reaches contact
+    // (ceil(gap / 1.05) snapshots: it impacts on its last step, plan
+    // `2026-11-11-contact-and-missiles` D-6), the two ticks of delay, then the eighteen of
+    // flight; the landing tick shows none.
+    let expected = flight.saturating_ceil().saturating_to_u32() + DELAY + FLIGHT;
     assert_eq!(shown, expected, "every tick from the cast to the landing");
 }
 
@@ -885,4 +894,115 @@ fn a_second_tongue_never_meets_a_unit_whose_pull_is_under_way() {
         pulled_twice.is_empty(),
         "pulled to the second walk's origin after offsets {pulled_twice:?}"
     );
+}
+
+/// Ticks within which a homing missile at `speed` closes `gap` on a target receding at
+/// `receding` a tick, plus one: `ceil(gap / (speed − receding)) + 1`.
+fn closing_bound(gap: SimScalar, speed: SimScalar, receding: SimScalar) -> u32 {
+    gap.saturating_div(speed - receding)
+        .saturating_ceil()
+        .saturating_to_u32()
+        + 1
+}
+
+/// Orders `id` of `owner` to walk to `(60, 20)` and steps ten ticks so that it walks at speed;
+/// returns its `max_speed`.
+fn walk_east(world: &mut SimWorld, owner: PlayerId, id: EntityId) -> SimScalar {
+    step_with(
+        world,
+        vec![PlayerCommand {
+            player_id: owner,
+            entities: vec![id],
+            order: UnitOrder::Move {
+                target: at(60.0, 20.0),
+            },
+            queue: false,
+        }],
+    );
+    steps(world, 10);
+    let kind = world.entities[&id].unit_type_id;
+    world.catalog.get(kind).expect("registered").max_speed
+}
+
+/// T-M2 (plan `2026-11-11-contact-and-missiles` WP1), the reproduction of B-115: a tongue
+/// reaches a unit walking straight away from the caster at its full speed. The tongue flies
+/// 1.05 a tick and the unit at most its `max_speed`, so the gap closes by their difference
+/// every tick (`YoinkMissile` is a Guidance mover, which "chases the target, regardless of
+/// where it moves"). It used to trail the unit at contact distance until the unit stopped.
+#[test]
+fn a_tongue_reaches_a_unit_walking_away_from_it() {
+    let mut world = world();
+    let caster = viper(&mut world, BLUE, 10.0, 20.0);
+    let target = spawn(&mut world, "shock_golem", RED, 15.0, 20.0);
+    let walk = walk_east(&mut world, RED, target);
+    let gap = world.entities[&target]
+        .position
+        .distance(world.entities[&caster].position)
+        - radius(&world, target);
+    let bound = closing_bound(gap, SimScalar::from_num(1.05), walk);
+    let cast_tick = world.current_tick;
+    assert!(abduct(&mut world, caster, target));
+    let contact = (0..bound).find_map(|_| {
+        let tick = world.current_tick;
+        step(&mut world);
+        abducted(&world, target).then_some(tick)
+    });
+    assert!(
+        contact.is_some(),
+        "contact within {bound} ticks of the cast at {cast_tick}"
+    );
+    assert!(
+        world.entities[&target].position.x < n(50),
+        "contact while the unit still walks"
+    );
+}
+
+/// T-M3 (plan `2026-11-11-contact-and-missiles` WP1): the geometry of the evidence's traced
+/// second tongue (spellcaster evidence §7), which B-114's mark now keeps from happening through
+/// Abduct, with a scratch missile at the tongue's speed: one target walks away from the
+/// launch, one is flown away by a scratch `Displace` at 0.55 a tick. Each is reached within
+/// the closing bound, the flown one before its flight ends.
+#[test]
+fn a_missile_reaches_a_walking_and_a_flown_receding_target() {
+    let statuses = r#"(name: "struck", duration_ticks: 100.0)"#;
+    let effects = r#"(name: "probe_missile", node: LaunchMissile((to: TargetUnit, speed: 1.05,
+            view: Tether, impact: ApplyStatus((status: "struck"))))),
+        (name: "shove", node: Displace((flight_ticks: 40)))"#;
+    for flown in [false, true] {
+        let label = if flown { "flown" } else { "walking" };
+        let mut world = effect_support::world(statuses, effects);
+        let struck = world
+            .catalog
+            .spells()
+            .status_id("struck")
+            .expect("the scratch status");
+        let target = effect_support::unit(&mut world, 0, 18, 20);
+        let receding = if flown {
+            let mut push =
+                effect_support::context(&world, None, sim_types::EffectTarget::Unit(target));
+            push.origin = SimVec2::from_i32(40, 20);
+            effect_support::run(&mut world, "shove", push);
+            SimScalar::from_num(22.0 / 40.0)
+        } else {
+            walk_east(&mut world, PlayerId(0), target)
+        };
+        let launch = at(10.0, 20.0);
+        let gap = world.entities[&target].position.distance(launch) - radius(&world, target);
+        let bound = closing_bound(gap, SimScalar::from_num(1.05), receding);
+        let mut context =
+            effect_support::context(&world, None, sim_types::EffectTarget::Unit(target));
+        context.source_point = launch;
+        effect_support::run(&mut world, "probe_missile", context);
+        let reached = (0..bound).any(|_| {
+            step(&mut world);
+            world.effects().has_status(target, struck)
+        });
+        assert!(reached, "{label}: reached within {bound} ticks");
+        if flown {
+            assert!(
+                world.entities[&target].displacement.is_some(),
+                "flown: reached during the flight"
+            );
+        }
+    }
 }
