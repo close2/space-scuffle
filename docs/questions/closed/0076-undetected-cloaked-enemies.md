@@ -28,3 +28,14 @@ Options:
    - **Attacking burrowed units** (such as the Lurker / `burrow_scorpion`) visibly erupt their line of subterranean spines (`spine_line`) starting from the burrowed attacker's position toward the target, revealing the Lurker's location on the ground via its attack effect even when the Lurker itself is undetected.
    - (And in SC2 LotV, units like the Widow Mine show a faint surface disturbance / targeting cue when acquiring.)
 Please ensure undetected cloaked units show the refractive shimmer, stationary non-attacking burrowed enemies stay hidden, and burrowed enemies that move underground or fire (like the Lurker's spine line) show their ground disturbance / attack origin to the enemy player.
+
+## Resolution
+
+Carried out in plan [`2026-11-09-effect-visualization`](../../plans/2026-11-09-effect-visualization.md), Amendment 2
+(commits `c5b5de2` and `ca082cd`, 2026-11-10). R4: an undetected cloaked enemy stays a shimmer only, not
+pickable, inspected or given a health bar (`BattleFog::presence`, unchanged since WP3, tested in
+`battle_fog_tests.rs`). R5: a stationary, non-attacking undetected burrowed enemy stays hidden; a mode's
+presentation block may name a `moving` trail effect, laid where the viewer sees the ground while the unit
+moves (`client::effects::systems::spawn_mode_trails`; no shipped burrowed mode can move yet, so no shipped unit
+names one). R6: an undetected burrowed attacker's spine line shows wherever the viewer sees it, point by
+point (`LineAssembly`, `WorldLine::seen`), tested headless and in pixels (`effect_slice_gpu_tests.rs`).

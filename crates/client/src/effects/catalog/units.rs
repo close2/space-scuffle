@@ -86,6 +86,8 @@ pub struct ModeEffectIds {
     pub transition: Option<EffectId>,
     /// Held in the mode.
     pub stance: Option<EffectId>,
+    /// Laid at its `repeat` period while the unit moves in the mode (a trail).
+    pub moving: Option<EffectId>,
 }
 
 /// One archetype's resolved block.
@@ -187,6 +189,14 @@ impl UnitEffectTables {
             .and_then(|entry| entry.status[status_index(kind)])
     }
 
+    /// Whether any unit names a `moving` trail, so the trail system has work at all.
+    #[must_use]
+    pub fn has_trails(&self) -> bool {
+        self.units
+            .iter()
+            .any(|entry| entry.modes.iter().any(|mode| mode.moving.is_some()))
+    }
+
     /// The mode effects of `unit` for mode index `mode`.
     #[must_use]
     pub fn mode(&self, unit: UnitTypeId, mode: u8) -> Option<ModeEffectIds> {
@@ -229,6 +239,20 @@ impl Checker<'_> {
                 })?;
         self.kind(slot, Some(id), kinds)?;
         Ok(Some(id))
+    }
+
+    /// Resolves a mode's `moving` slot: a `Mode` effect that states its `repeat` period.
+    fn trail(&self, name: Option<&String>) -> Result<Option<EffectId>, EffectCatalogError> {
+        let id = self.name("mode moving", name, MODE_KINDS)?;
+        match id.and_then(|id| self.effects.effect(id)) {
+            Some(effect) if effect.repeat.is_none() => {
+                Err(EffectCatalogError::TrailWithoutRepeat {
+                    unit: self.unit.to_owned(),
+                    name: effect.name.clone(),
+                })
+            }
+            _ => Ok(id),
+        }
     }
 
     /// Fails unless effect `id` is made for one of `kinds`.
@@ -302,6 +326,7 @@ fn resolve_unit(
             leave: check.name("mode leave", mode.leave.as_ref(), MODE_KINDS)?,
             transition: check.name("mode transition", mode.transition.as_ref(), MODE_KINDS)?,
             stance: check.name("mode stance", mode.stance.as_ref(), MODE_KINDS)?,
+            moving: check.trail(mode.moving.as_ref())?,
         });
     }
     for kind in STATUS_ORDER {

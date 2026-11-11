@@ -108,7 +108,7 @@ pub struct SpriteInstance {
 /// One decal box.
 // PERFORMANCE RATIONALE:
 // Why: As for cards: decals are drawn by one instanced draw from a retained storage buffer.
-// What: A `Pod` record of seven 16-byte rows matching the WGSL struct.
+// What: A `Pod` record of nine 16-byte rows matching the WGSL struct.
 // Trade-off: Fields are packed for alignment rather than grouped by meaning, and the noise
 // offset is two scalars in WGSL (a `vec2` there would need 8-byte alignment).
 #[repr(C)]
@@ -154,7 +154,26 @@ pub struct DecalInstance {
     pub noise_layer: u32,
     /// World XZ direction the mark is clipped along; zero for no clip.
     pub clip_axis: [f32; 2],
-    /// Unused; keeps the record a multiple of 16 bytes.
+    /// World units over which a clipped mark feathers out, across each clip end (60 % of it beyond the end).
+    pub clip_feather: f32,
+    /// Liquid relief: slope scale of the thickness field lit as a wet surface; 0 for none.
+    pub relief: f32,
+    /// Strength of the liquid's specular sheen at full wetness.
+    pub sheen: f32,
+    /// Specular exponent of the sheen (higher is a tighter highlight).
+    pub gloss: f32,
+    /// Weight of low-frequency noise in the liquid's value and thickness, 0..1.
+    pub value_noise: f32,
+    /// Ramp factor at and below which the liquid is dry (no sheen, no relief light); the
+    /// sheen grows linearly from there to a ramp factor of 1.
+    pub dry_below: f32,
+    /// Depth of a disc outline's edge noise as a fraction of the half length; 0 with
+    /// `outline_fill` 0 for none (the texture's own outline).
+    pub outline_noise: f32,
+    /// Share of the texture's half width read across a disc outline's radius; 0 for no disc
+    /// outline.
+    pub outline_fill: f32,
+    /// Padding to a whole 16-byte row; always zero.
     pub padding: [f32; 2],
 }
 
@@ -178,7 +197,10 @@ mod tests {
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
         assert_eq!(size_of::<SpriteInstance>(), 128);
-        assert_eq!(size_of::<DecalInstance>(), 112);
+        assert_eq!(size_of::<DecalInstance>(), 144);
+        assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);
+        assert_eq!(std::mem::offset_of!(DecalInstance, clip_feather), 104);
+        assert_eq!(std::mem::offset_of!(DecalInstance, dry_below), 124);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_axis), 96);
         assert_eq!(std::mem::offset_of!(SpriteInstance, noise_offset), 80);
         assert_eq!(std::mem::offset_of!(SpriteInstance, clip_axis), 96);

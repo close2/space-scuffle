@@ -29,3 +29,10 @@ Recommendation: yes, because decals and single-frame elements are where a still 
 **Option 1 — Yes: agents may use a Gemini still-image model for effect textures and Veo keyframes, targeting ~$25 (the planned $25.25) with an upper cap of < $50 within the $200 total media budget.**
 
 **Technical insight:** Generating greyscale effect decals and sprite cards (scorch marks, cracks, smoke puffs, spikes, acid stains) on black/white backgrounds for difference matting via a Gemini still-image model is ~4–10× cheaper per asset than Veo video clips and yields cleaner alpha mattes and higher detail for ground decals and particle cards. Log every call in `docs/evidence/veo/ledger.jsonl`.
+
+## Resolution
+
+Recorded in plan [`2026-11-09-effect-visualization`](../../plans/2026-11-09-effect-visualization.md), Amendment 2
+(commit `c5b5de2`): image-model target about $25, cap below $50, within the $200 total; every call goes
+through `asset_baker effect-image`, which ledgers it. Review round 3 spent 8 paid images ($0.88); the image model
+stands at 49 paid images, $5.39, and the ledger at $105.79 (2026-11-10).

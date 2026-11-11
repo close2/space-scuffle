@@ -2638,6 +2638,11 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the detonation's acid splash
+            // (accepted by the review gate in round 5, Amendment 3).
+            effects: (
+                weapons: [(weapon: Primary, splash: Some("acid_burst"))],
+            ),
             veo_prompts: {
                 Idle: "Acid-Burst Beetle: Swollen rounded insect with translucent glowing chartreuse bio-acid sac pulsating.",
                 Walk: "Acid-Burst Beetle: Rapid rolling tumbling motion propelled by frantic legs.",
@@ -2935,6 +2940,11 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the burrowed spine line's
+            // ground marks (accepted by the review gate in round 5, Amendment 3).
+            effects: (
+                weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))],
             ),
             veo_prompts: {
                 Idle: "Subterranean Ambush Scorpion: one broad, flat organic scorpion of thick brown chitin, crouched low and compact: six short legs tucked close under its body, two broad pincer claws folded shut in front of its head, a spined tail curled over its back, amber glow along its back seams, seen from high above at a three-quarter angle, head toward the lower right, whole, centred, floating in evenly lit empty space, no floor, no shadow.",

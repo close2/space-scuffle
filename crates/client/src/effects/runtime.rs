@@ -31,7 +31,8 @@ use super::budget::{
     retire_fade, retirement_candidate, RetireCandidate,
 };
 use super::catalog::schema::{
-    CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping, RotationDef,
+    Binding, CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping,
+    RotationDef,
 };
 use super::catalog::{
     Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
@@ -42,7 +43,7 @@ use super::instances::{
     SHAPE_TEXTURE,
 };
 use super::particles::{Burst, LineClip, ParticlePool};
-use super::placement::{hash3, instance_count, place, unit_float, WorldLine};
+use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
 use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
 use bevy::math::{Vec2, Vec3};
 use bevy::prelude::Resource;
@@ -419,16 +420,21 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let placement_salt = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
+                if !placed_seen(placement, index, instance.line) {
+                    continue;
+                }
                 let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 let due = layer.start + placed.delay;
                 if due <= window.0 || due > window.1 {
                     continue;
                 }
-                let clip = match instance.line {
-                    Some(line) if layer.clip_to_line => line_clip_window(line),
-                    _ => NO_CLIP,
-                };
+                let clip = clip_window(
+                    instance.line,
+                    layer.clip_to_line,
+                    &instance.bound,
+                    instance.anchor + placed.offset,
+                );
                 let burst = Burst {
                     emitter: emitter_id,
                     origin: instance.anchor + placed.offset,
@@ -508,6 +514,9 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let salt = u32::try_from(context.layer_index * 4 + placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
+                if !placed_seen(placement, index, instance.line) {
+                    continue;
+                }
                 let seed = hash3(instance.seed, salt, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 #[expect(
@@ -637,6 +646,11 @@ impl EffectRuntime {
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
         let standing = matches!(look.orient, Orient::VerticalAlongLine | Orient::Upright);
+        // A standing card clipped to its line stands whole inside it (review round 5).
+        let (position, extent) = match line {
+            Some(line) if standing && look.clip_to_line => fit_inside_line(line, position, extent),
+            _ => (position, extent),
+        };
         let lift = match look.lift_curve {
             Some(curve) => catalog.sample(Some(curve), life, 0.0),
             None => look.lift.unwrap_or(if standing { 1.0 } else { 0.0 }),
@@ -655,9 +669,12 @@ impl EffectRuntime {
             (_, RingMapping::Front) if ring_inner > 0.0 => SHAPE_FRONT,
             _ => SHAPE_TEXTURE,
         };
+        // A standing card (a clump of spikes) is drawn only at a seen point and kept whole: cut
+        // at the fog's edge it would read as half a clump (review round 4, fog capture). Only
+        // the line's own ends cut it; ground-hugging cards end where the fog begins.
         let clip = match line {
-            Some(line) if look.clip_to_line => line_clip_window(line),
-            _ => NO_CLIP,
+            Some(line) if standing && look.clip_to_line => line_clip_window(line),
+            _ => clip_window(line, look.clip_to_line, &context.instance.bound, position),
         };
         let surface = Surface::of(look.breakup.as_ref(), seed);
         let card = SpriteInstance {
@@ -720,10 +737,7 @@ impl EffectRuntime {
             .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
         let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
         let line = context.instance.line;
-        let clip = match line {
-            Some(line) if look.clip_to_line => line_clip_window(line),
-            _ => NO_CLIP,
-        };
+        let clip = clip_window(line, look.clip_to_line, &context.instance.bound, position);
         let yaw = match (look.yaw, line) {
             (DecalYaw::AlongLine, Some(line)) => {
                 let direction = line.to - line.from;
@@ -750,6 +764,14 @@ impl EffectRuntime {
             clip_min: clip[2],
             clip_max: clip[3],
             clip_axis: [clip[0], clip[1]],
+            clip_feather: look.clip_feather,
+            relief: look.liquid.map_or(0.0, |liquid| liquid.relief),
+            sheen: look.liquid.map_or(0.0, |liquid| liquid.sheen),
+            gloss: look.liquid.map_or(1.0, |liquid| liquid.gloss),
+            value_noise: look.liquid.map_or(0.0, |liquid| liquid.value_noise),
+            dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
+            outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
+            outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
         Written::Yes
@@ -862,7 +884,7 @@ fn len32(len: usize) -> u32 {
 }
 
 /// The longest extra delay the line placements of `layers` add on `line`.
-fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
+pub fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
     let Some(line) = line else {
         return 0.0;
     };
@@ -897,6 +919,105 @@ pub fn line_clip_window(line: WorldLine) -> LineClip {
     let axis = along / length;
     let start = axis.dot(Vec2::new(line.from.x, line.from.z));
     [axis.x, axis.y, start, start + length]
+}
+
+/// A standing card of half width `extent` (world units) at `position` on `line`, made smaller
+/// and moved inward when the line's nearer end would cut it, so that it stands whole between
+/// the line's ends (review round 5: the first clump, cut at the line's start, read as a lone
+/// spike). Such a card keeps its far edge and spans from the end to that edge, so it stays
+/// over its own point; it is never wider than the line. Returns the card's position and half
+/// width; unchanged when the card already fits or the line has no horizontal length.
+#[must_use]
+pub fn fit_inside_line(line: WorldLine, position: Vec3, extent: f32) -> (Vec3, f32) {
+    let window = line_clip_window(line);
+    if window == NO_CLIP {
+        return (position, extent);
+    }
+    let [x, z, start, end] = window;
+    let along = x * position.x + z * position.z;
+    let (behind, ahead) = ((along - start).max(0.0), (end - along).max(0.0));
+    if behind >= extent && ahead >= extent {
+        return (position, extent);
+    }
+    let room = behind.min(ahead);
+    let fitted = f32::midpoint(extent, room).min(0.5 * (end - start));
+    let centre = if behind <= ahead {
+        start + fitted
+    } else {
+        end - fitted
+    };
+    (position + Vec3::new(x, 0.0, z) * (centre - along), fitted)
+}
+
+/// The clip window of an instance at `position` of a layer that `clips` to the event's
+/// `line`: [`seen_clip_window`] with the line's bound spacing, or no clip.
+fn clip_window(
+    line: Option<WorldLine>,
+    clips: bool,
+    bound: &BoundValues,
+    position: Vec3,
+) -> LineClip {
+    match line {
+        Some(line) if clips => seen_clip_window(
+            line,
+            bound.get(Binding::LineSpacing),
+            Vec2::new(position.x, position.z),
+        ),
+        _ => NO_CLIP,
+    }
+}
+
+/// The clip window of an instance at `position` (XZ) on `line`, whose search points lie
+/// `spacing` apart from its start: the whole line when the viewer sees every point, otherwise
+/// the run of seen points around the instance's own point, ending half a spacing beyond its
+/// outermost seen points (where the fog's cell edge lies for points at cell centres), so the
+/// ground-hugging layers of the line (marks, dust, chips) end at the same place where the line
+/// runs into the fog (plan Amendment 2, R6; review round 4). No clip for a line without
+/// horizontal length.
+#[must_use]
+pub fn seen_clip_window(line: WorldLine, spacing: f32, position: Vec2) -> LineClip {
+    let whole = line_clip_window(line);
+    if whole == NO_CLIP || line.seen == u64::MAX || spacing <= f32::EPSILON {
+        return whole;
+    }
+    let [x, z, start, end] = whole;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a point index of a line of at most a few hundred spacings, clamped at 0"
+    )]
+    let (point, last) = (
+        ((position.dot(Vec2::new(x, z)) - start) / spacing)
+            .round()
+            .max(0.0) as u32,
+        ((end - start) / spacing + 1e-3).floor().max(0.0) as u32,
+    );
+    let point = point.min(last);
+    let mut low = point;
+    while low > 0 && line.sees_point(low - 1) {
+        low -= 1;
+    }
+    let mut high = point;
+    while high < last && line.sees_point(high + 1) {
+        high += 1;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a small point index is exact in f32"
+    )]
+    let (low_at, high_at) = (
+        if low == 0 {
+            start
+        } else {
+            start + (low as f32 - 0.5) * spacing
+        },
+        if high == last {
+            end
+        } else {
+            start + (high as f32 + 0.5) * spacing
+        },
+    );
+    [x, z, low_at, high_at]
 }
 
 /// Offset of a card that moves `spread` world units away from its anchor over its life,
@@ -1105,23 +1226,85 @@ mod tests {
 
     #[test]
     fn a_line_clip_window_spans_the_line_from_its_start_to_its_end() {
-        let line = WorldLine {
-            from: Vec3::new(2.0, 1.0, 3.0),
-            to: Vec3::new(2.0, 1.0, 11.0),
-        };
+        let line = WorldLine::whole(Vec3::new(2.0, 1.0, 3.0), Vec3::new(2.0, 1.0, 11.0));
         let [x, z, min, max] = line_clip_window(line);
         assert!(x.abs() < 1e-6 && (z - 1.0).abs() < 1e-6, "along +z");
         assert!((min - 3.0).abs() < 1e-5 && (max - 11.0).abs() < 1e-5);
         let point = Vec3::new(2.0, 0.0, 3.0);
         assert!(((Vec2::new(point.x, point.z).dot(Vec2::new(x, z))) - min).abs() < 1e-5);
-        let vertical = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(0.0, 4.0, 0.0),
-        };
+        let vertical = WorldLine::whole(Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0));
         assert_eq!(
             line_clip_window(vertical),
             NO_CLIP,
             "no horizontal length, no clip"
+        );
+    }
+
+    #[test]
+    fn a_standing_card_at_a_line_end_is_fitted_whole_inside_the_line() {
+        let line = WorldLine::whole(Vec3::new(2.0, 0.0, 1.0), Vec3::new(2.0, 0.0, 9.0));
+        let middle = Vec3::new(2.0, 0.0, 5.0);
+        assert_eq!(
+            fit_inside_line(line, middle, 0.9),
+            (middle, 0.9),
+            "a card that fits is unchanged"
+        );
+        // At the first point: half as wide, spanning from the start to its old far edge.
+        let (position, extent) = fit_inside_line(line, Vec3::new(2.0, 0.0, 1.0), 0.9);
+        assert!((extent - 0.45).abs() < 1e-6, "{extent}");
+        assert!(
+            position.distance(Vec3::new(2.0, 0.0, 1.45)) < 1e-5,
+            "{position}"
+        );
+        // Near the last point, 0.3 short of it: it keeps its far edge 0.9 behind its point.
+        let (position, extent) = fit_inside_line(line, Vec3::new(2.0, 0.0, 8.7), 0.9);
+        assert!((extent - 0.6).abs() < 1e-6, "{extent}");
+        assert!(
+            (position.z - 8.4).abs() < 1e-5 && (position.z - extent - 7.8).abs() < 1e-5,
+            "{position}"
+        );
+        // Never wider than a short line.
+        let short = WorldLine::whole(Vec3::ZERO, Vec3::new(0.6, 0.0, 0.0));
+        let (position, extent) = fit_inside_line(short, Vec3::ZERO, 0.9);
+        assert!((extent - 0.3).abs() < 1e-6 && (position.x - 0.3).abs() < 1e-6);
+        // A line without horizontal length leaves the card alone.
+        let vertical = WorldLine::whole(Vec3::ZERO, Vec3::Y);
+        assert_eq!(
+            fit_inside_line(vertical, Vec3::ZERO, 0.9),
+            (Vec3::ZERO, 0.9)
+        );
+    }
+
+    #[test]
+    fn a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance() {
+        let mut line = WorldLine::whole(Vec3::new(0.0, 0.0, 0.0), Vec3::new(8.0, 0.0, 0.0));
+        assert_eq!(
+            seen_clip_window(line, 1.0, Vec2::new(3.0, 0.0)),
+            line_clip_window(line),
+            "a wholly seen line keeps its whole window"
+        );
+        // Points 0..=3 fogged, 4..=6 seen, 7 fogged, 8 seen.
+        line.seen = 0b1_0111_0000;
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(5.2, 0.3));
+        assert!(
+            (min - 3.5).abs() < 1e-5 && (max - 6.5).abs() < 1e-5,
+            "{min} {max}"
+        );
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(8.0, 0.0));
+        assert!(
+            (min - 7.5).abs() < 1e-5 && (max - 8.0).abs() < 1e-5,
+            "the end point keeps the line's end: {min} {max}"
+        );
+        line.seen = 0b0_0000_0111;
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(-0.4, 0.0));
+        assert!(
+            min.abs() < 1e-5 && (max - 2.5).abs() < 1e-5,
+            "the first point keeps the line's start"
+        );
+        assert_eq!(
+            seen_clip_window(line, 0.0, Vec2::ZERO),
+            line_clip_window(line),
+            "no spacing bound: the whole window"
         );
     }
 

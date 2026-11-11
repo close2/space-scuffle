@@ -47,10 +47,51 @@ pub fn unit_float(hash: u32) -> f32 {
 /// The line an event lies on, in Bevy world space (Y up).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldLine {
-    /// Start of the line.
+    /// Start of the line: its first search point.
     pub from: Vec3,
     /// End of the line.
     pub to: Vec3,
+    /// Bit `i` set when the viewer sees search point `i` (counted from `from` in steps of the
+    /// line's spacing); instances placed at a point the viewer does not see are not drawn
+    /// (plan Amendment 2, R6). [`WorldLine::whole`] sets every bit.
+    pub seen: u64,
+}
+
+impl WorldLine {
+    /// A line whose every search point is seen: no fog, or a viewer who sees all of it.
+    #[must_use]
+    pub const fn whole(from: Vec3, to: Vec3) -> Self {
+        Self {
+            from,
+            to,
+            seen: u64::MAX,
+        }
+    }
+
+    /// Whether the viewer sees search point `point`. Points from the 64th on share its bit.
+    #[must_use]
+    pub const fn sees_point(&self, point: u32) -> bool {
+        let bit = if point < 63 { point } else { 63 };
+        self.seen & (1 << bit) != 0
+    }
+}
+
+/// Whether instance `index` of `placement` stands only at search points of `line` the viewer
+/// sees: a point-placed instance needs its point, an instance between two points needs both.
+/// Instances of other placements, and of an effect without a line, are always seen.
+#[must_use]
+pub fn placed_seen(placement: &PlacementDef, index: u32, line: Option<WorldLine>) -> bool {
+    let (
+        PlacementDef::Line {
+            between, per_point, ..
+        },
+        Some(line),
+    ) = (placement, line)
+    else {
+        return true;
+    };
+    let point = index / (*per_point).max(1);
+    line.sees_point(point) && (!*between || line.sees_point(point + 1))
 }
 
 /// One placed instance: offset from the effect's anchor and extra start delay.
@@ -213,10 +254,7 @@ mod tests {
 
     #[test]
     fn a_line_places_every_spacing_and_delays_by_travel() {
-        let line = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(9.0, 0.0, 0.0),
-        };
+        let line = WorldLine::whole(Vec3::ZERO, Vec3::new(9.0, 0.0, 0.0));
         let placement = PlacementDef::Line {
             spacing: constant(1.5),
             travel: 3.0,
@@ -235,10 +273,7 @@ mod tests {
             1,
             "no line, one instance"
         );
-        let long = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(1000.0, 0.0, 0.0),
-        };
+        let long = WorldLine::whole(Vec3::ZERO, Vec3::new(1000.0, 0.0, 0.0));
         assert_eq!(
             instance_count(&placement, &bound, Some(long)),
             MAX_INSTANCES_PER_PLACEMENT
@@ -247,10 +282,7 @@ mod tests {
 
     #[test]
     fn segments_between_the_points_end_at_the_line_ends() {
-        let line = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(8.0, 0.0, 0.0),
-        };
+        let line = WorldLine::whole(Vec3::ZERO, Vec3::new(8.0, 0.0, 0.0));
         let placement = PlacementDef::Line {
             spacing: constant(1.0),
             travel: 4.0,
@@ -273,10 +305,7 @@ mod tests {
 
     #[test]
     fn a_clump_per_point_scatters_and_jitters_within_its_bounds() {
-        let line = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(4.0, 0.0, 0.0),
-        };
+        let line = WorldLine::whole(Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0));
         let placement = PlacementDef::Line {
             spacing: constant(1.0),
             travel: 10.0,
@@ -303,5 +332,51 @@ mod tests {
             spread = spread.max(placed.offset.z.abs());
         }
         assert!(spread > 0.05, "the clump is scattered across the line");
+    }
+
+    #[test]
+    fn only_instances_at_seen_points_are_seen() {
+        let mut line = WorldLine::whole(Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0));
+        line.seen = 0b0_0110;
+        let clumps = PlacementDef::Line {
+            spacing: constant(1.0),
+            travel: 10.0,
+            between: false,
+            per_point: 2,
+            scatter: 0.0,
+            delay_jitter: 0.0,
+        };
+        let seen: Vec<bool> = (0..10)
+            .map(|index| placed_seen(&clumps, index, Some(line)))
+            .collect();
+        assert_eq!(
+            seen,
+            [false, false, true, true, true, true, false, false, false, false],
+            "points 1 and 2, two instances each"
+        );
+        let segments = PlacementDef::Line {
+            spacing: constant(1.0),
+            travel: 10.0,
+            between: true,
+            per_point: 1,
+            scatter: 0.0,
+            delay_jitter: 0.0,
+        };
+        let seen: Vec<bool> = (0..4)
+            .map(|index| placed_seen(&segments, index, Some(line)))
+            .collect();
+        assert_eq!(
+            seen,
+            [false, true, false, false],
+            "only the segment from 1 to 2"
+        );
+        assert!(
+            placed_seen(&PlacementDef::Point, 0, Some(line)),
+            "not a line placement"
+        );
+        assert!(placed_seen(&clumps, 0, None), "no line");
+        let mut far = WorldLine::whole(Vec3::ZERO, Vec3::X);
+        far.seen = 1 << 63;
+        assert!(far.sees_point(63) && far.sees_point(200) && !far.sees_point(62));
     }
 }

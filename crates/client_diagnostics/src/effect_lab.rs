@@ -53,6 +53,8 @@ pub struct EffectLabOptions {
     /// The D-11 experiment: an HDR camera with a thresholded bloom
     /// ([`crate::hdr_bloom`]); the sheets are then named `<effect>_hdr_*`.
     pub hdr_bloom: bool,
+    /// The fog take of a line ([`fog_subject`]): the first search point the viewer sees.
+    pub fog_seen_from: Option<u32>,
 }
 
 /// Parses `Binding=value` pairs into bound values.
@@ -93,7 +95,33 @@ pub fn subject(effect: &str, kind: EventKind, bound: BoundValues) -> LabSubject 
         bound,
         anchor,
         line_to,
+        line_seen: u64::MAX,
+        fog_below_x: None,
     }
+}
+
+/// The fog take of a line subject: the line moved half a spacing along itself so that its
+/// search points sit at cell centres, as for units standing on them, the viewer seeing the
+/// points from `seen_from` on, and the fog over every cell before the cell edge half a spacing
+/// before that point (the attacker, one spacing before the first point, lies in it). A subject
+/// without a line is returned as it is.
+#[must_use]
+pub fn fog_subject(mut subject: LabSubject, seen_from: u32) -> LabSubject {
+    let Some(to) = subject.line_to else {
+        return subject;
+    };
+    let spacing = subject.bound.get(Binding::LineSpacing).max(f32::EPSILON);
+    let shift = Vec3::new(spacing * 0.5, 0.0, 0.0);
+    subject.anchor += shift;
+    subject.line_to = Some(to + shift);
+    subject.line_seen = u64::MAX.checked_shl(seen_from.min(63)).unwrap_or(0);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a small point index is exact in f32"
+    )]
+    let edge = subject.anchor.x + (seen_from as f32 - 0.5) * spacing;
+    subject.fog_below_x = Some(edge);
+    subject
 }
 
 /// Runs the mode.
@@ -111,8 +139,15 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
             CaptureError::InvalidScript(format!("no effect named {:?}", options.effect))
         })?;
     let bound = parse_bindings(&options.bindings)?;
-    let lifetime = effect.lifetime;
-    let subject = subject(&options.effect, effect.event, bound);
+    let mut subject = subject(&options.effect, effect.event, bound);
+    // The sheet's last column is the true end: a line's far points erupt later by its travel.
+    let line = subject
+        .line_to
+        .map(|to| client::effects::placement::WorldLine::whole(subject.anchor, to));
+    let lifetime = effect.lifetime + client::effects::runtime::max_line_delay(&effect.layers, line);
+    if let Some(seen_from) = options.fog_seen_from {
+        subject = fog_subject(subject, seen_from);
+    }
     std::fs::create_dir(&options.out).map_err(|source| CaptureError::Io {
         path: options.out.clone(),
         source,
@@ -130,6 +165,8 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
     let sheets = options.sheet_dir.as_deref().unwrap_or(&options.out);
     let look = if options.hdr_bloom {
         Look::HdrBloom
+    } else if options.fog_seen_from.is_some() {
+        Look::Fog
     } else {
         Look::Ldr
     };
@@ -182,6 +219,8 @@ enum Look {
     Ldr,
     /// The D-11 experiment ([`crate::hdr_bloom`]).
     HdrBloom,
+    /// The shipped camera, with the line running out of the fog ([`fog_subject`]).
+    Fog,
 }
 
 impl Look {
@@ -190,6 +229,7 @@ impl Look {
         match self {
             Self::Ldr => "",
             Self::HdrBloom => "_hdr",
+            Self::Fog => "_fog",
         }
     }
 
@@ -199,6 +239,12 @@ impl Look {
             Self::Ldr => "shipped camera (no HDR, no bloom)",
             Self::HdrBloom => {
                 "HDR camera with bloom above 1.0 (`--hdr-bloom`, plan D-11 experiment)"
+            }
+            Self::Fog => {
+                "shipped camera; the line's first search points and the attacker behind them lie in \
+                 the viewer's fog (`--fog-seen-from`), the fogged ground darkened to a quarter with a \
+                 hard edge as the battle terrain draws it, and only the seen points admitted (plan \
+                 Amendment 2, R6)"
             }
         }
     }

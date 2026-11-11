@@ -25,3 +25,41 @@ decal pool (2 048) and overflowed it with Critical marks (the spine line's churn
 line for 2.6 s); the pool is now 4 096. The Major class cap (96 live) is far exceeded, so an effect spawned over
 it has its Detail layers retired at birth (eroded out over 0.1 s, never popped) and draws its Critical layers:
 the acid front, the shell's shock front, the spines and the spine line's churned earth and fissure.
+
+Review round 3 (2026-11-10, plan Amendment 2): stress_capture_400.png is re-taken with the round-3 effects.
+The shipped units no longer name acid_burst and spine_line (Amendment 1), so the stream would carry only
+shell_impact; the run therefore reads a scratch copy of assets/ whose units.ron gives volatile_tick and
+burrow_scorpion the presentation blocks of crates/client/tests/data/effect_lab_blocks.ron (`--source-assets`);
+nothing else differs. Made by `frame_budget --scenario 400 --display-path xvfb-software-present --warmup-frames 2
+--measure-frames 34 --effect-stress 200 --capture-tick 150 --capture <png> --source-assets <copy>` (debug
+build, lavapipe under Xvfb, 1280x720): the RX 580 path of rounds 1 and 2 was not used, because the server's
+disk was saturated by other users and a release build was out of reach; the picture is the same renderer.
+Each line splash now arrives as one event per search point, as the simulation emits them, and is merged
+back into one effect. On the captured frame: 1 151 live effects, 732 cards, 3 072 ground decals; footprints
+cover 29.0 % of the screen (upper bound), summed area 2.25 screens, at most 58 footprints over one cell. Over
+the run: 1 700 splashes, 1 700 effects spawned, none refused, no Critical instance without a slot, 655 Detail
+instances skipped for room, 988 skipped as smaller than 6 pixels. The acid stain is Critical since round 3,
+so over the Major cap a burst keeps its liquid stain (and its front) instead of only a ring; at 200 splashes a
+second the 6-second stains overlap into green fields between the armies, and every unit stays visible on them.
+
+Review round 4 (2026-11-11): stress_capture_400.png is re-taken with the round-4 effects (the acid stain at
+0.98 of the reach) the same way as round 3: the same command (debug build of frame_budget, lavapipe under
+Xvfb, 1280x720, the driver and build of the round-4 contact sheets) with a scratch copy of assets/ whose
+units.ron gives volatile_tick and burrow_scorpion the presentation blocks of
+crates/client/tests/data/effect_lab_blocks.ron (`--source-assets`); nothing else differs. On the captured
+frame: 1 134 live effects, 713 cards, 3 072 ground decals; footprints cover 31.7 % of the screen (upper
+bound), summed area 3.00 screens, at most 65 footprints over one cell. Over the run: 1 700 splashes, 1 700
+effects spawned, none refused, no Critical instance without a slot, 655 Detail instances skipped for room,
+1 174 skipped as smaller than 6 pixels, none retired. Cropped to x 360..1280 as before.
+
+Review round 5 (2026-11-11): stress_capture_400.png is re-taken with the round-5 effects (the acid stain's
+visible edge on the reach through its disc outline, the opaque lip, the glob variants; the spine line's fitted end
+clumps and darker scar; the shell's later blast mark) the same way as rounds 3 and 4: debug build of
+frame_budget, lavapipe under Xvfb, 1280x720, a scratch copy of assets/ whose units.ron gives volatile_tick and
+burrow_scorpion the presentation blocks of crates/client/tests/data/effect_lab_blocks.ron (`--source-assets`);
+nothing else differs. A first take ran a frame_budget binary that predated the round-5 decal record (the build
+had not finished) and drew no decal at all; it was discarded. On the captured frame: 1 134 live effects, 717
+cards, 3 066 ground decals; footprints cover 31.9 % of the screen (upper bound), summed area 3.11 screens, at
+most 38 footprints over one cell. Over the run: 1 700 splashes, 1 700 effects spawned, none refused, no Critical
+instance without a slot, 655 Detail instances skipped for room, 1 206 skipped as smaller than 6 pixels, none
+retired. Cropped to x 360..1280 as before.

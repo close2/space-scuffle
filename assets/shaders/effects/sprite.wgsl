@@ -22,6 +22,8 @@
 const TAU: f32 = 6.28318530718;
 // World units over which a clipped card fades out at a clip end (a fade, not a cut edge).
 const CLIP_EDGE: f32 = 0.1;
+// Contrast of the noise that wavers a pressure front's trailing edge.
+const FRONT_WAVER_CONTRAST: f32 = 2.2;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -111,7 +113,10 @@ fn front_texel(card: SpriteInstance, centred: vec2<f32>, radius: f32, edge: f32,
     let angle = atan2(centred.y, centred.x) / TAU + 0.5;
     let repeats = max(round(card.noise_scale), 1.0);
     let offset = noise_offset(card);
-    let waver = noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.37) + offset, card.noise_layer, level);
+    // The noise's contrast stretched, so the band's width varies about twofold around the
+    // circumference instead of reading as an even rim (review round 4).
+    let waver_raw = noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.37) + offset, card.noise_layer, level);
+    let waver = clamp((waver_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
     let inner = card.ring_inner - width * card.noise_amount * (waver - 0.5) * 2.0;
     let across = clamp((radius - inner) / max(1.0 - inner, 1e-4), 0.0, 1.0);
     let grain = noise_sample(

@@ -8,6 +8,9 @@
 //!   spawn through [`UnitEffectTables`]: a `SplashVisual` spawns its weapon's `splash` effect
 //!   sized by its zones; a tracer, beam, projectile or melee event spawns its weapon's `impact`
 //!   effect where it lands.
+//! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
+//!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
+//!   the ground, at the effect's `repeat` period.
 //! - [`build_effect_frame`] ages the effects to `Time<Virtual>` and rebuilds the frame for the
 //!   active 3D camera; [`apply_effect_lights`] writes the frame's lights into the pooled
 //!   point-light entities.
@@ -16,7 +19,10 @@
 //! Events arrive already admitted by `BattleFog::reveals`, judged where they land
 //! (`CombatEventVisual::anchor`). Every effect here is anchored at that landing point (a
 //! splash's centre, a line's first search point, a shot's impact or arrival); none is
-//! anchored at the source, so an undetected attacker is never drawn. Launch and travel effects
+//! anchored at the source, so an undetected attacker is never drawn. A line is admitted point
+//! by point: it spawns once from any admitted search point and draws only at the points the
+//! viewer sees ([`LineAssembly`], plan Amendment 2, R6), so an undetected burrowed attacker's
+//! line shows wherever it is seen, from its first point on. Launch and travel effects
 //! (anchored at the source) and death effects are wired by later work packages.
 //!
 //! # Invariants
@@ -126,7 +132,53 @@ fn world(position: [f32; 3]) -> Vec3 {
     Vec3::new(position[0], position[2], position[1])
 }
 
-/// The spawn an admitted `event` asks for, if its source unit (or the defaults) names one.
+/// Merges the admitted search points of one line into one spawn (plan Amendment 2, R6).
+///
+/// The simulation emits every search point of a line on the same tick, one after another, and
+/// the fog admits each by where it lands, so the points a viewer may see arrive consecutively.
+/// Each becomes a request for the whole line that sees only its own point; this merges a run of
+/// requests for the same line into one whose `seen` mask holds every admitted point. A line
+/// whose first point is fogged still shows where the viewer sees it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LineAssembly {
+    pending: Option<SpawnRequest>,
+}
+
+/// How far apart, in world units, two requests' anchors may lie and still be one line: the
+/// first point is recomputed from each search point, which rounds differently.
+const SAME_LINE_TOLERANCE: f32 = 1e-3;
+
+impl LineAssembly {
+    /// Takes `request` and returns what is ready to spawn: a request without a line at once,
+    /// a line's request once a request of another line arrives, and nothing while the same
+    /// line goes on.
+    pub fn push(&mut self, request: SpawnRequest) -> Option<SpawnRequest> {
+        let Some(line) = request.line else {
+            return Some(request);
+        };
+        if let Some(pending) = self.pending.as_mut() {
+            if let Some(pending_line) = pending.line.as_mut() {
+                if pending.effect == request.effect
+                    && pending_line.to == line.to
+                    && pending.anchor.distance(request.anchor) <= SAME_LINE_TOLERANCE
+                {
+                    pending_line.seen |= line.seen;
+                    return None;
+                }
+            }
+        }
+        self.pending.replace(request)
+    }
+
+    /// The line still being merged, if any; call once the frame's events are read.
+    pub fn finish(&mut self) -> Option<SpawnRequest> {
+        self.pending.take()
+    }
+}
+
+/// The spawn an admitted `event` asks for, if its source unit (or the defaults) names one. A
+/// line's search point asks for the whole line seen only at that point; [`LineAssembly`]
+/// merges the points of one line.
 #[must_use]
 pub fn spawn_request(
     event: &CombatEventVisual,
@@ -156,16 +208,23 @@ pub fn spawn_request(
                 .with(Binding::SplashFull, zones[0])
                 .with(Binding::SplashMid, zones[1])
                 .with(Binding::SplashReach, zones[2]);
-            let anchor = world(*center);
+            let mut anchor = world(*center);
             let world_line = match (kind, line) {
                 (EventKind::Line, Some(line)) => {
-                    if line.index != 0 {
-                        return None;
-                    }
+                    // Any search point of the line stands for the whole line: the effect is
+                    // anchored at the first point, found back along the line's axis, and sees
+                    // only this point until [`LineAssembly`] merges the line's other admitted
+                    // points (plan Amendment 2, R6).
                     let to = world(line.to);
+                    let axis = (to - world(line.from)).normalize_or_zero();
+                    anchor -= axis * line.spacing * f32::from(line.index);
                     bound.set(Binding::LineLength, anchor.distance(to));
                     bound.set(Binding::LineSpacing, line.spacing);
-                    Some(WorldLine { from: anchor, to })
+                    Some(WorldLine {
+                        from: anchor,
+                        to,
+                        seen: 1 << line.index.min(63),
+                    })
                 }
                 _ => None,
             };
@@ -216,8 +275,98 @@ pub fn spawn_effects_from_events(
         return;
     };
     let now = time.elapsed_secs_f64();
+    let mut lines = LineAssembly::default();
     for event in events.read() {
-        if let Some(request) = spawn_request(&event.0, &tables, &catalog) {
+        if let Some(ready) =
+            spawn_request(&event.0, &tables, &catalog).and_then(|request| lines.push(request))
+        {
+            runtime.spawn(&catalog, &ready, now);
+        }
+    }
+    if let Some(ready) = lines.finish() {
+        runtime.spawn(&catalog, &ready, now);
+    }
+}
+
+/// Speed in world units per second below which a published velocity counts as standing still.
+const MOVING_SPEED: f32 = 1e-3;
+
+/// The trail `bubble` lays in the frame that ran from `now - delta` to `now` (seconds of
+/// `Time<Virtual>`), if it lays one (plan Amendment 2, R5).
+///
+/// A unit lays its mode's `moving` effect while its published velocity is not zero, once per
+/// the effect's `repeat` period, at a phase of its own (so a group's trails do not pulse
+/// together), where it stands on the ground. Under fog, the trail of another player's unit is
+/// laid only where the viewer sees the ground; whether the viewer detects the unit does not
+/// matter, because the unit is not drawn, only the ground it disturbs.
+#[must_use]
+pub fn trail_request(
+    bubble: &sim_types::BubbleRenderInstance,
+    fog: Option<&crate::battle_pipeline::fog::BattleFog>,
+    tables: &UnitEffectTables,
+    catalog: &EffectCatalog,
+    now: f64,
+    delta: f64,
+) -> Option<SpawnRequest> {
+    let mode = bubble.stance.mode?;
+    let effect = tables.mode(bubble.unit_type, mode)?.moving?;
+    let period = f64::from(catalog.effect(effect)?.repeat?);
+    let [vx, vy] = bubble.velocity;
+    if vx.hypot(vy) < MOVING_SPEED {
+        return None;
+    }
+    let [x, y, _] = bubble.world_pos;
+    if fog.is_some_and(|fog| !fog.shows(bubble.owner, x, y)) {
+        return None;
+    }
+    let phase = f64::from(super::placement::unit_float(super::placement::hash3(
+        bubble.entity_id.0,
+        0x7A11,
+        0,
+    ))) * period;
+    let beat = |time: f64| ((time + phase) / period).floor();
+    if beat(now) <= beat(now - delta.max(0.0)) {
+        return None;
+    }
+    Some(SpawnRequest {
+        effect,
+        anchor: Vec3::new(x, bubble.ground_z, y),
+        bound: BoundValues::default().with(Binding::UnitRadius, bubble.radius),
+        line: None,
+        delay: 0.0,
+    })
+}
+
+/// Lays the trails of the units that move in a mode whose block names a `moving` effect.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn spawn_mode_trails(
+    bubbles: Query<
+        '_,
+        '_,
+        &crate::bubble_shader::BubbleInstance,
+        With<crate::scene_controller::LiveBattleBubble>,
+    >,
+    fog: Option<Res<'_, crate::battle_pipeline::fog::BattleFog>>,
+    catalog: Option<Res<'_, EffectCatalog>>,
+    tables: Option<Res<'_, UnitEffectTables>>,
+    runtime: Option<ResMut<'_, EffectRuntime>>,
+    time: Res<'_, Time<Virtual>>,
+) {
+    let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
+        return;
+    };
+    if !tables.has_trails() {
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    let delta = time.delta_secs_f64();
+    for bubble in &bubbles {
+        if let Some(request) =
+            trail_request(&bubble.0, fog.as_deref(), &tables, &catalog, now, delta)
+        {
             runtime.spawn(&catalog, &request, now);
         }
     }

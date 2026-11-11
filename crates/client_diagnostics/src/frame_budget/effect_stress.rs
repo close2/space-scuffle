@@ -328,20 +328,45 @@ pub const fn mix(value: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// The splash event of `source` at `at` (`[x, y, altitude]`), its line along `angle` radians.
+/// How many search points one splash of `source` has: one for a circle, every point of a line
+/// as the simulation emits them (one event per point on the same tick).
 #[must_use]
-pub fn stress_event(source: &StressSource, at: [f32; 3], angle: f32) -> CombatEventVisual {
+pub fn stress_points(source: &StressSource) -> u8 {
+    match source.line {
+        Some((first, far, spacing)) if spacing > f32::EPSILON => {
+            let steps = ((far - first) / spacing).floor().clamp(0.0, 63.0);
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a whole number in 0..=63"
+            )]
+            let steps = steps as u8;
+            steps + 1
+        }
+        _ => 1,
+    }
+}
+
+/// The splash event of search point `index` of `source` at `at` (`[x, y, altitude]`), its
+/// line along `angle` radians.
+#[must_use]
+pub fn stress_event(
+    source: &StressSource,
+    at: [f32; 3],
+    angle: f32,
+    index: u8,
+) -> CombatEventVisual {
     let (sin, cos) = angle.sin_cos();
     let along = |distance: f32| [at[0] + cos * distance, at[1] + sin * distance, at[2]];
     let (center, line) = match source.line {
         Some((first, far, spacing)) => (
-            along(first),
+            along(first + spacing * f32::from(index)),
             Some(LineView {
                 from: at,
                 to: along(far),
                 spacing,
-                index: 0,
-                count: 1,
+                index,
+                count: stress_points(source),
             }),
         ),
         None => (at, None),
@@ -429,11 +454,14 @@ fn spawn_stress_events(
             reason = "16 bits of the hash become an angle"
         )]
         let angle = ((hash >> 32) & 0xFFFF) as f32 / 65_536.0 * std::f32::consts::TAU;
-        events.send(CombatVisualEvent(stress_event(
-            source,
-            bubble.world_pos,
-            angle,
-        )));
+        for index in 0..stress_points(source) {
+            events.send(CombatVisualEvent(stress_event(
+                source,
+                bubble.world_pos,
+                angle,
+                index,
+            )));
+        }
     }
 }
 
@@ -701,7 +729,8 @@ mod tests {
             zones: [0.5, 0.5, 0.5],
             line: Some((1.0, 9.0, 1.0)),
         };
-        let event = stress_event(&source, [10.0, 20.0, 0.0], 0.0);
+        assert_eq!(stress_points(&source), 9, "points 1 to 9, one apart");
+        let event = stress_event(&source, [10.0, 20.0, 0.0], 0.0, 0);
         let CombatEventVisual::SplashVisual { center, line, .. } = event else {
             return Err(format!("a stress event is a splash: {event:?}"));
         };

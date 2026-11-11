@@ -1,21 +1,19 @@
-// Lab-only presentation blocks, read by crates/client/tests/support/effect_subjects.rs.
+// Lab-only presentation entries, read by crates/client/tests/support/effect_subjects.rs.
 //
-// The effect review gate of plan docs/plans/2026-11-09-effect-visualization.md (Amendment 1)
-// accepted `shell_impact` and rejected `acid_burst` and `spine_line` twice, so no shipped unit
-// names those two (Q0080). They stay in assets/catalog/effects.ron, and the effect GPU tests
-// still render them through the effect lab, since they exercise the framework (line placements,
-// landing particles, upright clumps, line clips). Each entry gives a shipped unit (by slug) the
-// presentation block it would carry, so the lab binds the effect to that unit's real weapon
-// (zones, line length and spacing) and the golden stills stay those of the reviewed effects.
+// The effect review gate of plan docs/plans/2026-11-09-effect-visualization.md accepted
+// `shell_impact`, `acid_burst` and `spine_line` in round 5 (Amendment 3), so their presentation
+// blocks live in assets/catalog/units.ron alone. What remains here is the one effect no shipped
+// unit can use yet: `burrow_trail`, the trail of a burrowed unit moving underground (plan
+// Amendment 2, R5). The shipped burrowed mode cannot move, so only the tests drive this unit
+// with a velocity. Each entry gives a shipped unit (by slug) presentation entries that are added
+// to its shipped block, so the lab binds the effect to that unit's real data.
 //
 // This is test data, not Rust, so it stays outside the zero-hardcoded-identities rule (charter
-// §3.3). An effect named here must not also be named by a shipped unit: the catalog test fails
-// then, and the entry belongs back in `units.ron` alone.
+// §3.3). An entry here must not repeat a weapon or mode entry of the unit's shipped block, and
+// an effect named here must not also be named by a shipped unit: the catalog test fails then,
+// and the entry belongs in `units.ron` alone.
 {
-    "volatile_tick": (
-        weapons: [(weapon: Primary, splash: Some("acid_burst"))],
-    ),
     "burrow_scorpion": (
-        weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))],
+        modes: [(mode: "burrowed", moving: Some("burrow_trail"))],
     ),
 }
