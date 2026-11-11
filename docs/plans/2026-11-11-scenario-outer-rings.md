@@ -411,3 +411,8 @@ are merged to `main`, because the measured commit must be on `main`.
   48 cases).
 - **Checksums (§4.4).** Every shipped scenario and the three eight-player frame-budget scenarios have the same
   `last_checksum` before and after WP1; the table is in WP1's commit message.
+- **WP2 done-when.** `fixture_root_scenarios_spawn_exactly_their_units` passes on the two-army spec (totals 0,
+  200 and 400), and the harness's smoke run of the `400` scenario on `lavapipe`
+  (`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, `frame_budget_smoke_run_writes_a_valid_report`: no warm-up frame,
+  10 measured frames, every frame at least 95 % of 400 units in view) finished in 68 s with the camera pose
+  unchanged.

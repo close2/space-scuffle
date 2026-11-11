@@ -6,11 +6,14 @@
 // one start loadout per scenario and one scenario file per entry of `scenarios`. Nothing here is
 // shipped to players and nothing in the repository's `assets/` changes.
 //
-// Why eight players: the production scenario path places a player's units on rings 1 to 3 around
-// its 5x5 town hall, which hold 96 cells, so one player cannot field 100 or 200 units. Every
-// scenario therefore uses the same eight players on a circle, each attack-moving to the start
-// opposite its own, and differs only in units per player: 0, 25 and 50 (0, 200 and 400 units).
-// See docs/questions/open/0018-frame-budget-army-layout.md.
+// Two armies: every scenario has the same two players, opposite each other, each attack-moving to
+// the other's start, and differs only in units per player: 0, 100 and 200 (0, 200 and 400 units).
+// The production scenario path places a player's units on rings 1 to 3 around its 5x5 town hall
+// (96 cells) and continues on rings 4, 5, ... when those are full, so 200 units fill rings 1 to 5,
+// a 15x15 block around each hall. Owner's answer to Q0018, option (b):
+// docs/questions/open/0018-frame-budget-army-layout.md, and the plan
+// docs/plans/2026-11-11-scenario-outer-rings.md. Until 2026-11-11 the scenarios used eight players
+// of 0, 25 and 50 units on a circle; those figures stay in docs/evidence/2026-11-03-frame-budget.md.
 (
     format_version: 1,
     // The shipped loadout whose unit mix is scaled to `units_per_player`, with largest-remainder
@@ -26,24 +29,19 @@
         theme: "orbital_foundry",
         start_footprint: (5, 5),
     ),
-    // Start cells are the top-left cells of the footprints, on a circle of radius 22 to 23 cells
-    // around (64.5, 64.5). Neighbouring starts are 16 cells apart (Chebyshev), the map minimum.
+    // Start cells are the top-left cells of the footprints: slots 0 and 4 of the former eight-player
+    // circle around (64.5, 64.5), 44 cells apart on one row.
     players: [
-        (slot: 0, start_cell: (84, 62), target_slot: 4),
-        (slot: 1, start_cell: (78, 78), target_slot: 5),
-        (slot: 2, start_cell: (62, 84), target_slot: 6),
-        (slot: 3, start_cell: (46, 78), target_slot: 7),
-        (slot: 4, start_cell: (40, 62), target_slot: 0),
-        (slot: 5, start_cell: (46, 46), target_slot: 1),
-        (slot: 6, start_cell: (62, 40), target_slot: 2),
-        (slot: 7, start_cell: (78, 46), target_slot: 3),
+        (slot: 0, start_cell: (84, 62), target_slot: 1),
+        (slot: 1, start_cell: (40, 62), target_slot: 0),
     ],
-    // The 0 scenario keeps the eight town halls and fields no unit: the baseline of map, smog,
-    // HUD and presentation with nothing moving.
+    // The 0 scenario keeps the two town halls and fields no unit: the baseline of map, smog, HUD
+    // and presentation with nothing moving, for this scene (not comparable with the former
+    // eight-hall baseline).
     scenarios: [
         (name: "0", units_per_player: 0),
-        (name: "200", units_per_player: 25),
-        (name: "400", units_per_player: 50),
+        (name: "200", units_per_player: 100),
+        (name: "400", units_per_player: 200),
     ],
     // A fixed pose over the arena, in world units (one unit is one grid cell; `target` is the
     // ground point (x, z) the camera looks at). The far side of a 58-degree view reaches further
