@@ -931,3 +931,13 @@ together.
   `gpu_validation_tests`, then about 25 min more by the 2026-11-05 run's figures scaled to today's). The caps
   roughly double the capped binaries' times (Amendment 4's 2-to-4-thread ratios applied to CI's 4-thread times:
   about +26 min), and the replays add about 4 min: about 100 min.
+
+## Amendment 6 (2026-11-11): three lanes by default
+
+The plan [`2026-11-11-faster-gates.md`](2026-11-11-faster-gates.md) adds memory admission, exclusive jobs, per-target
+timeouts and `cargo gate stop` to the runner of §5.3, and measured `--jobs 1` against `--jobs 3` on one tree of the
+complete suite: the test phase took 2,842 s against 7,076 s, every target passed in both runs, and the slice's
+`anon` stayed below the 56 GiB ceiling ([evidence](../evidence/2026-11-11-gate-lanes.md) §3). This supersedes the
+conclusion of §2.6 and the §6 row "Concurrent binaries": the default is now three lanes (one GPU lane, two
+general lanes), set by `--jobs` or `SPACE_SCUFFLE_GATE_JOBS`. `valgrind` jobs no longer take two general lanes;
+they run alone, first, with every target whose memory this host has not measured. CI keeps one lane.

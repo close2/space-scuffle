@@ -10,8 +10,9 @@
 //!
 //! # Invariants
 //! - An unknown subcommand, option or extra argument is an error, never ignored.
-//! - Lanes come from `--jobs`, else [`JOBS_VAR`], else 1, the sequential run of `cargo test`
-//!   (blueprint §2.6; plan 2026-11-11-faster-gates §3.2). The environment is read once, by
+//! - Lanes come from `--jobs`, else [`JOBS_VAR`], else [`DEFAULT_JOBS`] (3: one GPU lane and two
+//!   general lanes, accepted by the A/B of plan 2026-11-11-faster-gates §7 and §12; CI sets
+//!   [`JOBS_VAR`] to 1). The environment is read once, by
 //!   [`parse_args`]; [`parse_args_with`] takes it as a value, so parsing stays testable.
 
 use crate::tier::Tier;
@@ -41,7 +42,7 @@ options:
   --base <rev>        compare with this revision (default: `git merge-base HEAD <main>`)
   --main <ref>        the main branch (default: main)
   --jobs <n>          concurrent test executables: one GPU lane and n-1 general lanes (default
-                      $SPACE_SCUFFLE_GATE_JOBS, else 1)
+                      $SPACE_SCUFFLE_GATE_JOBS, else 3; 1 runs one executable at a time)
   --memory-budget-gib <x>   most the running targets' recorded peaks may sum to (default 40)
   --memory-ceiling-gib <x>  most the slice's live anon plus a starting target's peak may reach
                       (default: the cgroup limit minus 10 GiB)
@@ -54,8 +55,10 @@ options:
 /// The environment variable that sets the lanes when `--jobs` is absent.
 pub const JOBS_VAR: &str = "SPACE_SCUFFLE_GATE_JOBS";
 
-/// The lanes when neither `--jobs` nor [`JOBS_VAR`] sets them.
-pub const DEFAULT_JOBS: usize = 1;
+/// The lanes when neither `--jobs` nor [`JOBS_VAR`] sets them: one GPU lane and two general
+/// lanes. The A/B of 2026-11-11 measured the test phase of the complete suite at 2,842 s against
+/// 7,076 s with one lane, with no new failure (`docs/evidence/2026-11-11-gate-lanes.md` §3).
+pub const DEFAULT_JOBS: usize = 3;
 
 /// The memory budget when `--memory-budget-gib` is absent, in MiB (plan §3.2).
 pub const DEFAULT_MEMORY_BUDGET_MIB: u64 = 40 * 1024;
@@ -375,6 +378,8 @@ mod tests {
         assert_eq!(jobs("full --jobs 3", Some("1")), Some(3));
         assert_eq!(jobs("full", Some("2")), Some(2));
         assert_eq!(jobs("full", None), Some(DEFAULT_JOBS));
+        assert_eq!(DEFAULT_JOBS, 3, "the lane count the A/B accepted");
+        assert_eq!(RunOptions::default().jobs, 3);
         assert!(parse_args_with(&args("full"), Some("zero")).is_err());
         assert!(parse_args_with(&args("full"), Some("0")).is_err());
     }

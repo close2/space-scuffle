@@ -1,6 +1,6 @@
 # Faster gates: test lanes, diff-aware catalog and lockfile selection, explicit sim→client contracts
 
-Date: 2026-11-11. Status: Proposed. Base: `main` at `a0f8e7b`. Host: the shared Debian 13 VM, 16 cores, AMD Radeon
+Date: 2026-11-11. Status: Done (results in §12). Base: `main` at `a0f8e7b`. Host: the shared Debian 13 VM, 16 cores, AMD Radeon
 RX 580 on `radv`; the user slice's `memory.high` is now 66 GiB (`memory.max` 70 GiB). Charter sections touched:
 §7 (the memory figures, WP8 only). §4.3, §5, §6 and the check table are not changed: `cargo gate full` stays the
 CI command word for word (C16), and C22 keeps its meaning.
@@ -590,4 +590,32 @@ other's code and may be merged in either order. At most two building agents run 
 
 ## 12. Results
 
-Filled in by WP6 and WP7.
+WP1 to WP5a merged to `main` at `ea2e103` (WP1 `e468904`, WP2 `9e17a3d`, WP3 `77faec1`, WP4 `6b74a4d`, WP5
+`744baed` `d14c081`, WP5a `0a5999e`). Two findings of the implementation:
+
+- WP4: the smog code reads exactly the eight fields §5 lists. The system goldens hash the client's showcase
+  instances (`showcase_render_instance`), not instances the test builds; the conclusion of §5 stands. The four
+  goldens were re-recorded once with proof that no smog output changed, and the audit of client hash and golden
+  tests found no missing sim contract ([evidence](../evidence/2026-11-11-gate-lanes.md) §1).
+- WP5a: no path is shared between test binaries of `client`, `client_diagnostics` and `asset_baker`, by a source
+  read and an `strace` sweep of all 68 general executables; nothing needed a fix (evidence §2).
+
+**WP6, the A/B** (evidence §3), on `main` at `3c98e71`, complete suite, the same tree and stamp directory:
+
+| | `--jobs 1` (A) | `--jobs 3` (B) |
+|---|---|---|
+| Test-phase wall time | 7,076 s | 2,842 s (−59.8 %) |
+| Sum of executables | 7,066 s | 7,055 s (overlap 2.5×) |
+| Whole gate | 7,950 s | 3,947 s |
+| Result | 199 of 199 pass | 199 of 199 pass; no `FLAKY`, no `TIMEOUT` |
+| Slice `anon` peak | 38.2 GiB | 38.5 GiB (the valgrind binary, alone); 28.5 GiB of estimates on the lanes at most |
+| GPU lane (its 19 binaries) | 2,637 s | 2,242 s |
+| Load average, median | 33.0 | 23.6 |
+
+Every criterion of §7 holds; no target slowed more than 2× (largest 1.80×, `client/smog_golden_tests`). Another
+agent's builds raised the load during A more than during B; A's binaries still ran at or below their times in the
+evaluation's window, and the executables' sums are equal, so the load does not change the verdict (evidence §3.3).
+
+**WP7:** the default is `--jobs 3` (`DEFAULT_JOBS`, usage text); `SPACE_SCUFFLE_GATE_JOBS` and `--jobs` override
+it, and CI stays at one lane. The tiered-gates blueprint gained Amendment 6. **WP8:** charter §7's memory figures
+are the slice's 66 GiB `memory.high`, keeping `anon` below about 56 GiB.
