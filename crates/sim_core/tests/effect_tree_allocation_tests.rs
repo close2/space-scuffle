@@ -1,6 +1,8 @@
 //! The effect engine allocates nothing in steady state (plan `2026-11-10-spellcaster-mechanics`
 //! D-18, §11): after a warm-up, 200 ticks with two live storms, a missile, a displacement and
-//! twenty pulsing statuses allocate nothing in the engine.
+//! twenty pulsing statuses allocate nothing in the engine. A second steady child does the same
+//! with the four shipped spells (Psionic Storm, Abduct, Fungal Growth and Blinding Cloud) recast
+//! throughout its window, so every shipped tree is live on every measured tick (plan WP6).
 //!
 //! **How it counts.** The workspace forbids `unsafe_code`, so no counting `#[global_allocator]`
 //! can be installed (owner question Q0011; the plan's D-18 fallback). As
@@ -105,6 +107,8 @@ enum Variant {
     PlantedOutside,
     /// The same, plus persistents beyond the reserved capacity started in the window.
     PlantedEngine,
+    /// The four shipped spells, recast on a schedule so each is live throughout.
+    ShippedSpells,
 }
 
 impl Variant {
@@ -114,6 +118,7 @@ impl Variant {
             Self::Steady => "steady_effect_ticks",
             Self::PlantedOutside => "planted_outside_ticks",
             Self::PlantedEngine => "planted_engine_ticks",
+            Self::ShippedSpells => "shipped_spell_ticks",
         }
     }
 }
@@ -164,6 +169,62 @@ fn busy_world() -> SimWorld {
     w
 }
 
+/// Ticks between two casts of each shipped spell in [`Variant::ShippedSpells`]: the areas and
+/// statuses are cast again before the last one ends (storm 61 ticks, cloud 134, Fungal's
+/// statuses 71 after its impact); Abduct, 30 ticks from the tongue's launch to the landing
+/// here, is cast again only after it landed, so a tongue never meets a unit in flight.
+const RECASTS: [(&str, u32); 4] = [
+    ("psionic_storm", 60),
+    ("blinding_cloud", 130),
+    ("fungal_growth", 70),
+    ("abduct", 40),
+];
+
+/// Twenty enemy units in a clump for the shipped spells, whose centre is (12, 11.5).
+fn shipped_world() -> (SimWorld, Vec<sim_types::EntityId>) {
+    let mut w = world("", "");
+    let units: Vec<_> = (0..20)
+        .map(|i| unit(&mut w, 1, 10 + (i % 5), 10 + (i / 5)))
+        .collect();
+    // Held units do not flee the storm's and Fungal's responses, so the clump stays put.
+    for id in &units {
+        w.entities
+            .get_mut(id)
+            .expect("spawned")
+            .issue_order(sim_types::UnitOrder::HoldPosition, false)
+            .expect("hold admitted");
+    }
+    (w, units)
+}
+
+/// Runs every shipped spell due on `tick` (a tick count from the child's start) at the clump
+/// of [`shipped_world`], as player 0 without a caster unit; Abduct takes the clump's first
+/// unit and lands it where it stands. The clump's life is restored first, so the storms and
+/// Fungal Growths of the whole run kill nobody and every search keeps finding the same units.
+fn cast_shipped(w: &mut SimWorld, units: &[sim_types::EntityId], tick: u32) {
+    for id in units {
+        let kind = w.entities[id].unit_type_id;
+        let full = w.catalog.get(kind).expect("registered").max_hp;
+        w.entities.get_mut(id).expect("alive").hp = full;
+    }
+    let centre = SimVec2::new(sim_types::SimScalar::from_i32(12), support::scalar("11.5"));
+    for (spell, every) in RECASTS {
+        if !tick.is_multiple_of(every) {
+            continue;
+        }
+        let mut ctx = if spell == "abduct" {
+            let target = units[0];
+            let mut ctx = context(w, None, EffectTarget::Unit(target));
+            ctx.origin = w.entities[&target].position;
+            ctx
+        } else {
+            context(w, None, EffectTarget::Point(centre))
+        };
+        ctx.source_point = SimVec2::from_i32(12, 20);
+        run(w, spell, ctx);
+    }
+}
+
 // PERFORMANCE RATIONALE:
 // Why: whole-process allocation records mix world construction and the systems outside the
 // engine with the steady state under test.
@@ -176,13 +237,16 @@ fn measured_effect_ticks(
     output: &mut RenderSnapshot,
     bundle: &mut TickBundle,
     ticks: u32,
-    variant: Variant,
+    (variant, units): (Variant, &[sim_types::EntityId]),
 ) {
     for tick in 0..ticks {
+        if variant == Variant::ShippedSpells {
+            cast_shipped(w, units, WARM_TICKS + tick);
+        }
         bundle.tick = Tick(w.current_tick);
         w.step_into(bundle, output);
         match variant {
-            Variant::Steady => {}
+            Variant::Steady | Variant::ShippedSpells => {}
             Variant::PlantedOutside => drop(std::hint::black_box(Box::new(w.current_tick))),
             Variant::PlantedEngine => {
                 if tick < GROWTH_PERSISTENTS {
@@ -208,19 +272,46 @@ fn run_child(variant: Variant) {
         );
         return;
     };
-    let mut w = busy_world();
+    let (mut w, units) = if variant == Variant::ShippedSpells {
+        shipped_world()
+    } else {
+        (busy_world(), Vec::new())
+    };
     let mut output = RenderSnapshot::default();
     let mut bundle = TickBundle {
         tick: Tick(0),
         commands: Vec::new(),
         state_checksum: None,
     };
-    for _ in 0..WARM_TICKS {
+    for tick in 0..WARM_TICKS {
+        if variant == Variant::ShippedSpells {
+            cast_shipped(&mut w, &units, tick);
+        }
         bundle.tick = Tick(w.current_tick);
         w.step_into(&bundle, &mut output);
     }
-    measured_effect_ticks(&mut w, &mut output, &mut bundle, ticks, variant);
+    measured_effect_ticks(&mut w, &mut output, &mut bundle, ticks, (variant, &units));
     assert_eq!(w.diagnostics().len(), 0);
+    if variant == Variant::ShippedSpells {
+        let spells = w.catalog.spells();
+        for status in [
+            "psionic_storm",
+            "blinding_cloud",
+            "fungal_growth",
+            "abducted",
+        ] {
+            let id = spells.status_id(status).expect("a shipped status");
+            assert!(
+                w.effects()
+                    .statuses()
+                    .iter()
+                    .any(|entry| entry.status == id),
+                "{status} is live at the end of the window"
+            );
+        }
+        assert!(w.effects().persistents().len() >= 2, "a storm and a cloud");
+        return;
+    }
     let storms = if variant == Variant::PlantedEngine {
         2 + GROWTH_PERSISTENTS.min(ticks) as usize
     } else {
@@ -252,6 +343,11 @@ fn planted_outside_ticks() {
 #[test]
 fn planted_engine_ticks() {
     run_child(Variant::PlantedEngine);
+}
+
+#[test]
+fn shipped_spell_ticks() {
+    run_child(Variant::ShippedSpells);
 }
 
 /// The parts of a DHAT profile (`dhatFileVersion` 2, JSON) this test reads.
@@ -395,10 +491,11 @@ fn effect_engine_allocates_nothing_in_steady_state() -> Result<(), String> {
     let (steady_idle, steady) = run(Variant::Steady)?;
     let (outside_idle, outside) = run(Variant::PlantedOutside)?;
     let (engine_idle, engine) = run(Variant::PlantedEngine)?;
+    let (shipped_idle, shipped) = run(Variant::ShippedSpells)?;
     println!(
         "over {MEASURED} ticks: steady {steady:?} (0 ticks {steady_idle:?}); planted outside \
          {outside:?} (0 ticks {outside_idle:?}); planted in the engine {engine:?} (0 ticks \
-         {engine_idle:?})"
+         {engine_idle:?}); shipped spells {shipped:?} (0 ticks {shipped_idle:?})"
     );
     assert_eq!(
         outside.window,
@@ -419,6 +516,12 @@ fn effect_engine_allocates_nothing_in_steady_state() -> Result<(), String> {
         (0, 0),
         "{MEASURED} ticks with two storms, a missile, a displacement and twenty statuses \
          allocated (blocks, bytes) in the engine"
+    );
+    assert_eq!(
+        shipped.engine_since(shipped_idle),
+        (0, 0),
+        "{MEASURED} ticks with the four shipped spells recast throughout allocated (blocks, \
+         bytes) in the engine"
     );
     Ok(())
 }
