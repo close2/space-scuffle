@@ -223,6 +223,62 @@
             (0.00, (0.040, 0.032, 0.024, 0.22)),
             (1.00, (0.20, 0.17, 0.13, 0.38)),
         ],
+        // The hot core of a flame jet (additive, WP7): deep red where the noise thins it,
+        // orange through its body, yellow-white only on its densest axis.
+        "flame_core": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.25, (0.30, 0.05, 0.01, 0.0)),
+            (0.55, (0.95, 0.38, 0.06, 0.0)),
+            (0.80, (1.00, 0.70, 0.22, 0.0)),
+            (1.00, (1.00, 0.92, 0.62, 0.0)),
+        ],
+        // The flame jet's sheath (WP7): sooty and partly opaque where thin, glowing orange
+        // where dense, so the burning napalm reads as matter around the hot core.
+        "flame_sheath": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.12, (0.025, 0.016, 0.010, 0.45)),
+            (0.30, (0.20, 0.045, 0.012, 0.30)),
+            (0.55, (0.80, 0.28, 0.04, 0.06)),
+            (0.80, (1.00, 0.55, 0.12, 0.0)),
+            (1.00, (1.00, 0.78, 0.36, 0.0)),
+        ],
+        // Burning napalm left on the ground for a moment (additive embers, a step deeper and
+        // redder than a blast's).
+        "napalm_ember": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.45, (0.40, 0.06, 0.01, 0.0)),
+            (0.80, (0.85, 0.30, 0.04, 0.0)),
+            (1.00, (1.00, 0.55, 0.12, 0.0)),
+        ],
+        // A thermal lance's stroke on the ground (additive, WP7): white-hot on its axis, an
+        // orange-red glow at its edges.
+        "lance_hot": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.30, (0.45, 0.06, 0.01, 0.0)),
+            (0.60, (1.00, 0.36, 0.05, 0.0)),
+            (0.85, (1.00, 0.72, 0.30, 0.0)),
+            (1.00, (1.00, 0.95, 0.80, 0.0)),
+        ],
+        // The glowing groove a lance leaves (additive): cherry red cooling to nothing.
+        "lance_glow": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.50, (0.32, 0.04, 0.008, 0.0)),
+            (1.00, (0.80, 0.20, 0.03, 0.0)),
+        ],
+        // Flak smoke in the air (alpha): dark grey-brown, denser than ground smoke.
+        "flak_smoke": [
+            (0.00, (0.014, 0.012, 0.010, 0.70)),
+            (0.50, (0.060, 0.054, 0.048, 0.84)),
+            (1.00, (0.20, 0.18, 0.16, 0.86)),
+        ],
+        // The shock front of a heavy blow on the ground (alpha, WP7): dust thrown outward, a
+        // lighter shade of the ground at its leading edge, darker churned soil behind it.
+        "cleave_front": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.25, (0.030, 0.024, 0.017, 0.60)),
+            (0.60, (0.12, 0.10, 0.075, 0.62)),
+            (1.00, (0.34, 0.30, 0.24, 0.66)),
+        ],
         // A short, light dust burst where the newest spines break the ground (alpha): the
         // travelling front's secondary highlight, lighter than the ground's own dust.
         "dust_light": [
@@ -283,6 +339,14 @@
         "dry": [(0.00, 1.00, EaseInOut), (0.05, 0.95, EaseOutQuad), (0.15, 0.62, Linear), (0.30, 0.42, Linear), (0.60, 0.34, Linear), (1.00, 0.28, Linear)],
         // Ramp factor: the newest spine lit up as the travelling front, then its own colour.
         "spine_hot": [(0.00, 1.80, Linear), (0.10, 1.70, EaseInQuad), (0.22, 1.00, Linear), (1.00, 1.00, Linear)],
+        // Intensity of a jet (WP7): on at once, held while it streams, eased out.
+        "jet": [(0.00, 1.00, Linear), (0.45, 0.95, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity of a ground glow that comes in fast and cools slowly.
+        "glow_cool": [(0.00, 0.00, EaseOutQuad), (0.04, 1.00, Linear), (0.30, 0.70, EaseInQuad), (1.00, 0.00, Linear)],
+        // Ramp factor: a stroke cooling from white-hot to a red glow.
+        "cool_fast": [(0.00, 1.00, EaseOutQuad), (0.35, 0.70, Linear), (1.00, 0.45, Linear)],
+        // Size factor: a flame tongue billowing out as it burns.
+        "flame_grow": [(0.00, 0.55, EaseOutCubic), (0.30, 0.95, EaseOutQuad), (1.00, 1.20, Linear)],
         // Erosion: nothing, then eating the element from its thin parts.
         "erode_late": [(0.00, 0.00, Linear), (0.45, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: from the start, slowly at first.
@@ -337,6 +401,27 @@
             speed: (4.0, 7.5), cone_deg: 70.0, gravity: 12.0, drag: 1.5, lifetime: (0.25, 0.45),
             size: (0.04, 0.07), texture: "droplet", orient: VelocityStretched(1.6),
             roll_deg: 90.0, ramp: "acid_liquid", curve: "particle_fade",
+        ),
+        // Burning napalm droplets thrown up off the flame line, falling back (WP7).
+        "napalm_embers": (
+            spawn: Burst(count: (base: 3, per_unit_radius: 0.0, max: 3)), shape: Point,
+            speed: (1.6, 3.4), cone_deg: 35.0, gravity: 6.0, drag: 1.2, lifetime: (0.35, 0.70),
+            size: (0.025, 0.04), texture: "droplet", orient: VelocityStretched(1.8),
+            roll_deg: 90.0, ramp: "sparks", curve: "particle_fade",
+        ),
+        // Molten sparks spat out where a lance sweeps over the ground (WP7).
+        "lance_sparks": (
+            spawn: Burst(count: (base: 4, per_unit_radius: 0.0, max: 4)), shape: Point,
+            speed: (2.5, 5.0), cone_deg: 50.0, gravity: 10.0, drag: 1.6, lifetime: (0.20, 0.40),
+            size: (0.025, 0.04), texture: "droplet", orient: VelocityStretched(2.0),
+            roll_deg: 90.0, ramp: "sparks", curve: "particle_fade",
+        ),
+        // Burning fragments of a flak burst, falling out of the air (WP7).
+        "flak_fragments": (
+            spawn: Burst(count: (base: 10, per_unit_radius: 0.0, max: 10)), shape: Point,
+            speed: (3.0, 6.5), cone_deg: 150.0, gravity: 9.0, drag: 1.4, lifetime: (0.35, 0.65),
+            size: (0.03, 0.05), texture: "droplet", orient: VelocityStretched(2.0),
+            roll_deg: 90.0, ramp: "sparks", curve: "particle_fade",
         ),
         // Dirt and rock chips thrown up where a spine breaks the ground.
         "spine_chips": (
@@ -643,6 +728,260 @@
                     placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2),
                     size: (bind: LineSpacing, scale: 0.1), start: 0.05,
                 ),
+            ],
+        ),
+        // Hellion analogue (`napalm_wheeler`, WP7): a jet of burning napalm racing from the
+        // nozzle to the line's end in about 0.14 s (its search line: 25 points from 0.25 to
+        // 6.5 units ahead, radius 0.15). A white-hot core (Critical, a ribbon whose head races
+        // out at 45 units per second) inside a sooty, glowing sheath, flame tongues billowing
+        // and rising along it, burning droplets thrown up, the napalm burning on the ground for
+        // a moment and a soot streak that marks the line (Critical) for 3 s. Every layer stays
+        // on the line and on the points the viewer sees (no light at its anchor: R6).
+        "flame_line": (
+            class: Major,
+            event: Line,
+            layers: [
+                (
+                    // The soot streak: scorch marks stretched along the line, each longer than
+                    // the spacing so they merge into one streak of uneven width, in as the jet
+                    // passes. Critical: it marks the line after the fire has gone.
+                    block: Decal(texture: "scorch", ramp: "char", erosion: "erode_tail", depth: 0.6,
+                        yaw: AlongLine, width: 0.42, clip_to_line: true, clip_feather: 0.12,
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.45, softness: 0.15)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.04),
+                    size: (bind: LineSpacing, scale: 2.0), size_jitter: 0.2,
+                    start: 0.02, duration: 3.0, curve: "linger", priority: Critical,
+                ),
+                (
+                    // The napalm burning on the ground: embers along the streak, cooling.
+                    block: Decal(texture: "scorch", ramp: "napalm_ember", erosion: "erode_rise", depth: 0.6,
+                        yaw: AlongLine, width: 0.5, clip_to_line: true, clip_feather: 0.12,
+                        breakup: (noise: "fire_noise", scale: 2.2, amount: 0.6, softness: 0.2)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.05),
+                    size: (bind: LineSpacing, scale: 1.9), size_jitter: 0.25,
+                    ramp_curve: "cool", start: 0.02, duration: 1.1, curve: "glow_cool",
+                ),
+                (
+                    // The jet's white-hot core: racing out from the nozzle, its tail leaving the
+                    // nozzle after 0.12 s, the fire noise streaming along it. Critical: it is the
+                    // line's path while it burns.
+                    block: Ribbon(texture: "droplet", ramp: "flame_core", shape: Radial, travel: 45.0,
+                        tail_delay: Some(0.12), taper: (0.04, 0.22), height: 0.3, repeat: 1.6,
+                        scroll: 3.0, soft_depth: 0.2, erosion: "glow_break",
+                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.2)),
+                    size: (bind: SplashFull, scale: 1.1), size_curve: "flash_grow",
+                    duration: 0.3, curve: "jet", priority: Critical,
+                ),
+                (
+                    // The sheath: a wider, sooty, glowing body around the core, broken hard by
+                    // the fire noise, eroding from its thin parts.
+                    block: Ribbon(texture: "droplet", ramp: "flame_sheath", shape: Radial, travel: 40.0,
+                        tail_delay: Some(0.2), taper: (0.06, 0.3), height: 0.34, repeat: 2.2,
+                        scroll: 2.0, soft_depth: 0.3, erosion: "erode_late", sort_bias: 0.2,
+                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.75, softness: 0.18, shade: 0.5)),
+                    size: (bind: SplashFull, scale: 2.4), size_curve: "flame_grow",
+                    duration: 0.42, curve: "jet",
+                ),
+                (
+                    // Flame tongues: fireball cards billowing and rising along the line every
+                    // other point, each of its own rotation, phase and size.
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.4,
+                        rotation: Random, erosion: "erode_late", lift: 0.6, drift: (0.0, 0.9, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.4, softness: 0.15, shade: 0.6)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.08,
+                        delay_jitter: 0.04),
+                    size: (bind: SplashFull, scale: 2.4), size_jitter: 0.25, size_curve: "flame_grow",
+                    ramp_curve: "cool", duration: 0.55, curve: "punch",
+                ),
+                (
+                    // Smoke rising off the burnt line, thin and late.
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.5,
+                        rotation: Random, erosion: "erode_rise", drift: (0.0, 0.7, 0.0), lift: 0.6,
+                        clip_to_line: true,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 4.0), travel: 45.0, scatter: 0.12),
+                    size: (bind: SplashFull, scale: 2.2), size_jitter: 0.3, size_curve: "smoke_grow",
+                    start: 0.3, duration: 1.4, curve: "puff_fade",
+                ),
+                (
+                    block: Particles(emitter: "napalm_embers", clip_to_line: true),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 3.0), travel: 45.0),
+                    size: (bind: LineSpacing, scale: 0.3), start: 0.04,
+                ),
+                (
+                    // Heat haze over the burning line.
+                    block: Distortion(noise: "fire_noise", scale: 1.2, scroll: (0.1, 1.1),
+                        strength: 0.06, height: 0.5),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 6.0), travel: 45.0),
+                    size: (bind: LineSpacing, scale: 4.0), start: 0.03, duration: 1.1,
+                    curve: "glow_out",
+                ),
+            ],
+        ),
+        // Colossus analogue (`tripod_annihilator`, WP7): a thermal lance sweeping across the
+        // struck point (its search line: 11 points from -1.25 to 1.25 across the attack, radius
+        // 0.15). A white-hot stroke on the ground (Critical) sweeps from one end to the other
+        // in about 0.2 s as a short segment, the newest point flaring as the travelling focal
+        // point and spitting molten sparks; it leaves a cherry-red glowing groove and a burnt
+        // line (Critical) that cool and erode within 2.5 s, with thin smoke. Two strikes of
+        // one attack land on one tick along the same line and draw one sweep.
+        "lance_sweep": (
+            class: Major,
+            event: Line,
+            layers: [
+                (
+                    // The burnt line, burnt in as the stroke passes. Critical: it marks the
+                    // line once the stroke has gone.
+                    block: Decal(texture: "scorch", ramp: "char", erosion: "erode_tail", depth: 0.6,
+                        yaw: AlongLine, width: 0.3, clip_to_line: true, clip_feather: 0.08,
+                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.4, softness: 0.15)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 12.0, between: true,
+                        scatter: 0.02),
+                    size: (bind: LineSpacing, scale: 1.3), size_jitter: 0.15,
+                    start: 0.02, duration: 2.5, curve: "linger", priority: Critical,
+                ),
+                (
+                    // The glowing groove: cherry red, cooling and eroding from its thin parts.
+                    block: Decal(texture: "scorch", ramp: "lance_glow", erosion: "erode_rise", depth: 0.6,
+                        yaw: AlongLine, width: 0.32, clip_to_line: true, clip_feather: 0.08,
+                        breakup: (noise: "fire_noise", scale: 2.0, amount: 0.55, softness: 0.2)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 12.0, between: true),
+                    size: (bind: LineSpacing, scale: 1.25), size_jitter: 0.2,
+                    ramp_curve: "cool", start: 0.01, duration: 1.0, curve: "glow_cool",
+                ),
+                (
+                    // The stroke: a white-hot segment on the ground sweeping along the line.
+                    // Critical: it is the line's path while the lance burns.
+                    block: Ribbon(texture: "droplet", ramp: "lance_hot", shape: Radial, orient: Ground,
+                        travel: 12.0, tail_delay: Some(0.07), taper: (0.35, 0.12), height: 0.04,
+                        repeat: 0.8, scroll: 1.5, erosion: "glow_break",
+                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.35, softness: 0.25)),
+                    size: (bind: SplashFull, scale: 1.0), ramp_curve: "cool_fast",
+                    duration: 0.3, curve: "hold", priority: Critical,
+                ),
+                (
+                    // A wide, dim heat glow around the stroke, trailing it.
+                    block: Ribbon(texture: "droplet", ramp: "lance_glow", shape: Radial, orient: Ground,
+                        travel: 12.0, tail_delay: Some(0.16), taper: (0.4, 0.15), height: 0.05,
+                        repeat: 1.2, scroll: 1.0, erosion: "glow_break",
+                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.4, softness: 0.25)),
+                    size: (bind: SplashFull, scale: 2.6), duration: 0.42, curve: "hold",
+                ),
+                (
+                    // The flare at each point the stroke reaches: the travelling focal point.
+                    block: Sprite(texture: "droplet", ramp: "lance_hot", shape: Radial, lift: 0.25,
+                        soft_depth: 0.3, erosion: "glow_break",
+                        breakup: (noise: "noise_tile", scale: 2.5, amount: 0.5, softness: 0.2)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 12.0),
+                    size: (bind: SplashFull, scale: 1.6), size_curve: "flash_grow",
+                    duration: 0.1, curve: "flash",
+                ),
+                (
+                    // Thin smoke curling up off the burnt line.
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.4,
+                        rotation: Random, erosion: "erode_rise", drift: (0.0, 0.6, 0.0), lift: 0.5,
+                        clip_to_line: true,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.5, softness: 0.2, shade: 0.5)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 12.0, scatter: 0.06),
+                    size: (bind: SplashFull, scale: 1.5), size_jitter: 0.3, size_curve: "smoke_grow",
+                    start: 0.18, duration: 1.1, curve: "puff_fade",
+                ),
+                (
+                    block: Particles(emitter: "lance_sparks", clip_to_line: true),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 12.0),
+                    size: (bind: LineSpacing, scale: 0.2),
+                ),
+                (
+                    // Heat haze rising off the burnt line: the ground behind it shimmers.
+                    block: Distortion(noise: "fire_noise", scale: 1.4, scroll: (0.1, 0.9),
+                        strength: 0.07, height: 0.35),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 4.0), travel: 12.0),
+                    size: (bind: LineSpacing, scale: 3.0), start: 0.05, duration: 1.0,
+                    curve: "glow_out",
+                ),
+            ],
+        ),
+        // Liberator analogue's anti-air rockets (`sky_bastion`, air weapon, WP7): a flak burst
+        // in the air plane of the air units it hits (splash 1.5, one zone). A flash, a fireball
+        // cluster, a horizontal shock front racing to the reach in the air units' plane
+        // (Critical: the area struck), burning fragments falling and a dark smoke cloud that
+        // drifts and thins. No ground mark: it bursts in the air.
+        "flak_burst": (
+            class: Major,
+            event: Splash,
+            layers: [
+                (
+                    block: Light(color: (1.0, 0.6, 0.3), intensity: 50000.0, height: 0.2),
+                    size: (bind: SplashReach, scale: 3.0), duration: 0.25, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_flash", shape: Radial,
+                        soft_depth: 0.4, sort_bias: 3.0,
+                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.35, softness: 0.25)),
+                    size: (bind: SplashReach, scale: 0.6), size_curve: "flash_grow",
+                    duration: 0.08, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.5,
+                        rotation: Random, erosion: "erode_late",
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
+                    placement: Disc(count: 3, radius: (bind: SplashReach, scale: 0.3)),
+                    size: (bind: SplashReach, scale: 0.42), size_jitter: 0.2, size_curve: "fireball_grow",
+                    ramp_curve: "cool", duration: 0.6, curve: "punch",
+                ),
+                (
+                    // The shock front in the air plane, at the reach within about 0.1 s.
+                    block: Ring(texture: "fireball_flipbook", ramp: "blast_ring", orient: Ground,
+                        thickness: 0.3, mapping: Front, height: 0.02, sort_bias: 3.0, erosion: "front_break",
+                        breakup: (noise: "noise_tile", scale: 6.0, amount: 0.55, softness: 0.15)),
+                    radius: (from: (bind: SplashReach, scale: 0.35), to: (bind: SplashReach, scale: 1.0),
+                        curve: "front_fast"),
+                    size_curve: "thin_out", duration: 0.32, curve: "front_fade", priority: Critical,
+                ),
+                (block: Particles(emitter: "flak_fragments"), size: (scale: 0.2)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "flak_smoke", soft_depth: 0.4,
+                        rotation: Random, erosion: "erode_rise", drift: (0.3, 0.25, 0.1), spread: 0.4,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.4, softness: 0.2, shade: 0.55)),
+                    placement: Disc(count: 4, radius: (bind: SplashReach, scale: 0.45)),
+                    size: (bind: SplashReach, scale: 0.4), size_jitter: 0.25, size_curve: "smoke_grow",
+                    start: 0.08, duration: 1.6, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // Ultralisk analogue's cleave (`stag_behemoth`, WP7): a heavy blow driven into the ground
+        // at the struck unit's near edge (zones 0.5 / 1.0 / 1.5). A dust front racing to the
+        // reach (Critical), soil and chips thrown up, dust settling, and churned earth over the
+        // full-damage zone that is gone within a second, so a fast attacker's blows (every
+        // 0.6 s) never stack into a lasting mark. Minor: frequent.
+        "cleave_impact": (
+            class: Minor,
+            event: Splash,
+            layers: [
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "cleave_front", orient: Ground,
+                        thickness: 0.4, mapping: Front, height: 0.03, erosion: "front_break",
+                        breakup: (noise: "noise_tile", scale: 5.0, amount: 0.55, softness: 0.18)),
+                    radius: (from: (bind: SplashFull, scale: 0.5), to: (bind: SplashReach, scale: 1.0),
+                        curve: "front_fast"),
+                    size_curve: "thin_out", duration: 0.34, curve: "front_fade", priority: Critical,
+                ),
+                (
+                    block: Decal(texture: "scorch", ramp: "churn", erosion: "erode_rise", depth: 0.6,
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.5, softness: 0.2)),
+                    size: (bind: SplashFull, scale: 1.3), size_jitter: 0.15,
+                    duration: 0.9, curve: "punch",
+                ),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_dust", soft_depth: 0.15,
+                        rotation: Random, erosion: "erode_rise", lift: 0.7, spread: 0.5,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.45)),
+                    placement: Disc(count: 6, radius: (bind: SplashMid, scale: 0.8)),
+                    size: (bind: SplashReach, scale: 0.22), size_jitter: 0.3, size_curve: "dust_grow",
+                    start: 0.04, duration: 0.7, curve: "puff_fade",
+                ),
+                (block: Particles(emitter: "spine_chips"), size: (bind: SplashFull, scale: 0.6)),
+                (block: Particles(emitter: "debris_chunks"), size: (bind: SplashFull, scale: 0.4), start: 0.02),
             ],
         ),
         // A burrowed unit moving underground (Amendment 2, R5): the ground heaving over it, a

@@ -33,6 +33,10 @@ struct SpriteInstance {
     shade: f32,
     noise_layer: u32,
     shape: u32,
+    strip_repeats: f32,
+    strip_offset: f32,
+    taper_tail: f32,
+    taper_head: f32,
 }
 
 struct DecalInstance {
@@ -75,6 +79,8 @@ const ORIENT_GROUND: u32 = 1u;
 const ORIENT_VERTICAL: u32 = 2u;
 const ORIENT_STRETCHED: u32 = 3u;
 const ORIENT_UPRIGHT: u32 = 4u;
+const ORIENT_RIBBON: u32 = 5u;
+const ORIENT_RIBBON_GROUND: u32 = 6u;
 
 const SHAPE_TEXTURE: u32 = 0u;
 const SHAPE_RADIAL: u32 = 1u;

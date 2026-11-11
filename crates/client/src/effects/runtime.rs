@@ -36,11 +36,12 @@ use super::catalog::schema::{
 };
 use super::catalog::{
     Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
+    RibbonLook,
 };
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA,
-    ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL,
-    SHAPE_TEXTURE,
+    ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT,
+    ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::particles::{Burst, LineClip, ParticlePool};
 use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
@@ -107,6 +108,9 @@ pub struct EffectStats {
     pub lod_skipped: u64,
     /// Effects whose detail was retired.
     pub retired: u64,
+    /// Line requests merged into a live effect of the same line (a line whose searches land
+    /// on several ticks).
+    pub merged_lines: u64,
 }
 
 /// What one frame draws.
@@ -124,13 +128,17 @@ pub struct EffectFrame {
     pub decals: Vec<DecalInstance>,
     /// Point lights.
     pub lights: Vec<LightInstance>,
+    /// Distortion discs (drawn in the transmissive phase, unsorted: each only bends the
+    /// opaque scene, so their order does not matter).
+    pub distortions: Vec<SpriteInstance>,
     /// Cards written this frame (not particles).
     card_count: u32,
 }
 
 impl EffectFrame {
-    /// A frame with room for `cards` cards (cards and particles), `decals` and `lights`.
-    fn with_capacity(cards: usize, decals: usize, lights: usize) -> Self {
+    /// A frame with room for `cards` cards (cards and particles), `decals`, `lights` and
+    /// `distortions`.
+    fn with_capacity(cards: usize, decals: usize, lights: usize, distortions: usize) -> Self {
         Self {
             cards: Vec::with_capacity(cards),
             depth: Vec::with_capacity(cards),
@@ -138,13 +146,14 @@ impl EffectFrame {
             sorted: Vec::with_capacity(cards),
             decals: Vec::with_capacity(decals),
             lights: Vec::with_capacity(lights),
+            distortions: Vec::with_capacity(distortions),
             card_count: 0,
         }
     }
 
     /// Address and capacity of every retained vector, which an allocation would change.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 6] {
+    pub fn buffers(&self) -> [(usize, usize); 7] {
         [
             (self.cards.as_ptr() as usize, self.cards.capacity()),
             (self.depth.as_ptr() as usize, self.depth.capacity()),
@@ -152,6 +161,10 @@ impl EffectFrame {
             (self.sorted.as_ptr() as usize, self.sorted.capacity()),
             (self.decals.as_ptr() as usize, self.decals.capacity()),
             (self.lights.as_ptr() as usize, self.lights.capacity()),
+            (
+                self.distortions.as_ptr() as usize,
+                self.distortions.capacity(),
+            ),
         ]
     }
 }
@@ -205,6 +218,7 @@ impl EffectRuntime {
                 cards,
                 budget.decals as usize,
                 budget.lights as usize,
+                budget.distortions as usize,
             ),
             stats: EffectStats::default(),
             last_build: None,
@@ -212,13 +226,23 @@ impl EffectRuntime {
         }
     }
 
-    /// Spawns `request` at time `now` (seconds of `Time<Virtual>`).
+    /// Spawns `request` at time `now` (seconds of `Time<Virtual>`). A request for a line
+    /// that a live effect already draws (the same effect and the same far end) adds the
+    /// search points it sees to that effect instead and returns `None`: a line whose searches
+    /// land one after another on several ticks (the spine line, B-85) is one effect whose
+    /// travel delays already place each search's instances at its time.
     pub fn spawn(
         &mut self,
         catalog: &EffectCatalog,
         request: &SpawnRequest,
         now: f64,
     ) -> Option<EffectHandle> {
+        if let Some(line) = request.line {
+            if self.merge_line(catalog, request.effect, line, now) {
+                self.stats.merged_lines += 1;
+                return None;
+            }
+        }
         let effect = catalog.effect(request.effect)?;
         let birth = now + f64::from(request.delay);
         let line_delay = max_line_delay(&effect.layers, request.line);
@@ -250,6 +274,47 @@ impl EffectRuntime {
         }
     }
 
+    /// Adds `line`'s seen search points to the live effect `effect` drawing the same line, if
+    /// there is one still laying the line out (younger than its longest travel delay plus
+    /// [`LINE_MERGE_SLACK`]); returns whether there was. A later attack along the very same
+    /// line (a unit firing again from where it stands) is a new effect.
+    // PERFORMANCE RATIONALE:
+    // Why: A line request must find the live effect of its line, if any; an index keyed by
+    // line would be a second structure to keep in step with the pool's slots.
+    // What: A linear scan over the pool's fixed slots, once per line request (one per line
+    // per frame after `LineAssembly`), comparing two indices and a point.
+    // Trade-off: O(capacity) per line request (2 048 slots, a few microseconds) in exchange
+    // for no extra state and no allocation.
+    fn merge_line(
+        &mut self,
+        catalog: &EffectCatalog,
+        effect: EffectId,
+        line: WorldLine,
+        now: f64,
+    ) -> bool {
+        let Some(layers) = catalog.effect(effect).map(|effect| &effect.layers) else {
+            return false;
+        };
+        for slot in 0..self.pool.capacity() as usize {
+            let Some(instance) = self.pool.slot_mut(slot) else {
+                continue;
+            };
+            let birth = instance.birth;
+            let Some(live) = instance.line.as_mut() else {
+                continue;
+            };
+            let window = f64::from(max_line_delay(layers, Some(*live)) + LINE_MERGE_SLACK);
+            if instance.effect == effect
+                && live.to.distance(line.to) <= SAME_LINE_END
+                && now - birth <= window
+            {
+                live.seen |= line.seen;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Removes every effect and particle and restarts the spawn sequence, so the next effects
     /// draw the same random choices as the first ones did (the effect lab's takes).
     pub fn reset(&mut self) {
@@ -265,6 +330,7 @@ impl EffectRuntime {
         self.frame.sorted.clear();
         self.frame.decals.clear();
         self.frame.lights.clear();
+        self.frame.distortions.clear();
         self.last_build = None;
     }
 
@@ -287,6 +353,7 @@ impl EffectRuntime {
         self.frame.depth.clear();
         self.frame.decals.clear();
         self.frame.lights.clear();
+        self.frame.distortions.clear();
         self.frame.card_count = 0;
         let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
         let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
@@ -420,7 +487,7 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let placement_salt = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
-                if !placed_seen(placement, index, instance.line) {
+                if !placed_seen(placement, index, instance.line, &instance.bound) {
                     continue;
                 }
                 let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
@@ -488,6 +555,9 @@ impl EffectRuntime {
                     Pool::Sprites => budget.sprites.saturating_sub(self.frame.card_count),
                     Pool::Decals => budget.decals.saturating_sub(len32(self.frame.decals.len())),
                     Pool::Lights => budget.lights.saturating_sub(len32(self.frame.lights.len())),
+                    Pool::Distortions => budget
+                        .distortions
+                        .saturating_sub(len32(self.frame.distortions.len())),
                     Pool::Particles => continue,
                 };
                 let context = LayerContext {
@@ -514,7 +584,7 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let salt = u32::try_from(context.layer_index * 4 + placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
-                if !placed_seen(placement, index, instance.line) {
+                if !placed_seen(placement, index, instance.line, &instance.bound) {
                     continue;
                 }
                 let seed = hash3(instance.seed, salt, index);
@@ -566,9 +636,14 @@ impl EffectRuntime {
             }),
             _ => size,
         };
+        // A ribbon is as large on screen as its line is long, however thin it is.
+        let lod_extent = match (&layer.block, context.instance.line) {
+            (Block::Ribbon(_), Some(line)) => extent.max(0.5 * line.from.distance(line.to)),
+            _ => extent,
+        };
         if let Some(camera) = context.camera {
             if lod_skips(
-                camera.pixels(extent * 2.0, position),
+                camera.pixels(lod_extent * 2.0, position),
                 context.catalog.budget.min_screen_px,
             ) {
                 self.stats.lod_skipped += 1;
@@ -596,6 +671,32 @@ impl EffectRuntime {
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
+            }
+            Block::Ribbon(look) => self.push_ribbon(context, look, extent, age, life, intensity),
+            Block::Distortion(look) => {
+                if self.frame.distortions.len() == self.frame.distortions.capacity() {
+                    return Written::Full;
+                }
+                let phase = Vec2::new(
+                    unit_float(hash3(seed, 0xD157_0001, 0)),
+                    unit_float(hash3(seed, 0xD157_0002, 0)),
+                ) + look.scroll * age;
+                self.frame.distortions.push(SpriteInstance {
+                    center: (position + Vec3::Y * look.height).to_array(),
+                    half_size: extent,
+                    intensity,
+                    orient: if look.ground {
+                        ORIENT_GROUND
+                    } else {
+                        ORIENT_CAMERA
+                    },
+                    noise_offset: phase.to_array(),
+                    noise_scale: look.scale,
+                    noise_amount: look.strength,
+                    noise_layer: look.noise_layer,
+                    ..SpriteInstance::default()
+                });
+                Written::Yes
             }
             Block::Light {
                 color,
@@ -699,6 +800,87 @@ impl EffectRuntime {
             clip_max: clip[3],
             shape,
             ..surface.card()
+        };
+        self.push_sorted_card(card, context.camera, look.sort_bias);
+        self.frame.card_count += 1;
+        Written::Yes
+    }
+
+    /// Pushes a ribbon of half width `extent` along the effect's line: the span its head and
+    /// tail have reached at `age`, clipped to the run of search points the viewer sees around
+    /// the first seen one (plan Amendment 2, R6).
+    fn push_ribbon(
+        &mut self,
+        context: &LayerContext<'_>,
+        look: &RibbonLook,
+        extent: f32,
+        age: f32,
+        life: f32,
+        intensity: f32,
+    ) -> Written {
+        let Some(line) = context.instance.line else {
+            return Written::Skipped;
+        };
+        if self.frame.cards.len() == self.frame.cards.capacity() {
+            return Written::Full;
+        }
+        let length = line.from.distance(line.to);
+        let direction = (line.to - line.from).normalize_or_zero();
+        let (tail, head) = ribbon_span(look, length, age);
+        if head - tail <= RIBBON_MIN_LENGTH || direction == Vec3::ZERO || extent <= 0.0 {
+            return Written::Skipped;
+        }
+        let spacing = context.instance.bound.get(Binding::LineSpacing);
+        let Some(first_seen) = (0..64).find(|point| line.sees_point(*point)) else {
+            return Written::Skipped;
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a point index below 64 is exact in f32"
+        )]
+        let seen_at = line.from + direction * spacing * first_seen as f32;
+        // The strip itself ends at the line's ends (its tapers round them); only a line the
+        // viewer sees in part is cut, where the fog begins.
+        let clip = if line.seen == u64::MAX {
+            NO_CLIP
+        } else {
+            seen_clip_window(line, spacing, Vec2::new(seen_at.x, seen_at.z))
+        };
+        let catalog = context.catalog;
+        let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, context.instance.seed)
+            .unwrap_or_else(|| flipbook_frame(&look.element, None, age, life, true));
+        let drawn = head - tail;
+        let center = line.from + direction * (0.5 * (tail + head)) + Vec3::Y * look.height;
+        let card = SpriteInstance {
+            center: center.to_array(),
+            half_size: extent,
+            axis: direction.to_array(),
+            stretch: 0.5 * drawn / extent,
+            layer_a,
+            layer_b,
+            frame_mix,
+            ramp_row: u32::from(look.ramp.0),
+            intensity,
+            erosion: catalog.sample(look.erosion, life, 0.0),
+            soft_depth: look.soft_depth,
+            orient: if look.ground {
+                ORIENT_RIBBON_GROUND
+            } else {
+                ORIENT_RIBBON
+            },
+            ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
+            clip_axis: [clip[0], clip[1]],
+            clip_min: clip[2],
+            clip_max: clip[3],
+            shape: match look.shape {
+                CardShape::Radial => SHAPE_RADIAL,
+                CardShape::Texture => SHAPE_TEXTURE,
+            },
+            strip_repeats: drawn / look.repeat,
+            strip_offset: tail / look.repeat - look.scroll * age,
+            taper_tail: look.taper.0,
+            taper_head: look.taper.1,
+            ..Surface::of(look.breakup.as_ref(), context.instance.seed).card()
         };
         self.push_sorted_card(card, context.camera, look.sort_bias);
         self.frame.card_count += 1;
@@ -906,6 +1088,36 @@ pub fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
 
 /// No clip window.
 const NO_CLIP: LineClip = [0.0; 4];
+
+/// How far, in world units, the far ends of two requests for one line may lie apart: every
+/// search point of a line publishes the same far end.
+const SAME_LINE_END: f32 = 1e-4;
+
+/// Seconds after a line effect's last travel delay during which a request for its line still
+/// joins it: a search lands on the simulation's tick, up to a frame after the presentation
+/// time its travel delay predicts.
+const LINE_MERGE_SLACK: f32 = 0.1;
+
+/// Shortest ribbon span drawn, world units: a span this short is the head just leaving the
+/// tail (or the tail catching the head), not yet or no longer a strip.
+const RIBBON_MIN_LENGTH: f32 = 1e-3;
+
+/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer,
+/// as distances from the line's start: `(tail, head)`. The head races out at the look's
+/// `travel` (the whole line at once without one); after `tail_delay` the tail follows at the
+/// same speed, so the strip becomes a segment sweeping along the line and then shrinks into
+/// its end. Without travel the tail stays at the start.
+#[must_use]
+pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32) -> (f32, f32) {
+    if look.travel <= 0.0 {
+        return (0.0, length);
+    }
+    let head = (look.travel * age).clamp(0.0, length);
+    let tail = look.tail_delay.map_or(0.0, |delay| {
+        (look.travel * (age - delay)).clamp(0.0, length)
+    });
+    (tail.min(head), head)
+}
 
 /// The clip window of `line`: its XZ direction and the range of `dot(xz, direction)` from its
 /// start to its end; no clip for a line without horizontal length.
@@ -1223,6 +1435,66 @@ pub fn flipbook_frame(
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+
+    fn ribbon(travel: f32, tail_delay: Option<f32>) -> RibbonLook {
+        RibbonLook {
+            element: ElementRef {
+                first_layer: 0,
+                frames: 1,
+                duration_secs: None,
+            },
+            ramp: super::super::catalog::RampId(0),
+            ground: false,
+            repeat: 1.0,
+            scroll: 0.0,
+            travel,
+            tail_delay,
+            taper: (0.1, 0.1),
+            height: 0.0,
+            soft_depth: 0.0,
+            erosion: None,
+            sort_bias: 0.0,
+            shape: CardShape::Radial,
+            breakup: None,
+        }
+    }
+
+    #[test]
+    fn a_ribbon_races_out_then_sweeps_and_shrinks_into_its_end() {
+        assert_eq!(
+            ribbon_span(&ribbon(0.0, None), 6.0, 0.3),
+            (0.0, 6.0),
+            "no travel"
+        );
+        assert_eq!(
+            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3),
+            (0.0, 6.0),
+            "without travel the tail stays"
+        );
+        let racing = ribbon(10.0, Some(0.2));
+        assert_eq!(
+            ribbon_span(&racing, 6.0, 0.0),
+            (0.0, 0.0),
+            "nothing at once"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.1);
+        assert!(
+            tail.abs() < 1e-6 && (head - 1.0).abs() < 1e-5,
+            "head out 1 unit"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.5);
+        assert!(
+            (tail - 3.0).abs() < 1e-5 && (head - 5.0).abs() < 1e-5,
+            "a segment sweeping: {tail}..{head}"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 1.0);
+        assert!(
+            (tail - 6.0).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
+            "shrunk into the end"
+        );
+        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0);
+        assert!(tail.abs() < 1e-6 && (head - 6.0).abs() < 1e-5, "held whole");
+    }
 
     #[test]
     fn a_line_clip_window_spans_the_line_from_its_start_to_its_end() {

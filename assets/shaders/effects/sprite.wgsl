@@ -1,11 +1,12 @@
-// Effect cards: sprites, rings and particles drawn from one retained instance buffer
+// Effect cards: sprites, rings, ribbons and particles drawn from one retained instance buffer
 // (client::effects::render). Premultiplied output; soft depth against the depth prepass; noise
 // breakup with a phase per card; an optional clip window along an event line.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
-    SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, FLAG_MIRROR,
-    FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup, erosion_step, breakup_order, self_shade,
-    noise_sample, clip_fade, soft_depth_fade, flipbook_sample, premultiply, card_mip_level,
+    SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
+    flipbook_sample, premultiply, card_mip_level, derivative_mip_level,
 }
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -74,9 +75,17 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
         let view_right = view.world_from_view[0].xyz;
         right = normalize(vec3<f32>(view_right.x, 0.0, view_right.z) + vec3<f32>(1e-6, 0.0, 0.0));
         up = vec3<f32>(0.0, 1.0, 0.0);
-    } else if (card.orient == ORIENT_STRETCHED) {
+    } else if (card.orient == ORIENT_STRETCHED || card.orient == ORIENT_RIBBON) {
         let to_camera = normalize(view.world_position - card.center);
         let side = cross(card.axis, to_camera);
+        if (dot(side, side) > 1e-8) {
+            up = card.axis;
+            right = normalize(side);
+            along = card.half_size * card.stretch;
+        }
+    } else if (card.orient == ORIENT_RIBBON_GROUND) {
+        // Flat on the ground: the width runs horizontally across the strip's axis.
+        let side = cross(vec3<f32>(0.0, 1.0, 0.0), card.axis);
         if (dot(side, side) > 1e-8) {
             up = card.axis;
             right = normalize(side);
@@ -138,6 +147,44 @@ fn radial_texel(radius: f32) -> vec4<f32> {
     return vec4<f32>(exp(-r2 * 3.0), exp(-r2 * 2.5), 1.0 - radius, mask);
 }
 
+// Whether `card` is a ribbon.
+fn is_ribbon(card: SpriteInstance) -> bool {
+    return card.orient == ORIENT_RIBBON || card.orient == ORIENT_RIBBON_GROUND;
+}
+
+// A ribbon's own coordinates at card `uv`: x along the strip in texture repeats (scrolled),
+// y across it (0..1), z the share of the drawn length from the tail (0) to the head (1).
+fn strip_coordinates(card: SpriteInstance, uv: vec2<f32>) -> vec3<f32> {
+    let from_tail = 1.0 - uv.y;
+    return vec3<f32>(from_tail * card.strip_repeats + card.strip_offset, uv.x, from_tail);
+}
+
+// A ribbon's texel: (shading, coverage, erosion order, mask). The element is tiled along the
+// strip (u along, v across), or for `SHAPE_RADIAL` a soft core is computed across it; the mask
+// narrows the strip to a point over its tapers, rounded, with an anti-aliased edge. `mip` and
+// `edge` are the strip texture's mip and the screen width of `across`, taken from derivatives
+// in uniform control flow.
+fn ribbon_texel(card: SpriteInstance, strip: vec3<f32>, across: f32, mip: f32, edge: f32) -> vec4<f32> {
+    var texel: vec4<f32>;
+    if (card.shape == SHAPE_RADIAL) {
+        let a2 = across * across;
+        texel = vec4<f32>(exp(-a2 * 3.0), exp(-a2 * 2.0), 1.0 - across, 1.0);
+    } else {
+        texel = flipbook_sample(atlas, atlas_sampler, strip.xy, card.layer_a, card.layer_b, card.frame_mix, mip);
+    }
+    var width = 1.0;
+    if (card.taper_tail > 0.0) {
+        width = min(width, clamp(strip.z / card.taper_tail, 0.0, 1.0));
+    }
+    if (card.taper_head > 0.0) {
+        width = min(width, clamp((1.0 - strip.z) / card.taper_head, 0.0, 1.0));
+    }
+    // A rounded tip rather than a sharp wedge.
+    width = sqrt(width);
+    let mask = 1.0 - smoothstep(width - edge * 1.5, width, across);
+    return vec4<f32>(texel.r, texel.g, texel.b, mask);
+}
+
 // The texel of a texture card at `uv` (a polar ring wraps the element's middle band around
 // itself), with the ring mask in the fourth component.
 fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, radius: f32, edge: f32, mip: f32) -> vec4<f32> {
@@ -170,7 +217,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let edge = max(fwidth(radius), 1e-4);
     let noise_level = in.mip + log2(max(card.noise_scale, 1.0));
     var texel: vec4<f32>;
-    if (card.shape == SHAPE_FRONT && card.ring_inner > 0.0) {
+    let ribbon = is_ribbon(card);
+    // Derivatives of a ribbon's strip coordinates, taken for every card so they stay in
+    // uniform control flow.
+    let strip = strip_coordinates(card, in.uv);
+    let across = abs(in.uv.x * 2.0 - 1.0);
+    let strip_mip = derivative_mip_level(f32(textureDimensions(atlas).x), dpdx(strip.xy), dpdy(strip.xy));
+    let across_edge = max(fwidth(across), 1e-4);
+    if (ribbon) {
+        texel = ribbon_texel(card, strip, across, strip_mip, across_edge);
+    } else if (card.shape == SHAPE_FRONT && card.ring_inner > 0.0) {
         texel = front_texel(card, centred, radius, edge, noise_level);
     } else if (card.shape == SHAPE_RADIAL) {
         texel = radial_texel(radius);
@@ -180,8 +236,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let noisy = card.noise_amount > 0.0;
     var order = texel.b;
     if (noisy) {
+        // A ribbon's noise repeats and scrolls with its strip, so it flows along it.
+        var noise_uv = in.uv;
+        var level = noise_level;
+        if (ribbon) {
+            noise_uv = strip.xy;
+            level = strip_mip + log2(max(card.noise_scale, 1.0));
+        }
         let noise = noise_sample(
-            atlas, atlas_sampler, in.uv * card.noise_scale + noise_offset(card), card.noise_layer, noise_level,
+            atlas, atlas_sampler, noise_uv * card.noise_scale + noise_offset(card), card.noise_layer, level,
         );
         order = breakup_order(order, noise, card.noise_amount);
     }

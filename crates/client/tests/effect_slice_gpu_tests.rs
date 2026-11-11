@@ -942,6 +942,39 @@ fn slice_effect_2_renders_to_its_bindings() -> TestResult {
     check_subject(2)
 }
 
+/// The fourth splash subject (by name; the scale-out's effects from WP7 on).
+#[test]
+fn slice_effect_3_renders_to_its_bindings() -> TestResult {
+    check_subject(3)
+}
+
+/// The fifth splash subject (by name).
+#[test]
+fn slice_effect_4_renders_to_its_bindings() -> TestResult {
+    check_subject(4)
+}
+
+/// The sixth splash subject (by name).
+#[test]
+fn slice_effect_5_renders_to_its_bindings() -> TestResult {
+    check_subject(5)
+}
+
+/// The seventh splash subject (by name).
+#[test]
+fn slice_effect_6_renders_to_its_bindings() -> TestResult {
+    check_subject(6)
+}
+
+/// No splash subject is left without a test of its own above.
+#[test]
+fn every_splash_subject_has_its_own_test() {
+    assert!(
+        effect_subjects::splash_subjects().len() <= 7,
+        "add a slice_effect_N test for each subject beyond the seventh"
+    );
+}
+
 // --- A line out of the fog (plan Amendment 2, R6) ---------------------------------------------
 
 /// The first search point of the masked line that the viewer sees.
@@ -955,21 +988,29 @@ const MASKED_AGE: f32 = 1.0;
 const MASKED_REACH_BACK: f32 = 1.0;
 /// Fewest lit pixels the seen part of the line must draw.
 const MASKED_MIN_LIT: usize = 200;
-/// The index of the line subject, if the subjects have one.
-fn line_subject() -> Option<usize> {
+/// The indices of the line subjects.
+fn line_subjects() -> Vec<usize> {
     effect_subjects::splash_subjects()
         .iter()
-        .position(|subject| subject.line)
+        .enumerate()
+        .filter(|(_, subject)| subject.line)
+        .map(|(index, _)| index)
+        .collect()
 }
 
-/// The masked child: the line subject seen only from point [`FIRST_SEEN_POINT`] on, and the
-/// background.
+/// The masked child: the line subject named by [`INDEX_VAR`] seen only from point
+/// [`FIRST_SEEN_POINT`] on, and the background.
 #[test]
 #[ignore = "launched by the slice effect tests on a virtual display"]
 fn effect_slice_masked_line_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let index: usize = std::env::var(INDEX_VAR)
+        .expect("the parent names the subject")
+        .parse()
+        .expect("the index is a number");
     let subjects = effect_subjects::splash_subjects();
-    let subject = &subjects[line_subject().expect("a line subject")];
+    let subject = &subjects[index];
+    assert!(subject.line, "the masked child draws a line subject");
     let mut lab = lab_subject(subject);
     lab.line_seen = u64::MAX << FIRST_SEEN_POINT;
     let program = LabProgram {
@@ -987,15 +1028,20 @@ fn effect_slice_masked_line_child() {
 
 /// Plan Amendment 2, R6, in pixels: a line whose first search points the viewer does not see
 /// (an undetected burrowed attacker firing out of the fog) draws nothing at those points and
-/// its whole look from the first seen point on.
+/// its whole look from the first seen point on; every line subject is checked.
 #[test]
 fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
     if gpu_run::gpu_tests_opted_out() {
         return Ok(());
     }
-    let Some(index) = line_subject() else {
-        return Ok(());
-    };
+    for index in line_subjects() {
+        check_masked_line(index)?;
+    }
+    Ok(())
+}
+
+/// Runs the masked child for line subject `index` and checks its pixels.
+fn check_masked_line(index: usize) -> TestResult {
     let subjects = effect_subjects::splash_subjects();
     let subject = &subjects[index];
     let directory = tempfile::tempdir()?;
@@ -1007,6 +1053,7 @@ fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
         "effect_slice_masked_line_child",
     ]);
     command.env(OUT_VAR, directory.path());
+    command.env(INDEX_VAR, index.to_string());
     command.assert_passes_validation("slice masked line");
     let lab = lab_subject(subject);
     let view = View::new(lab.focus());
@@ -1040,11 +1087,13 @@ fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
     );
     assert_eq!(
         unseen_lit, 0,
-        "nothing is drawn at the search points the viewer does not see"
+        "{}: nothing is drawn at the search points the viewer does not see",
+        subject.effect
     );
     assert!(
         seen_lit >= MASKED_MIN_LIT,
-        "the seen part of the line is drawn: {seen_lit} lit pixels"
+        "{}: the seen part of the line is drawn: {seen_lit} lit pixels",
+        subject.effect
     );
     Ok(())
 }

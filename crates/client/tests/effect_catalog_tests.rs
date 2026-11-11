@@ -528,6 +528,83 @@ fn out_of_range_values_and_empty_pools_are_refused() {
     );
 }
 
+/// A ribbon (WP7) spans its event's line once: it needs a `Line` event, only the `Point`
+/// placement, a camera-facing or ground orientation and ranged values; a valid one resolves.
+#[test]
+fn a_ribbon_needs_a_line_one_placement_and_ranged_values() {
+    let (dir, manifest) = fixture();
+    let ribbon = |block: &str, extra: &str| {
+        format!(
+            r#"(block: Ribbon(texture: "solid", ramp: "white"{block}), size: (scale: 0.2),
+            duration: 0.5, priority: Critical{extra})"#
+        )
+    };
+    let line_effect =
+        |layer: String| format!(r#""jet": (class: Major, event: Line, layers: [ {layer} ])"#);
+    let catalog = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &line_effect(ribbon(
+                ", orient: Ground, travel: 20.0, tail_delay: Some(0.1), taper: (0.1, 0.3), shape: Radial",
+                "",
+            )),
+            "",
+        ),
+    )
+    .expect("a valid ribbon resolves");
+    let effect = catalog
+        .effect(catalog.effect_id("jet").expect("defined"))
+        .expect("resolves");
+    match &effect.layers[0].block {
+        Block::Ribbon(look) => {
+            assert!(look.ground);
+            assert_eq!(look.taper, (0.1, 0.3));
+            assert_eq!(look.tail_delay, Some(0.1));
+        }
+        other => panic!("expected a ribbon, got {other:?}"),
+    }
+    let error = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&ribbon("", "")), ""),
+    )
+    .expect_err("a ribbon needs a line event");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::UnboundBinding {
+                binding: Binding::LineLength,
+                event: EventKind::Splash,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    for (block, extra, field) in [
+        (
+            "",
+            ", placement: Line(spacing: (bind: LineSpacing, scale: 1.0))",
+            "placement",
+        ),
+        (", orient: Upright", "", "orient"),
+        (", taper: (0.6, 0.1)", "", "taper"),
+        (", repeat: 0.0", "", "repeat"),
+        (", travel: -1.0", "", "travel"),
+        (", tail_delay: Some(-0.5)", "", "tail_delay"),
+    ] {
+        let error = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &line_effect(ribbon(block, extra)), ""),
+        )
+        .expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: named, .. } if *named == field),
+            "{field}: {error}"
+        );
+    }
+}
+
 #[test]
 fn the_shipped_vocabulary_and_presentation_blocks_resolve_from_the_runtime_path() {
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
@@ -724,7 +801,12 @@ fn binds_extent(layer: &client::effects::catalog::Layer) -> bool {
         }
         _ => false,
     });
-    extent(layer.size.bind) || layer.radius.is_some_and(|radius| extent(radius.to.bind)) || placed
+    // A ribbon spans its event's line by construction (WP7).
+    let spans_line = matches!(layer.block, Block::Ribbon(_));
+    extent(layer.size.bind)
+        || layer.radius.is_some_and(|radius| extent(radius.to.bind))
+        || placed
+        || spans_line
 }
 
 #[test]

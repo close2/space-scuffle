@@ -947,3 +947,87 @@ fn the_fog_admits_a_line_point_by_point() {
     assert_eq!(xs.len(), 2, "drawn at the two seen points only: {xs:?}");
     assert!(xs.iter().all(|x| *x < 2.0), "nothing in the fog: {xs:?}");
 }
+
+/// A line whose searches land one after another on several ticks (the spine line, B-85) is one
+/// effect: a later search of the same line joins the live effect while its travel still lays
+/// the line out, and a later attack along the very same line (a unit firing again from where
+/// it stands) is a new effect.
+#[test]
+fn a_line_landing_over_several_ticks_is_one_effect_and_a_new_attack_another() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit) = tables_for(&catalog, "spines");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let request = |index: u8| {
+        let event = splash(
+            unit,
+            1.0 + f32::from(index),
+            0.0,
+            [0.3, 0.3, 0.3],
+            Some(LineView {
+                from: [0.0, 0.0, 0.0],
+                to: [9.0, 0.0, 0.0],
+                spacing: 1.0,
+                index,
+                count: 9,
+            }),
+        );
+        spawn_request(&event, &tables, &catalog).expect("the spines are named")
+    };
+    // One search per 0.08 s, each its own frame (travel 10: point k is due at 0.1 k s).
+    assert!(runtime.spawn(&catalog, &request(0), 0.0).is_some());
+    for index in 1..9_u8 {
+        let now = 0.08 * f64::from(index);
+        assert!(
+            runtime.spawn(&catalog, &request(index), now).is_none(),
+            "search {index} joins the live line"
+        );
+    }
+    assert_eq!(runtime.stats.spawned, 1);
+    assert_eq!(runtime.stats.merged_lines, 8);
+    runtime.build_frame(&catalog, 0.95, Some(&camera()));
+    assert_eq!(
+        runtime.frame.sorted.len(),
+        9,
+        "every search point of the one effect is drawn"
+    );
+    // The same line again, after the first has laid it out: a new attack.
+    assert!(runtime.spawn(&catalog, &request(0), 1.8).is_some());
+    assert_eq!(runtime.stats.spawned, 2);
+}
+
+/// A line whose last search lies a double spacing beyond the one before (the flame line's
+/// 6.0 then 6.5) is still one line in one frame: its points are merged by the far end they all
+/// publish, not by the first point each recomputes from the spacing.
+#[test]
+fn an_unevenly_spaced_line_is_merged_by_its_far_end() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit) = tables_for(&catalog, "spines");
+    let mut lines = LineAssembly::default();
+    let mut ready = Vec::new();
+    // Offsets 1, 2, 3 and then 5 (not 4) from the origin; spacing 1, far end 5.
+    for (index, along) in [(0_u8, 1.0_f32), (1, 2.0), (2, 3.0), (3, 5.0)] {
+        let event = splash(
+            unit,
+            along,
+            0.0,
+            [0.3, 0.3, 0.3],
+            Some(LineView {
+                from: [0.0, 0.0, 0.0],
+                to: [5.0, 0.0, 0.0],
+                spacing: 1.0,
+                index,
+                count: 4,
+            }),
+        );
+        let request = spawn_request(&event, &tables, &catalog).expect("the spines are named");
+        ready.extend(lines.push(request));
+    }
+    ready.extend(lines.finish());
+    assert_eq!(ready.len(), 1, "one spawn for the line");
+    assert!(
+        (ready[0].anchor - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-4,
+        "anchored at the first search point: {:?}",
+        ready[0].anchor
+    );
+    assert_eq!(ready[0].line.map(|line| line.seen & 0xF), Some(0xF));
+}

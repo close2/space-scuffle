@@ -8,6 +8,11 @@
 // with a velocity. Each entry gives a shipped unit (by slug) presentation entries that are added
 // to its shipped block, so the lab binds the effect to that unit's real data.
 //
+// The scale-out's WP7 splash effects wait here for their review gate, as the slice's did
+// before round 5: `flame_line` (Hellion analogue), `lance_sweep` (Colossus analogue),
+// `flak_burst` (Liberator analogue's anti-air rockets) and `cleave_impact` (Ultralisk
+// analogue). Once the independent review accepts one, its entry moves to `units.ron`.
+//
 // This is test data, not Rust, so it stays outside the zero-hardcoded-identities rule (charter
 // §3.3). An entry here must not repeat a weapon or mode entry of the unit's shipped block, and
 // an effect named here must not also be named by a shipped unit: the catalog test fails then,
@@ -15,5 +20,17 @@
 {
     "burrow_scorpion": (
         modes: [(mode: "burrowed", moving: Some("burrow_trail"))],
+    ),
+    "napalm_wheeler": (
+        weapons: [(weapon: Primary, splash: Some("flame_line"))],
+    ),
+    "tripod_annihilator": (
+        weapons: [(weapon: Primary, splash: Some("lance_sweep"))],
+    ),
+    "sky_bastion": (
+        weapons: [(weapon: Air, splash: Some("flak_burst"))],
+    ),
+    "stag_behemoth": (
+        weapons: [(weapon: Primary, splash: Some("cleave_impact"))],
     ),
 }
