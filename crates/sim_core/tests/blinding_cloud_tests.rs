@@ -50,7 +50,7 @@ fn floor() -> SimScalar {
 fn world() -> SimWorld {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: a flat map");
-    sim_fixtures::world(map, 0xB11_D)
+    sim_fixtures::world(map, 0xB11D)
 }
 
 fn at(x: f32, y: f32) -> SimVec2 {
