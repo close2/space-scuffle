@@ -207,7 +207,7 @@ impl Shot {
             Self::Soft => &[("soft_card", [0.0, 0.5, 0.0])],
             Self::Hard => &[("hard_card", [0.0, 0.5, 0.0])],
             Self::Decal => &[("stain", [0.0, 0.0, 0.0])],
-            Self::WallOnly => &[],
+            Self::WallOnly | Self::WarpControl => &[],
             Self::Ring => &[("halo", [0.0, 0.0, 0.0])],
             Self::Mix => &[("cover", [-0.5, 0.0, 0.0]), ("glow", [0.5, 0.0, 0.5])],
             Self::Bubble | Self::BubbleHidden => {
@@ -219,7 +219,6 @@ impl Shot {
                 ("strip", [0.0; 3]),
             ],
             Self::Warp => &[("warp", [0.0; 3])],
-            Self::WarpControl => &[],
         }
     }
 }

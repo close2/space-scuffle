@@ -256,7 +256,7 @@ impl EffectRuntime {
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
-            seed: hash3(self.sequence, 0x5EED_0F1E, u32::from(request.effect.0)),
+            seed: hash3(self.sequence, 0x5EED_0F1E, effect.name_hash),
             detail_retired_at: over_cap.then_some(birth),
             has_detail: effect
                 .layers
@@ -850,7 +850,7 @@ impl EffectRuntime {
         let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, context.instance.seed)
             .unwrap_or_else(|| flipbook_frame(&look.element, None, age, life, true));
         let drawn = head - tail;
-        let center = line.from + direction * (0.5 * (tail + head)) + Vec3::Y * look.height;
+        let center = line.from + direction * f32::midpoint(tail, head) + Vec3::Y * look.height;
         let card = SpriteInstance {
             center: center.to_array(),
             half_size: extent,

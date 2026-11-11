@@ -239,8 +239,8 @@
             (0.12, (0.025, 0.016, 0.010, 0.45)),
             (0.30, (0.20, 0.045, 0.012, 0.30)),
             (0.55, (0.80, 0.28, 0.04, 0.06)),
-            (0.80, (1.00, 0.55, 0.12, 0.0)),
-            (1.00, (1.00, 0.78, 0.36, 0.0)),
+            (0.80, (0.85, 0.42, 0.08, 0.0)),
+            (1.00, (0.95, 0.60, 0.20, 0.0)),
         ],
         // Burning napalm left on the ground for a moment (additive embers, a step deeper and
         // redder than a blast's).
@@ -275,9 +275,16 @@
         // lighter shade of the ground at its leading edge, darker churned soil behind it.
         "cleave_front": [
             (0.00, (0.00, 0.00, 0.00, 0.00)),
-            (0.25, (0.030, 0.024, 0.017, 0.60)),
-            (0.60, (0.12, 0.10, 0.075, 0.62)),
-            (1.00, (0.34, 0.30, 0.24, 0.66)),
+            (0.25, (0.022, 0.017, 0.012, 0.50)),
+            (0.60, (0.075, 0.058, 0.040, 0.62)),
+            (1.00, (0.17, 0.135, 0.095, 0.70)),
+        ],
+        // Dust and soil thrown up by a heavy blow (alpha): darker and denser than a blast's
+        // dust, so it reads on bright ground.
+        "cleave_dust": [
+            (0.00, (0.015, 0.012, 0.008, 0.70)),
+            (0.60, (0.060, 0.048, 0.034, 0.82)),
+            (1.00, (0.14, 0.115, 0.085, 0.86)),
         ],
         // A short, light dust burst where the newest spines break the ground (alpha): the
         // travelling front's secondary highlight, lighter than the ground's own dust.
@@ -347,6 +354,9 @@
         "cool_fast": [(0.00, 1.00, EaseOutQuad), (0.35, 0.70, Linear), (1.00, 0.45, Linear)],
         // Size factor: a flame tongue billowing out as it burns.
         "flame_grow": [(0.00, 0.55, EaseOutCubic), (0.30, 0.95, EaseOutQuad), (1.00, 1.20, Linear)],
+        // Erosion: a ragged, noise-torn edge from the start, eaten away as the fire dies (a
+        // flame jet's sheath and core).
+        "flame_break": [(0.00, 0.30, Linear), (0.45, 0.38, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: nothing, then eating the element from its thin parts.
         "erode_late": [(0.00, 0.00, Linear), (0.45, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: from the start, slowly at first.
@@ -395,12 +405,13 @@
             size: (0.22, 0.46), texture: "acid_glob", orient: VelocityStretched(0.6),
             roll_deg: 90.0, ramp: "acid_glob", curve: "particle_fade",
         ),
-        // Fine acid spray, fast and short.
+        // Fine acid spray, fast and short. Scale-out polish (Amendment 4): the glob's dark wet
+        // ramp, so the spray reads as droplets and not as sparkle dots in the first frames.
         "acid_spray": (
             spawn: Burst(count: (base: 14, per_unit_radius: 0.0, max: 14)), shape: Disc,
             speed: (4.0, 7.5), cone_deg: 70.0, gravity: 12.0, drag: 1.5, lifetime: (0.25, 0.45),
             size: (0.04, 0.07), texture: "droplet", orient: VelocityStretched(1.6),
-            roll_deg: 90.0, ramp: "acid_liquid", curve: "particle_fade",
+            roll_deg: 90.0, ramp: "acid_glob", curve: "particle_fade",
         ),
         // Burning napalm droplets thrown up off the flame line, falling back (WP7).
         "napalm_embers": (
@@ -558,10 +569,13 @@
                     duration: 0.08, curve: "flash",
                 ),
                 (
+                    // The wet lip racing to the reach. Scale-out polish (Amendment 4): it starts at
+                    // 0.3 of the full-damage radius, under the crown, so frame 0 shows no
+                    // concentric inner ring.
                     block: Ring(texture: "droplet", ramp: "acid_front", orient: Ground,
                         thickness: 0.40, mapping: Front, height: 0.04, erosion: "front_break",
                         breakup: (noise: "noise_tile", scale: 6.0, amount: 0.6, softness: 0.15)),
-                    radius: (from: (bind: SplashFull, scale: 0.55), to: (bind: SplashReach, scale: 1.0),
+                    radius: (from: (bind: SplashFull, scale: 0.3), to: (bind: SplashReach, scale: 1.0),
                         curve: "front"),
                     size_curve: "thin_out", duration: 0.42, curve: "lip_thick", priority: Critical,
                 ),
@@ -570,7 +584,7 @@
                     block: Ring(texture: "droplet", ramp: "acid_edge", orient: Ground,
                         thickness: 0.07, mapping: Front, height: 0.02, erosion: "front_break",
                         breakup: (noise: "noise_tile", scale: 6.0, amount: 0.65, softness: 0.15)),
-                    radius: (from: (bind: SplashFull, scale: 0.55), to: (bind: SplashReach, scale: 1.0),
+                    radius: (from: (bind: SplashFull, scale: 0.3), to: (bind: SplashReach, scale: 1.0),
                         curve: "front"),
                     duration: 0.42, curve: "hold",
                 ),
@@ -646,10 +660,12 @@
                     // after the spines have sunk; feathered over 0.3 at the line's ends.
                     // Round 4: the box three times as wide (the furrow about 0.3 to 0.4 across) and its own
                     // ramp, so the torn-earth texture reads instead of a pencil line.
+                    // Scale-out polish (Amendment 4): scattered 0.3 along and across the line, so
+                    // its blotches no longer repeat at the point spacing.
                     block: Decal(texture: "earth_scar", ramp: "scar", erosion: "erode_tail", depth: 0.6,
                         yaw: AlongLine, width: 1.3, clip_to_line: true, clip_feather: 0.3,
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.3, softness: 0.15)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, scatter: 0.1),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, scatter: 0.3),
                     size: (bind: LineSpacing, scale: 0.95), size_jitter: 0.25,
                     duration: 2.3, curve: "linger", priority: Critical,
                 ),
@@ -748,38 +764,38 @@
                     block: Decal(texture: "scorch", ramp: "char", erosion: "erode_tail", depth: 0.6,
                         yaw: AlongLine, width: 0.42, clip_to_line: true, clip_feather: 0.12,
                         breakup: (noise: "noise_tile", scale: 1.8, amount: 0.45, softness: 0.15)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.04),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.08),
                     size: (bind: LineSpacing, scale: 2.0), size_jitter: 0.2,
                     start: 0.02, duration: 3.0, curve: "linger", priority: Critical,
                 ),
                 (
                     // The napalm burning on the ground: embers along the streak, cooling.
                     block: Decal(texture: "scorch", ramp: "napalm_ember", erosion: "erode_rise", depth: 0.6,
-                        yaw: AlongLine, width: 0.5, clip_to_line: true, clip_feather: 0.12,
-                        breakup: (noise: "fire_noise", scale: 2.2, amount: 0.6, softness: 0.2)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.05),
-                    size: (bind: LineSpacing, scale: 1.9), size_jitter: 0.25,
-                    ramp_curve: "cool", start: 0.02, duration: 1.1, curve: "glow_cool",
+                        yaw: AlongLine, width: 0.42, clip_to_line: true, clip_feather: 0.12,
+                        breakup: (noise: "fire_noise", scale: 3.5, amount: 0.8, softness: 0.2)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.06),
+                    size: (bind: LineSpacing, scale: 1.7), size_jitter: 0.3,
+                    ramp_curve: "cool", start: 0.02, duration: 0.8, curve: "glow_cool",
                 ),
                 (
                     // The jet's white-hot core: racing out from the nozzle, its tail leaving the
                     // nozzle after 0.12 s, the fire noise streaming along it. Critical: it is the
                     // line's path while it burns.
-                    block: Ribbon(texture: "droplet", ramp: "flame_core", shape: Radial, travel: 45.0,
-                        tail_delay: Some(0.12), taper: (0.04, 0.22), height: 0.3, repeat: 1.6,
-                        scroll: 3.0, soft_depth: 0.2, erosion: "glow_break",
-                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.2)),
-                    size: (bind: SplashFull, scale: 1.1), size_curve: "flash_grow",
-                    duration: 0.3, curve: "jet", priority: Critical,
+                    block: Ribbon(texture: "droplet", ramp: "flame_core", shape: Radial, travel: 40.0,
+                        tail_delay: Some(0.12), taper: (0.4, 0.3), height: 0.38, repeat: 0.9,
+                        scroll: 4.0, soft_depth: 0.2, erosion: "flame_break",
+                        breakup: (noise: "fire_noise", scale: 2.5, amount: 0.7, softness: 0.2)),
+                    size: (bind: SplashFull, scale: 0.9), size_curve: "flash_grow",
+                    ramp_curve: "cool", duration: 0.3, curve: "jet", priority: Critical,
                 ),
                 (
                     // The sheath: a wider, sooty, glowing body around the core, broken hard by
                     // the fire noise, eroding from its thin parts.
                     block: Ribbon(texture: "droplet", ramp: "flame_sheath", shape: Radial, travel: 40.0,
-                        tail_delay: Some(0.2), taper: (0.06, 0.3), height: 0.34, repeat: 2.2,
-                        scroll: 2.0, soft_depth: 0.3, erosion: "erode_late", sort_bias: 0.2,
-                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.75, softness: 0.18, shade: 0.5)),
-                    size: (bind: SplashFull, scale: 2.4), size_curve: "flame_grow",
+                        tail_delay: Some(0.2), taper: (0.45, 0.25), height: 0.4, repeat: 1.1,
+                        scroll: 3.0, soft_depth: 0.3, erosion: "flame_break",
+                        breakup: (noise: "fire_noise", scale: 3.0, amount: 0.85, softness: 0.18, shade: 0.5)),
+                    size: (bind: SplashFull, scale: 2.6), size_curve: "flame_grow",
                     duration: 0.42, curve: "jet",
                 ),
                 (
@@ -787,11 +803,12 @@
                     // other point, each of its own rotation, phase and size.
                     block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.4,
                         rotation: Random, erosion: "erode_late", lift: 0.6, drift: (0.0, 0.9, 0.0),
+                        sort_bias: 0.4,
                         breakup: (noise: "noise_tile", scale: 1.3, amount: 0.4, softness: 0.15, shade: 0.6)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.08,
-                        delay_jitter: 0.04),
-                    size: (bind: SplashFull, scale: 2.4), size_jitter: 0.25, size_curve: "flame_grow",
-                    ramp_curve: "cool", duration: 0.55, curve: "punch",
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 45.0, scatter: 0.1,
+                        delay_jitter: 0.05),
+                    size: (bind: SplashFull, scale: 4.4), size_jitter: 0.3, size_curve: "flame_grow",
+                    ramp_curve: "cool", duration: 0.6, curve: "punch",
                 ),
                 (
                     // Smoke rising off the burnt line, thin and late.
@@ -799,8 +816,9 @@
                         rotation: Random, erosion: "erode_rise", drift: (0.0, 0.7, 0.0), lift: 0.6,
                         clip_to_line: true,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 4.0), travel: 45.0, scatter: 0.12),
-                    size: (bind: SplashFull, scale: 2.2), size_jitter: 0.3, size_curve: "smoke_grow",
+                    placement: Line(spacing: (bind: LineSpacing, scale: 4.0), travel: 45.0, scatter: 0.35,
+                        delay_jitter: 0.3),
+                    size: (bind: SplashFull, scale: 2.2), size_jitter: 0.45, size_curve: "smoke_grow",
                     start: 0.3, duration: 1.4, curve: "puff_fade",
                 ),
                 (
@@ -833,11 +851,11 @@
                     // The burnt line, burnt in as the stroke passes. Critical: it marks the
                     // line once the stroke has gone.
                     block: Decal(texture: "scorch", ramp: "char", erosion: "erode_tail", depth: 0.6,
-                        yaw: AlongLine, width: 0.3, clip_to_line: true, clip_feather: 0.08,
-                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.4, softness: 0.15)),
+                        yaw: AlongLine, width: 0.38, clip_to_line: true, clip_feather: 0.08,
+                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.55, softness: 0.15)),
                     placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 12.0, between: true,
                         scatter: 0.02),
-                    size: (bind: LineSpacing, scale: 1.3), size_jitter: 0.15,
+                    size: (bind: LineSpacing, scale: 1.3), size_jitter: 0.3,
                     start: 0.02, duration: 2.5, curve: "linger", priority: Critical,
                 ),
                 (
@@ -853,19 +871,19 @@
                     // The stroke: a white-hot segment on the ground sweeping along the line.
                     // Critical: it is the line's path while the lance burns.
                     block: Ribbon(texture: "droplet", ramp: "lance_hot", shape: Radial, orient: Ground,
-                        travel: 12.0, tail_delay: Some(0.07), taper: (0.35, 0.12), height: 0.04,
-                        repeat: 0.8, scroll: 1.5, erosion: "glow_break",
-                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.35, softness: 0.25)),
+                        travel: 12.0, tail_delay: Some(0.07), taper: (0.5, 0.15), height: 0.04,
+                        repeat: 0.8, scroll: 1.5, erosion: "flame_break",
+                        breakup: (noise: "fire_noise", scale: 2.5, amount: 0.6, softness: 0.2)),
                     size: (bind: SplashFull, scale: 1.0), ramp_curve: "cool_fast",
                     duration: 0.3, curve: "hold", priority: Critical,
                 ),
                 (
                     // A wide, dim heat glow around the stroke, trailing it.
                     block: Ribbon(texture: "droplet", ramp: "lance_glow", shape: Radial, orient: Ground,
-                        travel: 12.0, tail_delay: Some(0.16), taper: (0.4, 0.15), height: 0.05,
-                        repeat: 1.2, scroll: 1.0, erosion: "glow_break",
-                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.4, softness: 0.25)),
-                    size: (bind: SplashFull, scale: 2.6), duration: 0.42, curve: "hold",
+                        travel: 12.0, tail_delay: Some(0.16), taper: (0.5, 0.2), height: 0.05,
+                        repeat: 0.7, scroll: 1.0, erosion: "flame_break",
+                        breakup: (noise: "fire_noise", scale: 3.0, amount: 0.8, softness: 0.2)),
+                    size: (bind: SplashFull, scale: 2.0), duration: 0.42, curve: "hold",
                 ),
                 (
                     // The flare at each point the stroke reaches: the travelling focal point.
@@ -873,8 +891,8 @@
                         soft_depth: 0.3, erosion: "glow_break",
                         breakup: (noise: "noise_tile", scale: 2.5, amount: 0.5, softness: 0.2)),
                     placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 12.0),
-                    size: (bind: SplashFull, scale: 1.6), size_curve: "flash_grow",
-                    duration: 0.1, curve: "flash",
+                    size: (bind: SplashFull, scale: 1.0), size_curve: "flash_grow",
+                    duration: 0.06, curve: "flash",
                 ),
                 (
                     // Thin smoke curling up off the burnt line.
@@ -882,8 +900,9 @@
                         rotation: Random, erosion: "erode_rise", drift: (0.0, 0.6, 0.0), lift: 0.5,
                         clip_to_line: true,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.5, softness: 0.2, shade: 0.5)),
-                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 12.0, scatter: 0.06),
-                    size: (bind: SplashFull, scale: 1.5), size_jitter: 0.3, size_curve: "smoke_grow",
+                    placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 12.0, scatter: 0.22,
+                        delay_jitter: 0.15),
+                    size: (bind: SplashFull, scale: 1.4), size_jitter: 0.4, size_curve: "smoke_grow",
                     start: 0.18, duration: 1.1, curve: "puff_fade",
                 ),
                 (
@@ -916,17 +935,17 @@
                 ),
                 (
                     block: Sprite(texture: "fireball_flipbook", ramp: "blast_flash", shape: Radial,
-                        soft_depth: 0.4, sort_bias: 3.0,
+                        lift: 0.15, soft_depth: 0.4, sort_bias: 3.0,
                         breakup: (noise: "noise_tile", scale: 1.5, amount: 0.35, softness: 0.25)),
-                    size: (bind: SplashReach, scale: 0.6), size_curve: "flash_grow",
-                    duration: 0.08, curve: "flash",
+                    size: (bind: SplashReach, scale: 1.25), size_curve: "flash_grow",
+                    duration: 0.1, curve: "flash",
                 ),
                 (
                     block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.5,
-                        rotation: Random, erosion: "erode_late",
+                        rotation: Random, erosion: "erode_late", lift: 0.35,
                         breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
-                    placement: Disc(count: 3, radius: (bind: SplashReach, scale: 0.3)),
-                    size: (bind: SplashReach, scale: 0.42), size_jitter: 0.2, size_curve: "fireball_grow",
+                    placement: Disc(count: 5, radius: (bind: SplashReach, scale: 0.4)),
+                    size: (bind: SplashReach, scale: 0.58), size_jitter: 0.2, size_curve: "fireball_grow",
                     ramp_curve: "cool", duration: 0.6, curve: "punch",
                 ),
                 (
@@ -941,11 +960,11 @@
                 (block: Particles(emitter: "flak_fragments"), size: (scale: 0.2)),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "flak_smoke", soft_depth: 0.4,
-                        rotation: Random, erosion: "erode_rise", drift: (0.3, 0.25, 0.1), spread: 0.4,
+                        rotation: Random, erosion: "erode_rise", drift: (0.3, 0.25, 0.1), spread: 0.4, lift: 0.6,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.4, softness: 0.2, shade: 0.55)),
                     placement: Disc(count: 4, radius: (bind: SplashReach, scale: 0.45)),
-                    size: (bind: SplashReach, scale: 0.4), size_jitter: 0.25, size_curve: "smoke_grow",
-                    start: 0.08, duration: 1.6, curve: "puff_fade",
+                    size: (bind: SplashReach, scale: 0.5), size_jitter: 0.25, size_curve: "smoke_grow",
+                    start: 0.06, duration: 1.6, curve: "puff_fade",
                 ),
             ],
         ),
@@ -960,28 +979,28 @@
             layers: [
                 (
                     block: Ring(texture: "smoke_puff", ramp: "cleave_front", orient: Ground,
-                        thickness: 0.4, mapping: Front, height: 0.03, erosion: "front_break",
-                        breakup: (noise: "noise_tile", scale: 5.0, amount: 0.55, softness: 0.18)),
+                        thickness: 0.2, mapping: Front, height: 0.03, erosion: "front_break",
+                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.75, softness: 0.18)),
                     radius: (from: (bind: SplashFull, scale: 0.5), to: (bind: SplashReach, scale: 1.0),
                         curve: "front_fast"),
-                    size_curve: "thin_out", duration: 0.34, curve: "front_fade", priority: Critical,
+                    size_curve: "thin_out", duration: 0.34, curve: "lip_thick", priority: Critical,
                 ),
                 (
                     block: Decal(texture: "scorch", ramp: "churn", erosion: "erode_rise", depth: 0.6,
                         breakup: (noise: "noise_tile", scale: 1.8, amount: 0.5, softness: 0.2)),
-                    size: (bind: SplashFull, scale: 1.3), size_jitter: 0.15,
+                    size: (bind: SplashMid, scale: 1.0), size_jitter: 0.15,
                     duration: 0.9, curve: "punch",
                 ),
                 (
-                    block: Sprite(texture: "smoke_puff", ramp: "blast_dust", soft_depth: 0.15,
+                    block: Sprite(texture: "smoke_puff", ramp: "cleave_dust", soft_depth: 0.15,
                         rotation: Random, erosion: "erode_rise", lift: 0.7, spread: 0.5,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.45)),
-                    placement: Disc(count: 6, radius: (bind: SplashMid, scale: 0.8)),
-                    size: (bind: SplashReach, scale: 0.22), size_jitter: 0.3, size_curve: "dust_grow",
-                    start: 0.04, duration: 0.7, curve: "puff_fade",
+                    placement: Disc(count: 8, radius: (bind: SplashMid, scale: 0.9)),
+                    size: (bind: SplashReach, scale: 0.38), size_jitter: 0.3, size_curve: "dust_grow",
+                    start: 0.0, duration: 0.8, curve: "puff_fade",
                 ),
                 (block: Particles(emitter: "spine_chips"), size: (bind: SplashFull, scale: 0.6)),
-                (block: Particles(emitter: "debris_chunks"), size: (bind: SplashFull, scale: 0.4), start: 0.02),
+                (block: Particles(emitter: "debris_chunks"), size: (bind: SplashFull, scale: 0.8), start: 0.02),
             ],
         ),
         // A burrowed unit moving underground (Amendment 2, R5): the ground heaving over it, a

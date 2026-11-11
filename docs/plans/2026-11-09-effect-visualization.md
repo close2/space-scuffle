@@ -1126,3 +1126,62 @@ under Q0002 and taken up in the scale-out (WP7 onwards), each with its own revie
   at close zoom), and about 2x width variation in the shock ring with one or two breaks.
 
 **Next.** The WP7 to WP15 scale-out (§9), unblocked by Q0080 (Amendment 2), with B-107 to B-111 open behind it.
+
+## Amendment 4: scale-out WP7 (2026-11-11, short note, charter §6)
+
+**What changes.** WP7 of §9 in the client, the effect shaders and the catalog's presentation data (no simulation
+state, golden replay or checksum changes; D-1 holds):
+
+- **`Ribbon` block** (§5.1): a strip along the event's line, drawn by the card renderer as an axis billboard
+  (`orient: Camera`) or flat on the ground (`Ground`); its head races out at `travel`, its tail follows after
+  `tail_delay`, so it can sweep along the line as a short segment; a tiled texture (u along the strip) or a computed
+  core (`shape: Radial`), tapers at both ends, noise breakup that repeats and scrolls with the strip. Only `Line`
+  effects may use it, with the one `Point` placement (typed load errors). A card record gains a ninth 16-byte row.
+- **`Distortion` block** (§5.1): a camera-facing or ground disc that bends the opaque scene behind it by scrolling
+  noise, read from the view's transmission texture (Bevy's copy of the opaque scene before the transmissive phase),
+  queued as one `Transmissive3d` item; budget `distortions` (default 64).
+- **Line events.** A line's search points are merged by the far end they all publish (the flame line's last search
+  lies a double spacing beyond the one before, which split it into two spawns); a line whose searches land on
+  several ticks (the spine line, B-85, period 2 ticks) joins its live effect while its travel still lays the line
+  out, instead of spawning the whole line again per search (in battle each search had spawned a second, later copy
+  of the line); line placements spaced wider than the line ask the fog for the search points they stand on.
+- **Random choices salted by name.** An effect instance's seed was salted by the effect's dense id, which every
+  effect added before it in name order shifts: adding the four effects changed `shell_impact`'s random rotations
+  and its golden stills (86.7 % of pixels within 8/255). The salt is now an FNV-1a hash of the effect's name, so a
+  vocabulary edit never moves another effect's picture again. The goldens of the three shipped effects are
+  re-recorded once with this cause (both drivers), and their sheets re-taken.
+- **Effects:** `flame_line` (Hellion analogue `napalm_wheeler`), `lance_sweep` (Colossus analogue
+  `tripod_annihilator`), `flak_burst` (Liberator analogue `sky_bastion`, air weapon) and `cleave_impact` (Ultralisk
+  analogue `stag_behemoth`), named by lab-only entries (`crates/client/tests/data/effect_lab_blocks.ron`) until the
+  independent review accepts each; then the entry moves to `units.ron` (as for the slice, Amendment 1).
+- **Polish of the shipped three** (Amendment 3's list, cheap and safe items only): `acid_burst` item 6 (the front
+  and its dark edge start at 0.3 of the full-damage radius, inside the crown, so frame 0 shows no concentric inner
+  ring; the fine spray takes the glob's dark wet ramp, so no sparkle dots); `spine_line` (the scar's pieces scattered
+  0.3 along and across the line, so its blotches no longer repeat at the point spacing; the churned patches are
+  kept as they were, because scattering them more or varying their size lowered the full-damage coverage from 75 %
+  to 62 %).
+
+**Decisions (Q0002, reversible).**
+
+- The Colossus beams from the weapon to the sweep point need the attacker's position in the line event, which
+  `LineView` does not carry for a target-origin line; the legacy per-strike beam (`vfx`) still draws from the
+  weapon to the struck point and the sweep is drawn on the ground. Recorded for WP11 (migration of the legacy
+  beams), with the option of a presentation-only `LineView` field.
+- The Hellion's legacy team-coloured tracer (`vfx`, 0.12 s) still draws under the flame until WP11.
+- Line effects carry no `Point`-placed light: a light at the line's anchor would light ground the viewer may not
+  see (R6). Their glow comes from additive layers.
+- `flak_burst` bursts at the air units' plane; in the effect lab it is captured on the ground plane.
+- `shell_impact`'s polish (a new blast-mark texture, twice the ring's width variation) is not taken: it needs a new
+  texture and a change of the front shader shared with the accepted `acid_burst`.
+- Distortion discs are unsorted and see only the opaque scene (not other effects or the bubbles), as Bevy's
+  transmission does.
+- WP8 (concealment and stance) is not started in this round.
+
+**Tests.** `effect_gpu_tests.rs`: ribbon ends and width within 2 px (camera-facing, ground, fog-cut), distortion
+bends pixels only inside its disc; `effect_slice_gpu_tests.rs`: seven subjects (footprint, coverage, pop, lingering,
+goldens per driver) and every line subject's fog mask; `effect_catalog_tests.rs`: ribbon and distortion range
+checks; `effect_runtime_tests.rs`: the two line merges; `gpu_validation_tests.rs`: `distortion.wgsl`.
+
+**Gate.** Each new effect and each polished one gets its implementer checklist in
+[`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 1") and a packet section; the
+orchestrator runs the independent review.

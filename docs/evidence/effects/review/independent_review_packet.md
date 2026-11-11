@@ -1,4 +1,4 @@
-# Independent Review Packet: Effect Vertical Slice (Round 5)
+# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Round 1)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
@@ -6,6 +6,61 @@ judge it by, and nothing else: it holds no verdict of the implementer, on purpos
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Scale-out round 1 (WP7)
+
+The slice's review gate passed in round 5. The scale-out adds four splash effects and polishes two of the
+accepted ones. Please write this review to a new file next to this one, `independent_review_scaleout1.md`, in
+the same form as the slice's reviews: each effect below against each of the seven checklist items (at the end of
+this packet), **accept** or **reject** with a concrete reason (sheet, cell or frame, what you see), and for the
+two polished effects whether the change regressed anything. The images are lavapipe captures from a debug
+`battle_capture --effect-lab` under Xvfb, as for the slice; the sheets' layout is the slice's (eight ages across;
+rows: bright ground default zoom, the same with the 1-unit grid and the bound extent in red, bright close zoom
+and its reference, then the same four rows on dark teal ground). For a line the grid row draws the line and the
+full-damage radius at each search point.
+
+### What the new effects are meant to be (StarCraft II analogues; looks stay original)
+
+| Effect | Unit (analogue) | Simulated extent | Meant to read like |
+|---|---|---|---|
+| `flame_line` | `napalm_wheeler` (Hellion) | a line of 25 searches of radius 0.15 from 0.25 to 6.5 units ahead of the attacker | a short jet of burning napalm racing from the nozzle along the whole line, burning for a moment and leaving a burnt streak |
+| `lance_sweep` | `tripod_annihilator` (Colossus) | a line of 11 searches of radius 0.15, 2.5 units long, across the struck point | a thermal lance sweeping across the target, burning a glowing line into the ground that cools |
+| `flak_burst` | `sky_bastion` air weapon (Liberator's anti-air rockets) | one zone of radius 1.5 in the air units' plane | an anti-air burst among air units (drawn on the ground in the lab; in battle it is at the air units' altitude) |
+| `cleave_impact` | `stag_behemoth` (Ultralisk) | zones 0.5 / 1.0 / 1.5 at the struck unit's near edge | a heavy blow driven into the ground, dust and soil thrown out to the cleave's reach; frequent (every 0.6 s), so it must not stack |
+
+Two new building blocks are used: a **ribbon** (a strip along the line, racing out and sweeping) and a
+**distortion** (a heat haze that bends the ground behind it; subtle by design).
+
+### Material
+
+| Effect | Contact sheet | Sequence (40 ms steps) |
+|---|---|---|
+| `flame_line` | [flame_line_contact.png](flame_line_contact.png) ([legend](flame_line_contact.txt)) | [flame_line_sequence.png](flame_line_sequence.png) |
+| `lance_sweep` | [lance_sweep_contact.png](lance_sweep_contact.png) ([legend](lance_sweep_contact.txt)) | [lance_sweep_sequence.png](lance_sweep_sequence.png) |
+| `flak_burst` | [flak_burst_contact.png](flak_burst_contact.png) ([legend](flak_burst_contact.txt)) | [flak_burst_sequence.png](flak_burst_sequence.png) |
+| `cleave_impact` | [cleave_impact_contact.png](cleave_impact_contact.png) ([legend](cleave_impact_contact.txt)) | [cleave_impact_sequence.png](cleave_impact_sequence.png) |
+
+Measured on the GPU (`effect_slice_gpu_tests.rs`, lavapipe): the Critical marks of each line end within 1.3 px of
+the line's projected ends; the fronts of the two circles end within ±2 px of the reach on at least 97 % of 72 rays;
+coverage of the full-damage area within 80 ms is 65–99 %; the largest
+frame-to-frame change after the impact is at most 1.63/255; nothing differs from the empty ground after the end.
+With a line seen by the viewer only from its fifth search point on (fog), nothing is drawn more than 1 unit
+before that point.
+
+### Polish of the accepted effects (round 5's remaining improvements)
+
+| Effect | Round-5 finding | What changed |
+|---|---|---|
+| `acid_burst` | Item 6 of the list: frame 0 shows a concentric inner ring and sparkle dots | The front and its dark edge start at 0.3 (was 0.55) of the full-damage radius, under the crown; the fine spray takes the globs' dark wet ramp. [acid_burst_contact.png](acid_burst_contact.png), [acid_burst_sequence.png](acid_burst_sequence.png) |
+| `spine_line` | The scar's blotches repeat at about the point spacing | The scar's pieces are scattered 0.3 (was 0.1) along and across the line. [spine_line_contact.png](spine_line_contact.png), [spine_line_sequence.png](spine_line_sequence.png) |
+
+The `acid_burst` and `spine_line` sheets of this directory are now the polished ones, and `shell_impact`'s is
+re-taken too: the random choices of every effect (rotations, placements, variants, noise phases) are now drawn from
+the effect's name rather than its position in the vocabulary, so each of the three shows a different, equally
+random draw than in round 5 ([shell_impact_contact.png](shell_impact_contact.png),
+[shell_impact_sequence.png](shell_impact_sequence.png)). Please check all three for regressions. Round 5's sheets
+are in commit `58b8da2`. Not changed this round: `shell_impact`; the acid stain's meniscus, inner rims, glob shapes, crowd variation and
+dried crust; the spine scar's torn clods.
 
 ## Round 5
 

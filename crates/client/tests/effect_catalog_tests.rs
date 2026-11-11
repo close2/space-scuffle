@@ -1140,3 +1140,30 @@ fn a_landing_emitter_spawns_only_point_effects() {
         "{error}"
     );
 }
+
+/// An effect's random choices are salted by its name, not by its dense id: adding an effect
+/// that sorts before it moves its id and keeps its salt, so its picture stays the same.
+#[test]
+fn an_effects_salt_survives_other_effects_being_added() {
+    let (dir, manifest) = fixture();
+    let one = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(SPRITE), ""),
+    )
+    .expect("one effect");
+    let earlier = format!(
+        r#""aaa": (class: Major, event: Splash, layers: [ {SPRITE} ]), {}"#,
+        splash_effect(SPRITE)
+    );
+    let two = load(dir.path(), &vocabulary(&manifest, "", &earlier, "")).expect("two effects");
+    let (id_one, id_two) = (
+        one.effect_id("boom").expect("defined"),
+        two.effect_id("boom").expect("defined"),
+    );
+    assert_ne!(id_one, id_two, "the dense id moves");
+    assert_eq!(
+        one.effect(id_one).map(|effect| effect.name_hash),
+        two.effect(id_two).map(|effect| effect.name_hash),
+        "the salt does not"
+    );
+}

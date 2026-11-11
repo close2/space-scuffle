@@ -473,3 +473,106 @@ average above 100 and passed on a rerun); `concealment_gpu_tests` 1 (harness); `
 
 **Round 5 result (implementer):** accepted, every item for every effect, with the watch points above. The
 independent round-5 review follows on [`independent_review_packet.md`](independent_review_packet.md).
+
+## Scale-out round 1 (WP7, plan Amendment 4)
+
+Evidence: the contact sheets and sequences of this round in this directory (lavapipe, debug `battle_capture`,
+Xvfb, 2026-11-11: the slice's path), judged cell by cell and on the full-resolution lab frames:
+[`flame_line_contact.png`](flame_line_contact.png), [`lance_sweep_contact.png`](lance_sweep_contact.png),
+[`flak_burst_contact.png`](flak_burst_contact.png), [`cleave_impact_contact.png`](cleave_impact_contact.png), the
+`_sequence.png` beside each, and the re-taken [`acid_burst_contact.png`](acid_burst_contact.png) and
+[`spine_line_contact.png`](spine_line_contact.png) for the polish. Bindings are the weapons' own:
+`flame_line` 25 searches of radius 0.15 over 6.25 (spacing 0.25); `lance_sweep` 11 searches of radius 0.15 over
+2.5 across the struck point; `flak_burst` one zone of 1.5; `cleave_impact` 0.5 / 1.0 / 1.5. No texture was made and
+nothing was spent this round (ledger unchanged: 251 Veo requests at $0.40 and 84 image requests, $106.45 of $200).
+
+GPU figures (`effect_slice_gpu_tests.rs` through the harness, lavapipe, 2026-11-11, with the name-salted random
+choices; RADV_NOTE):
+
+| Effect | Footprint | Coverage of the full-damage disc at peak | Pop | Lingering |
+|---|---|---|---|---|
+| `flame_line` | marks start −1.27 px and end +1.00 px from the line's projected ends | 99 % (least point 90 %) | 1.63/255 | 0/255 after the end |
+| `lance_sweep` | marks start −0.14 px and end +0.21 px | 87 % (least point 41 %) | 0.21/255 | 0/255 |
+| `flak_burst` | 97 % of 72 rays within ±2 px of the reach, mean −0.85 px, largest overshoot +0.32 px | 65 % | 1.35/255 | 0/255 |
+| `cleave_impact` | 100 % of 72 rays within ±2 px of the reach, mean −0.71 px, largest overshoot +0.44 px | 94 % | 0.63/255 | 0/255 |
+| `acid_burst` (polish, new salt) | front and held stain: 100 % of rays within ±2 px, mean +0.17 / −0.09 px, largest overshoot +1.35 px | 99 % | 0.19/255 | 0/255 |
+| `shell_impact` (new salt) | 100 % of rays within ±2 px, mean −0.61 px, largest overshoot +0.41 px | 100 % | 1.17/255 | 0/255 |
+| `spine_line` (polish, new salt) | marks start +0.10 px and end +1.42 px | **62 %** (least point 42 %; round 5: 75 %) | 0.65/255 | 0/255 |
+
+Watch point for `spine_line`: its coverage of the full-damage discs within 80 ms fell from 75 % to 62 % (the test's
+floor is 60 %) with the scar's wider scatter and the new random draw; at points where a scattered scar piece and
+the heave both lie off the point, the disc is about 40 % covered in its first frames.
+
+Fog (R6): the masked-line test now runs for every line subject; with the line seen from its fifth search point
+on, `flame_line` draws 2 983 px from that point and 0 px more than 1 unit before it, `lance_sweep` 538 and 0,
+`spine_line` 3 258 and 0.
+
+### `flame_line` (Hellion analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The jet's core (Critical) races from the nozzle to the line's end in 0.14 s and the soot streak (Critical) marks the line from 0.02 s for 3 s; footprint within 1.3 px of the line's ends. One focal point: the hot core streaming along the line. |
+| 2 | Layered | Accept | Hot core ribbon, sooty glowing sheath ribbon, flame tongues (fireball flipbook cards every other point), burning napalm on the ground, soot streak, smoke, burning droplets, heat haze (distortion). |
+| 3 | Timing | Accept | Peak by frame 2–3 (the head reaches the end at 0.14 s), the tail leaves the nozzle at 0.12 s and the sheath erodes by 0.45 s; the napalm burns out by 0.8 s; the streak erodes at its end (3 s). |
+| 4 | No tells of cheapness | Accept, with a watch point | Close zoom 0.1 s: the flame tongues billow over a torn sheath; at 0.26 s a wall of fire along the line. Watch point: in the first two frames the core's head is a smooth, rounded glow ahead of the tongues (it reads as the jet's hot tip), and the ribbons are smooth tubes where their noise is below a pixel (the default zoom's 0.3-unit-wide jet). |
+| 5 | Value and colour | Accept | Brightest in the core near the nozzle, orange body, sooty dark parts; the lasting streak is darker than both grounds. |
+| 6 | Crowd | Not measured | No crowd frame this round (the stress mode streams the slice's three effects; recorded under "What remains"). |
+| 7 | Fog | Accept | No layer at the attacker (no light at the anchor); the masked test: nothing more than 1 unit before the first seen point. |
+
+### `lance_sweep` (Colossus analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The stroke (Critical) sweeps across the struck point in 0.21 s and the burnt line (Critical) stays 2.5 s; footprint within 0.3 px of the line's ends. The line is 2.5 units long (about 55 px at default zoom), the true size. |
+| 2 | Layered | Accept | Hot stroke ribbon on the ground, wide heat glow ribbon, flare at each newly reached point, cherry-red groove, burnt line, sparks, thin smoke, heat haze (distortion). |
+| 3 | Timing | Accept | The stroke reaches each point at 12 units per second; the groove cools over 1 s and erodes; the line erodes at its end. |
+| 4 | No tells of cheapness | Accept, with a watch point | At default zoom the stroke is a short, comet-shaped glow travelling across; at close zoom, while it is young, it is a smooth glowing streak (its noise is below a pixel at 10 px width). Smoke puffs are scattered and staggered, not a row. |
+| 5 | Value and colour | Accept | White-hot at the stroke, cherry red behind, char last. |
+| 6 | Crowd | Not measured | As above. |
+| 7 | Fog | Accept | No layer at the source; masked test 0 px before the seen run. |
+
+Known limitation (Amendment 4): the beams from the Colossus analogue to the sweep point are the legacy per-strike
+beam, which ends at the struck point; the sweep is drawn on the ground.
+
+### `flak_burst` (Liberator analogue's anti-air rockets)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The shock front (Critical) reaches the 1.5 reach in about 0.1 s in the air units' plane; the flash and the fireball cluster fill the area in the first frames. |
+| 2 | Layered | Accept | Light, flash, fireball cluster (four cards), shock front, burning fragments, flak smoke. |
+| 3 | Timing | Accept | Flash at its peak at once, fireball by 2 frames, smoke drifting and eroding by 1.7 s; no ground mark (an air burst). |
+| 4 | No tells of cheapness | Accept, with a watch point | Same fireball and front materials as the accepted `shell_impact`. Watch point: the lab draws it on the ground; in battle it bursts at the air units' altitude, where nothing is below it to soften the cards. |
+| 5 | Value and colour | Accept | Hot core, orange body, dark grey-brown smoke. |
+| 6 | Crowd | Not measured | As above. |
+| 7 | Fog | Accept | Anchored where it lands. |
+
+### `cleave_impact` (Ultralisk analogue)
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The dust front (Critical) marks the 1.5 reach (100 % of rays within ±2 px) and the soil thrown up marks the full-damage zone. |
+| 2 | Layered | Accept | Dust front, churned earth, eight dust puffs, chips, debris. |
+| 3 | Timing | Accept | Front at the reach by about 0.1 s; everything gone within 0.9 s, so blows every 0.6 s never stack into a lasting mark. |
+| 4 | No tells of cheapness | **Reject** | Close zoom on the bright ground: the front's band is a thin, even, glassy rim (a lighter leading edge over a darker band), which reads as a lens or a selection circle rather than thrown dust. Dust and soil inside it read as matter. To change: a front made of dust cards along the circle (a placement on the ring) instead of the computed front, or a darker, broken front. |
+| 5 | Value and colour | Accept | Earth tones a step darker than the ground; no colour. |
+| 6 | Crowd | Not measured | As above. |
+| 7 | Fog | Accept | Anchored where it lands. |
+
+### Polish of the shipped three (Amendment 3's list)
+
+| Effect | Item taken | Result |
+|---|---|---|
+| `acid_burst` | 6: no concentric inner ring and no sparkle dots at frame 0 | The front and its dark edge start at 0.3 of the full-damage radius (under the crown), the spray takes the glob's dark wet ramp. Items 1–5 (meniscus, inner rims, glob letters, crowd variation, dried crust) are not taken: each needs shader or texture work and its own review. |
+| `spine_line` | Less periodic blotches | The scar's pieces scattered 0.3 along and across the line (was 0.1). The churned patches are kept: scattering them 0.18 to 0.3 or varying their size ±40 % lowered the full-damage coverage from 75 % to 62 %. Torn clods (a new texture) are not taken. |
+| `shell_impact` | — | Not taken (a new blast-mark texture and the front shader shared with `acid_burst`). |
+
+The random choices of an effect's instances (rotations, placements, variants, noise phases) are now salted by the
+effect's name instead of its dense id (Amendment 4), because adding the four effects had shifted `shell_impact`'s
+id and with it its look (golden 0: 86.7 % of pixels within 8/255). Every effect therefore shows a different, equally
+random draw than in round 5; the goldens of all seven subjects are re-recorded with this cause on both drivers and
+the three shipped effects' sheets are re-taken, so the reviewer can check them for regressions:
+[`shell_impact_contact.png`](shell_impact_contact.png), [`acid_burst_contact.png`](acid_burst_contact.png),
+[`spine_line_contact.png`](spine_line_contact.png).
+
+**Scale-out round 1 result (implementer):** `flame_line`, `lance_sweep` and `flak_burst` accepted with the watch
+points above; `cleave_impact` rejected on item 4; crowd behaviour (item 6) not measured for the new effects.

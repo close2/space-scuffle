@@ -487,6 +487,7 @@ impl Resolver<'_> {
             layers,
             lifetime,
             repeat: effect.repeat,
+            name_hash: name_hash(name),
         })
     }
 
@@ -546,22 +547,7 @@ impl Resolver<'_> {
         for value in &values {
             self.require(at, event, value.bind)?;
         }
-        if matches!(block, Block::Ribbon(_)) {
-            // A ribbon runs along the event's line, once.
-            self.require(at, event, super::schema::Binding::LineLength)?;
-            if placements
-                .iter()
-                .any(|placement| *placement != PlacementDef::Point)
-            {
-                return Err(EffectCatalogError::InvalidValue {
-                    path: self.path.to_path_buf(),
-                    site: at.clone(),
-                    field: "placement",
-                    value: 0.0,
-                    rule: "a ribbon spans its line once: only the `Point` placement",
-                });
-            }
-        }
+        self.ribbon_spans_line(at, event, &block, &placements)?;
         if matches!(block, Block::Ring { .. }) && layer.radius.is_none() {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -599,6 +585,34 @@ impl Resolver<'_> {
                 }
             ),
         })
+    }
+
+    /// Checks that a ribbon layer spans its event's line once: a `Line` event and only the
+    /// `Point` placement. Other blocks pass.
+    fn ribbon_spans_line(
+        &self,
+        at: &Site,
+        event: EventKind,
+        block: &Block,
+        placements: &[PlacementDef],
+    ) -> Result<(), EffectCatalogError> {
+        if !matches!(block, Block::Ribbon(_)) {
+            return Ok(());
+        }
+        self.require(at, event, super::schema::Binding::LineLength)?;
+        if placements
+            .iter()
+            .any(|placement| *placement != PlacementDef::Point)
+        {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "placement",
+                value: 0.0,
+                rule: "a ribbon spans its line once: only the `Point` placement",
+            });
+        }
+        Ok(())
     }
 
     /// Checks that `value` lies in `[0, 1)`.
@@ -1078,6 +1092,13 @@ impl Resolver<'_> {
 }
 
 /// A [`Site`] for `owner` and an optional layer.
+/// The 32-bit FNV-1a hash of `name`.
+fn name_hash(name: &str) -> u32 {
+    name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
 fn site(owner: &str, layer: Option<usize>) -> Site {
     Site {
         owner: owner.to_owned(),

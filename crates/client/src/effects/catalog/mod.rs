@@ -336,6 +336,10 @@ pub struct Effect {
     pub lifetime: f32,
     /// Seconds between spawns while its fact holds (trails), if it repeats.
     pub repeat: Option<f32>,
+    /// FNV-1a hash of its name: the salt of its instances' random choices, so they stay the
+    /// same when other effects are added to or removed from the vocabulary (its dense id
+    /// does not).
+    pub name_hash: u32,
 }
 
 /// A resolved emitter.
