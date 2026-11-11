@@ -68,6 +68,8 @@
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: SCV FusionCutter, liberty WeaponData:195-201 (Melee :201).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -340,6 +342,8 @@
                 weapon_class: Some("enclave_ground_weapons"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Zealot PsiBlades, liberty WeaponData:150-158 (Melee :158).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -1467,6 +1471,8 @@
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Probe ParticleBeam, liberty WeaponData:142-148 (Melee :148).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -1906,6 +1912,8 @@
                 weapon_class: Some("enclave_ground_weapons"),
                 upgrade_bonus_per_level: 5.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Dark Templar WarpBlades, liberty WeaponData:161-169 (Melee :169).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -2451,6 +2459,8 @@
                 weapon_class: None,
                 upgrade_bonus_per_level: 0.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Drone Spines, liberty WeaponData:349-355 (Melee :355).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -2533,6 +2543,8 @@
                 weapon_class: Some("swarm_melee_attacks"),
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Zergling Claws, liberty WeaponData:357-363 (Melee :363).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -2617,6 +2629,8 @@
                 bonus_upgrade_per_level: 2.0,
                 suicide_on_attack: true,
                 structure_strike: Some((damage: 80.0, upgrade_per_level: 5.0, ignores_armor: true)),
+                // Options Melee: Baneling VolatileBurst, liberty WeaponData:463-472 (Melee :472); its structure strike is VolatileBurstBuilding, swarm WeaponData:200-203 (Melee :203).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (
@@ -3290,6 +3304,8 @@
                 weapon_class: Some("swarm_melee_attacks"),
                 upgrade_bonus_per_level: 3.0,
                 bonus_upgrade_per_level: 0.0,
+                // Options Melee: Ultralisk KaiserBlades, liberty WeaponData:430-439 (Melee :439).
+                melee: true,
             )),
             is_detector: false,
             capabilities: (

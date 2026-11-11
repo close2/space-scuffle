@@ -2103,6 +2103,56 @@ fn b82_only_the_baneling_has_its_structure_strike() {
     assert!(found > 0, "the Baneling analogue has its structure strike");
 }
 
+/// The analogues whose weapon carries `Options index="Melee"` (plan
+/// `2026-11-10-spellcaster-mechanics` D-14, WP5a): no `CWeapon` default sets it (`core`
+/// WeaponData:3-31) and no later layer clears it. The game weapons the catalog leaves out (the
+/// Roach's and Hydralisk's melee weapons, `liberty` WeaponData:86-89 and :46-49, the
+/// Ultralisk's `Ram`, :441-451) have no catalog counterpart; the analogues' ranged weapons are
+/// not melee.
+const SC2_MELEE_WEAPONS: [(&str, &str); 8] = [
+    ("SCV", "FusionCutter, liberty WeaponData:201"),
+    ("Probe", "ParticleBeam, liberty WeaponData:148"),
+    ("Zealot", "PsiBlades, liberty WeaponData:158"),
+    ("Dark Templar", "WarpBlades, liberty WeaponData:169"),
+    ("Drone", "Spines, liberty WeaponData:355"),
+    ("Zergling", "Claws, liberty WeaponData:363"),
+    ("Baneling", "VolatileBurst, liberty WeaponData:472"),
+    ("Ultralisk", "KaiserBlades, liberty WeaponData:439"),
+];
+
+#[test]
+fn d14_melee_weapons_follow_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut melee = Vec::new();
+    for archetype in catalogs.units.archetypes() {
+        let modes = replacing_mode_weapons(archetype).map(|weapon| ("siege_mode", Some(weapon)));
+        for (block, weapon) in weapon_blocks(archetype).into_iter().chain(modes) {
+            let Some(weapon) = weapon else {
+                continue;
+            };
+            let row = SC2_MELEE_WEAPONS
+                .iter()
+                .find(|(unit, _)| *unit == analogue(archetype));
+            assert_eq!(
+                weapon.melee,
+                row.is_some(),
+                "{} {block} {}: melee per {}",
+                archetype.slug,
+                weapon.name,
+                row.map_or("no Options Melee in its weapon", |(_, source)| source)
+            );
+            if weapon.melee {
+                melee.push(analogue(archetype));
+            }
+        }
+    }
+    melee.sort_unstable();
+    melee.dedup();
+    let mut want: Vec<_> = SC2_MELEE_WEAPONS.iter().map(|(unit, _)| *unit).collect();
+    want.sort_unstable();
+    assert_eq!(melee, want, "every melee row has its analogue");
+}
+
 /// Where a weapon sets no `Arc`: no `CWeapon` default sets it (`core` WeaponData:3-31), so the
 /// engine's 0 applies (catalog-time audit §10.3).
 const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
