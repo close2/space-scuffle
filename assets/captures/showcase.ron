@@ -33,8 +33,9 @@
 // kill its workers (ticks 1,163 and 1,245) and fire on its hall until it falls at tick 2,218.
 // `clash` is longer so that it covers the whole fight; `march` follows the enemy's first survivor,
 // whom the fog hides until the viewer's base sees it; `assault` shows the viewer's base falling
-// at 2x; `closing` pauses before the result. Scene ticks of the checking render are in
-// docs/evidence/2026-11-11-contact-and-missiles.md §4b.
+// at 2x; `closing` pauses before the result. Render-checked on radv: `clash` runs from the first shot
+// (tick 305) to tick 677, past the fight's last death (650); `march` ends on combat at the viewer's
+// base (tick 968), above its minimum. Scene ticks are in docs/evidence/2026-11-11-contact-and-missiles.md §4c.
 (
     format_version: 1,
     resolution: (1280, 720),

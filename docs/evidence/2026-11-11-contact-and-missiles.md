@@ -416,3 +416,32 @@ the empty 256x256 map in a loaded first round). `showcase_canyon` is 9 % below t
 medians and 10 % by the means (117.6 against 105.8): at the plan's bound. The spell scenario is
 within noise (candidate 223 to 230). Not yet decided: a re-measurement at low load, and if it
 stays near the bound, D-5's exact early-out; `DESIGN.md` §5 is not yet updated.
+
+### 4c. Showcase render check
+
+The storyboard retold in `319dd52` for player 1's win (`assets/captures/showcase.ron`) rendered on the RX 580
+(`showcase render --driver radv`, one GPU lock per take; take 1,422 frames in 188.5 s). No scene length needed a
+change: `clash` starts on the first shot (tick 305) and ends on tick 677, after the lane fight's last death (650),
+and `march` ends on combat at the viewer's base after 73 frames, well above its 5-frame minimum. Only the header's
+pointer (to this section) changed.
+
+| Scene | Speed | Frames | First frame | Start tick |
+|---|---|---:|---:|---:|
+| title | paused | 125 | 0 | 0 |
+| terrain | paused | 150 | 125 | 0 |
+| units | 1x | 150 | 275 | 1 |
+| smog | 1x | 100 | 425 | 151 |
+| advance | 1x until combat (25 to 500) | 54 | 525 | 251 |
+| clash | 1x | 370 | 579 | 305 |
+| march | 4x until combat (5 to 200) | 73 | 949 | 678 |
+| assault | 2x | 200 | 1,022 | 968 |
+| closing | paused | 200 | 1,222 | 1,366 |
+
+`assault` covers ticks 968 to 1,366: the workers fall inside it (1,163 and 1,245), and `closing` pauses with the hall
+still standing (it falls at 2,218), so the video never shows the result. Stills (640 wide) under
+`~/scratch/contact/q/show1/stills/`: `f700.png` (clash, tick about 426: both armies firing at the west ramp, caption
+"Combat"), `f900.png` (tick 626: player 0's last bot against player 1's four survivors), `f990.png` (march at 4x: the
+fog hides the followed survivor, caption "Pathfinding"), `f1100.png` (assault on the viewer's hall, supply 2 of 15),
+`f1300.png` (closing card, supply 0 of 15, hall standing), and `f560.png`, `f1200.png`.
+The site assembled within its budgets (video 15.1 MB, teaser 4.24 MB); `showcase_storyboard_tests` (7) and
+`showcase_tests` (through the GPU harness) pass.
