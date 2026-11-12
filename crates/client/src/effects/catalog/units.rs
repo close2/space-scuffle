@@ -17,7 +17,7 @@
 
 use super::error::EffectCatalogError;
 use super::schema::EventKind;
-use super::{EffectCatalog, EffectId};
+use super::{ConcealmentDefaults, EffectCatalog, EffectId};
 use sim_core::catalog::{ArchetypeEffects, UnitArchetype, UnitCatalog};
 use sim_types::{EffectSource, StatusKind, UnitTypeId, WeaponKey};
 
@@ -112,10 +112,18 @@ pub struct UnitEffectTables {
     default_splash: Option<EffectId>,
     /// Default impact effect.
     default_impact: Option<EffectId>,
+    /// How concealed units look, from the vocabulary's defaults.
+    concealment: ConcealmentDefaults,
 }
 
 impl UnitEffectTables {
     /// Resolves every archetype's presentation block in `units` against `effects`.
+    ///
+    /// Every mode of every archetype gets an entry: a burrowed mode (`burrowed: true`) starts
+    /// from the vocabulary's `concealment` defaults (`burrow_enter`, `burrow_leave`,
+    /// `burrowed`), any other mode that anchors its unit (`is_immobile`) from its `mode`
+    /// defaults (`transition`, `anchored`), and each slot the unit's block names replaces its
+    /// default.
     ///
     /// # Errors
     /// [`EffectCatalogError::UnknownUnitEffect`], [`EffectCatalogError::UnknownUnitMode`] or
@@ -126,6 +134,7 @@ impl UnitEffectTables {
             units: Vec::new(),
             default_splash: defaults.splash,
             default_impact: defaults.impact,
+            concealment: defaults.concealment,
         };
         let check = Checker {
             effects,
@@ -136,6 +145,19 @@ impl UnitEffectTables {
         check.kind("death", defaults.death, DEATH_KINDS)?;
         for id in defaults.status.values() {
             check.kind("status", Some(*id), STATUS_KINDS)?;
+        }
+        let concealment = &defaults.concealment;
+        for (slot, id) in [
+            ("concealment burrow_enter", concealment.burrow_enter),
+            ("concealment burrow_leave", concealment.burrow_leave),
+            ("concealment burrowed", concealment.burrowed),
+            ("concealment cloaked_own", concealment.cloaked_own),
+            ("concealment cloaked_enemy", concealment.cloaked_enemy),
+            ("concealment detected", concealment.detected),
+            ("mode transition", defaults.anchor_transition),
+            ("mode anchored", defaults.anchored),
+        ] {
+            check.kind(slot, id, MODE_KINDS)?;
         }
         for archetype in units.archetypes() {
             let entry = resolve_unit(archetype, effects)?;
@@ -197,7 +219,13 @@ impl UnitEffectTables {
             .any(|entry| entry.modes.iter().any(|mode| mode.moving.is_some()))
     }
 
-    /// The mode effects of `unit` for mode index `mode`.
+    /// How concealed units look: the vocabulary's `concealment` defaults.
+    #[must_use]
+    pub const fn concealment(&self) -> &ConcealmentDefaults {
+        &self.concealment
+    }
+
+    /// The mode effects of `unit` for mode index `mode`, defaults filled in.
     #[must_use]
     pub fn mode(&self, unit: UnitTypeId, mode: u8) -> Option<ModeEffectIds> {
         self.units
@@ -319,15 +347,50 @@ fn resolve_unit(
             splash: check.name("weapon splash", weapon.splash.as_ref(), SPLASH_KINDS)?,
         });
     }
-    for mode in &block.modes {
+    let defaults = &effects.defaults;
+    for (index, spec) in archetype.modes.iter().enumerate() {
+        let Ok(mode) = u8::try_from(index) else {
+            break;
+        };
+        let (enter, leave, transition, stance) = if spec.burrowed {
+            let concealment = &defaults.concealment;
+            (
+                concealment.burrow_enter,
+                concealment.burrow_leave,
+                None,
+                concealment.burrowed,
+            )
+        } else if spec.is_immobile {
+            (None, None, defaults.anchor_transition, defaults.anchored)
+        } else {
+            (None, None, None, None)
+        };
         entry.modes.push(ModeEffectIds {
-            mode: mode_index(archetype, &mode.mode)?,
+            mode,
+            enter,
+            leave,
+            transition,
+            stance,
+            moving: None,
+        });
+    }
+    for mode in &block.modes {
+        let index = mode_index(archetype, &mode.mode)?;
+        let resolved = ModeEffectIds {
+            mode: index,
             enter: check.name("mode enter", mode.enter.as_ref(), MODE_KINDS)?,
             leave: check.name("mode leave", mode.leave.as_ref(), MODE_KINDS)?,
             transition: check.name("mode transition", mode.transition.as_ref(), MODE_KINDS)?,
             stance: check.name("mode stance", mode.stance.as_ref(), MODE_KINDS)?,
             moving: check.trail(mode.moving.as_ref())?,
-        });
+        };
+        if let Some(slot) = entry.modes.iter_mut().find(|slot| slot.mode == index) {
+            slot.enter = resolved.enter.or(slot.enter);
+            slot.leave = resolved.leave.or(slot.leave);
+            slot.transition = resolved.transition.or(slot.transition);
+            slot.stance = resolved.stance.or(slot.stance);
+            slot.moving = resolved.moving.or(slot.moving);
+        }
     }
     for kind in STATUS_ORDER {
         let own = check.name("status", block.status.get(&kind), STATUS_KINDS)?;

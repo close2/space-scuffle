@@ -148,6 +148,12 @@ impl Plugin for EffectRenderPlugin {
                 index: 0,
             })
             .id();
+        let darkening_cards = world
+            .spawn(EffectRunSlot {
+                kind: RunKind::Cards,
+                index: DARKENING_RUN,
+            })
+            .id();
         let distortion = world
             .spawn(EffectRunSlot {
                 kind: RunKind::Distortions,
@@ -157,6 +163,7 @@ impl Plugin for EffectRenderPlugin {
         world.insert_resource(EffectRunEntities {
             cards,
             decal,
+            darkening_cards,
             distortion,
         });
         let gpu = EffectGpu::new(world.resource::<RenderDevice>());
@@ -189,17 +196,24 @@ struct EffectRunSlot {
 struct EffectRunEntities {
     /// One per card run.
     cards: Vec<Entity>,
-    /// The decal item.
+    /// The decal items.
     decal: Entity,
+    /// The darkening cards' item.
+    darkening_cards: Entity,
     /// The distortion item.
     distortion: Entity,
 }
+
+/// [`EffectRunSlot::index`] of the item that draws the darkening cards.
+const DARKENING_RUN: u32 = u32::MAX;
 
 /// This frame's instance ranges per run.
 #[derive(Resource, Debug, Default)]
 struct EffectRuns {
     /// Card ranges, indexed by [`EffectRunSlot::index`].
     cards: Vec<Range<u32>>,
+    /// The darkening cards: the first cards of the sorted buffer.
+    darkening: Range<u32>,
     /// The decal range.
     decals: Range<u32>,
     /// Distances of the view's other transparent items, sorted (retained scratch).
@@ -231,6 +245,11 @@ struct EffectGpu {
     decal_count: u32,
     /// Distortion discs to draw this frame.
     distortion_count: u32,
+    /// Cards this frame that darken what lies under them ([`super::instances::FLAG_DARKEN`]):
+    /// the first this many of the card buffer.
+    darkening_cards: u32,
+    /// Whether any decal this frame darkens what lies under it.
+    darkening_decals: bool,
     /// Card centres in draw order (retained), for the runs.
     centers: Vec<Vec3>,
 }
@@ -260,6 +279,8 @@ impl EffectGpu {
             card_count: 0,
             decal_count: 0,
             distortion_count: 0,
+            darkening_cards: 0,
+            darkening_decals: false,
             centers: Vec::new(),
         }
     }
@@ -432,6 +453,8 @@ fn extract_effects(
     gpu.card_count = u32::try_from(frame.sorted.len()).unwrap_or(0);
     gpu.decal_count = u32::try_from(frame.decals.len()).unwrap_or(0);
     gpu.distortion_count = u32::try_from(frame.distortions.len()).unwrap_or(0);
+    gpu.darkening_cards = frame.darkening_cards.min(gpu.card_count);
+    gpu.darkening_decals = frame.darkening_decals > 0;
     if !runtime.is_changed() {
         return;
     }
@@ -540,6 +563,9 @@ struct EffectPipelineKey {
     samples: u32,
     /// Whether the view renders to an HDR target.
     hdr: bool,
+    /// The darkening pass: draws only the elements that darken what lies under them and
+    /// multiplies the target by their output (`DARKEN_PASS`); the other pass draws the rest.
+    darken: bool,
 }
 
 impl SpecializedRenderPipeline for EffectPipeline {
@@ -556,6 +582,9 @@ impl SpecializedRenderPipeline for EffectPipeline {
         if key.samples > 1 {
             defs.push("MULTISAMPLED".into());
         }
+        if key.darken {
+            defs.push("DARKEN_PASS".into());
+        }
         let view_layout = match (key.kind, key.samples > 1) {
             (RunKind::Distortions, _) => self.distortion_view_layout.clone(),
             (_, true) => self.view_layout_msaa.clone(),
@@ -565,6 +594,27 @@ impl SpecializedRenderPipeline for EffectPipeline {
             src_factor: BlendFactor::One,
             dst_factor: BlendFactor::OneMinusSrcAlpha,
             operation: BlendOperation::Add,
+        };
+        // The darkening pass multiplies the target's colour by the shader's output and leaves
+        // its alpha alone.
+        let blend = if key.darken {
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Dst,
+                    dst_factor: BlendFactor::Zero,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::Zero,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+            }
+        } else {
+            BlendState {
+                color: premultiplied,
+                alpha: premultiplied,
+            }
         };
         RenderPipelineDescriptor {
             label: Some(
@@ -593,10 +643,7 @@ impl SpecializedRenderPipeline for EffectPipeline {
                     } else {
                         TextureFormat::bevy_default()
                     },
-                    blend: Some(BlendState {
-                        color: premultiplied,
-                        alpha: premultiplied,
-                    }),
+                    blend: Some(blend),
                     write_mask: ColorWrites::ALL,
                 })],
             }),
@@ -654,37 +701,69 @@ fn queue_effects(
     let Some(phase) = phases.get_mut(&view_entity) else {
         return;
     };
-    let key = |kind| EffectPipelineKey {
+    let key = |kind, darken| EffectPipelineKey {
         kind,
         samples: msaa.samples(),
         hdr: view.hdr,
+        darken,
     };
     let placeholder = MainEntity::from(Entity::PLACEHOLDER);
-    if gpu.decal_count > 0 && gpu.decal_group.is_some() {
-        runs.decals = 0..gpu.decal_count;
+    let mut ground = |pipeline, entity| {
         phase.add(Transparent3d {
             distance: f32::MIN,
-            pipeline: pipelines.specialize(&cache, &pipeline, key(RunKind::Decals)),
-            entity: (entities.decal, placeholder),
+            pipeline,
+            entity: (entity, placeholder),
             draw_function: draw,
             batch_range: 0..1,
             extra_index: PhaseItemExtraIndex::NONE,
         });
+    };
+    // Every darkening element first, the darkening decals and then the darkening cards (all
+    // ground-lying), so they multiply only the opaque scene; then the other decals over them.
+    // The phase's sort is stable, so items of one distance keep the order they are added in
+    // (WP8 review 3, E3-1: a darkening card queued at its run's distance multiplied whatever
+    // transparent item sorted before it).
+    let decals = gpu.decal_count > 0 && gpu.decal_group.is_some();
+    runs.decals = 0..gpu.decal_count;
+    if decals && gpu.darkening_decals {
+        ground(
+            pipelines.specialize(&cache, &pipeline, key(RunKind::Decals, true)),
+            entities.decal,
+        );
+    }
+    runs.darkening = 0..gpu.darkening_cards;
+    if gpu.darkening_cards > 0 && gpu.card_group.is_some() {
+        ground(
+            pipelines.specialize(&cache, &pipeline, key(RunKind::Cards, true)),
+            entities.darkening_cards,
+        );
+    }
+    if decals {
+        ground(
+            pipelines.specialize(&cache, &pipeline, key(RunKind::Decals, false)),
+            entities.decal,
+        );
     }
     if gpu.card_count == 0 || gpu.card_group.is_none() {
         return;
     }
-    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(RunKind::Cards));
+    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(RunKind::Cards, false));
     let runs = &mut *runs;
     runs.others.clear();
     runs.others
         .extend(phase.items.iter().map(|item| item.distance));
     runs.others.sort_unstable_by(f32::total_cmp);
     let rangefinder = view.rangefinder3d();
+    // The darkening prefix is drawn by its own item; the ordinary runs are cut over the cards
+    // after it, which are back to front (WP8 review 4, E4-1: cut with the prefix's distances,
+    // every card behind a switching tank fell into one run queued at the tank's distance).
+    let prefix = gpu.darkening_cards;
     cut_runs(
         gpu.centers
             .iter()
+            .skip(prefix as usize)
             .map(|center| rangefinder.distance_translation(center)),
+        prefix,
         &runs.others,
         &mut runs.cards,
     );
@@ -744,6 +823,7 @@ fn queue_distortions(
         kind: RunKind::Distortions,
         samples: msaa.samples(),
         hdr: view.hdr,
+        darken: false,
     };
     phase.add(Transmissive3d {
         distance: f32::MAX,
@@ -757,12 +837,21 @@ fn queue_distortions(
 
 /// Cuts cards at `distances` (ascending: back to front) into runs that no other item's
 /// distance in `others` (sorted ascending) falls inside; at most [`MAX_CARD_RUNS`] runs, the
-/// last taking the rest. Writes the instance ranges into `runs`.
-fn cut_runs(distances: impl Iterator<Item = f32>, others: &[f32], runs: &mut Vec<Range<u32>>) {
+/// last taking the rest. The first distance is card `start`'s, so the ranges written into
+/// `runs` index the card buffer from there: the queue cuts only the cards after the darkening
+/// prefix, whose own distances are not in back-to-front order with them (WP8 review 4, E4-1).
+fn cut_runs(
+    distances: impl Iterator<Item = f32>,
+    start: u32,
+    others: &[f32],
+    runs: &mut Vec<Range<u32>>,
+) {
     runs.clear();
     let mut below = 0_usize;
-    for (index, distance) in distances.enumerate() {
-        let index = u32::try_from(index).unwrap_or(u32::MAX);
+    for (offset, distance) in distances.enumerate() {
+        let index = u32::try_from(offset)
+            .unwrap_or(u32::MAX)
+            .saturating_add(start);
         let mut crossed = false;
         while below < others.len() && others[below] < distance {
             below += 1;
@@ -916,6 +1005,9 @@ impl<P: PhaseItem> RenderCommand<P> for DrawEffectRun {
             RunKind::Distortions => {
                 pass.draw(0..CARD_VERTICES, 0..gpu.into_inner().distortion_count);
             }
+            RunKind::Cards if slot.index == DARKENING_RUN => {
+                pass.draw(0..CARD_VERTICES, runs.darkening.clone());
+            }
             RunKind::Cards => {
                 let Some(range) = runs.cards.get(slot.index as usize) else {
                     return RenderCommandResult::Skip;
@@ -933,8 +1025,44 @@ mod tests {
 
     fn cut(distances: &[f32], others: &[f32]) -> Vec<Range<u32>> {
         let mut runs = Vec::new();
-        cut_runs(distances.iter().copied(), others, &mut runs);
+        cut_runs(distances.iter().copied(), 0, others, &mut runs);
         runs
+    }
+
+    /// The ordinary runs of a card buffer whose first `prefix` cards darken, cut as the queue
+    /// cuts them.
+    fn cut_after(prefix: u32, distances: &[f32], others: &[f32]) -> Vec<Range<u32>> {
+        let mut runs = Vec::new();
+        cut_runs(
+            distances.iter().copied().skip(prefix as usize),
+            prefix,
+            others,
+            &mut runs,
+        );
+        runs
+    }
+
+    /// WP8 review 4, E4-1: a darkening prefix nearer than every other card neither joins an
+    /// ordinary run nor moves its cuts.
+    #[test]
+    fn the_darkening_prefix_stays_out_of_the_ordinary_runs() {
+        let others = [-9.5, -8.5];
+        let ordinary = [-10.0, -9.0, -8.0];
+        let with_prefix = [-1.0, -10.0, -9.0, -8.0];
+        let runs = cut_after(1, &with_prefix, &others);
+        assert!(
+            runs.iter().all(|run| !run.contains(&0)),
+            "no ordinary run draws the darkening card: {runs:?}"
+        );
+        let shifted: Vec<Range<u32>> = cut(&ordinary, &others)
+            .into_iter()
+            .map(|run| run.start + 1..run.end + 1)
+            .collect();
+        assert_eq!(runs, shifted, "cut at -9.5 and -8.5 as without the prefix");
+        assert_eq!(runs, vec![1..2, 2..3, 3..4]);
+        // The defect it replaces: cut with the prefix, the near darkening card moved the cursor
+        // past every other item, and the cards behind it fell into its run.
+        assert_eq!(cut(&with_prefix, &others), vec![0..4]);
     }
 
     #[test]

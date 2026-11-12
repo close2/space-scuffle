@@ -1,0 +1,49 @@
+WP8 round 5: printed measurements of the effect GPU tests (debug build, Xvfb, 1280x720).
+
+== radv
+driver radv: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 4014 changed, largest 194
+test a_torn_front_must_reach_the_reach_in_every_sector ... ok
+test every_splash_subject_has_its_own_test ... ok
+driver radv: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 2528 changed
+driver radv: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 3257 changed
+driver radv: battle tableau, undetected cloaked enemy: its shimmer bends 1222 pixels, 0 of them to a colour not near them without it, mean colour moves 0.40 levels
+driver radv: battle tableau, undetected burrowed enemy: 0 pixels changed where it stands
+driver radv: battle tableau, anchored unit: its looks darken 1946 and lighten 0 of 8163 pixels within 2.2 radii (by more than 6 levels)
+driver radv: battle tableau, anchored unit: its looks' outer edge fades from 0.95 to 0.75 of the ground's light over 4.5 pixels (0.19 radii), median of 15 rays
+driver radv: the burrow's channel ended at 1.36 s with the body 77 % sunk
+driver radv: clip unit standing changes 2529 pixels of its disc, burrowed 2473 (97.8 %); round it (its shadow) 1596 standing, 0 burrowed
+driver radv: a unit on the back of the siege furrow: 0 of 214 body pixels keep less than 0.85 of their light (lowest 0.891); the furrow darkens 94 pixels round its foot
+driver radv: a neutral unit beside the burrowed one: 0 pixels of its shadow ring changed against the empty shot
+driver radv: unit without a clip standing changes 273 pixels of its disc, burrowed 68 (24.9 %)
+driver radv: the burrowed looks change 2668 pixels, 0 beyond the ring; farthest at 1.62 radii; they change 57.0 % of the ground between 1.05 and 1.6 radii beside the body
+driver radv: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1178 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.19 levels
+driver radv: siege switch at 0.472, its arc draws 0.450 of the turn
+
+== lavapipe
+driver lavapipe: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 4015 changed, largest 192
+test a_torn_front_must_reach_the_reach_in_every_sector ... ok
+test every_splash_subject_has_its_own_test ... ok
+driver lavapipe: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 2315 changed
+driver lavapipe: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 3259 changed
+driver lavapipe: battle tableau, undetected cloaked enemy: its shimmer bends 1070 pixels, 0 of them to a colour not near them without it, mean colour moves 0.38 levels
+driver lavapipe: battle tableau, undetected burrowed enemy: 0 pixels changed where it stands
+driver lavapipe: battle tableau, anchored unit: its looks darken 1968 and lighten 0 of 8163 pixels within 2.2 radii (by more than 6 levels)
+driver lavapipe: battle tableau, anchored unit: its looks' outer edge fades from 0.95 to 0.75 of the ground's light over 4.5 pixels (0.19 radii), median of 14 rays
+driver lavapipe: the burrow's channel ended at 1.36 s with the body 77 % sunk
+driver lavapipe: clip unit standing changes 2526 pixels of its disc, burrowed 2473 (97.9 %); round it (its shadow) 1596 standing, 0 burrowed
+driver lavapipe: a unit on the back of the siege furrow: 0 of 214 body pixels keep less than 0.85 of their light (lowest 0.892); the furrow darkens 96 pixels round its foot
+driver lavapipe: a neutral unit beside the burrowed one: 0 pixels of its shadow ring changed against the empty shot
+driver lavapipe: unit without a clip standing changes 277 pixels of its disc, burrowed 68 (24.5 %)
+driver lavapipe: the burrowed looks change 2665 pixels, 0 beyond the ring; farthest at 1.62 radii; they change 57.2 % of the ground between 1.05 and 1.6 radii beside the body
+driver lavapipe: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1081 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.07 levels
+driver lavapipe: siege switch at 0.472, its arc draws 0.450 of the turn
+
+== negative control (A4-3), radv, one-off run, not kept in the code
+The darkening card item queued at its card's own distance (the order before E3-1), pose test only:
+driver radv: clip unit standing changes 2529 pixels of its disc, burrowed 2473 (97.8 %); round it (its shadow) 1596 standing, 0 burrowed
+driver radv: a unit on the back of the siege furrow: 18 of 214 body pixels keep less than 0.85 of their light (lowest 0.332); the furrow darkens 96 pixels round its foot
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 73.72s
+exit 101
+thread 'concealment_and_stance_poses_read_as_the_plan_asks' (3819008) panicked at crates/client/tests/stance_gpu_tests.rs:418:5:
+the furrow darkens the body of the unit standing on it: 18 of 214
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

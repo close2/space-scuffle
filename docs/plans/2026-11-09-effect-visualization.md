@@ -1475,6 +1475,10 @@ review).**
 | `spine_line` | Torn clods; clods a step lighter than the furrows; one detached scar piece. | slice round 5, scale-out 1 |
 | Decal ledger | Optional, camera-independent: leave out of the reservations the layers that can never reach the 6-pixel floor, computed once at load. | scale-out 4 |
 | Crowd evidence | An annotated crop of one soft retirement would strengthen the degradation take. | scale-out 3 |
+| `mode_seal_sweep` | The softened band lost its trench-and-berm structure and reads as a soft stroke, a thin ellipse when closed: lower `WAVER_SOFT` to about 0.35 or raise the band's core intensity so a darker core of about two pixels survives, with the `WAVER_ACROSS` shading across it (P4-1). | WP8 4 |
+| `siege_anchor` | The 3 o'clock patch falls in the hull's shadow and the fourth hides under the bubble: raise `size_jitter` (to about 0.35) and `spread`, stretch the patches tangentially (pads, not dots; never radially) (P4-2). | WP8 4 |
+| `siege_anchor` | The outer falloff is 0.19 radii against the test's 0.15 floor: a thin margin if the soil is later thickened (A4-2). | WP8 4 |
+| `burrow_mound` | A small premultiplied lit crest on a few heaps over the darkening, so the stains read as raised heaps. | WP8 3 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
 
@@ -1531,3 +1535,248 @@ bound texture and changed pixels); `round2_visual_tests` audits the mode atlases
 - The tank's sieged Attack is played over the sieged weapon's period like any Attack; the morph clips are 4 s of
   source compressed into channels of 2.88 s (siege), 2.52 s (unsiege), 1.32 s (burrow) and 0.44 s (unburrow).
 - B-111 is fixed and leaves the register.
+
+## Amendment 11: WP8 concealment and stance, round 1 (2026-11-12, short note, charter §6)
+
+**What changes.** WP8 of §9 in the client, its shaders and the catalog's presentation data. No simulation state,
+golden replay or checksum changes (D-1 holds: the client reads `concealment` and `stance`, which WP2 already
+publishes).
+
+- **Held effects.** A `Mode` effect can be *held* on a unit (`EffectRuntime::hold`, `update_held`, `release`): its
+  layers marked `held: true` come in over their `duration` and stay until the look is released, then erode out
+  over their `exit` (default 0.35 s); its other layers play once. Its anchor and bound values (`UnitRadius`,
+  `ChannelProgress`) follow the unit every frame. A held effect counts against no class cap, is never retired by
+  the budget and keeps its decal reservation (it shows a unit's state, at most one of each kind per unit). A unit
+  first seen in a state is shown settled in it (`hold(.., settled)`: its one-shot layers are not replayed).
+- **`Shell` block** (§5.1): `sink` (share of the diameter), `tint`, `rim`, `veil`, `soil`, and `progress` (life =
+  the switch's progress instead of age). It is evaluated by `client::effects::stance` and written into a new,
+  separate bubble uniform at binding 4 (`ShellUniformGpu`), so `BubbleUniformGpu` keeps its 176 bytes and the
+  smog goldens, which hash it, stay unchanged. A vertex stage in `bubble_dome.wgsl` (Bevy's mesh vertex plus the
+  sink) moves the bubble into the ground, whose depth hides what is below it. A sunk or veiled bubble casts no
+  shadow. Only `Mode` effects may hold layers or have a `Shell` (load errors).
+- **Ring arc** (`arc: (bind: ChannelProgress)`, `FLAG_ARC`): a ring drawn over that share of its turn with a lit
+  head; **distortion lens** (`lens`): a glass body's radial bend, strongest just inside the rim.
+- **Looks** (`effects.ron`): `burrow_dig` (span 1.8 s), `burrow_mound`, `burrow_emerge`, `cloak_own`,
+  `cloak_shimmer`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`. `defaults.concealment` names the first six
+  and `defaults.mode.transition` the seal; `UnitEffectTables` fills every mode of every archetype from its flags
+  (`burrowed`, `is_immobile`) before the unit's block replaces slots. `railgun_crawler` (Siege-Tank analogue)
+  names `mode_seal_sweep` and `siege_anchor`; `burrow_scorpion` uses the defaults (its block keeps no mode entry,
+  so the lab fixture's `burrow_trail` entry does not repeat one).
+- **Progress and settle (D-1, D-6).** `channel_progress = clamp((nominal - remaining) / nominal, 0, 1)` holds at 0
+  during the random extra. A morph whose effect states a `span` longer than its channel plays at its own pace:
+  `presented = channel_progress × channel / span` during the channel, then the client-local settle continues at
+  `1 / span` per second until complete (`StanceTrack`, a component of the bubble; nothing in the simulation). The
+  burrow's stats change at 33 ticks and the dig ends at 45 (Q0069 option 2). A cancelled switch releases its morph
+  and shows the stance settled again.
+- **Fog (D-5, Q0076 R4).** An undetected cloaked enemy's bubble is no longer drawn (`Presence::draws_bubble`); the
+  viewer gets only `cloak_shimmer`, a colourless lensed distortion held at its body. Nothing is held on a
+  `Hidden` unit. Stances, morphs and marks are held only on a unit shown as it is.
+
+**Decisions (Q0002, reversible).**
+
+- A burrowed unit has no cover look: its stance (sunk in its mound) reads to its owner and to an enemy that detects
+  it alike. `detected_mark` marks detected *cloaked* enemies only.
+- An enemy seen starting to burrow disappears when its concealment flips at the channel's end (33 ticks), about
+  three quarters sunk; the dig's one-shot ground layers spawned while it was visible play out. Holding the
+  remaining 12 ticks of the dig for an enemy would draw a unit the fog hides.
+- The bubble shader's old sine-stripe cloak stays only for the Visual Lab preview's checkbox; in a battle the
+  effects drive every concealment look (`ShellUniformGpu::driven`).
+- No pulse in `detected_mark` (the `Shell` block has no period); a static cold outline light and a slight lens.
+- **Fix (a leak found in the WP8 battle capture):** the `Distortion` block read Bevy's scene copy at
+  viewport-relative coordinates, but the copy covers the whole render target and the battle camera's viewport
+  excludes the HUD panels; in a battle every distortion copied the scene from elsewhere on the screen, which put a
+  shadow-coloured spot at an undetected cloaked enemy's feet. `distortion.wgsl` now reads the copy at the
+  fragment's own target position with offsets in pixels (identical in the effect lab, whose viewport is the
+  window). `stance_gpu_tests.rs` checks that setup: against the same battle frame without effect layers, the
+  shimmer may not take colours absent near it (before: 133 of 2 074 bent pixels, mean shift 4.10 levels; after:
+  0, 0.18).
+- Own concealed units stay readable (Q0076; input from the WP13 review, whose burrowed-mode clip was nearly
+  invisible under the old whole-bubble cloak fade): the burrowed dome shows the unit's picture unveiled, with
+  only a thin soil band at the ground line (`soil: 0.12`, no media tint, no veil) and an earth-coloured outline;
+  `cloak_own` veils the picture to about half (`veil: 0.45`). The old fade no longer applies in a battle.
+- R5 (burrowed trail) and R6 (a burrowed attacker's line drawn where seen) are unchanged from Amendment 2.
+- No new texture and no spend: the looks use `smoke_puff`, `debris_atlas`, `scorch`, `earth_scar`,
+  `ground_crack` and `noise_tile`.
+
+**Tests.** `effects::stance` unit tests (hold during the random extra, clamp, leaving direction, a morph longer or
+shorter than its channel, the shell sum); `crates/client/tests/stance_gpu_tests.rs` on the production skirmish
+(radv and lavapipe): the burrowed bubble's above-ground area at most 35 % of the standing one and its looks inside
+1.8 radii; the undetected cloaked enemy bends what is behind it with no tint (the patch's mean colour moves at most
+0.75 levels; at most 0.5 % of bent pixels take a colour not on the ground within 6 px, in the pose and in the battle tableau) and without its looks changes
+at most 2 pixels; the siege switch's arc within ±5 % of its progress; and through real mode commands, the dig goes
+on after the channel ends until fully sunk, never rises, and the emerge never sinks. `battle_fog_tests.rs` now
+expects the shimmer look and no drawn bubble for an undetected cloaked enemy, and the cover look of each case.
+
+**Gate.** The packet's section "WP8 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).
+
+## Amendment 12: WP8 round 2, decided by the orchestrator after WP8 review 1 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_1.md`](../evidence/effects/review/independent_review_wp8_1.md)).** Review 1 accepted
+`cloak_shimmer`, `cloak_own`, `detected_mark` (with note C-1), the fog rule and the absence of leaks, the shimmer
+tolerances, the `distortion.wgsl` fix and the unchanged splash effects. It rejected `burrow_mound`, `burrow_dig`,
+`burrow_emerge`, `mode_seal_sweep` and `siege_anchor`. The orchestrator decided:
+
+1. **B-1, own burrowed units with a clip.** A unit whose burrowed mode has its own clip (WP13 mode media) sinks only
+   a little (`Shell.clip_sink`, 0.12 of the diameter), so at least 85 % of the clip's disc shows to its owner, and
+   its glass highlight is off (`Shell.matte`). The ground carries "dug in": the shadow fades out, a dark hollow,
+   heaped earth and the soil band. Only a unit without mode media sinks deep (`sink`, 0.92; at most 35 % of the
+   standing bubble's area shows). The presentation asks the `FlipbookRegistry` whether the unit has a clip for the
+   mode it is entering or in.
+2. **B-2 to B-6, the earth.**
+   - The shadow fades with the sink and the veil (`Shell.shadow`, the share of the caster's shrink): the bubble's
+     prepass vertex stage (`assets/shaders/bubble_shadow.wgsl`) shrinks the shadow caster toward its centre and
+     sinks it with the body. `NotShadowCaster` is no longer toggled. Bevy 0.15 bins shadow draws by pipeline and
+     mesh only, so bubbles, which share one sphere, cast with one representative's material; every bubble is
+     therefore spawned with `NoAutomaticBatching`, so each casts with its own shell (a blended bubble's main draw
+     is a sorted transparent item and is unaffected).
+   - Soil is feathered (a noise-edged disc outline, no box edge), warmer, darker and more opaque (ramps `mound`,
+     `hollow`, `plough`, `crushed`, `clod`, `dig_dust`); clods and dust are larger and darker, so they read at the
+     default camera.
+   - The furrow is ground, not a drawn ring: `Ring.waver` varies its width and radius round the turn
+     (`sprite.wgsl`, `waver_band`), its breakup leaves a broken circle, its berm is opaque earth lighter on top, its
+     head is lit, and it is drawn under the unit's shadow (gouges allowed).
+   - The stabilisers' pressed soil lies out from under the bubble (1.35 to 1.5 radii).
+3. **Evidence.** F-1: the battle tableau gains an undetected burrowed enemy; where it stands, the tableau equals the
+   scene captured just before it was staged (at most 2 changed pixels). F-2: dig, emerge, siege and unsiege are
+   pictured at a fixed 40 ms step of presentation time: every frame advances it by one tick
+   (`TimeUpdateStrategy::ManualDuration`) and each frame of an act is captured, labelled with its time, on both
+   drivers; the sequence runs in two children (burrow; siege and the tableau), each inside the harness's run
+   limit. C-1: the detected tableau is also captured without
+   effect layers.
+4. **Stronger regression check.** `shimmer_check` judges whole colours: a bent pixel passes only if its RGB colour
+   lies within 6 levels (Euclidean) of the colours one filtered read of a 2×2 block of the reference within 6 px
+   can give. A colour assembled from channels of different neighbours fails.
+5. **Register.** DESIGN.md B-119 records the distortion read fixed in Amendment 11 (heat haze of `flame_line` and
+   `lance_sweep` sampled the wrong screen region in every battle).
+
+**WP8 test, as changed.** `stance_gpu_tests.rs`: the shipped burrowing unit (with its clip) burrowed shows at
+least 85 % of its standing disc's changed pixels, and the ring round it where its shadow fell changes at most 15 %
+as much as standing; a unit without mode media (an unused shipped archetype given a copy of the burrowed mode in
+the test world's catalog only) shows at most 35 % and at least 2 %; the mound's looks stay inside 1.8 radii; the
+dig and emerge checks read the depth the unit reaches, whichever sink applies. The rest of Amendment 11's test is
+unchanged.
+
+Presentation data, three shaders, the client's stance presentation and its tests. No simulation state, golden replay
+or checksum (D-1 holds). Packet: section "WP8 round 2". This is round 2 of the owner's five (Q0080).
+
+## Amendment 13: WP8 round 3, decided by the orchestrator after WP8 review 2 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_2.md`](../evidence/effects/review/independent_review_wp8_2.md)).** Review 2 accepted the fog
+rule (F-1 closed), the whole-colour shimmer check, `cloak_shimmer`, `detected_mark` (C-1 closed), `burrow_dig`,
+`burrow_emerge` and the unchanged splash effects. It rejected `cloak_own` (a regression: a detached dark dot from its
+shadow lane), `burrow_mound`, `mode_seal_sweep` and `siege_anchor`, and accepted the shadow batching diagnosis but
+not its centre of shrinking or its unconditional cost. The orchestrator decided:
+
+1. **S-1, the shadow's shape.** The bubble's shadow caster shrinks about the sphere's lowest point, where it stands on
+   the ground (`bubble_shadow.wgsl`), so a fading shadow contracts to the unit's foot and stays attached. `cloak_own`
+   keeps an attached, smaller shadow at its foot (`shadow: 0.6`).
+2. **S-2, the shadow's cost (the conditional form).** `NoAutomaticBatching` is no longer on every bubble. It is
+   inserted on a bubble whose shell moves its shadow caster (shadow lane or sink above 0;
+   `effects::stance::casts_own_shadow`) on the frame that starts, and removed on the frame the shell is neutral
+   again, so batched bins hold only neutral bubbles. Bevy 0.15 rebuilds the render mesh instances every frame with
+   `Has<NoAutomaticBatching>`, so the change takes effect on that frame. Test: in the pose shot with the burrowed
+   unit (unbatched, its shadow gone), a neutral unit of the viewer's among the batched others casts the same shadow
+   as in the empty shot (pixels of other bodies, whose pictures animate, left out). One 400-unit `frame_budget`
+   measurement on the RX 580 (two runs of this build interleaved with two of `main`'s, the protocol of
+   [`2026-11-12-frame-budget-two-armies.md`](../evidence/2026-11-12-frame-budget-two-armies.md) at reduced scale) is
+   recorded in [`2026-11-12-frame-budget-wp8-shadows.md`](../evidence/2026-11-12-frame-budget-wp8-shadows.md).
+3. **B2-1, the burrowed ground.** The heaped earth lies outside a burrowed clip unit's near-full body: twelve heaps
+   on a circle of 1.2 radii (a new `Circle` placement: evenly round a circle from a start angle drawn per effect,
+   each turned by up to a third of the spacing and moved in or out by up to `spread`; a `Disc` scattered most of
+   them under the body), and the hollow is a dark lip out to 1.4 radii. The same holds for `burrow_dig`'s heaps
+   and `burrow_emerge`'s lingering earth. Test: the burrowed looks change at least half of the ground between 1.05
+   and 1.6 radii where it shows beside the body.
+4. **B2-2 and B2-3, the furrow and the anchor: everything darkens the ground.** A new darkening mode (`darken: true`
+   on a `Decal` or a ground `Ring`) draws an element in a second pass whose blend multiplies the target by the
+   element's output, `mix(1, colour, opacity × coverage)` (`common.wgsl`, `darkening_factor`), so it tints the
+   floor and never lightens it, a shadow included. The renderer adds that pass only on frames that hold a darkening
+   element, drawing the same instance buffers with the elements of the other pass collapsed in the vertex stage, so
+   the shipped effects draw exactly as before. The furrow, the hollow, the heaps, the pressed soil and the cracks
+   darken; their ramps are the share of the ground's light they leave, and a soil intensity above 1 thickens their
+   soft textures. The sweep's head is a soft end 18 degrees wide (its fade showing over about 12), with the freshly
+   turned earth lit behind it. The straight edge across the tank's shadow was the shadow's own flank, revealed
+   where round 2's lighter soil lightened the shadow and not the floor beside it; multiplied soil leaves no such
+   step. The pressed soil is a darker, warm compaction, and the anchor's dust is shorter. Test: within 2.2 radii of
+   the anchored unit, its looks lighten at most 0.5 % of the pixels against the frame without them. A catalog test
+   refuses a darkening standing ring or liquid decal.
+5. **Evidence.** F2-1: the unit without mode media is pictured burrowed with its looks. F2-2: every measurement line
+   is in the measurements file. F2-3: the packet notes that the "bare" view keeps the Shell. The battle tableau is
+   taken 5 s after it is staged, when every look stands settled.
+6. **The `shimmer_check` comment** states what it accepts: a colour within 6 levels of the per-channel box of one
+   2×2 block, so a colour assembled from channels of pixels in different blocks fails, and one assembled within a
+   block passes.
+
+Presentation data, the effect and bubble shaders, the effect renderer's darkening pass, a placement, the client's
+stance presentation and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
+"WP8 round 3". This is round 3 of the owner's five (Q0080).
+
+## Amendment 14: WP8 round 4, decided by the orchestrator after WP8 review 3 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_3.md`](../evidence/effects/review/independent_review_wp8_3.md)).** Review 3 accepted every
+look but the settled `siege_anchor` (A3-1), closed S-1, accepted S-2 and the darkening pass for decals and the
+shipped effects, and asked for the darkening cards' order (E3-1). The orchestrator decided:
+
+1. **A3-1, the settled anchor.** No held ring, no hard outline and no cracks (invisible at the default zoom). The
+   anchor is soil pressed down under and round the hull, a soft disc fading out from about 0.8 to 1.6 radii, plus
+   four darker compaction patches round it where the stabilisers press (`Circle` at 1.4 radii), which break the
+   round boundary; everything darkens only. A decal's disc outline gains `soft` (`OutlineDef::soft`, in [0, 0.8]):
+   the mark fades out over that share of its half length inside the edge, as the square of the distance in from
+   the edge, applied after the coverage is clamped, so a thickening intensity does not sharpen it (outlines without
+   it are unchanged). The pressed soil has no edge noise: a wavering edge under a soft fade read as rays in a trial
+   of this round. The switch's furrow (`mode_seal_sweep`, the element round 3's anchor ring shared) gets soft edges:
+   a wavering band fades over half its width at each edge, its mask applied after the intensity (shipped effects
+   have no wavering band and are unchanged); it erodes out over 0.6 s as the anchor comes in. Test: the anchored
+   look's outer edge fades from 0.95 to 0.75 of the ground's light over at least 0.15 of the unit's radius (median
+   over near-horizontal rays from its centre, printed), and it lightens nothing.
+2. **E3-1, the darkening cards' order.** Darkening cards sort as the farthest of all, so they are the first
+   `EffectFrame::darkening_cards` cards of the sorted buffer, and the renderer draws that prefix in one darkening item
+   at `f32::MIN`, after the darkening decals and before every other transparent item, so it multiplies only the
+   opaque scene. Tests: the darkening cards lead the sorted cards (runtime test), and in the pose shot of the siege
+   switch half way a unit of the viewer's on the back half of the furrow keeps at least 0.85 of its light on at
+   least 95 % of its body (the bubble's translucency lets about 0.92 through) while the furrow darkens the ground
+   round its foot.
+3. **E3-2.** A headless test steps a unit through neutral, cloaked, neutral, burrowing, burrowed and emerging, and on
+   every frame asserts that its bubble carries `NoAutomaticBatching` exactly while `casts_own_shadow` holds for its
+   shell, the marker being inserted and removed once for the cloak and once for the burrow.
+4. **E3-3: the contained form.** Item 2's single darkening item draws only the darkening cards (the sorted prefix),
+   so the per-run second items are gone: the darkening pass now costs one item and the prefix's vertices per frame,
+   and the other card runs draw as before. No new buffer or bind group was needed, so no `frame_budget` run was
+   taken for it.
+5. **Not done (optional):** a lit crest on the burrow heaps, left out so `burrow_mound`'s acceptance stands.
+
+Presentation data, the card and decal shaders, a field of the decal outline, the effect runtime's sort and the
+renderer's queue, and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
+"WP8 round 4". This is round 4 of the owner's five (Q0080).
+
+## Amendment 15: WP8 round 5, decided by the orchestrator after WP8 review 4 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_4.md`](../evidence/effects/review/independent_review_wp8_4.md)).** Review 4 accepted every
+look and rejected the round narrowly for one engineering defect (E4-1). This last round changes no look. The
+orchestrator decided:
+
+1. **E4-1, the ordinary card runs leave the darkening prefix out.** `queue_effects` cuts the ordinary runs over the
+   cards after the prefix only (`cut_runs` takes the first card's index and offsets its ranges by it), so the first
+   run is queued at the first ordinary card's distance. Cut with the prefix's real distances, a darkening card nearer
+   than the other cards had moved the cutting cursor past every other transparent item, and every card behind a
+   switching tank fell into one run queued at the tank's distance. Test: a prefix nearer than every other card
+   neither joins an ordinary run nor moves its cuts (they equal the cuts without it, offset), and cut with the prefix
+   the same cards fall into one run.
+2. **A4-1, finite sort depths.** An ordinary card's sort depth is finite and below the darkening cards' (a non-finite
+   depth sorts as 0), so no card, one with a non-finite centre included, can sort before a darkening card and push
+   it out of the prefix. Unit test.
+3. **A4-3, a negative control for the back-of-furrow check.** The unit now stands just inside the furrow, 1.3 world
+   units behind the hull (clear of it), so its body rises over the furrow's band on screen; on the furrow line, as in
+   round 4, its body hardly overlapped the band and the check passed with either queue order. A one-off radv run with
+   the darkening card item queued at its card's own distance (the order before E3-1) fails the check: 18 of 214 body
+   pixels keep less than 0.85 of their light (lowest 0.332). With the order of record it passes. The run is noted in
+   the packet; the temporary queue is not kept.
+4. **Not taken:** P4-1, P4-2, A4-2 and the burrow crest, recorded in the open polish list above.
+
+The effect renderer's queue, the effect runtime's sort depths and their tests. No look, simulation state, golden
+replay or checksum changes (D-1 holds). Packet: section "WP8 round 5". This is round 5, the last of the owner's five
+(Q0080).

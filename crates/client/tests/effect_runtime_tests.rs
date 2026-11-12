@@ -26,7 +26,7 @@ use client::battle_pipeline::commands::SessionGeneration;
 use client::battle_pipeline::fog::{BattleFog, Presence};
 use client::effects::catalog::error::EffectCatalogError;
 use client::effects::catalog::{EffectCatalog, UnitEffectTables};
-use client::effects::instances::{ORIENT_GROUND, ORIENT_VERTICAL};
+use client::effects::instances::{FLAG_DARKEN, ORIENT_GROUND, ORIENT_VERTICAL};
 use client::effects::runtime::{CameraView, EffectRuntime};
 use client::effects::systems::trail_request;
 use client::effects::systems::{spawn_request, LineAssembly};
@@ -72,6 +72,10 @@ const EFFECTS: &str = r#"
          duration: 0.3, priority: Critical),
         (block: Decal(texture: "solid", ramp: "blue"), size: (scale: 0.5),
          placement: Disc(count: 2, radius: (scale: 0.5)), duration: 3.0, priority: Critical),
+    ]),
+    "furrow": (class: Minor, event: Splash, layers: [
+        (block: Ring(texture: "solid", ramp: "green", orient: Ground, thickness: 0.25, darken: true),
+         radius: (from: (scale: 1.0), to: (scale: 1.0)), duration: 1.0, priority: Critical),
     ]),
     "trail_once": (class: Minor, event: Mode, layers: [
         (block: Decal(texture: "solid", ramp: "blue"), size: (bind: UnitRadius, scale: 1.0),
@@ -669,6 +673,57 @@ fn cards_are_sorted_back_to_front() {
     assert!(
         depths.windows(2).all(|pair| pair[0] >= pair[1]),
         "far first: {depths:?}"
+    );
+}
+
+/// WP8 review 3, E3-1: darkening cards sort as the farthest of all, so they are the first
+/// `darkening_cards` cards of the sorted buffer, which the renderer draws in one darkening item
+/// before every other transparent item; the other cards stay back to front after them.
+#[test]
+fn darkening_cards_lead_the_sorted_cards() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (puffs, puff_unit) = tables_for(&catalog, "puff");
+    let (furrows, furrow_unit) = tables_for(&catalog, "furrow");
+    let mut runtime = EffectRuntime::new(&catalog);
+    for (index, y) in [-5.0, 8.0, 0.0, 3.0, -9.0, 6.0].into_iter().enumerate() {
+        let (tables, unit) = if index % 2 == 0 {
+            (&puffs, puff_unit)
+        } else {
+            (&furrows, furrow_unit)
+        };
+        assert!(spawn(
+            &mut runtime,
+            &catalog,
+            tables,
+            &splash(unit, 0.0, y, [1.0; 3], None),
+            0.0
+        ));
+    }
+    let view = camera();
+    runtime.build_frame(&catalog, 0.1, Some(&view));
+    let frame = &runtime.frame;
+    let darkening = frame.darkening_cards as usize;
+    assert_eq!(darkening, 3, "one darkening ring per furrow");
+    assert_eq!(frame.sorted.len(), 6);
+    assert!(
+        frame.sorted[..darkening]
+            .iter()
+            .all(|card| card.flags & FLAG_DARKEN != 0),
+        "the darkening cards come first"
+    );
+    assert!(
+        frame.sorted[darkening..]
+            .iter()
+            .all(|card| card.flags & FLAG_DARKEN == 0),
+        "and only they"
+    );
+    let depths: Vec<f32> = frame.sorted[darkening..]
+        .iter()
+        .map(|card| view.depth(Vec3::from_array(card.center)))
+        .collect();
+    assert!(
+        depths.windows(2).all(|pair| pair[0] >= pair[1]),
+        "the others far first: {depths:?}"
     );
 }
 

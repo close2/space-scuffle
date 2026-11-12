@@ -1,12 +1,14 @@
 // Effect cards: sprites, rings, ribbons and particles drawn from one retained instance buffer
 // (client::effects::render). Premultiplied output; soft depth against the depth prepass; noise
-// breakup with a phase per card; an optional clip window along an event line.
+// breakup with a phase per card; an optional clip window along an event line. The pipeline with
+// `DARKEN_PASS` draws only cards flagged `FLAG_DARKEN` and outputs the factor the target is
+// multiplied by; the other draws every other card.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
-    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
     erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
-    flipbook_sample, premultiply, card_mip_level, derivative_mip_level,
+    flipbook_sample, premultiply, card_mip_level, derivative_mip_level, darkening_factor, NOWHERE,
 }
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -36,6 +38,23 @@ const FRONT_CRESTS: u32 = 12u;
 const CREST_JITTER: f32 = 0.019444444;
 const CREST_HALF_WIDTH: f32 = 0.0069444444;
 const CREST_SOFT: f32 = 0.0041666667;
+// An arc's head (FLAG_ARC): a soft end 0.05 of a turn (18 degrees) wide, centred on the bound
+// share so the drawn share stays within 3 % of it (a wavering band applies its mask after its
+// intensity, so the whole fade shows however much it is thickened). Freshly turned earth is lit
+// just behind it: its shading rises by up to `ARC_HEAD_LIGHT`, falling off over about a
+// twentieth of a turn (WP8 review 2, B2-2: round 2's 3.6-degree step read as a progress ring's
+// cut end).
+const ARC_HEAD: f32 = 0.05;
+const ARC_HEAD_LIGHT: f32 = 0.6;
+const ARC_HEAD_FALLOFF: f32 = 20.0;
+// A wavering band (`warp`): its middle radius wanders by this share of `warp` either way, and
+// its shading runs this far towards its position across the band (furrow to thrown soil).
+const WAVER_RADIAL: f32 = 0.1;
+const WAVER_ACROSS: f32 = 0.6;
+// A wavering band's edges fade over this share of its width each (WP8 review 3, A3-1: a band
+// cut within one pixel read as a drawn outline). Its mask is applied after the intensity, so a
+// thickened band keeps the whole fade.
+const WAVER_SOFT: f32 = 0.5;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -116,6 +135,16 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     out.mip = card_mip_level(f32(textureDimensions(atlas).x), pixels);
     out.world_xz = world.xz;
     out.instance = instance_index;
+    let darkening = (card.flags & FLAG_DARKEN) != 0u;
+#ifdef DARKEN_PASS
+    if (!darkening) {
+        out.position = NOWHERE;
+    }
+#else
+    if (darkening) {
+        out.position = NOWHERE;
+    }
+#endif
     return out;
 }
 
@@ -256,12 +285,57 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
     }
     let texel = flipbook_sample(atlas, atlas_sampler, uv, card.layer_a, card.layer_b, card.frame_mix, mip);
     var mask = 1.0;
-    if (card.ring_inner > 0.0) {
+    var shading = texel.r;
+    if (card.ring_inner > 0.0 && card.warp > 0.0) {
+        let band = waver_band(card, centred, radius, mip);
+        let soft = max(WAVER_SOFT * (band.y - band.x), edge);
+        mask = (1.0 - smoothstep(band.y - soft, band.y, radius)) * smoothstep(band.x, band.x + soft, radius);
+        // Dark furrow on the inner edge, lighter thrown soil on the outer one.
+        let across = clamp((radius - band.x) / max(band.y - band.x, 1e-4), 0.0, 1.0);
+        shading = mix(texel.r, across, WAVER_ACROSS);
+    } else if (card.ring_inner > 0.0) {
         let outer = 1.0 - smoothstep(1.0 - edge, 1.0, radius);
         let inner = smoothstep(card.ring_inner - edge, card.ring_inner, radius);
         mask = outer * inner;
     }
-    return vec4<f32>(texel.r, texel.g, texel.b, mask);
+    if (card.ring_inner > 0.0) {
+        if ((card.flags & FLAG_ARC) != 0u && card.arc < 1.0) {
+            let arc = arc_texel(centred, card.arc);
+            mask *= arc.x;
+            shading = min(shading + arc.y, 1.0);
+        }
+    }
+    return vec4<f32>(shading, texel.g, texel.b, mask);
+}
+
+// A wavering ring band (`warp` > 0): (inner edge, outer edge) as fractions of the card's half
+// size at this angle. Two reads of the card's breakup noise round the turn (whole repeats, so
+// no seam) vary the band's width by up to `warp` either way and its middle radius by
+// `WAVER_RADIAL` of `warp`, so the band reads as dug ground and not as a drawn circle.
+fn waver_band(card: SpriteInstance, centred: vec2<f32>, radius: f32, mip: f32) -> vec2<f32> {
+    let turn = atan2(centred.y, centred.x) / TAU + 0.5;
+    let repeats = max(round(card.noise_scale), 1.0);
+    let level = mip + log2(repeats);
+    let offset = noise_offset(card);
+    let width_noise = noise_sample(atlas, atlas_sampler, vec2<f32>(turn * repeats, 0.23) + offset, card.noise_layer, level);
+    let radial_noise = noise_sample(atlas, atlas_sampler, vec2<f32>(turn * repeats * 0.5, 0.61) + offset.yx, card.noise_layer, level);
+    let width = 1.0 - card.ring_inner;
+    let half_width = 0.5 * width * (1.0 + (width_noise - 0.5) * 2.0 * card.warp);
+    let wobble = (radial_noise - 0.5) * 2.0 * WAVER_RADIAL * card.warp;
+    // Room for the widest band and the largest wobble inside the card.
+    let middle = 1.0 - 0.5 * width * (1.0 + card.warp) - WAVER_RADIAL * card.warp + wobble;
+    return vec2<f32>(middle - half_width, middle + half_width);
+}
+
+// An arc of a ring drawn from its start angle round to `share` of the turn: (mask, head
+// light). The arc's head is a soft step `ARC_HEAD` of a turn wide and the ring is lit a little
+// just behind it, so a closing seal has a leading point and no hard cut.
+fn arc_texel(centred: vec2<f32>, share: f32) -> vec2<f32> {
+    let turn = atan2(centred.y, centred.x) / TAU + 0.5;
+    let mask = 1.0 - smoothstep(share - 0.5 * ARC_HEAD, share + 0.5 * ARC_HEAD, turn);
+    let behind = max(share - turn, 0.0);
+    let light = ARC_HEAD_LIGHT * exp(-behind * ARC_HEAD_FALLOFF) * mask;
+    return vec2<f32>(mask, light);
 }
 
 @fragment
@@ -311,12 +385,20 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let scene = textureLoad(depth_prepass, vec2<i32>(floor(in.position.xy)), 0);
     let soft = soft_depth_fade(scene, in.view_z, card.soft_depth, view.clip_from_view);
     let survive = erosion_step(order, card.erosion, card.softness, noisy);
-    // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
-    let coverage = min(texel.g * survive * texel.a * card.intensity * soft * clip, 1.0);
+    // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1. A wavering
+    // band's mask (its soft edges) is applied after it, so thickening does not sharpen them.
+    let wavering = !ribbon && card.ring_inner > 0.0 && card.warp > 0.0;
+    let thickened = select(texel.a, 1.0, wavering);
+    let outline = select(1.0, texel.a, wavering);
+    let coverage = min(texel.g * survive * thickened * card.intensity * soft * clip, 1.0) * outline;
     if (coverage <= 0.0) {
         discard;
     }
     let shading = self_shade(texel.r, texel.g, card.shade);
     let colour = ramp_lookup(ramps, card.ramp_row, shading * card.ramp_scale);
+#ifdef DARKEN_PASS
+    return darkening_factor(colour, coverage);
+#else
     return premultiply(colour, coverage);
+#endif
 }

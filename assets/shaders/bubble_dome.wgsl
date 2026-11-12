@@ -9,8 +9,15 @@
 // - Flipbook layer chosen from the shared flipbook clock and per-bubble lanes, with frame blending
 // - Voronoi spiderweb glass fractures & CRT scanlines
 
+// - Effect shell (plan 2026-11-09-effect-visualization WP8, binding 4): the vertex stage sinks the
+//   bubble into the ground (the terrain's depth hides what is below it); the fragment stage stains
+//   it with soil near the ground, tints it, lights its outline and veils its media. All zero is
+//   the bubble as it was.
+
 #import bevy_pbr::mesh_view_bindings::{view, globals}
-#import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::forward_io::{Vertex, VertexOutput}
+#import bevy_pbr::mesh_functions
+#import bevy_pbr::view_transformations::position_world_to_clip
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping::tone_mapping
 #endif
@@ -57,6 +64,51 @@ struct FlipbookClock {
 @group(2) @binding(1) var video_texture: texture_2d_array<f32>;
 @group(2) @binding(2) var video_sampler: sampler;
 @group(2) @binding(3) var<storage, read> flipbook_clock: FlipbookClock;
+
+// client::bubble_shader::ShellUniformGpu: the effects' modulation of this bubble.
+struct ShellUniform {
+    tint: vec4<f32>,             // linear RGB, share of the media replaced
+    rim: vec4<f32>,              // linear RGB of the outline light, strength
+    shape: vec4<f32>,            // sink (world units), veil (0..1), soil height (world units), ground y
+    driven: vec4<f32>,           // x = 1 when effects drive the concealment look; y = matte; z = shadow taken away (bubble_shadow.wgsl)
+};
+
+@group(2) @binding(4) var<uniform> shell: ShellUniform;
+
+// The mesh vertex of bevy_pbr (mesh.wgsl) without skinning or morph targets, which bubbles never
+// have, moved down by the shell's sink. With no sink it computes exactly what Bevy's does.
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
+#ifdef VERTEX_NORMALS
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+#endif
+#ifdef VERTEX_POSITIONS
+    out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
+    out.world_position.y -= shell.shape.x;
+    out.position = position_world_to_clip(out.world_position.xyz);
+#endif
+#ifdef VERTEX_UVS_A
+    out.uv = vertex.uv;
+#endif
+#ifdef VERTEX_UVS_B
+    out.uv_b = vertex.uv_b;
+#endif
+#ifdef VERTEX_TANGENTS
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex.instance_index);
+#endif
+#ifdef VERTEX_COLORS
+    out.color = vertex.color;
+#endif
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    out.instance_index = vertex.instance_index;
+#endif
+#ifdef VISIBILITY_RANGE_DITHER
+    out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
+#endif
+    return out;
+}
 
 // Modular Feature Bitflags
 const FLAG_CLOAKED: u32 = 1u;         // 1 << 0
@@ -318,6 +370,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let exponent = max(2.0 / (bubble.optics_glare.x * bubble.optics_glare.x) - 2.0, 1.0);
         specular = pow(max(dot(normal, halfway), 0.0), exponent)
             * bubble.optics_glare.y * bubble.optics_light.w;
+        // The effect shell's matte lane: a burrowed dome loses its highlight, which would
+        // otherwise make the sunk cap read as a whole ball (WP8 review 1, B-1).
+        specular *= 1.0 - clamp(shell.driven.y, 0.0, 1.0);
     }
 
     // 4. Directional Indicator: Sleek Rim Arc Confined Strictly to Outer Fresnel Annulus [0.86, 0.98]
@@ -392,7 +447,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         selection_glow = vec3<f32>(0.25, 0.85, 1.0) * pulse * smoothstep(0.94, 0.985, r) * bubble.optics_signals.x;
     }
 
-    // 9. Final Composite & Cloak Interference
+    // 9. Effect shell (plan 2026-11-09-effect-visualization WP8): the tint on the media keeps
+    // the media's own shading. The soil stain (composited after the veil, so a veiled body keeps
+    // its caked earth) is the tint's colour, cracked like dried mud, full at the ground and gone
+    // at the stain's height along an edge the crack pattern breaks up.
+    var soil_stain = 0.0;
+    var soil_rgb = vec3<f32>(0.0);
+    if (shell.tint.a > 0.0) {
+        let shade = dot(video_color, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let tinted = shell.tint.rgb * (0.35 + 0.65 * min(shade * 2.0, 1.0));
+        video_color = mix(video_color, tinted, shell.tint.a);
+    }
+    if (shell.shape.z > 0.0) {
+        let cracks = voronoi_cracks(in.uv * 5.0);
+        let above = in.world_position.y - shell.shape.w;
+        let ragged = above + (voronoi_cracks(in.uv * 2.0) - 0.5) * 0.3 * shell.shape.z;
+        soil_stain = 1.0 - smoothstep(0.0, shell.shape.z, ragged);
+        soil_rgb = shell.tint.rgb * (1.0 - 0.45 * cracks);
+    }
+
+    // 10. Final Composite & Cloak Interference
     let signals = direction_stripe + aim_glow + crack_glow + shield_surge + hull_surge
         + boost_glow + selection_glow;
     let signal_peak = max(signals.r, max(signals.g, signals.b));
@@ -401,8 +475,22 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         + vec3<f32>(specular) + bounded_signals;
     var final_alpha = mix(bubble.optics_signals.y, 1.0, F);
 
+    // The shell's veil and outline light: a veiled bubble keeps only its glass (Fresnel edge,
+    // glare and signals) and a soft outline light, so its owner sees a clear, hollow shape.
+    if (shell.shape.y > 0.0 || shell.rim.a > 0.0) {
+        let outline = smoothstep(0.78, 0.97, r) * (1.0 - smoothstep(0.985, 1.0, r));
+        final_rgb = mix(final_rgb, final_rgb - video_color * (1.0 - F), shell.shape.y);
+        final_alpha = mix(final_alpha, 0.12 + F * 0.45, shell.shape.y);
+        final_rgb += shell.rim.rgb * shell.rim.a * outline;
+        final_alpha = max(final_alpha, shell.rim.a * outline * 0.6);
+    }
+    if (soil_stain > 0.0) {
+        final_rgb = mix(final_rgb, soil_rgb, soil_stain);
+        final_alpha = mix(final_alpha, 0.8, soil_stain);
+    }
+
     let is_cloaked = ((bubble.feature_flags & FLAG_CLOAKED) != 0u) || (bubble.cloaked == 1u);
-    if (is_cloaked) {
+    if (is_cloaked && shell.driven.x < 0.5) {
         final_alpha = 0.15 + F * 0.25;
         final_rgb += vec3<f32>(0.1, 0.3, 0.5) * sin(globals.time * 10.0 + in.world_position.y * 5.0) * 0.5;
     }

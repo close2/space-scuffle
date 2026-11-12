@@ -167,6 +167,8 @@ pub struct DecalLook {
     pub liquid: Option<schema::LiquidDef>,
     /// The disc outline, if the mark's visible edge is a disc and not its texture's outline.
     pub outline: Option<schema::OutlineDef>,
+    /// Whether the mark darkens the ground under it (multiplied, never lightened).
+    pub darken: bool,
 }
 
 /// The look of a ribbon (see [`schema::BlockDef::Ribbon`]).
@@ -217,6 +219,32 @@ pub struct DistortionLook {
     pub ground: bool,
     /// Height above the placed point, world units.
     pub height: f32,
+    /// Lens bend towards the rim, as a fraction of the disc's radius on screen; 0 for none.
+    pub lens: f32,
+}
+
+/// A modulation of the unit's own bubble (see [`schema::BlockDef::Shell`]): each value at the
+/// layer's intensity 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShellLook {
+    /// Share of the bubble's diameter sunk below where it rests.
+    pub sink: f32,
+    /// Linear RGB tint and the share of the media it replaces.
+    pub tint: Vec4,
+    /// Linear RGB rim light and its strength.
+    pub rim: Vec4,
+    /// Share of the bubble made see-through.
+    pub veil: f32,
+    /// Height of the soil stain above the ground, as a share of the radius.
+    pub soil: f32,
+    /// Whether the layer's life is the mode switch's progress rather than its age.
+    pub progress: bool,
+    /// The sink for a unit showing its own clip for the mode, if it differs from `sink`.
+    pub clip_sink: Option<f32>,
+    /// Share of the glass's specular highlight taken away.
+    pub matte: f32,
+    /// Share of the unit's shadow taken away.
+    pub shadow: f32,
 }
 
 /// A layer's block, resolved.
@@ -234,6 +262,12 @@ pub enum Block {
         height: f32,
         /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
         edge_noise: f32,
+        /// Share of the turn drawn (bound, clamped to [0, 1]); `None` draws the whole ring.
+        arc: Option<ValueDef>,
+        /// How much the band's width and radius waver round the turn; 0 for an even band.
+        waver: f32,
+        /// Whether the ring darkens the ground under it (multiplied, never lightened).
+        darken: bool,
     },
     /// A projected ground mark.
     Decal(DecalLook),
@@ -252,6 +286,9 @@ pub enum Block {
     },
     /// A particle burst.
     Particles(EmitterId),
+    /// A modulation of the bubble the effect is held on, evaluated by
+    /// [`crate::effects::stance`] and never drawn by the effect renderer.
+    Shell(ShellLook),
 }
 
 /// The block pools of the budget.
@@ -267,6 +304,8 @@ pub enum Pool {
     Lights,
     /// Distortion discs.
     Distortions,
+    /// No pool: the block changes the unit's own bubble (a `Shell`).
+    Bubble,
 }
 
 impl Block {
@@ -279,6 +318,7 @@ impl Block {
             Self::Light { .. } => Pool::Lights,
             Self::Distortion(_) => Pool::Distortions,
             Self::Particles(_) => Pool::Particles,
+            Self::Shell(_) => Pool::Bubble,
         }
     }
 }
@@ -310,6 +350,10 @@ pub struct Layer {
     pub placements: Vec<PlacementDef>,
     /// A particle layer's particles are cut off at the event line's ends.
     pub clip_to_line: bool,
+    /// Whether the layer lives while its effect is held (see [`schema::LayerDef::held`]).
+    pub held: bool,
+    /// Seconds a held layer takes to erode out once its effect is released.
+    pub exit: f32,
 }
 
 /// A ring's radius over its layer's life, resolved.
@@ -334,8 +378,12 @@ pub struct Effect {
     pub event: EventKind,
     /// Layers, at most [`MAX_LAYERS`].
     pub layers: Vec<Layer>,
-    /// Seconds from the event until the last layer ends.
+    /// Seconds from the event until the last layer that is not held ends.
     pub lifetime: f32,
+    /// The longest exit of its held layers, seconds; 0 when it holds none.
+    pub held_exit: f32,
+    /// Seconds a mode switch's morph takes on screen, if the effect states it.
+    pub span: Option<f32>,
     /// Seconds between spawns while its fact holds (trails), if it repeats.
     pub repeat: Option<f32>,
     /// The salt of its instances' random choices: the file's `seed` when it pins one (a draw a
@@ -417,6 +465,29 @@ pub struct Defaults {
     pub death: Option<EffectId>,
     /// Statuses, by `StatusKind`.
     pub status: BTreeMap<sim_types::StatusKind, EffectId>,
+    /// How concealed units look.
+    pub concealment: ConcealmentDefaults,
+    /// Channel into a mode that anchors its unit and is not burrowed.
+    pub anchor_transition: Option<EffectId>,
+    /// Held while in such a mode.
+    pub anchored: Option<EffectId>,
+}
+
+/// The looks of concealment, resolved (see [`schema::ConcealmentDefaultsDef`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConcealmentDefaults {
+    /// Channel into a burrowed mode.
+    pub burrow_enter: Option<EffectId>,
+    /// Channel out of a burrowed mode.
+    pub burrow_leave: Option<EffectId>,
+    /// Held while burrowed.
+    pub burrowed: Option<EffectId>,
+    /// Held on a cloaked unit of the viewer's own.
+    pub cloaked_own: Option<EffectId>,
+    /// Held on a cloaked enemy the viewer does not detect.
+    pub cloaked_enemy: Option<EffectId>,
+    /// Held on a concealed enemy the viewer detects.
+    pub detected: Option<EffectId>,
 }
 
 /// The resolved effect vocabulary.

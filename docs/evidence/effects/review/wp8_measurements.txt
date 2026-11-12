@@ -1,0 +1,16 @@
+driver radv: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 1371 changed, largest 156
+driver radv: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 2096 changed
+driver radv: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 3075 changed
+driver radv: battle tableau, undetected cloaked enemy: its shimmer bends 1289 pixels, 0 of them to a colour not near them without it, mean colour moves 0.19 levels
+driver radv: the burrow's channel ended at 1.58 s with the body 76 % sunk
+driver radv: the burrowed looks change 695 pixels, 0 beyond the ring; farthest at 0.94 radii
+driver radv: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1186 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.18 levels
+driver radv: siege switch at 0.486, its arc draws 0.475 of the turn
+driver lavapipe: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 1385 changed, largest 154
+driver lavapipe: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 1961 changed
+driver lavapipe: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 3071 changed
+driver lavapipe: battle tableau, undetected cloaked enemy: its shimmer bends 1153 pixels, 0 of them to a colour not near them without it, mean colour moves 0.10 levels
+driver lavapipe: the burrow's channel ended at 1.73 s with the body 73 % sunk
+driver lavapipe: the burrowed looks change 695 pixels, 0 beyond the ring; farthest at 0.95 radii
+driver lavapipe: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1046 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.05 levels
+driver lavapipe: siege switch at 0.514, its arc draws 0.500 of the turn

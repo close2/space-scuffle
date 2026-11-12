@@ -55,10 +55,18 @@ pub enum Presence {
 }
 
 impl Presence {
-    /// Whether any of the unit is drawn.
+    /// Whether any of the unit is drawn: its bubble, or its shimmer.
     #[must_use]
     pub const fn is_drawn(self) -> bool {
         !matches!(self, Self::Hidden)
+    }
+
+    /// Whether the unit's own bubble is drawn. A shimmering unit's bubble is not: all the viewer
+    /// sees of it is its shimmer, a colourless distortion held by the effect system where it
+    /// stands (plan `2026-11-09-effect-visualization` WP8, Q0076).
+    #[must_use]
+    pub const fn draws_bubble(self) -> bool {
+        matches!(self, Self::Shown)
     }
 
     /// Whether the unit may be picked, inspected, targeted and given a health bar.

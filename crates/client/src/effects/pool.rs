@@ -69,6 +69,16 @@ pub struct EffectInstance {
     /// infinity before the first build); a burst due at age `e` fires once `e` falls in
     /// `(bursts_through, age]`, so bursts delayed along a line fire one by one.
     pub bursts_through: f32,
+    /// Whether the effect is held on a unit ([`super::runtime::EffectRuntime::hold`]): its
+    /// held layers draw until it is released, its anchor and bound values follow the unit,
+    /// and the budget never retires it (it shows a unit's state, bounded by the units).
+    pub held: bool,
+    /// Time a held effect was released, if it was: its held layers erode out from then.
+    pub released_at: Option<f64>,
+    /// For a held effect, the longest exit of its held layers, seconds (0 otherwise).
+    pub held_exit: f32,
+    /// For a held effect, the time its one-shot layers end (its birth otherwise).
+    pub oneshot_end: f64,
 }
 
 /// A slot: its generation and its instance, if live.
@@ -223,6 +233,15 @@ impl EffectInstancePool {
     pub fn slot_mut(&mut self, index: usize) -> Option<&mut EffectInstance> {
         self.slots.get_mut(index)?.instance.as_mut()
     }
+
+    /// The live instance `handle` refers to, mutably, if still live.
+    pub fn get_mut(&mut self, handle: EffectHandle) -> Option<&mut EffectInstance> {
+        let slot = self.slots.get_mut(handle.index as usize)?;
+        if slot.generation != handle.generation {
+            return None;
+        }
+        slot.instance.as_mut()
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +266,10 @@ mod tests {
             decal_slots: 0,
             marks_retired_at: None,
             bursts_through: f32::NEG_INFINITY,
+            held: false,
+            released_at: None,
+            held_exit: 0.0,
+            oneshot_end: 0.0,
         }
     }
 

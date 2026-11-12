@@ -19,6 +19,10 @@
 
 // Share of the disc's radius from which its effect fades out towards its rim.
 const FADE_FROM: f32 = 0.45;
+// A lens disc (`lens` > 0) bends the scene up to its rim: it fades out only from this share
+// of its radius, and its radial bend peaks at `LENS_PEAK` of it.
+const LENS_RIM: f32 = 0.86;
+const LENS_PEAK: f32 = 0.78;
 // Offset between the two reads of the noise, in noise tiles, so the two axes are unrelated.
 const SECOND_READ: vec2<f32> = vec2<f32>(0.37, 0.61);
 
@@ -64,19 +68,37 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let disc = discs[in.instance];
     let centred = in.uv * 2.0 - 1.0;
     let radius = length(centred);
-    let mask = 1.0 - smoothstep(FADE_FROM, 1.0, radius);
+    let lensed = disc.warp > 0.0;
+    var mask = 1.0 - smoothstep(FADE_FROM, 1.0, radius);
+    if (lensed) {
+        mask = 1.0 - smoothstep(LENS_RIM, 1.0, radius);
+    }
     if (mask <= 0.0) {
         discard;
     }
     let noise_uv = in.uv * disc.noise_scale + vec2<f32>(disc.noise_offset_x, disc.noise_offset_y);
     let along_x = noise_sample(atlas, atlas_sampler, noise_uv, disc.noise_layer, 0.0) - 0.5;
     let along_y = noise_sample(atlas, atlas_sampler, noise_uv.yx + SECOND_READ, disc.noise_layer, 0.0) - 0.5;
-    let strength = disc.noise_amount * clamp(disc.intensity, 0.0, 1.0) * mask;
-    // Screen UV y runs down; the aspect ratio keeps the offset round on screen.
-    let aspect = view.viewport.w / max(view.viewport.z, 1.0);
-    let offset = vec2<f32>(along_x * aspect, along_y) * 2.0 * strength * in.radius_uv;
-    let screen_uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
-    let bent = textureSampleLevel(scene, scene_sampler, clamp(screen_uv + offset, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+    let intensity = clamp(disc.intensity, 0.0, 1.0);
+    let strength = disc.noise_amount * intensity * mask;
+    // The offset is computed in framebuffer pixels (round on screen; y runs down) from the disc's
+    // radius on screen, which `radius_uv` gives as a share of the viewport's height.
+    let radius_px = in.radius_uv * view.viewport.w;
+    var offset_px = vec2<f32>(along_x, along_y) * 2.0 * strength * radius_px;
+    if (lensed) {
+        // A glass body's refraction: the scene is read from further out along the radius, most
+        // a little inside the rim and not at all at the centre or beyond the rim, so the body's
+        // outline shows as a bent ring of what lies behind it and nothing of its own.
+        let profile = smoothstep(0.0, LENS_PEAK, radius) * (1.0 - smoothstep(LENS_PEAK, 1.0, radius));
+        offset_px += centred / max(radius, 1e-4) * disc.warp * intensity * profile * radius_px;
+    }
+    // The scene copy covers the whole render target, of which the camera's viewport may be a
+    // part (the battle's HUD panels lie outside it), and the fragment position is in the
+    // target's pixels: the copy is read at that position, never re-scaled to the viewport
+    // (a viewport-relative read copied the scene from elsewhere on the screen, WP8 round 1).
+    let target_px = vec2<f32>(textureDimensions(scene));
+    let read_px = clamp(in.position.xy + offset_px, view.viewport.xy, view.viewport.xy + view.viewport.zw - 1.0);
+    let bent = textureSampleLevel(scene, scene_sampler, read_px / target_px, 0.0);
     // Premultiplied: the bent scene over the scene, as opaque as the disc's mask.
     return vec4<f32>(bent.rgb * mask, mask);
 }

@@ -7,6 +7,268 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP8 round 5 (concealment and stance: engineering only)
+
+Round 4's review ([`independent_review_wp8_4.md`](independent_review_wp8_4.md), kept as written) accepted every
+look and rejected the round narrowly for one engineering defect, E4-1. This round, plan Amendment 15, changes no
+look. It is round 5, the last of the owner's five (Q0080). Please write it to a new file next to this one,
+`independent_review_wp8_5.md`: check E4-1, A4-1 and A4-3, and confirm that no look and no shipped effect changed.
+There are no new pictures. The figures are in [wp8r5_measurements.txt](wp8r5_measurements.txt).
+
+### What changed
+
+| Round-4 finding | Change |
+|---|---|
+| E4-1: the ordinary card runs were cut with the darkening prefix's real distances | `queue_effects` cuts the ordinary runs over the cards after the prefix only, and `cut_runs` offsets its ranges by the first card's index. The first run is queued at the first ordinary card's distance. New test `effects::render::tests::the_darkening_prefix_stays_out_of_the_ordinary_runs`: a prefix at −1.0 before cards at −10, −9 and −8, with other items at −9.5 and −8.5. No ordinary range contains the prefix, and the cuts equal those without it, offset by one. The test also shows the defect: cut with the prefix, the three cards fall into one run with it. |
+| A4-1: a non-finite depth could sort before a darkening card | An ordinary card's sort depth is finite and below the darkening cards'; a non-finite depth sorts as 0. Unit test `no_card_sorts_before_a_darkening_card` covers NaN, infinities and `f32::MAX`. |
+| A4-3: the back-of-furrow check had no negative control | The unit now stands just inside the furrow, 1.3 world units behind the hull and clear of it, so its body rises over the band on screen. On the furrow line, as in round 4, its body hardly overlapped the band. A first control run there passed even with the old order, so the check was insensitive. A one-off radv run with the darkening card item queued at its card's own distance (the order before E3-1) fails: 18 of 214 body pixels keep less than 0.85 of their light (lowest 0.332). With the order of record the check passes on both drivers: 0 of 214, lowest 0.891 and 0.892. The temporary queue was not kept. |
+| P4-1, P4-2, A4-2, the burrow crest | Not taken. They are recorded in the plan's open polish list. |
+
+`main` was already contained in the branch (`573a88c`), so the merge brought nothing new.
+
+## WP8 round 4 (concealment and stance)
+
+Round 3's review ([`independent_review_wp8_3.md`](independent_review_wp8_3.md), kept as written) accepted every look
+but the settled `siege_anchor` (A3-1). It asked for the darkening cards' order (E3-1), with E3-2 and E3-3 advisory.
+The orchestrator's decisions are plan Amendment 14. This is round 4 of at most five (Q0080). Please write it to a new
+file next to this one, `independent_review_wp8_4.md`, in the same form:
+- judge `siege_anchor` against each of the seven checklist items, and `mode_seal_sweep`'s softened band;
+- check E3-1 to E3-3;
+- say whether anything accepted earlier, or any shipped splash effect, regressed.
+
+The pictures come from `crates/client/tests/stance_gpu_tests.rs` on the production skirmish, as before (debug build,
+Xvfb, 1280×720, default camera distance), on radv and lavapipe. This round's files start with `wp8r4_`; earlier
+rounds' files are unchanged. As before, "bare" keeps the unit's Shell and clears only the effect renderer's layers.
+Nothing was spent and no texture was made.
+
+### What changed
+
+| Round-3 finding | Change |
+|---|---|
+| A3-1: the settled anchor reads as a hard-edged, evenly tinted round pad with a darker rim; the cracks do not show | The held ring and the cracks are gone. The anchor is soil pressed down under and round the hull, a soft disc fading out from about 0.8 to 1.6 radii, plus four darker compaction patches round it where the stabilisers press, which break the round boundary. Everything darkens only. A decal's disc outline gains `soft`: the mark fades out over that share of its half length inside its edge, as the square of the distance in from it, after the coverage is clamped, so thickening does not sharpen it. The pressed soil has no edge noise, because a trial with a wavering edge under the soft fade read as rays. |
+| A3-1: the sweep band's crisp edges | A wavering band now fades over half its width at each edge, its mask applied after the intensity. The furrow erodes out over 0.6 s as the anchor comes in. |
+| A3-1: a falloff figure | The test prints the anchored look's outer falloff: the width over which the ground keeps from 0.95 down to 0.75 of its light, as the median over near-horizontal rays from the unit's centre. It requires at least 0.15 of the unit's radius. The figures are in the measurements file. |
+| E3-1: a darkening card queued at its run's distance | Darkening cards sort as the farthest of all, so they are the first cards of the sorted buffer. One darkening item at `f32::MIN` draws that prefix, before every other transparent item. In the pose shot of the switch half way, a unit of the viewer's stands on the back half of the furrow; the test requires its body to keep its light while the furrow darkens the ground round its foot. |
+| E3-2 (advisory) | A headless test steps a unit through neutral, cloaked, neutral, burrowing, burrowed and emerging. On every frame it asserts that the bubble is unbatched exactly while its shell moves its shadow caster. |
+| E3-3 (advisory) | Taken in the contained form: the single darkening item draws only the darkening cards, with no second item per card run, so no frame-budget run was taken for it. |
+| Optional lit crest on the burrow heaps | Not done, so `burrow_mound` stays as accepted. |
+
+### Material
+
+| What | Files |
+|---|---|
+| The anchored unit, close: in the tableau, without effect layers | [wp8r4_anchored_crop_radv.png](wp8r4_anchored_crop_radv.png), [wp8r4_anchored_crop_lavapipe.png](wp8r4_anchored_crop_lavapipe.png) |
+| Siege switch half way, `Critical` layers only, the tank's bubble hidden, a unit of the viewer's on the back of the furrow; and without effect layers | [wp8r4_siege_mid_radv.png](wp8r4_siege_mid_radv.png), [wp8r4_siege_mid_lavapipe.png](wp8r4_siege_mid_lavapipe.png) |
+| Sequences at 40 ms steps: siege (the furrow closing, then the anchor coming in) and unsiege | [siege](wp8r4_siege_sequence_radv.png), [unsiege](wp8r4_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The same sequences for dig and emerge, unchanged looks | [dig](wp8r4_dig_sequence_radv.png), [emerge](wp8r4_emerge_sequence_radv.png); lavapipe likewise |
+| Battle: before the tableau; the tableau; without effect layers; detected; detected without effect layers | [before](wp8r4_battle_before_radv.png), [tableau](wp8r4_battle_undetected_radv.png), [bare](wp8r4_battle_bare_radv.png), [detected](wp8r4_battle_detected_radv.png), [detected, bare](wp8r4_battle_detected_bare_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Burrow poses, shimmer pose and the player's cloaked unit (for regressions) | `wp8r4_burrow_pose_*`, `wp8r4_plain_burrow_pose_*`, `wp8r4_shimmer_pose_*`, `wp8r4_own_cloaked_crop_*` |
+| The tests' printed measurements on both drivers | [wp8r4_measurements.txt](wp8r4_measurements.txt) |
+
+The anchored Siege-Tank analogue stands at about (548, 244) in the battle captures, at the upper left corner of the
+platform. Its hull's shadow falls to its lower right.
+
+### Points to look at
+
+- Whether the settled anchor reads as soil pressed down by the hull and its stabilisers, with no outline, ring, rim,
+  aura or range language, and whether its edge is soft and its boundary broken.
+- Whether the sweep's band still reads as ploughed earth with its softened edges.
+- E3-1: the unit on the back of the furrow in `wp8r4_siege_mid_*`.
+
+## WP8 round 3 (concealment and stance)
+
+Round 2's review ([`independent_review_wp8_2.md`](independent_review_wp8_2.md), kept as written) accepted the fog
+rule, the shimmer check, `cloak_shimmer`, `detected_mark`, `burrow_dig` and `burrow_emerge`, and found no regression
+in the shipped effects. It rejected `cloak_own` (a regression), `burrow_mound`, `mode_seal_sweep` and `siege_anchor`,
+and asked for S-1, S-2, B2-1 to B2-3 and F2-1 to F2-3. The orchestrator's decisions are plan Amendment 13. This is
+round 3 of at most five (Q0080). Please write it to a new file next to this one, `independent_review_wp8_3.md`, in
+the same form: judge `cloak_own`, `burrow_mound`, `mode_seal_sweep` and `siege_anchor` against each of the seven
+checklist items, check S-1 and S-2, and say whether anything accepted in rounds 1 and 2 or any shipped splash effect
+regressed (the effect renderer gained a darkening pass that the shipped effects do not use).
+
+The pictures come from `crates/client/tests/stance_gpu_tests.rs` on the production skirmish, as before (debug build,
+Xvfb, 1280×720, default camera distance), on radv and lavapipe. This round's files start with `wp8r3_`; the
+earlier rounds' files are unchanged. Nothing was spent and no texture was made.
+
+**About "bare" (F2-3).** Every "without effect layers" or "bare" picture in this packet, as in rounds 1 and 2,
+clears the effect renderer's sprites, decals, distortions and lights only. The unit's Shell (its sink, veil, rim,
+matte and shadow lane) still applies. A bare-against-full difference therefore shows what the ground and air layers
+add, not the unit without any look.
+
+### What changed
+
+| Round-2 finding | Change |
+|---|---|
+| S-1: the fading shadow detaches; `cloak_own` leaves a small dark dot beside the unit | The shadow caster shrinks about the sphere's lowest point, where it stands, so the shadow contracts to the foot. `cloak_own` keeps a smaller shadow at its foot (`shadow: 0.6`). |
+| S-2: unbatched shadows for all 400 units | `NoAutomaticBatching` only on a bubble whose shell moves its shadow caster (shadow lane or sink above 0), inserted on the frame that starts and removed on the frame the shell is neutral again. The pose test checks that a neutral unit among the batched ones casts the same shadow while the burrowed unit's is gone. A 400-unit frame-budget comparison with `main` is in [`2026-11-12-frame-budget-wp8-shadows.md`](../../2026-11-12-frame-budget-wp8-shadows.md). |
+| B2-1: the burrowed ground hidden under the near-full body | Twelve heaps of earth on a circle of 1.2 radii (a new `Circle` placement; round 2's `Disc` scattered most of them under the body), and a hollow out to 1.4 radii whose lip shows outside the outline. The test asks the looks to change at least half of the ground between 1.05 and 1.6 radii that shows beside the body. |
+| B2-2: the furrow's head a hard cut; the furrow and soil lit over the shadow | A darkening mode: the furrow, hollow, heaps, pressed soil and cracks multiply the ground by their colour, so they never lighten it, shadows included. The sweep's head is a soft end 18 degrees wide (its fade showing over about 12), freshly turned earth lit behind it. |
+| B2-3: a straight edge across the tank's shadow; a pale smear | The edge was the shadow's own straight flank, made visible where round 2's lighter soil lightened the shadow but not the floor beside it. Multiplied soil leaves no such step. The pressed soil is a darker, warm compaction, and the anchor's dust is shorter. The test asks the anchored unit's looks to lighten at most 0.5 % of the pixels within 2.2 radii. |
+| F2-1, F2-2 | The unit without mode media is pictured burrowed with its looks. Every measurement line is in the measurements file. |
+| `shimmer_check` comment | It now states what it accepts (the box of one 2×2 block; channels mixed within a block pass, across blocks fail). |
+
+The battle tableau is now taken 5 s after it is staged, so the anchoring switch and its dust have ended.
+
+### Material
+
+| What | Files |
+|---|---|
+| Burrow pose, unit with its clip: empty ground, standing, burrowed, burrowed without effect layers | [wp8r3_burrow_pose_radv.png](wp8r3_burrow_pose_radv.png), [wp8r3_burrow_pose_lavapipe.png](wp8r3_burrow_pose_lavapipe.png) |
+| Burrow pose, unit without mode media: empty, standing, burrowed with its looks, burrowed without effect layers | [wp8r3_plain_burrow_pose_radv.png](wp8r3_plain_burrow_pose_radv.png), [wp8r3_plain_burrow_pose_lavapipe.png](wp8r3_plain_burrow_pose_lavapipe.png) |
+| Undetected cloaked enemy, pose: empty, shimmer, without effect layers, amplified difference | [wp8r3_shimmer_pose_radv.png](wp8r3_shimmer_pose_radv.png), [wp8r3_shimmer_pose_lavapipe.png](wp8r3_shimmer_pose_lavapipe.png) |
+| Siege switch half way, `Critical` layers only, bubble hidden; and without effect layers | [wp8r3_siege_mid_radv.png](wp8r3_siege_mid_radv.png), [wp8r3_siege_mid_lavapipe.png](wp8r3_siege_mid_lavapipe.png) |
+| Sequences at 40 ms steps, labelled `t` since the switch was asked for: dig, emerge, siege, unsiege | [dig](wp8r3_dig_sequence_radv.png), [emerge](wp8r3_emerge_sequence_radv.png), [siege](wp8r3_siege_sequence_radv.png), [unsiege](wp8r3_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The player's cloaked unit, close: before the tableau (not there yet), in the tableau, without effect layers | [wp8r3_own_cloaked_crop_radv.png](wp8r3_own_cloaked_crop_radv.png), [wp8r3_own_cloaked_crop_lavapipe.png](wp8r3_own_cloaked_crop_lavapipe.png) |
+| The anchored unit, close: in the tableau, without effect layers | [wp8r3_anchored_crop_radv.png](wp8r3_anchored_crop_radv.png), [wp8r3_anchored_crop_lavapipe.png](wp8r3_anchored_crop_lavapipe.png) |
+| Battle: before the tableau; the tableau; without effect layers; a detector beside the cloaked enemy; that scene without effect layers | [before](wp8r3_battle_before_radv.png), [tableau](wp8r3_battle_undetected_radv.png), [bare](wp8r3_battle_bare_radv.png), [detected](wp8r3_battle_detected_radv.png), [detected, bare](wp8r3_battle_detected_bare_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The tests' printed measurements on both drivers | [wp8r3_measurements.txt](wp8r3_measurements.txt) |
+
+Where things stand in the battle captures (window pixels, radv): the anchored Siege-Tank analogue at about
+(548, 244), the player's cloaked unit at about (691, 212), the undetected cloaked enemy at about (893, 230), the
+undetected burrowed enemy at about (796, 211), and the player's burrowed unit at about (580, 385), left of the
+headquarters.
+
+### Points to look at
+
+- Whether the owner's burrowed unit now reads as set into the floor (`wp8r3_burrow_pose_*` cell 3, and the battle),
+  and whether the heaps read as earth.
+- Whether the furrow reads as ploughed ground during the switch (its head) and anchored, darker inside the tank's
+  shadow and never lighter.
+- Whether `cloak_own`'s shadow is attached and faint.
+- S-2: the frame-budget comparison.
+
+## WP8 round 2 (concealment and stance)
+
+Round 1's review ([`independent_review_wp8_1.md`](independent_review_wp8_1.md), kept as written) accepted
+`cloak_shimmer`, `cloak_own`, `detected_mark` (with check C-1), the fog rule and the distortion fix. It rejected
+`burrow_mound`, `burrow_dig`, `burrow_emerge`, `mode_seal_sweep` and `siege_anchor`. The orchestrator's decisions
+are plan Amendment 12. This is round 2 of at most five (Q0080). Please write it to a new file next to this one,
+`independent_review_wp8_2.md`, in the same form as round 1: judge the five rejected looks against each of the seven
+checklist items, check C-1 and F-1, and say whether anything accepted in round 1 or any shipped splash effect
+regressed.
+
+The pictures come from `crates/client/tests/stance_gpu_tests.rs` on the production skirmish, as in round 1 (debug
+build, Xvfb, 1280×720, default camera distance), on radv and on lavapipe. Round 1's files are unchanged; this
+round's files start with `wp8r2_`. Nothing was spent and no texture was made.
+
+### What changed
+
+| Round-1 finding | Change |
+|---|---|
+| B-1: the owner's burrowed unit reads as a marble; only the middle strip of its burrowed clip shows | A unit whose burrowed mode has its own clip sinks 0.12 of its diameter (`clip_sink`), not 0.92, and its glass highlight is off while burrowed (`matte`). The "dug in" read comes from the ground: the shadow fades out, a dark hollow, heaped earth, the soil band. Only a unit without mode media still sinks deep. |
+| B-2: the shadow pops off at the start of the dig and back on at the emerge | The shadow fades with the sink and the veil: the bubble's shadow caster shrinks into the body (`bubble_shadow.wgsl`, the shell's `shadow` lane). Bevy drew every bubble's shadow with one bubble's material (bubbles share a mesh), so bubbles are now drawn unbatched and each casts with its own. |
+| B-3, B-4: grey haze, a hard straight edge, clods and dust not visible | The earth is warm brown, darker and more opaque. Its marks have a noise-edged outline with no box edge, and they lie inside 1.8 radii. Clods are larger and darker, and the dust is warmer. |
+| B-5, B-6: the furrow reads as a drawn ring over the shadow; no lit head | The furrow's width and radius waver round the turn (`waver`), its breakup leaves a broken circle, its berm is opaque earth lighter on top, its head is lit, and it is drawn under the unit's shadow. The stabilisers' pressed soil and cracks lie out from under the bubble (1.35 to 1.5 radii). |
+| F-1: no undetected burrowed enemy in the battle | The tableau has one (the stand-in, burrowed, at about (796, 211) in the radv window). The test compares its patch with the scene captured just before the tableau was staged. |
+| F-2: sequences without a fixed interval or times | Every frame of an act advances presentation time by exactly 40 ms, and every frame is captured, labelled with its time since the switch was asked for. |
+| C-1: the detected enemy looks milky | The detected tableau is also captured without effect layers (`wp8r2_battle_detected_bare_*`). |
+| Regression check per channel | `shimmer_check` now judges whole colours: a bent pixel must lie within 6 levels (Euclidean RGB) of what one filtered read of a 2×2 block of the reference within 6 px can give. |
+| Distortion fix | Registered in `DESIGN.md` as B-119 (`flame_line`'s and `lance_sweep`'s heat haze sampled the wrong screen region in every battle until the fix). |
+
+A fix found while building the evidence: an emerging unit with a clip dropped for one frame to the deep sink of a
+unit without a clip when its channel ended, because the unit then has no mode to ask about. The track now keeps
+the decision while the emerge settles (`kept_clip`), and the sequence test checks that the body never sinks during
+the emerge.
+
+### Material
+
+| What | Files |
+|---|---|
+| Burrow pose, unit with its clip: empty ground, standing, burrowed, burrowed without effect layers | [wp8r2_burrow_pose_radv.png](wp8r2_burrow_pose_radv.png), [wp8r2_burrow_pose_lavapipe.png](wp8r2_burrow_pose_lavapipe.png) |
+| Burrow pose, unit without mode media (a small shipped archetype given the burrowed mode in the test world's catalog only): empty, standing, burrowed without effect layers | [wp8r2_plain_burrow_pose_radv.png](wp8r2_plain_burrow_pose_radv.png), [wp8r2_plain_burrow_pose_lavapipe.png](wp8r2_plain_burrow_pose_lavapipe.png) |
+| Undetected cloaked enemy, pose: empty, shimmer, without effect layers, amplified difference | [wp8r2_shimmer_pose_radv.png](wp8r2_shimmer_pose_radv.png), [wp8r2_shimmer_pose_lavapipe.png](wp8r2_shimmer_pose_lavapipe.png) |
+| Siege switch half way, `Critical` layers only, bubble hidden; and without effect layers | [wp8r2_siege_mid_radv.png](wp8r2_siege_mid_radv.png), [wp8r2_siege_mid_lavapipe.png](wp8r2_siege_mid_lavapipe.png) |
+| Sequences at 40 ms steps, labelled `t` since the switch was asked for (cells cut 160×120 round the unit, enlarged 2×): dig 2.4 s, emerge 1.4 s, siege 3.6 s, unsiege 3.2 s | [dig](wp8r2_dig_sequence_radv.png), [emerge](wp8r2_emerge_sequence_radv.png), [siege](wp8r2_siege_sequence_radv.png), [unsiege](wp8r2_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Battle: the scene before the tableau; the tableau; without effect layers; a detector of the player's beside the cloaked enemy; that scene without effect layers | [before](wp8r2_battle_before_radv.png), [tableau](wp8r2_battle_undetected_radv.png), [bare](wp8r2_battle_bare_radv.png), [detected](wp8r2_battle_detected_radv.png), [detected, bare](wp8r2_battle_detected_bare_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The tests' printed measurements on both drivers | [wp8r2_measurements.txt](wp8r2_measurements.txt) |
+
+The tableau's units: the player's burrowed Lurker analogue, the player's cloaked stand-in, the enemy cloaked
+stand-in (undetected, about (893, 230) in the radv window), the undetected burrowed enemy stand-in (about
+(796, 211)) and the anchored Siege-Tank analogue. All stand on the upper part of the skirmish platform, which ends
+in open space close to the base, so some looks lie near its edge.
+
+### Points to look at
+
+- Whether the owner's burrowed unit now reads as its own burrowed clip, dug in (no marble, no highlight, no
+  shadow), and whether the ground round it reads as earth at the default zoom.
+- Whether the dig and the emerge, at 40 ms steps, show the shadow fading rather than popping, the clods and the
+  dust, and the heaped earth staying after the emerge.
+- Whether the furrow reads as ploughed ground during the siege and unsiege and while anchored, rather than as a
+  drawn ring, and whether its head is lit.
+- C-1: the detected enemy with and without its looks.
+- F-1: the undetected burrowed enemy's place in the tableau against the scene before it.
+
+## WP8 round 1 (concealment and stance)
+
+This is the first review round of WP8 (plan Amendment 11; Q0080 allows up to five). Please write it to a new file
+next to this one, `independent_review_wp8_1.md`, in the same form as earlier rounds: judge each look below against
+each of the seven checklist items (item 7, fog, carries most weight here), write **accept** or **reject** with a
+concrete reason (file, cell or frame, what you see), and say whether the shipped seven splash effects regressed
+(they were not changed; the effect shaders gained an arc mask and a lens bend that are off for them).
+
+Unlike the earlier rounds, these looks are not drawn in the effect lab but on units in the production client
+playing the shipped skirmish, because they modify the units' own bubbles. The pictures are screenshots of
+`crates/client/tests/stance_gpu_tests.rs`'s two children (debug build, Xvfb, 1280×720 window), on radv (the
+physical GPU) and on lavapipe, at the camera's default distance. The burrowing unit is the shipped Lurker
+analogue (a scorpion picture, with WP13's burrowed and morph clips), the anchoring unit the shipped Siege-Tank
+analogue (with WP13's sieged clip); the cloaked units are an unarmed stand-in `battle_harness::burrower` picks.
+Nothing was spent and no texture was made.
+
+### The looks (what each is meant to be)
+
+| Look | Shown to | Meant to read as |
+|---|---|---|
+| `burrow_dig` | anyone who sees the unit | the bubble sinks into the ground over the dig (1.8 s; the stats change at 33 ticks, the dig goes on to 45, D-6), soil creeps up its glass from the ground, clods are thrown off its rim, dust rises, loose earth heaps round the hole |
+| `burrow_mound` | the owner and an enemy that detects it | a low, soil-caked dome in a hollow with heaped earth round it; nothing else |
+| `burrow_emerge` | anyone who sees the unit | the body heaves up out of its hole in 11 ticks, throwing soil and dust; the heaped earth stays a while |
+| `cloak_own` | the owner of a cloaked unit | a hollow, cool glass shape with an outline light and a faint bend of what is behind it: "hidden, but here" |
+| `cloak_shimmer` | an enemy that does not detect it | only a faint refraction of what lies behind its outline, slowly crawling; no colour, no bubble, no ring or bar (Q0076) |
+| `detected_mark` | an enemy that detects a cloaked unit | the unit drawn as it is, with a thin cold outline light and a slight bend at its edge |
+| `mode_seal_sweep` | anyone who sees the unit | while an anchoring mode switch runs (siege and unsiege), a furrow ploughed round the hull whose arc closes with the switch's progress, its head lit; dust as it begins |
+| `siege_anchor` | anyone who sees the unit | while anchored, the closed furrow stays, with soil pressed down under the stabilisers |
+
+An undetected **burrowed** enemy shows nothing at all (WP3's rule, unchanged), and its spine line still shows where
+the viewer sees the ground (R6, unchanged).
+
+### Material
+
+| What | Files |
+|---|---|
+| Burrow pose: empty ground, the unit standing, burrowed, burrowed without the effect layers | [wp8_burrow_pose_radv.png](wp8_burrow_pose_radv.png), [wp8_burrow_pose_lavapipe.png](wp8_burrow_pose_lavapipe.png) |
+| Undetected cloaked enemy: empty ground, its shimmer, without the effect layers, the shimmer's amplified difference from the empty ground | [wp8_shimmer_pose_radv.png](wp8_shimmer_pose_radv.png), [wp8_shimmer_pose_lavapipe.png](wp8_shimmer_pose_lavapipe.png) |
+| Siege switch caught half way, only `Critical` layers, the unit's bubble hidden so the arc can be measured; and the same without effect layers | [wp8_siege_mid_radv.png](wp8_siege_mid_radv.png), [wp8_siege_mid_lavapipe.png](wp8_siege_mid_lavapipe.png) |
+| Sequences through real mode commands, one picture whenever the previous one was written (about every 0.15 to 0.5 s; frame numbers are picture indices) | dig [wp8_dig_sequence_radv.png](wp8_dig_sequence_radv.png), emerge [wp8_emerge_sequence_radv.png](wp8_emerge_sequence_radv.png), siege [wp8_siege_sequence_radv.png](wp8_siege_sequence_radv.png), unsiege [wp8_unsiege_sequence_radv.png](wp8_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Battle capture: a burrowed unit of the player's, a cloaked unit of the player's, a cloaked enemy undetected, the Siege-Tank analogue anchored; then the same scene without effect layers; then a detector of the player's brought beside the enemy | [wp8_battle_undetected_radv.png](wp8_battle_undetected_radv.png), [wp8_battle_bare_radv.png](wp8_battle_bare_radv.png), [wp8_battle_detected_radv.png](wp8_battle_detected_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Own units, close: the player's unit standing and burrowed (pose shots); the player's cloaked unit with and without its effect layers (battle capture) | [wp8_own_burrowed_crop_radv.png](wp8_own_burrowed_crop_radv.png), [wp8_own_burrowed_crop_lavapipe.png](wp8_own_burrowed_crop_lavapipe.png), [wp8_own_cloaked_crop_radv.png](wp8_own_cloaked_crop_radv.png) |
+| The tests' printed measurements on both drivers | [wp8_measurements.txt](wp8_measurements.txt) |
+
+Where things stand in the battle capture (window pixels): the anchored Siege-Tank analogue upper left of the
+headquarters dome, the player's burrowed unit left of the dome, the player's cloaked unit above the dome, the
+enemy cloaked unit right of it (to the upper right of the row of workers).
+
+### Points to look at
+
+- Whether the burrowed unit reads as dug in rather than as a small disc on the ground, at the default zoom, and
+  whether its owner still reads the unit clearly (Q0076: own concealed units stay readable). The burrowed dome
+  shows the unit's own picture unveiled, with only a thin soil band at the ground line and an earth-coloured
+  outline. Since WP13 merged, the burrowing unit in these captures is the shipped Lurker analogue, and its dome
+  shows its own burrowed-mode clip (the Siege-Tank analogue likewise plays its sieged clip). The dome is sunk to
+  at most 35 % of the standing bubble's area, as WP8's test requires, so only the clip's middle shows; whether
+  that is readable enough for its owner is a question for this review. The player's own cloaked unit keeps its
+  picture at about half opacity under a cool outline.
+- Whether the shimmer is faint and colourless (item 7): compare `wp8_shimmer_pose_*` cells 1 and 2, and the battle
+  capture's enemy before and after detection.
+- Before hand-off, the implementer's battle capture showed a small shadow-coloured spot at the undetected
+  enemy's feet. Cause: the distortion block read the scene copy at viewport-relative coordinates, while the copy
+  covers the whole window and the battle camera's viewport excludes the HUD panels, so every distortion in a
+  battle copied the scene from elsewhere on the screen (here a shadow). It now reads the copy where the fragment
+  is (`distortion.wgsl`; the effect lab's full-window viewport is unaffected). The battle test now compares the
+  capture with and without effect layers around that enemy: before the fix 133 of 2 074 bent pixels took a
+  colour not near them and the mean colour moved 4.10 levels; after it, none, and 0.18 levels. Please check the
+  battle captures for any remaining trace (item 7).
+- Whether the siege furrow reads during the switch and while anchored, and whether it reads as ploughed ground or
+  as a drawn ring.
+
 ## Scale-out round 5 (WP7)
 
 Round 4's review ([`independent_review_scaleout4.md`](independent_review_scaleout4.md), kept as written) accepted

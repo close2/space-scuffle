@@ -3,8 +3,10 @@
 //!
 //! # Responsibility
 //! Owns the effect vocabulary ([`catalog`]), its pure evaluation ([`curve`], [`binding`],
-//! [`placement`]), the live effect instances and their budget and level of detail, and the
-//! instanced renderer of the `Sprite`, `Ring`, `Decal`, `Light` and CPU `Particles` blocks.
+//! [`placement`]), the live effect instances and their budget and level of detail, the
+//! instanced renderer of the `Sprite`, `Ring`, `Decal`, `Light` and CPU `Particles` blocks, and
+//! the looks held on units for their concealment and stance, whose `Shell` layers shape the
+//! units' own bubbles ([`stance`], WP8).
 //!
 //! # How it fits
 //! The simulation publishes facts (`CombatEventVisual::SplashVisual`, every weapon event's
@@ -34,6 +36,7 @@ pub mod placement;
 pub mod pool;
 pub mod render;
 pub mod runtime;
+pub mod stance;
 pub mod systems;
 
 use bevy::prelude::*;
@@ -52,6 +55,7 @@ impl Plugin for EffectsPlugin {
                     systems::spawn_effects_from_events
                         .after(crate::battle_pipeline::driver::publish_combat_events),
                     systems::spawn_mode_trails,
+                    stance::present_stances,
                 )
                     .in_set(crate::battle_pipeline::BattleSet::Present),
             )

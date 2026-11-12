@@ -27,6 +27,14 @@ pub const ORIENT_STRETCHED: u32 = 3;
 pub const FLAG_MIRROR: u32 = 1;
 /// [`SpriteInstance::flags`] bit: a ring wraps the texture's middle band around itself.
 pub const FLAG_POLAR: u32 = 2;
+/// [`SpriteInstance::flags`] bit: a ring draws only the arc [`SpriteInstance::arc`] of its
+/// turn, with a brighter head (a mode switch's seal closing).
+pub const FLAG_ARC: u32 = 4;
+/// [`SpriteInstance::flags`] bit: the card darkens what lies under it. It is drawn in the
+/// darkening pass, which multiplies the target by `mix(1, c, a)` (`c` its ramp colour, `a` its
+/// ramp opacity times its coverage), so it never lightens anything, a shadow included (WP8
+/// review 2, B2-2).
+pub const FLAG_DARKEN: u32 = 8;
 /// The card stands upright and turns about world up to face the camera.
 pub const ORIENT_UPRIGHT: u32 = 4;
 /// A ribbon: the card faces the camera about its length along `axis` (as
@@ -122,8 +130,13 @@ pub struct SpriteInstance {
     pub front_edge: f32,
     /// Seed of a torn front's guaranteed crests ([`super::front`]): their rotation and jitter.
     pub front_seed: u32,
-    /// Padding to a whole 16-byte row; zero.
-    pub reserved: [f32; 2],
+    /// With [`FLAG_ARC`], the share of the turn a ring draws from its start angle round, in
+    /// [0, 1]; unused otherwise.
+    pub arc: f32,
+    /// For a distortion disc, its lens bend towards the rim as a fraction of its radius on
+    /// screen; for a ring, how much its band wavers round the turn (its `waver`); 0 for none
+    /// and for every other card.
+    pub warp: f32,
 }
 
 /// One decal box.
@@ -194,8 +207,12 @@ pub struct DecalInstance {
     /// Share of the texture's half width read across a disc outline's radius; 0 for no disc
     /// outline.
     pub outline_fill: f32,
-    /// Padding to a whole 16-byte row; always zero.
-    pub padding: [f32; 2],
+    /// 1 for a mark that darkens what lies under it (drawn in the darkening pass, multiplying
+    /// the ground by its colour), 0 for one blended over it.
+    pub darken: f32,
+    /// Share of the half length, inside a disc outline's edge, over which the mark fades out;
+    /// 0 for an edge anti-aliased over a pixel.
+    pub outline_soft: f32,
 }
 
 /// A point light requested this frame.
@@ -220,6 +237,8 @@ mod tests {
         assert_eq!(size_of::<SpriteInstance>(), 160);
         assert_eq!(std::mem::offset_of!(SpriteInstance, front_edge), 144);
         assert_eq!(std::mem::offset_of!(SpriteInstance, front_seed), 148);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, arc), 152);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, warp), 156);
         assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
         assert_eq!(size_of::<DecalInstance>(), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);

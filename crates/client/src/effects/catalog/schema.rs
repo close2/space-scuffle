@@ -389,6 +389,25 @@ pub enum BlockDef {
         /// test allows its rays to end inside the reach by this bite.
         #[serde(default)]
         edge_noise: f32,
+        /// Share of the full turn the ring draws from its start angle round, in [0, 1] once
+        /// resolved (a mode switch's progress through `ChannelProgress`: a seal that closes as
+        /// the switch completes, plan WP8). `None` draws the whole ring. The arc's head is a
+        /// soft step one hundredth of a turn wide.
+        #[serde(default)]
+        arc: Option<ValueDef>,
+        /// A `Card` or `Polar` ring only: how much its band wavers round the turn, in [0, 1). Its
+        /// width varies by up to this share either way and its radius by a tenth of it, both
+        /// from its breakup noise, and its colour runs from its ramp's low end on the inner
+        /// edge to its high end on the outer one (a furrow and the soil thrown up beside it,
+        /// WP8 review 1, B-5). 0 keeps an even band.
+        #[serde(default)]
+        waver: f32,
+        /// A `Ground` ring only: the ring darkens the ground under it, multiplying it by its
+        /// colour where it covers it, and never lightens it, shadows included (a furrow in
+        /// the shade of its unit; WP8 review 2, B2-2). Its ramp then reads as the colour the
+        /// ground is multiplied by.
+        #[serde(default)]
+        darken: bool,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -431,6 +450,12 @@ pub enum BlockDef {
         /// instead of the texture's own outline: see [`OutlineDef`].
         #[serde(default)]
         outline: Option<OutlineDef>,
+        /// The mark darkens the ground under it, multiplying it by its colour where it covers
+        /// it, and never lightens it, shadows included (soil pressed into the shade of its
+        /// unit; WP8 review 2). Its ramp then reads as the colour the ground is multiplied
+        /// by. A liquid cannot darken.
+        #[serde(default)]
+        darken: bool,
     },
     /// A strip along the event's line (plan WP7): a flame jet's core, a lance's burning
     /// stroke. Its half width is the layer's `size`; it runs from the line's first search
@@ -514,6 +539,54 @@ pub enum BlockDef {
         /// Height of the disc's centre above its placed point, world units.
         #[serde(default)]
         height: f32,
+        /// Lens bend, in [0, 0.25]: the scene behind is pulled outward as a glass sphere
+        /// refracts it, most strongly a little inside the rim, by up to this fraction of the
+        /// disc's radius on screen; 0 for none. A cloaked body's outline is drawn this way
+        /// (plan §5.5 `cloak_shimmer`), with no colour of its own.
+        #[serde(default)]
+        lens: f32,
+    },
+    /// A modulation of the unit's own bubble (plan §5.1 `Shell`, WP8). The effect renderer
+    /// does not draw it: it is evaluated each frame for the unit its effect is held on and
+    /// written into that bubble's material. Every value is its strength at the layer's
+    /// intensity 1; the intensity (the layer's `curve` over its life) scales it towards no
+    /// change. Only `Mode` effects may have one.
+    Shell {
+        /// Share of the bubble's diameter sunk below where it rests, in [0, 1]; the ground
+        /// hides what is below it (a burrowing unit).
+        #[serde(default)]
+        sink: f32,
+        /// Linear RGB tint and the share of the media it replaces, each in [0, 1].
+        #[serde(default)]
+        tint: (f32, f32, f32, f32),
+        /// Linear RGB of a light along the bubble's outline and its strength, each in [0, 1].
+        #[serde(default)]
+        rim: (f32, f32, f32, f32),
+        /// Share of the bubble made see-through, in [0, 1]: its media fades and only the
+        /// glass's outline and rim stay (a cloaked unit its owner sees).
+        #[serde(default)]
+        veil: f32,
+        /// Height above the ground, as a share of the bubble's radius in [0, 1], over which the
+        /// glass is stained by soil (a unit digging in).
+        #[serde(default)]
+        soil: f32,
+        /// With `true` the layer's life is the progress of the mode switch its effect shows
+        /// (`ChannelProgress`), not its age: the bubble sinks as the switch completes.
+        #[serde(default)]
+        progress: bool,
+        /// The sink, in [0, 1], used instead of `sink` for a unit that shows its own clip for
+        /// the mode (WP13 media): the clip itself shows the state, so the bubble sinks only a
+        /// little and stays readable (WP8 review 1, B-1). `None` uses `sink` for every unit.
+        #[serde(default)]
+        clip_sink: Option<f32>,
+        /// Share of the glass's specular highlight taken away, in [0, 1] (a highlight makes a
+        /// sunk dome read as a whole ball).
+        #[serde(default)]
+        matte: f32,
+        /// Share of the unit's shadow taken away, in [0, 1]: the shadow caster shrinks into
+        /// the body as this rises, so the shadow fades with the look instead of popping.
+        #[serde(default)]
+        shadow: f32,
     },
     /// A short point light.
     Light {
@@ -593,6 +666,12 @@ pub struct OutlineDef {
     pub edge_noise: f32,
     /// Share of the texture's half width read across the disc's radius, in [0.25, 1].
     pub fill: f32,
+    /// Share of the half length, inside the edge, over which the mark fades out to it (as the
+    /// square of the distance in from the edge, so its outermost part fades in slowly), in
+    /// [0, 0.8]; 0 for an edge anti-aliased over a pixel (WP8 review 3, A3-1: soil pressed
+    /// down by a hull fades into the floor round it).
+    #[serde(default)]
+    pub soft: f32,
 }
 
 /// Whether a layer may be dropped by the budget.
@@ -616,6 +695,19 @@ pub enum PlacementDef {
         count: u32,
         /// Disc radius.
         radius: ValueDef,
+    },
+    /// `count` instances round a circle of `radius`, evenly spaced from a start angle drawn per
+    /// effect, each turned by up to a third of the spacing and moved in or out by up to
+    /// `spread` of the radius (both hashed): a ring of heaped earth round a body, which a
+    /// `Disc` would mostly scatter under it (WP8 review 2, B2-1).
+    Circle {
+        /// Instances.
+        count: u32,
+        /// Circle radius.
+        radius: ValueDef,
+        /// Largest move in or out, as a fraction of the radius, in [0, 0.5].
+        #[serde(default)]
+        spread: f32,
     },
     /// Instances every `spacing` along the event's line, each delayed by its distance
     /// divided by `travel` (world units per second; 0 for no delay).
@@ -684,6 +776,20 @@ pub struct LayerDef {
     /// Placements; empty means one `Point`.
     #[serde(default)]
     pub placements: Vec<PlacementDef>,
+    /// The layer lives while the fact its effect shows holds (a unit's stance, its cloak):
+    /// it comes in over `duration` along its curves, then stays at their end until the effect
+    /// is released, and erodes out over `exit` seconds (plan §5.4, WP8). Only `Mode` effects
+    /// may hold layers.
+    #[serde(default)]
+    pub held: bool,
+    /// Seconds a held layer takes to erode out once its effect is released; positive.
+    #[serde(default = "default_exit")]
+    pub exit: f32,
+}
+
+/// Default seconds a held layer takes to erode out once released.
+const fn default_exit() -> f32 {
+    0.35
 }
 
 /// An effect: a class, an event kind and its layers.
@@ -706,6 +812,13 @@ pub struct EffectDefRaw {
     /// any `u32`. Without it the salt is the FNV-1a hash of the effect's name.
     #[serde(default)]
     pub seed: Option<u32>,
+    /// For a mode switch's effect (a `Mode` effect named as `enter`, `leave` or `transition`):
+    /// the seconds the morph takes on screen. When it is longer than the switch's channel the
+    /// morph plays at its own pace and finishes after the channel has ended (the dig of a unit
+    /// whose stats change before its animation ends, plan D-6, Q0069); without it, or when it
+    /// is shorter, the morph follows the channel. Positive.
+    #[serde(default)]
+    pub span: Option<f32>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.
@@ -871,4 +984,46 @@ pub struct DefaultsDef {
     /// A status, by kind.
     #[serde(default)]
     pub status: BTreeMap<StatusKind, String>,
+    /// How concealed units look (plan §5.2 `defaults.concealment`, D-5).
+    #[serde(default)]
+    pub concealment: ConcealmentDefaultsDef,
+    /// Mode switches and stances a unit's block names nothing for (plan §5.2 `defaults.mode`).
+    #[serde(default)]
+    pub mode: ModeDefaultsDef,
+}
+
+/// The looks of concealment; every entry is optional and names a `Mode` effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcealmentDefaultsDef {
+    /// Channel into a burrowed mode (a mode with `burrowed: true`).
+    #[serde(default)]
+    pub burrow_enter: Option<String>,
+    /// Channel out of a burrowed mode.
+    #[serde(default)]
+    pub burrow_leave: Option<String>,
+    /// Held while burrowed.
+    #[serde(default)]
+    pub burrowed: Option<String>,
+    /// Held on a cloaked unit of the viewer's own (or of anyone, with no fog).
+    #[serde(default)]
+    pub cloaked_own: Option<String>,
+    /// Held on a cloaked enemy the viewer does not detect: all the viewer sees of it.
+    #[serde(default)]
+    pub cloaked_enemy: Option<String>,
+    /// Held on a concealed enemy the viewer detects.
+    #[serde(default)]
+    pub detected: Option<String>,
+}
+
+/// The looks of mode switches; every entry is optional and names a `Mode` effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModeDefaultsDef {
+    /// Either channel of a mode that anchors its unit (`is_immobile`) and is not burrowed.
+    #[serde(default)]
+    pub transition: Option<String>,
+    /// Held while in such a mode.
+    #[serde(default)]
+    pub anchored: Option<String>,
 }

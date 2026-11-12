@@ -417,6 +417,123 @@ fn the_d12_limits_are_load_time_errors() {
     );
 }
 
+/// WP8 review 2, B2-1: a circle placement loads with a spread in [0, 0.5] and at least one
+/// instance; the catalog refuses the rest.
+#[test]
+fn a_circle_placement_is_range_checked() {
+    let (dir, manifest) = fixture();
+    let layer = |placement: &str| {
+        format!(
+            r#"(block: Decal(texture: "solid", ramp: "blue"), size: (scale: 0.2), duration: 1.0,
+                placement: {placement})"#
+        )
+    };
+    load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&layer(
+                "Circle(count: 8, radius: (scale: 1.0), spread: 0.1)",
+            )),
+            "",
+        ),
+    )
+    .expect("a circle loads");
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&layer(
+                "Circle(count: 8, radius: (scale: 1.0), spread: 0.6)",
+            )),
+            "",
+        ),
+    )
+    .expect_err("a spread above a half");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "spread",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&layer("Circle(count: 0, radius: (scale: 1.0))")),
+            "",
+        ),
+    )
+    .expect_err("no instances");
+    assert!(
+        matches!(&error, EffectCatalogError::TooManyInstances { .. }),
+        "{error}"
+    );
+}
+
+/// WP8 review 2, B2-2: a decal or a ground ring may darken the ground; a standing ring or a
+/// liquid cannot, and the catalog names the field.
+#[test]
+fn darkening_needs_a_mark_on_the_ground() {
+    let (dir, manifest) = fixture();
+    let decal = |extra: &str| {
+        format!(
+            r#"(block: Decal(texture: "solid", ramp: "blue"{extra}), size: (scale: 1.0), duration: 1.0)"#
+        )
+    };
+    let ring = |extra: &str| {
+        format!(
+            r#"(block: Ring(texture: "soft_disc", ramp: "green", thickness: 0.2{extra}),
+                radius: (from: (scale: 0.5), to: (scale: 1.0)), duration: 1.0)"#
+        )
+    };
+    for (layer, what) in [
+        (decal(", darken: true"), "a darkening decal"),
+        (
+            ring(", orient: Ground, darken: true"),
+            "a darkening ground ring",
+        ),
+    ] {
+        let catalog = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &splash_effect(&layer), ""),
+        )
+        .expect(what);
+        let effect = catalog
+            .effect(catalog.effect_id("boom").expect("defined"))
+            .expect("loaded");
+        let darkens = match &effect.layers[0].block {
+            Block::Decal(look) => look.darken,
+            Block::Ring { darken, .. } => *darken,
+            other => panic!("expected a decal or a ring, got {other:?}"),
+        };
+        assert!(darkens, "{what} keeps its flag");
+    }
+    for layer in [
+        ring(", darken: true"),
+        decal(
+            ", darken: true, liquid: (relief: 0.05, sheen: 1.0, gloss: 20.0, value_noise: 0.5, dry_below: 0.5)",
+        ),
+    ] {
+        let error = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &splash_effect(&layer), ""),
+        )
+        .expect_err("refused");
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: "darken", .. }),
+            "{error}"
+        );
+    }
+}
+
 /// Plan Amendment 2: a liquid decal's material, a decal's clip feather and an effect's repeat
 /// period are range-checked at load, naming the field.
 #[test]
@@ -450,11 +567,27 @@ fn liquid_feather_and_repeat_values_are_range_checked() {
         &vocabulary(&manifest, "", &splash_effect(&outline(0.02, 0.76)), ""),
     )
     .expect("a decal with a disc outline loads (review round 5)");
+    load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&decal(
+                ", outline: (edge_noise: 0.2, fill: 0.7, soft: 0.55)",
+            )),
+            "",
+        ),
+    )
+    .expect("a disc outline with a soft fade loads (WP8 review 3)");
     for (layer, field) in [
         (outline(-0.01, 0.76), "outline.edge_noise"),
         (outline(0.3, 0.76), "outline.edge_noise"),
         (outline(0.02, 0.2), "outline.fill"),
         (outline(0.02, 1.1), "outline.fill"),
+        (
+            decal(", outline: (edge_noise: 0.02, fill: 0.76, soft: 0.9)"),
+            "outline.soft",
+        ),
         (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
         (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
         (liquid(0.05, 1.0, 0.5, 0.5, 0.5), "liquid.gloss"),

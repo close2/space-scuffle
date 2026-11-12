@@ -43,9 +43,9 @@ use super::catalog::{
     ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA,
-    ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT,
-    ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_DARKEN, FLAG_MIRROR, FLAG_POLAR,
+    NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
+    ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
@@ -144,6 +144,11 @@ pub struct EffectFrame {
     pub distortions: Vec<SpriteInstance>,
     /// Cards written this frame (not particles).
     card_count: u32,
+    /// Cards this frame that darken what lies under them: the first this many of `sorted`
+    /// (they sort as the farthest), which the renderer draws in its darkening item.
+    pub darkening_cards: u32,
+    /// Decals this frame that darken what lies under them.
+    pub darkening_decals: u32,
 }
 
 impl EffectFrame {
@@ -160,6 +165,8 @@ impl EffectFrame {
             lights: Vec::with_capacity(lights),
             distortions: Vec::with_capacity(distortions),
             card_count: 0,
+            darkening_cards: 0,
+            darkening_decals: 0,
         }
     }
 
@@ -292,7 +299,22 @@ impl EffectRuntime {
             decal_slots,
             marks_retired_at: None,
             bursts_through: f32::NEG_INFINITY,
+            held: false,
+            released_at: None,
+            held_exit: 0.0,
+            oneshot_end: birth,
         };
+        self.place(instance)
+    }
+
+    /// The held effect `handle`, if it is still live (held or eroding out after release).
+    #[must_use]
+    pub fn held(&self, handle: EffectHandle) -> Option<&EffectInstance> {
+        self.pool.get(handle).filter(|instance| instance.held)
+    }
+
+    /// Places `instance` in the pool and advances the spawn sequence.
+    fn place(&mut self, instance: EffectInstance) -> Option<EffectHandle> {
         self.sequence = self.sequence.wrapping_add(1);
         if let Ok(handle) = self.pool.spawn(instance) {
             self.stats.spawned += 1;
@@ -300,6 +322,97 @@ impl EffectRuntime {
         } else {
             self.stats.refused += 1;
             None
+        }
+    }
+
+    /// Holds `request`'s effect on a unit from time `now` until [`Self::release`]: its held
+    /// layers come in and stay, its other layers play once (plan §5.4, WP8). With `settled`,
+    /// the effect is shown as if it had been held long ago: its one-shot layers and bursts are
+    /// over and its held layers are fully in (a unit first seen already in its stance).
+    ///
+    /// A held effect counts against no class cap and is never retired by the budget: it shows
+    /// a unit's state, and there is at most one of each kind per unit. Its decals are reserved
+    /// whole at once, as any effect's are.
+    pub fn hold(
+        &mut self,
+        catalog: &EffectCatalog,
+        request: &SpawnRequest,
+        now: f64,
+        settled: bool,
+    ) -> Option<EffectHandle> {
+        let effect = catalog.effect(request.effect)?;
+        let birth = if settled {
+            now - f64::from(effect.lifetime) - SETTLED_AGE
+        } else {
+            now
+        };
+        let spans = effect_spans(effect, request);
+        let decal_slots = self.reserve_marks(catalog, effect.class, false, spans.decals, now);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "an effect's age in seconds fits f32"
+        )]
+        let bursts_through = if settled {
+            (now - birth) as f32
+        } else {
+            f32::NEG_INFINITY
+        };
+        let instance = EffectInstance {
+            effect: request.effect,
+            class: effect.class,
+            birth,
+            end: f64::INFINITY,
+            anchor: request.anchor,
+            bound: request.bound,
+            line: None,
+            seed: instance_seed(self.sequence, effect.salt),
+            detail_retired_at: None,
+            has_detail: false,
+            fire_end: birth + f64::from(spans.fire),
+            decal_end: if spans.held_decals {
+                f64::INFINITY
+            } else {
+                birth + f64::from(spans.decal)
+            },
+            decal_slots,
+            marks_retired_at: None,
+            bursts_through,
+            held: true,
+            released_at: None,
+            held_exit: effect.held_exit,
+            oneshot_end: birth + f64::from(effect.lifetime),
+        };
+        self.place(instance)
+    }
+
+    /// Moves the held effect `handle` to `anchor` (world space) with the values `bound`; a
+    /// released or stale handle does nothing. Returns whether the effect is still held.
+    pub fn update_held(&mut self, handle: EffectHandle, anchor: Vec3, bound: BoundValues) -> bool {
+        match self.pool.get_mut(handle) {
+            Some(instance) if instance.held && instance.released_at.is_none() => {
+                instance.anchor = anchor;
+                instance.bound = bound;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Releases the held effect `handle` at `now`: its held layers erode out over their exit
+    /// and the effect ends once they and its one-shot layers are over. A stale or already
+    /// released handle does nothing.
+    pub fn release(&mut self, handle: EffectHandle, now: f64) {
+        let Some(instance) = self.pool.get_mut(handle) else {
+            return;
+        };
+        if !instance.held || instance.released_at.is_some() {
+            return;
+        }
+        let exit_end = now + f64::from(instance.held_exit);
+        instance.released_at = Some(now);
+        instance.end = exit_end.max(instance.oneshot_end);
+        if instance.decal_end.is_infinite() {
+            instance.decal_end = exit_end.max(instance.oneshot_end);
         }
     }
 
@@ -361,6 +474,8 @@ impl EffectRuntime {
         self.frame.decal_owners.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
+        self.frame.darkening_cards = 0;
+        self.frame.darkening_decals = 0;
         self.ledger.clear();
         self.last_build = None;
     }
@@ -388,6 +503,8 @@ impl EffectRuntime {
         self.frame.lights.clear();
         self.frame.distortions.clear();
         self.frame.card_count = 0;
+        self.frame.darkening_cards = 0;
+        self.frame.darkening_decals = 0;
         let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
         let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
         self.stats.critical_overflow += u64::from(overflowed_critical);
@@ -435,7 +552,8 @@ impl EffectRuntime {
                 Some(effect) if instance.decal_slots > 0 => held_marks(effect, instance, now),
                 _ => 0,
             };
-            let burning = now < instance.fire_end && instance.detail_retired_at.is_none();
+            let burning =
+                !instance.held && now < instance.fire_end && instance.detail_retired_at.is_none();
             self.ledger.count(
                 instance.class,
                 burning,
@@ -459,6 +577,7 @@ impl EffectRuntime {
             .iter()
             .filter(|(_, instance)| {
                 instance.class == class
+                    && !instance.held
                     && instance.has_detail
                     && instance.detail_retired_at.is_none()
                     && now < instance.fire_end
@@ -511,7 +630,9 @@ impl EffectRuntime {
         let oldest = self
             .pool
             .iter()
-            .filter(|(_, instance)| instance.decal_slots > 0 && instance.marks_retired_at.is_none())
+            .filter(|(_, instance)| {
+                instance.decal_slots > 0 && instance.marks_retired_at.is_none() && !instance.held
+            })
             .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
             .map(|(index, _)| index);
         let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
@@ -532,7 +653,7 @@ impl EffectRuntime {
                     class: instance.class,
                     birth: instance.birth,
                     detail_retired: instance.detail_retired_at.is_some(),
-                    has_detail: instance.has_detail,
+                    has_detail: instance.has_detail && !instance.held,
                 },
             )
         }));
@@ -699,7 +820,7 @@ impl EffectRuntime {
                     Pool::Distortions => budget
                         .distortions
                         .saturating_sub(len32(self.frame.distortions.len())),
-                    Pool::Particles => continue,
+                    Pool::Particles | Pool::Bubble => continue,
                 };
                 let Some(fade) = marks_fade(&instance, layer, fade, now) else {
                     continue;
@@ -713,6 +834,7 @@ impl EffectRuntime {
                     now,
                     fade,
                     camera,
+                    exit: layer_clock(layer, &instance, now, 0.0).map_or(0.0, |clock| clock.exit),
                 };
                 overflow += self.write_layer(&context, free);
             }
@@ -735,20 +857,15 @@ impl EffectRuntime {
                 }
                 let seed = placed_seed(instance.seed, layer_index, placement_index, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "an effect's age in seconds fits f32"
-                )]
-                let age = (context.now - instance.birth) as f32 - layer.start - placed.delay;
-                if age < 0.0 || age > layer.duration {
+                let Some(clock) = layer_clock(layer, instance, context.now, placed.delay) else {
                     continue;
-                }
+                };
                 if !layer_admitted(layer.priority, free) {
                     overflow += 1;
                     continue;
                 }
                 let position = instance.anchor + placed.offset;
-                match self.write_instance(context, position, age, seed) {
+                match self.write_instance(context, position, clock, seed) {
                     Written::Yes => free = free.saturating_sub(1),
                     Written::Full => overflow += 1,
                     Written::Skipped => {}
@@ -763,13 +880,15 @@ impl EffectRuntime {
         &mut self,
         context: &LayerContext<'_>,
         position: Vec3,
-        age: f32,
+        clock: LayerClock,
         seed: u32,
     ) -> Written {
         let layer = context.layer;
         let catalog = context.catalog;
-        let life = (age / layer.duration).clamp(0.0, 1.0);
-        let intensity = catalog.sample(layer.curve, life, 1.0) * context.fade;
+        let LayerClock { age, life, exit } = clock;
+        // A released held layer erodes out (its erosion rises with `exit`, see `push_card` and
+        // `push_decal`) and dims with it, so it never pops.
+        let intensity = catalog.sample(layer.curve, life, 1.0) * context.fade * (1.0 - exit * exit);
         let jitter = 1.0 + layer.size_jitter * (2.0 * unit_float(hash3(seed, 0x51CE, 0)) - 1.0);
         let size = resolve_value(&layer.size, &context.instance.bound)
             * catalog.sample(layer.size_curve, life, 1.0)
@@ -813,6 +932,9 @@ impl EffectRuntime {
                 thickness,
                 height,
                 edge_noise,
+                arc,
+                waver,
+                darken,
             } => self.push_card(
                 context,
                 look,
@@ -827,6 +949,10 @@ impl EffectRuntime {
                         - (thickness * catalog.sample(layer.size_curve, life, 1.0))
                             .clamp(0.01, 0.99),
                     edge_noise: *edge_noise,
+                    arc: arc
+                        .map(|arc| resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)),
+                    waver: *waver,
+                    darken: *darken,
                 },
             ),
             Block::Decal(look) => {
@@ -852,7 +978,7 @@ impl EffectRuntime {
                 });
                 Written::Yes
             }
-            Block::Particles(_) => Written::Skipped,
+            Block::Particles(_) | Block::Shell(_) => Written::Skipped,
         }
     }
 
@@ -882,6 +1008,10 @@ impl EffectRuntime {
         let (rotation, mut flags) = roll_and_mirror(look.rotation, seed);
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
+        }
+        if ring.darken {
+            flags |= FLAG_DARKEN;
+            self.frame.darkening_cards += 1;
         }
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
@@ -927,13 +1057,19 @@ impl EffectRuntime {
             frame_mix,
             ramp_row: u32::from(look.ramp.0),
             intensity,
-            erosion: catalog.sample(look.erosion, life, 0.0),
+            erosion: catalog.sample(look.erosion, life, 0.0).max(context.exit),
             soft_depth: look.soft_depth,
             ring_inner,
             rotation: rotation + lean,
             orient,
             ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-            flags,
+            flags: if ring.arc.is_some() {
+                flags | FLAG_ARC
+            } else {
+                flags
+            },
+            arc: ring.arc.unwrap_or(0.0),
+            warp: ring.waver,
             clip_axis: [clip[0], clip[1]],
             clip_min: clip[2],
             clip_max: clip[3],
@@ -981,6 +1117,7 @@ impl EffectRuntime {
             noise_scale: look.scale,
             noise_amount: look.strength,
             noise_layer: look.noise_layer,
+            warp: look.lens,
             ..SpriteInstance::default()
         });
         Written::Yes
@@ -1068,10 +1205,19 @@ impl EffectRuntime {
     }
 
     /// Appends a card and its depth, moved `bias` world units towards the camera in the sort.
+    ///
+    /// A darkening card ([`FLAG_DARKEN`]) sorts as the farthest of all, so the darkening cards
+    /// are the first [`EffectFrame::darkening_cards`] of `sorted`: the renderer draws that
+    /// prefix in one darkening item before every other transparent item (WP8 review 3, E3-1),
+    /// and multiplication does not depend on their order.
     fn push_sorted_card(&mut self, card: SpriteInstance, camera: Option<&CameraView>, bias: f32) {
-        let depth = camera.map_or(0.0, |camera| {
-            camera.depth(Vec3::from_array(card.center)) - bias
-        });
+        let depth = if card.flags & FLAG_DARKEN != 0 {
+            DARKENING_DEPTH
+        } else {
+            sort_depth(camera.map_or(0.0, |camera| {
+                camera.depth(Vec3::from_array(card.center)) - bias
+            }))
+        };
         self.frame.cards.push(card);
         self.frame.depth.push(depth);
     }
@@ -1122,7 +1268,7 @@ impl EffectRuntime {
             frame_mix,
             ramp_row: u32::from(look.ramp.0),
             intensity,
-            erosion: catalog.sample(look.erosion, life, 0.0),
+            erosion: catalog.sample(look.erosion, life, 0.0).max(context.exit),
             ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
             clip_min: clip[2],
             clip_max: clip[3],
@@ -1135,8 +1281,13 @@ impl EffectRuntime {
             dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
             outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
             outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
+            outline_soft: look.outline.map_or(0.0, |outline| outline.soft),
+            darken: if look.darken { 1.0 } else { 0.0 },
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
+        if look.darken {
+            self.frame.darkening_decals += 1;
+        }
         Written::Yes
     }
 
@@ -1190,7 +1341,7 @@ impl EffectRuntime {
                 clip_max: particle.clip[3],
                 ..Surface::NONE.card()
             };
-            let depth = camera.map_or(0.0, |camera| camera.depth(particle.position));
+            let depth = sort_depth(camera.map_or(0.0, |camera| camera.depth(particle.position)));
             frame.cards.push(card);
             frame.depth.push(depth);
         }
@@ -1220,6 +1371,12 @@ struct RingShape {
     inner: f32,
     /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
     edge_noise: f32,
+    /// Share of the turn an arc draws, in [0, 1]; `None` for the whole ring.
+    arc: Option<f32>,
+    /// How much the band wavers round the turn; 0 for an even band.
+    waver: f32,
+    /// Whether the ring darkens the ground under it.
+    darken: bool,
 }
 
 impl RingShape {
@@ -1227,6 +1384,9 @@ impl RingShape {
     const NONE: Self = Self {
         inner: 0.0,
         edge_noise: 0.0,
+        arc: None,
+        waver: 0.0,
+        darken: false,
     };
 }
 
@@ -1258,6 +1418,8 @@ struct LayerContext<'a> {
     fade: f32,
     /// The camera.
     camera: Option<&'a CameraView>,
+    /// Share of a released held layer's exit gone (0 otherwise): its erosion is at least this.
+    exit: f32,
 }
 
 /// The fade of `layer` of `instance` given its retirement fade `fade`: a decal layer draws
@@ -1293,6 +1455,11 @@ fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f
         .iter()
         .filter(|layer| layer.block.pool() == Pool::Decals)
         .filter(|layer| {
+            if layer.held && instance.held {
+                return instance
+                    .released_at
+                    .is_none_or(|released| now - released <= f64::from(layer.exit));
+            }
             age <= layer.start
                 + layer.duration
                 + max_line_delay(std::slice::from_ref(*layer), instance.line)
@@ -1317,31 +1484,105 @@ struct Spans {
     decal: f32,
     /// Decals its decal layers place over its life.
     decals: u32,
+    /// Whether a held layer is a decal (its marks last until the effect is released).
+    held_decals: bool,
 }
 
-/// The spans of `effect` spawned by `request`.
+/// The spans of `effect` spawned by `request`. Held layers add their decals but no span: they
+/// last until their effect is released.
 fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Spans {
     let mut spans = Spans {
         fire: 0.0,
         decal: 0.0,
         decals: 0,
+        held_decals: false,
     };
     for layer in &effect.layers {
         let end = layer.start
             + layer.duration
             + max_line_delay(std::slice::from_ref(layer), request.line);
-        if layer.block.pool() == Pool::Decals {
-            spans.decal = spans.decal.max(end);
-            spans.decals += layer
-                .placements
-                .iter()
-                .map(|placement| instance_count(placement, &request.bound, request.line))
-                .sum::<u32>();
-        } else {
-            spans.fire = spans.fire.max(end);
+        match layer.block.pool() {
+            Pool::Decals => {
+                spans.decals += layer
+                    .placements
+                    .iter()
+                    .map(|placement| instance_count(placement, &request.bound, request.line))
+                    .sum::<u32>();
+                if layer.held {
+                    spans.held_decals = true;
+                } else {
+                    spans.decal = spans.decal.max(end);
+                }
+            }
+            Pool::Bubble => {}
+            _ if layer.held => {}
+            _ => spans.fire = spans.fire.max(end),
         }
     }
     spans
+}
+
+/// How far a held effect is shown as born in the past when it is held `settled`, beyond its
+/// one-shot lifetime, seconds: every one-shot layer and burst is over, every held layer in.
+const SETTLED_AGE: f64 = 60.0;
+
+/// When one layer of one live effect is drawn, for a placed instance delayed by `delay`
+/// seconds: its age and life, and how far a released held layer has eroded out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayerClock {
+    /// Seconds since the layer started.
+    pub age: f32,
+    /// Share of the layer's duration gone, in [0, 1]; a held layer stays at 1 once in.
+    pub life: f32,
+    /// Share of a released held layer's exit gone, in [0, 1); 0 while held or not held.
+    pub exit: f32,
+}
+
+/// The [`LayerClock`] of `layer` of `instance` at `now` for an instance placed `delay` seconds
+/// late, or `None` when it is not drawn: not started, past its duration (a layer that is not
+/// held), or eroded out (a released held layer).
+#[must_use]
+pub fn layer_clock(
+    layer: &Layer,
+    instance: &EffectInstance,
+    now: f64,
+    delay: f32,
+) -> Option<LayerClock> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "an effect's age in seconds fits f32"
+    )]
+    let age = (now - instance.birth) as f32 - layer.start - delay;
+    if age < 0.0 {
+        return None;
+    }
+    let held = layer.held && instance.held;
+    if !held {
+        if age > layer.duration {
+            return None;
+        }
+        return Some(LayerClock {
+            age,
+            life: (age / layer.duration).clamp(0.0, 1.0),
+            exit: 0.0,
+        });
+    }
+    let exit = match instance.released_at {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "seconds since release fit f32"
+        )]
+        Some(released) => ((now - released) as f32 / layer.exit.max(1e-3)).max(0.0),
+        None => 0.0,
+    };
+    if exit >= 1.0 {
+        return None;
+    }
+    Some(LayerClock {
+        age,
+        life: (age / layer.duration).clamp(0.0, 1.0),
+        exit,
+    })
 }
 
 /// The seed of the effect instance spawned as number `sequence` of the runtime, for an effect
@@ -1739,10 +1980,47 @@ pub fn flipbook_frame(
     (element.first_layer + whole, element.first_layer + next, mix)
 }
 
+/// The sort depth of every darkening card: above every other card's ([`sort_depth`]), so the
+/// darkening cards lead the sorted cards.
+const DARKENING_DEPTH: f32 = f32::MAX;
+
+/// The sort depth of an ordinary card at view depth `depth`: finite and below
+/// [`DARKENING_DEPTH`], so no card (one with a non-finite centre included) can sort before a
+/// darkening card and push it out of the prefix the renderer draws (WP8 review 4, A4-1). A
+/// non-finite depth sorts as 0 (at the camera plane).
+fn sort_depth(depth: f32) -> f32 {
+    if depth.is_finite() {
+        depth.min(f32::MAX / 2.0)
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+
+    #[test]
+    fn no_card_sorts_before_a_darkening_card() {
+        for depth in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            1.0e30,
+            -3.0,
+        ] {
+            let sorted = sort_depth(depth);
+            assert!(sorted.is_finite(), "{depth} sorts at {sorted}");
+            assert!(
+                sorted.total_cmp(&DARKENING_DEPTH).is_lt(),
+                "{depth} sorts at {sorted}, not below the darkening cards"
+            );
+        }
+        assert_eq!(sort_depth(-3.0), -3.0, "an ordinary depth is kept");
+        assert_eq!(sort_depth(f32::NAN), 0.0);
+    }
 
     fn ribbon(travel: f32, tail_delay: Option<f32>) -> RibbonLook {
         RibbonLook {

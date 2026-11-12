@@ -4,11 +4,14 @@
 // texture in the box's local XZ at the mip its screen footprint needs, breaks its erosion up
 // with noise of its own phase and fades on faces steeper than the decal's grazing cosine. A
 // decal with a disc outline is bounded by a disc of its half length with a shallow noise edge
-// and reads its texture's middle inside it (review round 5).
+// and reads its texture's middle inside it (review round 5). The pipeline with `DARKEN_PASS`
+// draws only decals with `darken` set and outputs the factor the scene is multiplied by, so such
+// a mark darkens the ground, its shadows included, and never lightens it (WP8 review 2); the
+// other pipeline draws every other decal.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     DecalInstance, ramp_lookup, erosion_step, breakup_order, self_shade, noise_sample, clip_fade,
-    derivative_mip_level, flipbook_sample, premultiply,
+    derivative_mip_level, flipbook_sample, premultiply, darkening_factor, NOWHERE,
 }
 
 // Liquid material (DecalInstance::relief > 0): the element's shading is the liquid's
@@ -119,6 +122,15 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     var out: VertexOutput;
     out.position = view.clip_from_world * vec4<f32>(world, 1.0);
     out.instance = instance_index;
+#ifdef DARKEN_PASS
+    if (decal.darken <= 0.0) {
+        out.position = NOWHERE;
+    }
+#else
+    if (decal.darken > 0.0) {
+        out.position = NOWHERE;
+    }
+#endif
     return out;
 }
 
@@ -175,7 +187,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (disc) {
         edge = outline_edge(decal, local.xz, radius, level, noise_offset);
     }
-    let outline = 1.0 - smoothstep(edge - radius_step, edge, radius);
+    // A soft outline fades out over `outline_soft` of the half length inside its edge, as the
+    // square of the distance in from the edge, so its outermost part fades in slowly (WP8
+    // review 3, A3-1). The coverage is clamped before the outline multiplies it, so an
+    // intensity above 1 does not sharpen the fade. Without it the edge is anti-aliased over a
+    // pixel.
+    var outline = 1.0 - smoothstep(edge - radius_step, edge, radius);
+    if (decal.outline_soft > 0.0) {
+        let inward = clamp((edge - radius) / max(decal.outline_soft * edge, radius_step), 0.0, 1.0);
+        outline = inward * inward;
+    }
     // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
     let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0) * outline;
     if (!inside || coverage <= 0.0) {
@@ -183,7 +204,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     var shading = self_shade(texel.r, texel.g, decal.shade);
     if (decal.relief <= 0.0) {
-        return premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
+        let colour = ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale);
+#ifdef DARKEN_PASS
+        return darkening_factor(colour, coverage);
+#else
+        return premultiply(colour, coverage);
+#endif
     }
     // Liquid: value pooled by the noise, the relief lit from the upper left while wet, and a
     // specular sheen that dries away with the ramp curve.
@@ -226,7 +252,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         smoothstep(edge - LIQUID_OUTLINE_RIM, edge, radius),
     );
     let rimmed = base.rgb * mix(vec3<f32>(1.0), LIQUID_RIM_DARK, rim);
-    return vec4<f32>(rimmed * diffuse + LIQUID_SHEEN_COLOR * specular * coverage * (1.0 - rim), base.a);
+    let liquid_colour = vec4<f32>(rimmed * diffuse + LIQUID_SHEEN_COLOR * specular * coverage * (1.0 - rim), base.a);
+#ifdef DARKEN_PASS
+    // The catalog refuses a darkening liquid; were one drawn here, it would leave the ground as it is.
+    return vec4<f32>(1.0);
+#else
+    return liquid_colour;
+#endif
 }
 
 // The radius of a disc outline's edge, in half lengths, at the box's local XZ point `local`
