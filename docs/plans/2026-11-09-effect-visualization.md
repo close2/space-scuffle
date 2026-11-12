@@ -1780,3 +1780,49 @@ orchestrator decided:
 The effect renderer's queue, the effect runtime's sort depths and their tests. No look, simulation state, golden
 replay or checksum changes (D-1 holds). Packet: section "WP8 round 5". This is round 5, the last of the owner's five
 (Q0080).
+
+## Amendment 16: WP13 reframe of the sieged tank, after the independent review of WP13 (2026-11-12, short note, charter §6)
+
+**Decision note (charter §6, short note: a single-cause media defect with an obvious test, within the owner's
+approval in [Q0075](../questions/closed/0075-veo-morph-and-mode-clips.md)).** The
+[independent review of WP13](../evidence/veo/modes/independent_review_wp13.md) accepted all eight mode clips. As
+its defect 1 it carried forward a cut: the sieged `railgun_crawler`'s raised rails and Attack blast were cut by the
+top edge of the downloaded video. That showed in Attack frames 10–13, and slightly at a muzzle in the sieged rest
+pose. Re-baking cannot fix it. A prompt cannot either: the enter morph must start on the unit's Idle picture so the
+default atlas flows into it, and Veo keeps that frame's framing with a locked camera.
+
+**What changes.**
+
+- **`reframe` of a mode** (`media_style.ron` `modes.<slug>.<mode>.reframe: Some((scale_permille, feather_permille))`,
+  `asset_baker::mode_media::Reframe`). A reframed mode's morphs start and end on
+  `<slug>-<mode>_reframed_idle.png`, written by the free command `asset_baker reframe-mode-picture`. That picture is
+  the Idle picture shrunk about its centre, with its own backdrop continued into the margin
+  (`framing::reframe_picture`, deterministic). The mode's clips bake as
+  `BakeFraming::ReframedLetterbox { feather_permille, scale_permille }`, which crops the centre `scale_permille` of
+  the width (full height) before the letterbox. The tank returns to the default atlas's scale and place, and the
+  margin above and below stays where a default atlas draws its bars. That margin is room for a pose that rises out of
+  the default frame.
+- **Checks.** A reframe is refused outside 500–999 per mille, or with a feather above 500 per mille, when the style
+  loads. A reframe of a centre-cropped unit is refused by every mode command before anything is paid for, because
+  its bake would cut the margin. The identity framing policy may not name `ReframedLetterbox`.
+- **Shipped data.** `railgun_crawler` `siege_mode` reframes at 700 per mille with a 60 per mille feather. All four of
+  its clips were regenerated from the new chain. The Enter and Attack texts keep the muzzles and a compact blast
+  inside the frame, and keep the rails locked raised while firing. The scorpion is unchanged.
+- **Media.** 7 generations, $2.80 (ledger $110.85 → $113.65; WP13 total $7.20 of $20.00). Tank: 4 accepted
+  (`a0d4247d`, `d554ddc2`, `55e0ba27`, `7e984d36`) and 1 rejected (`057e9373`, rails dropped to level). The four
+  superseded clips are recorded as `mode_clip_rejected`. Scorpion Enter (review defects 2 and 3): 2 retries
+  (`21ebf9b8` and `4275320e`) both rejected for loose claws. The shipped `7581379d` stays, and its atlas re-bakes
+  byte for byte. Log, joins and sheets: [`2026-11-12-mode-clips.md`](../evidence/veo/2026-11-12-mode-clips.md), section
+  "Reframe of the sieged tank".
+
+**Tests.** `framing` unit tests: the crop filter, the even reframed side, only a letterbox reframes, the reframed
+picture's geometry and margin, determinism, and the range refusals. `framing_tests`: a clip reframed and baked with
+real FFmpeg lands within 1 px of its default bake and keeps a part above the default frame.
+`mode_media_tests`: a reframed mode's morphs chain through the reframed picture, the bake framing, the range
+refusals, the centre-crop refusal before spend, and that the shipped reframed picture is what
+`reframe-mode-picture` writes. `runtime_media_tests` and `mode_atlas_gpu_tests` admit and draw the new atlas.
+
+**Decisions and out of scope (Q0002).** Defects 2 and 3 (the scorpion Enter's one-frame claw and greyer bar) stay
+as the review recorded them. Two paid retries repeated the fault. A bake-time bar normalisation per atlas family
+(the review's suggestion for defect 3) is not built here. The reframe applies only to mode atlases; default atlases
+keep their framing policy. No simulation state, golden replay or checksum changes (D-1 holds).

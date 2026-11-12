@@ -3,7 +3,8 @@
 //!
 //! # Responsibility
 //! Parses and runs `mode-veo` (one paid clip of a mode atlas slice, or its dry run),
-//! `mode-reject` (records a reviewer's rejection), `install-mode-clip` (copies a reviewed
+//! `mode-reject` (records a reviewer's rejection), `reframe-mode-picture` (writes a reframed
+//! mode's start picture), `install-mode-clip` (copies a reviewed
 //! download into the bundle) and `bake-mode-videos` (packs a mode's installed clips into its
 //! atlas with a provenance record) over [`asset_baker::mode_media`] and
 //! [`asset_baker::paid_clip`].
@@ -138,6 +139,24 @@ pub enum ModeCommand {
         #[arg(long)]
         replace: bool,
     },
+    /// Writes a reframed mode's start picture, `<slug>-<mode>_reframed_idle.png`: the unit's
+    /// Idle picture shrunk by the mode's `reframe` with a margin of its own backdrop. Free: it
+    /// reads no credential and sends nothing.
+    #[command(name = "reframe-mode-picture")]
+    Reframe {
+        /// Exact catalog slug.
+        #[arg(short, long)]
+        unit: String,
+        /// The catalog mode (`mode_name`).
+        #[arg(long)]
+        mode: String,
+        /// Directory of keyframes: the unit's Idle picture, and where the picture is written.
+        #[arg(long, default_value = "assets/ai_keyframes")]
+        keyframes_dir: PathBuf,
+        /// Replace an existing reframed picture (the clips made from it then no longer chain).
+        #[arg(long)]
+        replace: bool,
+    },
     /// Bakes a mode's installed clips into its atlas `<slug>-<mode>` with a provenance record.
     /// Every slice the mode needs must be installed.
     #[command(name = "bake-mode-videos")]
@@ -211,6 +230,20 @@ pub fn run(assets: Option<&Path>, command: ModeCommand) -> RunResult {
             videos_dir,
             replace,
         } => run_install(assets, &slice, &clip, &ledger, &videos_dir, replace),
+        ModeCommand::Reframe {
+            unit,
+            mode,
+            keyframes_dir,
+            replace,
+        } => run_reframe(
+            assets,
+            ModeAtlasId {
+                slug: &unit,
+                stance: &mode,
+            },
+            &keyframes_dir,
+            replace,
+        ),
         ModeCommand::Bake {
             unit,
             mode,
@@ -253,6 +286,9 @@ fn load(assets: Option<&Path>) -> Result<(PathBuf, UnitCatalog, MediaStyle), Box
     let root = asset_baker::resolve_assets_root(assets)?;
     let catalog = asset_baker::load_catalogs(&root)?.units;
     let style = MediaStyle::load_for_catalog(&root, &catalog)?;
+    style
+        .modes
+        .check_framing(&style.framing, &catalog, &root.join(MEDIA_STYLE_FILE))?;
     Ok((root, catalog, style))
 }
 
@@ -547,6 +583,60 @@ fn run_install(
     Ok(())
 }
 
+/// `reframe-mode-picture`: writes the reframed Idle picture of a mode with a `reframe`.
+fn run_reframe(
+    assets: Option<&Path>,
+    id: ModeAtlasId<'_>,
+    keyframes_dir: &Path,
+    replace: bool,
+) -> RunResult {
+    let (_root, catalog, style) = load(assets)?;
+    asset_baker::validate_catalog_slug(&catalog, id.slug)?;
+    let spec = style
+        .modes
+        .spec(id)
+        .ok_or_else(|| format!("no `modes` entry for {}", id.atlas_name()))?;
+    let reframe = spec
+        .reframe
+        .ok_or_else(|| format!("{} has no `reframe` in media_style.ron", id.atlas_name()))?;
+    let KeyframeSource::File(default_idle) =
+        resolve_keyframe(keyframes_dir, id.slug, AnimState::Idle)
+    else {
+        return Err(format!(
+            "'{}' has no Idle picture in '{}'",
+            id.slug,
+            keyframes_dir.display()
+        )
+        .into());
+    };
+    let target = id.reframed_idle_picture(keyframes_dir);
+    if target.exists() && !replace {
+        return Err(format!(
+            "'{}' exists; pass --replace to write it again",
+            target.display()
+        )
+        .into());
+    }
+    let source = image::open(&default_idle)?.to_rgba8();
+    let reframed = asset_baker::framing::reframe_picture(
+        &source,
+        reframe.scale_permille,
+        reframe.feather_permille,
+    )?;
+    image::DynamicImage::ImageRgba8(reframed.image)
+        .to_rgb8()
+        .save(&target)?;
+    let [r, g, b] = reframed.margin_rgb;
+    println!(
+        "Wrote '{}': '{}' at {} per mille on a margin of ({r}, {g}, {b}), SHA-256 {}.",
+        target.display(),
+        default_idle.display(),
+        reframe.scale_permille,
+        sha256_file(&target)?
+    );
+    Ok(())
+}
+
 /// Where `bake-mode-videos` reads and writes.
 struct BakeDirs {
     videos_dir: PathBuf,
@@ -599,7 +689,10 @@ fn run_bake(
         .iter()
         .filter_map(|(state, loop_spec)| Some((*state, loop_spec.seam?)))
         .collect();
-    let framing = style.framing.framing_for(id.slug, &archetype.shape);
+    let framing = spec.bake_framing(
+        style.framing.framing_for(id.slug, &archetype.shape),
+        &root.join(MEDIA_STYLE_FILE),
+    )?;
     println!(
         "==> Baking {} clips of {} into {:?} ({framing})...",
         clips.len(),

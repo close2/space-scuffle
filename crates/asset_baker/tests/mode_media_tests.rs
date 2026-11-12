@@ -14,7 +14,7 @@ use asset_baker::ledger::{
 };
 use asset_baker::mode_media::{
     build_mode_prompt, catalog_mode, check_mode_clip, plan_mode_pictures, required_mode_slices,
-    ModeAtlasId,
+    ModeAtlasId, Reframe,
 };
 use asset_baker::prompts::{check_prompt, MediaStyle, MEDIA_STYLE_FILE};
 use asset_baker::provenance::{bake_mode_with_provenance, veo_origin_of_mode_clip, SliceClip};
@@ -275,6 +275,202 @@ fn pictures_chain_the_morphs_through_the_mode_picture() {
         !check_mode_clip(&style, &prompt, &pinned).is_empty(),
         "a square picture cannot pin a clip's last frame"
     );
+}
+
+#[test]
+fn a_reframed_mode_chains_its_morphs_through_the_reframed_idle_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let style = shipped_style();
+    let (slug, stance, _) = shipped_modes().remove(0);
+    let id = ModeAtlasId {
+        slug: &slug,
+        stance: &stance,
+    };
+    let mut spec = style.modes.spec(id).unwrap().clone();
+    spec.reframe = Some(Reframe {
+        scale_permille: 700,
+        feather_permille: 60,
+    });
+    let idle = dir.path().join("idle_picture.png");
+    write_picture(&idle, 1280, 720);
+    let enter = SliceKey::Morph(Morph::Enter);
+    let leave = SliceKey::Morph(Morph::Leave);
+
+    // Without its reframed Idle picture, a reframed mode's morphs cannot start or end.
+    let missing = plan_mode_pictures(&spec, id, enter, &idle, dir.path());
+    assert!(
+        matches!(&missing, Err(BakerError::DataFile { reason, .. }) if reason.contains("reframe-mode-picture")),
+        "{missing:?}"
+    );
+
+    let reframed = id.reframed_idle_picture(dir.path());
+    write_picture(&reframed, 1280, 720);
+    let first = plan_mode_pictures(&spec, id, enter, &idle, dir.path()).unwrap();
+    assert_eq!((first.start, first.end), (reframed.clone(), None));
+    write_picture(&id.picture(dir.path()), 1280, 720);
+    let back = plan_mode_pictures(&spec, id, leave, &idle, dir.path()).unwrap();
+    assert_eq!(
+        (back.start, back.end),
+        (id.picture(dir.path()), Some(reframed))
+    );
+    let state = plan_mode_pictures(
+        &spec,
+        id,
+        SliceKey::Action(AnimState::Idle),
+        &idle,
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        state.start,
+        id.picture(dir.path()),
+        "states start on the mode's picture"
+    );
+}
+
+#[test]
+fn a_reframed_mode_bakes_with_the_reframed_letterbox_of_its_unit() {
+    let style = shipped_style();
+    let path = shipped_assets().join(MEDIA_STYLE_FILE);
+    let (slug, stance, _) = shipped_modes().remove(0);
+    let id = ModeAtlasId {
+        slug: &slug,
+        stance: &stance,
+    };
+    let mut spec = style.modes.spec(id).unwrap().clone();
+    let letterbox = BakeFraming::Letterbox {
+        feather_permille: 30,
+    };
+    spec.reframe = None;
+    assert_eq!(spec.bake_framing(letterbox, &path).unwrap(), letterbox);
+    spec.reframe = Some(Reframe {
+        scale_permille: 650,
+        feather_permille: 0,
+    });
+    assert_eq!(
+        spec.bake_framing(letterbox, &path).unwrap(),
+        BakeFraming::ReframedLetterbox {
+            feather_permille: 30,
+            scale_permille: 650,
+        }
+    );
+    assert!(matches!(
+        spec.bake_framing(BakeFraming::CenterCrop, &path),
+        Err(BakerError::DataFile { .. })
+    ));
+}
+
+/// The shipped style with `reframe` set on the first mode entry.
+fn with_first_mode_reframe(text: String, reframe: &str) -> String {
+    let (_, entry) = first_mode_entry();
+    let at = text.find(&entry).unwrap() + entry.len();
+    let mut text = text;
+    text.insert_str(at, &format!("\n                reframe: Some({reframe}),"));
+    text
+}
+
+#[test]
+fn a_reframe_out_of_range_is_refused() {
+    for (reframe, wanted) in [
+        (
+            "(scale_permille: 400, feather_permille: 60)",
+            "scale_permille 400",
+        ),
+        (
+            "(scale_permille: 1000, feather_permille: 60)",
+            "scale_permille 1000",
+        ),
+        (
+            "(scale_permille: 700, feather_permille: 501)",
+            "feather_permille 501",
+        ),
+    ] {
+        let error = style_error(|text| with_first_mode_reframe(text, reframe));
+        assert!(error.contains(wanted), "{error}");
+    }
+}
+
+#[test]
+fn a_reframe_of_a_centre_cropped_unit_is_refused_before_any_spend() {
+    let (slug, stance, _) = shipped_modes().remove(0);
+    let bundle = bundle_with_style(|text| {
+        let text = text.replace(&format!("\"{slug}\": Letterbox(feather_permille: 30),"), "");
+        with_first_mode_reframe(text, "(scale_permille: 700, feather_permille: 60)")
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let output = baker_with_assets(bundle.path())
+        .current_dir(dir.path())
+        .args([
+            "mode-veo", "--unit", &slug, "--mode", &stance, "--slice", "enter",
+        ])
+        .arg("--ledger")
+        .arg(dir.path().join("ledger.jsonl"))
+        .arg("--out-dir")
+        .arg(dir.path().join("clips"))
+        .args(["--max-generations", "1", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        text(&output).contains("needs a letterboxed unit"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn every_shipped_reframed_picture_is_what_reframe_mode_picture_writes() {
+    let style = shipped_style();
+    let keyframes = shipped_assets().join("ai_keyframes");
+    for (id, _) in style
+        .modes
+        .modes()
+        .filter(|(_, spec)| spec.reframe.is_some())
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let idle = format!("{}_idle.png", id.slug);
+        std::fs::copy(keyframes.join(&idle), dir.path().join(&idle)).unwrap();
+        let output = baker_with_assets(&shipped_assets())
+            .args([
+                "reframe-mode-picture",
+                "--unit",
+                id.slug,
+                "--mode",
+                id.stance,
+            ])
+            .arg("--keyframes-dir")
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", text(&output));
+        let written = image::open(id.reframed_idle_picture(dir.path()))
+            .unwrap()
+            .to_rgb8();
+        let shipped = image::open(id.reframed_idle_picture(&keyframes))
+            .expect("a reframed mode ships its reframed Idle picture")
+            .to_rgb8();
+        assert!(
+            written == shipped,
+            "{} differs from what reframe-mode-picture writes",
+            id.atlas_name()
+        );
+
+        // It refuses to overwrite without --replace.
+        let again = baker_with_assets(&shipped_assets())
+            .args([
+                "reframe-mode-picture",
+                "--unit",
+                id.slug,
+                "--mode",
+                id.stance,
+            ])
+            .arg("--keyframes-dir")
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(!again.status.success());
+        assert!(text(&again).contains("--replace"), "{}", text(&again));
+    }
 }
 
 fn record(event: LedgerEvent) -> LedgerRecord {
