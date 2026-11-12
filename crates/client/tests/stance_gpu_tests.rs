@@ -73,10 +73,12 @@ use battle_harness::{assets, burrower, presentable, sim_position};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::render::{Render, RenderApp};
+use bevy::time::TimeUpdateStrategy;
 use client::battle_pipeline::commands::ModeDirection;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_pipeline::BattleSet;
+use client::bubble_shader::FlipbookRegistry;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance};
 use client::effects::catalog::schema::Priority;
 use client::effects::catalog::{EffectCatalog, UnitEffectTables};
@@ -90,10 +92,13 @@ use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
+use sim_types::BubbleRenderInstance;
 use sim_types::{
     AbilityEffectSpec, Concealment, EntityId, MoverType, PlayerId, SimScalar, UnitOrder, UnitTypeId,
 };
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -119,9 +124,12 @@ const SETTLE_FRAMES: u32 = 3;
 /// come in over at most half a second.
 const SETTLE_SECONDS: f64 = 0.9;
 /// Distances from the camera's target, in world units, at which the spots are sought.
-const SPOT_DISTANCES: [f32; 9] = [4.0, 5.0, 6.0, 7.0, 8.0, 3.0, 9.0, 10.0, 11.0];
-/// Clearance around a spot, in world units, from any unit, structure, node or other spot.
-const SPOT_CLEARANCE: f32 = 3.0;
+const SPOT_DISTANCES: [f32; 13] = [
+    4.0, 5.0, 6.0, 7.0, 8.0, 3.0, 9.0, 10.0, 11.0, 3.5, 4.5, 5.5, 6.5,
+];
+/// Clearance around a spot, in world units, from any unit, structure, node or other spot: wide
+/// enough that a neighbour's looks (up to 1.8 radii) stay out of a spot's checked patch.
+const SPOT_CLEARANCE: f32 = 3.4;
 
 /// A pixel counts as changed when one of its channels moves by more than this, in levels.
 const CHANGE_LEVEL: u8 = 12;
@@ -129,6 +137,17 @@ const CHANGE_LEVEL: u8 = 12;
 const TOLERATED_PIXELS: usize = 2;
 /// Plan WP8: the burrowed bubble's above-ground area is at most this share of the standing one.
 const BURROW_AREA_SHARE: f64 = 0.35;
+/// Amendment 12 (B-1): a unit with its own burrowed clip shows at least this share of the
+/// pixels its standing bubble changes inside its screen disc.
+const CLIP_SHOWN_SHARE: f64 = 0.85;
+/// Amendment 12 (B-2): a burrowed unit's shadow is gone: round its body it changes at most
+/// this share of the pixels its standing shadow changes.
+const SHADOW_LEFT_SHARE: f64 = 0.15;
+/// Where a unit's shadow is sought round its body: from this many screen radii (clear of the
+/// bubble, which a shallow sink moves down by a fifth of its radius on screen) ...
+const SHADOW_FROM_RADII: f32 = 1.3;
+/// ... to this many.
+const SHADOW_REACH_RADII: f32 = 2.5;
 /// The burrowed bubble still shows its owner a little of itself: at least this share.
 const BURROW_AREA_FLOOR: f64 = 0.02;
 /// The mound's ring: its looks lie on the ground within this many radii of the unit.
@@ -140,8 +159,9 @@ const MOUND_MIN_PIXELS: usize = 40;
 /// Reach of a shimmer's bend in pixels: its colours must already be on the ground this near
 /// (the largest bend, lens plus noise, is about 3 px at the default zoom).
 const SHIMMER_REACH_PX: i64 = 6;
-/// Levels a shimmer pixel may lie outside the colours of the ground around it (filtering).
-const SHIMMER_SLACK: i16 = 4;
+/// Euclidean RGB distance, in levels, a shimmer pixel may lie from the colours a filtered read
+/// of the ground around it can give ([`blend_of_neighbours`]).
+const SHIMMER_SLACK: f32 = 6.0;
 /// Share of bent pixels tolerated outside the ground's colours near them (filtering at the
 /// bend's edges). Round 1 read the scene copy at viewport-relative coordinates, i.e. from
 /// elsewhere on the screen, and failed this at 133 of 2 074 bent pixels with a shadow-coloured
@@ -176,9 +196,13 @@ enum Shot {
     ShimmerBare,
     SiegeMid,
     SiegeMidBare,
+    /// A unit without a burrowed clip of its own, standing (the stand-in).
+    PlainUpright,
+    /// The same unit burrowed, without the effect layers: the deep sink.
+    PlainBurrowedBare,
 }
 
-const SHOTS: [Shot; 8] = [
+const SHOTS: [Shot; 10] = [
     Shot::Empty,
     Shot::Upright,
     Shot::Burrowed,
@@ -187,6 +211,8 @@ const SHOTS: [Shot; 8] = [
     Shot::ShimmerBare,
     Shot::SiegeMid,
     Shot::SiegeMidBare,
+    Shot::PlainUpright,
+    Shot::PlainBurrowedBare,
 ];
 
 impl Shot {
@@ -258,6 +284,12 @@ struct PoseReport {
     burrower: UnitView,
     shimmer: UnitView,
     siege: UnitView,
+    /// The burrowing unit burrowed, its disc where its shallow sink draws it.
+    burrowed: UnitView,
+    /// The unit without a burrowed clip of its own.
+    plain: UnitView,
+    /// Whether the burrowing unit shows its own burrowed clip (WP13 media).
+    burrower_has_clip: bool,
     /// Concealment and presence published in each shot, by shot.
     published: Vec<(Shot, Concealment, String)>,
     /// The switch's presented progress in the `SiegeMid` shot.
@@ -302,23 +334,53 @@ fn concealment_and_stance_poses_read_as_the_plan_asks() -> TestResult {
     let driver = gpu_run::selected_driver().driver;
     let empty = shot(Shot::Empty)?;
 
-    // Burrow: the bubble's above-ground area, inside the standing bubble's screen disc.
+    // Burrow, a unit with its own burrowed clip (Amendment 12, B-1): the clip's disc mostly
+    // shows, and its shadow is gone. A unit without one: sunk to a low dome.
     let unit = report.burrower;
+    assert!(
+        report.burrower_has_clip,
+        "the shipped burrowing unit has its burrowed clip"
+    );
     let standing = disc_changes(&empty, &shot(Shot::Upright)?, unit);
-    let sunk = disc_changes(&empty, &shot(Shot::BurrowedBare)?, unit);
+    let burrowed_bare = shot(Shot::BurrowedBare)?;
+    let shown = disc_changes(&empty, &burrowed_bare, report.burrowed);
+    let shadow_standing = ring_changes(&empty, &shot(Shot::Upright)?, unit);
+    let shadow_burrowed = ring_changes(&empty, &burrowed_bare, unit);
     eprintln!(
-        "driver {driver}: standing bubble changes {standing} pixels of its disc, burrowed {sunk} \
-         ({:.1} %)",
-        100.0 * sunk as f64 / standing.max(1) as f64
+        "driver {driver}: clip unit standing changes {standing} pixels of its disc, burrowed \
+         {shown} ({:.1} %); round it (its shadow) {shadow_standing} standing, {shadow_burrowed} \
+         burrowed",
+        100.0 * shown as f64 / standing.max(1) as f64
     );
     assert!(standing > 200, "the standing unit is on screen: {standing}");
     assert!(
-        (sunk as f64) <= BURROW_AREA_SHARE * standing as f64,
-        "the burrowed bubble shows {sunk} of {standing} pixels"
+        (shown as f64) >= CLIP_SHOWN_SHARE * standing as f64,
+        "the burrowed clip shows {shown} of {standing} pixels"
     );
     assert!(
-        (sunk as f64) >= BURROW_AREA_FLOOR * standing as f64,
-        "its owner still sees the burrowed unit: {sunk} of {standing}"
+        shadow_standing > 100,
+        "the standing unit casts a shadow round it: {shadow_standing}"
+    );
+    assert!(
+        (shadow_burrowed as f64) <= SHADOW_LEFT_SHARE * shadow_standing as f64,
+        "the burrowed unit's shadow is gone: {shadow_burrowed} of {shadow_standing}"
+    );
+    let plain = report.plain;
+    let plain_standing = disc_changes(&empty, &shot(Shot::PlainUpright)?, plain);
+    let sunk = disc_changes(&empty, &shot(Shot::PlainBurrowedBare)?, plain);
+    eprintln!(
+        "driver {driver}: unit without a clip standing changes {plain_standing} pixels of its \
+         disc, burrowed {sunk} ({:.1} %)",
+        100.0 * sunk as f64 / plain_standing.max(1) as f64
+    );
+    assert!(plain_standing > 200, "the plain unit is on screen");
+    assert!(
+        (sunk as f64) <= BURROW_AREA_SHARE * plain_standing as f64,
+        "the burrowed bubble shows {sunk} of {plain_standing} pixels"
+    );
+    assert!(
+        (sunk as f64) >= BURROW_AREA_FLOOR * plain_standing as f64,
+        "its owner still sees the burrowed unit: {sunk} of {plain_standing}"
     );
     // The mound: every pixel the looks change lies inside its ring on the ground.
     let (mound, outside, farthest) = mound_changes(
@@ -423,6 +485,22 @@ fn disc_changes(a: &image::RgbImage, b: &image::RgbImage, unit: UnitView) -> usi
     disc_patch_changes(a, b, unit, 1.0)
 }
 
+/// Pixels round `unit`'s body (between [`SHADOW_FROM_RADII`] and [`SHADOW_REACH_RADII`] of
+/// its screen radius) that differ between `a` and `b`: where its shadow falls.
+fn ring_changes(a: &image::RgbImage, b: &image::RgbImage, unit: UnitView) -> usize {
+    let [cx, cy] = unit.centre_px;
+    let mut changed = 0;
+    for_disc(a, unit, SHADOW_REACH_RADII, |x, y| {
+        let distance = Vec2::new(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy).length();
+        if distance > unit.radius_px * SHADOW_FROM_RADII
+            && change(a.get_pixel(x, y).0, b.get_pixel(x, y).0) > CHANGE_LEVEL
+        {
+            changed += 1;
+        }
+    });
+    changed
+}
+
 /// Pixels within `scale` screen radii of `unit`'s body that differ between `a` and `b`.
 fn disc_patch_changes(
     a: &image::RgbImage,
@@ -517,29 +595,7 @@ fn shimmer_check(empty: &image::RgbImage, shimmer: &image::RgbImage, unit: UnitV
             return;
         }
         result.bent += 1;
-        let (mut low, mut high) = ([255_i16; 3], [0_i16; 3]);
-        for dy in -SHIMMER_REACH_PX..=SHIMMER_REACH_PX {
-            for dx in -SHIMMER_REACH_PX..=SHIMMER_REACH_PX {
-                let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
-                if nx < 0
-                    || ny < 0
-                    || nx >= i64::from(empty.width())
-                    || ny >= i64::from(empty.height())
-                {
-                    continue;
-                }
-                let around = empty.get_pixel(nx as u32, ny as u32).0;
-                for c in 0..3 {
-                    low[c] = low[c].min(i16::from(around[c]));
-                    high[c] = high[c].max(i16::from(around[c]));
-                }
-            }
-        }
-        let inside = (0..3).all(|c| {
-            let value = i16::from(after[c]);
-            value >= low[c] - SHIMMER_SLACK && value <= high[c] + SHIMMER_SLACK
-        });
-        if !inside {
+        if !blend_of_neighbours(empty, x, y, after) {
             result.foreign += 1;
         }
     });
@@ -549,6 +605,44 @@ fn shimmer_check(empty: &image::RgbImage, shimmer: &image::RgbImage, unit: UnitV
             .fold(0.0, f64::max);
     }
     result
+}
+
+/// Whether `colour` is, as a whole colour, what a bent read of `reference` near `(x, y)` can
+/// give: a filtered read blends the four pixels of one 2 by 2 block, so the colour must lie
+/// within [`SHIMMER_SLACK`] (Euclidean RGB distance) of the box those four colours span, for some
+/// block within [`SHIMMER_REACH_PX`]. Unlike a box over the whole neighbourhood, this refuses a
+/// colour assembled from channels of different pixels, such as a dark neutral spot on
+/// multi-coloured ground (review 1's note on the per-channel check).
+fn blend_of_neighbours(reference: &image::RgbImage, x: u32, y: u32, colour: [u8; 3]) -> bool {
+    let (width, height) = (i64::from(reference.width()), i64::from(reference.height()));
+    for dy in -SHIMMER_REACH_PX..SHIMMER_REACH_PX {
+        for dx in -SHIMMER_REACH_PX..SHIMMER_REACH_PX {
+            let (left, top) = (i64::from(x) + dx, i64::from(y) + dy);
+            if left < 0 || top < 0 || left + 1 >= width || top + 1 >= height {
+                continue;
+            }
+            let (mut low, mut high) = ([255.0_f32; 3], [0.0_f32; 3]);
+            for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let texel = reference.get_pixel((left + ox) as u32, (top + oy) as u32).0;
+                for c in 0..3 {
+                    low[c] = low[c].min(f32::from(texel[c]));
+                    high[c] = high[c].max(f32::from(texel[c]));
+                }
+            }
+            let distance = (0..3)
+                .map(|c| {
+                    let value = f32::from(colour[c]);
+                    let outside = (low[c] - value).max(value - high[c]).max(0.0);
+                    outside * outside
+                })
+                .sum::<f32>()
+                .sqrt();
+            if distance <= SHIMMER_SLACK {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The share of the turn the arc drawn between `without` and `with` covers round `unit`: one
@@ -605,6 +699,38 @@ fn arc_share(
 /// The latest tick the session published, or 0 before the first.
 fn published_tick(session: &BattleSession) -> u32 {
     session.published().map_or(0, |published| published.tick)
+}
+
+/// World units from `point` to the ground's edge (the first cell that is not walkable ground,
+/// or the map's end) along the axes, in half-unit steps up to 8.
+fn edge_room(world: &SimWorld, point: Vec2) -> f32 {
+    let map = &world.map;
+    let ground = |probe: Vec2| {
+        map.world_to_cell(sim_position(probe))
+            .ok()
+            .and_then(|(cx, cy)| map.cell(cx, cy).ok())
+            .is_some_and(|cell| cell.flags.contains(CellFlags::GROUND_PATHABLE))
+    };
+    [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y]
+        .iter()
+        .map(|direction| {
+            (1..=16)
+                .map(|step| step as f32 * 0.5)
+                .take_while(|reach| ground(point + *direction * *reach))
+                .last()
+                .unwrap_or(0.0)
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Moves the spot farthest from the ground's edge to `index`: the shimmer staged there then
+/// bends no ground edge, whose step from lit ground to the dark beyond would move its patch's
+/// mean colour, which the shimmer check bounds.
+fn roomiest_at(world: &SimWorld, spots: &mut [Vec2], index: usize) {
+    let roomiest = (0..spots.len())
+        .max_by(|a, b| edge_room(world, spots[*a]).total_cmp(&edge_room(world, spots[*b])))
+        .expect("invariant: find_spots returned at least one spot");
+    spots.swap(index, roomiest);
 }
 
 /// Whether the 5 by 5 cells around `point` are open, walkable ground (a ring of 1.85 radii round
@@ -722,6 +848,45 @@ fn burrowing_unit(world: &mut SimWorld) -> (UnitTypeId, String) {
         archetype.abilities.push(switch);
     }
     (unit, mode)
+}
+
+/// A presentable, unarmed unit type of `world` with a burrowed mode but no clip for it (no
+/// mode media), and that mode's name: a mobile ground archetype nothing on the field uses,
+/// given in the session's catalog a copy of the shipped burrowed mode without its weapon and no
+/// weapons of its own (as `battle_harness::burrower` makes its stand-in). Only the test
+/// world's catalog changes.
+fn plain_burrower(world: &mut SimWorld) -> (UnitTypeId, String) {
+    let mode = world
+        .catalog
+        .archetypes()
+        .find_map(|arch| arch.modes.iter().find(|mode| mode.burrowed).cloned())
+        .expect("the shipped catalog has a burrowing unit");
+    let in_use = |world: &SimWorld, id: UnitTypeId| {
+        world.entities.values().any(|unit| unit.unit_type_id == id)
+    };
+    let stand_in = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.max_speed > SimScalar::ZERO
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+                && !in_use(world, arch.unit_type_id)
+                && presentable(&assets(), &arch.slug)
+        })
+        .expect("the catalog ships a presentable ground unit nothing on the field uses")
+        .unit_type_id;
+    let archetype = world
+        .catalog
+        .get_mut(stand_in)
+        .expect("invariant: the type was just found in this catalog");
+    archetype.weapon = None;
+    archetype.ground_weapon = None;
+    archetype.air_weapon = None;
+    let mut burrowed = mode.clone();
+    burrowed.ground_weapon_override = None;
+    archetype.modes.push(burrowed);
+    (stand_in, mode.mode_name)
 }
 
 /// A presentable mobile ground unit type of `world` with a mode that anchors it and is not
@@ -881,17 +1046,34 @@ fn capture(
     path: PathBuf,
     done: impl Fn(&mut World) + Send + Sync + 'static,
 ) {
+    capture_part(commands, path, None, done);
+}
+
+/// Requests a screenshot to `path`, cut to `crop` (`[left, top, width, height]` in window
+/// pixels, clamped to the window) when given; `done` runs once it is written.
+fn capture_part(
+    commands: &mut Commands<'_, '_>,
+    path: PathBuf,
+    crop: Option<[u32; 4]>,
+    done: impl Fn(&mut World) + Send + Sync + 'static,
+) {
     commands.spawn(Screenshot::primary_window()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>, mut commands: Commands<'_, '_>| {
-            trigger
+            let mut image = trigger
                 .event()
                 .0
                 .clone()
                 .try_into_dynamic()
                 .expect("a screenshot converts to an image")
-                .to_rgb8()
-                .save(&path)
-                .expect("a screenshot must be written");
+                .to_rgb8();
+            if let Some([left, top, width, height]) = crop {
+                let left = left.min(image.width().saturating_sub(1));
+                let top = top.min(image.height().saturating_sub(1));
+                let width = width.min(image.width() - left);
+                let height = height.min(image.height() - top);
+                image = image::imageops::crop_imm(&image, left, top, width, height).to_image();
+            }
+            image.save(&path).expect("a screenshot must be written");
             commands.insert_resource(ShotWritten);
         },
     );
@@ -930,7 +1112,11 @@ fn run_child<S: Resource, M>(staging: S, system: impl IntoSystemConfigs<M>) {
             .insert_resource(idle.clone())
             .add_systems(Render, track_render_idle);
     }
-    app.insert_resource(idle)
+    // Every frame advances presentation time by one 40 ms tick, whatever the frame took, so
+    // the sequences are taken at a fixed step and every driver sees the same moments (review
+    // 1, F-2).
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(FRAME_STEP))
+        .insert_resource(idle)
         .insert_resource(staging)
         .init_resource::<EffectView>()
         .add_systems(Update, (system, hide_unit).in_set(BattleSet::Present))
@@ -941,6 +1127,9 @@ fn run_child<S: Resource, M>(staging: S, system: impl IntoSystemConfigs<M>) {
         .add_systems(Last, finish_capture);
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
+
+/// Presentation time each frame of a child advances: one simulation tick.
+const FRAME_STEP: Duration = Duration::from_millis(40);
 
 /// Render frames in a row with no pipeline waiting before a picture is taken: a bubble or an
 /// effect whose pipeline is still compiling is not drawn yet.
@@ -998,6 +1187,7 @@ struct PoseStaging {
     burrower: Option<(EntityId, String)>,
     enemy: Option<EntityId>,
     siege: Option<EntityId>,
+    plain: Option<(EntityId, String)>,
     report: PoseReport,
 }
 
@@ -1053,6 +1243,29 @@ fn change_pose_world(
             view.critical_only = true;
             view.hidden = Some(id);
         }
+        Shot::PlainUpright => {
+            let world = session.world_mut().expect("a ready session has a world");
+            let (unit_type, mode) = plain_burrower(world);
+            let id = spawn_still(world, unit_type, VIEWER, staging.spots[3]);
+            world
+                .entities
+                .get_mut(&id)
+                .expect("just spawned")
+                .is_immobile = true;
+            staging.plain = Some((id, mode));
+        }
+        Shot::PlainBurrowedBare => {
+            let (id, mode) = staging
+                .plain
+                .clone()
+                .expect("the plain upright shot spawned it");
+            burrow(
+                session.world_mut().expect("a ready session has a world"),
+                id,
+                &mode,
+            );
+            view.bare = true;
+        }
         Shot::BurrowedBare | Shot::ShimmerBare => view.bare = true,
         Shot::SiegeMidBare => {
             view.bare = true;
@@ -1062,16 +1275,7 @@ fn change_pose_world(
 }
 
 /// Whether shot `index` may stop the clock: the siege switch must be half way.
-fn pose_ready(
-    staging: &PoseStaging,
-    index: usize,
-    bubbles: &Query<
-        '_,
-        '_,
-        (&BubbleInstance, &GlobalTransform, Option<&StanceTrack>),
-        With<LiveBattleBubble>,
-    >,
-) -> bool {
+fn pose_ready(staging: &PoseStaging, index: usize, bubbles: &ShellQuery<'_, '_>) -> bool {
     if SHOTS[index] != Shot::SiegeMid {
         return true;
     }
@@ -1093,12 +1297,9 @@ fn record_pose(
     staging: &mut PoseStaging,
     index: usize,
     fog: &BattleFog,
-    bubbles: &Query<
-        '_,
-        '_,
-        (&BubbleInstance, &GlobalTransform, Option<&StanceTrack>),
-        With<LiveBattleBubble>,
-    >,
+    bubbles: &ShellQuery<'_, '_>,
+    materials: &Assets<BubbleDomeMaterial>,
+    registry: &FlipbookRegistry,
     camera: (&Camera, &GlobalTransform),
 ) {
     let shot = SHOTS[index];
@@ -1109,18 +1310,41 @@ fn record_pose(
             .find(|(bubble, ..)| Some(bubble.0.entity_id) == id)
     };
     let burrower = staging.burrower.as_ref().map(|(id, _)| *id);
+    let plain = staging.plain.as_ref().map(|(id, _)| *id);
     let (watched, slot) = match shot {
         Shot::Upright | Shot::Burrowed | Shot::BurrowedBare => (burrower, 0),
         Shot::Shimmer | Shot::ShimmerBare => (staging.enemy, 1),
         Shot::SiegeMid | Shot::SiegeMidBare => (staging.siege, 2),
+        Shot::PlainUpright | Shot::PlainBurrowedBare => (plain, 4),
         Shot::Empty => (None, 3),
     };
-    let Some((bubble, _, track)) = find(watched) else {
+    let Some((bubble, material, track)) = find(watched) else {
         return;
     };
     let view = unit_view(bubble, camera);
     match slot {
         0 if shot == Shot::Upright => staging.report.burrower = view,
+        0 if shot == Shot::BurrowedBare => {
+            // The burrowed body's disc lies lower by its sink: measure it where it is drawn.
+            let sink = materials
+                .get(&material.0)
+                .map_or(0.0, |material| material.shell.shape.x);
+            let lowered = BubbleInstance(BubbleRenderInstance {
+                world_pos: [
+                    bubble.0.world_pos[0],
+                    bubble.0.world_pos[1],
+                    bubble.0.world_pos[2] - sink,
+                ],
+                ..bubble.0.clone()
+            });
+            staging.report.burrowed = unit_view(&lowered, camera);
+            staging.report.burrower_has_clip = bubble
+                .0
+                .stance
+                .mode
+                .is_some_and(|mode| registry.get_mode(bubble.0.unit_type, mode).is_some());
+        }
+        4 if shot == Shot::PlainUpright => staging.report.plain = view,
         1 => staging.report.shimmer = view,
         2 => {
             staging.report.siege = view;
@@ -1148,12 +1372,11 @@ fn stage_poses(
     mut view: ResMut<'_, EffectView>,
     time: Res<'_, Time<Virtual>>,
     fog: Option<Res<'_, BattleFog>>,
-    bubbles: Query<
-        '_,
-        '_,
-        (&BubbleInstance, &GlobalTransform, Option<&StanceTrack>),
-        With<LiveBattleBubble>,
-    >,
+    bubbles: ShellQuery<'_, '_>,
+    (materials, registry): (
+        Res<'_, Assets<BubbleDomeMaterial>>,
+        Res<'_, FlipbookRegistry>,
+    ),
     cameras: Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
     idle: Res<'_, LabRenderIdle>,
 ) {
@@ -1178,7 +1401,7 @@ fn stage_poses(
         }
         PosePhase::Booting { .. } => {
             let world = session.world().expect("a ready session has a world");
-            staging.spots = find_spots(world, &fog, rts.target, 3);
+            staging.spots = find_spots(world, &fog, rts.target, 4);
             change_pose_world(&mut staging, &mut session, &mut view, 0);
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
@@ -1215,6 +1438,8 @@ fn stage_poses(
                 shot,
                 &fog,
                 &bubbles,
+                &materials,
+                &registry,
                 (camera, camera_transform),
             );
             let path = staging.directory.join(SHOTS[shot].file());
@@ -1285,7 +1510,7 @@ struct Sample {
 struct SequenceReport {
     /// The burrowing unit's radius.
     radius: f32,
-    /// Samples while it burrows.
+    /// Samples while it burrows, one per 40 ms step.
     dig: Vec<Sample>,
     /// Samples while it comes up.
     emerge: Vec<Sample>,
@@ -1295,6 +1520,8 @@ struct SequenceReport {
     unsiege: Vec<Sample>,
     /// The tableau's enemy cloaked unit, undetected, as the camera saw it.
     enemy: UnitView,
+    /// The tableau's enemy burrowed unit, undetected, where it stands (review 1, F-1).
+    burrowed_enemy: UnitView,
 }
 
 /// The sequences, in order.
@@ -1308,10 +1535,12 @@ enum Act {
 
 const ACTS: [Act; 4] = [Act::Dig, Act::Emerge, Act::Siege, Act::Unsiege];
 
-/// Seconds an act runs after the switch was asked for.
-const ACT_SECONDS: [f64; 4] = [3.0, 1.5, 4.2, 4.0];
-/// A picture every this many seconds of an act.
-const PICTURE_STEP: f64 = 0.12;
+/// Seconds of presentation time an act runs after the switch was asked for: the dig's 1.8 s
+/// and its settle, the emerge's channel and its lingering earth, and each siege channel (72 or
+/// 63 ticks and up to 9 random ones) with the anchoring after it.
+const ACT_SECONDS: [f64; 4] = [2.4, 1.4, 3.6, 3.2];
+/// Width and height of a sequence picture, cut round the acting unit, in window pixels.
+const SEQUENCE_CROP: [u32; 2] = [320, 240];
 
 /// What the sequence child is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -1322,7 +1551,7 @@ enum SequencePhase {
         still: u32,
         height: f32,
     },
-    /// Act `act` runs since `at`; `pictures` were taken.
+    /// Act `act` runs since `at`; `pictures` were taken, one per 40 ms step.
     Acting {
         act: usize,
         at: f64,
@@ -1340,6 +1569,10 @@ enum SequencePhase {
     Detected {
         at: f64,
     },
+    /// The detected tableau is shown without its effect layers since `at` (review 1, C-1).
+    DetectedBare {
+        at: f64,
+    },
     /// A picture is being written; its completion moves the staging on.
     Capturing,
 }
@@ -1347,7 +1580,7 @@ enum SequencePhase {
 /// Seconds the detected tableau runs before its picture: detection is published, the mark
 /// comes in.
 const DETECT_SECONDS: f64 = 1.5;
-/// Seconds the bare tableau is shown before its picture.
+/// Seconds a bare tableau is shown before its picture.
 const BARE_SECONDS: f64 = 0.4;
 
 /// The sequence child's staging.
@@ -1359,12 +1592,47 @@ struct SequenceStaging {
     burrower: Option<(EntityId, String)>,
     siege: Option<(EntityId, String)>,
     report: SequenceReport,
-    /// A screenshot is being written.
-    busy: bool,
+    /// The window rectangle the act's pictures are cut to.
+    crop: Option<[u32; 4]>,
+    /// Pictures requested and not yet written.
+    outstanding: Arc<AtomicU32>,
+    /// The acts this child plays: indices into [`ACTS`], from the first to before the end.
+    acts: (usize, usize),
+    /// Whether the tableau follows the acts.
+    tableau: bool,
+}
+
+/// Environment variable naming the part of the sequences a child plays: `burrow` (dig and
+/// emerge) or `siege` (siege, unsiege and the tableau). Each part is its own child, so each
+/// stays inside the GPU harness's run limit with a picture every 40 ms step.
+const PART_VAR: &str = "SPACE_SCUFFLE_STANCE_PART";
+/// The parts, with their acts and whether the tableau follows.
+const PARTS: [(&str, (usize, usize), bool); 2] =
+    [("burrow", (0, 2), false), ("siege", (2, 4), true)];
+
+/// The report file of part `part`.
+fn part_report(part: &str) -> String {
+    format!("report_{part}.ron")
+}
+
+/// Writes `report` as part `part`'s report into `directory`.
+fn write_part_report(directory: &Path, part: &str, report: &SequenceReport) {
+    let text = ron::to_string(report).expect("plain data");
+    std::fs::write(directory.join(part_report(part)), text)
+        .expect("the parent's directory is writable");
+}
+
+/// The name of the part a staging plays.
+fn part_name(staging: &SequenceStaging) -> &'static str {
+    PARTS
+        .iter()
+        .find(|(_, acts, _)| *acts == staging.acts)
+        .map_or("burrow", |(name, ..)| *name)
 }
 
 /// Starts act `act`: spawns its unit on the first act of each and asks for the switch.
 fn start_act(staging: &mut SequenceStaging, session: &mut BattleSession, act: Act) {
+    staging.crop = None;
     match act {
         Act::Dig => {
             let world = session.world_mut().expect("a ready session has a world");
@@ -1394,35 +1662,43 @@ fn start_act(staging: &mut SequenceStaging, session: &mut BattleSession, act: Ac
 }
 
 /// Stages the tableau: the burrowing unit burrowed again, a cloaked unit of the viewer's, an
-/// enemy cloaked unit the viewer does not detect (a detector comes beside it for the second
-/// picture, [`detect_in_tableau`]), and the anchoring unit sieged again.
-fn stage_tableau(staging: &SequenceStaging, session: &mut BattleSession) {
-    let world = session.world_mut().expect("a ready session has a world");
-    if let Some((id, mode)) = &staging.burrower {
-        burrow(world, *id, mode);
-    }
-    let (cloaker, _) = burrower(world, &assets());
-    let own = spawn_still(world, cloaker, VIEWER, staging.spots[2]);
-    world
-        .entities
-        .get_mut(&own)
-        .expect("just spawned")
-        .is_cloaked = true;
-    let hidden = spawn_still(world, cloaker, ENEMY, staging.spots[3]);
-    world
-        .entities
-        .get_mut(&hidden)
-        .expect("just spawned")
-        .is_cloaked = true;
-    for unit in world.entities.values_mut() {
-        if unit.owner == ENEMY && unit.is_cloaked {
-            unit.is_immobile = true;
+/// enemy cloaked unit the viewer does not detect (a detector comes beside it for the later
+/// pictures, [`detect_in_tableau`]), an enemy burrowed unit it does not detect, and the
+/// anchoring unit sieged again.
+fn stage_tableau(world: &mut World) {
+    world.resource_scope(|world, staging: Mut<'_, SequenceStaging>| {
+        let mut session = world.resource_mut::<BattleSession>();
+        let sim = session.world_mut().expect("a ready session has a world");
+        let (digger, dig_mode) = if let Some((id, mode)) = &staging.burrower {
+            (*id, mode.clone())
+        } else {
+            let (unit_type, mode) = burrowing_unit(sim);
+            (spawn_still(sim, unit_type, VIEWER, staging.spots[0]), mode)
+        };
+        burrow(sim, digger, &dig_mode);
+        let (stand_in, mode) = burrower(sim, &assets());
+        let own = spawn_still(sim, stand_in, VIEWER, staging.spots[2]);
+        sim.entities.get_mut(&own).expect("just spawned").is_cloaked = true;
+        let hidden = spawn_still(sim, stand_in, ENEMY, staging.spots[3]);
+        sim.entities
+            .get_mut(&hidden)
+            .expect("just spawned")
+            .is_cloaked = true;
+        let dug_in = spawn_still(sim, stand_in, ENEMY, staging.spots[4]);
+        burrow(sim, dug_in, &mode);
+        for unit in sim.entities.values_mut() {
+            if unit.owner == ENEMY && unit.is_cloaked {
+                unit.is_immobile = true;
+            }
         }
-    }
-    if let Some((id, mode)) = &staging.siege {
-        let (id, mode) = (*id, mode.clone());
-        switch_mode(session, id, &mode, ModeDirection::Enter);
-    }
+        if let Some((id, mode)) = &staging.siege {
+            let (id, mode) = (*id, mode.clone());
+            switch_mode(&mut session, id, &mode, ModeDirection::Enter);
+        }
+    });
+    world.resource_mut::<LabState>().battle_paused = false;
+    let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
+    world.resource_mut::<SequenceStaging>().phase = SequencePhase::Tableau { at: now };
 }
 
 /// Puts a detector of the viewer's beside the tableau's enemy cloaked unit, so the viewer
@@ -1445,6 +1721,14 @@ fn detect_in_tableau(world: &mut World) {
     world.resource_mut::<LabState>().battle_paused = false;
     let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
     world.resource_mut::<SequenceStaging>().phase = SequencePhase::Detected { at: now };
+}
+
+/// Moves the staging to `phase` with the effect layers drawn (`bare` false) or not, at the
+/// present time.
+fn show_tableau(world: &mut World, bare: bool, phase: fn(f64) -> SequencePhase) {
+    world.resource_mut::<EffectView>().bare = bare;
+    let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
+    world.resource_mut::<SequenceStaging>().phase = phase(now);
 }
 
 /// The live bubbles with their materials and tracks.
@@ -1482,7 +1766,173 @@ fn sample(
     })
 }
 
+/// The window rectangle of [`SEQUENCE_CROP`] centred on `view`'s body.
+fn crop_round(view: UnitView) -> [u32; 4] {
+    let [width, height] = SEQUENCE_CROP;
+    let [x, y] = view.centre_px;
+    let left = (x - width as f32 * 0.5).max(0.0) as u32;
+    let top = (y - height as f32 * 0.55).max(0.0) as u32;
+    [left, top, width, height]
+}
+
+/// Requests a screenshot of this frame to `path`, cut to `crop`, without waiting for it: the
+/// counter `outstanding` counts it until it is written. Every frame advances presentation time
+/// by [`FRAME_STEP`], so a picture requested each frame lies exactly one step after the last,
+/// however long the readback takes.
+fn capture_frame(
+    commands: &mut Commands<'_, '_>,
+    path: PathBuf,
+    [left, top, width, height]: [u32; 4],
+    outstanding: &Arc<AtomicU32>,
+) {
+    outstanding.fetch_add(1, Ordering::SeqCst);
+    let outstanding = Arc::clone(outstanding);
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |trigger: Trigger<'_, ScreenshotCaptured>| {
+            let image = trigger
+                .event()
+                .0
+                .clone()
+                .try_into_dynamic()
+                .expect("a screenshot converts to an image")
+                .to_rgb8();
+            let left = left.min(image.width().saturating_sub(1));
+            let top = top.min(image.height().saturating_sub(1));
+            let width = width.min(image.width() - left);
+            let height = height.min(image.height() - top);
+            image::imageops::crop_imm(&image, left, top, width, height)
+                .to_image()
+                .save(&path)
+                .expect("a screenshot must be written");
+            outstanding.fetch_sub(1, Ordering::SeqCst);
+        },
+    );
+}
+
+/// One frame of act `act` that began at `at`: samples the acting unit and requests picture
+/// `pictures` of this frame (one per 40 ms step, [`capture_frame`]). Once the act's time is up
+/// and its pictures are written, starts the next act, ends the part or stages the tableau.
+/// Returns the next phase.
+fn act_step(
+    commands: &mut Commands<'_, '_>,
+    staging: &mut SequenceStaging,
+    session: &mut BattleSession,
+    now: f64,
+    (bubbles, materials): (&ShellQuery<'_, '_>, &Assets<BubbleDomeMaterial>),
+    camera: (&Camera, &GlobalTransform),
+    (act, at, pictures): (usize, f64, u32),
+) -> SequencePhase {
+    if now - at >= ACT_SECONDS[act] {
+        if staging.outstanding.load(Ordering::SeqCst) > 0 {
+            return SequencePhase::Acting { act, at, pictures };
+        }
+        return end_act(commands, staging, session, now, act);
+    }
+    let since = (now - at) as f32;
+    let unit = match ACTS[act] {
+        Act::Dig | Act::Emerge => staging.burrower.as_ref().map(|(id, _)| *id),
+        Act::Siege | Act::Unsiege => staging.siege.as_ref().map(|(id, _)| *id),
+    };
+    let found = unit.and_then(|id| bubbles.iter().find(|(bubble, ..)| bubble.0.entity_id == id));
+    if let Some((bubble, ..)) = found {
+        if staging.report.radius == 0.0 && matches!(ACTS[act], Act::Dig) {
+            staging.report.radius = bubble.0.radius;
+        }
+        if staging.crop.is_none() {
+            staging.crop = Some(crop_round(unit_view(bubble, camera)));
+        }
+    }
+    if let Some(sampled) = unit.and_then(|id| sample(id, since, bubbles, materials)) {
+        match ACTS[act] {
+            Act::Dig => staging.report.dig.push(sampled),
+            Act::Emerge => staging.report.emerge.push(sampled),
+            Act::Siege => staging.report.siege.push(sampled),
+            Act::Unsiege => staging.report.unsiege.push(sampled),
+        }
+    }
+    let Some(crop) = staging.crop else {
+        return SequencePhase::Acting { act, at, pictures };
+    };
+    // Named by its step since the switch was asked for, so a label t = step × 40 ms is exact
+    // even when the unit's bubble appeared a frame or two after the request.
+    let step = (f64::from(since) / FRAME_STEP.as_secs_f64()).round() as u32;
+    let name = format!("seq_{:?}_{step:03}.png", ACTS[act]).to_lowercase();
+    capture_frame(
+        commands,
+        staging.directory.join(name),
+        crop,
+        &staging.outstanding,
+    );
+    SequencePhase::Acting {
+        act,
+        at,
+        pictures: pictures + 1,
+    }
+}
+
+/// Ends act `act` at `now`: starts the part's next act, or ends the part, or (in the part
+/// with the tableau) pictures the scene and then stages the tableau.
+fn end_act(
+    commands: &mut Commands<'_, '_>,
+    staging: &mut SequenceStaging,
+    session: &mut BattleSession,
+    now: f64,
+    act: usize,
+) -> SequencePhase {
+    if act + 1 < staging.acts.1 {
+        start_act(staging, session, ACTS[act + 1]);
+        commands.queue(rebuild_tables);
+        return SequencePhase::Acting {
+            act: act + 1,
+            at: now,
+            pictures: 0,
+        };
+    }
+    if !staging.tableau {
+        write_part_report(&staging.directory, part_name(staging), &staging.report);
+        commands.queue(|world: &mut World| {
+            world.send_event(AppExit::Success);
+        });
+        return SequencePhase::Capturing;
+    }
+    // The scene before the tableau, for the undetected burrowed enemy's check.
+    capture(
+        commands,
+        staging.directory.join("seq_pre_tableau.png"),
+        stage_tableau,
+    );
+    SequencePhase::Capturing
+}
+
+/// Records the tableau's undetected enemies as the camera sees them.
+fn record_tableau(
+    report: &mut SequenceReport,
+    fog: &BattleFog,
+    bubbles: &ShellQuery<'_, '_>,
+    camera: (&Camera, &GlobalTransform),
+) {
+    for (bubble, ..) in bubbles.iter() {
+        if bubble.0.owner != ENEMY {
+            continue;
+        }
+        let presence = fog.presence(&bubble.0);
+        match (bubble.0.concealment, presence) {
+            (Concealment::Cloaked, client::battle_pipeline::fog::Presence::Shimmer) => {
+                report.enemy = unit_view(bubble, camera);
+            }
+            (Concealment::Burrowed, client::battle_pipeline::fog::Presence::Hidden) => {
+                report.burrowed_enemy = unit_view(bubble, camera);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Advances the sequence staging by one frame.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one state machine; each arm is a step of the staging"
+)]
 fn stage_sequences(
     mut commands: Commands<'_, '_>,
     mut staging: ResMut<'_, SequenceStaging>,
@@ -1518,91 +1968,43 @@ fn stage_sequences(
         }
         SequencePhase::Booting { .. } => {
             let world = session.world().expect("a ready session has a world");
-            staging.spots = find_spots(world, &fog, rts.target, 4);
+            staging.spots = find_spots(world, &fog, rts.target, 5);
+            roomiest_at(world, &mut staging.spots, 3);
             hold_own_units(&mut session);
-            start_act(&mut staging, &mut session, ACTS[0]);
+            let first = staging.acts.0;
+            start_act(&mut staging, &mut session, ACTS[first]);
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
             SequencePhase::Acting {
-                act: 0,
+                act: first,
                 at: now,
                 pictures: 0,
             }
         }
-        SequencePhase::Acting { act, at, pictures } => {
-            let since = (now - at) as f32;
-            let unit = match ACTS[act] {
-                Act::Dig | Act::Emerge => staging.burrower.as_ref().map(|(id, _)| *id),
-                Act::Siege | Act::Unsiege => staging.siege.as_ref().map(|(id, _)| *id),
-            };
-            if let Some(found) = unit.and_then(|id| sample(id, since, &bubbles, &materials)) {
-                if staging.report.radius == 0.0 {
-                    if let Some((bubble, ..)) = bubbles
-                        .iter()
-                        .find(|(bubble, ..)| Some(bubble.0.entity_id) == unit)
-                    {
-                        staging.report.radius = bubble.0.radius;
-                    }
-                }
-                let list = match ACTS[act] {
-                    Act::Dig => &mut staging.report.dig,
-                    Act::Emerge => &mut staging.report.emerge,
-                    Act::Siege => &mut staging.report.siege,
-                    Act::Unsiege => &mut staging.report.unsiege,
-                };
-                list.push(found);
-            }
-            let mut pictures = pictures;
-            if !staging.busy && f64::from(since) >= f64::from(pictures) * PICTURE_STEP {
-                let name = format!("seq_{:?}_{pictures:03}.png", ACTS[act]).to_lowercase();
-                staging.busy = true;
-                capture(
-                    &mut commands,
-                    staging.directory.join(name),
-                    |world: &mut World| {
-                        world.resource_mut::<SequenceStaging>().busy = false;
-                    },
-                );
-                pictures += 1;
-            }
-            if now - at < ACT_SECONDS[act] {
-                SequencePhase::Acting { act, at, pictures }
-            } else if act + 1 < ACTS.len() {
-                start_act(&mut staging, &mut session, ACTS[act + 1]);
-                commands.queue(rebuild_tables);
-                SequencePhase::Acting {
-                    act: act + 1,
-                    at: now,
-                    pictures: 0,
-                }
-            } else {
-                stage_tableau(&staging, &mut session);
-                SequencePhase::Tableau { at: now }
-            }
-        }
-        SequencePhase::Tableau { at } if now - at < ACT_SECONDS[2] || staging.busy => {
-            SequencePhase::Tableau { at }
-        }
+        SequencePhase::Acting { act, at, pictures } => act_step(
+            &mut commands,
+            &mut staging,
+            &mut session,
+            now,
+            (&bubbles, &materials),
+            (camera, camera_transform),
+            (act, at, pictures),
+        ),
+        SequencePhase::Tableau { at } if now - at < ACT_SECONDS[2] => SequencePhase::Tableau { at },
         SequencePhase::Tableau { .. } => {
             lab.battle_paused = true;
-            let enemy = bubbles.iter().find(|(bubble, ..)| {
-                bubble.0.owner == ENEMY
-                    && bubble.0.concealment == Concealment::Cloaked
-                    && fog.presence(&bubble.0) == client::battle_pipeline::fog::Presence::Shimmer
-            });
-            if let Some((bubble, ..)) = enemy {
-                staging.report.enemy = unit_view(bubble, (camera, camera_transform));
-            }
-            let text = ron::to_string(&staging.report).expect("plain data");
-            std::fs::write(staging.directory.join(REPORT_FILE), text)
-                .expect("the parent's directory is writable");
+            record_tableau(
+                &mut staging.report,
+                &fog,
+                &bubbles,
+                (camera, camera_transform),
+            );
+            write_part_report(&staging.directory, part_name(&staging), &staging.report);
             capture(
                 &mut commands,
                 staging.directory.join("seq_tableau.png"),
                 |world: &mut World| {
-                    world.resource_mut::<EffectView>().bare = true;
-                    let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
-                    world.resource_mut::<SequenceStaging>().phase = SequencePhase::Bare { at: now };
+                    show_tableau(world, true, |at| SequencePhase::Bare { at });
                 },
             );
             SequencePhase::Capturing
@@ -1628,6 +2030,19 @@ fn stage_sequences(
                 &mut commands,
                 staging.directory.join("seq_tableau_detected.png"),
                 |world: &mut World| {
+                    show_tableau(world, true, |at| SequencePhase::DetectedBare { at });
+                },
+            );
+            SequencePhase::Capturing
+        }
+        SequencePhase::DetectedBare { at } if now - at < BARE_SECONDS => {
+            SequencePhase::DetectedBare { at }
+        }
+        SequencePhase::DetectedBare { .. } => {
+            capture(
+                &mut commands,
+                staging.directory.join("seq_tableau_detected_bare.png"),
+                |world: &mut World| {
                     world.send_event(AppExit::Success);
                 },
             );
@@ -1643,20 +2058,33 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
         return Ok(());
     }
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
-    command.args([
-        "--ignored",
-        "--exact",
-        "--nocapture",
-        "stance_sequence_child",
-    ]);
-    command.env(CHILD_OUT_VAR, directory.path());
-    command.allow_for_hex_tiling_driver_defect();
-    command.assert_passes_validation("stance sequences");
-    let report: SequenceReport = ron::from_str(&std::fs::read_to_string(
-        directory.path().join(REPORT_FILE),
-    )?)?;
+    let mut parts = Vec::new();
+    for (part, ..) in PARTS {
+        let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+        command.args([
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "stance_sequence_child",
+        ]);
+        command.env(CHILD_OUT_VAR, directory.path());
+        command.env(PART_VAR, part);
+        command.allow_for_hex_tiling_driver_defect();
+        command.assert_passes_validation(&format!("stance sequences, {part}"));
+        let report: SequenceReport = ron::from_str(&std::fs::read_to_string(
+            directory.path().join(part_report(part)),
+        )?)?;
+        parts.push(report);
+    }
     keep_evidence(directory.path(), "seq_")?;
+    let [burrowing, sieging] =
+        <[SequenceReport; 2]>::try_from(parts).map_err(|_| "one report per part")?;
+    let report = SequenceReport {
+        radius: burrowing.radius,
+        dig: burrowing.dig,
+        emerge: burrowing.emerge,
+        ..sieging
+    };
     // The battle tableau's undetected cloaked enemy: against the same frame without the effect
     // layers, its shimmer only bends what is there, with no colour, shadow or contact darkening
     // of its own (WP8 round 1 found a shadow-coloured spot at its feet: the distortion read the
@@ -1693,8 +2121,37 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
         "the tableau's shimmer moves its patch's mean colour by {:.2} levels",
         tableau.mean_shift
     );
-    let full = 0.9 * 2.0 * report.radius;
     let driver = gpu_run::selected_driver().driver;
+
+    // The tableau's undetected burrowed enemy (review 1, F-1): where it stands, the tableau
+    // equals the scene before it was staged (at most the WP3 tolerance of changed pixels).
+    let dug_in = report.burrowed_enemy;
+    assert!(
+        dug_in.radius_px > 0.0,
+        "the tableau has an undetected burrowed enemy"
+    );
+    let hidden_changes = disc_patch_changes(
+        &picture("seq_pre_tableau.png")?,
+        &picture("seq_tableau.png")?,
+        dug_in,
+        1.3,
+    );
+    eprintln!(
+        "driver {driver}: battle tableau, undetected burrowed enemy: {hidden_changes} pixels \
+         changed where it stands"
+    );
+    assert!(
+        hidden_changes <= TOLERATED_PIXELS,
+        "the undetected burrowed enemy changes {hidden_changes} pixels"
+    );
+
+    // The body's depth once dug in: whatever the unit's sink (shallow with its own clip, deep
+    // without), the dig ends there.
+    let full = report
+        .dig
+        .last()
+        .map_or(0.0, |sample| sample.sink)
+        .max(1e-3);
 
     // The dig: the body never rises, the channel ends before it is fully sunk (the stats change
     // at 33 ticks, the dig runs to 45, D-6) and it is fully sunk after that.
@@ -1778,9 +2235,16 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
 #[ignore = "launched by the test above on a virtual display"]
 fn stance_sequence_child() {
     let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    let part = std::env::var(PART_VAR).expect("the parent names a part");
+    let (_, acts, tableau) = PARTS
+        .into_iter()
+        .find(|(name, ..)| *name == part)
+        .expect("a known part");
     run_child(
         SequenceStaging {
             directory: PathBuf::from(directory),
+            acts,
+            tableau,
             ..SequenceStaging::default()
         },
         stage_sequences,

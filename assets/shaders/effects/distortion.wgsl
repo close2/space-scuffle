@@ -68,7 +68,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let disc = discs[in.instance];
     let centred = in.uv * 2.0 - 1.0;
     let radius = length(centred);
-    let lensed = disc.lens > 0.0;
+    let lensed = disc.warp > 0.0;
     var mask = 1.0 - smoothstep(FADE_FROM, 1.0, radius);
     if (lensed) {
         mask = 1.0 - smoothstep(LENS_RIM, 1.0, radius);
@@ -90,7 +90,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // a little inside the rim and not at all at the centre or beyond the rim, so the body's
         // outline shows as a bent ring of what lies behind it and nothing of its own.
         let profile = smoothstep(0.0, LENS_PEAK, radius) * (1.0 - smoothstep(LENS_PEAK, 1.0, radius));
-        offset_px += centred / max(radius, 1e-4) * disc.lens * intensity * profile * radius_px;
+        offset_px += centred / max(radius, 1e-4) * disc.warp * intensity * profile * radius_px;
     }
     // The scene copy covers the whole render target, of which the camera's viewport may be a
     // part (the battle's HUD panels lie outside it), and the fragment position is in the

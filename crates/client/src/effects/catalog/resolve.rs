@@ -831,14 +831,7 @@ impl Resolver<'_> {
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
             BlockDef::Ribbon { .. } => self.ribbon(at, block)?,
             BlockDef::Distortion { .. } => self.distortion_block(at, block)?,
-            BlockDef::Shell {
-                sink,
-                tint,
-                rim,
-                veil,
-                soil,
-                progress,
-            } => self.shell(at, *sink, *tint, *rim, *veil, *soil, *progress)?,
+            BlockDef::Shell { .. } => self.shell(at, block)?,
             BlockDef::Light {
                 color,
                 intensity,
@@ -926,6 +919,7 @@ impl Resolver<'_> {
             height: *height,
             edge_noise: *edge_noise,
             arc: None,
+            waver: 0.0,
         })
     }
 
@@ -977,10 +971,22 @@ impl Resolver<'_> {
             breakup,
             edge_noise,
             arc,
+            waver,
         } = block
         else {
             return self.block(at, block);
         };
+        self.fraction(at, "waver", *waver)?;
+        if *waver > 0.0 && (*mapping == super::schema::RingMapping::Front || breakup.is_none()) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "waver",
+                value: *waver,
+                rule:
+                    "a wavering band needs `Card` or `Polar` mapping and breakup noise to waver by",
+            });
+        }
         let block = self.ring_block(
             at,
             &RingFields {
@@ -1018,28 +1024,33 @@ impl Resolver<'_> {
                 height,
                 edge_noise,
                 arc: *arc,
+                waver: *waver,
             },
             other => other,
         })
     }
 
     /// Resolves a shell modulation, every value checked against its range.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the fields of one block definition, each checked on its own"
-    )]
-    fn shell(
-        &self,
-        at: &Site,
-        sink: f32,
-        tint: (f32, f32, f32, f32),
-        rim: (f32, f32, f32, f32),
-        veil: f32,
-        soil: f32,
-        progress: bool,
-    ) -> Result<Block, EffectCatalogError> {
-        let fields: [(&'static str, f32); 11] = [
+    fn shell(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
+        let BlockDef::Shell {
+            sink,
+            tint,
+            rim,
+            veil,
+            soil,
+            progress,
+            clip_sink,
+            matte,
+            shadow,
+        } = *block
+        else {
+            return self.block(at, block);
+        };
+        let fields: [(&'static str, f32); 14] = [
             ("sink", sink),
+            ("clip_sink", clip_sink.unwrap_or(0.0)),
+            ("matte", matte),
+            ("shadow", shadow),
             ("tint", tint.0),
             ("tint", tint.1),
             ("tint", tint.2),
@@ -1061,6 +1072,9 @@ impl Resolver<'_> {
             veil,
             soil,
             progress,
+            clip_sink,
+            matte,
+            shadow,
         }))
     }
 

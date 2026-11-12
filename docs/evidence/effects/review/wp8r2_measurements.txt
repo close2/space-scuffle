@@ -1,0 +1,30 @@
+WP8 round 2: printed measurements of the effect GPU tests (debug build, Xvfb, 1280x720).
+
+== radv
+driver radv: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 2625 changed, largest 159
+test a_torn_front_must_reach_the_reach_in_every_sector ... ok
+test every_splash_subject_has_its_own_test ... ok
+driver radv: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 2712 changed
+driver radv: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 2774 changed
+driver radv: battle tableau, undetected cloaked enemy: its shimmer bends 1240 pixels, 0 of them to a colour not near them without it, mean colour moves 0.40 levels
+driver radv: battle tableau, undetected burrowed enemy: 0 pixels changed where it stands
+driver radv: the burrow's channel ended at 1.36 s with the body 77 % sunk
+driver radv: unit without a clip standing changes 273 pixels of its disc, burrowed 66 (24.2 %)
+driver radv: the burrowed looks change 662 pixels, 0 beyond the ring; farthest at 1.35 radii
+driver radv: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1178 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.19 levels
+driver radv: siege switch at 0.472, its arc draws 0.456 of the turn
+
+== lavapipe
+driver lavapipe: patch [542, 372, 619, 449] of 5929 pixels; empty vs burrowed: 0 changed, largest channel change 0; empty vs unconcealed: 2852 changed, largest 190
+test a_torn_front_must_reach_the_reach_in_every_sector ... ok
+test every_splash_subject_has_its_own_test ... ok
+driver lavapipe: railgun_crawler-siege_mode patch [558, 349, 629, 420] of 5041 pixels; default vs settled: 2735 changed
+driver lavapipe: burrow_scorpion-burrowed patch [498, 290, 569, 361] of 5041 pixels; default vs settled: 2773 changed
+driver lavapipe: battle tableau, undetected cloaked enemy: its shimmer bends 1090 pixels, 0 of them to a colour not near them without it, mean colour moves 0.38 levels
+driver lavapipe: battle tableau, undetected burrowed enemy: 0 pixels changed where it stands
+driver lavapipe: the burrow's channel ended at 1.36 s with the body 77 % sunk
+driver lavapipe: unit without a clip standing changes 277 pixels of its disc, burrowed 66 (23.8 %)
+driver lavapipe: the burrowed looks change 655 pixels, 0 beyond the ring; farthest at 1.35 radii
+driver lavapipe: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 1081 pixels, 0 of them to a colour not on the ground near them, mean colour moves 0.07 levels
+driver lavapipe: siege switch at 0.472, its arc draws 0.456 of the turn
+

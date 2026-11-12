@@ -1605,3 +1605,54 @@ expects the shimmer look and no drawn bubble for an undetected cloaked enemy, an
 
 **Gate.** The packet's section "WP8 round 1"; the orchestrator runs the independent review (Q0080, up to five
 rounds).
+
+## Amendment 12: WP8 round 2, decided by the orchestrator after WP8 review 1 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_1.md`](../evidence/effects/review/independent_review_wp8_1.md)).** Review 1 accepted
+`cloak_shimmer`, `cloak_own`, `detected_mark` (with note C-1), the fog rule and the absence of leaks, the shimmer
+tolerances, the `distortion.wgsl` fix and the unchanged splash effects. It rejected `burrow_mound`, `burrow_dig`,
+`burrow_emerge`, `mode_seal_sweep` and `siege_anchor`. The orchestrator decided:
+
+1. **B-1, own burrowed units with a clip.** A unit whose burrowed mode has its own clip (WP13 mode media) sinks only
+   a little (`Shell.clip_sink`, 0.12 of the diameter), so at least 85 % of the clip's disc shows to its owner, and
+   its glass highlight is off (`Shell.matte`). The ground carries "dug in": the shadow fades out, a dark hollow,
+   heaped earth and the soil band. Only a unit without mode media sinks deep (`sink`, 0.92; at most 35 % of the
+   standing bubble's area shows). The presentation asks the `FlipbookRegistry` whether the unit has a clip for the
+   mode it is entering or in.
+2. **B-2 to B-6, the earth.**
+   - The shadow fades with the sink and the veil (`Shell.shadow`, the share of the caster's shrink): the bubble's
+     prepass vertex stage (`assets/shaders/bubble_shadow.wgsl`) shrinks the shadow caster toward its centre and
+     sinks it with the body. `NotShadowCaster` is no longer toggled. Bevy 0.15 bins shadow draws by pipeline and
+     mesh only, so bubbles, which share one sphere, cast with one representative's material; every bubble is
+     therefore spawned with `NoAutomaticBatching`, so each casts with its own shell (a blended bubble's main draw
+     is a sorted transparent item and is unaffected).
+   - Soil is feathered (a noise-edged disc outline, no box edge), warmer, darker and more opaque (ramps `mound`,
+     `hollow`, `plough`, `crushed`, `clod`, `dig_dust`); clods and dust are larger and darker, so they read at the
+     default camera.
+   - The furrow is ground, not a drawn ring: `Ring.waver` varies its width and radius round the turn
+     (`sprite.wgsl`, `waver_band`), its breakup leaves a broken circle, its berm is opaque earth lighter on top, its
+     head is lit, and it is drawn under the unit's shadow (gouges allowed).
+   - The stabilisers' pressed soil lies out from under the bubble (1.35 to 1.5 radii).
+3. **Evidence.** F-1: the battle tableau gains an undetected burrowed enemy; where it stands, the tableau equals the
+   scene captured just before it was staged (at most 2 changed pixels). F-2: dig, emerge, siege and unsiege are
+   pictured at a fixed 40 ms step of presentation time: every frame advances it by one tick
+   (`TimeUpdateStrategy::ManualDuration`) and each frame of an act is captured, labelled with its time, on both
+   drivers; the sequence runs in two children (burrow; siege and the tableau), each inside the harness's run
+   limit. C-1: the detected tableau is also captured without
+   effect layers.
+4. **Stronger regression check.** `shimmer_check` judges whole colours: a bent pixel passes only if its RGB colour
+   lies within 6 levels (Euclidean) of the colours one filtered read of a 2×2 block of the reference within 6 px
+   can give. A colour assembled from channels of different neighbours fails.
+5. **Register.** DESIGN.md B-119 records the distortion read fixed in Amendment 11 (heat haze of `flame_line` and
+   `lance_sweep` sampled the wrong screen region in every battle).
+
+**WP8 test, as changed.** `stance_gpu_tests.rs`: the shipped burrowing unit (with its clip) burrowed shows at
+least 85 % of its standing disc's changed pixels, and the ring round it where its shadow fell changes at most 15 %
+as much as standing; a unit without mode media (an unused shipped archetype given a copy of the burrowed mode in
+the test world's catalog only) shows at most 35 % and at least 2 %; the mound's looks stay inside 1.8 radii; the
+dig and emerge checks read the depth the unit reaches, whichever sink applies. The rest of Amendment 11's test is
+unchanged.
+
+Presentation data, three shaders, the client's stance presentation and its tests. No simulation state, golden replay
+or checksum (D-1 holds). Packet: section "WP8 round 2". This is round 2 of the owner's five (Q0080).

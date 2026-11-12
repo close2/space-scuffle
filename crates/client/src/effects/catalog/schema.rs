@@ -395,6 +395,13 @@ pub enum BlockDef {
         /// soft step one hundredth of a turn wide.
         #[serde(default)]
         arc: Option<ValueDef>,
+        /// A `Card` or `Polar` ring only: how much its band wavers round the turn, in [0, 1). Its
+        /// width varies by up to this share either way and its radius by a tenth of it, both
+        /// from its breakup noise, and its colour runs from its ramp's low end on the inner
+        /// edge to its high end on the outer one (a furrow and the soil thrown up beside it,
+        /// WP8 review 1, B-5). 0 keeps an even band.
+        #[serde(default)]
+        waver: f32,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -555,6 +562,19 @@ pub enum BlockDef {
         /// (`ChannelProgress`), not its age: the bubble sinks as the switch completes.
         #[serde(default)]
         progress: bool,
+        /// The sink, in [0, 1], used instead of `sink` for a unit that shows its own clip for
+        /// the mode (WP13 media): the clip itself shows the state, so the bubble sinks only a
+        /// little and stays readable (WP8 review 1, B-1). `None` uses `sink` for every unit.
+        #[serde(default)]
+        clip_sink: Option<f32>,
+        /// Share of the glass's specular highlight taken away, in [0, 1] (a highlight makes a
+        /// sunk dome read as a whole ball).
+        #[serde(default)]
+        matte: f32,
+        /// Share of the unit's shadow taken away, in [0, 1]: the shadow caster shrinks into
+        /// the body as this rises, so the shadow fades with the look instead of popping.
+        #[serde(default)]
+        shadow: f32,
     },
     /// A short point light.
     Light {

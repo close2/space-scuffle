@@ -129,8 +129,9 @@ pub struct SpriteInstance {
     /// [0, 1]; unused otherwise.
     pub arc: f32,
     /// For a distortion disc, its lens bend towards the rim as a fraction of its radius on
-    /// screen; 0 for none and for every other card.
-    pub lens: f32,
+    /// screen; for a ring, how much its band wavers round the turn (its `waver`); 0 for none
+    /// and for every other card.
+    pub warp: f32,
 }
 
 /// One decal box.
@@ -228,7 +229,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(SpriteInstance, front_edge), 144);
         assert_eq!(std::mem::offset_of!(SpriteInstance, front_seed), 148);
         assert_eq!(std::mem::offset_of!(SpriteInstance, arc), 152);
-        assert_eq!(std::mem::offset_of!(SpriteInstance, lens), 156);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, warp), 156);
         assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
         assert_eq!(size_of::<DecalInstance>(), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);

@@ -42,6 +42,10 @@ const CREST_SOFT: f32 = 0.0041666667;
 const ARC_HEAD: f32 = 0.01;
 const ARC_HEAD_LIGHT: f32 = 0.35;
 const ARC_HEAD_FALLOFF: f32 = 24.0;
+// A wavering band (`warp`): its middle radius wanders by this share of `warp` either way, and
+// its shading runs this far towards its position across the band (furrow to thrown soil).
+const WAVER_RADIAL: f32 = 0.1;
+const WAVER_ACROSS: f32 = 0.6;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -263,10 +267,18 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
     let texel = flipbook_sample(atlas, atlas_sampler, uv, card.layer_a, card.layer_b, card.frame_mix, mip);
     var mask = 1.0;
     var shading = texel.r;
-    if (card.ring_inner > 0.0) {
+    if (card.ring_inner > 0.0 && card.warp > 0.0) {
+        let band = waver_band(card, centred, radius, mip);
+        mask = (1.0 - smoothstep(band.y - edge, band.y, radius)) * smoothstep(band.x - edge, band.x, radius);
+        // Dark furrow on the inner edge, lighter thrown soil on the outer one.
+        let across = clamp((radius - band.x) / max(band.y - band.x, 1e-4), 0.0, 1.0);
+        shading = mix(texel.r, across, WAVER_ACROSS);
+    } else if (card.ring_inner > 0.0) {
         let outer = 1.0 - smoothstep(1.0 - edge, 1.0, radius);
         let inner = smoothstep(card.ring_inner - edge, card.ring_inner, radius);
         mask = outer * inner;
+    }
+    if (card.ring_inner > 0.0) {
         if ((card.flags & FLAG_ARC) != 0u && card.arc < 1.0) {
             let arc = arc_texel(centred, card.arc);
             mask *= arc.x;
@@ -274,6 +286,25 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
         }
     }
     return vec4<f32>(shading, texel.g, texel.b, mask);
+}
+
+// A wavering ring band (`warp` > 0): (inner edge, outer edge) as fractions of the card's half
+// size at this angle. Two reads of the card's breakup noise round the turn (whole repeats, so
+// no seam) vary the band's width by up to `warp` either way and its middle radius by
+// `WAVER_RADIAL` of `warp`, so the band reads as dug ground and not as a drawn circle.
+fn waver_band(card: SpriteInstance, centred: vec2<f32>, radius: f32, mip: f32) -> vec2<f32> {
+    let turn = atan2(centred.y, centred.x) / TAU + 0.5;
+    let repeats = max(round(card.noise_scale), 1.0);
+    let level = mip + log2(repeats);
+    let offset = noise_offset(card);
+    let width_noise = noise_sample(atlas, atlas_sampler, vec2<f32>(turn * repeats, 0.23) + offset, card.noise_layer, level);
+    let radial_noise = noise_sample(atlas, atlas_sampler, vec2<f32>(turn * repeats * 0.5, 0.61) + offset.yx, card.noise_layer, level);
+    let width = 1.0 - card.ring_inner;
+    let half_width = 0.5 * width * (1.0 + (width_noise - 0.5) * 2.0 * card.warp);
+    let wobble = (radial_noise - 0.5) * 2.0 * WAVER_RADIAL * card.warp;
+    // Room for the widest band and the largest wobble inside the card.
+    let middle = 1.0 - 0.5 * width * (1.0 + card.warp) - WAVER_RADIAL * card.warp + wobble;
+    return vec2<f32>(middle - half_width, middle + half_width);
 }
 
 // An arc of a ring drawn from its start angle round to `share` of the turn: (mask, head

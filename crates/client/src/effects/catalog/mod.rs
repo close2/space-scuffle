@@ -237,6 +237,12 @@ pub struct ShellLook {
     pub soil: f32,
     /// Whether the layer's life is the mode switch's progress rather than its age.
     pub progress: bool,
+    /// The sink for a unit showing its own clip for the mode, if it differs from `sink`.
+    pub clip_sink: Option<f32>,
+    /// Share of the glass's specular highlight taken away.
+    pub matte: f32,
+    /// Share of the unit's shadow taken away.
+    pub shadow: f32,
 }
 
 /// A layer's block, resolved.
@@ -256,6 +262,8 @@ pub enum Block {
         edge_noise: f32,
         /// Share of the turn drawn (bound, clamped to [0, 1]); `None` draws the whole ring.
         arc: Option<ValueDef>,
+        /// How much the band's width and radius waver round the turn; 0 for an even band.
+        waver: f32,
     },
     /// A projected ground mark.
     Decal(DecalLook),

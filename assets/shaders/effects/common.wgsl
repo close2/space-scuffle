@@ -41,8 +41,8 @@ struct SpriteInstance {
     front_seed: u32,
     // With FLAG_ARC, the share of the turn a ring draws.
     arc: f32,
-    // A distortion disc's lens bend towards its rim.
-    lens: f32,
+    // A distortion disc's lens bend towards its rim; a ring's waver of its band.
+    warp: f32,
 }
 
 struct DecalInstance {

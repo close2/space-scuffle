@@ -41,13 +41,13 @@ use super::catalog::{Block, EffectCatalog, EffectId, ShellLook, UnitEffectTables
 use super::pool::{EffectHandle, EffectInstance};
 use super::runtime::{layer_clock, EffectRuntime, SpawnRequest};
 use crate::battle_pipeline::fog::{presence_of, BattleFog, Presence};
+use crate::bubble_shader::FlipbookRegistry;
 use crate::bubble_shader::{
     sync_bubble_shell, BubbleDomeMaterial, BubbleInstance, ShellUniformGpu,
 };
 use crate::scene_controller::LiveBattleBubble;
 use bevy::ecs::component::ComponentId;
 use bevy::ecs::world::DeferredWorld;
-use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use sim_types::{BubbleRenderInstance, Concealment, ModeTransitionView, ShapeKind};
 
@@ -185,6 +185,33 @@ pub struct StanceTrack {
     pub cover: Option<HeldLook>,
     /// Whether the next stance look is held settled (a switch was cancelled).
     pub settle_next: bool,
+    /// Looks released lately, still eroding out: their held `Shell` layers fade with them
+    /// (a cloak's veil, a burrow's shadow), so a released look never pops.
+    pub releasing: [Option<HeldLook>; RELEASING_SLOTS],
+    /// The slot of `releasing` the next released look takes.
+    pub next_releasing: usize,
+    /// Whether the looks sink the unit as one showing its own mode clip. It follows the unit's
+    /// mode or switch, and holds while a morph settles after the switch left its mode, so an
+    /// emerge that ends its channel does not drop to the deep sink of a unit without a clip.
+    pub clip: bool,
+}
+
+/// Looks a track remembers while they erode out: a unit can drop its stance, its morph and
+/// its cover on one frame.
+pub const RELEASING_SLOTS: usize = 3;
+
+impl StanceTrack {
+    /// The looks held now: stance, morph and cover.
+    fn looks(&self) -> [Option<HeldLook>; 3] {
+        [self.stance, self.morph.map(|morph| morph.look), self.cover]
+    }
+
+    /// Remembers `look`, just released, while it erodes out (the oldest remembered one is
+    /// forgotten; it has eroded out or will a moment later).
+    fn remember_released(&mut self, look: HeldLook) {
+        self.releasing[self.next_releasing] = Some(look);
+        self.next_releasing = (self.next_releasing + 1) % RELEASING_SLOTS;
+    }
 }
 
 /// Releases every look `entity`'s track holds when the track is removed.
@@ -275,12 +302,14 @@ fn anchors(bubble: &BubbleRenderInstance) -> (Vec3, Vec3) {
 }
 
 /// Brings `track` up to `bubble` as the viewer sees it (`presence`, `own`) and returns the
-/// shell its looks give the bubble.
+/// shell its looks give the bubble; `clip` says whether the unit shows its own clip for the
+/// mode its stance or switch is about (WP13 media), which keeps its sink shallow.
 pub fn present_looks(
     track: &mut StanceTrack,
     bubble: &BubbleRenderInstance,
     presence: Presence,
     own: bool,
+    clip: bool,
     context: &mut LookContext<'_>,
 ) -> ShellUniformGpu {
     let (ground, body) = anchors(bubble);
@@ -296,7 +325,11 @@ pub fn present_looks(
         return ShellUniformGpu::default();
     }
     let settled = !track.seen;
+    let before = track.looks();
     keep_morph(track, bubble, ground, unit, context);
+    let in_mode = bubble.stance.mode.is_some() || bubble.stance.transition.is_some();
+    track.clip = kept_clip(track.clip, clip, !in_mode && track.morph.is_some());
+    let clip = track.clip;
     if track.morph.is_some() {
         context.release(track.stance.take());
     } else {
@@ -307,21 +340,40 @@ pub fn present_looks(
     }
     context.keep(&mut track.cover, cover, body, unit, settled);
     track.seen = true;
+    let now_held = track.looks();
+    for look in before.into_iter().flatten() {
+        if !now_held.contains(&Some(look)) {
+            track.remember_released(look);
+        }
+    }
     let mut shell = ShellSum::default();
+    let morph_progress = track.morph.map_or(0.0, |morph| morph.progress);
+    let released = track.releasing.iter().map(|look| (*look, 1.0));
     for (look, progress) in [
         (track.stance, 1.0),
-        (
-            track.morph.map(|morph| morph.look),
-            track.morph.map_or(0.0, |morph| morph.progress),
-        ),
+        (track.morph.map(|morph| morph.look), morph_progress),
         (track.cover, 1.0),
-    ] {
+    ]
+    .into_iter()
+    .chain(released)
+    {
         let instance = look.and_then(|look| context.runtime.held(look.handle));
         if let Some(instance) = instance {
-            shell.add(context.catalog, instance, context.now, progress);
+            shell.add(context.catalog, instance, context.now, progress, clip);
         }
     }
     shell.uniform(bubble.radius, bubble.ground_z)
+}
+
+/// Whether the looks sink the unit as one with its own mode clip: `previous` while
+/// `settling_out` (a morph settles after the switch left its mode, D-6, so the unit has no mode
+/// left to ask about), otherwise `wanted` (what its mode or switch shows now).
+const fn kept_clip(previous: bool, wanted: bool, settling_out: bool) -> bool {
+    if settling_out {
+        previous
+    } else {
+        wanted
+    }
 }
 
 /// Keeps the morph of `bubble`'s mode switch held: starts it with the switch, follows the
@@ -413,45 +465,69 @@ pub struct ShellSum {
     pub veil: f32,
     /// Soil stain height as a share of the radius.
     pub soil: f32,
+    /// Share of the specular highlight taken away.
+    pub matte: f32,
+    /// Share of the shadow taken away.
+    pub shadow: f32,
 }
 
 impl ShellSum {
-    /// Adds the `Shell` layers of held `instance` at `now`; a progress-driven layer's life is
-    /// `progress`. A released look adds nothing: the next look takes over on the same frame,
-    /// and each pair of looks that follow one another is authored to meet (a morph ends where
-    /// its stance begins).
+    /// Adds the `Shell` layers of `instance` at `now`; a progress-driven layer's life is
+    /// `progress`, and `clip` says whether the unit shows its own clip for the look's mode
+    /// (then a layer's `clip_sink` replaces its `sink`).
+    ///
+    /// A released look's held layers keep their veil, tint, rim, matte and shadow while they
+    /// erode out over their exit, so a cloak or a shadow comes and goes without a pop; their
+    /// sink and soil stop at once, because the next look (the morph after a stance, the stance
+    /// after a morph) takes the body over on the same frame and each such pair is authored to
+    /// meet. A released look's other layers add nothing.
     pub fn add(
         &mut self,
         catalog: &EffectCatalog,
         instance: &EffectInstance,
         now: f64,
         progress: f32,
+        clip: bool,
     ) {
-        if instance.released_at.is_some() {
-            return;
-        }
         let Some(effect) = catalog.effect(instance.effect) else {
             return;
         };
+        let released = instance.released_at.is_some();
         for layer in &effect.layers {
             let Block::Shell(look) = &layer.block else {
                 continue;
             };
-            let life = if look.progress {
-                progress.clamp(0.0, 1.0)
-            } else {
-                match layer_clock(layer, instance, now, 0.0) {
-                    Some(clock) => clock.life,
-                    None => continue,
-                }
+            if released && !layer.held {
+                continue;
+            }
+            let clock = layer_clock(layer, instance, now, 0.0);
+            let life = match (look.progress, clock) {
+                (true, _) => progress.clamp(0.0, 1.0),
+                (false, Some(clock)) => clock.life,
+                (false, None) => continue,
             };
-            self.add_look(look, catalog.sample(layer.curve, life, 1.0));
+            let mut strength = catalog.sample(layer.curve, life, 1.0);
+            let mut look = *look;
+            if clip {
+                look.sink = look.clip_sink.unwrap_or(look.sink);
+            }
+            if released {
+                let Some(clock) = clock else {
+                    continue;
+                };
+                strength *= 1.0 - clock.exit;
+                look.sink = 0.0;
+                look.soil = 0.0;
+            }
+            self.add_look(&look, strength);
         }
     }
 
     /// Adds one shell `look` at intensity `strength`.
     pub fn add_look(&mut self, look: &ShellLook, strength: f32) {
         let strength = strength.clamp(0.0, 1.0);
+        self.matte = self.matte.max(look.matte * strength);
+        self.shadow = self.shadow.max(look.shadow * strength);
         self.sink = self.sink.max(look.sink * strength);
         self.veil = self.veil.max(look.veil * strength);
         self.soil = self.soil.max(look.soil * strength);
@@ -485,7 +561,7 @@ impl ShellSum {
                 soil,
                 if soil > 0.0 { ground } else { 0.0 },
             ),
-            driven: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            driven: Vec4::new(1.0, self.matte, self.shadow, 0.0),
         }
     }
 }
@@ -499,16 +575,28 @@ type StanceQuery<'w, 's> = Query<
         &'static BubbleInstance,
         Option<&'static mut StanceTrack>,
         &'static MeshMaterial3d<BubbleDomeMaterial>,
-        Has<NotShadowCaster>,
     ),
     With<LiveBattleBubble>,
 >;
 
+/// Whether `bubble`'s unit shows its own clip for the mode its switch enters or its stance
+/// holds (WP13 media), so its looks sink it only a little.
+fn shows_mode_clip(registry: Option<&FlipbookRegistry>, bubble: &BubbleRenderInstance) -> bool {
+    let mode = match bubble.stance.transition {
+        Some(transition) => transition.entering.or(bubble.stance.mode),
+        None => bubble.stance.mode,
+    };
+    match (registry, mode) {
+        (Some(registry), Some(mode)) => registry.get_mode(bubble.unit_type, mode).is_some(),
+        _ => false,
+    }
+}
+
 /// Keeps every live bubble's looks held and writes their shells into the bubble materials.
 ///
-/// A bubble seen for the first time gets its [`StanceTrack`]. A bubble sunk or veiled by its
-/// looks casts no shadow (its shadow would be the whole sphere's), and casts one again when
-/// neither holds.
+/// A bubble seen for the first time gets its [`StanceTrack`]. Its shadow fades with its
+/// looks through the shell's shadow lane (the shadow caster shrinks into the body,
+/// `bubble_shadow.wgsl`), never toggled, so it never pops (WP8 review 1, B-2).
 #[expect(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -520,6 +608,7 @@ pub fn present_stances(
     catalog: Option<Res<'_, EffectCatalog>>,
     tables: Option<Res<'_, UnitEffectTables>>,
     runtime: Option<ResMut<'_, EffectRuntime>>,
+    registry: Option<Res<'_, FlipbookRegistry>>,
     time: Res<'_, Time<Virtual>>,
     materials: Option<ResMut<'_, Assets<BubbleDomeMaterial>>>,
     mut bubbles: StanceQuery<'_, '_>,
@@ -531,30 +620,26 @@ pub fn present_stances(
         return;
     };
     let fog = fog.as_deref();
+    let registry = registry.as_deref();
     let mut context = LookContext {
         catalog: &catalog,
         tables: &tables,
         runtime: &mut runtime,
         now: time.elapsed_secs_f64(),
     };
-    for (entity, bubble, track, material, shadowless) in &mut bubbles {
+    for (entity, bubble, track, material) in &mut bubbles {
         let presence = presence_of(fog, &bubble.0);
         let own = fog.is_none_or(|fog| fog.viewer() == Some(bubble.0.owner));
+        let clip = shows_mode_clip(registry, &bubble.0);
         let shell = if let Some(mut track) = track {
-            present_looks(&mut track, &bubble.0, presence, own, &mut context)
+            present_looks(&mut track, &bubble.0, presence, own, clip, &mut context)
         } else {
             let mut track = StanceTrack::default();
-            let shell = present_looks(&mut track, &bubble.0, presence, own, &mut context);
+            let shell = present_looks(&mut track, &bubble.0, presence, own, clip, &mut context);
             commands.entity(entity).insert(track);
             shell
         };
         sync_bubble_shell(&mut materials, &material.0, &shell);
-        let hide_shadow = shell.shape.x > 0.0 || shell.shape.y > 0.0;
-        if hide_shadow && !shadowless {
-            commands.entity(entity).insert(NotShadowCaster);
-        } else if !hide_shadow && shadowless {
-            commands.entity(entity).remove::<NotShadowCaster>();
-        }
     }
 }
 
@@ -568,6 +653,18 @@ mod tests {
             remaining_ticks: remaining,
             nominal_ticks: nominal,
         }
+    }
+
+    #[test]
+    fn an_emerge_settling_after_its_channel_keeps_the_clip_sink() {
+        // Burrowed with a clip, then switching out: the switch's mode decides.
+        assert!(kept_clip(false, true, false));
+        // The channel has ended, the unit has no mode, the morph still settles: kept.
+        assert!(kept_clip(true, false, true));
+        // Settled out of every mode: what the unit shows now.
+        assert!(!kept_clip(true, false, false));
+        // A unit without a clip never gains one while it settles.
+        assert!(!kept_clip(false, true, true));
     }
 
     #[test]
@@ -639,6 +736,9 @@ mod tests {
             veil: 0.0,
             soil: 0.4,
             progress: true,
+            clip_sink: Some(0.1),
+            matte: 1.0,
+            shadow: 1.0,
         };
         let cloak = ShellLook {
             sink: 0.0,
@@ -647,6 +747,9 @@ mod tests {
             veil: 0.7,
             soil: 0.0,
             progress: false,
+            clip_sink: None,
+            matte: 0.0,
+            shadow: 0.6,
         };
         sum.add_look(&deep, 0.5);
         sum.add_look(&cloak, 1.0);
@@ -663,6 +766,21 @@ mod tests {
         assert!((uniform.shape.z - 0.1).abs() < 1e-6, "soil in world units");
         assert_eq!(uniform.shape.w, 2.0);
         assert_eq!(uniform.driven.x, 1.0);
+        assert!(
+            (uniform.driven.y - 0.5).abs() < 1e-6,
+            "matte at half strength"
+        );
+        assert!(
+            (uniform.driven.z - 0.6).abs() < 1e-6,
+            "the cloak's shadow wins"
+        );
         assert_eq!(ShellSum::default().uniform(0.5, 0.0).shape.x, 0.0);
+        let mut no_soil = ShellSum::default();
+        no_soil.add_look(&cloak, 1.0);
+        assert_eq!(
+            no_soil.uniform(0.5, 2.0).shape.w,
+            0.0,
+            "no ground lane without a stain"
+        );
     }
 }

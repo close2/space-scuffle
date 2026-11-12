@@ -168,8 +168,10 @@ mod gpu_layout {
         /// height in world units of the soil stain above `ground` (its fourth lane is the
         /// world height of the ground under the unit). All zero leaves the bubble as it is.
         pub shape: Vec4,
-        /// 1 when effects drive this bubble's concealment look (the legacy cloak shimmer of
-        /// `cloaked` is then off), else 0; the other lanes are padding.
+        /// x: 1 when effects drive this bubble's concealment look (the legacy cloak shimmer of
+        /// `cloaked` is then off), else 0; y: share of the glass's specular highlight taken
+        /// away; z: share of the bubble's shadow taken away (its shadow caster shrinks into the
+        /// body, `bubble_shadow.wgsl`); w: padding.
         pub driven: Vec4,
     }
 }
@@ -504,6 +506,13 @@ impl Plugin for BubbleDomeMaterialPlugin {
 impl Material for BubbleDomeMaterial {
     fn vertex_shader() -> ShaderRef {
         "shaders/bubble_dome.wgsl".into()
+    }
+
+    /// The bubble casts its shadow through the prepass pipeline; this vertex stage sinks and
+    /// shrinks the caster as the effect shell asks, so a shadow fades with a burrow or a cloak
+    /// instead of popping (plan `2026-11-09-effect-visualization` WP8, review 1 B-2).
+    fn prepass_vertex_shader() -> ShaderRef {
+        "shaders/bubble_shadow.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {

@@ -922,6 +922,7 @@ impl EffectRuntime {
                 height,
                 edge_noise,
                 arc,
+                waver,
             } => self.push_card(
                 context,
                 look,
@@ -938,6 +939,7 @@ impl EffectRuntime {
                     edge_noise: *edge_noise,
                     arc: arc
                         .map(|arc| resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)),
+                    waver: *waver,
                 },
             ),
             Block::Decal(look) => {
@@ -1050,6 +1052,7 @@ impl EffectRuntime {
                 flags
             },
             arc: ring.arc.unwrap_or(0.0),
+            warp: ring.waver,
             clip_axis: [clip[0], clip[1]],
             clip_min: clip[2],
             clip_max: clip[3],
@@ -1097,7 +1100,7 @@ impl EffectRuntime {
             noise_scale: look.scale,
             noise_amount: look.strength,
             noise_layer: look.noise_layer,
-            lens: look.lens,
+            warp: look.lens,
             ..SpriteInstance::default()
         });
         Written::Yes
@@ -1339,6 +1342,8 @@ struct RingShape {
     edge_noise: f32,
     /// Share of the turn an arc draws, in [0, 1]; `None` for the whole ring.
     arc: Option<f32>,
+    /// How much the band wavers round the turn; 0 for an even band.
+    waver: f32,
 }
 
 impl RingShape {
@@ -1347,6 +1352,7 @@ impl RingShape {
         inner: 0.0,
         edge_noise: 0.0,
         arc: None,
+        waver: 0.0,
     };
 }
 

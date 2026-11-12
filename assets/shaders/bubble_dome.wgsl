@@ -70,7 +70,7 @@ struct ShellUniform {
     tint: vec4<f32>,             // linear RGB, share of the media replaced
     rim: vec4<f32>,              // linear RGB of the outline light, strength
     shape: vec4<f32>,            // sink (world units), veil (0..1), soil height (world units), ground y
-    driven: vec4<f32>,           // x = 1 when effects drive the concealment look
+    driven: vec4<f32>,           // x = 1 when effects drive the concealment look; y = matte; z = shadow taken away (bubble_shadow.wgsl)
 };
 
 @group(2) @binding(4) var<uniform> shell: ShellUniform;
@@ -370,6 +370,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let exponent = max(2.0 / (bubble.optics_glare.x * bubble.optics_glare.x) - 2.0, 1.0);
         specular = pow(max(dot(normal, halfway), 0.0), exponent)
             * bubble.optics_glare.y * bubble.optics_light.w;
+        // The effect shell's matte lane: a burrowed dome loses its highlight, which would
+        // otherwise make the sunk cap read as a whole ball (WP8 review 1, B-1).
+        specular *= 1.0 - clamp(shell.driven.y, 0.0, 1.0);
     }
 
     // 4. Directional Indicator: Sleek Rim Arc Confined Strictly to Outer Fresnel Annulus [0.86, 0.98]
