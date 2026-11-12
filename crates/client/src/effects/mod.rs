@@ -27,6 +27,7 @@ pub mod catalog;
 pub mod curve;
 pub mod instances;
 pub mod lab;
+pub mod ledger;
 pub mod particles;
 pub mod placement;
 pub mod pool;

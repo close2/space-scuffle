@@ -117,3 +117,30 @@ cropped to x 360..1280 and halved. 204 live effects, 95 cards, 1 289 decals on t
 by the battle so far, 85 layers skipped as smaller than 6 pixels. The jets show as a thin orange core with the
 legacy tracer and their scorched bands, without fire: more than 96 Major effects are alive (a flame line lives
 3.5 s for its band), so a new jet's Detail layers are retired at birth (plan Amendment 6).
+
+Scale-out round 4 (2026-11-12, plan Amendment 7): the same takes, with the budget rules of Amendment 7. A class cap
+counts an effect only while its fire (non-decal layers) is alive, and over the cap the oldest burning effect gives
+its detail up, never the newborn. An effect reserves its decal slots at birth (whole or not at all) and holds the
+slots of its decal layers that have not ended. Above 85 % of the pool the oldest lasting marks erode out over
+0.25 s to make room. flame_line's body of fire and its burning ground are Critical.
+stress_capture_400.png (and _detail.png), tick 150, with the stream: 912 live effects, 2 595 cards, 3 908 decals;
+footprints cover 28.2 % of the screen (upper bound), summed area 2.03 screens, at most 57 footprints over one cell.
+Over the run: 1 400 splashes, 1 842 effects spawned, none refused, no Critical instance without a slot, 1 718
+effects gave their detail up (the oldest burning ones), 853 lasting marks were retired early to make room, and
+no effect was refused decal room. Reservations count every decal an effect will place, including those too small
+on screen to draw at this camera, so the 85 % mark (5 222 slots) is reached while about 3 900 decals are drawn.
+stress_degradation_400.png: ticks 150 to 157 (same crop as round 3). The frames draw 3 908, 3 891, 3 831, 3 834,
+3 813, 3 821, 3 830 and 3 852 decals. Over these eight frames 36 lasting marks erode out to make room and 68
+effects give their detail up.
+stress_decal_cap_400.png: the same with the pool forced to 2 048. 1 146 decals on the first frame. No Critical
+decal is ever dropped (0 Critical without a slot). 660 lasting marks eroded out to make room, and 444 new effects
+found no room and draw no decal at all (whole set or none). Consecutive frames show stains as full discs that stay
+or erode out; none flickers or draws as a hollow ring. The runtime test
+lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole checks this with a pool of 8.
+stress_jets_400.png: the battle without the stream at the battle camera's default distance (22), ticks 200 to 209.
+204 live effects, 1 243 cards, 1 507 decals; 483 effects gave their detail up over the run, 255 layers skipped as
+too small. The jets burn as torn orange flames with smoke over the units.
+stress_jets_far_400.png (and _far_400_detail.png, the middle at tick 202 enlarged twice): the same battle at the
+frame-budget camera (75 units away). 26 502 layers skipped as smaller than 6 pixels. The billows are below that
+floor, but the jets' Critical body of fire (a ribbon sized on screen by its line) and their burning ground remain:
+short, broad orange strips over burning ground, not thin beams.

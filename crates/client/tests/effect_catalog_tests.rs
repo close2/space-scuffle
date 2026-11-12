@@ -1111,6 +1111,12 @@ fn a_front_ring_needs_its_breakup_noise() {
             with_noise.replace("mapping: Front,", "mapping: Polar, edge_noise: 0.5,"),
             "a ragged edge on a ring that is not a front",
         ),
+        (
+            with_noise
+                .replace("thickness: 0.2", "thickness: 0.5")
+                .replace("mapping: Front,", "mapping: Front, edge_noise: 0.5,"),
+            "a bite of a quarter of the radius",
+        ),
     ] {
         let error = load(
             dir.path(),

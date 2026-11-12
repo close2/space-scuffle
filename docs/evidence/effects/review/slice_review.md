@@ -719,3 +719,65 @@ Not taken (recorded in Amendment 6): the optional notes on `flame_line` (jet rod
 
 **Scale-out round 3 result (implementer):** `cleave_impact` and the crowd evidence are ready for a fresh independent
 review (packet section "Scale-out round 3"); the implementer does not accept its own work.
+
+## Scale-out round 4 (WP7, plan Amendment 7: the orchestrator's decisions after review 3)
+
+Evidence (lavapipe, debug, Xvfb, 2026-11-12):
+- [`cleave_impact_contact.png`](cleave_impact_contact.png) and its sequence, the repeat take, and
+  [`cleave_impact_pops.txt`](cleave_impact_pops.txt) (round 4 row);
+- the crowd takes of [`stress_capture.txt`](stress_capture.txt) ("Scale-out round 4"): `stress_capture_400.png`,
+  `stress_degradation_400.png`, `stress_decal_cap_400.png`, `stress_jets_400.png`, `stress_jets_far_400.png`.
+
+### 1. Footprint rule
+
+- **Per-sector clause:** a torn front's farthest ray must be within 2 px of the reach in every 45° sector
+  (`torn_front_holds`).
+- **Bite cap:** `edge_noise × thickness` is capped at 0.2 of the radius (`MAX_FRONT_BITE`, catalog test).
+- **Negative test:** `a_torn_front_must_reach_the_reach_in_every_sector` fails a front squashed on one side and one
+  missing a quarter.
+- **Round 3's cleave fails the new clause.** On radv, sector 0's farthest ray was −3.58 px. So the bite now reads two
+  octaves of its noise (the reviewer's polish note: irregular bump spacing), and the clumps' crests are broader (the
+  edge is on the radius over the upper 30 % of the contrasted noise, `FRONT_CREST` 0.7).
+- **Crest variants (radv):**
+
+| `FRONT_CREST` | Result |
+|---|---|
+| 1.0 | fails, sector 0 at −2.63 px |
+| 0.8 | fails, sector 1 at −2.37 px |
+| 0.7 (taken) | passes: 97 % of rays in the band, mean −2.66 px, nothing beyond the reach |
+| 0.6 | passes: 99 %, mean −1.95 px, but noticeably rounder |
+
+- **Goldens and pops:** re-recorded on both drivers. Per-pixel steps after the impact (frame 4 on) are 775–1 048.
+
+### 2. Stable decals at the cap
+
+- **Reservation:** every decal an effect places is reserved at birth (`client::effects::ledger`). An effect holds the
+  slots of its decal layers that have not ended.
+- **Pressure:** above 85 % of the pool the oldest lasting marks erode out over 0.25 s.
+- **No room:** an effect that finds no room draws no decal at all.
+- **Runtime test** (pool of 8, 25 effects of two marks each over 2.5 s): no drawn decal disappears between frames
+  unless it is eroding out or its layer ended, every effect draws both its marks or none, the pool is never overrun.
+- **Forced cap of 2 048:** 0 Critical decals dropped (round 3: about 2 050 a frame). 660 marks eroded out to make
+  room, 444 effects drew none. The stains stay whole discs, with no flicker and no hollow rings.
+- **At the normal stress load** (pool 6 144): no effect is refused room. 853 lasting marks erode early over the run,
+  because reservations also count decals too small to draw at that camera, so the 85 % mark is reached at about
+  3 900 drawn.
+
+### 3. Jets
+
+- **Class cap:** a class cap now counts an effect only while its fire is alive. Over the cap the oldest burning
+  effect gives its detail up, never the newborn (two runtime tests).
+- **Kept layers:** `flame_line`'s body of fire and its burning ground are `Critical`. Their look in the lab is
+  unchanged: every subject's goldens pass unchanged, and the flame's Critical marks still end within 0.9 px of the
+  line.
+- **Default camera** (`stress_jets_400.png`): the jets burn as torn orange flames with smoke over the units.
+- **Far camera** (`stress_jets_far_400.png`): the billows fall below the 6-pixel floor. The body of fire and the
+  burning ground remain as short, broad orange strips, not beams.
+
+### 4. Optional cleave notes
+
+- Taken: the second octave (it also served item 1).
+- Not taken: the front's value on teal. A lighter front loses the contrast the footprint needs on the bright ground.
+
+**Scale-out round 4 result (implementer):** ready for a fresh independent review (packet section "Scale-out round
+4"). The implementer does not accept its own work.

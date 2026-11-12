@@ -25,6 +25,10 @@ const TAU: f32 = 6.28318530718;
 const CLIP_EDGE: f32 = 0.1;
 // Contrast of the noise that wavers a pressure front's trailing edge.
 const FRONT_WAVER_CONTRAST: f32 = 2.2;
+// Weight of a torn front's second, finer octave in the bite of its leading edge.
+const FRONT_SECOND_OCTAVE: f32 = 0.35;
+// Contrasted noise from which a torn front's leading edge is on the radius (a clump's crest).
+const FRONT_CREST: f32 = 0.7;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -128,17 +132,22 @@ fn front_texel(card: SpriteInstance, centred: vec2<f32>, radius: f32, edge: f32,
     let waver = clamp((waver_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
     let inner = card.ring_inner - width * card.noise_amount * (waver - 0.5) * 2.0;
     // A torn skirt (`front_edge` > 0): the leading edge is bitten back where a third read of
-    // the noise (its own row, the same whole repeats around the circle, so no seam) is low, by
+    // the noise (its own rows, the same whole repeats around the circle, so no seam) is low, by
     // up to `front_edge` of the band's width, so its outline is a run of clumps whose farthest
     // parts stay on the radius and differs per instance. A round front (0) keeps its whole edge
     // on the radius.
     var leading = 1.0;
     if (card.front_edge > 0.0) {
-        let bite_raw = noise_sample(
-            atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.71) + offset.yx, card.noise_layer, level,
+        // Two octaves (the second at twice the repeats, on its own row), so the clumps are not
+        // spaced at one regular period; the clumps' crests are broad (the edge is on the radius
+        // over the upper part of the noise), so every part of the circle has dust on the reach.
+        let bite_raw = mix(
+            noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.71) + offset.yx, card.noise_layer, level),
+            noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats * 2.0, 0.29) + offset, card.noise_layer, level),
+            FRONT_SECOND_OCTAVE,
         );
         let bite = clamp((bite_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
-        leading = 1.0 - width * card.front_edge * (1.0 - smoothstep(0.0, 1.0, bite));
+        leading = 1.0 - width * card.front_edge * (1.0 - smoothstep(0.0, FRONT_CREST, bite));
     }
     let across = clamp((radius - inner) / max(leading - inner, 1e-4), 0.0, 1.0);
     let grain = noise_sample(

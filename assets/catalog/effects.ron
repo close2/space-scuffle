@@ -845,7 +845,9 @@
                         breakup: (noise: "fire_noise", scale: 2.3, amount: 0.65, softness: 0.25)),
                     placement: Line(spacing: (bind: LineSpacing, scale: 2.0), travel: 40.0, scatter: 0.12),
                     size: (bind: LineSpacing, scale: 2.0), size_jitter: 0.3,
-                    ramp_curve: "cool", start: 0.03, duration: 0.6, curve: "glow_cool",
+                    // Critical (Amendment 7): when a crowd of effects retires the jet's detail,
+                    // the burning ground along its line still reads as fire.
+                    ramp_curve: "cool", start: 0.03, duration: 0.6, curve: "glow_cool", priority: Critical,
                 ),
                 (
                     // The jet: racing out from the first search point, its tail leaving it after
@@ -866,8 +868,10 @@
                         tail_delay: Some(0.2), taper: (0.45, 0.25), height: 0.34, repeat: 1.1,
                         scroll: 3.0, soft_depth: 0.3, erosion: "flame_break",
                         breakup: (noise: "fire_noise", scale: 3.0, amount: 0.8, softness: 0.35, shade: 0.5)),
+                    // Critical (Amendment 7): with the jet's core it is the fire that always draws,
+                    // so a jet stripped of its detail in a crowd is a poorer flame, not a beam.
                     size: (bind: SplashFull, scale: 2.4), size_curve: "flame_grow",
-                    duration: 0.42, curve: "jet",
+                    duration: 0.42, curve: "jet", priority: Critical,
                 ),
                 (
                     // Rolling fire on the line every other point: soft-edged billows of the
@@ -1194,8 +1198,10 @@
     // acid flecks (Minor, 16 per burst, 4.5 s) to the effect pool. Scale-out round 3: the
     // flame and lance bands are several decals each, and the round-2 stress frame with all
     // seven effects drew 3 921 decals, 96 % of the old 4 096; the pool is now 6 144, about a
-    // third of headroom at that load (at the cap, Detail decals give way first and Critical
-    // ones are written up to the capacity; docs/evidence/effects/review/stress_capture.txt).
+    // third of headroom at that load. Round 4 (Amendment 7): each effect reserves its decals at
+    // birth, whole or not at all, and above 85 % of the pool the oldest lasting marks erode out
+    // to make room (docs/evidence/effects/review/stress_capture.txt). The class caps count an
+    // effect only while its fire (non-decal layers) is alive.
     budget: (
         particles: 30000,
         sprites: 4096,

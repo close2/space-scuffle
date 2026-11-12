@@ -95,6 +95,11 @@ pub(super) fn resolve(
     })
 }
 
+/// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
+/// `thickness`): the footprint test lets its rays end inside the reach by this much, so a
+/// front must not buy a large tolerance with a large declaration (Amendment 7).
+pub const MAX_FRONT_BITE: f32 = 0.2;
+
 /// Names in map order mapped to dense ids.
 fn dense_ids<'a>(names: impl Iterator<Item = &'a String>) -> BTreeMap<String, u16> {
     names
@@ -785,6 +790,15 @@ impl Resolver<'_> {
         } = *ring;
         self.at_least(at, "height", *height, 0.0)?;
         self.fraction(at, "edge_noise", *edge_noise)?;
+        if edge_noise * thickness > MAX_FRONT_BITE {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "edge_noise",
+                value: *edge_noise,
+                rule: "a front's bite (edge_noise times thickness) is at most 0.2 of its radius",
+            });
+        }
         if *edge_noise > 0.0 && *mapping != super::schema::RingMapping::Front {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),

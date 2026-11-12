@@ -1321,3 +1321,42 @@ and only on a `Front` ring; `instances.rs`: the card record is ten rows; `effect
 
 **Gate.** Implementer checklist in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round
 3"), packet section "Scale-out round 3"; the orchestrator runs the independent review.
+
+## Amendment 7: scale-out round 4, decided by the orchestrator after independent review 3 (2026-11-11)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_scaleout3.md`](../evidence/effects/review/independent_review_scaleout3.md)).** Review 3 accepted
+`cleave_impact` (with notes), the 6 144 decal pool and the degradation frames, and found no regression. It accepted the
+footprint rule of Amendment 6 with one clause strengthened, judged the behaviour at the decal cap unacceptable as a
+design, and found a defect: in a battle the napalm jet reads as a thin beam. The orchestrator decided:
+
+1. **Footprint rule for fronts with `edge_noise`:** the reviewer's change is adopted. The "farthest ray within 2 px of
+   the reach" clause must hold in each of eight 45° sectors, not once somewhere. The declared bite
+   (`edge_noise × thickness`) is capped at 20 % of the radius, and the catalog refuses more
+   (`MAX_FRONT_BITE`). A test shows that a front squashed on one side, or missing a quarter, fails
+   (`a_torn_front_must_reach_the_reach_in_every_sector`).
+2. **Stable decals at the cap:**
+   - An effect reserves its decal slots at birth and keeps them to its end (`client::effects::ledger`).
+   - Its decals draw as a whole set or not at all.
+   - Above 85 % of the pool, the oldest lasting marks erode out over 0.25 s to make room. An effect that still finds
+     no room draws no decal at all.
+   - Test: across consecutive frames no drawn decal disappears unless its effect is eroding it out or its layer has
+     ended, and every effect draws its marks whole
+     (`lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole`, pool of 8).
+   - The forced-cap capture is re-taken.
+3. **Jets (option 1):**
+   - An effect counts against its class cap only while its fire (its non-decal layers) is alive.
+   - A newborn effect is never the one stripped: over the cap, the oldest burning effect of the class gives its detail
+     up (`over_its_class_cap_the_oldest_burning_effect_gives_its_detail_up`,
+     `an_effect_whose_fire_has_ended_no_longer_counts_against_its_class_cap`).
+   - The jet's always-kept layers must read as fire: `flame_line`'s body of fire and its burning ground are now
+     `Critical` beside the jet's core. Their look in the lab is unchanged; priority only decides what a crowd keeps.
+     A jet stripped of its detail is a broad orange body over burning ground, not a beam.
+   - The jets are re-taken at the default and the far camera.
+4. **Optional cleave note taken:** the torn edge's bite reads two octaves of its noise, so its clumps are not spaced
+   at one regular period. Its value on teal is unchanged: a lighter front loses its contrast on the bright ground,
+   which the footprint needs.
+
+Presentation data, one shader line, the runtime's budget rules, the effect tests, and the stress tool's report. No
+simulation state, golden replay or checksum (D-1 holds). Implementer checklist: [`slice_review.md`](../evidence/effects/review/slice_review.md)
+("Scale-out round 4"). Packet: section "Scale-out round 4". This is round 4 of the owner's five (Q0080).

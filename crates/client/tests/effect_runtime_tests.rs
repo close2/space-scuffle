@@ -10,6 +10,9 @@
 //!
 //! # Invariants verified
 //! - Critical layers always draw; detail of the oldest `Minor` effect retires first.
+//! - A class cap counts an effect only while its fire is alive, and over it the oldest burning
+//!   effect gives its detail up, never the newborn; at the decal cap marks draw whole and never
+//!   flicker (plan Amendment 7).
 //! - Every size follows its binding; a line effect spawns once per line.
 //! - Two runtimes fed the same stream build identical frames.
 
@@ -63,6 +66,12 @@ const EFFECTS: &str = r#"
     "trail": (class: Minor, event: Mode, repeat: Some(0.2), layers: [
         (block: Decal(texture: "solid", ramp: "blue"), size: (bind: UnitRadius, scale: 1.0),
          duration: 1.0, priority: Detail),
+    ]),
+    "mark": (class: Minor, event: Splash, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 0.5),
+         duration: 0.3, priority: Critical),
+        (block: Decal(texture: "solid", ramp: "blue"), size: (scale: 0.5),
+         placement: Disc(count: 2, radius: (scale: 0.5)), duration: 3.0, priority: Critical),
     ]),
     "trail_once": (class: Minor, event: Mode, layers: [
         (block: Decal(texture: "solid", ramp: "blue"), size: (bind: UnitRadius, scale: 1.0),
@@ -463,7 +472,7 @@ fn critical_layers_survive_a_full_pool_and_the_oldest_minor_detail_retires() {
 }
 
 #[test]
-fn an_effect_over_its_class_cap_draws_only_its_critical_layers() {
+fn over_its_class_cap_the_oldest_burning_effect_gives_its_detail_up() {
     let (_dir, catalog) = catalog_with(|text| text.replace("Major: 16", "Major: 1"));
     let (tables, unit) = tables_for(&catalog, "blast");
     let mut runtime = EffectRuntime::new(&catalog);
@@ -485,7 +494,11 @@ fn an_effect_over_its_class_cap_draws_only_its_critical_layers() {
     assert_eq!(
         runtime.frame.decals.len(),
         1,
-        "the second blast's detail decal is retired at birth"
+        "one blast's detail decal is retired"
+    );
+    assert!(
+        runtime.frame.decals[0].center[0] > 4.0,
+        "the newborn keeps its detail; the older blast gives it up"
     );
     let critical_cards = runtime
         .frame
@@ -494,6 +507,114 @@ fn an_effect_over_its_class_cap_draws_only_its_critical_layers() {
         .filter(|card| card.half_size >= 1.0)
         .count();
     assert_eq!(critical_cards, 4, "both blasts draw their sprite and ring");
+}
+
+#[test]
+fn an_effect_whose_fire_has_ended_no_longer_counts_against_its_class_cap() {
+    let (_dir, catalog) = catalog_with(|text| text.replace("Major: 16", "Major: 1"));
+    let (tables, unit) = tables_for(&catalog, "blast");
+    let mut runtime = EffectRuntime::new(&catalog);
+    assert!(spawn(
+        &mut runtime,
+        &catalog,
+        &tables,
+        &splash(unit, 0.0, 0.0, [1.0; 3], None),
+        0.0
+    ));
+    // The first blast's cards, light and sparks are over by 1 s; its 5 s mark lasts.
+    runtime.build_frame(&catalog, 2.0, None);
+    assert!(spawn(
+        &mut runtime,
+        &catalog,
+        &tables,
+        &splash(unit, 9.0, 0.0, [1.0; 3], None),
+        2.0
+    ));
+    runtime.build_frame(&catalog, 2.1, None);
+    assert_eq!(runtime.stats.retired, 0, "nothing gives its detail up");
+    assert_eq!(
+        runtime.frame.decals.len(),
+        2,
+        "the lasting mark of the first and the detail of the second both draw"
+    );
+}
+
+/// A decal pool of 8 under a stream of effects of two lasting marks each, one every 0.1 s
+/// for 2.5 s (Amendment 7): a decal drawn in one frame is drawn in the next unless its effect
+/// is eroding it out or its layer has ended, every effect draws its marks whole or not at all,
+/// and the pool is never overrun.
+#[test]
+fn lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole() {
+    let (_dir, catalog) = catalog_with(|text| text.replace("decals: 64", "decals: 8"));
+    let (tables, unit) = tables_for(&catalog, "mark");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut previous: Vec<(u32, u64)> = Vec::new();
+    let mut spawned = 0_u16;
+    for step in 0..100_u32 {
+        let now = f64::from(step) * 0.04;
+        while f64::from(spawned) * 0.1 <= now && spawned < 25 {
+            let x = f32::from(spawned % 5) * 3.0;
+            let y = f32::from(spawned / 5) * 3.0;
+            assert!(spawn(
+                &mut runtime,
+                &catalog,
+                &tables,
+                &splash(unit, x, y, [1.0; 3], None),
+                now
+            ));
+            spawned += 1;
+        }
+        runtime.build_frame(&catalog, now, None);
+        assert!(runtime.frame.decals.len() <= 8, "the pool is never overrun");
+        // Owners this frame, identified by slot and birth, with their decal counts.
+        let mut owners: Vec<(u32, u64, usize)> = Vec::new();
+        for slot in &runtime.frame.decal_owners {
+            let birth = runtime
+                .pool
+                .iter()
+                .find(|(index, _)| *index == *slot as usize)
+                .map(|(_, instance)| instance.birth.to_bits())
+                .expect("a drawn decal belongs to a live effect");
+            match owners
+                .iter_mut()
+                .find(|(s, b, _)| *s == *slot && *b == birth)
+            {
+                Some(owner) => owner.2 += 1,
+                None => owners.push((*slot, birth, 1)),
+            }
+        }
+        for (slot, _, count) in &owners {
+            assert_eq!(
+                *count, 2,
+                "effect in slot {slot} draws its marks whole at {now:.2} s"
+            );
+        }
+        for (slot, birth) in &previous {
+            let still = owners.iter().any(|(s, b, _)| s == slot && b == birth);
+            if still {
+                continue;
+            }
+            let instance = runtime
+                .pool
+                .iter()
+                .find(|(index, instance)| {
+                    *index == *slot as usize && instance.birth.to_bits() == *birth
+                })
+                .map(|(_, instance)| *instance);
+            if let Some(instance) = instance {
+                assert!(
+                    instance.marks_retired_at.is_some() || now > instance.decal_end,
+                    "the marks of slot {slot} vanished at {now:.2} s without eroding out"
+                );
+            }
+        }
+        previous = owners.iter().map(|(s, b, _)| (*s, *b)).collect();
+    }
+    assert!(
+        runtime.stats.marks_retired > 0,
+        "the oldest marks made room"
+    );
+    assert_eq!(runtime.stats.critical_overflow, 0);
 }
 
 #[test]

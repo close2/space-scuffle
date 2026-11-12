@@ -194,6 +194,12 @@ pub struct StressSummary {
     pub lod_skipped: u64,
     /// Effects whose detail was retired early.
     pub retired: u64,
+    /// Lasting marks retired (eroded out) to make room in the decal pool.
+    #[serde(default)]
+    pub marks_retired: u64,
+    /// Effects that found no room for their decals and draw none.
+    #[serde(default)]
+    pub marks_refused: u64,
     /// The captured frame, if any.
     pub capture: Option<CaptureSummary>,
 }
@@ -312,6 +318,8 @@ impl EffectStress {
             summary.detail_skipped = stats.detail_skipped;
             summary.lod_skipped = stats.lod_skipped;
             summary.retired = stats.retired;
+            summary.marks_retired = stats.marks_retired;
+            summary.marks_refused = stats.marks_refused;
         });
     }
 }
@@ -525,12 +533,15 @@ fn capture_stressed_frame(
                 });
             info!(
                 "frame_budget: consecutive capture {} at tick {tick}: {} ({decals} decals; so far \
-                 {} retired, {} Detail skipped, {} Critical without a slot)",
+                 {} retired, {} Detail skipped, {} Critical without a slot, {} marks retired to \
+                 make room, {} effects refused decal room)",
                 stress.captured_frames,
                 path.display(),
                 stats.retired,
                 stats.detail_skipped,
-                stats.critical_overflow
+                stats.critical_overflow,
+                stats.marks_retired,
+                stats.marks_refused
             );
             commands
                 .spawn(Screenshot::primary_window())

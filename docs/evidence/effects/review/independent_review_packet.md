@@ -1,4 +1,4 @@
-# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 to 3)
+# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 to 4)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
@@ -6,6 +6,52 @@ judge it by, and nothing else: it holds no verdict of the implementer, on purpos
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Scale-out round 4 (WP7)
+
+Round 3's review ([`independent_review_scaleout3.md`](independent_review_scaleout3.md), kept as written) accepted
+`cleave_impact`, the 6 144 decal pool and the degradation frames. It asked for a stronger footprint clause, for
+stable behaviour at the decal cap, and for jets that burn in a real battle. The orchestrator decided those changes
+(plan Amendment 7). This is round 4, the fourth of the owner's five. Please write it to a new file next to this
+one, `independent_review_scaleout4.md`, in the same form:
+
+- judge `cleave_impact` again (its front changed; see below) and `flame_line` in the crowd;
+- check that the other effects did not regress;
+- judge the crowd (item 6) on the new takes, including the behaviour at the decal cap and the jets;
+- say whether the footprint rule is now acceptable.
+
+The images are lavapipe captures from a debug build under Xvfb, as before. Nothing was spent and no texture was made.
+
+### Material
+
+| What | Files |
+|---|---|
+| `cleave_impact` | [cleave_impact_contact.png](cleave_impact_contact.png) ([legend](cleave_impact_contact.txt)), [cleave_impact_sequence.png](cleave_impact_sequence.png), repeat take [cleave_impact_repeat_contact.png](cleave_impact_repeat_contact.png), [cleave_impact_repeat_sequence.png](cleave_impact_repeat_sequence.png), per-pixel steps [cleave_impact_pops.txt](cleave_impact_pops.txt) (round 4 row) |
+| crowd frame, tick 150, 200 splashes a second over all seven effects | [stress_capture_400.png](stress_capture_400.png), [stress_capture_400_detail.png](stress_capture_400_detail.png) |
+| eight consecutive frames, 40 ms apart | [stress_degradation_400.png](stress_degradation_400.png) |
+| the same with the decal pool forced to 2 048 | [stress_decal_cap_400.png](stress_decal_cap_400.png) |
+| the battle without the stream, jets, ticks 200–209, at the battle camera's default distance | [stress_jets_400.png](stress_jets_400.png) |
+| the same at the frame-budget camera (75 units away) | [stress_jets_far_400.png](stress_jets_far_400.png), [stress_jets_far_400_detail.png](stress_jets_far_400_detail.png) |
+| figures | [stress_capture.txt](stress_capture.txt), paragraph "Scale-out round 4" |
+
+### What changed
+
+| Point | Change |
+|---|---|
+| Footprint clause (b) | A torn front's farthest ray must now be within 2 px of the reach in each of eight 45° sectors, not once somewhere. Its declared bite is capped at 20 % of the reach. A test shows that a front squashed on one side, or missing a quarter, fails. |
+| `cleave_impact` front | Round 3's front failed the per-sector clause (one sector ended 3.6 px short). Its torn edge now reads two noise octaves (the round-3 note on regular bump spacing), and its clumps' crests are broader. It passes: 97 % of rays, mean −2.66 px, nothing beyond the reach. |
+| Decals at the cap | Each effect reserves its decal slots at birth and draws them whole or not at all. Above 85 % of the pool, the oldest lasting marks erode out over 0.25 s to make room. With the pool forced to 2 048, no Critical decal is dropped (round 3: about 2 050 a frame). 444 new effects drew no decal at all rather than part of their marks. |
+| Jets | A class cap now counts an effect only while its fire is alive. Over the cap, the oldest burning effect gives its detail up, never the newborn. `flame_line`'s body of fire and its burning ground are always kept; their look in the lab is unchanged. |
+
+**Points to look at.**
+
+- At the normal stress load, 853 lasting marks erode out early over the run. Reservations also count decals too small
+  to draw at the frame-budget camera, so the 85 % mark is reached while about 3 900 decals are drawn. No effect is
+  refused room at that load.
+- At the far camera, the flame's billows are below the 6-pixel floor. What remains is its body of fire and its
+  burning ground.
+- The cleave front's value on teal was not changed: a lighter front loses its contrast on the bright ground, which
+  the footprint needs.
 
 ## Scale-out round 3 (WP7)
 

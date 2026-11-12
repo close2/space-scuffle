@@ -457,6 +457,56 @@ fn reach_errors(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage
     errors
 }
 
+/// Sectors of the circle in which a torn front's farthest clump must reach the reach.
+const FRONT_SECTORS: usize = 8;
+
+/// Whether a torn front's rays (`errors`, per ray, pixels; NaN where nothing is lit) show the
+/// reach all the way round: in each of [`FRONT_SECTORS`] equal sectors the farthest ray ends
+/// within [`TOLERANCE_PX`] of it. A front squashed on one side, or missing a quarter, fails.
+fn torn_front_holds(errors: &[f32]) -> Result<(), String> {
+    let per_sector = errors.len().div_ceil(FRONT_SECTORS).max(1);
+    for (sector, rays) in errors.chunks(per_sector).enumerate() {
+        let farthest = rays
+            .iter()
+            .copied()
+            .filter(|error| error.is_finite())
+            .fold(f32::NEG_INFINITY, f32::max);
+        if farthest < -TOLERANCE_PX {
+            return Err(format!(
+                "sector {sector} of the torn front ends {farthest:.2} px inside the reach at most"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The per-sector rule passes a torn front that reaches the reach all the way round, and
+/// fails one squashed on one side or missing a quarter (Amendment 7).
+#[test]
+fn a_torn_front_must_reach_the_reach_in_every_sector() {
+    // Clumps on the reach every third ray, bitten 5 px back between them.
+    let torn: Vec<f32> = (0..72)
+        .map(|ray| if ray % 3 == 0 { -1.0 } else { -5.0 })
+        .collect();
+    assert!(torn_front_holds(&torn).is_ok());
+    // Squashed: one half of the circle ends 5 px short everywhere.
+    let squashed: Vec<f32> = (0..72)
+        .map(|ray| if ray < 36 { torn[ray] } else { -5.0 })
+        .collect();
+    assert!(torn_front_holds(&squashed).is_err());
+    // A quarter missing: nothing lit over 18 rays.
+    let quarter: Vec<f32> = (0..72)
+        .map(|ray| {
+            if (18..36).contains(&ray) {
+                f32::NAN
+            } else {
+                torn[ray]
+            }
+        })
+        .collect();
+    assert!(torn_front_holds(&quarter).is_err());
+}
+
 /// The projected reach in pixels along each of `rays` rays from the anchor.
 fn reach_pixels(view: &View, ground: &Ground, rays: usize) -> Vec<f32> {
     let centre = view.project(ground.anchor);
@@ -556,11 +606,13 @@ fn check_front(
         "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (bite {bite}; errors {errors:?})",
         share * 100.0
     );
-    // The farthest-reaching clumps of a torn front still mark the reach.
-    assert!(
-        bite <= 0.0 || worst_beyond >= -TOLERANCE_PX,
-        "the torn front's farthest clump ends {worst_beyond:.2} px inside the reach"
-    );
+    // The farthest-reaching clumps of a torn front still mark the reach all the way round
+    // (Amendment 7: in every 45-degree sector, not only somewhere).
+    if bite > 0.0 {
+        if let Err(failure) = torn_front_holds(&errors) {
+            panic!("{failure} (errors {errors:?})");
+        }
+    }
     format!(
         "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach{}, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
         share * 100.0,

@@ -14,9 +14,13 @@
 //!
 //! # Budget and level of detail
 //! `Critical` layers are written first, then `Detail` layers, each pool up to its budget. A
-//! detail card or decal that finds no room is skipped, and the oldest `Minor` or `Ambient`
-//! effect's detail is retired (it erodes out over 0.1 s). An effect spawned over its class cap
-//! starts with its detail retired. Layers smaller than `min_screen_px` are skipped; bursts
+//! detail card that finds no room is skipped, and the oldest `Minor` or `Ambient` effect's
+//! detail is retired (it erodes out over 0.1 s). A class cap counts an effect only while its
+//! fire (its non-decal layers) is alive; an effect spawned over its class cap keeps its detail
+//! and the oldest burning effect of its class gives its detail up instead (Amendment 7).
+//! Decals are reserved whole at birth ([`super::ledger`]): above the pool's pressure mark the
+//! oldest lasting marks erode out over 0.25 s to make room, an effect that still finds no room
+//! draws no decal at all, and a reserved decal is drawn every frame until it ends or erodes. Layers smaller than `min_screen_px` are skipped; bursts
 //! scale with projected size and halve in a crowd of `Major` effects (`budget` functions).
 //!
 //! # Invariants
@@ -43,6 +47,7 @@ use super::instances::{
     ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT,
     ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
+use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
 use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
 use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
@@ -111,6 +116,10 @@ pub struct EffectStats {
     /// Line requests merged into a live effect of the same line (a line whose searches land
     /// on several ticks).
     pub merged_lines: u64,
+    /// Lasting marks retired (eroded out) to make room in the decal pool.
+    pub marks_retired: u64,
+    /// Effects that found no room for their decals and draw none.
+    pub marks_refused: u64,
 }
 
 /// What one frame draws.
@@ -126,6 +135,8 @@ pub struct EffectFrame {
     pub sorted: Vec<SpriteInstance>,
     /// Decals.
     pub decals: Vec<DecalInstance>,
+    /// The pool slot of the effect each decal of `decals` belongs to (diagnostics and tests).
+    pub decal_owners: Vec<u32>,
     /// Point lights.
     pub lights: Vec<LightInstance>,
     /// Distortion discs (drawn in the transmissive phase, unsorted: each only bends the
@@ -145,6 +156,7 @@ impl EffectFrame {
             order: Vec::with_capacity(cards),
             sorted: Vec::with_capacity(cards),
             decals: Vec::with_capacity(decals),
+            decal_owners: Vec::with_capacity(decals),
             lights: Vec::with_capacity(lights),
             distortions: Vec::with_capacity(distortions),
             card_count: 0,
@@ -153,7 +165,7 @@ impl EffectFrame {
 
     /// Address and capacity of every retained vector, which an allocation would change.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 7] {
+    pub fn buffers(&self) -> [(usize, usize); 8] {
         [
             (self.cards.as_ptr() as usize, self.cards.capacity()),
             (self.depth.as_ptr() as usize, self.depth.capacity()),
@@ -164,6 +176,10 @@ impl EffectFrame {
             (
                 self.distortions.as_ptr() as usize,
                 self.distortions.capacity(),
+            ),
+            (
+                self.decal_owners.as_ptr() as usize,
+                self.decal_owners.capacity(),
             ),
         ]
     }
@@ -182,6 +198,8 @@ pub struct EffectRuntime {
     pub frame: EffectFrame,
     /// Budget counters.
     pub stats: EffectStats,
+    /// Burning effects per class and decal reservations, recounted every frame.
+    pub ledger: BudgetLedger,
     /// Time of the last build, seconds.
     last_build: Option<f64>,
     /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
@@ -221,6 +239,7 @@ impl EffectRuntime {
                 budget.distortions as usize,
             ),
             stats: EffectStats::default(),
+            ledger: BudgetLedger::default(),
             last_build: None,
             only: None,
         }
@@ -246,8 +265,14 @@ impl EffectRuntime {
         let effect = catalog.effect(request.effect)?;
         let birth = now + f64::from(request.delay);
         let line_delay = max_line_delay(&effect.layers, request.line);
-        let over_cap =
-            self.pool.live(effect.class) >= catalog.budget.class_caps[effect.class.index()];
+        let spans = effect_spans(effect, request);
+        // A newborn effect is never the one stripped: over its class cap, the oldest burning
+        // effect of its class gives its detail up (Amendment 7).
+        let over_cap = self.ledger.burning(effect.class)
+            >= catalog.budget.class_caps[effect.class.index()]
+            && !self.retire_oldest_fire(effect.class, now);
+        let burning = spans.fire > 0.0 && !over_cap;
+        let decal_slots = self.reserve_marks(catalog, effect.class, burning, spans.decals, now);
         let instance = EffectInstance {
             effect: request.effect,
             class: effect.class,
@@ -262,6 +287,10 @@ impl EffectRuntime {
                 .layers
                 .iter()
                 .any(|layer| layer.priority == Priority::Detail),
+            fire_end: birth + f64::from(spans.fire),
+            decal_end: birth + f64::from(spans.decal),
+            decal_slots,
+            marks_retired_at: None,
             bursts_through: f32::NEG_INFINITY,
         };
         self.sequence = self.sequence.wrapping_add(1);
@@ -329,8 +358,10 @@ impl EffectRuntime {
         self.frame.cards.clear();
         self.frame.sorted.clear();
         self.frame.decals.clear();
+        self.frame.decal_owners.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
+        self.ledger.clear();
         self.last_build = None;
     }
 
@@ -346,12 +377,14 @@ impl EffectRuntime {
             .map_or(0.0, |last| (now - last).max(0.0) as f32);
         self.last_build = Some(now);
         self.pool.free_ended(now);
+        self.settle_ledger(catalog, now);
         self.fire_bursts(catalog, now, camera);
         self.particles.step(dt, &catalog.emitters);
         self.spawn_landings(catalog, now);
         self.frame.cards.clear();
         self.frame.depth.clear();
         self.frame.decals.clear();
+        self.frame.decal_owners.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
         self.frame.card_count = 0;
@@ -380,6 +413,114 @@ impl EffectRuntime {
             };
             self.spawn(catalog, &request, now);
         }
+    }
+
+    /// Gives back the decal slots of marks that ended or finished eroding out, and recounts
+    /// the ledger from the live effects (once per frame). An effect holds the slots of its decal
+    /// layers that have not ended yet: a short layer (embers) gives its slots back when it ends,
+    /// a lasting one keeps them to its end.
+    fn settle_ledger(&mut self, catalog: &EffectCatalog, now: f64) {
+        self.ledger.clear();
+        for slot in 0..self.pool.capacity() as usize {
+            let Some(instance) = self.pool.slot_mut(slot) else {
+                continue;
+            };
+            let eroded = instance
+                .marks_retired_at
+                .is_some_and(|retired| now - retired >= f64::from(MARK_RETIRE_SECS));
+            if now > instance.decal_end || eroded {
+                instance.decal_slots = 0;
+            }
+            let held = match catalog.effect(instance.effect) {
+                Some(effect) if instance.decal_slots > 0 => held_marks(effect, instance, now),
+                _ => 0,
+            };
+            let burning = now < instance.fire_end && instance.detail_retired_at.is_none();
+            self.ledger.count(
+                instance.class,
+                burning,
+                held,
+                instance.marks_retired_at.is_some(),
+            );
+        }
+    }
+
+    /// Retires the detail of the oldest burning effect of `class`; returns whether there was
+    /// one.
+    // PERFORMANCE RATIONALE:
+    // Why: Over a class cap the oldest burning effect must be found among the live ones; an
+    // age-ordered index per class would be a second structure to keep in step with the pool.
+    // What: A linear scan over the pool's fixed slots, only for a spawn over its class cap.
+    // Trade-off: O(capacity) per such spawn (2 048 slots, a few microseconds) in exchange for
+    // no extra state and no allocation.
+    fn retire_oldest_fire(&mut self, class: EffectClass, now: f64) -> bool {
+        let oldest = self
+            .pool
+            .iter()
+            .filter(|(_, instance)| {
+                instance.class == class
+                    && instance.has_detail
+                    && instance.detail_retired_at.is_none()
+                    && now < instance.fire_end
+            })
+            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
+            .map(|(index, _)| index);
+        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+            return false;
+        };
+        instance.detail_retired_at = Some(now);
+        self.ledger.quench(class);
+        self.stats.retired += 1;
+        true
+    }
+
+    /// Reserves `need` decal slots for a new effect of `class` (burning when `burning`):
+    /// first retiring the oldest lasting marks while the pool is above its pressure mark, then
+    /// granting all of them or none. Returns the slots granted.
+    fn reserve_marks(
+        &mut self,
+        catalog: &EffectCatalog,
+        class: EffectClass,
+        burning: bool,
+        need: u32,
+        now: f64,
+    ) -> u32 {
+        let capacity = catalog.budget.decals;
+        while need > 0 && self.ledger.needs_room(need, capacity) {
+            if !self.retire_oldest_mark(now) {
+                break;
+            }
+        }
+        let granted = self.ledger.grant(class, burning, need, capacity);
+        if need > 0 && granted == 0 {
+            self.stats.marks_refused += 1;
+        }
+        granted
+    }
+
+    /// Retires the oldest lasting marks still holding decal slots: they erode out over
+    /// [`MARK_RETIRE_SECS`] and then give their slots back. Returns whether there were any.
+    // PERFORMANCE RATIONALE:
+    // Why: Making room needs the oldest effect holding decal slots; an age-ordered index
+    // would be a second structure to keep in step with the pool.
+    // What: A linear scan over the pool's fixed slots, only while the decal pool is above its
+    // pressure mark.
+    // Trade-off: O(capacity) per retirement (2 048 slots, a few microseconds), rare below the
+    // stress load, in exchange for no extra state and no allocation.
+    fn retire_oldest_mark(&mut self, now: f64) -> bool {
+        let oldest = self
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.decal_slots > 0 && instance.marks_retired_at.is_none())
+            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
+            .map(|(index, _)| index);
+        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+            return false;
+        };
+        instance.marks_retired_at = Some(now);
+        self.ledger.retire_marks(instance.decal_slots);
+        self.stats.marks_retired += 1;
+        true
     }
 
     /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it.
@@ -560,9 +701,13 @@ impl EffectRuntime {
                         .saturating_sub(len32(self.frame.distortions.len())),
                     Pool::Particles => continue,
                 };
+                let Some(fade) = marks_fade(&instance, layer, fade, now) else {
+                    continue;
+                };
                 let context = LayerContext {
                     catalog,
                     instance: &instance,
+                    slot: u32::try_from(slot).unwrap_or(u32::MAX),
                     layer,
                     layer_index,
                     now,
@@ -964,6 +1109,7 @@ impl EffectRuntime {
             }
             _ => random_yaw,
         };
+        self.frame.decal_owners.push(context.slot);
         self.frame.decals.push(DecalInstance {
             center: position.to_array(),
             yaw,
@@ -1098,6 +1244,8 @@ struct LayerContext<'a> {
     catalog: &'a EffectCatalog,
     /// The live effect.
     instance: &'a EffectInstance,
+    /// Its pool slot.
+    slot: u32,
     /// The layer.
     layer: &'a Layer,
     /// Its index in the effect.
@@ -1108,6 +1256,90 @@ struct LayerContext<'a> {
     fade: f32,
     /// The camera.
     camera: Option<&'a CameraView>,
+}
+
+/// The fade of `layer` of `instance` given its retirement fade `fade`: a decal layer draws
+/// only while its effect holds its decal slots (`None` otherwise: refused room, or ended), and
+/// erodes out with them once they are retired to make room.
+fn marks_fade(instance: &EffectInstance, layer: &Layer, fade: f32, now: f64) -> Option<f32> {
+    if layer.block.pool() != Pool::Decals {
+        return Some(fade);
+    }
+    if instance.decal_slots == 0 {
+        return None;
+    }
+    Some(instance.marks_retired_at.map_or(fade, |retired| {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "seconds since retirement fit f32"
+        )]
+        let since = (now - retired) as f32;
+        fade * mark_fade(since)
+    }))
+}
+
+/// The decal slots `instance` of `effect` holds at `now`: those of its decal layers that have
+/// not ended yet.
+fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f64) -> u32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "an effect's age in seconds fits f32"
+    )]
+    let age = (now - instance.birth) as f32;
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.block.pool() == Pool::Decals)
+        .filter(|layer| {
+            age <= layer.start
+                + layer.duration
+                + max_line_delay(std::slice::from_ref(*layer), instance.line)
+        })
+        .map(|layer| {
+            layer
+                .placements
+                .iter()
+                .map(|placement| instance_count(placement, &instance.bound, instance.line))
+                .sum::<u32>()
+        })
+        .sum()
+}
+
+/// How long an effect's fire and its decals last, in seconds from its birth, and how many
+/// decals its decal layers place in all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Spans {
+    /// The end of its last non-decal layer.
+    fire: f32,
+    /// The end of its last decal layer.
+    decal: f32,
+    /// Decals its decal layers place over its life.
+    decals: u32,
+}
+
+/// The spans of `effect` spawned by `request`.
+fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Spans {
+    let mut spans = Spans {
+        fire: 0.0,
+        decal: 0.0,
+        decals: 0,
+    };
+    for layer in &effect.layers {
+        let end = layer.start
+            + layer.duration
+            + max_line_delay(std::slice::from_ref(layer), request.line);
+        if layer.block.pool() == Pool::Decals {
+            spans.decal = spans.decal.max(end);
+            spans.decals += layer
+                .placements
+                .iter()
+                .map(|placement| instance_count(placement, &request.bound, request.line))
+                .sum::<u32>();
+        } else {
+            spans.fire = spans.fire.max(end);
+        }
+    }
+    spans
 }
 
 /// A length as `u32`, saturating.
