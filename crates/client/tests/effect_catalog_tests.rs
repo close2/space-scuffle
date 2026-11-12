@@ -1253,7 +1253,7 @@ fn shipped_torn_fronts_hold_every_sector_for_many_hits() {
     let mut fronts = 0;
     for effect in &catalog.effects {
         for (layer_index, layer) in effect.layers.iter().enumerate() {
-            let client::effects::catalog::Block::Ring { edge_noise, .. } = layer.block else {
+            let Block::Ring { edge_noise, .. } = layer.block else {
                 continue;
             };
             if edge_noise <= 0.0 || layer.priority != Priority::Critical {
