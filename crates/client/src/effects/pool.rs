@@ -53,6 +53,18 @@ pub struct EffectInstance {
     pub detail_retired_at: Option<f64>,
     /// Whether it has detail layers.
     pub has_detail: bool,
+    /// Time after which none of its non-decal layers (its fire) draws: it counts against its
+    /// class cap only until then.
+    pub fire_end: f64,
+    /// Time after which none of its decal layers draws.
+    pub decal_end: f64,
+    /// Decal slots it holds: every decal its decal layers place, reserved at birth and kept
+    /// until they end or erode out; 0 when it has none or was refused room (it then draws no
+    /// decal at all).
+    pub decal_slots: u32,
+    /// Time its lasting marks were retired to make room in the decal pool, if they were: they
+    /// erode out over [`super::ledger::MARK_RETIRE_SECS`] and give back their slots.
+    pub marks_retired_at: Option<f64>,
     /// Age in seconds up to which every particle burst due has been spawned (negative
     /// infinity before the first build); a burst due at age `e` fires once `e` falls in
     /// `(bursts_through, age]`, so bursts delayed along a line fire one by one.
@@ -230,6 +242,10 @@ mod tests {
             seed: 0,
             detail_retired_at: None,
             has_detail: true,
+            fire_end: end,
+            decal_end: end,
+            decal_slots: 0,
+            marks_retired_at: None,
             bursts_through: f32::NEG_INFINITY,
         }
     }

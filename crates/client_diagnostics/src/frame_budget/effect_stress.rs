@@ -7,7 +7,9 @@
 //!   splash effect, with the zone radii and line the simulation would publish for it.
 //! - [`spawn_stress_events`] sends `--effect-stress <rate>` splash events per second of
 //!   `Time<Virtual>` while the battle runs, round-robin over those sources, each at a live unit
-//!   of the presented snapshot chosen by a hash of its sequence number. The events go through
+//!   of the presented snapshot chosen by a hash of its sequence number, on the plane the weapon
+//!   strikes ([`strikes_plane`]: an air weapon's splash bursts among air units, a ground
+//!   weapon's on the ground). The events go through
 //!   the production wiring (`client::effects::systems::spawn_effects_from_events`), so budget,
 //!   level of detail and pools act as in a battle.
 //! - [`capture_stressed_frame`] takes a screenshot at the chosen tick and measures the effect
@@ -33,7 +35,7 @@ use client::effects::catalog::{EffectCatalog, UnitEffectTables};
 use client::effects::instances::{
     DecalInstance, SpriteInstance, ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_VERTICAL,
 };
-use client::effects::runtime::EffectRuntime;
+use client::effects::runtime::{EffectRuntime, EffectStats};
 use client::vfx::CombatVisualEvent;
 use client::{CatalogResource, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
@@ -48,6 +50,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 /// Side of one coverage cell in pixels.
 pub const COVERAGE_CELL_PX: u32 = 4;
+
+/// Height above its ground, world units, from which the stream counts a unit as airborne. Air
+/// units fly several units up and ground units stand on their ground, so any value between
+/// separates them; half a unit also tolerates a ground unit on a slope's edge.
+pub const AIRBORNE_HEIGHT: f32 = 0.5;
 
 /// One weapon whose splash the stream repeats.
 #[derive(Debug, Clone, PartialEq)]
@@ -162,6 +169,8 @@ pub struct StressConfig {
     pub capture: Option<PathBuf>,
     /// Simulation tick of the captured frame.
     pub capture_tick: u32,
+    /// Consecutive frames captured from that frame on, at least 1.
+    pub capture_frames: u32,
 }
 
 /// What the stress mode did, for the report.
@@ -185,6 +194,12 @@ pub struct StressSummary {
     pub lod_skipped: u64,
     /// Effects whose detail was retired early.
     pub retired: u64,
+    /// Lasting marks retired (eroded out) to make room in the decal pool.
+    #[serde(default)]
+    pub marks_retired: u64,
+    /// Effects that found no room for their decals and draw none.
+    #[serde(default)]
+    pub marks_refused: u64,
     /// The captured frame, if any.
     pub capture: Option<CaptureSummary>,
 }
@@ -230,6 +245,8 @@ pub struct EffectStress {
     pub sequence: u64,
     /// The captured frame, once taken.
     pub capture: Option<CaptureSummary>,
+    /// Frames captured so far (the first and the consecutive ones after it).
+    captured_frames: u32,
     /// Where the report section leaves the App.
     handle: StressHandle,
 }
@@ -267,6 +284,7 @@ impl EffectStress {
             owed: 0.0,
             sequence: 0,
             capture: None,
+            captured_frames: 0,
             handle,
         }
     }
@@ -300,6 +318,8 @@ impl EffectStress {
             summary.detail_skipped = stats.detail_skipped;
             summary.lod_skipped = stats.lod_skipped;
             summary.retired = stats.retired;
+            summary.marks_retired = stats.marks_retired;
+            summary.marks_refused = stats.marks_refused;
         });
     }
 }
@@ -317,6 +337,19 @@ pub fn install(app: &mut App, config: StressConfig) -> StressHandle {
         )
         .add_systems(Last, capture_stressed_frame);
     handle
+}
+
+/// Whether a unit `height` world units above its ground lies on the plane `slot`'s weapon
+/// strikes: an air weapon only airborne units, a ground weapon only units on the ground, a
+/// primary weapon (which may strike both) any unit.
+#[must_use]
+pub fn strikes_plane(slot: WeaponSlot, height: f32) -> bool {
+    let airborne = height > AIRBORNE_HEIGHT;
+    match slot {
+        WeaponSlot::Air => airborne,
+        WeaponSlot::Ground => !airborne,
+        WeaponSlot::Primary => true,
+    }
 }
 
 /// A 32-bit mix of `value` (`SplitMix64`'s finaliser), for choosing units and angles.
@@ -425,9 +458,11 @@ fn spawn_stress_events(
         return;
     };
     let bubbles = &session.frames.presented().bubbles;
-    let live = |index: usize| {
+    let live = |index: usize, slot: WeaponSlot| {
         bubbles.get(index).filter(|bubble| {
-            matches!(bubble.shape, ShapeKind::UnitSphere) && bubble.anim_state != AnimState::Die
+            matches!(bubble.shape, ShapeKind::UnitSphere)
+                && bubble.anim_state != AnimState::Die
+                && strikes_plane(slot, bubble.world_pos[2] - bubble.ground_z)
         })
     };
     if bubbles.is_empty() {
@@ -441,13 +476,13 @@ fn spawn_stress_events(
         let hash = mix(sequence);
         let source = &sources[usize::try_from(sequence % sources.len() as u64).unwrap_or(0)];
         let start = usize::try_from(hash % bubbles.len() as u64).unwrap_or(0);
-        // The first live unit at or after the hashed index; a frame of only dying units
-        // streams nothing.
+        // The first live unit on the weapon's plane at or after the hashed index; a frame
+        // without one skips this source's event.
         let Some(bubble) = (0..bubbles.len())
             .map(|step| (start + step) % bubbles.len())
-            .find_map(live)
+            .find_map(|index| live(index, source.source.weapon.slot))
         else {
-            return;
+            continue;
         };
         #[allow(
             clippy::cast_precision_loss,
@@ -484,7 +519,35 @@ fn capture_stressed_frame(
     let Some(tick) = session.world().map(|world| world.current_tick) else {
         return;
     };
-    if stress.capture.is_some() || tick < stress.config.capture_tick {
+    if tick < stress.config.capture_tick {
+        return;
+    }
+    if stress.capture.is_some() {
+        // The consecutive frames after the first: screenshots only.
+        if stress.captured_frames < stress.config.capture_frames {
+            let path = consecutive_path(&path, stress.captured_frames);
+            let (stats, decals) = runtime
+                .as_deref()
+                .map_or((EffectStats::default(), 0), |runtime| {
+                    (runtime.stats, runtime.frame.decals.len())
+                });
+            info!(
+                "frame_budget: consecutive capture {} at tick {tick}: {} ({decals} decals; so far \
+                 {} retired, {} Detail skipped, {} Critical without a slot, {} marks retired to \
+                 make room, {} effects refused decal room)",
+                stress.captured_frames,
+                path.display(),
+                stats.retired,
+                stats.detail_skipped,
+                stats.critical_overflow,
+                stats.marks_retired,
+                stats.marks_refused
+            );
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path));
+            stress.captured_frames += 1;
+        }
         return;
     }
     let Ok((camera, transform)) = cameras.get_single() else {
@@ -529,6 +592,20 @@ fn capture_stressed_frame(
         .handle
         .update(|summary| summary.capture = Some(published));
     stress.capture = Some(capture);
+    stress.captured_frames = 1;
+}
+
+/// The path of consecutive capture `index` (> 0) beside `first`: `<stem>_<index>.<ext>`.
+#[must_use]
+pub fn consecutive_path(first: &std::path::Path, index: u32) -> PathBuf {
+    let stem = first
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+    let name = match first.extension() {
+        Some(extension) => format!("{stem}_{index}.{}", extension.to_string_lossy()),
+        None => format!("{stem}_{index}"),
+    };
+    first.with_file_name(name)
 }
 
 /// The camera's right and up vectors in world space, for camera-facing cards.
@@ -740,6 +817,29 @@ mod tests {
             Some((0, [10.0, 20.0, 0.0], [19.0, 20.0, 0.0]))
         );
         Ok(())
+    }
+
+    #[test]
+    fn consecutive_captures_sit_beside_the_first() {
+        let first = PathBuf::from("/tmp/x/stress_capture_400.png");
+        assert_eq!(
+            consecutive_path(&first, 3),
+            PathBuf::from("/tmp/x/stress_capture_400_3.png")
+        );
+        assert_eq!(
+            consecutive_path(&PathBuf::from("frame"), 1),
+            PathBuf::from("frame_1")
+        );
+    }
+
+    #[test]
+    fn an_air_weapon_strikes_only_airborne_units() {
+        assert!(strikes_plane(WeaponSlot::Air, 3.0));
+        assert!(!strikes_plane(WeaponSlot::Air, 0.0));
+        assert!(strikes_plane(WeaponSlot::Ground, 0.1));
+        assert!(!strikes_plane(WeaponSlot::Ground, 3.0));
+        assert!(strikes_plane(WeaponSlot::Primary, 0.0));
+        assert!(strikes_plane(WeaponSlot::Primary, 3.0));
     }
 
     #[test]

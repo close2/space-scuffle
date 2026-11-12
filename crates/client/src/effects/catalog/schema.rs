@@ -381,6 +381,14 @@ pub enum BlockDef {
         /// Noise breakup of the erosion and edges (required by `mapping: Front`).
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// `mapping: Front` only: how deep the leading edge is bitten by its own noise, as a
+        /// fraction of the band's width, in [0, 1). 0 keeps a round leading edge (a pressure
+        /// front); above it the edge recedes where the noise is low, by up to this share of the
+        /// band, so the front is a run of clumps whose farthest parts stay on the radius and
+        /// whose outline differs per instance (a dust skirt; scale-out review 2). The footprint
+        /// test allows its rays to end inside the reach by this bite.
+        #[serde(default)]
+        edge_noise: f32,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -424,6 +432,89 @@ pub enum BlockDef {
         #[serde(default)]
         outline: Option<OutlineDef>,
     },
+    /// A strip along the event's line (plan WP7): a flame jet's core, a lance's burning
+    /// stroke. Its half width is the layer's `size`; it runs from the line's first search
+    /// point towards its last, its head racing out at `travel` and, after `tail_delay`, its
+    /// tail following at the same speed, so it can sweep along the line as a short segment.
+    /// The texture's u axis runs along the strip, repeating every `repeat` world units and
+    /// scrolling by `scroll` repeats per second; its v axis runs across it. Only `Line`
+    /// effects may use it (it binds the line), and only with the one `Point` placement.
+    Ribbon {
+        /// Texture element (its u axis along the strip).
+        texture: String,
+        /// Colour ramp.
+        ramp: String,
+        /// `Camera` turns the strip about its own axis to face the camera; `Ground` lays it
+        /// flat. Other orientations are refused.
+        #[serde(default)]
+        orient: Orient,
+        /// World units of strip per texture repeat, > 0.
+        #[serde(default = "one")]
+        repeat: f32,
+        /// Texture repeats per second the texture scrolls along the strip, away from its
+        /// start (negative: towards it).
+        #[serde(default)]
+        scroll: f32,
+        /// Speed in world units per second at which the head races along the line; 0 draws
+        /// the whole line from the start.
+        #[serde(default)]
+        travel: f32,
+        /// Seconds after the layer's start at which the tail leaves the line's start and
+        /// follows the head at `travel`; `None` keeps the tail at the start.
+        #[serde(default)]
+        tail_delay: Option<f32>,
+        /// Share of the drawn length at each end over which the strip narrows to a point,
+        /// `(at the tail, at the head)`, each in [0, 0.5].
+        #[serde(default = "default_taper")]
+        taper: (f32, f32),
+        /// Height of the strip above the line, world units.
+        #[serde(default)]
+        height: f32,
+        /// Soft-depth fade distance in world units; 0 for a hard intersection.
+        #[serde(default)]
+        soft_depth: f32,
+        /// Erosion threshold over the layer's life.
+        #[serde(default)]
+        erosion: Option<String>,
+        /// Moves the strip this many world units towards the camera in the sort only.
+        #[serde(default)]
+        sort_bias: f32,
+        /// `Texture` draws the element tiled along the strip; `Radial` computes a soft core
+        /// across it (a Gaussian across the width, densest on the axis), light rather than
+        /// matter, whose texture is not read.
+        #[serde(default)]
+        shape: CardShape,
+        /// Noise breakup of the erosion and edges, in the strip's own coordinates (it repeats
+        /// and scrolls with the texture).
+        #[serde(default)]
+        breakup: Option<BreakupDef>,
+    },
+    /// A screen-space refraction (plan §5.1 "Distortion", WP7): heat haze over a burn, air
+    /// rippling around a blast, a cloaked body's shimmer. It bends what is already drawn opaque
+    /// behind it (the ground, unit bodies) by a scrolling noise inside a soft disc of the
+    /// layer's `size` and adds no colour of its own. It is drawn in the transmissive phase from
+    /// the view's copy of the opaque scene.
+    Distortion {
+        /// Noise element (a `NoiseV1` element); two decorrelated reads of it give the offset.
+        noise: String,
+        /// Noise repeats across the disc, > 0.
+        #[serde(default = "one")]
+        scale: f32,
+        /// Noise scroll in repeats per second, `(u, v)` (v runs down the card: heat rising
+        /// from the ground scrolls with a positive v on a camera-facing disc).
+        #[serde(default)]
+        scroll: (f32, f32),
+        /// Largest offset of the scene behind, as a fraction of the disc's radius on screen,
+        /// in (0, 0.25].
+        strength: f32,
+        /// `Camera` (a disc facing the camera) or `Ground` (a disc lying flat); other
+        /// orientations are refused.
+        #[serde(default)]
+        orient: Orient,
+        /// Height of the disc's centre above its placed point, world units.
+        #[serde(default)]
+        height: f32,
+    },
     /// A short point light.
     Light {
         /// Linear RGB colour.
@@ -443,6 +534,11 @@ pub enum BlockDef {
         #[serde(default)]
         clip_to_line: bool,
     },
+}
+
+/// Serde default of a ribbon's taper: a tenth of its length at each end.
+const fn default_taper() -> (f32, f32) {
+    (0.1, 0.1)
 }
 
 /// Serde default of a decal's grazing cosine.
@@ -605,6 +701,11 @@ pub struct EffectDefRaw {
     /// `moving` slot, unused elsewhere.
     #[serde(default)]
     pub repeat: Option<f32>,
+    /// The salt of its instances' random choices (rotations, placements, variants, noise
+    /// phases), when a review accepted the pictures of one draw and the effect must keep it;
+    /// any `u32`. Without it the salt is the FNV-1a hash of the effect's name.
+    #[serde(default)]
+    pub seed: Option<u32>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.
@@ -715,6 +816,9 @@ pub struct BudgetDef {
     /// Pooled point lights.
     #[serde(default)]
     pub lights: u32,
+    /// Distortion discs per frame.
+    #[serde(default = "default_distortions")]
+    pub distortions: u32,
     /// Live effect instances (slots of the instance pool).
     pub effects: u32,
     /// Live caps per class (`{ Major: 96, Minor: 256, Ambient: 128 }`); a class left out has
@@ -729,6 +833,11 @@ pub struct BudgetDef {
     /// Live on-screen `Major` effects above which detail particle counts halve.
     #[serde(default = "default_crowd_threshold")]
     pub crowd_threshold: u32,
+}
+
+/// Serde default of `distortions`: the plan's §5.6 budget.
+const fn default_distortions() -> u32 {
+    64
 }
 
 /// Serde default of `min_screen_px`.

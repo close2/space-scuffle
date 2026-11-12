@@ -144,9 +144,11 @@ pub struct LineAssembly {
     pending: Option<SpawnRequest>,
 }
 
-/// How far apart, in world units, two requests' anchors may lie and still be one line: the
-/// first point is recomputed from each search point, which rounds differently.
-const SAME_LINE_TOLERANCE: f32 = 1e-3;
+/// How far, in world units, two requests' far ends may lie and still be one line. Every
+/// search point of a line publishes the same far end; the anchors are not compared, because
+/// each is recomputed from its point by the line's spacing, which an unevenly spaced line (the
+/// flame line's last search lies a double spacing beyond the one before it) does not hold.
+const SAME_LINE_TOLERANCE: f32 = 1e-4;
 
 impl LineAssembly {
     /// Takes `request` and returns what is ready to spawn: a request without a line at once,
@@ -159,8 +161,7 @@ impl LineAssembly {
         if let Some(pending) = self.pending.as_mut() {
             if let Some(pending_line) = pending.line.as_mut() {
                 if pending.effect == request.effect
-                    && pending_line.to == line.to
-                    && pending.anchor.distance(request.anchor) <= SAME_LINE_TOLERANCE
+                    && pending_line.to.distance(line.to) <= SAME_LINE_TOLERANCE
                 {
                     pending_line.seen |= line.seen;
                     return None;

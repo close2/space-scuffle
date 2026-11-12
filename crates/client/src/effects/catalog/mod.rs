@@ -169,6 +169,56 @@ pub struct DecalLook {
     pub outline: Option<schema::OutlineDef>,
 }
 
+/// The look of a ribbon (see [`schema::BlockDef::Ribbon`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RibbonLook {
+    /// Texture element; its u axis runs along the strip.
+    pub element: ElementRef,
+    /// Ramp row.
+    pub ramp: RampId,
+    /// Whether the strip lies flat on the ground (else it faces the camera about its axis).
+    pub ground: bool,
+    /// World units of strip per texture repeat.
+    pub repeat: f32,
+    /// Texture repeats per second scrolled along the strip.
+    pub scroll: f32,
+    /// Head speed along the line, world units per second; 0 is the whole line at once.
+    pub travel: f32,
+    /// Seconds after the layer's start at which the tail follows the head.
+    pub tail_delay: Option<f32>,
+    /// Shares of the drawn length over which the strip narrows, `(tail, head)`.
+    pub taper: (f32, f32),
+    /// Height above the line, world units.
+    pub height: f32,
+    /// Soft-depth distance in world units.
+    pub soft_depth: f32,
+    /// Erosion over life.
+    pub erosion: Option<CurveId>,
+    /// Shift towards the camera in the sort, world units.
+    pub sort_bias: f32,
+    /// Tiled texture or computed core.
+    pub shape: CardShape,
+    /// Noise breakup.
+    pub breakup: Option<Breakup>,
+}
+
+/// The look of a distortion disc (see [`schema::BlockDef::Distortion`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DistortionLook {
+    /// Texture array layer of the noise element.
+    pub noise_layer: u32,
+    /// Noise repeats across the disc.
+    pub scale: f32,
+    /// Noise scroll, repeats per second.
+    pub scroll: Vec2,
+    /// Largest offset as a fraction of the disc's radius on screen.
+    pub strength: f32,
+    /// Whether the disc lies flat on the ground (else it faces the camera).
+    pub ground: bool,
+    /// Height above the placed point, world units.
+    pub height: f32,
+}
+
 /// A layer's block, resolved.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
@@ -182,9 +232,15 @@ pub enum Block {
         thickness: f32,
         /// Height above the placed point, world units.
         height: f32,
+        /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
+        edge_noise: f32,
     },
     /// A projected ground mark.
     Decal(DecalLook),
+    /// A strip along the event's line, drawn as a card.
+    Ribbon(RibbonLook),
+    /// A refraction of the opaque scene inside a disc.
+    Distortion(DistortionLook),
     /// A pooled point light.
     Light {
         /// Linear RGB.
@@ -209,6 +265,8 @@ pub enum Pool {
     Particles,
     /// Point lights.
     Lights,
+    /// Distortion discs.
+    Distortions,
 }
 
 impl Block {
@@ -216,9 +274,10 @@ impl Block {
     #[must_use]
     pub const fn pool(&self) -> Pool {
         match self {
-            Self::Sprite(_) | Self::Ring { .. } => Pool::Sprites,
+            Self::Sprite(_) | Self::Ring { .. } | Self::Ribbon(_) => Pool::Sprites,
             Self::Decal(_) => Pool::Decals,
             Self::Light { .. } => Pool::Lights,
+            Self::Distortion(_) => Pool::Distortions,
             Self::Particles(_) => Pool::Particles,
         }
     }
@@ -279,6 +338,10 @@ pub struct Effect {
     pub lifetime: f32,
     /// Seconds between spawns while its fact holds (trails), if it repeats.
     pub repeat: Option<f32>,
+    /// The salt of its instances' random choices: the file's `seed` when it pins one (a draw a
+    /// review accepted), else the FNV-1a hash of its name. Either way it stays the same when
+    /// other effects are added to or removed from the vocabulary (its dense id does not).
+    pub salt: u32,
 }
 
 /// A resolved emitter.
@@ -329,6 +392,8 @@ pub struct Budget {
     pub decals: u32,
     /// Pooled lights.
     pub lights: u32,
+    /// Distortion discs per frame.
+    pub distortions: u32,
     /// Live effect instances.
     pub effects: u32,
     /// Live caps by [`EffectClass::index`].

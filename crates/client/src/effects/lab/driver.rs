@@ -264,7 +264,14 @@ fn start(
     runtime.only = take.only;
     let now = world.time.elapsed_secs_f64();
     if take.effect {
-        spawn_subject(program, catalog, runtime, now, 0.0)?;
+        match program.subject.repeat {
+            Some(repeat) => {
+                for delay in repeat.delays() {
+                    spawn_subject(program, catalog, runtime, now, delay)?;
+                }
+            }
+            None => spawn_subject(program, catalog, runtime, now, 0.0)?,
+        }
     }
     driver.phase = LabPhase::Running {
         take: index,

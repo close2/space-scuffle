@@ -528,6 +528,83 @@ fn out_of_range_values_and_empty_pools_are_refused() {
     );
 }
 
+/// A ribbon (WP7) spans its event's line once: it needs a `Line` event, only the `Point`
+/// placement, a camera-facing or ground orientation and ranged values; a valid one resolves.
+#[test]
+fn a_ribbon_needs_a_line_one_placement_and_ranged_values() {
+    let (dir, manifest) = fixture();
+    let ribbon = |block: &str, extra: &str| {
+        format!(
+            r#"(block: Ribbon(texture: "solid", ramp: "white"{block}), size: (scale: 0.2),
+            duration: 0.5, priority: Critical{extra})"#
+        )
+    };
+    let line_effect =
+        |layer: String| format!(r#""jet": (class: Major, event: Line, layers: [ {layer} ])"#);
+    let catalog = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &line_effect(ribbon(
+                ", orient: Ground, travel: 20.0, tail_delay: Some(0.1), taper: (0.1, 0.3), shape: Radial",
+                "",
+            )),
+            "",
+        ),
+    )
+    .expect("a valid ribbon resolves");
+    let effect = catalog
+        .effect(catalog.effect_id("jet").expect("defined"))
+        .expect("resolves");
+    match &effect.layers[0].block {
+        Block::Ribbon(look) => {
+            assert!(look.ground);
+            assert_eq!(look.taper, (0.1, 0.3));
+            assert_eq!(look.tail_delay, Some(0.1));
+        }
+        other => panic!("expected a ribbon, got {other:?}"),
+    }
+    let error = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&ribbon("", "")), ""),
+    )
+    .expect_err("a ribbon needs a line event");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::UnboundBinding {
+                binding: Binding::LineLength,
+                event: EventKind::Splash,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    for (block, extra, field) in [
+        (
+            "",
+            ", placement: Line(spacing: (bind: LineSpacing, scale: 1.0))",
+            "placement",
+        ),
+        (", orient: Upright", "", "orient"),
+        (", taper: (0.6, 0.1)", "", "taper"),
+        (", repeat: 0.0", "", "repeat"),
+        (", travel: -1.0", "", "travel"),
+        (", tail_delay: Some(-0.5)", "", "tail_delay"),
+    ] {
+        let error = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &line_effect(ribbon(block, extra)), ""),
+        )
+        .expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: named, .. } if *named == field),
+            "{field}: {error}"
+        );
+    }
+}
+
 #[test]
 fn the_shipped_vocabulary_and_presentation_blocks_resolve_from_the_runtime_path() {
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
@@ -724,7 +801,12 @@ fn binds_extent(layer: &client::effects::catalog::Layer) -> bool {
         }
         _ => false,
     });
-    extent(layer.size.bind) || layer.radius.is_some_and(|radius| extent(radius.to.bind)) || placed
+    // A ribbon spans its event's line by construction (WP7).
+    let spans_line = matches!(layer.block, Block::Ribbon(_));
+    extent(layer.size.bind)
+        || layer.radius.is_some_and(|radius| extent(radius.to.bind))
+        || placed
+        || spans_line
 }
 
 #[test]
@@ -802,14 +884,33 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
     );
 }
 
-/// The slice's splash effects the review gate accepted in round 5 (plan Amendment 3): the unit
-/// that names each, the mode whose weapon override carries it (`None` for the default stance)
-/// and the effect. Test data restating the shipped catalog, so a block dropped from
+/// The splash effects the review gates accepted (the slice in round 5, plan Amendment 3; the
+/// scale-out in rounds 1 to 5, Amendment 9): the unit that names each, the weapon slot, the mode
+/// whose weapon override carries it (`None` for the default stance) and the effect. Test data restating the shipped catalog, so a block dropped from
 /// `units.ron` fails here.
-const ACCEPTED_SLICE: [(&str, Option<&str>, &str); 3] = [
-    ("railgun_crawler", Some("siege_mode"), "shell_impact"),
-    ("volatile_tick", None, "acid_burst"),
-    ("burrow_scorpion", Some("burrowed"), "spine_line"),
+const ACCEPTED_SLICE: [(&str, WeaponSlot, Option<&str>, &str); 7] = [
+    (
+        "railgun_crawler",
+        WeaponSlot::Primary,
+        Some("siege_mode"),
+        "shell_impact",
+    ),
+    ("volatile_tick", WeaponSlot::Primary, None, "acid_burst"),
+    (
+        "burrow_scorpion",
+        WeaponSlot::Primary,
+        Some("burrowed"),
+        "spine_line",
+    ),
+    ("sky_bastion", WeaponSlot::Air, None, "flak_burst"),
+    ("napalm_wheeler", WeaponSlot::Primary, None, "flame_line"),
+    (
+        "tripod_annihilator",
+        WeaponSlot::Primary,
+        None,
+        "lance_sweep",
+    ),
+    ("stag_behemoth", WeaponSlot::Primary, None, "cleave_impact"),
 ];
 
 /// Every effect the review gate accepted is named by its shipped unit's presentation block
@@ -822,13 +923,13 @@ fn accepted_slice_effects_are_named_by_their_shipped_units() {
     let units = sim_fixtures::shipped_catalogs().units;
     UnitEffectTables::build(&units, &catalog).expect("every shipped presentation block resolves");
     let subjects = effect_subjects::splash_subjects();
-    for (slug, mode, effect) in ACCEPTED_SLICE {
+    for (slug, slot, mode, effect) in ACCEPTED_SLICE {
         let archetype = units
             .id_by_slug(slug)
             .and_then(|id| units.get(id).ok())
             .unwrap_or_else(|| panic!("{slug} is a shipped unit"));
         let named = archetype.effects.weapons.iter().any(|entry| {
-            entry.weapon == WeaponSlot::Primary
+            entry.weapon == slot
                 && entry.mode.as_deref() == mode
                 && entry.splash.as_deref() == Some(effect)
         });
@@ -1013,6 +1114,45 @@ fn a_front_ring_needs_its_breakup_noise() {
         &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&with_noise)),
     )
     .expect("a front with noise resolves");
+    // A ragged leading edge (scale-out review 2): a fraction, and only on a front.
+    let ragged = with_noise.replace("mapping: Front,", "mapping: Front, edge_noise: 0.5,");
+    load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&ragged)),
+    )
+    .expect("a ragged front resolves");
+    for (bad, why) in [
+        (
+            with_noise.replace("mapping: Front,", "mapping: Front, edge_noise: 1.0,"),
+            "an edge bitten through",
+        ),
+        (
+            with_noise.replace("mapping: Front,", "mapping: Polar, edge_noise: 0.5,"),
+            "a ragged edge on a ring that is not a front",
+        ),
+        (
+            with_noise
+                .replace("thickness: 0.2", "thickness: 0.5")
+                .replace("mapping: Front,", "mapping: Front, edge_noise: 0.5,"),
+            "a bite of a quarter of the radius",
+        ),
+    ] {
+        let error = load(
+            dir.path(),
+            &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&bad)),
+        )
+        .expect_err(why);
+        assert!(
+            matches!(
+                &error,
+                EffectCatalogError::InvalidValue {
+                    field: "edge_noise",
+                    ..
+                }
+            ),
+            "{why}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -1057,4 +1197,111 @@ fn a_landing_emitter_spawns_only_point_effects() {
         matches!(&error, EffectCatalogError::UnknownName { name, .. } if name == "nowhere"),
         "{error}"
     );
+}
+
+/// An effect's random choices are salted by its name, not by its dense id: adding an effect
+/// that sorts before it moves its id and keeps its salt, so its picture stays the same.
+#[test]
+fn an_effects_salt_survives_other_effects_being_added() {
+    let (dir, manifest) = fixture();
+    let one = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(SPRITE), ""),
+    )
+    .expect("one effect");
+    let earlier = format!(
+        r#""aaa": (class: Major, event: Splash, layers: [ {SPRITE} ]), {}"#,
+        splash_effect(SPRITE)
+    );
+    let two = load(dir.path(), &vocabulary(&manifest, "", &earlier, "")).expect("two effects");
+    let (id_one, id_two) = (
+        one.effect_id("boom").expect("defined"),
+        two.effect_id("boom").expect("defined"),
+    );
+    assert_ne!(id_one, id_two, "the dense id moves");
+    assert_eq!(
+        one.effect(id_one).map(|effect| effect.salt),
+        two.effect(id_two).map(|effect| effect.salt),
+        "the salt does not"
+    );
+    let pinned =
+        format!(r#""boom": (class: Major, event: Splash, seed: Some(2), layers: [ {SPRITE} ])"#);
+    let pinned = load(dir.path(), &vocabulary(&manifest, "", &pinned, "")).expect("pinned seed");
+    assert_eq!(
+        pinned
+            .effect_id("boom")
+            .and_then(|id| pinned.effect(id))
+            .map(|effect| effect.salt),
+        Some(2),
+        "a pinned seed is the salt"
+    );
+}
+
+/// Every shipped torn front (a `Critical` `Front` ring with `edge_noise`) keeps dust on the reach
+/// in every footprint sector, and its consecutive hits place their crests differently, for 64
+/// consecutive hits drawn with the effect's real salt and the ring's real layer index through
+/// the runtime's own seed functions (plan Amendment 8; review 5: one GPU capture checks one
+/// seed, this checks the construction for many).
+#[test]
+fn shipped_torn_fronts_hold_every_sector_for_many_hits() {
+    use client::effects::catalog::schema::Priority;
+    use client::effects::front::{crest_centres, turn_distance, CREST_HALF_WIDTH_DEG};
+    use client::effects::runtime::{instance_seed, placed_seed};
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let mut fronts = 0;
+    for effect in &catalog.effects {
+        for (layer_index, layer) in effect.layers.iter().enumerate() {
+            let Block::Ring { edge_noise, .. } = layer.block else {
+                continue;
+            };
+            if edge_noise <= 0.0 || layer.priority != Priority::Critical {
+                continue;
+            }
+            fronts += 1;
+            let layer_index = u32::try_from(layer_index).expect("a small index");
+            let seeds: Vec<u32> = (0..64_u32)
+                .map(|hit| placed_seed(instance_seed(hit, effect.salt), layer_index, 0, 0))
+                .collect();
+            for seed in &seeds {
+                let centres = crest_centres(*seed);
+                for sector in 0..8_u16 {
+                    let on_crest = (0..9_u16).any(|ray| {
+                        let angle = f32::from(sector * 9 + ray) / 72.0;
+                        centres.iter().any(|centre| {
+                            turn_distance(angle, *centre) * 360.0 <= CREST_HALF_WIDTH_DEG + 1e-3
+                        })
+                    });
+                    assert!(on_crest, "{}: seed {seed:#x}, sector {sector}", effect.name);
+                }
+            }
+            let mut total = 0.0;
+            for pair in seeds.windows(2) {
+                let (a, b) = (crest_centres(pair[0]), crest_centres(pair[1]));
+                let mean = a
+                    .iter()
+                    .map(|centre| {
+                        b.iter()
+                            .map(|other| turn_distance(*centre, *other))
+                            .fold(f32::MAX, f32::min)
+                    })
+                    .sum::<f32>()
+                    * 360.0
+                    / 12.0;
+                assert!(
+                    mean >= 1.0,
+                    "{}: consecutive hits share their crests",
+                    effect.name
+                );
+                total += mean;
+            }
+            assert!(
+                total / 63.0 >= 5.0,
+                "{}: hits differ too little",
+                effect.name
+            );
+        }
+    }
+    assert!(fronts > 0, "the shipped vocabulary has a torn front");
 }

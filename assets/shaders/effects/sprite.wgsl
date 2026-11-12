@@ -1,11 +1,12 @@
-// Effect cards: sprites, rings and particles drawn from one retained instance buffer
+// Effect cards: sprites, rings, ribbons and particles drawn from one retained instance buffer
 // (client::effects::render). Premultiplied output; soft depth against the depth prepass; noise
 // breakup with a phase per card; an optional clip window along an event line.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
-    SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, FLAG_MIRROR,
-    FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup, erosion_step, breakup_order, self_shade,
-    noise_sample, clip_fade, soft_depth_fade, flipbook_sample, premultiply, card_mip_level,
+    SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
+    flipbook_sample, premultiply, card_mip_level, derivative_mip_level,
 }
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -24,6 +25,17 @@ const TAU: f32 = 6.28318530718;
 const CLIP_EDGE: f32 = 0.1;
 // Contrast of the noise that wavers a pressure front's trailing edge.
 const FRONT_WAVER_CONTRAST: f32 = 2.2;
+// Weight of a torn front's second, finer octave in the bite of its leading edge; the mix is
+// re-contrasted by `FRONT_OCTAVE_NORM` (1 / sqrt(0.65^2 + 0.35^2)) so it keeps one octave's spread.
+const FRONT_SECOND_OCTAVE: f32 = 0.35;
+const FRONT_OCTAVE_NORM: f32 = 1.355;
+// A torn front's guaranteed crests (client::effects::front, which mirrors this placement and
+// proves its gaps): 12 crests, each jittered by up to 7 degrees, 2.5 degrees half wide (one
+// footprint ray always falls on one), with a 1.5-degree soft edge; angles in turns.
+const FRONT_CRESTS: u32 = 12u;
+const CREST_JITTER: f32 = 0.019444444;
+const CREST_HALF_WIDTH: f32 = 0.0069444444;
+const CREST_SOFT: f32 = 0.0041666667;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -74,9 +86,17 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
         let view_right = view.world_from_view[0].xyz;
         right = normalize(vec3<f32>(view_right.x, 0.0, view_right.z) + vec3<f32>(1e-6, 0.0, 0.0));
         up = vec3<f32>(0.0, 1.0, 0.0);
-    } else if (card.orient == ORIENT_STRETCHED) {
+    } else if (card.orient == ORIENT_STRETCHED || card.orient == ORIENT_RIBBON) {
         let to_camera = normalize(view.world_position - card.center);
         let side = cross(card.axis, to_camera);
+        if (dot(side, side) > 1e-8) {
+            up = card.axis;
+            right = normalize(side);
+            along = card.half_size * card.stretch;
+        }
+    } else if (card.orient == ORIENT_RIBBON_GROUND) {
+        // Flat on the ground: the width runs horizontally across the strip's axis.
+        let side = cross(vec3<f32>(0.0, 1.0, 0.0), card.axis);
         if (dot(side, side) > 1e-8) {
             up = card.axis;
             right = normalize(side);
@@ -104,6 +124,32 @@ fn noise_offset(card: SpriteInstance) -> vec2<f32> {
     return vec2<f32>(card.noise_offset_x, card.noise_offset_y);
 }
 
+// A 32-bit integer hash (PCG output permutation): the same as `client::effects::front::crest_hash`.
+fn crest_hash(value: u32) -> u32 {
+    let state = value * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// The top 24 bits of `value` as a fraction in [0, 1).
+fn crest_unit(value: u32) -> f32 {
+    return f32(value >> 8u) / 16777216.0;
+}
+
+// How much `angle` (turns) lies on one of the guaranteed crests of the torn front drawn with
+// `seed`: 1 within a crest's half width, 0 beyond its soft edge (client::effects::front).
+fn front_crest(seed: u32, angle: f32) -> f32 {
+    let rotation = crest_unit(crest_hash(seed ^ 0x9E3779B9u));
+    var nearest = 1.0;
+    for (var index = 0u; index < FRONT_CRESTS; index++) {
+        let jitter = (2.0 * crest_unit(crest_hash(seed + index * 0x85EBCA6Bu)) - 1.0) * CREST_JITTER;
+        let centre = fract((f32(index) + rotation) / f32(FRONT_CRESTS) + jitter + 1.0);
+        let d = abs(fract(angle - centre + 1.0));
+        nearest = min(nearest, min(d, 1.0 - d));
+    }
+    return 1.0 - smoothstep(CREST_HALF_WIDTH, CREST_HALF_WIDTH + CREST_SOFT, nearest);
+}
+
 // A ring computed as a pressure front: (shading, coverage, erosion order, mask). The band's
 // inner (trailing) edge wavers with the noise around the circumference; shading and coverage
 // rise towards the outer (leading) edge, the grain breaks them up, and the noise's whole repeats
@@ -118,14 +164,32 @@ fn front_texel(card: SpriteInstance, centred: vec2<f32>, radius: f32, edge: f32,
     let waver_raw = noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.37) + offset, card.noise_layer, level);
     let waver = clamp((waver_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
     let inner = card.ring_inner - width * card.noise_amount * (waver - 0.5) * 2.0;
-    let across = clamp((radius - inner) / max(1.0 - inner, 1e-4), 0.0, 1.0);
+    // A torn skirt (`front_edge` > 0): the leading edge is bitten back where a third read of
+    // the noise (two octaves on their own rows, the same whole repeats around the circle, so no
+    // seam) is low, by up to `front_edge` of the band's width, except on its guaranteed crests,
+    // where it stays on the radius; the crests' rotation and jitter come from the card's own
+    // seed, so every 45 degrees has dust on the reach and no two hits share an outline
+    // (Amendment 8). A round front (0) keeps its whole edge on the radius.
+    var leading = 1.0;
+    if (card.front_edge > 0.0) {
+        let bite_mix = mix(
+            noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.71) + offset.yx, card.noise_layer, level),
+            noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats * 2.0, 0.29) + offset, card.noise_layer, level),
+            FRONT_SECOND_OCTAVE,
+        );
+        let bite_raw = (bite_mix - 0.5) * FRONT_OCTAVE_NORM + 0.5;
+        let bite = clamp((bite_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
+        let crest = front_crest(card.front_seed, angle);
+        leading = 1.0 - width * card.front_edge * (1.0 - max(smoothstep(0.0, 1.0, bite), crest));
+    }
+    let across = clamp((radius - inner) / max(leading - inner, 1e-4), 0.0, 1.0);
     let grain = noise_sample(
         atlas, atlas_sampler, vec2<f32>(angle * repeats * 2.0, across * 0.5) + offset.yx, card.noise_layer, level,
     );
     let lead = across * across;
     let shading = lead * (0.55 + 0.45 * grain) * (0.8 + 0.4 * (waver - 0.5));
     let coverage = smoothstep(0.0, 0.5, across) * (0.55 + 0.45 * grain);
-    let outer = 1.0 - smoothstep(1.0 - edge * 1.5, 1.0, radius);
+    let outer = 1.0 - smoothstep(leading - edge * 1.5, leading, radius);
     let trailing = smoothstep(inner - edge, inner + edge, radius);
     return vec4<f32>(shading, coverage, grain, outer * trailing);
 }
@@ -136,6 +200,44 @@ fn radial_texel(radius: f32) -> vec4<f32> {
     let r2 = radius * radius;
     let mask = 1.0 - smoothstep(0.8, 1.0, radius);
     return vec4<f32>(exp(-r2 * 3.0), exp(-r2 * 2.5), 1.0 - radius, mask);
+}
+
+// Whether `card` is a ribbon.
+fn is_ribbon(card: SpriteInstance) -> bool {
+    return card.orient == ORIENT_RIBBON || card.orient == ORIENT_RIBBON_GROUND;
+}
+
+// A ribbon's own coordinates at card `uv`: x along the strip in texture repeats (scrolled),
+// y across it (0..1), z the share of the drawn length from the tail (0) to the head (1).
+fn strip_coordinates(card: SpriteInstance, uv: vec2<f32>) -> vec3<f32> {
+    let from_tail = 1.0 - uv.y;
+    return vec3<f32>(from_tail * card.strip_repeats + card.strip_offset, uv.x, from_tail);
+}
+
+// A ribbon's texel: (shading, coverage, erosion order, mask). The element is tiled along the
+// strip (u along, v across), or for `SHAPE_RADIAL` a soft core is computed across it; the mask
+// narrows the strip to a point over its tapers, rounded, with an anti-aliased edge. `mip` and
+// `edge` are the strip texture's mip and the screen width of `across`, taken from derivatives
+// in uniform control flow.
+fn ribbon_texel(card: SpriteInstance, strip: vec3<f32>, across: f32, mip: f32, edge: f32) -> vec4<f32> {
+    var texel: vec4<f32>;
+    if (card.shape == SHAPE_RADIAL) {
+        let a2 = across * across;
+        texel = vec4<f32>(exp(-a2 * 3.0), exp(-a2 * 2.0), 1.0 - across, 1.0);
+    } else {
+        texel = flipbook_sample(atlas, atlas_sampler, strip.xy, card.layer_a, card.layer_b, card.frame_mix, mip);
+    }
+    var width = 1.0;
+    if (card.taper_tail > 0.0) {
+        width = min(width, clamp(strip.z / card.taper_tail, 0.0, 1.0));
+    }
+    if (card.taper_head > 0.0) {
+        width = min(width, clamp((1.0 - strip.z) / card.taper_head, 0.0, 1.0));
+    }
+    // A rounded tip rather than a sharp wedge.
+    width = sqrt(width);
+    let mask = 1.0 - smoothstep(width - edge * 1.5, width, across);
+    return vec4<f32>(texel.r, texel.g, texel.b, mask);
 }
 
 // The texel of a texture card at `uv` (a polar ring wraps the element's middle band around
@@ -170,7 +272,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let edge = max(fwidth(radius), 1e-4);
     let noise_level = in.mip + log2(max(card.noise_scale, 1.0));
     var texel: vec4<f32>;
-    if (card.shape == SHAPE_FRONT && card.ring_inner > 0.0) {
+    let ribbon = is_ribbon(card);
+    // Derivatives of a ribbon's strip coordinates, taken for every card so they stay in
+    // uniform control flow.
+    let strip = strip_coordinates(card, in.uv);
+    let across = abs(in.uv.x * 2.0 - 1.0);
+    let strip_mip = derivative_mip_level(f32(textureDimensions(atlas).x), dpdx(strip.xy), dpdy(strip.xy));
+    let across_edge = max(fwidth(across), 1e-4);
+    if (ribbon) {
+        texel = ribbon_texel(card, strip, across, strip_mip, across_edge);
+    } else if (card.shape == SHAPE_FRONT && card.ring_inner > 0.0) {
         texel = front_texel(card, centred, radius, edge, noise_level);
     } else if (card.shape == SHAPE_RADIAL) {
         texel = radial_texel(radius);
@@ -180,8 +291,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let noisy = card.noise_amount > 0.0;
     var order = texel.b;
     if (noisy) {
+        // A ribbon's noise repeats and scrolls with its strip, so it flows along it.
+        var noise_uv = in.uv;
+        var level = noise_level;
+        if (ribbon) {
+            noise_uv = strip.xy;
+            level = strip_mip + log2(max(card.noise_scale, 1.0));
+        }
         let noise = noise_sample(
-            atlas, atlas_sampler, in.uv * card.noise_scale + noise_offset(card), card.noise_layer, noise_level,
+            atlas, atlas_sampler, noise_uv * card.noise_scale + noise_offset(card), card.noise_layer, level,
         );
         order = breakup_order(order, noise, card.noise_amount);
     }

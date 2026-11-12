@@ -29,6 +29,12 @@ pub const FLAG_MIRROR: u32 = 1;
 pub const FLAG_POLAR: u32 = 2;
 /// The card stands upright and turns about world up to face the camera.
 pub const ORIENT_UPRIGHT: u32 = 4;
+/// A ribbon: the card faces the camera about its length along `axis` (as
+/// [`ORIENT_STRETCHED`]), the texture's u axis runs along that length and repeats, and the
+/// strip narrows to a point over its tapers.
+pub const ORIENT_RIBBON: u32 = 5;
+/// A ribbon lying flat on the ground, its width horizontal across `axis`.
+pub const ORIENT_RIBBON_GROUND: u32 = 6;
 /// [`SpriteInstance::shape`]: the texture element.
 pub const SHAPE_TEXTURE: u32 = 0;
 /// [`SpriteInstance::shape`]: a soft radial glow computed in the shader.
@@ -42,7 +48,7 @@ pub const NO_NOISE: u32 = u32::MAX;
 // PERFORMANCE RATIONALE:
 // Why: Thousands of cards are written and uploaded every frame; one draw per run of cards
 // needs them in one contiguous GPU array the vertex shader indexes by instance.
-// What: A `Pod` record of eight 16-byte rows matching the WGSL struct, written into a retained
+// What: A `Pod` record of ten 16-byte rows matching the WGSL struct, written into a retained
 // vector and copied to the storage buffer with one `write_buffer`.
 // Trade-off: Fields are packed for alignment rather than grouped by meaning, and orientation
 // and shape are codes rather than an enum.
@@ -103,6 +109,21 @@ pub struct SpriteInstance {
     pub noise_layer: u32,
     /// One of the `SHAPE_*` codes.
     pub shape: u32,
+    /// A ribbon's texture repeats over its drawn length (u along the strip); 0 elsewhere.
+    pub strip_repeats: f32,
+    /// A ribbon's texture offset along the strip, in repeats (its scroll).
+    pub strip_offset: f32,
+    /// Share of a ribbon's drawn length over which it narrows at its tail (start).
+    pub taper_tail: f32,
+    /// Share of a ribbon's drawn length over which it narrows at its head (end).
+    pub taper_head: f32,
+    /// Depth of a [`SHAPE_FRONT`] ring's leading-edge noise, as a fraction of its band's
+    /// width; 0 for a round leading edge.
+    pub front_edge: f32,
+    /// Seed of a torn front's guaranteed crests ([`super::front`]): their rotation and jitter.
+    pub front_seed: u32,
+    /// Padding to a whole 16-byte row; zero.
+    pub reserved: [f32; 2],
 }
 
 /// One decal box.
@@ -196,7 +217,10 @@ mod tests {
 
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
-        assert_eq!(size_of::<SpriteInstance>(), 128);
+        assert_eq!(size_of::<SpriteInstance>(), 160);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, front_edge), 144);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, front_seed), 148);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
         assert_eq!(size_of::<DecalInstance>(), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_feather), 104);

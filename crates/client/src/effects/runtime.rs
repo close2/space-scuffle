@@ -14,9 +14,13 @@
 //!
 //! # Budget and level of detail
 //! `Critical` layers are written first, then `Detail` layers, each pool up to its budget. A
-//! detail card or decal that finds no room is skipped, and the oldest `Minor` or `Ambient`
-//! effect's detail is retired (it erodes out over 0.1 s). An effect spawned over its class cap
-//! starts with its detail retired. Layers smaller than `min_screen_px` are skipped; bursts
+//! detail card that finds no room is skipped, and the oldest `Minor` or `Ambient` effect's
+//! detail is retired (it erodes out over 0.1 s). A class cap counts an effect only while its
+//! fire (its non-decal layers) is alive; an effect spawned over its class cap keeps its detail
+//! and the oldest burning effect of its class gives its detail up instead (Amendment 7).
+//! Decals are reserved whole at birth ([`super::ledger`]): above the pool's pressure mark the
+//! oldest lasting marks erode out over 0.25 s to make room, an effect that still finds no room
+//! draws no decal at all, and a reserved decal is drawn every frame until it ends or erodes. Layers smaller than `min_screen_px` are skipped; bursts
 //! scale with projected size and halve in a crowd of `Major` effects (`budget` functions).
 //!
 //! # Invariants
@@ -35,13 +39,15 @@ use super::catalog::schema::{
     RotationDef,
 };
 use super::catalog::{
-    Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
+    Block, Breakup, CardLook, CurveId, DecalLook, DistortionLook, EffectCatalog, EffectId,
+    ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA,
-    ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL,
-    SHAPE_TEXTURE,
+    ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT,
+    ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
+use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
 use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
 use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
@@ -107,6 +113,13 @@ pub struct EffectStats {
     pub lod_skipped: u64,
     /// Effects whose detail was retired.
     pub retired: u64,
+    /// Line requests merged into a live effect of the same line (a line whose searches land
+    /// on several ticks).
+    pub merged_lines: u64,
+    /// Lasting marks retired (eroded out) to make room in the decal pool.
+    pub marks_retired: u64,
+    /// Effects that found no room for their decals and draw none.
+    pub marks_refused: u64,
 }
 
 /// What one frame draws.
@@ -122,29 +135,37 @@ pub struct EffectFrame {
     pub sorted: Vec<SpriteInstance>,
     /// Decals.
     pub decals: Vec<DecalInstance>,
+    /// The pool slot of the effect each decal of `decals` belongs to (diagnostics and tests).
+    pub decal_owners: Vec<u32>,
     /// Point lights.
     pub lights: Vec<LightInstance>,
+    /// Distortion discs (drawn in the transmissive phase, unsorted: each only bends the
+    /// opaque scene, so their order does not matter).
+    pub distortions: Vec<SpriteInstance>,
     /// Cards written this frame (not particles).
     card_count: u32,
 }
 
 impl EffectFrame {
-    /// A frame with room for `cards` cards (cards and particles), `decals` and `lights`.
-    fn with_capacity(cards: usize, decals: usize, lights: usize) -> Self {
+    /// A frame with room for `cards` cards (cards and particles), `decals`, `lights` and
+    /// `distortions`.
+    fn with_capacity(cards: usize, decals: usize, lights: usize, distortions: usize) -> Self {
         Self {
             cards: Vec::with_capacity(cards),
             depth: Vec::with_capacity(cards),
             order: Vec::with_capacity(cards),
             sorted: Vec::with_capacity(cards),
             decals: Vec::with_capacity(decals),
+            decal_owners: Vec::with_capacity(decals),
             lights: Vec::with_capacity(lights),
+            distortions: Vec::with_capacity(distortions),
             card_count: 0,
         }
     }
 
     /// Address and capacity of every retained vector, which an allocation would change.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 6] {
+    pub fn buffers(&self) -> [(usize, usize); 8] {
         [
             (self.cards.as_ptr() as usize, self.cards.capacity()),
             (self.depth.as_ptr() as usize, self.depth.capacity()),
@@ -152,6 +173,14 @@ impl EffectFrame {
             (self.sorted.as_ptr() as usize, self.sorted.capacity()),
             (self.decals.as_ptr() as usize, self.decals.capacity()),
             (self.lights.as_ptr() as usize, self.lights.capacity()),
+            (
+                self.distortions.as_ptr() as usize,
+                self.distortions.capacity(),
+            ),
+            (
+                self.decal_owners.as_ptr() as usize,
+                self.decal_owners.capacity(),
+            ),
         ]
     }
 }
@@ -169,6 +198,8 @@ pub struct EffectRuntime {
     pub frame: EffectFrame,
     /// Budget counters.
     pub stats: EffectStats,
+    /// Burning effects per class and decal reservations, recounted every frame.
+    pub ledger: BudgetLedger,
     /// Time of the last build, seconds.
     last_build: Option<f64>,
     /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
@@ -205,25 +236,43 @@ impl EffectRuntime {
                 cards,
                 budget.decals as usize,
                 budget.lights as usize,
+                budget.distortions as usize,
             ),
             stats: EffectStats::default(),
+            ledger: BudgetLedger::default(),
             last_build: None,
             only: None,
         }
     }
 
-    /// Spawns `request` at time `now` (seconds of `Time<Virtual>`).
+    /// Spawns `request` at time `now` (seconds of `Time<Virtual>`). A request for a line
+    /// that a live effect already draws (the same effect and the same far end) adds the
+    /// search points it sees to that effect instead and returns `None`: a line whose searches
+    /// land one after another on several ticks (the spine line, B-85) is one effect whose
+    /// travel delays already place each search's instances at its time.
     pub fn spawn(
         &mut self,
         catalog: &EffectCatalog,
         request: &SpawnRequest,
         now: f64,
     ) -> Option<EffectHandle> {
+        if let Some(line) = request.line {
+            if self.merge_line(catalog, request.effect, line, now) {
+                self.stats.merged_lines += 1;
+                return None;
+            }
+        }
         let effect = catalog.effect(request.effect)?;
         let birth = now + f64::from(request.delay);
         let line_delay = max_line_delay(&effect.layers, request.line);
-        let over_cap =
-            self.pool.live(effect.class) >= catalog.budget.class_caps[effect.class.index()];
+        let spans = effect_spans(effect, request);
+        // A newborn effect is never the one stripped: over its class cap, the oldest burning
+        // effect of its class gives its detail up (Amendment 7).
+        let over_cap = self.ledger.burning(effect.class)
+            >= catalog.budget.class_caps[effect.class.index()]
+            && !self.retire_oldest_fire(effect.class, now);
+        let burning = spans.fire > 0.0 && !over_cap;
+        let decal_slots = self.reserve_marks(catalog, effect.class, burning, spans.decals, now);
         let instance = EffectInstance {
             effect: request.effect,
             class: effect.class,
@@ -232,12 +281,16 @@ impl EffectRuntime {
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
-            seed: hash3(self.sequence, 0x5EED_0F1E, u32::from(request.effect.0)),
+            seed: instance_seed(self.sequence, effect.salt),
             detail_retired_at: over_cap.then_some(birth),
             has_detail: effect
                 .layers
                 .iter()
                 .any(|layer| layer.priority == Priority::Detail),
+            fire_end: birth + f64::from(spans.fire),
+            decal_end: birth + f64::from(spans.decal),
+            decal_slots,
+            marks_retired_at: None,
             bursts_through: f32::NEG_INFINITY,
         };
         self.sequence = self.sequence.wrapping_add(1);
@@ -248,6 +301,47 @@ impl EffectRuntime {
             self.stats.refused += 1;
             None
         }
+    }
+
+    /// Adds `line`'s seen search points to the live effect `effect` drawing the same line, if
+    /// there is one still laying the line out (younger than its longest travel delay plus
+    /// [`LINE_MERGE_SLACK`]); returns whether there was. A later attack along the very same
+    /// line (a unit firing again from where it stands) is a new effect.
+    // PERFORMANCE RATIONALE:
+    // Why: A line request must find the live effect of its line, if any; an index keyed by
+    // line would be a second structure to keep in step with the pool's slots.
+    // What: A linear scan over the pool's fixed slots, once per line request (one per line
+    // per frame after `LineAssembly`), comparing two indices and a point.
+    // Trade-off: O(capacity) per line request (2 048 slots, a few microseconds) in exchange
+    // for no extra state and no allocation.
+    fn merge_line(
+        &mut self,
+        catalog: &EffectCatalog,
+        effect: EffectId,
+        line: WorldLine,
+        now: f64,
+    ) -> bool {
+        let Some(layers) = catalog.effect(effect).map(|effect| &effect.layers) else {
+            return false;
+        };
+        for slot in 0..self.pool.capacity() as usize {
+            let Some(instance) = self.pool.slot_mut(slot) else {
+                continue;
+            };
+            let birth = instance.birth;
+            let Some(live) = instance.line.as_mut() else {
+                continue;
+            };
+            let window = f64::from(max_line_delay(layers, Some(*live)) + LINE_MERGE_SLACK);
+            if instance.effect == effect
+                && live.to.distance(line.to) <= SAME_LINE_END
+                && now - birth <= window
+            {
+                live.seen |= line.seen;
+                return true;
+            }
+        }
+        false
     }
 
     /// Removes every effect and particle and restarts the spawn sequence, so the next effects
@@ -264,7 +358,10 @@ impl EffectRuntime {
         self.frame.cards.clear();
         self.frame.sorted.clear();
         self.frame.decals.clear();
+        self.frame.decal_owners.clear();
         self.frame.lights.clear();
+        self.frame.distortions.clear();
+        self.ledger.clear();
         self.last_build = None;
     }
 
@@ -280,13 +377,16 @@ impl EffectRuntime {
             .map_or(0.0, |last| (now - last).max(0.0) as f32);
         self.last_build = Some(now);
         self.pool.free_ended(now);
+        self.settle_ledger(catalog, now);
         self.fire_bursts(catalog, now, camera);
         self.particles.step(dt, &catalog.emitters);
         self.spawn_landings(catalog, now);
         self.frame.cards.clear();
         self.frame.depth.clear();
         self.frame.decals.clear();
+        self.frame.decal_owners.clear();
         self.frame.lights.clear();
+        self.frame.distortions.clear();
         self.frame.card_count = 0;
         let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
         let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
@@ -313,6 +413,114 @@ impl EffectRuntime {
             };
             self.spawn(catalog, &request, now);
         }
+    }
+
+    /// Gives back the decal slots of marks that ended or finished eroding out, and recounts
+    /// the ledger from the live effects (once per frame). An effect holds the slots of its decal
+    /// layers that have not ended yet: a short layer (embers) gives its slots back when it ends,
+    /// a lasting one keeps them to its end.
+    fn settle_ledger(&mut self, catalog: &EffectCatalog, now: f64) {
+        self.ledger.clear();
+        for slot in 0..self.pool.capacity() as usize {
+            let Some(instance) = self.pool.slot_mut(slot) else {
+                continue;
+            };
+            let eroded = instance
+                .marks_retired_at
+                .is_some_and(|retired| now - retired >= f64::from(MARK_RETIRE_SECS));
+            if now > instance.decal_end || eroded {
+                instance.decal_slots = 0;
+            }
+            let held = match catalog.effect(instance.effect) {
+                Some(effect) if instance.decal_slots > 0 => held_marks(effect, instance, now),
+                _ => 0,
+            };
+            let burning = now < instance.fire_end && instance.detail_retired_at.is_none();
+            self.ledger.count(
+                instance.class,
+                burning,
+                held,
+                instance.marks_retired_at.is_some(),
+            );
+        }
+    }
+
+    /// Retires the detail of the oldest burning effect of `class`; returns whether there was
+    /// one.
+    // PERFORMANCE RATIONALE:
+    // Why: Over a class cap the oldest burning effect must be found among the live ones; an
+    // age-ordered index per class would be a second structure to keep in step with the pool.
+    // What: A linear scan over the pool's fixed slots, only for a spawn over its class cap.
+    // Trade-off: O(capacity) per such spawn (2 048 slots, a few microseconds) in exchange for
+    // no extra state and no allocation.
+    fn retire_oldest_fire(&mut self, class: EffectClass, now: f64) -> bool {
+        let oldest = self
+            .pool
+            .iter()
+            .filter(|(_, instance)| {
+                instance.class == class
+                    && instance.has_detail
+                    && instance.detail_retired_at.is_none()
+                    && now < instance.fire_end
+            })
+            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
+            .map(|(index, _)| index);
+        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+            return false;
+        };
+        instance.detail_retired_at = Some(now);
+        self.ledger.quench(class);
+        self.stats.retired += 1;
+        true
+    }
+
+    /// Reserves `need` decal slots for a new effect of `class` (burning when `burning`):
+    /// first retiring the oldest lasting marks while the pool is above its pressure mark, then
+    /// granting all of them or none. Returns the slots granted.
+    fn reserve_marks(
+        &mut self,
+        catalog: &EffectCatalog,
+        class: EffectClass,
+        burning: bool,
+        need: u32,
+        now: f64,
+    ) -> u32 {
+        let capacity = catalog.budget.decals;
+        while need > 0 && self.ledger.needs_room(need, capacity) {
+            if !self.retire_oldest_mark(now) {
+                break;
+            }
+        }
+        let granted = self.ledger.grant(class, burning, need, capacity);
+        if need > 0 && granted == 0 {
+            self.stats.marks_refused += 1;
+        }
+        granted
+    }
+
+    /// Retires the oldest lasting marks still holding decal slots: they erode out over
+    /// [`MARK_RETIRE_SECS`] and then give their slots back. Returns whether there were any.
+    // PERFORMANCE RATIONALE:
+    // Why: Making room needs the oldest effect holding decal slots; an age-ordered index
+    // would be a second structure to keep in step with the pool.
+    // What: A linear scan over the pool's fixed slots, only while the decal pool is above its
+    // pressure mark.
+    // Trade-off: O(capacity) per retirement (2 048 slots, a few microseconds), rare below the
+    // stress load, in exchange for no extra state and no allocation.
+    fn retire_oldest_mark(&mut self, now: f64) -> bool {
+        let oldest = self
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.decal_slots > 0 && instance.marks_retired_at.is_none())
+            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
+            .map(|(index, _)| index);
+        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+            return false;
+        };
+        instance.marks_retired_at = Some(now);
+        self.ledger.retire_marks(instance.decal_slots);
+        self.stats.marks_retired += 1;
+        true
     }
 
     /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it.
@@ -420,7 +628,7 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let placement_salt = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
-                if !placed_seen(placement, index, instance.line) {
+                if !placed_seen(placement, index, instance.line, &instance.bound) {
                     continue;
                 }
                 let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
@@ -488,11 +696,18 @@ impl EffectRuntime {
                     Pool::Sprites => budget.sprites.saturating_sub(self.frame.card_count),
                     Pool::Decals => budget.decals.saturating_sub(len32(self.frame.decals.len())),
                     Pool::Lights => budget.lights.saturating_sub(len32(self.frame.lights.len())),
+                    Pool::Distortions => budget
+                        .distortions
+                        .saturating_sub(len32(self.frame.distortions.len())),
                     Pool::Particles => continue,
+                };
+                let Some(fade) = marks_fade(&instance, layer, fade, now) else {
+                    continue;
                 };
                 let context = LayerContext {
                     catalog,
                     instance: &instance,
+                    slot: u32::try_from(slot).unwrap_or(u32::MAX),
                     layer,
                     layer_index,
                     now,
@@ -512,12 +727,13 @@ impl EffectRuntime {
         let layer = context.layer;
         let instance = context.instance;
         for (placement_index, placement) in layer.placements.iter().enumerate() {
-            let salt = u32::try_from(context.layer_index * 4 + placement_index).unwrap_or(0);
+            let layer_index = u32::try_from(context.layer_index).unwrap_or(0);
+            let placement_index = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
-                if !placed_seen(placement, index, instance.line) {
+                if !placed_seen(placement, index, instance.line, &instance.bound) {
                     continue;
                 }
-                let seed = hash3(instance.seed, salt, index);
+                let seed = placed_seed(instance.seed, layer_index, placement_index, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 #[expect(
                     clippy::cast_possible_truncation,
@@ -566,9 +782,14 @@ impl EffectRuntime {
             }),
             _ => size,
         };
+        // A ribbon is as large on screen as its line is long, however thin it is.
+        let lod_extent = match (&layer.block, context.instance.line) {
+            (Block::Ribbon(_), Some(line)) => extent.max(0.5 * line.from.distance(line.to)),
+            _ => extent,
+        };
         if let Some(camera) = context.camera {
             if lod_skips(
-                camera.pixels(extent * 2.0, position),
+                camera.pixels(lod_extent * 2.0, position),
                 context.catalog.budget.min_screen_px,
             ) {
                 self.stats.lod_skipped += 1;
@@ -577,12 +798,21 @@ impl EffectRuntime {
         }
         match &layer.block {
             Block::Sprite(look) => self.push_card(
-                context, look, position, extent, age, life, intensity, seed, 0.0,
+                context,
+                look,
+                position,
+                extent,
+                age,
+                life,
+                intensity,
+                seed,
+                RingShape::NONE,
             ),
             Block::Ring {
                 look,
                 thickness,
                 height,
+                edge_noise,
             } => self.push_card(
                 context,
                 look,
@@ -592,10 +822,19 @@ impl EffectRuntime {
                 life,
                 intensity,
                 seed,
-                1.0 - (thickness * catalog.sample(layer.size_curve, life, 1.0)).clamp(0.01, 0.99),
+                RingShape {
+                    inner: 1.0
+                        - (thickness * catalog.sample(layer.size_curve, life, 1.0))
+                            .clamp(0.01, 0.99),
+                    edge_noise: *edge_noise,
+                },
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
+            }
+            Block::Ribbon(look) => self.push_ribbon(context, look, extent, age, life, intensity),
+            Block::Distortion(look) => {
+                self.push_distortion(look, position, extent, age, intensity, seed)
             }
             Block::Light {
                 color,
@@ -632,8 +871,9 @@ impl EffectRuntime {
         life: f32,
         intensity: f32,
         seed: u32,
-        ring_inner: f32,
+        ring: RingShape,
     ) -> Written {
+        let ring_inner = ring.inner;
         if self.frame.cards.len() == self.frame.cards.capacity() {
             return Written::Full;
         }
@@ -698,7 +938,129 @@ impl EffectRuntime {
             clip_min: clip[2],
             clip_max: clip[3],
             shape,
+            front_edge: if shape == SHAPE_FRONT {
+                ring.edge_noise
+            } else {
+                0.0
+            },
+            front_seed: seed,
             ..surface.card()
+        };
+        self.push_sorted_card(card, context.camera, look.sort_bias);
+        self.frame.card_count += 1;
+        Written::Yes
+    }
+
+    /// Pushes a distortion disc of radius `extent` at `position`.
+    fn push_distortion(
+        &mut self,
+        look: &DistortionLook,
+        position: Vec3,
+        extent: f32,
+        age: f32,
+        intensity: f32,
+        seed: u32,
+    ) -> Written {
+        if self.frame.distortions.len() == self.frame.distortions.capacity() {
+            return Written::Full;
+        }
+        let phase = Vec2::new(
+            unit_float(hash3(seed, 0xD157_0001, 0)),
+            unit_float(hash3(seed, 0xD157_0002, 0)),
+        ) + look.scroll * age;
+        self.frame.distortions.push(SpriteInstance {
+            center: (position + Vec3::Y * look.height).to_array(),
+            half_size: extent,
+            intensity,
+            orient: if look.ground {
+                ORIENT_GROUND
+            } else {
+                ORIENT_CAMERA
+            },
+            noise_offset: phase.to_array(),
+            noise_scale: look.scale,
+            noise_amount: look.strength,
+            noise_layer: look.noise_layer,
+            ..SpriteInstance::default()
+        });
+        Written::Yes
+    }
+
+    /// Pushes a ribbon of half width `extent` along the effect's line: the span its head and
+    /// tail have reached at `age`, clipped to the run of search points the viewer sees around
+    /// the first seen one (plan Amendment 2, R6).
+    fn push_ribbon(
+        &mut self,
+        context: &LayerContext<'_>,
+        look: &RibbonLook,
+        extent: f32,
+        age: f32,
+        life: f32,
+        intensity: f32,
+    ) -> Written {
+        let Some(line) = context.instance.line else {
+            return Written::Skipped;
+        };
+        if self.frame.cards.len() == self.frame.cards.capacity() {
+            return Written::Full;
+        }
+        let length = line.from.distance(line.to);
+        let direction = (line.to - line.from).normalize_or_zero();
+        let (tail, head) = ribbon_span(look, length, age);
+        if head - tail <= RIBBON_MIN_LENGTH || direction == Vec3::ZERO || extent <= 0.0 {
+            return Written::Skipped;
+        }
+        let spacing = context.instance.bound.get(Binding::LineSpacing);
+        let Some(first_seen) = (0..64).find(|point| line.sees_point(*point)) else {
+            return Written::Skipped;
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a point index below 64 is exact in f32"
+        )]
+        let seen_at = line.from + direction * spacing * first_seen as f32;
+        // The strip itself ends at the line's ends (its tapers round them); only a line the
+        // viewer sees in part is cut, where the fog begins.
+        let clip = if line.seen == u64::MAX {
+            NO_CLIP
+        } else {
+            seen_clip_window(line, spacing, Vec2::new(seen_at.x, seen_at.z))
+        };
+        let catalog = context.catalog;
+        let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, context.instance.seed)
+            .unwrap_or_else(|| flipbook_frame(&look.element, None, age, life, true));
+        let drawn = head - tail;
+        let center = line.from + direction * f32::midpoint(tail, head) + Vec3::Y * look.height;
+        let card = SpriteInstance {
+            center: center.to_array(),
+            half_size: extent,
+            axis: direction.to_array(),
+            stretch: 0.5 * drawn / extent,
+            layer_a,
+            layer_b,
+            frame_mix,
+            ramp_row: u32::from(look.ramp.0),
+            intensity,
+            erosion: catalog.sample(look.erosion, life, 0.0),
+            soft_depth: look.soft_depth,
+            orient: if look.ground {
+                ORIENT_RIBBON_GROUND
+            } else {
+                ORIENT_RIBBON
+            },
+            ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
+            clip_axis: [clip[0], clip[1]],
+            clip_min: clip[2],
+            clip_max: clip[3],
+            shape: match look.shape {
+                CardShape::Radial => SHAPE_RADIAL,
+                CardShape::Texture => SHAPE_TEXTURE,
+            },
+            strip_repeats: drawn / look.repeat,
+            strip_offset: tail / look.repeat - look.scroll * age,
+            taper_tail: look.taper.0,
+            taper_head: look.taper.1,
+            ..Surface::of(look.breakup.as_ref(), context.instance.seed).card()
         };
         self.push_sorted_card(card, context.camera, look.sort_bias);
         self.frame.card_count += 1;
@@ -749,6 +1111,7 @@ impl EffectRuntime {
             }
             _ => random_yaw,
         };
+        self.frame.decal_owners.push(context.slot);
         self.frame.decals.push(DecalInstance {
             center: position.to_array(),
             yaw,
@@ -850,6 +1213,23 @@ impl EffectRuntime {
     }
 }
 
+/// The ring mask of a card: none for a sprite.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RingShape {
+    /// Inner radius as a fraction of the card's half size; 0 for a plain card.
+    inner: f32,
+    /// Depth of a `Front` ring's leading-edge noise, as a fraction of its band's width.
+    edge_noise: f32,
+}
+
+impl RingShape {
+    /// A plain card.
+    const NONE: Self = Self {
+        inner: 0.0,
+        edge_noise: 0.0,
+    };
+}
+
 /// Outcome of writing one instance.
 enum Written {
     /// Written.
@@ -866,6 +1246,8 @@ struct LayerContext<'a> {
     catalog: &'a EffectCatalog,
     /// The live effect.
     instance: &'a EffectInstance,
+    /// Its pool slot.
+    slot: u32,
     /// The layer.
     layer: &'a Layer,
     /// Its index in the effect.
@@ -876,6 +1258,114 @@ struct LayerContext<'a> {
     fade: f32,
     /// The camera.
     camera: Option<&'a CameraView>,
+}
+
+/// The fade of `layer` of `instance` given its retirement fade `fade`: a decal layer draws
+/// only while its effect holds its decal slots (`None` otherwise: refused room, or ended), and
+/// erodes out with them once they are retired to make room.
+fn marks_fade(instance: &EffectInstance, layer: &Layer, fade: f32, now: f64) -> Option<f32> {
+    if layer.block.pool() != Pool::Decals {
+        return Some(fade);
+    }
+    if instance.decal_slots == 0 {
+        return None;
+    }
+    Some(instance.marks_retired_at.map_or(fade, |retired| {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "seconds since retirement fit f32"
+        )]
+        let since = (now - retired) as f32;
+        fade * mark_fade(since)
+    }))
+}
+
+/// The decal slots `instance` of `effect` holds at `now`: those of its decal layers that have
+/// not ended yet.
+fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f64) -> u32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "an effect's age in seconds fits f32"
+    )]
+    let age = (now - instance.birth) as f32;
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.block.pool() == Pool::Decals)
+        .filter(|layer| {
+            age <= layer.start
+                + layer.duration
+                + max_line_delay(std::slice::from_ref(*layer), instance.line)
+        })
+        .map(|layer| {
+            layer
+                .placements
+                .iter()
+                .map(|placement| instance_count(placement, &instance.bound, instance.line))
+                .sum::<u32>()
+        })
+        .sum()
+}
+
+/// How long an effect's fire and its decals last, in seconds from its birth, and how many
+/// decals its decal layers place in all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Spans {
+    /// The end of its last non-decal layer.
+    fire: f32,
+    /// The end of its last decal layer.
+    decal: f32,
+    /// Decals its decal layers place over its life.
+    decals: u32,
+}
+
+/// The spans of `effect` spawned by `request`.
+fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Spans {
+    let mut spans = Spans {
+        fire: 0.0,
+        decal: 0.0,
+        decals: 0,
+    };
+    for layer in &effect.layers {
+        let end = layer.start
+            + layer.duration
+            + max_line_delay(std::slice::from_ref(layer), request.line);
+        if layer.block.pool() == Pool::Decals {
+            spans.decal = spans.decal.max(end);
+            spans.decals += layer
+                .placements
+                .iter()
+                .map(|placement| instance_count(placement, &request.bound, request.line))
+                .sum::<u32>();
+        } else {
+            spans.fire = spans.fire.max(end);
+        }
+    }
+    spans
+}
+
+/// The seed of the effect instance spawned as number `sequence` of the runtime, for an effect
+/// whose random choices are salted by `salt` ([`super::catalog::Effect::salt`]).
+#[must_use]
+pub const fn instance_seed(sequence: u32, salt: u32) -> u32 {
+    hash3(sequence, 0x5EED_0F1E, salt)
+}
+
+/// The seed of placed instance `index` of placement `placement_index` of layer `layer_index` of
+/// an effect instance seeded `instance_seed`: what a card's or decal's own random choices (and a
+/// torn front's crests) are drawn from.
+#[must_use]
+pub const fn placed_seed(
+    instance_seed: u32,
+    layer_index: u32,
+    placement_index: u32,
+    index: u32,
+) -> u32 {
+    hash3(
+        instance_seed,
+        layer_index.wrapping_mul(4).wrapping_add(placement_index),
+        index,
+    )
 }
 
 /// A length as `u32`, saturating.
@@ -906,6 +1396,36 @@ pub fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
 
 /// No clip window.
 const NO_CLIP: LineClip = [0.0; 4];
+
+/// How far, in world units, the far ends of two requests for one line may lie apart: every
+/// search point of a line publishes the same far end.
+const SAME_LINE_END: f32 = 1e-4;
+
+/// Seconds after a line effect's last travel delay during which a request for its line still
+/// joins it: a search lands on the simulation's tick, up to a frame after the presentation
+/// time its travel delay predicts.
+const LINE_MERGE_SLACK: f32 = 0.1;
+
+/// Shortest ribbon span drawn, world units: a span this short is the head just leaving the
+/// tail (or the tail catching the head), not yet or no longer a strip.
+const RIBBON_MIN_LENGTH: f32 = 1e-3;
+
+/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer,
+/// as distances from the line's start: `(tail, head)`. The head races out at the look's
+/// `travel` (the whole line at once without one); after `tail_delay` the tail follows at the
+/// same speed, so the strip becomes a segment sweeping along the line and then shrinks into
+/// its end. Without travel the tail stays at the start.
+#[must_use]
+pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32) -> (f32, f32) {
+    if look.travel <= 0.0 {
+        return (0.0, length);
+    }
+    let head = (look.travel * age).clamp(0.0, length);
+    let tail = look.tail_delay.map_or(0.0, |delay| {
+        (look.travel * (age - delay)).clamp(0.0, length)
+    });
+    (tail.min(head), head)
+}
 
 /// The clip window of `line`: its XZ direction and the range of `dot(xz, direction)` from its
 /// start to its end; no clip for a line without horizontal length.
@@ -1223,6 +1743,66 @@ pub fn flipbook_frame(
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+
+    fn ribbon(travel: f32, tail_delay: Option<f32>) -> RibbonLook {
+        RibbonLook {
+            element: ElementRef {
+                first_layer: 0,
+                frames: 1,
+                duration_secs: None,
+            },
+            ramp: super::super::catalog::RampId(0),
+            ground: false,
+            repeat: 1.0,
+            scroll: 0.0,
+            travel,
+            tail_delay,
+            taper: (0.1, 0.1),
+            height: 0.0,
+            soft_depth: 0.0,
+            erosion: None,
+            sort_bias: 0.0,
+            shape: CardShape::Radial,
+            breakup: None,
+        }
+    }
+
+    #[test]
+    fn a_ribbon_races_out_then_sweeps_and_shrinks_into_its_end() {
+        assert_eq!(
+            ribbon_span(&ribbon(0.0, None), 6.0, 0.3),
+            (0.0, 6.0),
+            "no travel"
+        );
+        assert_eq!(
+            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3),
+            (0.0, 6.0),
+            "without travel the tail stays"
+        );
+        let racing = ribbon(10.0, Some(0.2));
+        assert_eq!(
+            ribbon_span(&racing, 6.0, 0.0),
+            (0.0, 0.0),
+            "nothing at once"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.1);
+        assert!(
+            tail.abs() < 1e-6 && (head - 1.0).abs() < 1e-5,
+            "head out 1 unit"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.5);
+        assert!(
+            (tail - 3.0).abs() < 1e-5 && (head - 5.0).abs() < 1e-5,
+            "a segment sweeping: {tail}..{head}"
+        );
+        let (tail, head) = ribbon_span(&racing, 6.0, 1.0);
+        assert!(
+            (tail - 6.0).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
+            "shrunk into the end"
+        );
+        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0);
+        assert!(tail.abs() < 1e-6 && (head - 6.0).abs() < 1e-5, "held whole");
+    }
 
     #[test]
     fn a_line_clip_window_spans_the_line_from_its_start_to_its_end() {

@@ -18,14 +18,14 @@ use super::schema::{
 };
 use super::textures::TextureAtlas;
 use super::{
-    Block, Breakup, Budget, CardLook, CurveId, DecalLook, Defaults, Effect, EffectCatalog,
-    EffectId, ElementRef, Emitter, EmitterId, Layer, Pool, RampId, RingRadius,
-    EFFECTS_FORMAT_VERSION, MAX_LAYERS, MAX_PLACEMENTS,
+    Block, Breakup, Budget, CardLook, CurveId, DecalLook, Defaults, DistortionLook, Effect,
+    EffectCatalog, EffectId, ElementRef, Emitter, EmitterId, Layer, Pool, RampId, RibbonLook,
+    RingRadius, EFFECTS_FORMAT_VERSION, MAX_LAYERS, MAX_PLACEMENTS,
 };
 use crate::effects::binding::provides;
 use crate::effects::curve::{Curve, Ramp};
 use crate::effects::placement::MAX_INSTANCES_PER_PLACEMENT;
-use bevy::math::Vec3;
+use bevy::math::{Vec2, Vec3};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -94,6 +94,11 @@ pub(super) fn resolve(
         defaults,
     })
 }
+
+/// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
+/// `thickness`): the footprint test lets its rays end inside the reach by this much, so a
+/// front must not buy a large tolerance with a large declaration (Amendment 7).
+pub const MAX_FRONT_BITE: f32 = 0.2;
 
 /// Names in map order mapped to dense ids.
 fn dense_ids<'a>(names: impl Iterator<Item = &'a String>) -> BTreeMap<String, u16> {
@@ -487,6 +492,7 @@ impl Resolver<'_> {
             layers,
             lifetime,
             repeat: effect.repeat,
+            salt: effect.seed.unwrap_or_else(|| name_hash(name)),
         })
     }
 
@@ -546,6 +552,7 @@ impl Resolver<'_> {
         for value in &values {
             self.require(at, event, value.bind)?;
         }
+        self.ribbon_spans_line(at, event, &block, &placements)?;
         if matches!(block, Block::Ring { .. }) && layer.radius.is_none() {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -583,6 +590,34 @@ impl Resolver<'_> {
                 }
             ),
         })
+    }
+
+    /// Checks that a ribbon layer spans its event's line once: a `Line` event and only the
+    /// `Point` placement. Other blocks pass.
+    fn ribbon_spans_line(
+        &self,
+        at: &Site,
+        event: EventKind,
+        block: &Block,
+        placements: &[PlacementDef],
+    ) -> Result<(), EffectCatalogError> {
+        if !matches!(block, Block::Ribbon(_)) {
+            return Ok(());
+        }
+        self.require(at, event, super::schema::Binding::LineLength)?;
+        if placements
+            .iter()
+            .any(|placement| *placement != PlacementDef::Point)
+        {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "placement",
+                value: 0.0,
+                rule: "a ribbon spans its line once: only the `Point` placement",
+            });
+        }
+        Ok(())
     }
 
     /// Checks that `value` lies in `[0, 1)`.
@@ -711,6 +746,15 @@ impl Resolver<'_> {
                 })
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
+            BlockDef::Ribbon { .. } => self.ribbon(at, block)?,
+            BlockDef::Distortion {
+                noise,
+                scale,
+                scroll,
+                strength,
+                orient,
+                height,
+            } => self.distortion(at, noise, *scale, *scroll, *strength, *orient, *height)?,
             BlockDef::Light {
                 color,
                 intensity,
@@ -730,6 +774,76 @@ impl Resolver<'_> {
         })
     }
 
+    /// Resolves a ring block.
+    fn ring_block(&self, at: &Site, ring: &RingFields<'_>) -> Result<Block, EffectCatalogError> {
+        let RingFields {
+            texture,
+            ramp,
+            orient,
+            thickness,
+            erosion,
+            mapping,
+            height,
+            sort_bias,
+            breakup,
+            edge_noise,
+        } = *ring;
+        self.at_least(at, "height", *height, 0.0)?;
+        self.fraction(at, "edge_noise", *edge_noise)?;
+        if edge_noise * thickness > MAX_FRONT_BITE {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "edge_noise",
+                value: *edge_noise,
+                rule: "a front's bite (edge_noise times thickness) is at most 0.2 of its radius",
+            });
+        }
+        if *edge_noise > 0.0 && *mapping != super::schema::RingMapping::Front {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "edge_noise",
+                value: *edge_noise,
+                rule: "only a `Front` ring has a leading edge to break",
+            });
+        }
+        let breakup = self.breakup(breakup.as_ref(), at)?;
+        if *mapping == super::schema::RingMapping::Front && breakup.is_none() {
+            return Err(EffectCatalogError::FrontWithoutBreakup {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+            });
+        }
+        self.positive_fraction(at, "thickness", *thickness)?;
+        Ok(Block::Ring {
+            look: CardLook {
+                element: self.element(texture, at)?,
+                ramp: RampId(self.id(NameKind::Ramp, ramp, at)?),
+                orient: *orient,
+                soft_depth: 0.0,
+                frame_blend: true,
+                rotation: super::schema::RotationDef::Fixed,
+                erosion: self.curve(erosion.as_ref(), at)?,
+                drift: Vec3::ZERO,
+                fps: None,
+                frame_curve: None,
+                lift: None,
+                mapping: *mapping,
+                lift_curve: None,
+                lean: 0.0,
+                spread: 0.0,
+                sort_bias: *sort_bias,
+                clip_to_line: false,
+                shape: super::schema::CardShape::Texture,
+                breakup,
+            },
+            thickness: *thickness,
+            height: *height,
+            edge_noise: *edge_noise,
+        })
+    }
+
     /// Resolves a ring or a decal.
     fn masked_block(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
         match block {
@@ -743,42 +857,22 @@ impl Resolver<'_> {
                 height,
                 sort_bias,
                 breakup,
-            } => {
-                self.at_least(at, "height", *height, 0.0)?;
-                let breakup = self.breakup(breakup.as_ref(), at)?;
-                if *mapping == super::schema::RingMapping::Front && breakup.is_none() {
-                    return Err(EffectCatalogError::FrontWithoutBreakup {
-                        path: self.path.to_path_buf(),
-                        site: at.clone(),
-                    });
-                }
-                self.positive_fraction(at, "thickness", *thickness)?;
-                Ok(Block::Ring {
-                    look: CardLook {
-                        element: self.element(texture, at)?,
-                        ramp: RampId(self.id(NameKind::Ramp, ramp, at)?),
-                        orient: *orient,
-                        soft_depth: 0.0,
-                        frame_blend: true,
-                        rotation: super::schema::RotationDef::Fixed,
-                        erosion: self.curve(erosion.as_ref(), at)?,
-                        drift: Vec3::ZERO,
-                        fps: None,
-                        frame_curve: None,
-                        lift: None,
-                        mapping: *mapping,
-                        lift_curve: None,
-                        lean: 0.0,
-                        spread: 0.0,
-                        sort_bias: *sort_bias,
-                        clip_to_line: false,
-                        shape: super::schema::CardShape::Texture,
-                        breakup,
-                    },
-                    thickness: *thickness,
-                    height: *height,
-                })
-            }
+                edge_noise,
+            } => self.ring_block(
+                at,
+                &RingFields {
+                    texture,
+                    ramp,
+                    orient,
+                    thickness,
+                    erosion,
+                    mapping,
+                    height,
+                    sort_bias,
+                    breakup,
+                    edge_noise,
+                },
+            ),
             BlockDef::Decal {
                 texture,
                 ramp,
@@ -826,10 +920,165 @@ impl Resolver<'_> {
                     outline: *outline,
                 }))
             }
-            BlockDef::Sprite { .. } | BlockDef::Light { .. } | BlockDef::Particles { .. } => {
-                self.block(at, block)
+            BlockDef::Sprite { .. }
+            | BlockDef::Ribbon { .. }
+            | BlockDef::Distortion { .. }
+            | BlockDef::Light { .. }
+            | BlockDef::Particles { .. } => self.block(at, block),
+        }
+    }
+
+    /// Resolves a distortion disc.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fields of one block definition, each checked on its own"
+    )]
+    fn distortion(
+        &self,
+        at: &Site,
+        noise: &str,
+        scale: f32,
+        scroll: (f32, f32),
+        strength: f32,
+        orient: super::schema::Orient,
+        height: f32,
+    ) -> Result<Block, EffectCatalogError> {
+        let Some(element) = self
+            .atlas
+            .elements
+            .get(noise)
+            .filter(|element| element.noise)
+        else {
+            return Err(EffectCatalogError::NotNoiseElement {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                element: noise.to_owned(),
+            });
+        };
+        self.at_least(at, "scale", scale, 0.01)?;
+        self.at_least(at, "height", height, 0.0)?;
+        // The negated comparison also refuses NaN.
+        if !(strength > 0.0 && strength <= 0.25) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "strength",
+                value: strength,
+                rule: "it must be in (0, 0.25]",
+            });
+        }
+        for value in [scroll.0, scroll.1] {
+            if !value.is_finite() {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "scroll",
+                    value,
+                    rule: "it must be a finite number of repeats per second",
+                });
             }
         }
+        let ground = match orient {
+            super::schema::Orient::Camera => false,
+            super::schema::Orient::Ground => true,
+            super::schema::Orient::VerticalAlongLine | super::schema::Orient::Upright => {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "orient",
+                    value: 0.0,
+                    rule:
+                        "a distortion faces the camera (`Camera`) or lies on the ground (`Ground`)",
+                });
+            }
+        };
+        Ok(Block::Distortion(DistortionLook {
+            noise_layer: element.first_layer,
+            scale,
+            scroll: Vec2::new(scroll.0, scroll.1),
+            strength,
+            ground,
+            height,
+        }))
+    }
+
+    /// Resolves a ribbon.
+    fn ribbon(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
+        let BlockDef::Ribbon {
+            texture,
+            ramp,
+            orient,
+            repeat,
+            scroll,
+            travel,
+            tail_delay,
+            taper,
+            height,
+            soft_depth,
+            erosion,
+            sort_bias,
+            shape,
+            breakup,
+        } = block
+        else {
+            return self.block(at, block);
+        };
+        self.at_least(at, "repeat", *repeat, 0.001)?;
+        self.at_least(at, "travel", *travel, 0.0)?;
+        self.at_least(at, "height", *height, 0.0)?;
+        self.at_least(at, "soft_depth", *soft_depth, 0.0)?;
+        if let Some(delay) = tail_delay {
+            self.at_least(at, "tail_delay", *delay, 0.0)?;
+        }
+        for value in [taper.0, taper.1] {
+            if !(0.0..=0.5).contains(&value) {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "taper",
+                    value,
+                    rule: "each end's taper must be in [0, 0.5]",
+                });
+            }
+        }
+        let ground = match orient {
+            super::schema::Orient::Camera => false,
+            super::schema::Orient::Ground => true,
+            super::schema::Orient::VerticalAlongLine | super::schema::Orient::Upright => {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "orient",
+                    value: 0.0,
+                    rule: "a ribbon faces the camera (`Camera`) or lies on the ground (`Ground`)",
+                });
+            }
+        };
+        if !scroll.is_finite() {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "scroll",
+                value: *scroll,
+                rule: "it must be a finite number of repeats per second",
+            });
+        }
+        Ok(Block::Ribbon(RibbonLook {
+            element: self.element(texture, at)?,
+            ramp: RampId(self.id(NameKind::Ramp, ramp, at)?),
+            ground,
+            repeat: *repeat,
+            scroll: *scroll,
+            travel: *travel,
+            tail_delay: *tail_delay,
+            taper: *taper,
+            height: *height,
+            soft_depth: *soft_depth,
+            erosion: self.curve(erosion.as_ref(), at)?,
+            sort_bias: *sort_bias,
+            shape: *shape,
+            breakup: self.breakup(breakup.as_ref(), at)?,
+        }))
     }
 
     /// The budget, checked against what the effects use.
@@ -840,6 +1089,7 @@ impl Resolver<'_> {
             sprites: def.sprites,
             decals: def.decals,
             lights: def.lights,
+            distortions: def.distortions,
             effects: def.effects,
             class_caps: EffectClass::ALL.map(|class| def.classes.get(&class).copied().unwrap_or(0)),
             min_screen_px: def.min_screen_px,
@@ -856,6 +1106,7 @@ impl Resolver<'_> {
                     Pool::Decals => (budget.decals, "decals"),
                     Pool::Particles => (budget.particles, "particles"),
                     Pool::Lights => (budget.lights, "lights"),
+                    Pool::Distortions => (budget.distortions, "distortions"),
                 };
                 let effects_capacity = budget.effects.min(budget.class_caps[effect.class.index()]);
                 if capacity == 0 || effects_capacity == 0 {
@@ -893,6 +1144,37 @@ impl Resolver<'_> {
             status,
         })
     }
+}
+
+/// The fields of a `Ring` block definition, borrowed for [`Resolver::ring_block`].
+struct RingFields<'a> {
+    /// Texture element name.
+    texture: &'a String,
+    /// Ramp name.
+    ramp: &'a String,
+    /// Card orientation.
+    orient: &'a super::schema::Orient,
+    /// Thickness as a fraction of the radius.
+    thickness: &'a f32,
+    /// Erosion curve name.
+    erosion: &'a Option<String>,
+    /// Texture mapping.
+    mapping: &'a super::schema::RingMapping,
+    /// Height above the placed point.
+    height: &'a f32,
+    /// Sort bias.
+    sort_bias: &'a f32,
+    /// Noise breakup.
+    breakup: &'a Option<BreakupDef>,
+    /// Depth of a front's leading-edge noise.
+    edge_noise: &'a f32,
+}
+
+/// The 32-bit FNV-1a hash of `name`.
+fn name_hash(name: &str) -> u32 {
+    name.bytes().fold(0x811C_9DC5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
 }
 
 /// A [`Site`] for `owner` and an optional layer.

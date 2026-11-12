@@ -15,7 +15,7 @@
 //! - At most [`MAX_INSTANCES_PER_PLACEMENT`] instances per placement.
 
 use super::binding::{resolve_value, BoundValues};
-use super::catalog::schema::PlacementDef;
+use super::catalog::schema::{Binding, PlacementDef};
 use bevy::math::Vec3;
 
 /// D-12: the most instances one placement replicates.
@@ -77,13 +77,25 @@ impl WorldLine {
 }
 
 /// Whether instance `index` of `placement` stands only at search points of `line` the viewer
-/// sees: a point-placed instance needs its point, an instance between two points needs both.
-/// Instances of other placements, and of an effect without a line, are always seen.
+/// sees: a point-placed instance needs the search point nearest to it, an instance between two
+/// placed points needs every search point from the one to the other. Placed points are mapped
+/// onto the line's search points through `bound`'s `LineSpacing`, so a placement spaced wider
+/// than the line (a card every third point) asks for the points it actually stands on; without
+/// a bound spacing the placement's points are the search points. Instances of other placements,
+/// and of an effect without a line, are always seen.
 #[must_use]
-pub fn placed_seen(placement: &PlacementDef, index: u32, line: Option<WorldLine>) -> bool {
+pub fn placed_seen(
+    placement: &PlacementDef,
+    index: u32,
+    line: Option<WorldLine>,
+    bound: &BoundValues,
+) -> bool {
     let (
         PlacementDef::Line {
-            between, per_point, ..
+            spacing,
+            between,
+            per_point,
+            ..
         },
         Some(line),
     ) = (placement, line)
@@ -91,7 +103,23 @@ pub fn placed_seen(placement: &PlacementDef, index: u32, line: Option<WorldLine>
         return true;
     };
     let point = index / (*per_point).max(1);
-    line.sees_point(point) && (!*between || line.sees_point(point + 1))
+    let line_spacing = bound.get(Binding::LineSpacing);
+    let ratio = if line_spacing > f32::EPSILON {
+        resolve_value(spacing, bound) / line_spacing
+    } else {
+        1.0
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "point indices below a few hundred, rounded from non-negative distances"
+    )]
+    let (first, last) = {
+        let at = |placed: u32| (placed as f32 * ratio).round().max(0.0) as u32;
+        (at(point), at(point + u32::from(*between)))
+    };
+    (first..=last).all(|search| line.sees_point(search))
 }
 
 /// One placed instance: offset from the effect's anchor and extra start delay.
@@ -347,7 +375,7 @@ mod tests {
             delay_jitter: 0.0,
         };
         let seen: Vec<bool> = (0..10)
-            .map(|index| placed_seen(&clumps, index, Some(line)))
+            .map(|index| placed_seen(&clumps, index, Some(line), &BoundValues::default()))
             .collect();
         assert_eq!(
             seen,
@@ -363,7 +391,7 @@ mod tests {
             delay_jitter: 0.0,
         };
         let seen: Vec<bool> = (0..4)
-            .map(|index| placed_seen(&segments, index, Some(line)))
+            .map(|index| placed_seen(&segments, index, Some(line), &BoundValues::default()))
             .collect();
         assert_eq!(
             seen,
@@ -371,10 +399,37 @@ mod tests {
             "only the segment from 1 to 2"
         );
         assert!(
-            placed_seen(&PlacementDef::Point, 0, Some(line)),
+            placed_seen(&PlacementDef::Point, 0, Some(line), &BoundValues::default()),
             "not a line placement"
         );
-        assert!(placed_seen(&clumps, 0, None), "no line");
+        assert!(
+            placed_seen(&clumps, 0, None, &BoundValues::default()),
+            "no line"
+        );
+        // A card every third search point stands on points 0, 3, 6, ...: the second card
+        // (point 3) is not seen while only points 1 and 2 are.
+        let wide = PlacementDef::Line {
+            spacing: ValueDef {
+                bind: Binding::LineSpacing,
+                scale: 3.0,
+            },
+            travel: 0.0,
+            between: false,
+            per_point: 1,
+            scatter: 0.0,
+            delay_jitter: 0.0,
+        };
+        let spaced = BoundValues::default().with(Binding::LineSpacing, 0.5);
+        let mut long = WorldLine::whole(Vec3::ZERO, Vec3::new(4.5, 0.0, 0.0));
+        long.seen = 0b1000;
+        let seen: Vec<bool> = (0..4)
+            .map(|index| placed_seen(&wide, index, Some(long), &spaced))
+            .collect();
+        assert_eq!(
+            seen,
+            [false, true, false, false],
+            "only the card on point 3"
+        );
         let mut far = WorldLine::whole(Vec3::ZERO, Vec3::X);
         far.seen = 1 << 63;
         assert!(far.sees_point(63) && far.sees_point(200) && !far.sees_point(62));

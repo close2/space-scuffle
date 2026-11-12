@@ -779,7 +779,7 @@ Sizes: S ≤ 1 day, M 2–3 days, L ≥ 4 days. At most two building agents at o
 | WP6b | Author `shell_impact`, `acid_burst`, `spine_line` in `effects.ron`; presentation blocks for `railgun_crawler`, `volatile_tick`, `burrow_scorpion`; `effect_lab` capture mode in `client_diagnostics` | GPU tests per effect (§10.2): footprint against the bound radius or line, coverage ≥ 60 % of the full-damage disc at peak, no pixels after duration except the decal, no pop (frame-to-frame mean luminance change outside the impact frame ≤ 6/255), golden stills per driver within tolerance | Effects render; tests green | M |
 | WP6c | HDR and bloom decision (D-11); quality review (§7) by the implementer and an independent reviewer; frame-budget measurement with the slice at 200 splashes per second | Review log; frame budget evidence | **Gate:** all checklist items pass. Two failed review rounds → stop and hand back to the orchestrator with the contact sheets before any scale-out | S |
 | **Scale-out** (after WP6c passes) | | | | |
-| WP7 | `Ribbon` and `Distortion` blocks; `flame_line`, `lance_sweep`; projectile travel and impact (`ProjectileVisual` arrival spawns the unit's `impact` effect) | Ribbon width and endpoints ±2 px; distortion displaces only inside its mask; GPU stills; review | Reviewed | M |
+| WP7 | `Ribbon` and `Distortion` blocks; `flame_line`, `lance_sweep`; projectile travel and impact (`ProjectileVisual` arrival spawns the unit's `impact` effect) | Ribbon width and endpoints ±2 px; distortion displaces only inside its mask; GPU stills; review | Reviewed — **done** (Amendment 9; travel effects moved to WP11) | M |
 | WP8 | Concealment and stance: `Shell` hook (sink, rim, tint, refraction), `burrow_dig`/`burrow_emerge`/`burrow_mound`, `cloak_shimmer`/`cloak_own`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`; client-local settle (D-6) | Progress maths (hold during the random extra, clamp, leaving direction); GPU pose "burrow": above-ground pixel area of a burrowed bubble ≤ 35 % of the unburrowed one, mound decal inside its ring; "siege mid-transition": sweep arc within ±5 % of progress; enemy undetected cloaked: only distortion pixels, no tint | Reviewed | M |
 | WP9 | Status and death: `stim_surge`, `concussive_daze`, `charge_streak`, `barrier_shell` (absorb flash), death effects per presentation block (default stays the glass shatter) | Shell-flag unit tests; GPU pose "barrier": outer shell only while `barrier_ratio > 0` | Reviewed | S |
 | WP10 | Areas and links: `psionic_storm`-style area from a test-only ability, `abduct_tether` from a test-only snapshot; `abilities` map in presentation blocks | Area edge at `AreaRadius` ±2 px; fog per frame; tether ends on both bubbles ±2 px; steady-state window with a live area and tether | Reviewed | M |
@@ -1126,3 +1126,354 @@ under Q0002 and taken up in the scale-out (WP7 onwards), each with its own revie
   at close zoom), and about 2x width variation in the shock ring with one or two breaks.
 
 **Next.** The WP7 to WP15 scale-out (§9), unblocked by Q0080 (Amendment 2), with B-107 to B-111 open behind it.
+
+## Amendment 4: scale-out WP7 (2026-11-11, short note, charter §6)
+
+**What changes.** WP7 of §9 in the client, the effect shaders and the catalog's presentation data (no simulation
+state, golden replay or checksum changes; D-1 holds):
+
+- **`Ribbon` block** (§5.1): a strip along the event's line, drawn by the card renderer as an axis billboard
+  (`orient: Camera`) or flat on the ground (`Ground`); its head races out at `travel`, its tail follows after
+  `tail_delay`, so it can sweep along the line as a short segment; a tiled texture (u along the strip) or a computed
+  core (`shape: Radial`), tapers at both ends, noise breakup that repeats and scrolls with the strip. Only `Line`
+  effects may use it, with the one `Point` placement (typed load errors). A card record gains a ninth 16-byte row.
+- **`Distortion` block** (§5.1): a camera-facing or ground disc that bends the opaque scene behind it by scrolling
+  noise, read from the view's transmission texture (Bevy's copy of the opaque scene before the transmissive phase),
+  queued as one `Transmissive3d` item; budget `distortions` (default 64).
+- **Line events.** A line's search points are merged by the far end they all publish (the flame line's last search
+  lies a double spacing beyond the one before, which split it into two spawns); a line whose searches land on
+  several ticks (the spine line, B-85, period 2 ticks) joins its live effect while its travel still lays the line
+  out, instead of spawning the whole line again per search (in battle each search had spawned a second, later copy
+  of the line); line placements spaced wider than the line ask the fog for the search points they stand on.
+- **Random choices salted by name.** An effect instance's seed was salted by the effect's dense id, which every
+  effect added before it in name order shifts: adding the four effects changed `shell_impact`'s random rotations
+  and its golden stills (86.7 % of pixels within 8/255). The salt is now an FNV-1a hash of the effect's name, so a
+  vocabulary edit never moves another effect's picture again. The goldens of the three shipped effects are
+  re-recorded once with this cause (both drivers), and their sheets re-taken.
+- **Effects:** `flame_line` (Hellion analogue `napalm_wheeler`), `lance_sweep` (Colossus analogue
+  `tripod_annihilator`), `flak_burst` (Liberator analogue `sky_bastion`, air weapon) and `cleave_impact` (Ultralisk
+  analogue `stag_behemoth`), named by lab-only entries (`crates/client/tests/data/effect_lab_blocks.ron`) until the
+  independent review accepts each; then the entry moves to `units.ron` (as for the slice, Amendment 1).
+- **Polish of the shipped three** (Amendment 3's list, cheap and safe items only): `acid_burst` item 6 (the front
+  and its dark edge start at 0.3 of the full-damage radius, inside the crown, so frame 0 shows no concentric inner
+  ring; the fine spray takes the glob's dark wet ramp, so no sparkle dots); `spine_line` (the scar's pieces scattered
+  0.3 along and across the line, so its blotches no longer repeat at the point spacing; the churned patches are
+  kept as they were, because scattering them more or varying their size lowered the full-damage coverage from 75 %
+  to 62 %).
+
+**Decisions (Q0002, reversible).**
+
+- The Colossus beams from the weapon to the sweep point need the attacker's position in the line event, which
+  `LineView` does not carry for a target-origin line; the legacy per-strike beam (`vfx`) still draws from the
+  weapon to the struck point and the sweep is drawn on the ground. Recorded for WP11 (migration of the legacy
+  beams), with the option of a presentation-only `LineView` field.
+- The Hellion's legacy team-coloured tracer (`vfx`, 0.12 s) still draws under the flame until WP11.
+- Line effects carry no `Point`-placed light: a light at the line's anchor would light ground the viewer may not
+  see (R6). Their glow comes from additive layers.
+- `flak_burst` bursts at the air units' plane; in the effect lab it is captured on the ground plane.
+- `shell_impact`'s polish (a new blast-mark texture, twice the ring's width variation) is not taken: it needs a new
+  texture and a change of the front shader shared with the accepted `acid_burst`.
+- Distortion discs are unsorted and see only the opaque scene (not other effects or the bubbles), as Bevy's
+  transmission does.
+- WP8 (concealment and stance) is not started in this round.
+
+**Tests.** `effect_gpu_tests.rs`: ribbon ends and width within 2 px (camera-facing, ground, fog-cut), distortion
+bends pixels only inside its disc; `effect_slice_gpu_tests.rs`: seven subjects (footprint, coverage, pop, lingering,
+goldens per driver) and every line subject's fog mask; `effect_catalog_tests.rs`: ribbon and distortion range
+checks; `effect_runtime_tests.rs`: the two line merges; `gpu_validation_tests.rs`: `distortion.wgsl`.
+
+**Gate.** Each new effect and each polished one gets its implementer checklist in
+[`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 1") and a packet section; the
+orchestrator runs the independent review.
+
+## Amendment 5: scale-out round 2 (2026-11-11, short note, charter §6)
+
+**Why.** The independent review of scale-out round 1
+([`independent_review_scaleout1.md`](../evidence/effects/review/independent_review_scaleout1.md)) accepted
+`flak_burst`, rejected `flame_line`, `lance_sweep` and `cleave_impact`, found that `shell_impact` had regressed (its
+scoured blast mark 45 to 55 % weaker) and asked for a crowd frame with all seven effects and a fog sheet for
+`flame_line`. This round acts on each point. It changes presentation data, the effect lab and the stress tool only
+(no simulation state, golden replay or checksum; D-1 holds).
+
+**`shell_impact` restored.** Its regression came from Amendment 4's name-hash salt, which gave it a new draw of its
+random choices. An effect definition may now pin its salt (`seed: Some(n)`, schema `EffectDefRaw::seed`; without it
+the salt stays the FNV-1a hash of the name). `shell_impact` pins 2, its dense id when round 5 accepted it, so its
+pictures equal `main`'s pixel for pixel; the other round-1 fixes (the line merges, the name salt for every other
+effect) are kept. Proof: its goldens are `main`'s files again, unchanged, and pass on both drivers with every pixel
+equal (mean difference 0.000/255); its lavapipe contact sheet and sequence equal `main`'s round-5 files with 0
+differing pixels.
+
+**Effects reworked** (each point of the review; textures unchanged, nothing spent):
+
+- `flame_line`: the jet and the body of fire have opaque, saturated orange ramps (the additive cream core washed out
+  on bright ground and under the tone mapper), yellow-white on the axis only for its first two frames (`flame_cool`);
+  the bubbly fireball tongues are replaced by soft-eroding billows of the smoke element in a fire ramp that dies to
+  soot (`flame_tongue`, `flame_die`) and by flame tongues, smoke-element particles stretched along their rising
+  velocity (`napalm_tongues`, buoyant); the streak is one continuous scorched band of uneven width (`earth_scar`
+  pieces more than twice the spacing long, `scorch_band`) with napalm embers glowing in it for 0.6 s; every fire
+  layer is cut at the line's ends, so nothing burns behind the first search point; every line placement travels
+  with the jet (40 units per second), so no card appears ahead of its tip.
+- `lance_sweep`: the scar is a burnt groove of torn ground whose pieces vary twofold in length and width, in a
+  fading scorched halo, glowing from the inside (its thin parts erode first) and through short glowing cracks that
+  outlast the glow; the stroke and the flares at its head are torn by the fire noise from their first frame
+  (`torch_break`, no capsule; the wide round glow ribbon is removed) and a saturated orange (`lance_hot`); molten
+  spatter is thrown off every point (the burst's level-of-detail radius was too small to spawn it); smoke puffs vary
+  in size, place, time and drift.
+- `cleave_impact`: frame 0 shows the blow (a warm flash, a short light, sparks); a crack and churned earth under it,
+  dark clods on arcs; the front is a noise-broken dust skirt, wider, held thick (intensity 1.8) so its edge stays
+  on the reach, then thinning out over its last six frames while it erodes (`skirt_fade`, no pop), with small
+  dust puffs kicked out behind it; the dust is a dense burst at the struck point and puffs of their own size and place,
+  barely pushed outward (no radial star), drawn per hit.
+
+**Decisions (Q0002, reversible).** The review asked for the cleave's dust to be thrown in a cone along the blow's
+direction. A splash event carries no direction (`SplashVisual` has a centre and zones); the dust is instead
+irregular per hit. Recorded for WP11 with the option of a presentation-only facing in `SplashVisual`. Real flame
+flipbooks are not made (no media this round); the fire is built from the smoke element and computed shapes.
+
+**Tools.** The effect lab can spawn its subject several times on one spot (`LabSubject::repeat`, `battle_capture
+--effect-lab <effect> --repeat <count>x<seconds>`, sheets `<effect>_repeat_*`), each with its own instance seed as
+consecutive events in a battle have. The stress stream of `frame_budget` bursts an air weapon's splash only at
+airborne units and a ground weapon's only on the ground (`strikes_plane`).
+
+**Gate.** The implementer checklist is in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out
+round 2"), the material in the packet's section "Scale-out round 2"; the orchestrator runs the independent review.
+
+## Amendment 6: scale-out round 3 (2026-11-11, short note, charter §6)
+
+**Why.** The independent review of round 2
+([`independent_review_scaleout2.md`](../evidence/effects/review/independent_review_scaleout2.md)) accepted
+`flame_line` and `lance_sweep`, confirmed `shell_impact` equal to `main`, and rejected `cleave_impact`: its front was a
+translucent disc with a smooth, unbroken elliptical rim (a "glass bubble"), the same circle on every hit, and it
+popped out in one frame (frame 7 to 8). It also asked for degradation frames in the crowd, a frame with jets burning,
+and headroom in the decal pool. Presentation data, one shader branch, the effect lab, the stress tool and one
+footprint rule change; no simulation state, golden replay or checksum (D-1 holds).
+
+**`cleave_impact`.**
+
+- **A torn front.** A `Front` ring may declare `edge_noise` (schema `BlockDef::Ring`, in [0, 1)): where a third read of
+  its own noise is low, its leading edge is bitten back by up to that share of the band's width, so the front is a
+  run of dust clumps whose farthest parts stay on the reach and whose outline differs per hit (the noise phase is the
+  instance's own). The card record gains a tenth row (`front_edge` and padding); with `edge_noise` 0 the shader takes
+  the old path, so the round fronts of `shell_impact`, `acid_burst` and `flak_burst` draw exactly as before (their
+  goldens pass unchanged, mean difference 0.000/255, on both drivers). The cleave's front is thinner (0.3 of the
+  radius), torn from its first frame (`skirt_break`), with no tinted disc inside.
+- **No pop.** The front's intensity no longer holds above 1 and drops at the end: it falls linearly over the last
+  60 % of its 0.5 s while its erosion eats it (`skirt_fade`). Measured per pixel (pixels changing by more than 3 %
+  between consecutive 40 ms frames, over the cell the sheet shows, full-resolution lavapipe frames): round 2 had
+  719 at frame 6→7 and 2 638 at 7→8 (the pop); now every step after the impact (frame 4 on) lies between 696 and
+  1 034, each within 1.3 times its neighbours ([`cleave_impact_pops.txt`](../evidence/effects/review/cleave_impact_pops.txt)).
+
+**The footprint trade-off, and the proposal.** The slice test asks that at least 85 % of 72 rays end within ±2 px of
+the projected reach. At the default zoom the cleave's 1.5 reach is about 29 px, so ±2 px is 7 % of the radius: any
+torn edge deeper than that fails. Measured on radv:
+
+| Front | Rays within ±2 px | Look |
+|---|---|---|
+| round 2 (thickness 0.5, intensity 1.6–1.8, no bite) | 93 % | the "glass bubble" the review rejected |
+| thin (0.3) and broken inside, intensity 1.35, round edge | passes | still a smooth elliptical outline around the clumps |
+| torn, `edge_noise` 0.5 (shipped here) | 0 % under the old rule; 89 % under the new one (farthest ray −1.68 px) | a ragged skirt of clumps, a different outline per hit |
+| an edge on the reach with notched gaps | 83 % (gaps in about a fifth of the circle) to 85 % (fewer gaps, and the outline is smooth again) | a cog wheel with straight-sided notches |
+
+So under the old rule the look must give: only a nearly round edge passes. **Proposal (taken here, reversible):**
+the test gives, narrowly. A front that declares `edge_noise` may end inside the reach by its declared bite
+(`edge_noise × thickness` of the reach, projected per ray) on most rays, while (a) no ray may end beyond the reach
+by more than 2 px, as before, and (b) its farthest-reaching clumps must lie within 2 px of the reach (the largest
+ray error is at least −2 px). The contract a player relies on (the drawn area never claims more than the reach, and
+the reach's outline is shown by the outermost dust) is kept; what is given up is that every ray touches the reach.
+Round fronts (bite 0) keep the old rule unchanged. If the orchestrator or the owner prefers the old rule, the
+fallback is the second row (thin and broken, no bite), which passes but keeps a smooth outline.
+
+**Crowd and budget.**
+
+- `frame_budget` can take review captures at a fixed step (`--frame-step-ms 40`: one simulation tick per frame,
+  whatever the frame took; never a figure of record) and several consecutive screenshots (`--capture-frames N`,
+  written `<stem>_<k>.png`), each logged with the frame's decal count and the running budget counters.
+- **The decal pool is now 6 144** (was 4 096). At one tick per frame the stress load draws 4 206 to 4 289 decals a
+  frame (round 2's 3 921 was taken at five ticks a frame, which spawns fewer per drawn frame), which is above the old
+  pool; 6 144 leaves about 30 % headroom. At the cap, Detail decals give way first; Critical ones are then written up
+  to the pool's capacity and the rest of them are dropped for that frame. A scratch run with the pool forced to
+  2 048 shows what that means: about 2 000 Critical decals dropped every frame, and which ones changes from frame to
+  frame with the order of the live instances, so lasting marks flicker in and out. That is why the pool must not be
+  reached at the stress load ([`stress_capture.txt`](../evidence/effects/review/stress_capture.txt), "Scale-out round 3").
+- **Jets in a real battle draw only their Critical layers (finding; proposal, not taken).** A capture of the battle
+  without the stream, at the battle camera's default distance (`--camera-distance 22`), ten consecutive frames
+  from tick 200 ([`stress_jets_400.png`](../evidence/effects/review/stress_jets_400.png)), shows the jets as a thin
+  orange core with the legacy tracer and their scorched bands, but no billowing fire. Cause: the class cap of live
+  `Major` effects (96). A flame line lives 3.5 s for its band, so the battle's napalm wheelers and anti-air bursts
+  keep more than 96 `Major` instances alive, and a jet born over the cap has its Detail layers (the fire) retired
+  at birth. Both effects look as reviewed in the lab; this is the budget at work. Options: count an instance
+  against its class cap only while it has live Detail layers (a lasting band then holds no slot), or raise the
+  `Major` cap. Either changes the budget rules the slice's crowd was accepted under, so it waits for the
+  orchestrator. (At the frame-budget camera, 75 units away, the fire's cards are also below the 6-pixel
+  level-of-detail floor.)
+- **Acid stains in a crowd (review suggestion): recorded as a proposal, not taken.** Fading the stain's saturation
+  or opacity after its first second would change `acid_burst`'s accepted look on its own sheets (the stain holds its
+  full disc and wet colour to about 1.8 s by design, rounds 4 and 5). Options for a later round: a crowd-only rule
+  (fade a stain's Detail layers when many stains overlap a cell), or a shorter hold reviewed as an acid change.
+
+**Not taken (optional notes of round 2, recorded under Q0002):** `flame_line`'s jet rod with regular notches in
+frames 1–4, the oxblood pockets in its billows, `lance_sweep`'s wedge-shaped cooled groove and its larger spatter.
+Each would reopen an accepted effect's review; they wait for a polish round.
+
+**Tests.** `effect_slice_gpu_tests.rs`: the footprint rule above (`front_bite`), all seven subjects on radv and
+lavapipe, `cleave_impact`'s goldens re-recorded on both; `effect_catalog_tests.rs`: `edge_noise` must be a fraction
+and only on a `Front` ring; `instances.rs`: the card record is ten rows; `effect_stress.rs`: consecutive capture paths.
+
+**Gate.** Implementer checklist in [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round
+3"), packet section "Scale-out round 3"; the orchestrator runs the independent review.
+
+## Amendment 7: scale-out round 4, decided by the orchestrator after independent review 3 (2026-11-11)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_scaleout3.md`](../evidence/effects/review/independent_review_scaleout3.md)).** Review 3 accepted
+`cleave_impact` (with notes), the 6 144 decal pool and the degradation frames, and found no regression. It accepted the
+footprint rule of Amendment 6 with one clause strengthened, judged the behaviour at the decal cap unacceptable as a
+design, and found a defect: in a battle the napalm jet reads as a thin beam. The orchestrator decided:
+
+1. **Footprint rule for fronts with `edge_noise`:** the reviewer's change is adopted. The "farthest ray within 2 px of
+   the reach" clause must hold in each of eight 45° sectors, not once somewhere. The declared bite
+   (`edge_noise × thickness`) is capped at 20 % of the radius, and the catalog refuses more
+   (`MAX_FRONT_BITE`). A test shows that a front squashed on one side, or missing a quarter, fails
+   (`a_torn_front_must_reach_the_reach_in_every_sector`).
+2. **Stable decals at the cap:**
+   - An effect reserves its decal slots at birth and keeps them to its end (`client::effects::ledger`).
+   - Its decals draw as a whole set or not at all.
+   - Above 85 % of the pool, the oldest lasting marks erode out over 0.25 s to make room. An effect that still finds
+     no room draws no decal at all.
+   - Test: across consecutive frames no drawn decal disappears unless its effect is eroding it out or its layer has
+     ended, and every effect draws its marks whole
+     (`lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole`, pool of 8).
+   - The forced-cap capture is re-taken.
+3. **Jets (option 1):**
+   - An effect counts against its class cap only while its fire (its non-decal layers) is alive.
+   - A newborn effect is never the one stripped: over the cap, the oldest burning effect of the class gives its detail
+     up (`over_its_class_cap_the_oldest_burning_effect_gives_its_detail_up`,
+     `an_effect_whose_fire_has_ended_no_longer_counts_against_its_class_cap`).
+   - The jet's always-kept layers must read as fire: `flame_line`'s body of fire and its burning ground are now
+     `Critical` beside the jet's core. Their look in the lab is unchanged; priority only decides what a crowd keeps.
+     A jet stripped of its detail is a broad orange body over burning ground, not a beam.
+   - The jets are re-taken at the default and the far camera.
+4. **Optional cleave note taken:** the torn edge's bite reads two octaves of its noise, so its clumps are not spaced
+   at one regular period. Its value on teal is unchanged: a lighter front loses its contrast on the bright ground,
+   which the footprint needs.
+
+Presentation data, one shader line, the runtime's budget rules, the effect tests, and the stress tool's report. No
+simulation state, golden replay or checksum (D-1 holds). Implementer checklist: [`slice_review.md`](../evidence/effects/review/slice_review.md)
+("Scale-out round 4"). Packet: section "Scale-out round 4". This is round 4 of the owner's five (Q0080).
+
+## Amendment 8: scale-out round 5, decided by the orchestrator after independent review 4 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_scaleout4.md`](../evidence/effects/review/independent_review_scaleout4.md)).** Review 4 accepted
+the footprint rule, the decal reservations at the forced cap, the early erosion at the stress load, the jets at
+both cameras and the `Critical` body of fire, and found no regression. It rejected `cleave_impact`: to pass the
+per-sector clause, round 4 had made the front round again. Its edge was about 40 % smoother, it had no gaps, its
+bite was halved, and the four hits shared one outline. This is round 5, the owner's last review round (Q0080).
+
+1. **`cleave_impact`: guaranteed crests (the reviewer's construction).**
+   - **Round 3's bite is restored, and a little deeper.** The crest is back at 1.0. The bite's second octave is
+     re-contrasted after the mix, so it keeps one octave's spread. `edge_noise` is 0.66, so the bite is
+     0.66 × 0.3 = 0.198 of the radius, inside the 0.2 cap.
+   - **Twelve guaranteed crests** (`client::effects::front`, mirrored in `sprite.wgsl`'s `front_crest`). The edge
+     is on the radius over each crest: 2.5° half wide plus a 1.5° soft edge. The crests sit 30° apart, all turned
+     by a per-hit rotation, each jittered by up to ±7°. The rotation and jitter come from an integer hash of the
+     ring card's own seed, the same in Rust and WGSL.
+   - **Guarantee by construction.** The largest gap between crest centres is at most 30 + 2 × 7 = 44°. With the
+     2.5° half width (half the footprint test's 5° ray spacing), every 45° sector of the footprint test has a ray on
+     a crest, whatever the hit's noise phase. Between the crests the noise bites freely.
+   - **Proof across seeds.** Unit tests over 64 consecutive hits' card seeds check three things:
+     - no gap of 45° or more (`the_largest_gap_between_crests_is_below_a_sector_for_every_seed`);
+     - every footprint sector has a ray on a crest (`every_footprint_sector_has_a_ray_on_a_crest_for_every_seed`);
+     - two consecutive hits place their crests differently (`two_hits_place_their_crests_differently`): the mean
+       distance from each crest of one hit to the nearest crest of the next is at least 1° for every pair and at
+       least 5° on average. A rotation alone gives 7.5° on average.
+   - **In the capture**, the outline correlation between the four hits of the repeat take is measured: the
+     72-bin outer-radius profiles, pairwise Pearson correlation (figures in `slice_review.md`).
+2. **The pressure mark counts reservations.** The 85 % erosion threshold of Amendment 7 is measured in reserved
+   decal slots, not in decals drawn. A reservation includes decals that are too small to draw at the current
+   camera. Counting only drawable decals would make the ledger depend on the camera: a zoom-in would suddenly make
+   unreserved decals drawable, and they would then either stay hidden or force a burst of erosions. At the
+   frame-budget camera, the mark is reached at about 3 900 drawn decals. The real battle stays far below it. The
+   round-4 packet's wording is corrected: at the forced cap, no decal that was granted is ever dropped from a frame,
+   but the 444 effects refused room drew none of their marks, Critical ones included.
+3. **Optional, not taken: a minimum on-screen width for the flame's burning ground at the far camera.** The
+   reviewer accepted the far-camera jets as torn fire strips. A screen-size floor on a decal's width would be a new
+   rule of the decal shader. It is recorded here for a polish round.
+
+No simulation state, golden replay or checksum (D-1 holds). Implementer checklist:
+[`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 5"). Packet: section "Scale-out
+round 5".
+
+## Amendment 9: the scale-out's four effects shipped; WP7 closed (2026-11-12, short note, charter §6)
+
+**Decision note (charter §6, short note: catalog data, test fixtures and documentation).** The independent review of
+scale-out round 5 ([`independent_review_scaleout5.md`](../evidence/effects/review/independent_review_scaleout5.md))
+accepts `cleave_impact`. Across the five scale-out rounds this makes all seven effects ready to ship, with no
+regressions. This amendment ships the four new ones the way Amendment 3 shipped the slice. It changes no simulation
+state, golden replay or checksum (D-1 holds: presentation blocks are read by the client only), and no effect
+definition, texture or GPU golden.
+
+**Verdicts per scale-out round.**
+
+| Round | Review | `flak_burst` | `flame_line` | `lance_sweep` | `cleave_impact` | shipped three |
+|---|---|---|---|---|---|---|
+| 1 | [`independent_review_scaleout1.md`](../evidence/effects/review/independent_review_scaleout1.md) | **accept** | reject | reject | reject | `shell_impact` regressed |
+| 2 | [`independent_review_scaleout2.md`](../evidence/effects/review/independent_review_scaleout2.md) | accept | **accept** | **accept** | reject | restored, no regression |
+| 3 | [`independent_review_scaleout3.md`](../evidence/effects/review/independent_review_scaleout3.md) | accept | accept | accept | **accept** | no regression |
+| 4 | [`independent_review_scaleout4.md`](../evidence/effects/review/independent_review_scaleout4.md) | accept | accept (jets in battle) | accept | reject (round again) | no regression |
+| 5 | [`independent_review_scaleout5.md`](../evidence/effects/review/independent_review_scaleout5.md) | accept | accept | accept | **accept** | no regression |
+
+**What ships.**
+
+- **The four new effects** are named in `assets/catalog/units.ron` by their units' own weapon slots:
+  - `napalm_wheeler` (Hellion analogue): `(weapon: Primary, splash: Some("flame_line"))`;
+  - `tripod_annihilator` (Colossus analogue): `lance_sweep`;
+  - `sky_bastion` (Liberator analogue): `(weapon: Air, splash: Some("flak_burst"))`;
+  - `stag_behemoth` (Ultralisk analogue): `cleave_impact`.
+
+  Their blocks are those the effect lab and the GPU tests rendered in every round. No Rust names a unit or an effect
+  (C5, C6).
+- `crates/client/tests/data/effect_lab_blocks.ron` keeps only `burrow_trail`, which no shipped burrowed mode can
+  use yet (Amendment 3).
+- `effect_catalog_tests.rs`:
+  - `accepted_slice_effects_are_named_by_their_shipped_units` now covers all seven effects with their weapon slots.
+  - New: `shipped_torn_fronts_hold_every_sector_for_many_hits`. It checks every shipped torn front (today the
+    cleave's) for 64 consecutive hits. The seeds are drawn with the effect's real salt and the ring's real layer
+    index, through the runtime's own seed functions (`instance_seed`, `placed_seed`). This was review 5's note on
+    the test seeds. The unit tests in `client::effects::front` now use those same functions on an arbitrary effect.
+- **Units without media stay unpresented.** `tripod_annihilator`, `stag_behemoth` and `volatile_tick` have no unit
+  media, so the client cannot present them in a battle. Their effects are shipped and reviewed in the lab and in
+  the stress stream, and they will draw once those units have media (WP13, WP14).
+
+**WP7 status: done.**
+
+- The `Ribbon` and `Distortion` blocks and the four splash effects have shipped.
+- The projectile impact wiring (a `ProjectileVisual` arrival spawns the unit's `impact` effect) has been in
+  `client::effects::systems` since WP4.
+- The budget rules of Amendments 7 and 8 (decal reservations, class caps counted by live fire, torn fronts with
+  guaranteed crests) are in.
+- Travel effects for projectiles are not authored. They move to WP11 with the migration of the legacy looks.
+- WP8 (concealment and stance visuals, the Q0075 Veo clips) is not started.
+
+**Open polish (non-blocking, from the scale-out reviews; to be picked up in a polish round, each with its own
+review).**
+
+| Effect or area | Item | First raised |
+|---|---|---|
+| `cleave_impact` | Narrow crest teeth at close zoom on teal: soften their flanks (soft edge about 5–6°) so that they read as shoulders. | scale-out 5 |
+| `cleave_impact` | The front's dark value on teal reads as a beaded outline around light dust. | scale-out 3 |
+| `cleave_impact` | The front is faint at the default zoom on bright ground. | scale-out 3 |
+| `cleave_impact` | Square clods; the crack is not readable. | scale-out 1 |
+| `cleave_impact` | The GPU footprint test checks one seed per driver; render more than one seed. | scale-out 5 |
+| `flame_line` | A screen-size floor for the burning ground's width at the far camera (Amendment 8). | scale-out 4 |
+| `flame_line` | Flare and break up the jet rod in frames 1–4; oxblood pockets in the billows; a blunt cut at the fog edge at 0.104 s. | scale-out 2 |
+| `flame_line` (crowd) | Most `Major` effects give up their billows early in a big fight; revisit only if play-testing shows jets thinning too soon. | scale-out 4 |
+| `lance_sweep` | Spread the groove's width variation along the line instead of a wedge; larger spatter; the airborne part is weak at the default zoom. | scale-out 2 |
+| `flak_burst` | A regular scalloped inner edge (about ten even lobes), with a slight glass-rim read at close zoom; smoke that drifts and grows; shrapnel streaks. | scale-out 1 |
+| `shell_impact` | An irregular streak fringe for the blast mark (a new texture); more ring width variation; a draw space in which no instance loses its blast mark. | slice round 4, scale-out 1 |
+| `acid_burst` | Meniscus, inner rims, glob shapes, crowd variation, dried crust. Stains dominate the crowd frame (Amendment 6's proposal to fade them in crowds). | slice rounds; scale-out 2–4 |
+| `spine_line` | Torn clods; clods a step lighter than the furrows; one detached scar piece. | slice round 5, scale-out 1 |
+| Decal ledger | Optional, camera-independent: leave out of the reservations the layers that can never reach the 6-pixel floor, computed once at load. | scale-out 4 |
+| Crowd evidence | An annotated crop of one soft retirement would strengthen the degradation take. | scale-out 3 |
+
+**Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.

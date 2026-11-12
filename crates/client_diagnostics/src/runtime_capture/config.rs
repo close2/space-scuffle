@@ -39,6 +39,11 @@ pub struct CaptureOptions {
     /// the fog, drawn as the battle terrain draws it. The sheets are named `<effect>_fog_*`.
     #[arg(long, value_name = "POINT")]
     pub fog_seen_from: Option<u32>,
+    /// Effect-lab repeat take (scale-out review 1): `<count>x<seconds>` spawns the effect
+    /// `count` times on the same spot, `seconds` apart, as an attacker's consecutive hits. The
+    /// sheets are named `<effect>_repeat_*`.
+    #[arg(long, value_name = "COUNTxSECONDS")]
+    pub repeat: Option<String>,
 }
 
 /// Failures are surfaced as nonzero exit and an incomplete manifest where possible.

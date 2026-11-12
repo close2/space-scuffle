@@ -762,7 +762,7 @@ fn effect_shaders_compose_and_validate() {
     }
     let modules = [("effects/common.wgsl", common)];
     let mut failures = Vec::new();
-    for shader in ["sprite.wgsl", "decal.wgsl"] {
+    for shader in ["sprite.wgsl", "decal.wgsl", "distortion.wgsl"] {
         let source = read(shader);
         for defs in [&[][..], &["MULTISAMPLED"][..]] {
             match shader_ir::compose_with_modules(shader, &source, defs, &modules) {

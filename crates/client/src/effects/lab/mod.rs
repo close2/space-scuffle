@@ -25,8 +25,8 @@ pub mod scene;
 
 pub use driver::{LabDriver, LabPhase, LabRenderIdle};
 pub use program::{
-    LabGround, LabProgram, LabProgramError, LabShot, LabSubject, LabTake, LabZoom, CONTACT_AGES,
-    SEQUENCE_STEP,
+    LabGround, LabProgram, LabProgramError, LabRepeat, LabShot, LabSubject, LabTake, LabZoom,
+    CONTACT_AGES, SEQUENCE_STEP,
 };
 pub use scene::{LabScene, LabSceneError};
 

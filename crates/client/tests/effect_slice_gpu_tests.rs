@@ -10,7 +10,9 @@
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
-//!   within ±2 px on most rays and never beyond it, and once every non-decal layer has ended
+//!   within ±2 px on most rays and never beyond it (a front that declares a torn leading edge,
+//!   `edge_noise`, may end inside by its declared bite as well, on most rays, while its
+//!   farthest clumps stay within ±2 px of the reach: scale-out round 3), and once every non-decal layer has ended
 //!   the visible edge of its lasting `Critical` marks (the acid stain, held at full size)
 //!   lies on the reach, within ±2 px on most rays and never more than 2 px beyond it (review
 //!   round 5; round 4 checked only that it stayed inside); a line's marks start and end at
@@ -173,6 +175,7 @@ fn lab_subject(subject: &SplashSubject) -> LabSubject {
         line_to,
         line_seen: u64::MAX,
         fog_below_x: None,
+        repeat: None,
     }
 }
 
@@ -454,20 +457,106 @@ fn reach_errors(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage
     errors
 }
 
+/// Sectors of the circle in which a torn front's farthest clump must reach the reach.
+const FRONT_SECTORS: usize = 8;
+
+/// Whether a torn front's rays (`errors`, per ray, pixels; NaN where nothing is lit) show the
+/// reach all the way round: in each of [`FRONT_SECTORS`] equal sectors the farthest ray ends
+/// within [`TOLERANCE_PX`] of it. A front squashed on one side, or missing a quarter, fails.
+fn torn_front_holds(errors: &[f32]) -> Result<(), String> {
+    let per_sector = errors.len().div_ceil(FRONT_SECTORS).max(1);
+    for (sector, rays) in errors.chunks(per_sector).enumerate() {
+        let farthest = rays
+            .iter()
+            .copied()
+            .filter(|error| error.is_finite())
+            .fold(f32::NEG_INFINITY, f32::max);
+        if farthest < -TOLERANCE_PX {
+            return Err(format!(
+                "sector {sector} of the torn front ends {farthest:.2} px inside the reach at most"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The per-sector rule passes a torn front that reaches the reach all the way round, and
+/// fails one squashed on one side or missing a quarter (Amendment 7).
+#[test]
+fn a_torn_front_must_reach_the_reach_in_every_sector() {
+    // Clumps on the reach every third ray, bitten 5 px back between them.
+    let torn: Vec<f32> = (0..72)
+        .map(|ray| if ray % 3 == 0 { -1.0 } else { -5.0 })
+        .collect();
+    assert!(torn_front_holds(&torn).is_ok());
+    // Squashed: one half of the circle ends 5 px short everywhere.
+    let squashed: Vec<f32> = (0..72)
+        .map(|ray| if ray < 36 { torn[ray] } else { -5.0 })
+        .collect();
+    assert!(torn_front_holds(&squashed).is_err());
+    // A quarter missing: nothing lit over 18 rays.
+    let quarter: Vec<f32> = (0..72)
+        .map(|ray| {
+            if (18..36).contains(&ray) {
+                f32::NAN
+            } else {
+                torn[ray]
+            }
+        })
+        .collect();
+    assert!(torn_front_holds(&quarter).is_err());
+}
+
+/// The projected reach in pixels along each of `rays` rays from the anchor.
+fn reach_pixels(view: &View, ground: &Ground, rays: usize) -> Vec<f32> {
+    let centre = view.project(ground.anchor);
+    (0..rays)
+        .map(|ray| {
+            let angle = ray as f32 / rays as f32 * std::f32::consts::TAU;
+            let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+            view.project(ground.anchor + direction * ground.reach)
+                .distance(centre)
+        })
+        .collect()
+}
+
+/// The declared bite of `effect`'s torn `Critical` front, as a share of its reach: the
+/// largest `edge_noise · thickness` of its critical rings (0 for round fronts).
+fn front_bite(effect: &Effect) -> f32 {
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.priority == Priority::Critical)
+        .filter_map(|layer| match layer.block {
+            Block::Ring {
+                thickness,
+                edge_noise,
+                ..
+            } => Some(thickness * edge_noise),
+            _ => None,
+        })
+        .fold(0.0, f32::max)
+}
+
 /// Splash footprint: the front's outermost lit pixel per ray against the projected reach, and
 /// the lasting marks (`late`, once every non-decal layer has ended) never beyond it.
 fn check_front(
     view: &View,
     ground: &Ground,
-    critical: &RgbImage,
-    late: &RgbImage,
-    bg: &RgbImage,
+    (critical, late, bg): (&RgbImage, &RgbImage, &RgbImage),
+    bite: f32,
 ) -> String {
     let errors = reach_errors(view, ground, critical, bg);
     let rays = errors.len();
+    // A torn front may end inside the reach by its declared bite (a share of the reach),
+    // projected per ray; a round front (bite 0) keeps the plain tolerance.
+    let reach_px = reach_pixels(view, ground, rays);
     let within = errors
         .iter()
-        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .zip(&reach_px)
+        .filter(|(error, reach)| {
+            **error <= TOLERANCE_PX && **error >= -(TOLERANCE_PX + bite * **reach)
+        })
         .count();
     let worst_beyond = errors
         .iter()
@@ -514,12 +603,24 @@ fn check_front(
     );
     assert!(
         share >= FRONT_RAYS_WITHIN,
-        "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (errors {errors:?})",
+        "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (bite {bite}; errors {errors:?})",
         share * 100.0
     );
+    // The farthest-reaching clumps of a torn front still mark the reach all the way round
+    // (Amendment 7: in every 45-degree sector, not only somewhere).
+    if bite > 0.0 {
+        if let Err(failure) = torn_front_holds(&errors) {
+            panic!("{failure} (errors {errors:?})");
+        }
+    }
     format!(
-        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
+        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach{}, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
         share * 100.0,
+        if bite > 0.0 {
+            format!(" (or inside it by up to its declared bite, {:.0} % of the reach)", bite * 100.0)
+        } else {
+            String::new()
+        },
         late_beyond.map_or_else(
             || "none (no lasting critical mark)".to_owned(),
             |beyond| format!(
@@ -883,7 +984,7 @@ fn check_subject(index: usize) -> TestResult {
         check_line(&view, &ground, &critical, &bg)
     } else {
         let late = capture(directory.path(), "critical_late");
-        check_front(&view, &ground, &critical, &late, &bg)
+        check_front(&view, &ground, (&critical, &late, &bg), front_bite(effect))
     };
     let frames: Vec<RgbImage> = (0..sequence_frames())
         .map(|frame| capture(directory.path(), &format!("seq_{frame:03}")))
@@ -942,6 +1043,39 @@ fn slice_effect_2_renders_to_its_bindings() -> TestResult {
     check_subject(2)
 }
 
+/// The fourth splash subject (by name; the scale-out's effects from WP7 on).
+#[test]
+fn slice_effect_3_renders_to_its_bindings() -> TestResult {
+    check_subject(3)
+}
+
+/// The fifth splash subject (by name).
+#[test]
+fn slice_effect_4_renders_to_its_bindings() -> TestResult {
+    check_subject(4)
+}
+
+/// The sixth splash subject (by name).
+#[test]
+fn slice_effect_5_renders_to_its_bindings() -> TestResult {
+    check_subject(5)
+}
+
+/// The seventh splash subject (by name).
+#[test]
+fn slice_effect_6_renders_to_its_bindings() -> TestResult {
+    check_subject(6)
+}
+
+/// No splash subject is left without a test of its own above.
+#[test]
+fn every_splash_subject_has_its_own_test() {
+    assert!(
+        effect_subjects::splash_subjects().len() <= 7,
+        "add a slice_effect_N test for each subject beyond the seventh"
+    );
+}
+
 // --- A line out of the fog (plan Amendment 2, R6) ---------------------------------------------
 
 /// The first search point of the masked line that the viewer sees.
@@ -955,21 +1089,29 @@ const MASKED_AGE: f32 = 1.0;
 const MASKED_REACH_BACK: f32 = 1.0;
 /// Fewest lit pixels the seen part of the line must draw.
 const MASKED_MIN_LIT: usize = 200;
-/// The index of the line subject, if the subjects have one.
-fn line_subject() -> Option<usize> {
+/// The indices of the line subjects.
+fn line_subjects() -> Vec<usize> {
     effect_subjects::splash_subjects()
         .iter()
-        .position(|subject| subject.line)
+        .enumerate()
+        .filter(|(_, subject)| subject.line)
+        .map(|(index, _)| index)
+        .collect()
 }
 
-/// The masked child: the line subject seen only from point [`FIRST_SEEN_POINT`] on, and the
-/// background.
+/// The masked child: the line subject named by [`INDEX_VAR`] seen only from point
+/// [`FIRST_SEEN_POINT`] on, and the background.
 #[test]
 #[ignore = "launched by the slice effect tests on a virtual display"]
 fn effect_slice_masked_line_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let index: usize = std::env::var(INDEX_VAR)
+        .expect("the parent names the subject")
+        .parse()
+        .expect("the index is a number");
     let subjects = effect_subjects::splash_subjects();
-    let subject = &subjects[line_subject().expect("a line subject")];
+    let subject = &subjects[index];
+    assert!(subject.line, "the masked child draws a line subject");
     let mut lab = lab_subject(subject);
     lab.line_seen = u64::MAX << FIRST_SEEN_POINT;
     let program = LabProgram {
@@ -987,15 +1129,20 @@ fn effect_slice_masked_line_child() {
 
 /// Plan Amendment 2, R6, in pixels: a line whose first search points the viewer does not see
 /// (an undetected burrowed attacker firing out of the fog) draws nothing at those points and
-/// its whole look from the first seen point on.
+/// its whole look from the first seen point on; every line subject is checked.
 #[test]
 fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
     if gpu_run::gpu_tests_opted_out() {
         return Ok(());
     }
-    let Some(index) = line_subject() else {
-        return Ok(());
-    };
+    for index in line_subjects() {
+        check_masked_line(index)?;
+    }
+    Ok(())
+}
+
+/// Runs the masked child for line subject `index` and checks its pixels.
+fn check_masked_line(index: usize) -> TestResult {
     let subjects = effect_subjects::splash_subjects();
     let subject = &subjects[index];
     let directory = tempfile::tempdir()?;
@@ -1007,6 +1154,7 @@ fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
         "effect_slice_masked_line_child",
     ]);
     command.env(OUT_VAR, directory.path());
+    command.env(INDEX_VAR, index.to_string());
     command.assert_passes_validation("slice masked line");
     let lab = lab_subject(subject);
     let view = View::new(lab.focus());
@@ -1040,11 +1188,13 @@ fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
     );
     assert_eq!(
         unseen_lit, 0,
-        "nothing is drawn at the search points the viewer does not see"
+        "{}: nothing is drawn at the search points the viewer does not see",
+        subject.effect
     );
     assert!(
         seen_lit >= MASKED_MIN_LIT,
-        "the seen part of the line is drawn: {seen_lit} lit pixels"
+        "{}: the seen part of the line is drawn: {seen_lit} lit pixels",
+        subject.effect
     );
     Ok(())
 }

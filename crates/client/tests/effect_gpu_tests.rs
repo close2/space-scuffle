@@ -20,6 +20,13 @@
 //! - **bubble ordering**: a card behind a blended sphere (the bubbles' phase and depth
 //!   behaviour) is hidden by it while a card in front of it in the same frame is drawn over it;
 //!   the control without the sphere shows the hidden card.
+//! - **ribbon** (WP7): a camera-facing and a ground ribbon along lines of known ends: each
+//!   strip's lit ends lie within 2 px of its projected line ends and its width within 2 px of
+//!   twice its bound half width; a ribbon whose line is seen only from its third point on draws
+//!   nothing before the cell edge half a spacing before that point.
+//! - **distortion** (WP7): a disc over a striped ground bends the stripes inside it (many
+//!   pixels change against the control without the disc) and changes no pixel more than 2 px
+//!   outside its projected radius.
 //!
 //! # Invariants verified
 //! As listed; each shot's statistics are printed for the driver comparison.
@@ -49,7 +56,9 @@ use bevy::prelude::*;
 use bevy::render::camera::CameraProjection;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use client::effects::binding::BoundValues;
+use client::effects::catalog::schema::Binding;
 use client::effects::catalog::EffectCatalog;
+use client::effects::placement::WorldLine;
 use client::effects::runtime::{EffectRuntime, SpawnRequest};
 use client::effects::systems::EffectCatalogSource;
 use client::effects::EffectsPlugin;
@@ -81,6 +90,22 @@ const DECAL_RADIUS: f32 = 1.5;
 const RING_RADIUS: f32 = 2.0;
 /// Ring thickness as a fraction of the radius.
 const RING_THICKNESS: f32 = 0.2;
+/// Half width of the ribbons, world units.
+const RIBBON_HALF_WIDTH: f32 = 0.25;
+/// The ribbons' lines: x from, x to, z (camera-facing, ground, partly seen).
+const RIBBON_LINES: [(f32, f32, f32); 3] = [(-2.0, 2.0, -1.6), (-2.5, 1.5, 0.0), (-2.0, 2.0, 1.6)];
+/// Search spacing of the ribbons' lines, world units.
+const RIBBON_SPACING: f32 = 0.5;
+/// The first search point the viewer sees on the partly seen ribbon's line.
+const RIBBON_FIRST_SEEN: u32 = 3;
+/// World units over which a card clipped at the fog fades in (`CLIP_EDGE` of `sprite.wgsl`).
+const RIBBON_CLIP_EDGE: f32 = 0.1;
+/// Radius of the distortion disc, world units.
+const WARP_RADIUS: f32 = 1.5;
+/// Fewest pixels the distortion must change inside its disc.
+const WARP_MIN_CHANGED: usize = 300;
+/// Levels by which a pixel outside the disc may differ from the control.
+const WARP_OUTSIDE_LEVELS: i32 = 2;
 
 /// The test vocabulary's effects.
 const EFFECTS: &str = r#"
@@ -101,7 +126,14 @@ const EFFECTS: &str = r#"
     "behind": (class: Major, event: Point, layers: [(block: Sprite(texture: "solid",
         ramp: "red_add"), size: (scale: 0.5), duration: 100.0, priority: Critical)]),
     "front": (class: Major, event: Point, layers: [(block: Sprite(texture: "solid",
-        ramp: "green"), size: (scale: 0.4), duration: 100.0, priority: Critical)])
+        ramp: "green"), size: (scale: 0.4), duration: 100.0, priority: Critical)]),
+    "strip": (class: Major, event: Line, layers: [(block: Ribbon(texture: "solid", ramp: "green",
+        taper: (0.0, 0.0)), size: (scale: 0.25), duration: 100.0, priority: Critical)]),
+    "ground_strip": (class: Major, event: Line, layers: [(block: Ribbon(texture: "solid",
+        ramp: "green", orient: Ground, taper: (0.0, 0.0)), size: (scale: 0.25), duration: 100.0,
+        priority: Critical)]),
+    "warp": (class: Major, event: Point, layers: [(block: Distortion(noise: "grain",
+        strength: 0.25), size: (scale: 1.5), duration: 100.0, priority: Critical)])
 "#;
 
 /// One capture: its camera, scene and effects.
@@ -115,9 +147,12 @@ enum Shot {
     Mix,
     Bubble,
     BubbleHidden,
+    Ribbon,
+    Warp,
+    WarpControl,
 }
 
-const SHOTS: [Shot; 8] = [
+const SHOTS: [Shot; 11] = [
     Shot::Soft,
     Shot::Hard,
     Shot::Decal,
@@ -126,6 +161,9 @@ const SHOTS: [Shot; 8] = [
     Shot::Mix,
     Shot::Bubble,
     Shot::BubbleHidden,
+    Shot::Ribbon,
+    Shot::Warp,
+    Shot::WarpControl,
 ];
 
 impl Shot {
@@ -139,6 +177,9 @@ impl Shot {
             Self::Mix => "mix",
             Self::Bubble => "bubble",
             Self::BubbleHidden => "bubble_hidden",
+            Self::Ribbon => "ribbon",
+            Self::Warp => "warp",
+            Self::WarpControl => "warp_control",
         }
     }
 
@@ -151,7 +192,9 @@ impl Shot {
             Self::Decal | Self::WallOnly => {
                 Transform::from_xyz(0.0, 6.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y)
             }
-            Self::Ring => Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+            Self::Ring | Self::Ribbon | Self::Warp | Self::WarpControl => {
+                Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z)
+            }
             Self::Mix | Self::Bubble | Self::BubbleHidden => {
                 Transform::from_xyz(0.0, 0.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y)
             }
@@ -164,12 +207,18 @@ impl Shot {
             Self::Soft => &[("soft_card", [0.0, 0.5, 0.0])],
             Self::Hard => &[("hard_card", [0.0, 0.5, 0.0])],
             Self::Decal => &[("stain", [0.0, 0.0, 0.0])],
-            Self::WallOnly => &[],
+            Self::WallOnly | Self::WarpControl => &[],
             Self::Ring => &[("halo", [0.0, 0.0, 0.0])],
             Self::Mix => &[("cover", [-0.5, 0.0, 0.0]), ("glow", [0.5, 0.0, 0.5])],
             Self::Bubble | Self::BubbleHidden => {
                 &[("behind", [0.0, 0.0, -2.0]), ("front", [0.9, 0.0, 2.0])]
             }
+            Self::Ribbon => &[
+                ("strip", [0.0; 3]),
+                ("ground_strip", [0.0; 3]),
+                ("strip", [0.0; 3]),
+            ],
+            Self::Warp => &[("warp", [0.0; 3])],
         }
     }
 }
@@ -282,6 +331,29 @@ fn spawn_scene(
             Transform::from_xyz(0.0, 0.0, -3.0),
         ));
     }
+    if matches!(shot, Shot::Warp | Shot::WarpControl) {
+        // Alternating stripes across x, so a bend shows as a moved edge.
+        let light = unlit(
+            materials,
+            Color::linear_rgb(0.8, 0.8, 0.8),
+            AlphaMode::Opaque,
+        );
+        let dark = unlit(
+            materials,
+            Color::linear_rgb(0.05, 0.05, 0.3),
+            AlphaMode::Opaque,
+        );
+        let stripe = meshes.add(Cuboid::new(0.25, 0.02, 8.0));
+        for index in -16_i32..16 {
+            let material = if index % 2 == 0 { &light } else { &dark };
+            commands.spawn((
+                ShotEntity,
+                Mesh3d(stripe.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_xyz(index as f32 * 0.25 + 0.125, -0.01, 0.0),
+            ));
+        }
+    }
     if shot == Shot::Bubble {
         let material = unlit(
             materials,
@@ -296,18 +368,37 @@ fn spawn_scene(
     }
 }
 
+/// The `index`th ribbon line of [`RIBBON_LINES`], with the viewer's seen mask.
+fn ribbon_line(index: usize) -> WorldLine {
+    let (from, to, z) = RIBBON_LINES[index];
+    let mut line = WorldLine::whole(Vec3::new(from, 0.0, z), Vec3::new(to, 0.0, z));
+    if index == 2 {
+        line.seen = u64::MAX << RIBBON_FIRST_SEEN;
+    }
+    line
+}
+
 /// Spawns the effects of `shot`.
 fn spawn_effects(shot: Shot, catalog: &EffectCatalog, runtime: &mut EffectRuntime, now: f64) {
     runtime.clear();
-    for (name, anchor) in shot.effects() {
+    for (index, (name, anchor)) in shot.effects().iter().enumerate() {
         let effect = catalog
             .effect_id(name)
             .expect("the vocabulary defines every shot's effect");
+        let (anchor, bound, line) = if shot == Shot::Ribbon {
+            let line = ribbon_line(index);
+            let bound = BoundValues::default()
+                .with(Binding::LineLength, line.from.distance(line.to))
+                .with(Binding::LineSpacing, RIBBON_SPACING);
+            (line.from, bound, Some(line))
+        } else {
+            (Vec3::from_array(*anchor), BoundValues::default(), None)
+        };
         let request = SpawnRequest {
             effect,
-            anchor: Vec3::from_array(*anchor),
-            bound: BoundValues::default(),
-            line: None,
+            anchor,
+            bound,
+            line,
             delay: 0.0,
         };
         runtime
@@ -406,10 +497,11 @@ fn setup_camera(mut commands: Commands<'_, '_>) {
 fn child_app(directory: PathBuf) -> TestResult<App> {
     let root = ResolvedAssetsRoot::resolve()?;
     let manifest = effect_fixtures::write_fixture_set(&directory);
+    let noise = effect_fixtures::write_noise_set(&directory);
     let vocabulary = directory.join("effects.ron");
     std::fs::write(
         &vocabulary,
-        effect_fixtures::vocabulary(&manifest, "", EFFECTS, ""),
+        effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", EFFECTS),
     )?;
     let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
     window_backend.run_on_any_thread = true;
@@ -641,6 +733,104 @@ fn check_ring(directory: &Path) -> TestResult<String> {
     ))
 }
 
+/// Checks every ribbon's ends and width, and the partly seen ribbon's clip.
+fn check_ribbon(directory: &Path) -> TestResult<String> {
+    let capture = Capture::load(directory, Shot::Ribbon)?;
+    let camera = Shot::Ribbon.camera();
+    let mut report = Vec::with_capacity(RIBBON_LINES.len());
+    for (index, (from, to, z)) in RIBBON_LINES.into_iter().enumerate() {
+        // Lit pixels whose ground point lies within a unit of this line, across.
+        let (mut low, mut high, mut near, mut far, mut count) =
+            (f32::MAX, f32::MIN, f32::MAX, f32::MIN, 0_u32);
+        for (x, y, pixel) in capture.pixels() {
+            if pixel[1] < 128 {
+                continue;
+            }
+            let Some(point) = ground_hit(&camera, Vec2::new(x as f32 + 0.5, y as f32 + 0.5)) else {
+                continue;
+            };
+            if (point.z - z).abs() > 1.0 {
+                continue;
+            }
+            count += 1;
+            let pixel = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+            low = low.min(pixel.x);
+            high = high.max(pixel.x);
+            near = near.min(pixel.y);
+            far = far.max(pixel.y);
+        }
+        assert!(count > 200, "ribbon {index} lit only {count} px");
+        let line = ribbon_line(index);
+        let start_x = if index == 2 {
+            // Clipped half a spacing before the first seen point.
+            from + (RIBBON_FIRST_SEEN as f32 - 0.5) * RIBBON_SPACING
+        } else {
+            line.from.x
+        };
+        let start = project(&camera, Vec3::new(start_x, 0.0, z)).x;
+        let end = project(&camera, Vec3::new(to, 0.0, z)).x;
+        let width = project(&camera, Vec3::new(0.0, 0.0, z + RIBBON_HALF_WIDTH)).y
+            - project(&camera, Vec3::new(0.0, 0.0, z - RIBBON_HALF_WIDTH)).y;
+        // Pixel centres: the outermost lit centres lie up to half a pixel inside each edge.
+        let errors = [low - start, high - end, (far - near + 1.0) - width.abs()];
+        // Where the fog cuts the strip it fades in over the sprite shader's clip edge (0.1
+        // world units) from the cell edge on, never before it.
+        let fade_px = if index == 2 {
+            project(&camera, Vec3::new(start_x + RIBBON_CLIP_EDGE, 0.0, z)).x - start
+        } else {
+            0.0
+        };
+        assert!(
+            errors[0] >= -TOLERANCE_PX
+                && errors[0] <= TOLERANCE_PX + fade_px
+                && errors[1..].iter().all(|error| error.abs() <= TOLERANCE_PX),
+            "ribbon {index}: ends {low:.1}..{high:.1} px (line {start:.1}..{end:.1}), width {:.1} px (bound {:.1}); errors {errors:?}",
+            far - near + 1.0,
+            width.abs()
+        );
+        report.push(format!(
+            "ribbon {index}: start {:+.2} px, end {:+.2} px, width {:+.2} px",
+            errors[0], errors[1], errors[2]
+        ));
+    }
+    Ok(report.join("; "))
+}
+
+/// Checks that the distortion disc bends the stripes inside it and nothing outside it.
+fn check_warp(directory: &Path) -> TestResult<String> {
+    let warp = Capture::load(directory, Shot::Warp)?;
+    let control = Capture::load(directory, Shot::WarpControl)?;
+    let camera = Shot::Warp.camera();
+    let centre = project(&camera, Vec3::ZERO);
+    let radius_px = project(&camera, Vec3::new(WARP_RADIUS, 0.0, 0.0)).distance(centre);
+    let (mut inside, mut outside, mut worst_outside) = (0_usize, 0_usize, 0_i32);
+    for (x, y, pixel) in warp.pixels() {
+        let other = control.at(x, y);
+        let largest = (0..3)
+            .map(|channel| (pixel[channel] - other[channel]).abs())
+            .max()
+            .unwrap_or(0);
+        let distance = Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance(centre);
+        if distance > radius_px + TOLERANCE_PX {
+            worst_outside = worst_outside.max(largest);
+            outside += usize::from(largest > WARP_OUTSIDE_LEVELS);
+        } else if largest > 40 {
+            inside += 1;
+        }
+    }
+    assert!(
+        inside >= WARP_MIN_CHANGED,
+        "the disc bent only {inside} px of the stripes inside it"
+    );
+    assert_eq!(
+        outside, 0,
+        "{outside} px changed outside the disc (largest {worst_outside} levels)"
+    );
+    Ok(format!(
+        "distortion: {inside} px bent inside the disc (radius {radius_px:.1} px), none outside (largest {worst_outside} levels)"
+    ))
+}
+
 /// Checks that additive and alpha cards mix in one premultiplied pass.
 fn check_mix(directory: &Path) -> TestResult<String> {
     let capture = Capture::load(directory, Shot::Mix)?;
@@ -734,6 +924,8 @@ fn effect_blocks_render_on_the_gpu() -> TestResult {
         check_ring(directory.path())?,
         check_mix(directory.path())?,
         check_bubble(directory.path())?,
+        check_ribbon(directory.path())?,
+        check_warp(directory.path())?,
     ];
     eprintln!(
         "effect GPU statistics on {driver:?}:\n  {}",

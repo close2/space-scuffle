@@ -1,5 +1,6 @@
-//! The instanced effect renderer: retained GPU buffers, two pipelines and per-run draws in the
-//! transparent phase (plan §5.1, §5.6 "Sort and blend").
+//! The instanced effect renderer: retained GPU buffers, three pipelines, per-run draws in the
+//! transparent phase and one distortion draw in the transmissive phase (plan §5.1, §5.6 "Sort
+//! and blend").
 //!
 //! # Responsibility
 //! - **Buffers.** One storage buffer of [`SpriteInstance`] (sprites, rings and particles) and
@@ -14,6 +15,12 @@
 //!   depth test against the opaque depth, no depth write, soft depth against the depth
 //!   prepass. Decals: a box per instance drawn by its back faces with no depth test, the
 //!   ground point reconstructed from the depth prepass and tested against the box.
+//!   Distortion (WP7): a camera- or ground-oriented disc per instance that samples the view's
+//!   transmission texture (Bevy's copy of the opaque scene, made before the transmissive
+//!   phase) at an offset from scrolling noise and blends it over the scene inside a soft disc;
+//!   queued as one `Transmissive3d` item, which also makes Bevy prepare and copy that texture
+//!   for the frame (only when the camera's `screen_space_specular_transmission_steps` is
+//!   above 0, Bevy's default 1).
 //!
 //! # Ordering against bubbles and other transparent items
 //! Unit bubbles are `AlphaMode::Blend` and write no depth, so neither the depth test nor the
@@ -39,7 +46,9 @@ use super::catalog::EffectCatalog;
 use super::curve::RAMP_TEXELS;
 use super::instances::{DecalInstance, SpriteInstance};
 use super::runtime::EffectRuntime;
-use bevy::core_pipeline::core_3d::{Transparent3d, CORE_3D_DEPTH_FORMAT};
+use bevy::core_pipeline::core_3d::{
+    Transmissive3d, Transparent3d, ViewTransmissionTexture, CORE_3D_DEPTH_FORMAT,
+};
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::ecs::query::ROQueryItem;
 use bevy::ecs::system::lifetimeless::{Read, SRes};
@@ -80,6 +89,8 @@ const DECAL_VERTICES: u32 = 36;
 const CARD_SHADER: &str = "shaders/effects/sprite.wgsl";
 /// Shader of the decals.
 const DECAL_SHADER: &str = "shaders/effects/decal.wgsl";
+/// Distortion shader, below the assets root.
+const DISTORTION_SHADER: &str = "shaders/effects/distortion.wgsl";
 /// Shared import of both.
 const COMMON_SHADER: &str = "shaders/effects/common.wgsl";
 
@@ -99,6 +110,7 @@ impl Plugin for EffectRenderPlugin {
             .init_resource::<SpecializedRenderPipelines<EffectPipeline>>()
             .init_resource::<EffectRuns>()
             .add_render_command::<Transparent3d, DrawEffects>()
+            .add_render_command::<Transmissive3d, DrawEffects>()
             .add_systems(ExtractSchedule, extract_effects)
             .add_systems(
                 Render,
@@ -106,6 +118,9 @@ impl Plugin for EffectRenderPlugin {
                     queue_effects
                         .in_set(RenderSet::PhaseSort)
                         .before(sort_phase_system::<Transparent3d>),
+                    queue_distortions
+                        .in_set(RenderSet::PhaseSort)
+                        .before(sort_phase_system::<Transmissive3d>),
                     prepare_effect_view_bind_groups.in_set(RenderSet::PrepareBindGroups),
                 ),
             );
@@ -121,7 +136,7 @@ impl Plugin for EffectRenderPlugin {
             .map(|index| {
                 world
                     .spawn(EffectRunSlot {
-                        decal: false,
+                        kind: RunKind::Cards,
                         index: u32::try_from(index).unwrap_or(u32::MAX),
                     })
                     .id()
@@ -129,21 +144,42 @@ impl Plugin for EffectRenderPlugin {
             .collect();
         let decal = world
             .spawn(EffectRunSlot {
-                decal: true,
+                kind: RunKind::Decals,
                 index: 0,
             })
             .id();
-        world.insert_resource(EffectRunEntities { cards, decal });
+        let distortion = world
+            .spawn(EffectRunSlot {
+                kind: RunKind::Distortions,
+                index: 0,
+            })
+            .id();
+        world.insert_resource(EffectRunEntities {
+            cards,
+            decal,
+            distortion,
+        });
         let gpu = EffectGpu::new(world.resource::<RenderDevice>());
         world.insert_resource(gpu);
     }
 }
 
+/// Which block a phase item draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RunKind {
+    /// A run of cards.
+    Cards,
+    /// Every decal.
+    Decals,
+    /// Every distortion disc.
+    Distortions,
+}
+
 /// Which run a phase item draws.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 struct EffectRunSlot {
-    /// Whether it is the decal item.
-    decal: bool,
+    /// The block it draws.
+    kind: RunKind,
     /// Index of the card run.
     index: u32,
 }
@@ -155,6 +191,8 @@ struct EffectRunEntities {
     cards: Vec<Entity>,
     /// The decal item.
     decal: Entity,
+    /// The distortion item.
+    distortion: Entity,
 }
 
 /// This frame's instance ranges per run.
@@ -177,16 +215,22 @@ struct EffectGpu {
     cards: Option<Buffer>,
     /// Decal storage buffer.
     decals: Option<Buffer>,
+    /// Distortion storage buffer.
+    distortions: Option<Buffer>,
     /// Bind group of the card pipeline's resources.
     card_group: Option<BindGroup>,
     /// Bind group of the decal pipeline's resources.
     decal_group: Option<BindGroup>,
+    /// Bind group of the distortion pipeline's resources.
+    distortion_group: Option<BindGroup>,
     /// Shared sampler.
     sampler: Sampler,
     /// Cards to draw this frame.
     card_count: u32,
     /// Decals to draw this frame.
     decal_count: u32,
+    /// Distortion discs to draw this frame.
+    distortion_count: u32,
     /// Card centres in draw order (retained), for the runs.
     centers: Vec<Vec3>,
 }
@@ -198,8 +242,10 @@ impl EffectGpu {
             version: None,
             cards: None,
             decals: None,
+            distortions: None,
             card_group: None,
             decal_group: None,
+            distortion_group: None,
             sampler: device.create_sampler(&SamplerDescriptor {
                 label: Some("effect_sampler"),
                 mag_filter: bevy::render::render_resource::FilterMode::Linear,
@@ -213,6 +259,7 @@ impl EffectGpu {
             }),
             card_count: 0,
             decal_count: 0,
+            distortion_count: 0,
             centers: Vec::new(),
         }
     }
@@ -227,6 +274,7 @@ impl EffectGpu {
     ) {
         self.card_group = None;
         self.decal_group = None;
+        self.distortion_group = None;
         let budget = &catalog.budget;
         let card_capacity = u64::from(budget.sprites + budget.particles).max(1);
         let decal_capacity = u64::from(budget.decals).max(1);
@@ -245,6 +293,10 @@ impl EffectGpu {
         let decals = buffer(
             "effect_decals",
             decal_capacity * size_of::<DecalInstance>() as u64,
+        );
+        let distortions = buffer(
+            "effect_distortions",
+            u64::from(budget.distortions).max(1) * size_of::<SpriteInstance>() as u64,
         );
         self.centers = Vec::with_capacity(usize::try_from(card_capacity).unwrap_or(0));
         if let (Some(atlas), Some(ramps)) = (
@@ -265,9 +317,11 @@ impl EffectGpu {
             };
             self.card_group = Some(group(&cards));
             self.decal_group = Some(group(&decals));
+            self.distortion_group = Some(group(&distortions));
         }
         self.cards = Some(cards);
         self.decals = Some(decals);
+        self.distortions = Some(distortions);
     }
 }
 
@@ -366,6 +420,7 @@ fn extract_effects(
     let (Some(catalog), Some(version), Some(runtime)) = (&*catalog, &*version, &*runtime) else {
         gpu.card_count = 0;
         gpu.decal_count = 0;
+        gpu.distortion_count = 0;
         return;
     };
     if gpu.version != Some(version.0) {
@@ -376,6 +431,7 @@ fn extract_effects(
     let gpu = &mut *gpu;
     gpu.card_count = u32::try_from(frame.sorted.len()).unwrap_or(0);
     gpu.decal_count = u32::try_from(frame.decals.len()).unwrap_or(0);
+    gpu.distortion_count = u32::try_from(frame.distortions.len()).unwrap_or(0);
     if !runtime.is_changed() {
         return;
     }
@@ -384,6 +440,9 @@ fn extract_effects(
     }
     if let (Some(buffer), false) = (&gpu.decals, frame.decals.is_empty()) {
         queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.decals));
+    }
+    if let (Some(buffer), false) = (&gpu.distortions, frame.distortions.is_empty()) {
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.distortions));
     }
     gpu.centers.clear();
     gpu.centers.extend(
@@ -401,12 +460,16 @@ struct EffectPipeline {
     view_layout: BindGroupLayout,
     /// View group with a multisampled prepass depth.
     view_layout_msaa: BindGroupLayout,
+    /// View group of the distortion pipeline: uniforms, the transmission texture, a sampler.
+    distortion_view_layout: BindGroupLayout,
     /// Resource group: instances, atlas, sampler, ramps.
     resource_layout: BindGroupLayout,
     /// Card shader.
     card_shader: Handle<Shader>,
     /// Decal shader.
     decal_shader: Handle<Shader>,
+    /// Distortion shader.
+    distortion_shader: Handle<Shader>,
     /// The shared import, held so the composer keeps it.
     _common_shader: Handle<Shader>,
 }
@@ -430,6 +493,17 @@ impl FromWorld for EffectPipeline {
         let view_layout = device.create_bind_group_layout("effect_view", &view_entries(false));
         let view_layout_msaa =
             device.create_bind_group_layout("effect_view_msaa", &view_entries(true));
+        let distortion_view_layout = device.create_bind_group_layout(
+            "effect_distortion_view",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::VERTEX_FRAGMENT,
+                (
+                    uniform_buffer::<ViewUniform>(true),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                ),
+            ),
+        );
         let resource_layout = device.create_bind_group_layout(
             "effect_resources",
             &BindGroupLayoutEntries::sequential(
@@ -447,9 +521,11 @@ impl FromWorld for EffectPipeline {
         Self {
             view_layout,
             view_layout_msaa,
+            distortion_view_layout,
             resource_layout,
             card_shader: assets.load(CARD_SHADER),
             decal_shader: assets.load(DECAL_SHADER),
+            distortion_shader: assets.load(DISTORTION_SHADER),
             _common_shader: assets.load(COMMON_SHADER),
         }
     }
@@ -458,8 +534,8 @@ impl FromWorld for EffectPipeline {
 /// What a specialised effect pipeline depends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct EffectPipelineKey {
-    /// Decal pipeline rather than cards.
-    decal: bool,
+    /// The block the pipeline draws.
+    kind: RunKind,
     /// MSAA sample count of the view.
     samples: u32,
     /// Whether the view renders to an HDR target.
@@ -470,19 +546,20 @@ impl SpecializedRenderPipeline for EffectPipeline {
     type Key = EffectPipelineKey;
 
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
-        let shader = if key.decal {
-            self.decal_shader.clone()
-        } else {
-            self.card_shader.clone()
+        let decal = key.kind == RunKind::Decals;
+        let shader = match key.kind {
+            RunKind::Cards => self.card_shader.clone(),
+            RunKind::Decals => self.decal_shader.clone(),
+            RunKind::Distortions => self.distortion_shader.clone(),
         };
         let mut defs = Vec::new();
         if key.samples > 1 {
             defs.push("MULTISAMPLED".into());
         }
-        let view_layout = if key.samples > 1 {
-            self.view_layout_msaa.clone()
-        } else {
-            self.view_layout.clone()
+        let view_layout = match (key.kind, key.samples > 1) {
+            (RunKind::Distortions, _) => self.distortion_view_layout.clone(),
+            (_, true) => self.view_layout_msaa.clone(),
+            (_, false) => self.view_layout.clone(),
         };
         let premultiplied = BlendComponent {
             src_factor: BlendFactor::One,
@@ -490,11 +567,14 @@ impl SpecializedRenderPipeline for EffectPipeline {
             operation: BlendOperation::Add,
         };
         RenderPipelineDescriptor {
-            label: Some(if key.decal {
-                "effect_decals".into()
-            } else {
-                "effect_cards".into()
-            }),
+            label: Some(
+                match key.kind {
+                    RunKind::Cards => "effect_cards",
+                    RunKind::Decals => "effect_decals",
+                    RunKind::Distortions => "effect_distortions",
+                }
+                .into(),
+            ),
             layout: vec![view_layout, self.resource_layout.clone()],
             push_constant_ranges: Vec::new(),
             vertex: VertexState {
@@ -521,13 +601,13 @@ impl SpecializedRenderPipeline for EffectPipeline {
                 })],
             }),
             primitive: PrimitiveState {
-                cull_mode: key.decal.then_some(Face::Front),
+                cull_mode: decal.then_some(Face::Front),
                 ..default()
             },
             depth_stencil: Some(DepthStencilState {
                 format: CORE_3D_DEPTH_FORMAT,
                 depth_write_enabled: false,
-                depth_compare: if key.decal {
+                depth_compare: if decal {
                     CompareFunction::Always
                 } else {
                     CompareFunction::GreaterEqual
@@ -574,8 +654,8 @@ fn queue_effects(
     let Some(phase) = phases.get_mut(&view_entity) else {
         return;
     };
-    let key = |decal| EffectPipelineKey {
-        decal,
+    let key = |kind| EffectPipelineKey {
+        kind,
         samples: msaa.samples(),
         hdr: view.hdr,
     };
@@ -584,7 +664,7 @@ fn queue_effects(
         runs.decals = 0..gpu.decal_count;
         phase.add(Transparent3d {
             distance: f32::MIN,
-            pipeline: pipelines.specialize(&cache, &pipeline, key(true)),
+            pipeline: pipelines.specialize(&cache, &pipeline, key(RunKind::Decals)),
             entity: (entities.decal, placeholder),
             draw_function: draw,
             batch_range: 0..1,
@@ -594,7 +674,7 @@ fn queue_effects(
     if gpu.card_count == 0 || gpu.card_group.is_none() {
         return;
     }
-    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(false));
+    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(RunKind::Cards));
     let runs = &mut *runs;
     runs.others.clear();
     runs.others
@@ -628,6 +708,53 @@ fn queue_effects(
     }
 }
 
+/// Queues the distortion item into the transmissive phase of the first 3D view with a depth
+/// prepass (the view the cards are drawn in).
+#[expect(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    reason = "Bevy passes system parameters by value, each a separate declared dependency"
+)]
+fn queue_distortions(
+    draw_functions: Res<'_, DrawFunctions<Transmissive3d>>,
+    pipeline: Res<'_, EffectPipeline>,
+    mut pipelines: ResMut<'_, SpecializedRenderPipelines<EffectPipeline>>,
+    cache: Res<'_, PipelineCache>,
+    gpu: Res<'_, EffectGpu>,
+    entities: Option<Res<'_, EffectRunEntities>>,
+    mut phases: ResMut<'_, ViewSortedRenderPhases<Transmissive3d>>,
+    views: Query<'_, '_, (Entity, &ExtractedView, &Msaa, &ViewPrepassTextures)>,
+) {
+    let Some(entities) = entities else {
+        return;
+    };
+    if gpu.distortion_count == 0 || gpu.distortion_group.is_none() {
+        return;
+    }
+    let Some((view_entity, view, msaa, _)) = views
+        .iter()
+        .find(|(_, _, _, prepass)| prepass.depth.is_some())
+    else {
+        return;
+    };
+    let Some(phase) = phases.get_mut(&view_entity) else {
+        return;
+    };
+    let key = EffectPipelineKey {
+        kind: RunKind::Distortions,
+        samples: msaa.samples(),
+        hdr: view.hdr,
+    };
+    phase.add(Transmissive3d {
+        distance: f32::MAX,
+        pipeline: pipelines.specialize(&cache, &pipeline, key),
+        entity: (entities.distortion, MainEntity::from(Entity::PLACEHOLDER)),
+        draw_function: draw_functions.read().id::<DrawEffects>(),
+        batch_range: 0..1,
+        extra_index: PhaseItemExtraIndex::NONE,
+    });
+}
+
 /// Cuts cards at `distances` (ascending: back to front) into runs that no other item's
 /// distance in `others` (sorted ascending) falls inside; at most [`MAX_CARD_RUNS`] runs, the
 /// last taking the rest. Writes the instance ranges into `runs`.
@@ -653,6 +780,10 @@ fn cut_runs(distances: impl Iterator<Item = f32>, others: &[f32], runs: &mut Vec
 #[derive(Component)]
 struct EffectViewBindGroup(BindGroup);
 
+/// The per-view bind group of the distortion pipeline.
+#[derive(Component)]
+struct EffectDistortionViewBindGroup(BindGroup);
+
 /// Builds each view's group from its uniforms and prepass depth.
 #[expect(
     clippy::needless_pass_by_value,
@@ -664,15 +795,39 @@ fn prepare_effect_view_bind_groups(
     device: Res<'_, RenderDevice>,
     uniforms: Res<'_, ViewUniforms>,
     gpu: Res<'_, EffectGpu>,
-    views: Query<'_, '_, (Entity, &Msaa, &ViewPrepassTextures), With<ExtractedView>>,
+    views: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &Msaa,
+            &ViewPrepassTextures,
+            Option<&ViewTransmissionTexture>,
+        ),
+        With<ExtractedView>,
+    >,
 ) {
-    if gpu.card_count == 0 && gpu.decal_count == 0 {
+    if gpu.card_count == 0 && gpu.decal_count == 0 && gpu.distortion_count == 0 {
         return;
     }
     let Some(binding) = uniforms.uniforms.binding() else {
         return;
     };
-    for (entity, msaa, prepass) in &views {
+    for (entity, msaa, prepass, transmission) in &views {
+        if let Some(transmission) = transmission {
+            let group = device.create_bind_group(
+                "effect_distortion_view",
+                &pipeline.distortion_view_layout,
+                &BindGroupEntries::sequential((
+                    binding.clone(),
+                    &transmission.view,
+                    &transmission.sampler,
+                )),
+            );
+            commands
+                .entity(entity)
+                .insert(EffectDistortionViewBindGroup(group));
+        }
         let Some(depth) = prepass.depth_view() else {
             continue;
         };
@@ -698,29 +853,40 @@ struct SetEffectBindGroups;
 
 impl<P: PhaseItem> RenderCommand<P> for SetEffectBindGroups {
     type Param = SRes<EffectGpu>;
-    type ViewQuery = (Read<ViewUniformOffset>, Option<Read<EffectViewBindGroup>>);
+    type ViewQuery = (
+        Read<ViewUniformOffset>,
+        Option<Read<EffectViewBindGroup>>,
+        Option<Read<EffectDistortionViewBindGroup>>,
+    );
     type ItemQuery = Read<EffectRunSlot>;
 
     fn render<'w>(
         _item: &P,
-        (offset, view_group): ROQueryItem<'w, Self::ViewQuery>,
+        (offset, view_group, distortion_group): ROQueryItem<'w, Self::ViewQuery>,
         slot: Option<ROQueryItem<'w, Self::ItemQuery>>,
         gpu: SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let (Some(view_group), Some(slot)) = (view_group, slot) else {
+        let Some(slot) = slot else {
+            return RenderCommandResult::Skip;
+        };
+        let view_group = match slot.kind {
+            RunKind::Distortions => distortion_group.map(|group| &group.0),
+            RunKind::Cards | RunKind::Decals => view_group.map(|group| &group.0),
+        };
+        let Some(view_group) = view_group else {
             return RenderCommandResult::Skip;
         };
         let gpu = gpu.into_inner();
-        let group = if slot.decal {
-            &gpu.decal_group
-        } else {
-            &gpu.card_group
+        let group = match slot.kind {
+            RunKind::Cards => &gpu.card_group,
+            RunKind::Decals => &gpu.decal_group,
+            RunKind::Distortions => &gpu.distortion_group,
         };
         let Some(group) = group else {
             return RenderCommandResult::Skip;
         };
-        pass.set_bind_group(0, &view_group.0, &[offset.offset]);
+        pass.set_bind_group(0, view_group, &[offset.offset]);
         pass.set_bind_group(1, group, &[]);
         RenderCommandResult::Success
     }
@@ -730,7 +896,7 @@ impl<P: PhaseItem> RenderCommand<P> for SetEffectBindGroups {
 struct DrawEffectRun;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawEffectRun {
-    type Param = SRes<EffectRuns>;
+    type Param = (SRes<EffectRuns>, SRes<EffectGpu>);
     type ViewQuery = ();
     type ItemQuery = Read<EffectRunSlot>;
 
@@ -738,19 +904,24 @@ impl<P: PhaseItem> RenderCommand<P> for DrawEffectRun {
         _item: &P,
         (): ROQueryItem<'w, Self::ViewQuery>,
         slot: Option<ROQueryItem<'w, Self::ItemQuery>>,
-        runs: SystemParamItem<'w, '_, Self::Param>,
+        (runs, gpu): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let Some(slot) = slot else {
             return RenderCommandResult::Skip;
         };
         let runs = runs.into_inner();
-        if slot.decal {
-            pass.draw(0..DECAL_VERTICES, runs.decals.clone());
-        } else if let Some(range) = runs.cards.get(slot.index as usize) {
-            pass.draw(0..CARD_VERTICES, range.clone());
-        } else {
-            return RenderCommandResult::Skip;
+        match slot.kind {
+            RunKind::Decals => pass.draw(0..DECAL_VERTICES, runs.decals.clone()),
+            RunKind::Distortions => {
+                pass.draw(0..CARD_VERTICES, 0..gpu.into_inner().distortion_count);
+            }
+            RunKind::Cards => {
+                let Some(range) = runs.cards.get(slot.index as usize) else {
+                    return RenderCommandResult::Skip;
+                };
+                pass.draw(0..CARD_VERTICES, range.clone());
+            }
         }
         RenderCommandResult::Success
     }
