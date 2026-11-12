@@ -14,7 +14,7 @@
 // The production scenario path places a player's units on rings 1 to 3 around its 5x5 town hall
 // (96 cells) and continues on rings 4, 5, ... when those are full, so 200 units fill rings 1 to 5,
 // a 15x15 block around each hall. Owner's answer to Q0018, option (b):
-// docs/questions/open/0018-frame-budget-army-layout.md, and the plan
+// docs/questions/closed/0018-frame-budget-army-layout.md, and the plan
 // docs/plans/2026-11-11-scenario-outer-rings.md. Until 2026-11-11 the scenarios used eight players
 // of 0, 25 and 50 units on a circle; those figures stay in docs/evidence/2026-11-03-frame-budget.md.
 (

@@ -1011,7 +1011,7 @@ These are single runs at low load, not the figures of record; WP6 measures those
 
 - [Q0015](../questions/closed/0015-client-frame-time-target.md): the frame-time target. Default: measure and publish
   only.
-- [Q0018](../questions/open/0018-frame-budget-army-layout.md): the army layout of the scenarios. Default (a), eight
+- [Q0018](../questions/closed/0018-frame-budget-army-layout.md): the army layout of the scenarios. Default (a), eight
   players on a circle.
   **Answered 2026-11-03:** (a) now, and (b) as a to-do. **Follow-up (not started, no plan yet):** let
   `sim_core::scenario::build_world_with_catalogs` keep placing a player's starting units on rings 4, 5, … around its

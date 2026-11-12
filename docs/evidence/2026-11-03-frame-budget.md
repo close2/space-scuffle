@@ -1,5 +1,10 @@
 # Frame budget at 0, 200 and 400 units on the RX 580 (exits WP6)
 
+> **Superseded as the figures of record (2026-11-12).** The frame budget of record is now the two-army series in
+> [`2026-11-12-frame-budget-two-armies.md`](2026-11-12-frame-budget-two-armies.md), measured after the scenario
+> builder learned to place 100 and 200 units per player (Q0018, option (b)). The tables below are history: a
+> different scene (eight armies on a circle) and an earlier client.
+
 This is the evidence for WP6 of `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, which records the third exit
 criterion of remediation Phase 6: "frame budget measured at 200 and 400 units". It changes no code. The tool is
 `frame_budget` in `crates/client_diagnostics` (WP5, WP5b). Its design is decision D-4 of that plan.
@@ -64,7 +69,7 @@ second reference lines (16.7 ms and 33.3 ms).
   [Q0019](../questions/closed/0019-frame-budget-display-path.md). Every report records the path, and the
   tool refuses an environment that contradicts it (WP5b).
 - **Scenarios:** the eight-player arena of `crates/client_diagnostics/data/frame_budget.ron`, as
-  option (a) of [Q0018](../questions/open/0018-frame-budget-army-layout.md), chosen by the owner, describes: a
+  option (a) of [Q0018](../questions/closed/0018-frame-budget-army-layout.md), chosen by the owner, describes: a
   flat 128×128 map, eight town halls on a circle, 0, 25 or 50 units per player (0, 200 or 400 in all), each
   player attack-moving to the opposite start. Warm-up is 180 frames after media and map presentation are ready. Measurement covers 1,500
   simulation ticks (60 s of game time). The combat window runs from the first frame with a combat event for 750

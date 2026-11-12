@@ -40,3 +40,19 @@ after that plan lands.
 Owner (2026-11-03): Option a for now (eight players on a circle for 0, 200 and 400 units), option b as todo (allow the scenario builder to continue placing units on rings 4+ for two-army battles).
 
 Owner update (2026-11-11): **Build Option (b) now (not as a deferred todo) and close Q0018.** Let the scenario builder (`sim_core::scenario::build_world_with_catalogs`) continue placing units on rings 4, 5, … around the town hall so two armies of 100 and 200 units can load (preserving existing placement on rings 1–3 so existing scenario checksums do not change), rerun the 200- and 400-unit frame-budget measurements with two armies, and move Q0018 to `closed/`.
+
+## Resolution
+
+2026-11-12. Option (b) is built and measured, as the owner's update of 2026-11-11 asked; plan
+`docs/plans/2026-11-11-scenario-outer-rings.md`.
+
+- **Scenario builder (WP1, `5085308`, merged in `c05b766`):** a player's starting units fill rings 1 to 3 around its
+  town hall exactly as before, then continue on rings 4, 5, … inside the hall's ground region, outside other starts'
+  inner zones and off resource and watchtower cells; a loadout the region cannot hold is a typed error. Every
+  shipped scenario's checksum is unchanged (the table is in `5085308`'s message).
+- **Frame-budget spec (WP2, `b0d373b`; Amendment 2, `0eb6fbf`):** two players of 0, 100 and 200 units on the same
+  flat arena. Sent to each other's start, one army won and destroyed the other hall before the 1,500-tick window
+  ended, so both armies now attack-move to the arena centre (`target_cell`).
+- **Measurement (WP3):** fifteen accepted runs on the RX 580 through headless KWin at `0eb6fbf`; median frame
+  interval p50/p95/p99 7.1/8.3/9.2 ms at 0 units, 9.2/13.4/15.2 ms at 200 and 11.8/19.1/22.5 ms at 400
+  (`docs/evidence/2026-11-12-frame-budget-two-armies.md`, `DESIGN.md` §5).

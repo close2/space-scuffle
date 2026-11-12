@@ -24,10 +24,12 @@
 //! through the GPU harness (`crates/client_diagnostics/tests/frame_budget_tests.rs`); the real
 //! measurement runs on the RX 580 (WP6).
 //!
-//! The scenarios have two players, opposite each other, with 0, 100 or 200 units each. The
+//! The scenarios have two players, opposite each other, with 0, 100 or 200 units each, both
+//! attack-moving to the arena's centre (a player's `target_cell`) so that no town hall falls and
+//! the match lasts the measured window (the plan's Amendment 2). The
 //! production placement fills rings 1 to 3 around a 5×5 town hall (96 units) and continues on
 //! rings 4, 5, … (`docs/plans/2026-11-11-scenario-outer-rings.md`, the owner's answer to
-//! `docs/questions/open/0018-frame-budget-army-layout.md`, option (b)); until then they had eight
+//! `docs/questions/closed/0018-frame-budget-army-layout.md`, option (b)); until then they had eight
 //! players with 0, 25 or 50 units each.
 //!
 //! # Invariants

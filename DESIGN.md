@@ -257,33 +257,37 @@ layout (branch prediction), not a regression in the simulation
 ([`docs/evidence/2026-11-03-throughput-history.md`](docs/evidence/2026-11-03-throughput-history.md)).
 
 **Frame budget.** `frame_budget` (`crates/client_diagnostics`) runs the real client on a flat 128×128 arena where
-eight players attack-move across a circle with 0, 25 or 50 units each (Q0018, option (a), chosen by the owner). It measures 1,500 ticks
-(60 s of game time) after a warm-up. Measured on 2026-11-03 at `c918aa9` on the RX 580 through a headless KWin
-compositor, with hardware present, 1280×720 and vsync off, and no monitor (the owner's choice, Q0019). Release build, 16
-dedicated cores, load average 1.6 to 3.9 (one run of the 0 scenario at 8.5). Each figure is the median of five
+two players with 0, 100 or 200 units each attack-move to the arena's centre (Q0018, option (b), chosen by the owner;
+plan `2026-11-11-scenario-outer-rings`). It measures 1,500 ticks (60 s of game time) after a warm-up. Measured on
+2026-11-12 at `0eb6fbf` on the RX 580 through a headless KWin compositor, with hardware present, 1280×720 and vsync
+off, and no monitor (the owner's choice, Q0019). Release build, the 16 CPUs of this user's slice, each run started
+with them under 15 % busy and kept only if they stayed under 20 % busy during it. Each figure is the median of five
 interleaved runs, in ms:
 
 | Units | Frame interval p50 | p95 | p99 | max | Main update p50 | Simulation p50 |
 |---:|---:|---:|---:|---:|---:|---:|
-| 0 | 12.3 | 15.2 | 16.6 | 22.6 | 10.8 | 0.07 |
-| 200 | 15.6 | 19.0 | 20.6 | 44.7 | 13.9 | 0.09 |
-| 400 | 16.3 | 20.9 | 23.6 | 68.7 | 14.1 | 0.10 |
+| 0 | 7.1 | 8.3 | 9.2 | 23.6 | 4.4 | 0.04 |
+| 200 | 9.2 | 13.4 | 15.2 | 27.7 | 7.3 | 0.10 |
+| 400 | 11.8 | 19.1 | 22.5 | 50.7 | 9.3 | 0.15 |
 
-Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. The maximum at 200 and
-400 units is the single frame of the first tick. The client is CPU-bound in the main world: a quarter of the pixels
-changes the 400 median by 3 %, and the GPU passes Bevy times add up to 3.6 ms. Commands, every run, the attribution
-runs and why Xvfb's figures are not the game's are in
-[`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md).
+Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. At 400 units the median
+is under 16.7 ms and p95 and p99 are over it, set by the fight: in its 750-tick combat window p95 and p99 are 20.3
+and 23.5 ms, and after it 14.3 and 15.4 ms. Commands, every run, the runs repeated because another agent loaded
+the slice, and the windows of the fight are in
+[`docs/evidence/2026-11-12-frame-budget-two-armies.md`](docs/evidence/2026-11-12-frame-budget-two-armies.md).
 
-**Since that measurement.** The table above is the figure of record at `c918aa9`; it has not been re-measured with
-the five-run protocol. At `c918aa9` the largest cost was the smog solver, about 8.2 ms of every frame at any unit
-count (finding C-18). Plan `2026-11-04-open-findings-c17-c18-p9-gaps` pooled the combat-effect materials (C-17,
-`690be35`) and made the solver skip resting bricks and bring a still field to rest (C-18, WP7 to WP9, last
-`3f3ab76`). An A/B against the plan's base `e85f79f`, on the RX 580 through headless KWin, medians of three
-interleaved runs at 400 units: frame interval p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms, main update p50
-14.97 → 9.82 ms. The solver's own cost per frame (`perf`) fell from 5.0 to 0.3 ms at 0 units and from 7.8 to 6.1 ms
-at 400 units. The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly fixed and a lower
-fixed smog rate or a worker thread is left for a later plan. These runs are attribution, not figures of record:
+**History.** The figures of record before were the eight-player arena (eight armies of 0, 25 or 50 units on a
+circle) at `c918aa9` on 2026-11-03: 12.3, 15.6 and 16.3 ms median at 0, 200 and 400 units
+([`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md)). They are not like for
+like with the table above: a different scene, and a client before the C-17 and C-18 work. At `c918aa9` the
+largest cost was the smog solver, about 8.2 ms of every frame at any unit count (finding C-18). Plan
+`2026-11-04-open-findings-c17-c18-p9-gaps` pooled the combat-effect materials (C-17, `690be35`) and made the solver
+skip resting bricks and bring a still field to rest (C-18, WP7 to WP9, last `3f3ab76`); both lie inside the
+measured commit. An A/B against that plan's base `e85f79f`, medians of three interleaved runs at 400 units in the
+eight-player arena: frame interval p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms, main update p50 14.97 → 9.82 ms.
+The solver's own cost per frame (`perf`) fell from 5.0 to 0.3 ms at 0 units and from 7.8 to 6.1 ms at 400 units.
+The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly fixed and a lower fixed smog rate or
+a worker thread is left for a later plan:
 [`docs/evidence/2026-11-04-c18-smog-solver.md`](docs/evidence/2026-11-04-c18-smog-solver.md) §7 and §8, and
 [`docs/evidence/2026-11-03-c17-combat-fx-pool.md`](docs/evidence/2026-11-03-c17-combat-fx-pool.md).
 

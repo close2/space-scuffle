@@ -1,6 +1,6 @@
 # Blueprint: Starting Units on Outer Rings, and the Two-Army Frame Budget (Q0018 option (b))
 
-The owner's update to [Q0018](../questions/open/0018-frame-budget-army-layout.md) (2026-11-11) asks for option (b)
+The owner's update to [Q0018](../questions/closed/0018-frame-budget-army-layout.md) (2026-11-11) asks for option (b)
 now. The scenario builder continues placing a player's starting units on rings 4, 5, … around its town hall when
 rings 1 to 3 are full, so two armies of 100 and 200 units can load. Placement on rings 1 to 3 stays exactly as it
 is, so no existing scenario's checksum changes. The 200- and 400-unit frame budget is then measured again with two
@@ -13,11 +13,14 @@ requires a full plan. It does not move battle outcomes or golden replays (§4).
 `959ce4c`. Line numbers drift, so search for the quoted symbol. Claims not confirmed while planning are marked
 **verify**.
 
+**Status: Done (2026-11-12).** WP1 `5085308` and WP2 `b0d373b` merged in `c05b766`; Amendment 2 `0eb6fbf`; WP3's
+measurement and documents are recorded in Amendment 3. Q0018 is closed.
+
 **Questions.**
 
 | Question | State | Where in this plan |
 |---|---|---|
-| Q0018: how the frame-budget scenarios field 200 and 400 units | Answered 2026-11-11: option (b), now | Whole plan; closed by WP3 |
+| Q0018: how the frame-budget scenarios field 200 and 400 units | Answered 2026-11-11: option (b), now; closed 2026-11-12 | Whole plan; closed by WP3 |
 | Q0015: frame budget is measured and published against 16.7 and 33.3 ms, no pass or fail | Standing | §7 |
 | Q0019: the display path of record is headless KWin (`kwin-virtual`) | Standing | §7 |
 | Q0051 (charter §8): mechanics follow StarCraft II | Not engaged: §3.6 | §3.6 |
@@ -442,3 +445,22 @@ combat inside the combat window. The lavapipe smoke run of `400` still passes th
 **Measurement.** WP3 reruns all fifteen runs from scratch under §7. The runs wait until CPUs 32–47 (this user's
 slice) are under 15 % busy for 5 s, and the evidence records that figure and the machine load per run, because the
 machine-wide load includes another user's builds on CPUs 0–31. A run with a single stall above 1 s is repeated.
+
+## Amendment 3 (WP3, 2026-11-12): the measurement and what it recorded
+
+- **Measured commit:** `0eb6fbf` on branch `outer-rings-wp3` (`main` at `c05b766` plus Amendment 2), not `main`
+  itself as §7 step 1 says, because Amendment 2's change had to be measured before it merged. The branch merges
+  with this record.
+- **Runs:** twenty-four locked runs, all passing the tool's own checks. Fifteen are the record: 01, 02, 03, 05, 06,
+  07, 08, 09, 10, 12, 13 and 21 to 24. Run 04 had a 1,516 ms first frame; runs 11 and 14 to 20 ran while another
+  agent's GPU tests held 21 to 65 % of CPUs 32 to 47. Runs 21 to 24 replace 04, 11, 14 and 15. The machine-wide
+  load average (19 to 48, the other user's builds on CPUs 0 to 31) is recorded but is not the acceptance measure.
+- **Figures of record** (medians of five, ms): frame interval p50, p95, p99 and max 7.1, 8.3, 9.2, 23.6 at 0 units;
+  9.2, 13.4, 15.2, 27.7 at 200; 11.8, 19.1, 22.5, 50.7 at 400. Every run had 100 % of units in view with the camera
+  unchanged (§6). Statistics recomputed from the rows match the tool's summaries to 0.01 ms.
+- **Documents:** the evidence is `docs/evidence/2026-11-12-frame-budget-two-armies.md`, dated by the day of the
+  measurement rather than the `2026-11-11` name of §8, with the screenshot `2026-11-12-frame-budget-two-armies-400.jpg`
+  (tick 285, in contact). `DESIGN.md` §5 carries the new table, and the 2026-11-03 figures and the C-17 and C-18
+  paragraph as history. `DESIGN.md` §3 and §4 do not describe scenario placement, so §8's **verify** needs no
+  change there. The 2026-11-03 evidence has a note under its title. Q0018 has its resolution and is in `closed/`,
+  and every link to it points there.
