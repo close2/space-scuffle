@@ -25,6 +25,11 @@
 //! starts (and, if it is pinned, ends) on the mode's picture; the leave morph starts on the
 //! mode's picture and ends on the default Idle picture.
 //!
+//! A mode whose pose leaves the default frame (raised barrels) has a [`Reframe`]: its morphs
+//! start and end on the Idle picture shrunk with a margin of backdrop
+//! ([`ModeAtlasId::reframed_idle_picture`], `reframe-mode-picture`), and its bake crops the
+//! clips back to the default atlas's scale ([`crate::BakeFraming::ReframedLetterbox`]).
+//!
 //! # Invariants
 //! - Nothing here names a unit or a mode: slugs and mode names come from the catalog and the
 //!   style file at run time (charter §3.3).
@@ -77,6 +82,14 @@ impl ModeAtlasId<'_> {
     #[must_use]
     pub fn picture(&self, keyframes_dir: &Path) -> PathBuf {
         keyframes_dir.join(format!("{}.png", self.atlas_name()))
+    }
+
+    /// The unit's Idle picture reframed for the mode's clips in `keyframes_dir`,
+    /// `<slug>-<mode>_reframed_idle.png` ([`Reframe`]): where a reframed mode's enter morph
+    /// starts and its leave morph ends.
+    #[must_use]
+    pub fn reframed_idle_picture(&self, keyframes_dir: &Path) -> PathBuf {
+        keyframes_dir.join(format!("{}_reframed_idle.png", self.atlas_name()))
     }
 }
 
@@ -173,9 +186,75 @@ pub struct ModeMediaSpec {
     /// and only a looping one may have a seam.
     #[serde(default)]
     pub loops: BTreeMap<AnimState, LoopSpec>,
+    /// Room around the unit for the mode's clips, when the mode's pose leaves the default
+    /// frame (a sieged cannon's raised barrels). `None` (the default): the clips start on the
+    /// unit's Idle picture itself and bake with the unit's framing.
+    #[serde(default)]
+    pub reframe: Option<Reframe>,
+}
+
+/// A mode's reframe (`modes.<slug>.<mode>.reframe` in `media_style.ron`): its clips start on
+/// the unit's Idle picture shrunk about its centre ([`crate::framing::reframe_picture`], saved
+/// as [`ModeAtlasId::reframed_idle_picture`]) and are baked with
+/// [`crate::BakeFraming::ReframedLetterbox`], which crops them back to the default atlas's
+/// scale and place and keeps the margin above and below the unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reframe {
+    /// The scale of the unit in the reframed picture, in thousandths, from
+    /// [`crate::framing::MIN_REFRAME_PERMILLE`] to [`crate::framing::MAX_REFRAME_PERMILLE`].
+    pub scale_permille: u32,
+    /// Width of the blend from the shrunk picture into its margin, in thousandths of the
+    /// picture's height, at most [`crate::framing::MAX_FEATHER_PERMILLE`]. It shapes only the
+    /// start picture; the bake's bar feather is the unit's letterbox feather.
+    pub picture_feather_permille: u32,
+}
+
+impl Reframe {
+    /// Why this reframe is invalid, or `None` when it is in range.
+    #[must_use]
+    pub fn issue(&self) -> Option<String> {
+        use crate::framing::{MAX_FEATHER_PERMILLE, MAX_REFRAME_PERMILLE, MIN_REFRAME_PERMILLE};
+        if !(MIN_REFRAME_PERMILLE..=MAX_REFRAME_PERMILLE).contains(&self.scale_permille) {
+            return Some(format!(
+                "reframe scale_permille {} is outside {MIN_REFRAME_PERMILLE} to {MAX_REFRAME_PERMILLE}",
+                self.scale_permille
+            ));
+        }
+        (self.picture_feather_permille > MAX_FEATHER_PERMILLE).then(|| {
+            format!(
+                "reframe picture_feather_permille {} is wider than {MAX_FEATHER_PERMILLE}",
+                self.picture_feather_permille
+            )
+        })
+    }
 }
 
 impl ModeMediaSpec {
+    /// The framing the mode's clips are baked with: `unit_framing` (the unit's own, from the
+    /// `framing` policy), reframed when the spec has a [`Reframe`].
+    ///
+    /// # Errors
+    /// [`BakerError::DataFile`] naming `path` when the spec reframes a unit whose framing is a
+    /// centre crop, which would cut the margin the reframe makes.
+    pub fn bake_framing(
+        &self,
+        unit_framing: crate::BakeFraming,
+        path: &Path,
+    ) -> Result<crate::BakeFraming, BakerError> {
+        let Some(reframe) = self.reframe else {
+            return Ok(unit_framing);
+        };
+        unit_framing
+            .reframed(reframe.scale_permille)
+            .ok_or_else(|| BakerError::DataFile {
+                path: path.to_path_buf(),
+                reason: format!(
+                    "modes: a reframe needs a letterboxed unit, and this unit's framing is {unit_framing}"
+                ),
+            })
+    }
+
     /// The action text of `slot`, if the spec has one.
     #[must_use]
     pub fn text(&self, slot: SliceKey) -> Option<&str> {
@@ -242,8 +321,8 @@ impl ModeStyle {
     /// [`BakerError::DataFile`] naming the first problem: a slug the catalog does not hold
     /// exactly, a mode the unit does not have, a state the mode needs without a text or a text
     /// for a state the mode never shows, an empty text, a loop treatment for a state the mode
-    /// does not show, a seam on a state that does not loop, or a cross-fade longer than
-    /// [`MAX_CROSSFADE_FRAMES`] or a quarter of the slice's frame budget.
+    /// does not show, a seam on a state that does not loop, a cross-fade longer than
+    /// [`MAX_CROSSFADE_FRAMES`] or a quarter of the slice's frame budget, or a reframe out of range.
     pub fn check(&self, catalog: &UnitCatalog, path: &Path) -> Result<(), BakerError> {
         let invalid = |reason: String| BakerError::DataFile {
             path: path.to_path_buf(),
@@ -279,6 +358,9 @@ impl ModeStyle {
             {
                 return Err(invalid(format!("modes: {label} look is empty")));
             }
+            if let Some(issue) = spec.reframe.as_ref().and_then(Reframe::issue) {
+                return Err(invalid(format!("modes: {label} {issue}")));
+            }
             if let Some(state) = spec
                 .texts
                 .keys()
@@ -312,6 +394,30 @@ impl ModeStyle {
                         seam.crossfade_frames
                     )));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks that every reframed mode's unit is letterboxed under `framing`, the `framing`
+    /// section of the style loaded from `path` ([`ModeMediaSpec::bake_framing`]). The mode-media
+    /// commands run it after loading, so no clip is paid for that its bake would refuse.
+    ///
+    /// # Errors
+    /// [`BakerError::DataFile`] for a reframed mode of a centre-cropped unit.
+    pub fn check_framing(
+        &self,
+        framing: &crate::FramingPolicy,
+        catalog: &UnitCatalog,
+        path: &Path,
+    ) -> Result<(), BakerError> {
+        for (id, spec) in self.modes() {
+            if let Some(archetype) = catalog.get_by_slug(id.slug) {
+                spec.bake_framing(framing.framing_for(id.slug, &archetype.shape), path)
+                    .map_err(|error| BakerError::DataFile {
+                        path: path.to_path_buf(),
+                        reason: format!("{}: {error}", id.atlas_name()),
+                    })?;
             }
         }
         Ok(())
@@ -378,12 +484,16 @@ pub struct ModePictures {
 /// | a state | the mode's picture | the mode's picture when the state is pinned |
 /// | `Leave` | the mode's picture | the default Idle picture |
 ///
-/// `default_idle` is the unit's Idle picture (`veo_plan::resolve_keyframe` of Idle).
+/// `default_idle` is the unit's Idle picture (`veo_plan::resolve_keyframe` of Idle). A
+/// reframed mode ([`Reframe`]) uses its reframed Idle picture
+/// ([`ModeAtlasId::reframed_idle_picture`]) in its place, so the morphs start and end on the
+/// same framing as the mode's clips.
 ///
 /// # Errors
 /// [`BakerError::DataFile`] naming the mode's picture when a slot needs it and it does not
 /// exist yet: the enter morph is generated first, and its last frame is extracted as the
-/// picture (`keyframe-from-clip`).
+/// picture (`keyframe-from-clip`). For a reframed mode, likewise naming the reframed Idle
+/// picture when a morph needs it and it does not exist (`reframe-mode-picture`).
 pub fn plan_mode_pictures(
     spec: &ModeMediaSpec,
     id: ModeAtlasId<'_>,
@@ -402,14 +512,31 @@ pub fn plan_mode_pictures(
             ),
         })
     };
+    let idle = || -> Result<PathBuf, BakerError> {
+        if spec.reframe.is_none() {
+            return Ok(default_idle.to_path_buf());
+        }
+        let reframed = id.reframed_idle_picture(keyframes_dir);
+        if reframed.is_file() {
+            Ok(reframed)
+        } else {
+            Err(BakerError::DataFile {
+                path: reframed,
+                reason: format!(
+                    "{} is reframed, and its {slot} needs the reframed Idle picture: write it with `reframe-mode-picture` first",
+                    id.atlas_name()
+                ),
+            })
+        }
+    };
     Ok(match slot {
         SliceKey::Morph(Morph::Enter) => ModePictures {
-            start: default_idle.to_path_buf(),
+            start: idle()?,
             end: existing.clone(),
         },
         SliceKey::Morph(Morph::Leave) => ModePictures {
             start: need_picture()?,
-            end: Some(default_idle.to_path_buf()),
+            end: Some(idle()?),
         },
         SliceKey::Action(_) => {
             let start = need_picture()?;

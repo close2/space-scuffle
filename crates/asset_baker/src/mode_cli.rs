@@ -3,7 +3,9 @@
 //!
 //! # Responsibility
 //! Parses and runs `mode-veo` (one paid clip of a mode atlas slice, or its dry run),
-//! `mode-reject` (records a reviewer's rejection), `install-mode-clip` (copies a reviewed
+//! `mode-reject` (records a reviewer's rejection), `mode-withdraw-rejection` (withdraws one),
+//! `reframe-mode-picture` (writes a reframed
+//! mode's start picture), `install-mode-clip` (copies a reviewed
 //! download into the bundle) and `bake-mode-videos` (packs a mode's installed clips into its
 //! atlas with a provenance record) over [`asset_baker::mode_media`] and
 //! [`asset_baker::paid_clip`].
@@ -31,13 +33,15 @@ use asset_baker::ledger::{
 };
 use asset_baker::mode_media::{
     build_mode_prompt, catalog_mode, check_mode_clip, plan_mode_pictures, required_mode_slices,
-    ModeAtlasId, ModePictures,
+    ModeAtlasId, ModeMediaSpec, ModePictures,
 };
 use asset_baker::paid_clip::{run_paid_clip, ClipSubject, PaidClipJob};
 use asset_baker::prompts::{
     compose_negative_prompt, ComposedPrompt, DrawingKind, KeyframeSource, MEDIA_STYLE_FILE,
 };
-use asset_baker::provenance::{bake_mode_with_provenance, veo_origin_of_mode_clip, SliceClip};
+use asset_baker::provenance::{
+    bake_mode_with_provenance, veo_origin_of_mode_clip, ReframeRecord, SliceClip,
+};
 use asset_baker::veo_client::{
     VeoParameters, VeoRequestSettings, DEFAULT_VEO_MODEL, VEO_REQUEST_FILE,
 };
@@ -120,6 +124,23 @@ pub enum ModeCommand {
         #[arg(long)]
         ledger: PathBuf,
     },
+    /// Withdraws a reviewer's earlier rejection of a downloaded mode clip, for example when a
+    /// clip was rejected to allow a regeneration and every retry was worse, so the clip ships
+    /// after all. Costs nothing.
+    #[command(name = "mode-withdraw-rejection")]
+    WithdrawRejection {
+        #[command(flatten)]
+        slice: SliceArgs,
+        /// The clip whose rejection is withdrawn (the download, or its installed copy).
+        #[arg(long)]
+        clip: PathBuf,
+        /// Why the rejection is withdrawn.
+        #[arg(long)]
+        reason: String,
+        /// The media ledger.
+        #[arg(long)]
+        ledger: PathBuf,
+    },
     /// Installs a reviewed mode clip download as `<videos>/<slug>-<mode>_<slice>.mp4`.
     #[command(name = "install-mode-clip")]
     Install {
@@ -135,6 +156,24 @@ pub enum ModeCommand {
         #[arg(long, default_value = "assets/videos")]
         videos_dir: PathBuf,
         /// Replace an installed clip.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Writes a reframed mode's start picture, `<slug>-<mode>_reframed_idle.png`: the unit's
+    /// Idle picture shrunk by the mode's `reframe` with a margin of its own backdrop. Free: it
+    /// reads no credential and sends nothing.
+    #[command(name = "reframe-mode-picture")]
+    Reframe {
+        /// Exact catalog slug.
+        #[arg(short, long)]
+        unit: String,
+        /// The catalog mode (`mode_name`).
+        #[arg(long)]
+        mode: String,
+        /// Directory of keyframes: the unit's Idle picture, and where the picture is written.
+        #[arg(long, default_value = "assets/ai_keyframes")]
+        keyframes_dir: PathBuf,
+        /// Replace an existing reframed picture (the clips made from it then no longer chain).
         #[arg(long)]
         replace: bool,
     },
@@ -157,6 +196,9 @@ pub enum ModeCommand {
         /// The media ledger, which holds each clip's `mode_clip_downloaded` line.
         #[arg(long)]
         ledger: PathBuf,
+        /// Directory of keyframes, where a reframed mode's start picture is recorded from.
+        #[arg(long, default_value = "assets/ai_keyframes")]
+        keyframes_dir: PathBuf,
         /// Square frame side in pixels.
         #[arg(short, long, default_value_t = DEFAULT_UNIT_FRAME_SIZE)]
         size: u32,
@@ -204,6 +246,12 @@ pub fn run(assets: Option<&Path>, command: ModeCommand) -> RunResult {
             reason,
             ledger,
         } => run_reject(assets, &slice, &clip, &reason, &ledger),
+        ModeCommand::WithdrawRejection {
+            slice,
+            clip,
+            reason,
+            ledger,
+        } => run_withdraw(assets, &slice, &clip, &reason, &ledger),
         ModeCommand::Install {
             slice,
             clip,
@@ -211,12 +259,27 @@ pub fn run(assets: Option<&Path>, command: ModeCommand) -> RunResult {
             videos_dir,
             replace,
         } => run_install(assets, &slice, &clip, &ledger, &videos_dir, replace),
+        ModeCommand::Reframe {
+            unit,
+            mode,
+            keyframes_dir,
+            replace,
+        } => run_reframe(
+            assets,
+            ModeAtlasId {
+                slug: &unit,
+                stance: &mode,
+            },
+            &keyframes_dir,
+            replace,
+        ),
         ModeCommand::Bake {
             unit,
             mode,
             videos_dir,
             output_dir,
             ledger,
+            keyframes_dir,
             size,
             fps,
         } => run_bake(
@@ -229,6 +292,7 @@ pub fn run(assets: Option<&Path>, command: ModeCommand) -> RunResult {
                 videos_dir,
                 output_dir,
                 ledger,
+                keyframes_dir,
             },
             (size, fps),
         ),
@@ -253,6 +317,9 @@ fn load(assets: Option<&Path>) -> Result<(PathBuf, UnitCatalog, MediaStyle), Box
     let root = asset_baker::resolve_assets_root(assets)?;
     let catalog = asset_baker::load_catalogs(&root)?.units;
     let style = MediaStyle::load_for_catalog(&root, &catalog)?;
+    style
+        .modes
+        .check_framing(&style.framing, &catalog, &root.join(MEDIA_STYLE_FILE))?;
     Ok((root, catalog, style))
 }
 
@@ -489,6 +556,50 @@ fn run_reject(
     Ok(())
 }
 
+/// `mode-withdraw-rejection`: records that the rejection of a download of the slice is
+/// withdrawn.
+fn run_withdraw(
+    assets: Option<&Path>,
+    slice: &SliceArgs,
+    clip: &Path,
+    reason: &str,
+    ledger_path: &Path,
+) -> RunResult {
+    let (root, catalog, style) = load(assets)?;
+    check_slice(&catalog, &style, &root, slice)?;
+    if reason.trim().is_empty() {
+        return Err("a withdrawal needs a reason".into());
+    }
+    let sha256 = sha256_file(clip)?;
+    let history = LedgerHistory::load(ledger_path)?;
+    let rejected = history
+        .mode_clip(&slice.unit, &slice.mode, slice.slice)
+        .is_some_and(|known| known.rejected_sha256.contains(&sha256));
+    if !rejected {
+        return Err(format!(
+            "'{}' ({sha256}) has no standing rejection for {}-{} {} in the ledger",
+            clip.display(),
+            slice.unit,
+            slice.mode,
+            slice.slice
+        )
+        .into());
+    }
+    let mut ledger = Ledger::open(ledger_path, new_run_id())?;
+    ledger.append(LedgerEvent::ModeClipRejectionWithdrawn {
+        slug: slice.unit.clone(),
+        stance: slice.mode.clone(),
+        slot: slice.slice,
+        sha256: sha256.clone(),
+        reason: reason.to_string(),
+    })?;
+    println!(
+        "Withdrew the rejection of {}-{} {} ({sha256}); it counts as accepted again.",
+        slice.unit, slice.mode, slice.slice
+    );
+    Ok(())
+}
+
 /// The SHA-256 of `clip`, which the ledger must have downloaded for exactly `slice` and no
 /// reviewer may have rejected.
 fn downloaded_sha256(
@@ -547,11 +658,92 @@ fn run_install(
     Ok(())
 }
 
+/// `reframe-mode-picture`: writes the reframed Idle picture of a mode with a `reframe`.
+fn run_reframe(
+    assets: Option<&Path>,
+    id: ModeAtlasId<'_>,
+    keyframes_dir: &Path,
+    replace: bool,
+) -> RunResult {
+    let (_root, catalog, style) = load(assets)?;
+    asset_baker::validate_catalog_slug(&catalog, id.slug)?;
+    let spec = style
+        .modes
+        .spec(id)
+        .ok_or_else(|| format!("no `modes` entry for {}", id.atlas_name()))?;
+    let reframe = spec
+        .reframe
+        .ok_or_else(|| format!("{} has no `reframe` in media_style.ron", id.atlas_name()))?;
+    let KeyframeSource::File(default_idle) =
+        resolve_keyframe(keyframes_dir, id.slug, AnimState::Idle)
+    else {
+        return Err(format!(
+            "'{}' has no Idle picture in '{}'",
+            id.slug,
+            keyframes_dir.display()
+        )
+        .into());
+    };
+    let target = id.reframed_idle_picture(keyframes_dir);
+    if target.exists() && !replace {
+        return Err(format!(
+            "'{}' exists; pass --replace to write it again",
+            target.display()
+        )
+        .into());
+    }
+    let source = image::open(&default_idle)?.to_rgba8();
+    let reframed = asset_baker::framing::reframe_picture(
+        &source,
+        reframe.scale_permille,
+        reframe.picture_feather_permille,
+    )?;
+    image::DynamicImage::ImageRgba8(reframed.image)
+        .to_rgb8()
+        .save(&target)?;
+    let [r, g, b] = reframed.margin_rgb;
+    println!(
+        "Wrote '{}': '{}' at {} per mille on a margin of ({r}, {g}, {b}), SHA-256 {}.",
+        target.display(),
+        default_idle.display(),
+        reframe.scale_permille,
+        sha256_file(&target)?
+    );
+    Ok(())
+}
+
 /// Where `bake-mode-videos` reads and writes.
 struct BakeDirs {
     videos_dir: PathBuf,
     output_dir: PathBuf,
     ledger: PathBuf,
+    keyframes_dir: PathBuf,
+}
+
+/// The record of a reframed mode's start picture for its provenance, or `None` for a mode
+/// without a `reframe`.
+fn reframe_record(
+    spec: &ModeMediaSpec,
+    id: ModeAtlasId<'_>,
+    keyframes_dir: &Path,
+) -> Result<Option<ReframeRecord>, Box<dyn Error>> {
+    let Some(reframe) = spec.reframe else {
+        return Ok(None);
+    };
+    let picture = id.reframed_idle_picture(keyframes_dir);
+    if !picture.is_file() {
+        return Err(format!(
+            "{} is reframed, and its reframed Idle picture '{}' is missing",
+            id.atlas_name(),
+            picture.display()
+        )
+        .into());
+    }
+    Ok(Some(ReframeRecord {
+        scale_permille: reframe.scale_permille,
+        picture_feather_permille: reframe.picture_feather_permille,
+        picture_sha256: sha256_file(&picture)?,
+    }))
 }
 
 /// `bake-mode-videos`: packs every slice the mode needs from its installed clip.
@@ -599,7 +791,10 @@ fn run_bake(
         .iter()
         .filter_map(|(state, loop_spec)| Some((*state, loop_spec.seam?)))
         .collect();
-    let framing = style.framing.framing_for(id.slug, &archetype.shape);
+    let framing = spec.bake_framing(
+        style.framing.framing_for(id.slug, &archetype.shape),
+        &root.join(MEDIA_STYLE_FILE),
+    )?;
     println!(
         "==> Baking {} clips of {} into {:?} ({framing})...",
         clips.len(),
@@ -613,6 +808,7 @@ fn run_bake(
         &dirs.output_dir,
         FrameSpec { size, fps, framing },
         &seams,
+        reframe_record(spec, id, &dirs.keyframes_dir)?,
     )?;
     println!(
         "    Wrote '{}': {} states and {} morphs at {}x{} @ {} fps, with its provenance record.",

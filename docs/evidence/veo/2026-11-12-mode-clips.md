@@ -75,3 +75,103 @@ settled stance changed the unit's patch (tank 955 of 5041 pixels, scorpion 2596 
 deploying (legs out, rails raised). The settled burrowed scorpion is drawn under the client's existing concealment
 shimmer for an own burrowed unit, so its mound is faint at the default zoom; how a burrowed own unit is drawn is
 WP8's (concealment and stance visuals), not this package's.
+
+## Reframe of the sieged tank (2026-11-12, after the independent review)
+
+The [independent review of WP13](modes/independent_review_wp13.md) accepted all eight clips. As defect 1 it
+recorded that the raised rails and the Attack blast were cut by the top edge of the source frame: Attack frames
+10–13, and a muzzle rim in the sieged rest pose. Defects 2 and 3 were the scorpion Enter's detached claw (one atlas
+frame) and its greyer bar. Plan amendment: [Amendment 16](../../plans/2026-11-09-effect-visualization.md). Run from
+branch `wp13-reframe`.
+
+**Why a prompt alone could not fix it.** The enter morph must start on the unit's Idle picture, so that the default
+atlas flows into it without a jump. Veo keeps the first frame's framing, and the camera may not move. So the tank
+could not be "placed lower" by asking. **What changed instead:**
+
+- **A reframed start picture.** `asset_baker reframe-mode-picture` shrinks the Idle picture to 70 % about its centre
+  and continues its own backdrop into the margin. Next to the picture, the margin takes the colour of the picture's
+  nearest edge, averaged over 40 px cells. It fades to the measured border colour at the canvas edge. No panel and no
+  line are left for Veo to keep. The picture is
+  [`railgun_crawler-siege_mode_reframed_idle.png`](../../../assets/ai_keyframes/railgun_crawler-siege_mode_reframed_idle.png),
+  and the comparison sheet is [here](modes/railgun_crawler-siege_mode_reframe_pictures.jpg): Idle picture, reframed
+  picture, new sieged picture. A test proves that the committed picture is what the command writes.
+- **The bake undoes the shrink.** The mode's `reframe` in `media_style.ron` bakes its clips as
+  `ReframedLetterbox(feather_permille: 30, scale_permille: 700)`. That means: crop the centre 70 % of the width over
+  the whole height, then letterbox as before. The tank is back at the default atlas's scale and place. The margin
+  above and below stays in the square, where a default atlas has its bars, so the raised rails and the blast have
+  room. The provenance record names this framing. `framing_tests` proves the round trip with real FFmpeg: a subject
+  baked through the reframe lands within 1 px of its default bake, and a part above the default frame is kept.
+- **All four tank clips regenerated** from the new chain: reframed Idle picture → Enter → new sieged picture →
+  Idle, Attack, Leave → reframed Idle picture. The old installed clips were each recorded as `mode_clip_rejected`,
+  "superseded after acceptance", because the ledger refuses to regenerate a slice whose download was never
+  rejected. The prompts changed in two places. Enter drops "extend longer" and adds "the muzzles inside the frame".
+  Attack drops the shell "streaking out of the top of the frame" and asks for barrels "locked at their steep upward
+  angle the whole time" and a "compact" flash "that stays inside the frame".
+
+| Atlas | Slice | Download | Verdict | Reason |
+|---|---|---|---|---|
+| `railgun_crawler-siege_mode` | enter | `f589171c` | **superseded** | Accepted before; its last frame (the sieged picture) has the rails touching the top edge (review defect 1). |
+| `railgun_crawler-siege_mode` | idle | `1868ff1e` | **superseded** | Starts and ends on the old sieged picture. |
+| `railgun_crawler-siege_mode` | attack | `75b8dfad` | **superseded** | The blast is clipped flat by the top edge, and the rails run out of the frame for three frames (review defect 1). |
+| `railgun_crawler-siege_mode` | leave | `8730b2d6` | **superseded** | Starts on the old sieged picture. |
+| `railgun_crawler-siege_mode` | enter | `a0d4247d` ([sheet](modes/railgun_crawler-siege_mode_enter_a0d4247d.jpg)) | **accept** | From the reframed picture, the four stabilizer legs swing out and brace on broad feet, and the rails rise to a steep angle with their muzzles about 40 px below the top of the source frame. The camera is locked and nothing fires. The hull rises slightly on the legs, and both smoke plumes fade out (an engine state; the review accepted one plume fading before). The feet are larger than in the previous clip, which helps review defect 4. |
+| `railgun_crawler-siege_mode` | idle | `d554ddc2` ([sheet](modes/railgun_crawler-siege_mode_idle_d554ddc2.jpg)) | **accept** | Still on its legs; a smoke puff rises and fades from the stacks. Loop: start fidelity 0.995, wrap 0.980 against a mean step of 0.955, so the seam does not jump ([frames](modes/railgun_crawler-siege_mode_idle_loop_frames_reframed.png), [seam](modes/railgun_crawler-siege_mode_idle_loop_seam_reframed.png)). As before, `loop-check` flags its worst inner step (0.877, smoke) against its 0.03 margin, accepted on the same grounds as `1868ff1e`. |
+| `railgun_crawler-siege_mode` | attack | `057e9373` ([sheet](modes/railgun_crawler-siege_mode_attack_057e9373.jpg)) | **reject** | From 1.0 s to 2.3 s the rails drop to level and climb back (the fault of `4ce579c9`). The first blast is orange-white and touches the top edge. |
+| `railgun_crawler-siege_mode` | attack | `55e0ba27` ([sheet](modes/railgun_crawler-siege_mode_attack_55e0ba27.jpg)) | **accept** | The rails stay raised throughout. A blue-white blast blooms at the muzzles, then a smoke puff, then it settles on the pinned start pose. The round bloom stays inside the source frame, but the blast's upper flame tongue does not. In clip frames 23–31 (0.96–1.29 s, about 0.4 s) the top source rows are bright, and full white in frames 27–30. The sampled blast frame (atlas Attack frame 10, clip frame 26) has the tongue leaving the top edge, about 11 px wide at source row 0 and 22 px wide at row 10. The bake's 15 px bar feather fades it into the bar colour, so it reads as a soft tip rather than a flat cut. It cannot be seen at battle size, and no regeneration is asked for (independent review of the reframe, item 1). |
+| `railgun_crawler-siege_mode` | leave | `7e984d36` ([sheet](modes/railgun_crawler-siege_mode_leave_7e984d36.jpg)) | **accept** | The rails lower to level, the legs fold into the hull, both plumes return, and it ends on the reframed Idle picture. The camera is locked. |
+| `burrow_scorpion-burrowed` | enter | `7581379d` | **kept; rejection withdrawn** | A `mode_clip_rejected` line was recorded to allow a regeneration (review defects 2 and 3). Neither retry was better, so it **stays installed and shipped**. A later `mode_clip_rejection_withdrawn` line (written by `mode-withdraw-rejection`, free) withdraws that rejection, so the ledger says it ships. The media audit now fails a shipped mode clip whose rejection stands. Its atlas re-bakes byte for byte. |
+| `burrow_scorpion-burrowed` | enter | `21ebf9b8` ([sheet](modes/burrow_scorpion-burrowed_enter_21ebf9b8.jpg)) | **reject** | From 2.0 s to 2.7 s both claws lie loose on the mound (the fault of `a40d56ac`), and at 1.0 s a dark blob of dirt hides half the body. |
+| `burrow_scorpion-burrowed` | enter | `4275320e` ([sheet](modes/burrow_scorpion-burrowed_enter_4275320e.jpg)) | **reject** | Near 1.3 s a claw lies on the mound below the body with no arm, and the other sits apart at the mound's edge. This is no better than `7581379d`, so retries stop here. |
+
+**The atlas.** [Whole atlas](modes/railgun_crawler-siege_mode_atlas_reframed.jpg) (rows: Idle, Attack, Enter,
+Leave); [old against new](modes/railgun_crawler-siege_mode_old_vs_reframed.jpg) (top: the old atlas's sieged rest
+pose and Attack frames 9–13; bottom: the new ones). [Chain](modes/railgun_crawler-siege_mode_chain_reframed.jpg):
+default Idle frame 0, Enter 16 and 23, Idle 0 and 7, Attack 8 and 15, Leave 24 and 31, then the default Idle frame
+0 again.
+
+Join RMSE (normalised 0–1, `compare -metric RMSE`, atlas frames counted from 0):
+
+| Join | RMSE | Compared with |
+|---|---|---|
+| default Idle 0 → Enter 16 | 0.030 | a default Idle step, 0.024. The margin above and below now shows backdrop where the default draws bars, which is the same colour and scale. |
+| Enter 23 → Idle 0 | 0.0075 | |
+| Idle 7 → Idle 0 (wrap) | 0.017 | Idle inner steps 0.003–0.080 |
+| Idle 0 → Attack 8, Attack 15 → Idle 0 | 0.0063, 0.042 | |
+| Idle 0 → Leave 24 | 0.0065 | |
+| Leave 31 → default Idle 0 | 0.046 | Leave inner steps 0.005–0.098; the old Leave had 0.069 |
+
+**Spend.** 7 generations (`mode_clip_request_started`, `veo-3.1-fast-generate-001`, $0.40 each): tank 5 (Enter,
+Idle, Attack twice, Leave), scorpion Enter 2. **$2.80; the ledger went from $110.85 to $113.65** of the $200.00
+limit. WP13's mode clips total $7.20 of Q0075's $20.00. 11 `mode_clip_rejected` lines in all: 3 from before, 4
+tank supersessions, 1 scorpion supersession, and 3 new rejections. The new rejections are counted in the 7
+generations above. One `mode_clip_rejection_withdrawn` line withdraws the scorpion supersession; it is not a
+request and costs nothing.
+
+**Defects after this round.** Defect 1 is fixed for the raised rails and the bloom: in every frame the muzzles sit
+about 38 source px below the top edge, and the bloom is whole. A minor residual remains at the blast tip. For
+about 0.4 s (clip frames 23–31) a narrow flame tongue, about 11 px wide at the edge, still leaves the top of the
+source frame, and the sampled blast frame shows it. The bake's edge fade softens it to a soft tip, and it is
+invisible at battle size. Defects 2 and 3 (the scorpion Enter) remain as the review
+recorded them, after two failed paid retries. Defect 4 (feet legibility) is improved by the larger feet of
+`a0d4247d`. Defect 5 belongs to WP8.
+
+**Records after the review of the reframe.** The
+[independent review of the reframe](modes/independent_review_reframe.md) accepted the art and asked for record
+fixes only. These were made, with no paid generation (plan Amendment 16, "Records"):
+
+- The ledger withdraws the scorpion `7581379d` rejection (`mode_clip_rejection_withdrawn`).
+- The media audit checks every shipped mode atlas and fails one whose clip has a standing rejection.
+- The reframe's picture blend is renamed `picture_feather_permille`, and the tank atlas's provenance records it
+  (`bake.reframe`).
+- The text above is corrected about the blast tongue and the count of rejection lines.
+
+The backdrop average that runs cut smoke into faint haze columns in the margin is recorded as polish. Fixing it
+would change the shipped start picture.
+
+**In battle (reframed tank).** Written by `crates/client/tests/mode_atlas_gpu_tests.rs` with
+`SPACE_SCUFFLE_MODE_EVIDENCE_DIR`, through the test harness's GPU run (2026-11-12). The test passes: each bubble
+binds its mode atlas while morphing and settled, and the settled stance changes the patch. Shots:
+[default](modes/battle/battle_default_reframed.jpg), [morphing](modes/battle/battle_morphing_reframed.jpg),
+[settled](modes/battle/battle_settled_reframed.jpg). Enlarged crop of the sieged tank, default | morphing |
+settled: [here](modes/battle/battle_railgun_crawler-siege_mode_reframed.png). The settled bubble shows the raised
+rails whole, with no cut at the top. The earlier shots stay beside these for comparison.

@@ -3,9 +3,14 @@
 //! decisions D-1 to D-3).
 //!
 //! # Responsibility
-//! - [`BakeFraming`] names one of two treatments. `CenterCrop` cuts the centred square out of
+//! - [`BakeFraming`] names one of three treatments. `CenterCrop` cuts the centred square out of
 //!   the clip, as every bake did before this module existed. `Letterbox` scales the whole clip
-//!   frame to fit inside the square and fills the rest with opaque bars.
+//!   frame to fit inside the square and fills the rest with opaque bars. `ReframedLetterbox`
+//!   (a mode's `reframe`, plan `docs/plans/2026-11-09-effect-visualization.md` Amendment 16)
+//!   first crops a clip made from a [`reframe_picture`] back to the default scale, keeping the
+//!   margin above and below the subject.
+//! - [`reframe_picture`] shrinks a start picture about its centre into a margin of its own
+//!   backdrop, so a clip has room for a pose that leaves the default frame.
 //! - [`FramingPolicy`] is the `framing` section of `assets/catalog/media_style.ron`: the
 //!   treatment per render shape (`UnitSphere`, `BuildingDome`) and per-identity overrides. It is
 //!   data, so which identities are letterboxed needs no code change (charter §3.3).
@@ -73,23 +78,80 @@ pub enum BakeFraming {
         /// thousandths of the frame side (30 gives 15 px at 512 px). 0 leaves a hard edge.
         feather_permille: u32,
     },
+    /// A [`Self::Letterbox`] of a clip generated from a **reframed** start picture
+    /// ([`reframe_picture`]): the identity's picture scaled by `scale_permille` about its
+    /// centre, with a margin of backdrop on every side. The bake first crops the clip to the
+    /// centre `scale_permille` of its width, over its whole height, which brings the subject back
+    /// to the scale and place it has in the identity's default atlas; the margins above and below
+    /// stay in the frame, where a default atlas has its bars, so a part that rises above the
+    /// default frame (a raised barrel, a muzzle blast) is kept instead of cut.
+    ReframedLetterbox {
+        /// As [`Self::Letterbox`]'s.
+        feather_permille: u32,
+        /// The reframe scale in thousandths, from [`MIN_REFRAME_PERMILLE`] to
+        /// [`MAX_REFRAME_PERMILLE`].
+        scale_permille: u32,
+    },
+}
+
+/// Smallest accepted reframe scale, in thousandths: below half size the clip spends most of its
+/// pixels on margin.
+pub const MIN_REFRAME_PERMILLE: u32 = 500;
+
+/// Largest accepted reframe scale, in thousandths; 1000 would be no reframe at all.
+pub const MAX_REFRAME_PERMILLE: u32 = 999;
+
+/// The side, in pixels, that a reframe at `scale_permille` keeps of a side of `side` pixels:
+/// `side · scale_permille / 1000`, rounded down to an even number, so a centred crop has whole
+/// pixels on both sides. [`reframe_picture`] and [`BakeFraming::ffmpeg_filter`] both use it.
+#[must_use]
+pub fn reframed_side(side: u32, scale_permille: u32) -> u32 {
+    let scaled = u64::from(side) * u64::from(scale_permille) / 2000 * 2;
+    u32::try_from(scaled).unwrap_or(u32::MAX)
 }
 
 impl BakeFraming {
+    /// The reframed form of this framing at `scale_permille` ([`Self::ReframedLetterbox`]),
+    /// keeping its feather; `None` for [`Self::CenterCrop`], whose square crop would cut the
+    /// margin a reframe makes, and for a framing that is already reframed.
+    #[must_use]
+    pub fn reframed(self, scale_permille: u32) -> Option<Self> {
+        match self {
+            Self::Letterbox { feather_permille } => Some(Self::ReframedLetterbox {
+                feather_permille,
+                scale_permille,
+            }),
+            Self::CenterCrop | Self::ReframedLetterbox { .. } => None,
+        }
+    }
+
+    /// The FFmpeg crop that undoes a reframe, followed by a comma, or an empty string.
+    fn reframe_crop(self) -> String {
+        match self {
+            Self::ReframedLetterbox { scale_permille, .. } => {
+                format!("crop=trunc(iw*{scale_permille}/2000)*2:ih,")
+            }
+            Self::CenterCrop | Self::Letterbox { .. } => String::new(),
+        }
+    }
+
     /// The FFmpeg filter that decodes a clip into frames for this framing at `frame_size`
     /// pixels and `fps` frames per second.
     ///
     /// `CenterCrop` returns square frames. `Letterbox` returns frames that fit inside the square
     /// with the clip's aspect ratio (a 1280×720 clip at 512 becomes 512×288); the square is
-    /// completed by [`frame_to_square`].
+    /// completed by [`frame_to_square`]. `ReframedLetterbox` crops the clip's centre
+    /// ([`reframed_side`] of its width, all of its height) before it scales like `Letterbox`
+    /// (a 1280×720 clip at 700 per mille is cropped to 896×720 and becomes 512×411).
     #[must_use]
     pub fn ffmpeg_filter(self, frame_size: u32, fps: u32) -> String {
         match self {
             Self::CenterCrop => {
                 format!("crop=min(iw\\,ih):min(iw\\,ih),scale={frame_size}:{frame_size},fps={fps}")
             }
-            Self::Letterbox { .. } => format!(
-                "scale={frame_size}:{frame_size}:force_original_aspect_ratio=decrease,fps={fps}"
+            Self::Letterbox { .. } | Self::ReframedLetterbox { .. } => format!(
+                "{}scale={frame_size}:{frame_size}:force_original_aspect_ratio=decrease,fps={fps}",
+                self.reframe_crop()
             ),
         }
     }
@@ -109,8 +171,9 @@ impl BakeFraming {
             Self::CenterCrop => {
                 format!("crop=min(iw\\,ih):min(iw\\,ih),scale={side}:{side},fps={fps}")
             }
-            Self::Letterbox { .. } => format!(
-                "scale={side}:{side}:force_original_aspect_ratio=decrease:force_divisible_by={SUPERSAMPLE},fps={fps}"
+            Self::Letterbox { .. } | Self::ReframedLetterbox { .. } => format!(
+                "{}scale={side}:{side}:force_original_aspect_ratio=decrease:force_divisible_by={SUPERSAMPLE},fps={fps}",
+                self.reframe_crop()
             ),
         }
     }
@@ -121,7 +184,10 @@ impl BakeFraming {
     pub fn feather_pixels(self, frame_size: u32) -> u32 {
         match self {
             Self::CenterCrop => 0,
-            Self::Letterbox { feather_permille } => {
+            Self::Letterbox { feather_permille }
+            | Self::ReframedLetterbox {
+                feather_permille, ..
+            } => {
                 let pixels = u64::from(frame_size) * u64::from(feather_permille) / 1000;
                 u32::try_from(pixels).unwrap_or(u32::MAX)
             }
@@ -136,6 +202,13 @@ impl std::fmt::Display for BakeFraming {
             Self::Letterbox { feather_permille } => {
                 write!(f, "letterbox (feather {feather_permille} per mille)")
             }
+            Self::ReframedLetterbox {
+                feather_permille,
+                scale_permille,
+            } => write!(
+                f,
+                "letterbox of a {scale_permille} per mille reframe (feather {feather_permille} per mille)"
+            ),
         }
     }
 }
@@ -186,6 +259,14 @@ impl FramingPolicy {
             .into_iter()
             .chain(self.overrides.values().copied());
         for framing in every {
+            if let BakeFraming::ReframedLetterbox { .. } = framing {
+                return Err(BakerError::DataFile {
+                    path: path.to_path_buf(),
+                    reason: format!(
+                        "framing: {framing} belongs to a mode's `reframe`, not to an identity"
+                    ),
+                });
+            }
             if let BakeFraming::Letterbox { feather_permille } = framing {
                 if feather_permille > MAX_FEATHER_PERMILLE {
                     return Err(BakerError::DataFile {
@@ -412,21 +493,200 @@ impl Composition {
         square
     }
 
-    /// `pixel` moved `weight / (feather + 1)` of the way toward the bar colour, rounded to the
-    /// nearest integer. `weight` runs from `feather` at the outermost row down to 1.
+    /// `pixel` blended toward the bar colour with [`blend_toward`].
     fn blend(&self, pixel: Rgba<u8>, weight: u32) -> Rgba<u8> {
-        let denominator = self.feather + 1;
-        let mix = |own: u8, bar: u8| -> u8 {
-            let value = (u32::from(own) * (denominator - weight)
-                + u32::from(bar) * weight
-                + denominator / 2)
+        blend_toward(pixel, self.bar_rgb, self.feather, weight)
+    }
+}
+
+/// `pixel` moved `weight / (feather + 1)` of the way toward `bar_rgb`, rounded to the nearest
+/// integer, opaque. `weight` runs from `feather` at the outermost row down to 1.
+fn blend_toward(pixel: Rgba<u8>, bar_rgb: [u8; 3], feather: u32, weight: u32) -> Rgba<u8> {
+    let denominator = feather + 1;
+    let mix = |own: u8, bar: u8| -> u8 {
+        let value =
+            (u32::from(own) * (denominator - weight) + u32::from(bar) * weight + denominator / 2)
                 / denominator;
+        u8::try_from(value).unwrap_or(u8::MAX)
+    };
+    Rgba([
+        mix(pixel[0], bar_rgb[0]),
+        mix(pixel[1], bar_rgb[1]),
+        mix(pixel[2], bar_rgb[2]),
+        255,
+    ])
+}
+
+/// A start picture reframed for a mode's clips ([`reframe_picture`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReframedPicture {
+    /// The reframed picture, the size of its source.
+    pub image: RgbaImage,
+    /// The colour of its margin as sRGB bytes: the bar colour a letterbox bake of the source
+    /// would measure ([`measure_bar_rgb`] over its top and bottom bands), so the margin that a
+    /// [`BakeFraming::ReframedLetterbox`] bake keeps above and below the subject looks like the
+    /// default atlas's bars.
+    pub margin_rgb: [u8; 3],
+}
+
+/// Side, in pixels of the shrunk picture, of the cells over which [`reframe_picture`] averages
+/// the backdrop it extends into the margin: wide enough to blur away detail (a smoke plume's
+/// curls), narrow enough to follow the backdrop's gradient (a lit floor).
+pub const REFRAME_BACKDROP_CELL: u32 = 40;
+
+/// Reframes `source` for clips that need room around the subject: the picture scaled to
+/// `scale_permille` about its centre ([`reframed_side`] of each side, Lanczos filter) on a
+/// canvas of `source`'s size. The margin continues the picture's own backdrop: next to the
+/// shrunk picture it takes the colour of the picture's nearest edge, averaged over cells of
+/// [`REFRAME_BACKDROP_CELL`] pixels, and it fades linearly to the measured border colour
+/// ([`ReframedPicture::margin_rgb`]) at the canvas's edge. The shrunk picture's outermost rows and
+/// columns, `feather_permille` of the source's height, blend linearly into that averaged
+/// backdrop, so the margin has no edge, line or panel for a video model to keep or animate.
+///
+/// The inverse is the crop of [`BakeFraming::ReframedLetterbox`] at the same scale: a clip that
+/// starts on the result and is baked with it starts on the source's default framing, with the
+/// margin above and below kept where the default bake draws its bars.
+///
+/// Deterministic: the same source and parameters give the same bytes.
+///
+/// # Errors
+/// [`BakerError::ValidationFailed`] for a scale outside [`MIN_REFRAME_PERMILLE`] to
+/// [`MAX_REFRAME_PERMILLE`], a feather wider than [`MAX_FEATHER_PERMILLE`], or a source too
+/// small to keep a pixel.
+pub fn reframe_picture(
+    source: &RgbaImage,
+    scale_permille: u32,
+    feather_permille: u32,
+) -> Result<ReframedPicture, BakerError> {
+    let invalid = |reason: String| BakerError::ValidationFailed {
+        name: "reframed picture".into(),
+        reason,
+    };
+    if !(MIN_REFRAME_PERMILLE..=MAX_REFRAME_PERMILLE).contains(&scale_permille) {
+        return Err(invalid(format!(
+            "scale {scale_permille} per mille is outside {MIN_REFRAME_PERMILLE} to {MAX_REFRAME_PERMILLE}"
+        )));
+    }
+    if feather_permille > MAX_FEATHER_PERMILLE {
+        return Err(invalid(format!(
+            "feather {feather_permille} per mille is wider than {MAX_FEATHER_PERMILLE}"
+        )));
+    }
+    let (width, height) = source.dimensions();
+    let inner_size = (
+        reframed_side(width, scale_permille),
+        reframed_side(height, scale_permille),
+    );
+    if inner_size.0 == 0 || inner_size.1 == 0 || inner_size == (width, height) {
+        return Err(invalid(format!(
+            "a {width}x{height} source keeps no pixel, or no margin, at {scale_permille} per mille"
+        )));
+    }
+    let Some(margin_rgb) = measure_bar_rgb(std::slice::from_ref(source), Bars::TopBottom)? else {
+        return Err(invalid("the source has no border to measure".into()));
+    };
+    let filter = image::imageops::FilterType::Lanczos3;
+    let inner = image::imageops::resize(source, inner_size.0, inner_size.1, filter);
+    let backdrop = averaged_backdrop(&inner);
+    let feather = u32::try_from(u64::from(height) * u64::from(feather_permille) / 1000)
+        .unwrap_or(u32::MAX)
+        .min(inner_size.0 / 2)
+        .min(inner_size.1 / 2);
+    let layout = ReframeLayout {
+        canvas: (width, height),
+        inner: inner_size,
+        margin_rgb,
+    };
+    let mut image = RgbaImage::new(width, height);
+    for (x, y, out) in image.enumerate_pixels_mut() {
+        *out = match layout.inner_point(x, y) {
+            Some((ix, iy)) => {
+                let edge = ix
+                    .min(iy)
+                    .min(inner_size.0 - 1 - ix)
+                    .min(inner_size.1 - 1 - iy);
+                let own = *inner.get_pixel(ix, iy);
+                if edge < feather {
+                    let [r, g, b, _] = backdrop.get_pixel(ix, iy).0;
+                    blend_toward(own, [r, g, b], feather, feather - edge)
+                } else {
+                    Rgba([own[0], own[1], own[2], 255])
+                }
+            }
+            None => layout.margin_pixel(x, y, &backdrop),
+        };
+    }
+    Ok(ReframedPicture { image, margin_rgb })
+}
+
+/// `inner` averaged over cells of [`REFRAME_BACKDROP_CELL`] pixels and smoothly enlarged back to
+/// its own size (two triangle-filter resizes): the low-frequency backdrop.
+fn averaged_backdrop(inner: &RgbaImage) -> RgbaImage {
+    let (width, height) = inner.dimensions();
+    let filter = image::imageops::FilterType::Triangle;
+    let cells = image::imageops::resize(
+        inner,
+        (width / REFRAME_BACKDROP_CELL).max(1),
+        (height / REFRAME_BACKDROP_CELL).max(1),
+        filter,
+    );
+    image::imageops::resize(&cells, width, height, filter)
+}
+
+/// Where the shrunk picture lies on the reframed canvas.
+struct ReframeLayout {
+    /// Canvas size, in pixels.
+    canvas: (u32, u32),
+    /// Size of the shrunk picture, centred on the canvas, in pixels.
+    inner: (u32, u32),
+    /// The colour the margin fades to at the canvas's edge.
+    margin_rgb: [u8; 3],
+}
+
+impl ReframeLayout {
+    /// Left and top margins, in pixels.
+    fn offset(&self) -> (u32, u32) {
+        (
+            (self.canvas.0 - self.inner.0) / 2,
+            (self.canvas.1 - self.inner.1) / 2,
+        )
+    }
+
+    /// The point of the shrunk picture under canvas pixel `(x, y)`, or `None` in the margin.
+    fn inner_point(&self, x: u32, y: u32) -> Option<(u32, u32)> {
+        let (left, top) = self.offset();
+        let ix = x.checked_sub(left).filter(|ix| *ix < self.inner.0)?;
+        let iy = y.checked_sub(top).filter(|iy| *iy < self.inner.1)?;
+        Some((ix, iy))
+    }
+
+    /// The margin's colour at canvas pixel `(x, y)`: the averaged backdrop at the nearest point
+    /// of the shrunk picture, moved toward `margin_rgb` by the share of the margin crossed.
+    fn margin_pixel(&self, x: u32, y: u32, backdrop: &RgbaImage) -> Rgba<u8> {
+        let (left, top) = self.offset();
+        // Distance past the shrunk picture along one axis, in thousandths of that axis's margin.
+        let share = |at: u32, start: u32, len: u32, margin: u32| -> u32 {
+            let past = if at < start {
+                start - at
+            } else {
+                at.saturating_sub(start + len - 1)
+            };
+            (past * 1000 / margin.max(1)).min(1000)
+        };
+        let weight = share(x, left, self.inner.0, left).max(share(y, top, self.inner.1, top));
+        let nearest = (
+            x.clamp(left, left + self.inner.0 - 1) - left,
+            y.clamp(top, top + self.inner.1 - 1) - top,
+        );
+        let edge = backdrop.get_pixel(nearest.0, nearest.1);
+        let mix = |own: u8, far: u8| -> u8 {
+            let value = (u32::from(own) * (1000 - weight) + u32::from(far) * weight + 500) / 1000;
             u8::try_from(value).unwrap_or(u8::MAX)
         };
         Rgba([
-            mix(pixel[0], self.bar_rgb[0]),
-            mix(pixel[1], self.bar_rgb[1]),
-            mix(pixel[2], self.bar_rgb[2]),
+            mix(edge[0], self.margin_rgb[0]),
+            mix(edge[1], self.margin_rgb[1]),
+            mix(edge[2], self.margin_rgb[2]),
             255,
         ])
     }
@@ -530,5 +790,131 @@ mod tests {
         let framed = frame_to_square(square.clone(), 64, BakeFraming::CenterCrop).unwrap();
         assert_eq!(framed.frames, square);
         assert_eq!(framed.bar_rgb, None);
+    }
+
+    const REFRAMED: BakeFraming = BakeFraming::ReframedLetterbox {
+        feather_permille: 30,
+        scale_permille: 700,
+    };
+
+    #[test]
+    fn a_reframed_letterbox_crops_the_centre_width_before_it_scales() {
+        assert_eq!(
+            REFRAMED.ffmpeg_filter(512, 15),
+            "crop=trunc(iw*700/2000)*2:ih,scale=512:512:force_original_aspect_ratio=decrease,fps=15"
+        );
+        assert_eq!(
+            REFRAMED.ffmpeg_filter_supersampled(512, 15),
+            "crop=trunc(iw*700/2000)*2:ih,scale=1024:1024:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15"
+        );
+        assert_eq!(REFRAMED.feather_pixels(512), 15);
+        assert_eq!(
+            REFRAMED.to_string(),
+            "letterbox of a 700 per mille reframe (feather 30 per mille)"
+        );
+    }
+
+    #[test]
+    fn the_reframed_side_is_even_and_rounded_down() {
+        assert_eq!(reframed_side(1280, 700), 896);
+        assert_eq!(reframed_side(720, 700), 504);
+        assert_eq!(reframed_side(101, 500), 50);
+        assert_eq!(reframed_side(1280, 999), 1278);
+    }
+
+    #[test]
+    fn only_a_letterbox_can_be_reframed() {
+        let letterbox = BakeFraming::Letterbox {
+            feather_permille: 30,
+        };
+        assert_eq!(letterbox.reframed(700), Some(REFRAMED));
+        assert_eq!(BakeFraming::CenterCrop.reframed(700), None);
+        assert_eq!(REFRAMED.reframed(700), None);
+    }
+
+    /// A 400×200 backdrop with a 40×20 red box in the middle.
+    fn boxed() -> RgbaImage {
+        let mut image = wide(400, 200);
+        for y in 90..110 {
+            for x in 180..220 {
+                image.put_pixel(x, y, Rgba([220, 30, 30, 255]));
+            }
+        }
+        image
+    }
+
+    #[test]
+    fn a_reframed_picture_shrinks_about_its_centre_into_its_own_backdrop() {
+        let source = boxed();
+        let reframed = reframe_picture(&source, 600, 50).unwrap();
+        assert_eq!(reframed.image.dimensions(), (400, 200));
+        assert_eq!(reframed.margin_rgb, [44, 48, 74]);
+        // 600 per mille keeps 240×120 at (80, 40); the box becomes 24×12 at (188, 94).
+        assert_eq!(reframed.image.get_pixel(200, 100).0, [220, 30, 30, 255]);
+        let near_backdrop = |x: u32, y: u32| {
+            let pixel = reframed.image.get_pixel(x, y).0;
+            pixel[..3]
+                .iter()
+                .zip(BACKDROP)
+                .all(|(own, want)| own.abs_diff(want) <= 6)
+        };
+        // Clear of the box's filter ringing, the shrunk backdrop is the backdrop.
+        for (x, y) in [(183, 100), (217, 100), (200, 88), (200, 112)] {
+            assert!(near_backdrop(x, y), "({x}, {y})");
+        }
+        // A plain backdrop extends into a margin of nearly the same colour, with no visible
+        // edge; the averaged backdrop holds a trace of the box, which fades out toward the
+        // canvas's edge, where the margin is exactly the measured colour.
+        for (x, y) in [(79, 100), (320, 100), (200, 39), (200, 160)] {
+            assert!(near_backdrop(x, y), "({x}, {y})");
+        }
+        for (x, y) in [(0, 0), (399, 199), (0, 100), (200, 0)] {
+            assert_eq!(reframed.image.get_pixel(x, y).0, BACKDROP, "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn the_margin_continues_the_edge_and_fades_to_the_border_colour() {
+        // A backdrop lit from below: the bottom rows are brighter than the top ones.
+        let mut source = wide(200, 100);
+        for y in 80..100 {
+            for x in 0..200 {
+                source.put_pixel(x, y, Rgba([90, 94, 120, 255]));
+            }
+        }
+        let reframed = reframe_picture(&source, 600, 0).unwrap();
+        let below = |y: u32| reframed.image.get_pixel(100, y)[0];
+        // Just below the shrunk picture the margin is near the lit floor; at the canvas's
+        // bottom edge it is the measured border colour, the lower median of both bands.
+        assert!(below(80) > below(99), "{} then {}", below(80), below(99));
+        assert_eq!(
+            reframed.image.get_pixel(100, 99).0[..3],
+            reframed.margin_rgb
+        );
+        assert_eq!(reframed.margin_rgb, [44, 48, 74]);
+    }
+
+    #[test]
+    fn a_reframe_is_deterministic() {
+        let source = boxed();
+        assert_eq!(
+            reframe_picture(&source, 700, 60).unwrap(),
+            reframe_picture(&source, 700, 60).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_reframe_out_of_range_is_refused() {
+        let source = boxed();
+        for (scale, feather) in [(499, 0), (1000, 0), (700, MAX_FEATHER_PERMILLE + 1)] {
+            assert!(
+                matches!(
+                    reframe_picture(&source, scale, feather),
+                    Err(BakerError::ValidationFailed { .. })
+                ),
+                "{scale} {feather}"
+            );
+        }
+        assert!(reframe_picture(&wide(2, 2), 999, 0).is_err(), "no margin");
     }
 }

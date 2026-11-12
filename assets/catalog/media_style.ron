@@ -421,16 +421,23 @@
     modes: {
         "railgun_crawler": {
             "siege_mode": (
-                enter: "Deploying animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place, size and three-quarter facing in frame. It deploys into artillery mode: four heavy hydraulic stabilizer legs swing out from the hull corners and brace down, the hull lowers and locks, and the twin rail barrels extend longer and tilt up to a steep firing angle, glowing steadily blue. Nothing fires: no sparks, no lightning, no discharge. It ends fully deployed and still.",
+                enter: "Deploying animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place, size and three-quarter facing in frame. It deploys into artillery mode: four heavy hydraulic stabilizer legs swing out from the hull corners and brace down, the hull lowers and locks, and the twin rail barrels tilt up to a steep firing angle, glowing steadily blue, the muzzles inside the frame. Nothing fires: no sparks, no lightning, no discharge. It ends fully deployed and still.",
                 leave: "Packing-up animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place, size and three-quarter facing in frame. The deployed tank packs up for travel: the long twin rail barrels tilt down level, pointing forward, and slide back to their normal length, the hull rises, and the four stabilizer legs fold back into the hull corners. Nothing fires. It ends still, ready to drive.",
                 texts: {
                     Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the deployed tank keeps the same size, pose and place in frame from start to end. It stands anchored on its four braced stabilizer legs with the long twin rail barrels raised, completely still; only the blue glow along the rails pulses slowly and thin smoke drifts from its stacks. Nothing fires: no sparks, no lightning. Seamless loop: the last frame matches the first.",
-                    Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the deployed tank keeps its place in frame on its braced legs, the twin rail barrels staying raised at their steep angle throughout. They fire one massive shot together up into the sky: a violent recoil, a huge bright blue muzzle blast and a glowing shell streaking out of the top of the frame, a puff of smoke, then the barrels slide smoothly back and the glow settles.",
+                    Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the deployed tank keeps its place in frame on its braced legs. The twin rail barrels stay locked at their steep upward angle the whole time and never lower or turn. They fire one massive shot together: a short recoil along the barrels, a compact bright blue muzzle flash at their tips that stays inside the frame, a puff of smoke, then the glow settles.",
                 },
                 loops: {
                     Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
                     Attack: (pin_end: true, seam: None),
                 },
+                // The raised rails and the muzzle blast rose above the default frame and were
+                // cut by its top edge (independent review of WP13, item 1). The clips start on
+                // the Idle picture shrunk to 70 % with a margin of its backdrop; the bake crops
+                // them back to the default atlas's scale and keeps the margin above the hull.
+                // picture_feather_permille is the start picture's blend into its margin, not the
+                // bake's bar feather (the unit's letterbox feather above).
+                reframe: Some((scale_permille: 700, picture_feather_permille: 60)),
             ),
         },
         "burrow_scorpion": {

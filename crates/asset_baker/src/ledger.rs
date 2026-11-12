@@ -571,6 +571,22 @@ pub enum LedgerEvent {
         /// Why it was rejected.
         reason: String,
     },
+    /// A reviewer withdrew an earlier [`Self::ModeClipRejected`] of the same clip bytes: the
+    /// clip counts as accepted again (it may be installed, and a shipped copy verifies). It is
+    /// not a request and costs nothing. A later rejection of the same bytes applies again.
+    ModeClipRejectionWithdrawn {
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// SHA-256 of the clip whose rejection is withdrawn.
+        sha256: String,
+        /// Why the rejection is withdrawn.
+        reason: String,
+    },
     /// A reviewer rejected a downloaded clip.
     RejectedInReview {
         /// Catalog slug.
@@ -625,7 +641,8 @@ impl LedgerEvent {
             | Self::ModeClipDownloaded { .. }
             | Self::ModeClipQuotaRefused { .. }
             | Self::ModeClipStartFailed { .. }
-            | Self::ModeClipRejected { .. } => None,
+            | Self::ModeClipRejected { .. }
+            | Self::ModeClipRejectionWithdrawn { .. } => None,
         }
     }
 
@@ -668,6 +685,9 @@ impl LedgerEvent {
                 slug, stance, slot, ..
             }
             | Self::ModeClipRejected {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipRejectionWithdrawn {
                 slug, stance, slot, ..
             } => Some((slug, stance, *slot)),
             _ => None,
@@ -732,6 +752,9 @@ impl LedgerEvent {
             Self::RejectedInReview { sha256, .. } | Self::ModeClipRejected { sha256, .. } => {
                 ClipStep::Rejected { sha256 }
             }
+            Self::ModeClipRejectionWithdrawn { sha256, .. } => {
+                ClipStep::RejectionWithdrawn { sha256 }
+            }
             Self::ImageRequestStarted { .. }
             | Self::ImageDownloaded { .. }
             | Self::ImageQuotaRefused { .. }
@@ -760,6 +783,8 @@ enum ClipStep<'a> {
     StartFailed,
     /// A reviewer rejected a download.
     Rejected { sha256: &'a str },
+    /// A reviewer withdrew the rejection of a download.
+    RejectionWithdrawn { sha256: &'a str },
 }
 
 /// One line of the ledger: when and in which run an event happened.
@@ -945,7 +970,7 @@ pub struct ClipHistory {
     pub named_operations: BTreeSet<String>,
     /// SHA-256 of every clip downloaded for this clip.
     pub downloaded_sha256: BTreeSet<String>,
-    /// SHA-256 of every clip rejected in review.
+    /// SHA-256 of every clip rejected in review and not withdrawn since.
     pub rejected_sha256: BTreeSet<String>,
 }
 
@@ -1048,6 +1073,13 @@ impl LedgerHistory {
                 clip.unusable_results += 1;
                 if clip.downloaded.as_ref().is_some_and(|d| d.sha256 == sha256) {
                     clip.downloaded = None;
+                }
+            }
+            ClipStep::RejectionWithdrawn { sha256 } => {
+                // Undoes exactly one rejection's effect on the counts; the clip does not
+                // become the slice's download awaiting review again (it was reviewed).
+                if clip.rejected_sha256.remove(sha256) {
+                    clip.unusable_results = clip.unusable_results.saturating_sub(1);
                 }
             }
         }
