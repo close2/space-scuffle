@@ -1,0 +1,117 @@
+WP9 round 2: printed measurements of crates/client/tests/status_gpu_tests.rs (debug build, Xvfb, 1280x720,
+the battle camera's default distance), every line a test prints with its driver; then the clean radv run of
+gpu_validation_tests (review 1) and the effect GPU test binaries on both drivers.
+
+== radv
+driver radv: Stim stands at (586, 383)
+driver radv: Daze stands at (551, 249)
+driver radv: Charge stands at (684, 219), (595, 221)
+driver radv: Barrier stands at (793, 220), (800, 262)
+driver radv: Deaths stands at (892, 231), (898, 263), (909, 288), (920, 361)
+driver radv: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver radv: Daze: status shown on 74 of 88 frames, look held differently on 0
+driver radv: Charge: status shown on 10 of 88 frames, look held differently on 0
+driver radv: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver radv: the stimmed unit's rim runs from 0.252 to 0.620
+driver radv: the charge moved under its status on 10 frames and laid 6 dust effects then, 0 otherwise; the stim laid 10 fumes over 3.52 s (10.1 beats)
+driver radv: the barrier absorbed hits on 8 frames and flashed 8 times
+driver radv: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver radv: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver radv: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver radv: dying unit 3 (default shatter) had at most 16 legacy shards near it
+driver radv: bio_burst spawned 1 times at the deaths (expected 1)
+driver radv: vehicle_wreck spawned 2 times at the deaths (expected 2)
+driver radv: pair Stim stands at (581, 384), (622, 384) (acting, twin)
+driver radv: pair Daze stands at (550, 251), (586, 251) (acting, twin)
+driver radv: pair BarrierRanged stands at (691, 219), (726, 219) (acting, twin)
+driver radv: pair BarrierMelee stands at (793, 218), (829, 218) (acting, twin)
+driver radv: pair BarrierRanged attacker pulse_bot weapon Some((Hitscan, 5.0))
+driver radv: pair BarrierMelee attacker psi_grey weapon Some((MeleeSlash, 0.1))
+driver radv: pair Stim: status before the onset on 0 frames; look first held at Some(1.08) s
+driver radv: pair Daze: status before the onset on 0 frames; look first held at Some(1.08) s
+driver radv: pair BarrierRanged: status before the onset on 0 frames; look first held at Some(1.16) s
+driver radv: pair BarrierMelee: status before the onset on 0 frames; look first held at Some(1.16) s
+driver radv: absorb flashes spawned: 7
+driver radv: ring of 378 pixels round the unit (1.08..1.30 radii, 14.9 px radius): barrier at 0.5 changes 358 (94.7 %), without its layers 0, at 0.05 351, down 0; the unit itself changes 134 of the ring against empty ground
+driver radv: at 24 levels or more, the barrier at 0.5 changes 202 of the 378 ring pixels (53.4 %), at 0.05 156 (41.3 %)
+driver radv: barrier down, changed ring pixels (x, y, largest channel change): []
+driver radv: a death's marks beside a resource node change 469 of the 1137 pixels of the node's ground disc (its billboard and the ground under it) with the mask off and 0 with it on (against the same scene without effect layers)
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 186.43s
+
+== lavapipe
+driver lavapipe: Stim stands at (586, 383)
+driver lavapipe: Daze stands at (551, 249)
+driver lavapipe: Charge stands at (684, 219), (595, 221)
+driver lavapipe: Barrier stands at (793, 220), (800, 262)
+driver lavapipe: Deaths stands at (892, 231), (898, 263), (909, 288), (920, 361)
+driver lavapipe: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: Daze: status shown on 74 of 88 frames, look held differently on 0
+driver lavapipe: Charge: status shown on 10 of 88 frames, look held differently on 0
+driver lavapipe: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: the stimmed unit's rim runs from 0.252 to 0.620
+driver lavapipe: the charge moved under its status on 10 frames and laid 6 dust effects then, 0 otherwise; the stim laid 10 fumes over 3.52 s (10.1 beats)
+driver lavapipe: the barrier absorbed hits on 8 frames and flashed 8 times
+driver lavapipe: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver lavapipe: dying unit 3 (default shatter) had at most 16 legacy shards near it
+driver lavapipe: bio_burst spawned 1 times at the deaths (expected 1)
+driver lavapipe: vehicle_wreck spawned 2 times at the deaths (expected 2)
+driver lavapipe: pair Stim stands at (581, 384), (622, 384) (acting, twin)
+driver lavapipe: pair Daze stands at (550, 251), (586, 251) (acting, twin)
+driver lavapipe: pair BarrierRanged stands at (691, 219), (726, 219) (acting, twin)
+driver lavapipe: pair BarrierMelee stands at (793, 218), (829, 218) (acting, twin)
+driver lavapipe: pair BarrierRanged attacker pulse_bot weapon Some((Hitscan, 5.0))
+driver lavapipe: pair BarrierMelee attacker psi_grey weapon Some((MeleeSlash, 0.1))
+driver lavapipe: pair Stim: status before the onset on 0 frames; look first held at Some(1.08) s
+driver lavapipe: pair Daze: status before the onset on 0 frames; look first held at Some(1.08) s
+driver lavapipe: pair BarrierRanged: status before the onset on 0 frames; look first held at Some(1.16) s
+driver lavapipe: pair BarrierMelee: status before the onset on 0 frames; look first held at Some(1.16) s
+driver lavapipe: absorb flashes spawned: 7
+driver lavapipe: ring of 378 pixels round the unit (1.08..1.30 radii, 14.9 px radius): barrier at 0.5 changes 354 (93.7 %), without its layers 0, at 0.05 348, down 0; the unit itself changes 134 of the ring against empty ground
+driver lavapipe: at 24 levels or more, the barrier at 0.5 changes 194 of the 378 ring pixels (51.3 %), at 0.05 152 (40.2 %)
+driver lavapipe: barrier down, changed ring pixels (x, y, largest channel change): []
+driver lavapipe: a death's marks beside a resource node change 469 of the 1137 pixels of the node's ground disc (its billboard and the ground under it) with the mask off and 0 with it on (against the same scene without effect layers)
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 244.80s
+
+== gpu_validation_tests, radv (no lock contention this time)
+test a_busy_lock_times_out_without_starting_the_child ... ok
+test a_child_holds_the_gpu_lock_only_while_it_runs ... ok
+test a_child_timeline_names_its_slowest_phase ... ok
+test adapter_lines_are_parsed_and_checked ... ok
+test allowlist_entries_carry_a_reason ... ok
+test allowlist_matches_the_exact_id_only ... ok
+test an_ancestor_holding_the_lock_fails_fast ... ok
+test best_practices_ids_are_recognised_in_both_layer_naming_forms ... ok
+test clean_output_with_active_layer_has_no_violations ... ok
+test driver_selection_matrix ... ok
+test effect_shaders_compose_and_validate ... ok
+test error_finding_with_validation_id_is_an_unlisted_violation ... ok
+test error_from_another_subsystem_fails_the_run ... ok
+test listed_notice_does_not_hide_a_real_validation_error ... ok
+test live_battle_passes_vulkan_validation ... ok
+test log_delivered_on_stdout_is_validated_like_stderr ... ok
+test log_record_times_are_read_from_tracing_timestamps ... ok
+test log_split_across_both_streams_keeps_every_record ... ok
+test mesa_release_is_read_from_the_vulkaninfo_summary ... ok
+test only_mesa_before_the_sampler_rewrite_lowers_anisotropy ... ok
+test only_the_listed_missing_extension_is_tolerated ... ok
+test proc_locks_and_stat_lines_are_parsed ... ok
+test radv_never_lowers_terrain_anisotropy ... ok
+test real_layer_findings_reach_the_gate ... ok
+test skirmish_passes_vulkan_validation ... ok
+test stderr_without_the_layer_fails_even_when_it_has_no_findings ... ok
+test the_executable_is_read_before_the_lock_and_recorded ... ok
+test the_host_lock_tool_uses_the_harness_lock_file ... ok
+test the_selected_driver_is_the_one_that_rendered ... ok
+test unstructured_wgpu_hal_warning_is_not_dropped ... ok
+test warning_finding_is_parsed_once_and_detail_records_are_not_findings ... ok
+test warning_from_another_subsystem_is_not_a_validation_finding ... ok
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 143.92s
+
+effect_gpu_tests on radv: test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.66s
+effect_slice_gpu_tests on radv: test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 798.60s
+stance_gpu_tests on radv: test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 237.25s
+effect_gpu_tests on lavapipe: test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.15s
+effect_slice_gpu_tests on lavapipe: test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 765.76s
+stance_gpu_tests on lavapipe: test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 337.73s
