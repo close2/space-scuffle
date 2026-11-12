@@ -7,6 +7,25 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP8 round 5 (concealment and stance: engineering only)
+
+Round 4's review ([`independent_review_wp8_4.md`](independent_review_wp8_4.md), kept as written) accepted every
+look and rejected the round narrowly for one engineering defect, E4-1. This round, plan Amendment 15, changes no
+look. It is round 5, the last of the owner's five (Q0080). Please write it to a new file next to this one,
+`independent_review_wp8_5.md`: check E4-1, A4-1 and A4-3, and confirm that no look and no shipped effect changed.
+There are no new pictures. The figures are in [wp8r5_measurements.txt](wp8r5_measurements.txt).
+
+### What changed
+
+| Round-4 finding | Change |
+|---|---|
+| E4-1: the ordinary card runs were cut with the darkening prefix's real distances | `queue_effects` cuts the ordinary runs over the cards after the prefix only, and `cut_runs` offsets its ranges by the first card's index. The first run is queued at the first ordinary card's distance. New test `effects::render::tests::the_darkening_prefix_stays_out_of_the_ordinary_runs`: a prefix at −1.0 before cards at −10, −9 and −8, with other items at −9.5 and −8.5. No ordinary range contains the prefix, and the cuts equal those without it, offset by one. The test also shows the defect: cut with the prefix, the three cards fall into one run with it. |
+| A4-1: a non-finite depth could sort before a darkening card | An ordinary card's sort depth is finite and below the darkening cards'; a non-finite depth sorts as 0. Unit test `no_card_sorts_before_a_darkening_card` covers NaN, infinities and `f32::MAX`. |
+| A4-3: the back-of-furrow check had no negative control | The unit now stands just inside the furrow, 1.3 world units behind the hull and clear of it, so its body rises over the band on screen. On the furrow line, as in round 4, its body hardly overlapped the band. A first control run there passed even with the old order, so the check was insensitive. A one-off radv run with the darkening card item queued at its card's own distance (the order before E3-1) fails: 18 of 214 body pixels keep less than 0.85 of their light (lowest 0.332). With the order of record the check passes on both drivers: 0 of 214, lowest 0.891 and 0.892. The temporary queue was not kept. |
+| P4-1, P4-2, A4-2, the burrow crest | Not taken. They are recorded in the plan's open polish list. |
+
+`main` was already contained in the branch (`573a88c`), so the merge brought nothing new.
+
 ## WP8 round 4 (concealment and stance)
 
 Round 3's review ([`independent_review_wp8_3.md`](independent_review_wp8_3.md), kept as written) accepted every look

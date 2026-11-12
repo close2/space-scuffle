@@ -1212,11 +1212,11 @@ impl EffectRuntime {
     /// and multiplication does not depend on their order.
     fn push_sorted_card(&mut self, card: SpriteInstance, camera: Option<&CameraView>, bias: f32) {
         let depth = if card.flags & FLAG_DARKEN != 0 {
-            f32::MAX
+            DARKENING_DEPTH
         } else {
-            camera.map_or(0.0, |camera| {
+            sort_depth(camera.map_or(0.0, |camera| {
                 camera.depth(Vec3::from_array(card.center)) - bias
-            })
+            }))
         };
         self.frame.cards.push(card);
         self.frame.depth.push(depth);
@@ -1341,7 +1341,7 @@ impl EffectRuntime {
                 clip_max: particle.clip[3],
                 ..Surface::NONE.card()
             };
-            let depth = camera.map_or(0.0, |camera| camera.depth(particle.position));
+            let depth = sort_depth(camera.map_or(0.0, |camera| camera.depth(particle.position)));
             frame.cards.push(card);
             frame.depth.push(depth);
         }
@@ -1980,10 +1980,47 @@ pub fn flipbook_frame(
     (element.first_layer + whole, element.first_layer + next, mix)
 }
 
+/// The sort depth of every darkening card: above every other card's ([`sort_depth`]), so the
+/// darkening cards lead the sorted cards.
+const DARKENING_DEPTH: f32 = f32::MAX;
+
+/// The sort depth of an ordinary card at view depth `depth`: finite and below
+/// [`DARKENING_DEPTH`], so no card (one with a non-finite centre included) can sort before a
+/// darkening card and push it out of the prefix the renderer draws (WP8 review 4, A4-1). A
+/// non-finite depth sorts as 0 (at the camera plane).
+fn sort_depth(depth: f32) -> f32 {
+    if depth.is_finite() {
+        depth.min(f32::MAX / 2.0)
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+
+    #[test]
+    fn no_card_sorts_before_a_darkening_card() {
+        for depth in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            1.0e30,
+            -3.0,
+        ] {
+            let sorted = sort_depth(depth);
+            assert!(sorted.is_finite(), "{depth} sorts at {sorted}");
+            assert!(
+                sorted.total_cmp(&DARKENING_DEPTH).is_lt(),
+                "{depth} sorts at {sorted}, not below the darkening cards"
+            );
+        }
+        assert_eq!(sort_depth(-3.0), -3.0, "an ordinary depth is kept");
+        assert_eq!(sort_depth(f32::NAN), 0.0);
+    }
 
     fn ribbon(travel: f32, tail_delay: Option<f32>) -> RibbonLook {
         RibbonLook {

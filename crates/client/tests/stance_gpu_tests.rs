@@ -165,8 +165,11 @@ const MOUND_RING_SHARE: f64 = 0.5;
 /// (the largest bend, lens plus noise, is about 3 px at the default zoom).
 const SHIMMER_REACH_PX: i64 = 6;
 /// World units behind the anchoring unit (away from the camera) at which a neutral unit stands
-/// on its switch's furrow: the furrow's radius, 1.85 of the anchoring unit's radius of 0.875.
-const BEHIND_DISTANCE: f32 = 1.62;
+/// just inside its switch's furrow (radius 1.62, 1.85 of the anchoring unit's radius of 0.875),
+/// clear of the hull (their radii sum to 1.25), so its body rises over the furrow's band on
+/// screen: a furrow drawn after the body would multiply over it (WP8 review 4, A4-3: standing
+/// on the furrow line, the body hardly overlapped the band and the check passed either way).
+const BEHIND_DISTANCE: f32 = 1.3;
 /// A body pixel of a unit standing on a darkening element keeps at least this share of its
 /// light (linear luminance): what the bubble's slight translucency lets through from the
 /// darkened ground behind it, about 0.92, and no more (the soil leaves about 0.6).

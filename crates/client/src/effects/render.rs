@@ -754,10 +754,16 @@ fn queue_effects(
         .extend(phase.items.iter().map(|item| item.distance));
     runs.others.sort_unstable_by(f32::total_cmp);
     let rangefinder = view.rangefinder3d();
+    // The darkening prefix is drawn by its own item; the ordinary runs are cut over the cards
+    // after it, which are back to front (WP8 review 4, E4-1: cut with the prefix's distances,
+    // every card behind a switching tank fell into one run queued at the tank's distance).
+    let prefix = gpu.darkening_cards;
     cut_runs(
         gpu.centers
             .iter()
+            .skip(prefix as usize)
             .map(|center| rangefinder.distance_translation(center)),
+        prefix,
         &runs.others,
         &mut runs.cards,
     );
@@ -831,12 +837,21 @@ fn queue_distortions(
 
 /// Cuts cards at `distances` (ascending: back to front) into runs that no other item's
 /// distance in `others` (sorted ascending) falls inside; at most [`MAX_CARD_RUNS`] runs, the
-/// last taking the rest. Writes the instance ranges into `runs`.
-fn cut_runs(distances: impl Iterator<Item = f32>, others: &[f32], runs: &mut Vec<Range<u32>>) {
+/// last taking the rest. The first distance is card `start`'s, so the ranges written into
+/// `runs` index the card buffer from there: the queue cuts only the cards after the darkening
+/// prefix, whose own distances are not in back-to-front order with them (WP8 review 4, E4-1).
+fn cut_runs(
+    distances: impl Iterator<Item = f32>,
+    start: u32,
+    others: &[f32],
+    runs: &mut Vec<Range<u32>>,
+) {
     runs.clear();
     let mut below = 0_usize;
-    for (index, distance) in distances.enumerate() {
-        let index = u32::try_from(index).unwrap_or(u32::MAX);
+    for (offset, distance) in distances.enumerate() {
+        let index = u32::try_from(offset)
+            .unwrap_or(u32::MAX)
+            .saturating_add(start);
         let mut crossed = false;
         while below < others.len() && others[below] < distance {
             below += 1;
@@ -1010,8 +1025,44 @@ mod tests {
 
     fn cut(distances: &[f32], others: &[f32]) -> Vec<Range<u32>> {
         let mut runs = Vec::new();
-        cut_runs(distances.iter().copied(), others, &mut runs);
+        cut_runs(distances.iter().copied(), 0, others, &mut runs);
         runs
+    }
+
+    /// The ordinary runs of a card buffer whose first `prefix` cards darken, cut as the queue
+    /// cuts them.
+    fn cut_after(prefix: u32, distances: &[f32], others: &[f32]) -> Vec<Range<u32>> {
+        let mut runs = Vec::new();
+        cut_runs(
+            distances.iter().copied().skip(prefix as usize),
+            prefix,
+            others,
+            &mut runs,
+        );
+        runs
+    }
+
+    /// WP8 review 4, E4-1: a darkening prefix nearer than every other card neither joins an
+    /// ordinary run nor moves its cuts.
+    #[test]
+    fn the_darkening_prefix_stays_out_of_the_ordinary_runs() {
+        let others = [-9.5, -8.5];
+        let ordinary = [-10.0, -9.0, -8.0];
+        let with_prefix = [-1.0, -10.0, -9.0, -8.0];
+        let runs = cut_after(1, &with_prefix, &others);
+        assert!(
+            runs.iter().all(|run| !run.contains(&0)),
+            "no ordinary run draws the darkening card: {runs:?}"
+        );
+        let shifted: Vec<Range<u32>> = cut(&ordinary, &others)
+            .into_iter()
+            .map(|run| run.start + 1..run.end + 1)
+            .collect();
+        assert_eq!(runs, shifted, "cut at -9.5 and -8.5 as without the prefix");
+        assert_eq!(runs, vec![1..2, 2..3, 3..4]);
+        // The defect it replaces: cut with the prefix, the near darkening card moved the cursor
+        // past every other item, and the cards behind it fell into its run.
+        assert_eq!(cut(&with_prefix, &others), vec![0..4]);
     }
 
     #[test]

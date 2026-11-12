@@ -1475,6 +1475,10 @@ review).**
 | `spine_line` | Torn clods; clods a step lighter than the furrows; one detached scar piece. | slice round 5, scale-out 1 |
 | Decal ledger | Optional, camera-independent: leave out of the reservations the layers that can never reach the 6-pixel floor, computed once at load. | scale-out 4 |
 | Crowd evidence | An annotated crop of one soft retirement would strengthen the degradation take. | scale-out 3 |
+| `mode_seal_sweep` | The softened band lost its trench-and-berm structure and reads as a soft stroke, a thin ellipse when closed: lower `WAVER_SOFT` to about 0.35 or raise the band's core intensity so a darker core of about two pixels survives, with the `WAVER_ACROSS` shading across it (P4-1). | WP8 4 |
+| `siege_anchor` | The 3 o'clock patch falls in the hull's shadow and the fourth hides under the bubble: raise `size_jitter` (to about 0.35) and `spread`, stretch the patches tangentially (pads, not dots; never radially) (P4-2). | WP8 4 |
+| `siege_anchor` | The outer falloff is 0.19 radii against the test's 0.15 floor: a thin margin if the soil is later thickened (A4-2). | WP8 4 |
+| `burrow_mound` | A small premultiplied lit crest on a few heaps over the darkening, so the stains read as raised heaps. | WP8 3 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
 
@@ -1747,3 +1751,32 @@ shipped effects, and asked for the darkening cards' order (E3-1). The orchestrat
 Presentation data, the card and decal shaders, a field of the decal outline, the effect runtime's sort and the
 renderer's queue, and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
 "WP8 round 4". This is round 4 of the owner's five (Q0080).
+
+## Amendment 15: WP8 round 5, decided by the orchestrator after WP8 review 4 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_4.md`](../evidence/effects/review/independent_review_wp8_4.md)).** Review 4 accepted every
+look and rejected the round narrowly for one engineering defect (E4-1). This last round changes no look. The
+orchestrator decided:
+
+1. **E4-1, the ordinary card runs leave the darkening prefix out.** `queue_effects` cuts the ordinary runs over the
+   cards after the prefix only (`cut_runs` takes the first card's index and offsets its ranges by it), so the first
+   run is queued at the first ordinary card's distance. Cut with the prefix's real distances, a darkening card nearer
+   than the other cards had moved the cutting cursor past every other transparent item, and every card behind a
+   switching tank fell into one run queued at the tank's distance. Test: a prefix nearer than every other card
+   neither joins an ordinary run nor moves its cuts (they equal the cuts without it, offset), and cut with the prefix
+   the same cards fall into one run.
+2. **A4-1, finite sort depths.** An ordinary card's sort depth is finite and below the darkening cards' (a non-finite
+   depth sorts as 0), so no card, one with a non-finite centre included, can sort before a darkening card and push
+   it out of the prefix. Unit test.
+3. **A4-3, a negative control for the back-of-furrow check.** The unit now stands just inside the furrow, 1.3 world
+   units behind the hull (clear of it), so its body rises over the furrow's band on screen; on the furrow line, as in
+   round 4, its body hardly overlapped the band and the check passed with either queue order. A one-off radv run with
+   the darkening card item queued at its card's own distance (the order before E3-1) fails the check: 18 of 214 body
+   pixels keep less than 0.85 of their light (lowest 0.332). With the order of record it passes. The run is noted in
+   the packet; the temporary queue is not kept.
+4. **Not taken:** P4-1, P4-2, A4-2 and the burrow crest, recorded in the open polish list above.
+
+The effect renderer's queue, the effect runtime's sort depths and their tests. No look, simulation state, golden
+replay or checksum changes (D-1 holds). Packet: section "WP8 round 5". This is round 5, the last of the owner's five
+(Q0080).
