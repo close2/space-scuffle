@@ -41,4 +41,10 @@
     non_catalog: [
         "concept_video",
     ],
+    // Mode atlases `<slug>-<mode>` (docs/plans/2026-11-09-effect-visualization.md WP13): the
+    // clips of one catalog mode of a unit above, and its morphs into and out of it.
+    mode_atlases: [
+        "burrow_scorpion-burrowed",
+        "railgun_crawler-siege_mode",
+    ],
 )

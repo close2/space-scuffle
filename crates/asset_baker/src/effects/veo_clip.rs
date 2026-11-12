@@ -9,12 +9,12 @@
 //! origin by the clip's bytes ([`crate::provenance::veo_origin_by_clip_sha256`]).
 //!
 //! # How it fits
-//! The request, polling, download and redaction are the Veo client's ([`VeoClient`]), and the
-//! rules are those of a unit clip's run (`veo_run`): `effect_clip_request_started` is written
+//! The run itself is [`crate::paid_clip::run_paid_clip`], shared with the mode clips of units;
+//! its rules are those of a unit clip's run (`veo_run`): `effect_clip_request_started` is written
 //! before the request is sent, a quota refusal is recorded as free and ends the command with
-//! [`BakerError::VeoQuotaExhausted`] (exit status 3), any other start failure is recorded as
+//! [`crate::BakerError::VeoQuotaExhausted`] (exit status 3), any other start failure is recorded as
 //! possibly paid, and a filtered, failed or Cloud Storage result ends the command with
-//! [`BakerError::VeoRunStopped`] (exit status 4) after it is recorded. The CLI checks the
+//! [`crate::BakerError::VeoRunStopped`] (exit status 4) after it is recorded. The CLI checks the
 //! model's price and the total budget before it reads a credential.
 //!
 //! # Invariants
@@ -24,14 +24,10 @@
 //! - The parameters sent are the ones the ledger records.
 
 use super::{check_name, EffectError};
-use crate::error::BakerError;
-use crate::ffmpeg_importer::probe_video;
-use crate::ledger::{
-    sha256_file, sha256_hex, Ledger, LedgerError, LedgerEvent, LedgerHistory, OperationOutcome,
-};
+use crate::ledger::{Ledger, LedgerHistory};
+use crate::paid_clip::{run_paid_clip, ClipSubject, PaidClipJob};
 use crate::prompts::ComposedPrompt;
-use crate::veo_client::{GenerationImages, VeoClient, VeoOperation, VeoParameters};
-use crate::veo_run::operation_stem;
+use crate::veo_client::{VeoClient, VeoParameters};
 use std::path::{Path, PathBuf};
 
 /// One effect element's clip request.
@@ -68,8 +64,8 @@ pub struct EffectClipResult {
 ///
 /// # Errors
 /// [`EffectError::InvalidName`] for a set or element that cannot name a directory;
-/// [`BakerError::VeoQuotaExhausted`] and [`BakerError::VeoRunStopped`] (wrapped in
-/// [`EffectError::Baker`]) as described in the module docs; and transport, ledger, probe and
+/// [`crate::BakerError::VeoQuotaExhausted`] and [`crate::BakerError::VeoRunStopped`] (wrapped
+/// in [`EffectError::Baker`]) as described in the module docs; and transport, ledger, probe and
 /// I/O failures.
 pub fn run_effect_clip(
     client: &VeoClient,
@@ -79,192 +75,26 @@ pub fn run_effect_clip(
 ) -> Result<EffectClipResult, EffectError> {
     check_name("set", job.set)?;
     check_name("element", job.element)?;
-    let pending = history
-        .effect_clip(job.set, job.element)
-        .and_then(|clip| clip.pending.clone());
-    if let Some(pending) = pending {
-        let completed = client
-            .clone()
-            .with_model(&pending.model)
-            .poll_operation(&pending.operation)?;
-        let (path, sha256) = finish(client, ledger, job, &pending.operation, &completed)?;
-        return Ok(EffectClipResult {
-            started: false,
-            operation: pending.operation,
-            path,
-            sha256,
-        });
-    }
-    let keyframe_sha256 = job.keyframe.map(sha256_file).transpose()?;
-    let request_id = ledger.next_request_id();
-    ledger.append(LedgerEvent::EffectClipRequestStarted {
-        request_id: request_id.clone(),
-        set: job.set.to_string(),
-        element: job.element.to_string(),
-        model: client.model().to_string(),
-        mode: client.mode(),
-        prompt_sha256: sha256_hex(job.prompt.text.as_bytes()),
-        prompt: job.prompt.text.clone(),
-        keyframe_sha256,
-        parameters: job.parameters.clone(),
-    })?;
-    let operation = start(client, ledger, job, &request_id)?;
-    let completed = if operation.done {
-        operation.clone()
-    } else {
-        client.poll_operation(&operation.name)?
-    };
-    let (path, sha256) = finish(client, ledger, job, &operation.name, &completed)?;
+    let result = run_paid_clip(
+        client,
+        ledger,
+        history,
+        &PaidClipJob {
+            subject: ClipSubject::Effect {
+                set: job.set,
+                element: job.element,
+            },
+            prompt: job.prompt,
+            keyframe: job.keyframe,
+            end_frame: None,
+            parameters: job.parameters,
+            out_dir: job.out_dir,
+        },
+    )?;
     Ok(EffectClipResult {
-        started: true,
-        operation: operation.name,
-        path,
-        sha256,
+        started: result.started,
+        operation: result.operation,
+        path: result.path,
+        sha256: result.sha256,
     })
-}
-
-/// Sends the start request and records its outcome.
-fn start(
-    client: &VeoClient,
-    ledger: &mut Ledger,
-    job: &EffectClipJob<'_>,
-    request_id: &str,
-) -> Result<VeoOperation, EffectError> {
-    let images = GenerationImages {
-        start: job.keyframe,
-        end: None,
-    };
-    let operation = match client.initiate_generation_with(&job.prompt.text, images, job.parameters)
-    {
-        Ok(operation) => operation,
-        Err(BakerError::VeoQuotaExhausted {
-            http_status,
-            status,
-            reason,
-        }) => {
-            ledger.append(LedgerEvent::EffectClipQuotaRefused {
-                request_id: request_id.to_string(),
-                set: job.set.to_string(),
-                element: job.element.to_string(),
-                http_status,
-                status: status.clone(),
-                reason: reason.clone(),
-            })?;
-            return Err(BakerError::VeoQuotaExhausted {
-                http_status,
-                status,
-                reason,
-            }
-            .into());
-        }
-        Err(error) => {
-            let message = client.redact(&error.to_string());
-            ledger.append(LedgerEvent::EffectClipStartFailed {
-                request_id: request_id.to_string(),
-                set: job.set.to_string(),
-                element: job.element.to_string(),
-                error: message.clone(),
-            })?;
-            if matches!(error, BakerError::VeoHttpStatus { status: 400, .. }) {
-                return Err(BakerError::VeoRunStopped {
-                    reason: format!(
-                        "{}/{}: the service refused the start request as invalid; it started no operation and is not billed. It is recorded as effect_clip_start_failed and not retried: {message}",
-                        job.set, job.element
-                    ),
-                }
-                .into());
-            }
-            return Err(error.into());
-        }
-    };
-    ledger
-        .append(LedgerEvent::EffectClipOperationNamed {
-            request_id: request_id.to_string(),
-            set: job.set.to_string(),
-            element: job.element.to_string(),
-            model: client.model().to_string(),
-            operation: operation.name.clone(),
-        })
-        .map_err(|error| match error {
-            LedgerError::Io { path, source } => {
-                EffectError::from(BakerError::OperationNotRecorded {
-                    operation: operation.name.clone(),
-                    path,
-                    source,
-                })
-            }
-            other => other.into(),
-        })?;
-    Ok(operation)
-}
-
-/// Records a finished operation and downloads and validates its video, or stops.
-fn finish(
-    client: &VeoClient,
-    ledger: &mut Ledger,
-    job: &EffectClipJob<'_>,
-    operation_name: &str,
-    completed: &VeoOperation,
-) -> Result<(PathBuf, String), EffectError> {
-    let label = format!("{}/{}", job.set, job.element);
-    let outcome = client.classify_operation(completed);
-    let dir = job.out_dir.join(job.set).join(job.element);
-    let stem = operation_stem(operation_name);
-    let record = dir.join(format!("{stem}.json"));
-    let text = serde_json::to_string_pretty(&client.operation_record(completed))
-        .map_err(BakerError::from)?;
-    std::fs::create_dir_all(&dir).map_err(|source| EffectError::Io {
-        path: dir.clone(),
-        source,
-    })?;
-    super::write_atomic(&record, text.as_bytes())?;
-    ledger.append(LedgerEvent::EffectClipOperationDone {
-        set: job.set.to_string(),
-        element: job.element.to_string(),
-        operation: operation_name.to_string(),
-        outcome: outcome.clone(),
-    })?;
-    let stopped = |reason: String| EffectError::from(BakerError::VeoRunStopped { reason });
-    match outcome {
-        OperationOutcome::VideoInline | OperationOutcome::VideoUri { .. } => {}
-        OperationOutcome::GcsUri { uri } => {
-            return Err(stopped(format!(
-                "{label}: the result is a Cloud Storage URI ({uri}), which this pipeline cannot download; it is in the ledger and in {}",
-                record.display()
-            )))
-        }
-        OperationOutcome::Filtered { reason } => {
-            return Err(stopped(format!(
-                "{label}: the result was filtered ({reason}); reword the prompt before a regeneration"
-            )))
-        }
-        OperationOutcome::Failed { code, message } => {
-            return Err(stopped(format!(
-                "{label}: the operation failed (code {code:?}: {message})"
-            )))
-        }
-    }
-    let path = dir.join(format!("{stem}.mp4"));
-    client.save_operation_video(completed, &path)?;
-    let probe = probe_video(client.ffprobe_path(), &path)?;
-    let bytes = std::fs::metadata(&path)
-        .map_err(|source| EffectError::Io {
-            path: path.clone(),
-            source,
-        })?
-        .len();
-    let sha256 = sha256_file(&path)?;
-    ledger.append(LedgerEvent::EffectClipDownloaded {
-        set: job.set.to_string(),
-        element: job.element.to_string(),
-        operation: operation_name.to_string(),
-        bytes,
-        sha256: sha256.clone(),
-        duration_seconds: probe.duration_seconds,
-        frames: probe.packets,
-        width: probe.width,
-        height: probe.height,
-        path: path.display().to_string(),
-    })?;
-    Ok((path, sha256))
 }

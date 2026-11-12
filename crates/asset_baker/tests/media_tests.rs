@@ -30,6 +30,7 @@ fn fixture() -> FlipbookAtlasMeta {
         fps: 12,
         total_frames: 2,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions: BTreeMap::from([(
             AnimState::Idle,
             ActionSlice {

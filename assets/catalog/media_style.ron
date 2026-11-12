@@ -406,6 +406,50 @@
         },
     ),
 
+    // Media of units' catalog modes (docs/plans/2026-11-09-effect-visualization.md WP13,
+    // Amendment 10; owner answer Q0075). Exact catalog slug, then the catalog `mode_name`, then:
+    // - look: the unit's look for these prompts, replacing its Idle `veo_prompts` entry (optional);
+    // - enter / leave: the morph into the mode and back to the default stance;
+    // - texts: one text per state the client shows in the mode (Idle always, Attack when the
+    //   unit is armed in it, Walk when the mode is not immobile, Cast for a worker);
+    // - loops: as the `loops` section above, for the mode's states.
+    // A clip's prompt is: look, then the slice's text, then `style`. The pictures chain the clips:
+    // the enter morph starts on the unit's Idle picture and its last frame becomes the mode's
+    // picture (`<slug>-<mode>.png` among the keyframes); every state in the mode starts on it;
+    // the leave morph starts on it and ends on the Idle picture. A unit or mode not named here
+    // keeps its default clips in every stance.
+    modes: {
+        "railgun_crawler": {
+            "siege_mode": (
+                enter: "Deploying animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place, size and three-quarter facing in frame. It deploys into artillery mode: four heavy hydraulic stabilizer legs swing out from the hull corners and brace down, the hull lowers and locks, and the twin rail barrels extend longer and tilt up to a steep firing angle, glowing steadily blue. Nothing fires: no sparks, no lightning, no discharge. It ends fully deployed and still.",
+                leave: "Packing-up animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place, size and three-quarter facing in frame. The deployed tank packs up for travel: the long twin rail barrels tilt down level, pointing forward, and slide back to their normal length, the hull rises, and the four stabilizer legs fold back into the hull corners. Nothing fires. It ends still, ready to drive.",
+                texts: {
+                    Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the deployed tank keeps the same size, pose and place in frame from start to end. It stands anchored on its four braced stabilizer legs with the long twin rail barrels raised, completely still; only the blue glow along the rails pulses slowly and thin smoke drifts from its stacks. Nothing fires: no sparks, no lightning. Seamless loop: the last frame matches the first.",
+                    Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the deployed tank keeps its place in frame on its braced legs, the twin rail barrels staying raised at their steep angle throughout. They fire one massive shot together up into the sky: a violent recoil, a huge bright blue muzzle blast and a glowing shell streaking out of the top of the frame, a puff of smoke, then the barrels slide smoothly back and the glow settles.",
+                },
+                loops: {
+                    Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
+                    Attack: (pin_end: true, seam: None),
+                },
+            ),
+        },
+        "burrow_scorpion": {
+            "burrowed": (
+                look: Some("Subterranean Ambush Scorpion: one broad, flat armored scorpion of thick brown chitin with six short legs, two broad pincer claws, a spined tail and glowing amber bands along its back, seen from high above at a three-quarter angle, head toward the lower right, centred in evenly lit empty space."),
+                enter: "Burrowing animation, one static tripod shot: the camera never moves, zooms or pans. The scorpion digs straight down on the spot, staying one whole, intact body with every leg and claw attached: its legs and claws churn and fling loose dark earth, and it sinks into a growing mound of soil until only a low round mound of dark earth remains, the glowing amber bands of its back and the tip of its spined tail showing through. It ends still.",
+                leave: "Unburrowing animation, one static tripod shot: the camera never moves, zooms or pans. The mound of dark earth bursts open and the scorpion heaves itself up out of the soil, shaking off loose earth, unfolding its legs and claws and raising its spined tail; the soil falls away and vanishes until it crouches alone and still in empty space.",
+                texts: {
+                    Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the mound keeps the same size and place in frame. A low round mound of loose dark earth hides the buried scorpion: only the glowing amber bands of its back and the tip of its spined tail show through the soil, completely still, the amber glow pulsing softly. Seamless loop: the last frame matches the first.",
+                    Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the mound keeps its place in frame. The buried scorpion strikes: the mound heaves and a straight row of jagged bone spikes bursts up in a quick ripple from the mound toward the right edge of the frame, then the spikes sink away and the mound settles back to its starting look.",
+                },
+                loops: {
+                    Idle: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+                    Attack: (pin_end: true, seam: None),
+                },
+            ),
+        },
+    },
+
     // Prompt class "effect element" (docs/plans/2026-11-09-effect-visualization.md §6.1 to §6.4):
     // greyscale shape and shading of one isolated effect element on pure black, for the image
     // model (stills, decals) and for Veo (camera-facing flipbooks). Colour, size and timing come

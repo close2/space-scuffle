@@ -199,6 +199,7 @@ pub fn generate_procedural_unit_atlas(
         total_frames,
         layout: FlipbookLayout::VerticalStrip,
         actions,
+        morphs: BTreeMap::new(),
     };
     meta.validate()?;
 
@@ -279,6 +280,7 @@ pub fn generate_procedural_dome_atlas(
         total_frames,
         layout: FlipbookLayout::VerticalStrip,
         actions,
+        morphs: BTreeMap::new(),
     };
     meta.validate()?;
 

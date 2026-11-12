@@ -5,7 +5,7 @@
 //! pixels. Digests describe the same immutable read buffers that were parsed/decoded,
 //! and are content evidence rather than a claim of artistic approval.
 
-use crate::{BakerError, FlipbookAtlasMeta, FlipbookLayout};
+use crate::{BakerError, FlipbookAtlasMeta, FlipbookLayout, Morph, SliceKey};
 use sim_types::AnimState;
 use std::{
     io::Cursor,
@@ -72,6 +72,14 @@ pub enum MediaLoadError {
         path: PathBuf,
         /// Requested gameplay animation.
         action: AnimState,
+    },
+    /// A mode atlas lacks one of its morphs; the default atlas is never substituted.
+    #[error("mode media {path} has no authored {morph:?} morph")]
+    MissingMorph {
+        /// Exact metadata path.
+        path: PathBuf,
+        /// The missing morph.
+        morph: Morph,
     },
 }
 
@@ -252,6 +260,27 @@ pub fn require_action(
             action,
         })
     }
+}
+
+/// Rejects a mode atlas that lacks any of the `required` slices (plan
+/// `2026-11-09-effect-visualization.md` WP13; [`crate::mode_media::required_mode_slices`]),
+/// naming the first missing one in [`SliceKey`] order.
+///
+/// # Errors
+/// [`MediaLoadError::MissingAction`] or [`MediaLoadError::MissingMorph`] naming the metadata.
+pub fn require_slices(
+    metadata: &FlipbookAtlasMeta,
+    path: &Path,
+    required: &[SliceKey],
+) -> Result<(), MediaLoadError> {
+    required.iter().try_for_each(|slot| match slot {
+        SliceKey::Action(action) => require_action(metadata, path, *action),
+        SliceKey::Morph(morph) if metadata.morphs.contains_key(morph) => Ok(()),
+        SliceKey::Morph(morph) => Err(MediaLoadError::MissingMorph {
+            path: path.to_owned(),
+            morph: *morph,
+        }),
+    })
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, MediaLoadError> {

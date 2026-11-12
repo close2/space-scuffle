@@ -43,6 +43,7 @@ fn test_manifest_validation_success() {
         fps: 15,
         total_frames: 16,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions,
     };
 
@@ -70,6 +71,7 @@ fn test_manifest_validation_zero_dimensions() {
         fps: 15,
         total_frames: 4,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions: actions.clone(),
     };
     match meta_zero_width.validate() {
@@ -86,6 +88,7 @@ fn test_manifest_validation_zero_dimensions() {
         fps: 0,
         total_frames: 4,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions,
     };
     match meta_zero_fps.validate() {
@@ -117,6 +120,7 @@ fn test_manifest_validation_frame_range_overflow() {
         fps: 15,
         total_frames: 16,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions,
     };
 
@@ -149,6 +153,7 @@ fn test_manifest_validation_zero_frame_count() {
         fps: 15,
         total_frames: 16,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions,
     };
 
@@ -214,6 +219,7 @@ fn test_manifest_ron_roundtrip() {
         fps: 15,
         total_frames: 32,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions,
     };
 
@@ -292,6 +298,7 @@ fn timed_meta(duration_ms: Option<u32>) -> FlipbookAtlasMeta {
         fps: 15,
         total_frames: 20,
         layout: FlipbookLayout::VerticalStrip,
+        morphs: BTreeMap::new(),
         actions: BTreeMap::from([
             (AnimState::Idle, slice(0, true, duration_ms)),
             (AnimState::Attack, slice(10, false, None)),

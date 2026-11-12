@@ -93,6 +93,7 @@ impl Fixture {
                 fps: 15,
                 total_frames: 3,
                 layout: FlipbookLayout::VerticalStrip,
+                morphs: BTreeMap::new(),
                 actions,
             },
             origins: STATES
@@ -187,6 +188,7 @@ impl Fixture {
             .collect();
         let provenance = MediaProvenance {
             format_version: PROVENANCE_FORMAT_VERSION,
+            morphs: BTreeMap::new(),
             name: self.slug.clone(),
             atlas_sha256: sha256_hex(&std::fs::read(self.atlas_path()).expect("atlas")),
             manifest_sha256: sha256_hex(&std::fs::read(self.manifest_path()).expect("manifest")),
