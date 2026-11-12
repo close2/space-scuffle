@@ -41,6 +41,8 @@ use client::battle_hud::HudGeometry;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::{BattlePresentation, PlayerPresentation};
+use client::effects::catalog::EffectCatalog;
+use client::effects::stance::StanceTrack;
 use client::runtime_battle::{MapObject, MapPresentation, SKIRMISH_SCENARIO};
 use client::scene_controller::RenderEntityMap;
 use client::smog::SmogStats;
@@ -489,12 +491,26 @@ enum Watcher {
     NoFog,
 }
 
-/// What the viewer gets of the unit: whether it is drawn, and whether a click inspects or selects
-/// it with its ring and health bar.
+/// What the viewer gets of the unit: whether its bubble is drawn, the concealment look the
+/// effect system holds on it (by effect name), and whether a click inspects or selects it with
+/// its ring and health bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Seen {
     drawn: bool,
+    cover: Option<&'static str>,
     picked: bool,
+}
+
+/// The name of the concealment look held on unit `id`, if any (plan WP8).
+fn cover(harness: &Harness, id: EntityId) -> Option<&'static str> {
+    let world = harness.app.world();
+    let look = world.get::<StanceTrack>(bubble(harness, id))?.cover?;
+    let catalog = world.resource::<EffectCatalog>();
+    let name = catalog.effect(look.effect)?.name.as_str();
+    // The shipped defaults name each look once; the test compares against them.
+    ["cloak_own", "cloak_shimmer", "detected_mark"]
+        .into_iter()
+        .find(|known| *known == name)
 }
 
 /// Spawns a concealed unit beside home, as `watcher` says, and returns it with the detector.
@@ -558,34 +574,66 @@ fn seen(watcher: Watcher, concealment: Concealment) -> Seen {
             "the panel follows the pick"
         );
     }
-    Seen { drawn, picked }
+    Seen {
+        drawn,
+        cover: cover(&harness, hidden),
+        picked,
+    }
 }
 
 #[test]
 fn a_concealed_unit_reaches_each_viewer_as_detection_allows() {
+    // A burrowed unit shown at all shows its burrow by its stance, with no cover look.
     const SHOWN: Seen = Seen {
         drawn: true,
+        cover: None,
         picked: true,
     };
-    // The developer view draws the truth; who may be clicked stays the simulation's targeting,
-    // which no player without detection has (`a_cloaked_enemy_cannot_be_selected_or_targeted`).
+    // A cloaked unit of the viewer's own wears its owner's cloak; a detected cloaked enemy the
+    // detected mark (plan WP8).
+    const OWN_CLOAK: Seen = Seen {
+        cover: Some("cloak_own"),
+        ..SHOWN
+    };
+    const DETECTED: Seen = Seen {
+        cover: Some("detected_mark"),
+        ..SHOWN
+    };
+    // The developer view draws the truth with the owner's look; who may be clicked stays the
+    // simulation's targeting, which no player without detection has
+    // (`a_cloaked_enemy_cannot_be_selected_or_targeted`).
     const DRAWN_ONLY: Seen = Seen {
         drawn: true,
+        cover: None,
         picked: false,
     };
     const NOTHING: Seen = Seen {
         drawn: false,
+        cover: None,
         picked: false,
+    };
+    // An undetected cloaked enemy: its bubble is not drawn; all the viewer gets is its shimmer,
+    // a colourless distortion held where it stands (Q0076, plan WP8).
+    const SHIMMER_ONLY: Seen = Seen {
+        cover: Some("cloak_shimmer"),
+        ..NOTHING
     };
     let expected = [
         (Watcher::Own, Concealment::Burrowed, SHOWN),
-        (Watcher::Own, Concealment::Cloaked, SHOWN),
+        (Watcher::Own, Concealment::Cloaked, OWN_CLOAK),
         (Watcher::EnemyUndetected, Concealment::Burrowed, NOTHING),
-        (Watcher::EnemyUndetected, Concealment::Cloaked, DRAWN_ONLY),
+        (Watcher::EnemyUndetected, Concealment::Cloaked, SHIMMER_ONLY),
         (Watcher::EnemyRevealed, Concealment::Burrowed, SHOWN),
-        (Watcher::EnemyRevealed, Concealment::Cloaked, SHOWN),
+        (Watcher::EnemyRevealed, Concealment::Cloaked, DETECTED),
         (Watcher::NoFog, Concealment::Burrowed, DRAWN_ONLY),
-        (Watcher::NoFog, Concealment::Cloaked, DRAWN_ONLY),
+        (
+            Watcher::NoFog,
+            Concealment::Cloaked,
+            Seen {
+                cover: Some("cloak_own"),
+                ..DRAWN_ONLY
+            },
+        ),
     ];
     let mut wrong = Vec::new();
     for (watcher, concealment, wanted) in expected {
@@ -647,8 +695,11 @@ fn lose_detection(harness: &mut Harness, hidden: EntityId, detector: EntityId) {
 
 #[test]
 fn an_inspected_enemy_that_goes_undetected_stops_being_inspected() {
-    for (concealment, still_drawn) in [(Concealment::Burrowed, false), (Concealment::Cloaked, true)]
-    {
+    // Undetected, neither bubble is drawn; the cloaked one leaves only its shimmer (plan WP8).
+    for (concealment, look) in [
+        (Concealment::Burrowed, None),
+        (Concealment::Cloaked, Some("cloak_shimmer")),
+    ] {
         let mut harness = skirmish();
         let (hidden, detector) = stage_concealed(&mut harness, Watcher::EnemyRevealed, concealment);
         harness.select(hidden);
@@ -660,7 +711,8 @@ fn an_inspected_enemy_that_goes_undetected_stops_being_inspected() {
         assert!(harness.draws_selected(hidden));
 
         lose_detection(&mut harness, hidden, detector.expect("a revealed case"));
-        assert_eq!(drawn(&harness, hidden), still_drawn, "{concealment:?}");
+        assert!(!drawn(&harness, hidden), "{concealment:?}");
+        assert_eq!(cover(&harness, hidden), look, "{concealment:?}");
         assert!(
             !harness.draws_selected(hidden),
             "{concealment:?}: no ring or health bar on an undetected enemy"

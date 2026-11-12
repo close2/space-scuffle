@@ -145,6 +145,9 @@ const CONCERNS: &[Concern] = &[
             "Update: client::scene_controller::sync_lab_preview_system",
             "Update: client::scene_controller::sync_live_battle_system",
             "Update: client::scene_controller::sync_swarm_stress_system",
+            // Shell lanes (binding 4 only): the looks held on live battle units (plan
+            // 2026-11-09-effect-visualization WP8).
+            "Update: client::effects::stance::present_stances",
         ],
     },
     Concern {

@@ -7,6 +7,65 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP8 round 1 (concealment and stance)
+
+This is the first review round of WP8 (plan Amendment 10; Q0080 allows up to five). Please write it to a new file
+next to this one, `independent_review_wp8_1.md`, in the same form as earlier rounds: judge each look below against
+each of the seven checklist items (item 7, fog, carries most weight here), write **accept** or **reject** with a
+concrete reason (file, cell or frame, what you see), and say whether the shipped seven splash effects regressed
+(they were not changed; the effect shaders gained an arc mask and a lens bend that are off for them).
+
+Unlike the earlier rounds, these looks are not drawn in the effect lab but on units in the production client
+playing the shipped skirmish, because they modify the units' own bubbles. The pictures are screenshots of
+`crates/client/tests/stance_gpu_tests.rs`'s two children (debug build, Xvfb, 1280×720 window), on radv (the
+physical GPU) and on lavapipe, at the camera's default distance. The burrowing unit is the presentable stand-in
+`battle_harness::burrower` picks (a scorpion picture in its bubble), given the shipped burrowing unit's burrowed
+mode and Burrow ability in the test session's catalog; the anchoring unit is the shipped Siege-Tank analogue.
+Nothing was spent and no texture was made.
+
+### The looks (what each is meant to be)
+
+| Look | Shown to | Meant to read as |
+|---|---|---|
+| `burrow_dig` | anyone who sees the unit | the bubble sinks into the ground over the dig (1.8 s; the stats change at 33 ticks, the dig goes on to 45, D-6), soil creeps up its glass from the ground, clods are thrown off its rim, dust rises, loose earth heaps round the hole |
+| `burrow_mound` | the owner and an enemy that detects it | a low, soil-caked dome in a hollow with heaped earth round it; nothing else |
+| `burrow_emerge` | anyone who sees the unit | the body heaves up out of its hole in 11 ticks, throwing soil and dust; the heaped earth stays a while |
+| `cloak_own` | the owner of a cloaked unit | a hollow, cool glass shape with an outline light and a faint bend of what is behind it: "hidden, but here" |
+| `cloak_shimmer` | an enemy that does not detect it | only a faint refraction of what lies behind its outline, slowly crawling; no colour, no bubble, no ring or bar (Q0076) |
+| `detected_mark` | an enemy that detects a cloaked unit | the unit drawn as it is, with a thin cold outline light and a slight bend at its edge |
+| `mode_seal_sweep` | anyone who sees the unit | while an anchoring mode switch runs (siege and unsiege), a furrow ploughed round the hull whose arc closes with the switch's progress, its head lit; dust as it begins |
+| `siege_anchor` | anyone who sees the unit | while anchored, the closed furrow stays, with soil pressed down under the stabilisers |
+
+An undetected **burrowed** enemy shows nothing at all (WP3's rule, unchanged), and its spine line still shows where
+the viewer sees the ground (R6, unchanged).
+
+### Material
+
+| What | Files |
+|---|---|
+| Burrow pose: empty ground, the unit standing, burrowed, burrowed without the effect layers | [wp8_burrow_pose_radv.png](wp8_burrow_pose_radv.png), [wp8_burrow_pose_lavapipe.png](wp8_burrow_pose_lavapipe.png) |
+| Undetected cloaked enemy: empty ground, its shimmer, without the effect layers, the shimmer's amplified difference from the empty ground | [wp8_shimmer_pose_radv.png](wp8_shimmer_pose_radv.png), [wp8_shimmer_pose_lavapipe.png](wp8_shimmer_pose_lavapipe.png) |
+| Siege switch caught half way, only `Critical` layers, the unit's bubble hidden so the arc can be measured; and the same without effect layers | [wp8_siege_mid_radv.png](wp8_siege_mid_radv.png), [wp8_siege_mid_lavapipe.png](wp8_siege_mid_lavapipe.png) |
+| Sequences through real mode commands, one picture whenever the previous one was written (about every 0.15 to 0.5 s; frame numbers are picture indices) | dig [wp8_dig_sequence_radv.png](wp8_dig_sequence_radv.png), emerge [wp8_emerge_sequence_radv.png](wp8_emerge_sequence_radv.png), siege [wp8_siege_sequence_radv.png](wp8_siege_sequence_radv.png), unsiege [wp8_unsiege_sequence_radv.png](wp8_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Battle capture: a burrowed unit of the player's, a cloaked unit of the player's, a cloaked enemy undetected, the Siege-Tank analogue anchored; then the same scene without effect layers; then a detector of the player's brought beside the enemy | [wp8_battle_undetected_radv.png](wp8_battle_undetected_radv.png), [wp8_battle_bare_radv.png](wp8_battle_bare_radv.png), [wp8_battle_detected_radv.png](wp8_battle_detected_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The tests' printed measurements on both drivers | [wp8_measurements.txt](wp8_measurements.txt) |
+
+Where things stand in the battle capture (window pixels): the anchored Siege-Tank analogue upper left of the
+headquarters dome, the player's burrowed unit left of the dome, the player's cloaked unit above the dome, the
+enemy cloaked unit right of it (to the upper right of the row of workers).
+
+### Points to look at
+
+- Whether the burrowed unit reads as dug in rather than as a small disc on the ground, at the default zoom.
+- Whether the shimmer is faint and colourless (item 7): compare `wp8_shimmer_pose_*` cells 1 and 2, and the battle
+  capture's enemy before and after detection.
+- In the battle capture without detection, a small dark spot lies at the undetected enemy's feet; it is absent
+  without the effect layers (`wp8_battle_bare_*`) and absent in the pose test's shimmer at another spot. Its colour
+  is that of a unit's shadow on the tiles. The implementer has not found its cause; please judge it as a possible
+  leak (item 7).
+- Whether the siege furrow reads during the switch and while anchored, and whether it reads as ploughed ground or
+  as a drawn ring.
+
 ## Scale-out round 5 (WP7)
 
 Round 4's review ([`independent_review_scaleout4.md`](independent_review_scaleout4.md), kept as written) accepted

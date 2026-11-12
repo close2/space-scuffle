@@ -471,8 +471,26 @@ impl Resolver<'_> {
         }
         let lifetime = layers
             .iter()
+            .filter(|layer| !layer.held)
             .map(|layer| layer.start + layer.duration)
             .fold(0.0_f32, f32::max);
+        let held_exit = layers
+            .iter()
+            .filter(|layer| layer.held)
+            .map(|layer| layer.exit)
+            .fold(0.0_f32, f32::max);
+        if let Some(span) = effect.span {
+            self.positive_seconds(&site(name, None), "span", span)?;
+            if effect.event != EventKind::Mode {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: site(name, None),
+                    field: "span",
+                    value: span,
+                    rule: "only a `Mode` effect shows a mode switch's morph",
+                });
+            }
+        }
         if let Some(repeat) = effect.repeat {
             // The negated comparison also refuses NaN.
             if !(repeat > 0.0 && repeat.is_finite()) {
@@ -491,9 +509,68 @@ impl Resolver<'_> {
             event: effect.event,
             layers,
             lifetime,
+            held_exit,
+            span: effect.span,
             repeat: effect.repeat,
             salt: effect.seed.unwrap_or_else(|| name_hash(name)),
         })
+    }
+
+    /// Checks that `value` is a positive, finite number of seconds.
+    fn positive_seconds(
+        &self,
+        at: &Site,
+        field: &'static str,
+        value: f32,
+    ) -> Result<(), EffectCatalogError> {
+        // The negated comparison also refuses NaN.
+        if value > 0.0 && value.is_finite() {
+            return Ok(());
+        }
+        Err(EffectCatalogError::InvalidValue {
+            path: self.path.to_path_buf(),
+            site: at.clone(),
+            field,
+            value,
+            rule: "it must be a positive number of seconds",
+        })
+    }
+
+    /// Checks that a layer of an effect of kind `event` may hold or modulate the bubble: both
+    /// belong to an effect held on a unit, which only `Mode` effects are.
+    fn unit_bound(
+        &self,
+        at: &Site,
+        event: EventKind,
+        layer: &LayerDef,
+        block: &Block,
+    ) -> Result<(), EffectCatalogError> {
+        let field = if layer.held {
+            "held"
+        } else if matches!(block, Block::Shell(_)) {
+            "block"
+        } else {
+            return Ok(());
+        };
+        if event != EventKind::Mode {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field,
+                value: 0.0,
+                rule: "only a `Mode` effect is held on a unit and may hold a layer or shape its bubble",
+            });
+        }
+        if matches!(block, Block::Particles(_)) && layer.held {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field,
+                value: 0.0,
+                rule: "a particle burst fires once and cannot be held",
+            });
+        }
+        self.positive_seconds(at, "exit", layer.exit)
     }
 
     /// Resolves one layer of an effect of kind `event`.
@@ -522,6 +599,10 @@ impl Resolver<'_> {
         if let Some(radius) = &layer.radius {
             values.extend([radius.from, radius.to]);
         }
+        if let Block::Ring { arc: Some(arc), .. } = &block {
+            values.push(*arc);
+        }
+        self.unit_bound(at, event, layer, &block)?;
         self.fraction(at, "size_jitter", layer.size_jitter)?;
         for placement in &placements {
             match placement {
@@ -589,6 +670,8 @@ impl Resolver<'_> {
                     ..
                 }
             ),
+            held: layer.held,
+            exit: layer.exit,
         })
     }
 
@@ -747,14 +830,15 @@ impl Resolver<'_> {
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
             BlockDef::Ribbon { .. } => self.ribbon(at, block)?,
-            BlockDef::Distortion {
-                noise,
-                scale,
-                scroll,
-                strength,
-                orient,
-                height,
-            } => self.distortion(at, noise, *scale, *scroll, *strength, *orient, *height)?,
+            BlockDef::Distortion { .. } => self.distortion_block(at, block)?,
+            BlockDef::Shell {
+                sink,
+                tint,
+                rim,
+                veil,
+                soil,
+                progress,
+            } => self.shell(at, *sink, *tint, *rim, *veil, *soil, *progress)?,
             BlockDef::Light {
                 color,
                 intensity,
@@ -841,13 +925,65 @@ impl Resolver<'_> {
             thickness: *thickness,
             height: *height,
             edge_noise: *edge_noise,
+            arc: None,
         })
     }
 
-    /// Resolves a ring or a decal.
-    fn masked_block(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
-        match block {
-            BlockDef::Ring {
+    /// Resolves a distortion block definition, with its lens bend.
+    fn distortion_block(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
+        let BlockDef::Distortion {
+            noise,
+            scale,
+            scroll,
+            strength,
+            orient,
+            height,
+            lens,
+        } = block
+        else {
+            return self.block(at, block);
+        };
+        if !(0.0..=0.25).contains(lens) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "lens",
+                value: *lens,
+                rule: "it must be in [0, 0.25]",
+            });
+        }
+        Ok(
+            match self.distortion(at, noise, *scale, *scroll, *strength, *orient, *height)? {
+                Block::Distortion(look) => Block::Distortion(DistortionLook {
+                    lens: *lens,
+                    ..look
+                }),
+                other => other,
+            },
+        )
+    }
+
+    /// Resolves a ring block definition, with its arc.
+    fn ring_definition(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
+        let BlockDef::Ring {
+            texture,
+            ramp,
+            orient,
+            thickness,
+            erosion,
+            mapping,
+            height,
+            sort_bias,
+            breakup,
+            edge_noise,
+            arc,
+        } = block
+        else {
+            return self.block(at, block);
+        };
+        let block = self.ring_block(
+            at,
+            &RingFields {
                 texture,
                 ramp,
                 orient,
@@ -858,21 +994,80 @@ impl Resolver<'_> {
                 sort_bias,
                 breakup,
                 edge_noise,
-            } => self.ring_block(
-                at,
-                &RingFields {
-                    texture,
-                    ramp,
-                    orient,
-                    thickness,
-                    erosion,
-                    mapping,
-                    height,
-                    sort_bias,
-                    breakup,
-                    edge_noise,
-                },
-            ),
+            },
+        )?;
+        if arc.is_some() && *mapping == super::schema::RingMapping::Front {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "arc",
+                value: 0.0,
+                rule: "a pressure front is a whole ring: an arc needs `Card` or `Polar` mapping",
+            });
+        }
+        Ok(match block {
+            Block::Ring {
+                look,
+                thickness,
+                height,
+                edge_noise,
+                ..
+            } => Block::Ring {
+                look,
+                thickness,
+                height,
+                edge_noise,
+                arc: *arc,
+            },
+            other => other,
+        })
+    }
+
+    /// Resolves a shell modulation, every value checked against its range.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fields of one block definition, each checked on its own"
+    )]
+    fn shell(
+        &self,
+        at: &Site,
+        sink: f32,
+        tint: (f32, f32, f32, f32),
+        rim: (f32, f32, f32, f32),
+        veil: f32,
+        soil: f32,
+        progress: bool,
+    ) -> Result<Block, EffectCatalogError> {
+        let fields: [(&'static str, f32); 11] = [
+            ("sink", sink),
+            ("tint", tint.0),
+            ("tint", tint.1),
+            ("tint", tint.2),
+            ("tint", tint.3),
+            ("rim", rim.0),
+            ("rim", rim.1),
+            ("rim", rim.2),
+            ("rim", rim.3),
+            ("veil", veil),
+            ("soil", soil),
+        ];
+        for (field, value) in fields {
+            self.unit_range(at, field, value, 0.0)?;
+        }
+        Ok(Block::Shell(super::ShellLook {
+            sink,
+            tint: bevy::math::Vec4::new(tint.0, tint.1, tint.2, tint.3),
+            rim: bevy::math::Vec4::new(rim.0, rim.1, rim.2, rim.3),
+            veil,
+            soil,
+            progress,
+        }))
+    }
+
+    /// Resolves a ring or a decal.
+    fn masked_block(&self, at: &Site, block: &BlockDef) -> Result<Block, EffectCatalogError> {
+        match block {
+            BlockDef::Ring { .. } => self.ring_definition(at, block),
             BlockDef::Decal {
                 texture,
                 ramp,
@@ -924,7 +1119,8 @@ impl Resolver<'_> {
             | BlockDef::Ribbon { .. }
             | BlockDef::Distortion { .. }
             | BlockDef::Light { .. }
-            | BlockDef::Particles { .. } => self.block(at, block),
+            | BlockDef::Particles { .. }
+            | BlockDef::Shell { .. } => self.block(at, block),
         }
     }
 
@@ -999,6 +1195,7 @@ impl Resolver<'_> {
             strength,
             ground,
             height,
+            lens: 0.0,
         }))
     }
 
@@ -1107,6 +1304,8 @@ impl Resolver<'_> {
                     Pool::Particles => (budget.particles, "particles"),
                     Pool::Lights => (budget.lights, "lights"),
                     Pool::Distortions => (budget.distortions, "distortions"),
+                    // A shell changes the unit's own bubble and needs no pool slot.
+                    Pool::Bubble => (u32::MAX, "bubble"),
                 };
                 let effects_capacity = budget.effects.min(budget.class_caps[effect.class.index()]);
                 if capacity == 0 || effects_capacity == 0 {
@@ -1137,11 +1336,22 @@ impl Resolver<'_> {
         for (kind, name) in &file.defaults.status {
             status.insert(*kind, EffectId(self.id(NameKind::Effect, name, &at)?));
         }
+        let concealment = &file.defaults.concealment;
         Ok(Defaults {
             impact: one(file.defaults.impact.as_ref())?,
             splash: one(file.defaults.splash.as_ref())?,
             death: one(file.defaults.death.as_ref())?,
             status,
+            concealment: super::ConcealmentDefaults {
+                burrow_enter: one(concealment.burrow_enter.as_ref())?,
+                burrow_leave: one(concealment.burrow_leave.as_ref())?,
+                burrowed: one(concealment.burrowed.as_ref())?,
+                cloaked_own: one(concealment.cloaked_own.as_ref())?,
+                cloaked_enemy: one(concealment.cloaked_enemy.as_ref())?,
+                detected: one(concealment.detected.as_ref())?,
+            },
+            anchor_transition: one(file.defaults.mode.transition.as_ref())?,
+            anchored: one(file.defaults.mode.anchored.as_ref())?,
         })
     }
 }

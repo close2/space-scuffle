@@ -389,6 +389,12 @@ pub enum BlockDef {
         /// test allows its rays to end inside the reach by this bite.
         #[serde(default)]
         edge_noise: f32,
+        /// Share of the full turn the ring draws from its start angle round, in [0, 1] once
+        /// resolved (a mode switch's progress through `ChannelProgress`: a seal that closes as
+        /// the switch completes, plan WP8). `None` draws the whole ring. The arc's head is a
+        /// soft step one hundredth of a turn wide.
+        #[serde(default)]
+        arc: Option<ValueDef>,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -514,6 +520,41 @@ pub enum BlockDef {
         /// Height of the disc's centre above its placed point, world units.
         #[serde(default)]
         height: f32,
+        /// Lens bend, in [0, 0.25]: the scene behind is pulled outward as a glass sphere
+        /// refracts it, most strongly a little inside the rim, by up to this fraction of the
+        /// disc's radius on screen; 0 for none. A cloaked body's outline is drawn this way
+        /// (plan §5.5 `cloak_shimmer`), with no colour of its own.
+        #[serde(default)]
+        lens: f32,
+    },
+    /// A modulation of the unit's own bubble (plan §5.1 `Shell`, WP8). The effect renderer
+    /// does not draw it: it is evaluated each frame for the unit its effect is held on and
+    /// written into that bubble's material. Every value is its strength at the layer's
+    /// intensity 1; the intensity (the layer's `curve` over its life) scales it towards no
+    /// change. Only `Mode` effects may have one.
+    Shell {
+        /// Share of the bubble's diameter sunk below where it rests, in [0, 1]; the ground
+        /// hides what is below it (a burrowing unit).
+        #[serde(default)]
+        sink: f32,
+        /// Linear RGB tint and the share of the media it replaces, each in [0, 1].
+        #[serde(default)]
+        tint: (f32, f32, f32, f32),
+        /// Linear RGB of a light along the bubble's outline and its strength, each in [0, 1].
+        #[serde(default)]
+        rim: (f32, f32, f32, f32),
+        /// Share of the bubble made see-through, in [0, 1]: its media fades and only the
+        /// glass's outline and rim stay (a cloaked unit its owner sees).
+        #[serde(default)]
+        veil: f32,
+        /// Height above the ground, as a share of the bubble's radius in [0, 1], over which the
+        /// glass is stained by soil (a unit digging in).
+        #[serde(default)]
+        soil: f32,
+        /// With `true` the layer's life is the progress of the mode switch its effect shows
+        /// (`ChannelProgress`), not its age: the bubble sinks as the switch completes.
+        #[serde(default)]
+        progress: bool,
     },
     /// A short point light.
     Light {
@@ -684,6 +725,20 @@ pub struct LayerDef {
     /// Placements; empty means one `Point`.
     #[serde(default)]
     pub placements: Vec<PlacementDef>,
+    /// The layer lives while the fact its effect shows holds (a unit's stance, its cloak):
+    /// it comes in over `duration` along its curves, then stays at their end until the effect
+    /// is released, and erodes out over `exit` seconds (plan §5.4, WP8). Only `Mode` effects
+    /// may hold layers.
+    #[serde(default)]
+    pub held: bool,
+    /// Seconds a held layer takes to erode out once its effect is released; positive.
+    #[serde(default = "default_exit")]
+    pub exit: f32,
+}
+
+/// Default seconds a held layer takes to erode out once released.
+const fn default_exit() -> f32 {
+    0.35
 }
 
 /// An effect: a class, an event kind and its layers.
@@ -706,6 +761,13 @@ pub struct EffectDefRaw {
     /// any `u32`. Without it the salt is the FNV-1a hash of the effect's name.
     #[serde(default)]
     pub seed: Option<u32>,
+    /// For a mode switch's effect (a `Mode` effect named as `enter`, `leave` or `transition`):
+    /// the seconds the morph takes on screen. When it is longer than the switch's channel the
+    /// morph plays at its own pace and finishes after the channel has ended (the dig of a unit
+    /// whose stats change before its animation ends, plan D-6, Q0069); without it, or when it
+    /// is shorter, the morph follows the channel. Positive.
+    #[serde(default)]
+    pub span: Option<f32>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.
@@ -871,4 +933,46 @@ pub struct DefaultsDef {
     /// A status, by kind.
     #[serde(default)]
     pub status: BTreeMap<StatusKind, String>,
+    /// How concealed units look (plan §5.2 `defaults.concealment`, D-5).
+    #[serde(default)]
+    pub concealment: ConcealmentDefaultsDef,
+    /// Mode switches and stances a unit's block names nothing for (plan §5.2 `defaults.mode`).
+    #[serde(default)]
+    pub mode: ModeDefaultsDef,
+}
+
+/// The looks of concealment; every entry is optional and names a `Mode` effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcealmentDefaultsDef {
+    /// Channel into a burrowed mode (a mode with `burrowed: true`).
+    #[serde(default)]
+    pub burrow_enter: Option<String>,
+    /// Channel out of a burrowed mode.
+    #[serde(default)]
+    pub burrow_leave: Option<String>,
+    /// Held while burrowed.
+    #[serde(default)]
+    pub burrowed: Option<String>,
+    /// Held on a cloaked unit of the viewer's own (or of anyone, with no fog).
+    #[serde(default)]
+    pub cloaked_own: Option<String>,
+    /// Held on a cloaked enemy the viewer does not detect: all the viewer sees of it.
+    #[serde(default)]
+    pub cloaked_enemy: Option<String>,
+    /// Held on a concealed enemy the viewer detects.
+    #[serde(default)]
+    pub detected: Option<String>,
+}
+
+/// The looks of mode switches; every entry is optional and names a `Mode` effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModeDefaultsDef {
+    /// Either channel of a mode that anchors its unit (`is_immobile`) and is not burrowed.
+    #[serde(default)]
+    pub transition: Option<String>,
+    /// Held while in such a mode.
+    #[serde(default)]
+    pub anchored: Option<String>,
 }

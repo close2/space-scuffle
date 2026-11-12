@@ -145,8 +145,46 @@ mod gpu_layout {
         /// Loop phase offset in clock units (`FlipbookLanes::offset`).
         pub anim_offset: u32,
     }
+
+    /// GPU uniform matching `struct ShellUniform` in `bubble_dome.wgsl`: the modulation of a
+    /// bubble by the effects held on its unit (plan `2026-11-09-effect-visualization` §5.1
+    /// `Shell`, WP8).
+    // PERFORMANCE RATIONALE:
+    // Why: The shell lanes change only when a unit's stance or concealment look changes, while
+    // `BubbleUniformGpu` is compared and rewritten for every bubble; and the smog goldens hash
+    // that uniform's bytes, which must not change for bubbles no effect touches.
+    // What: A separate 64-byte uniform at binding 4, four 16-byte rows, neutral (all zero)
+    // unless an effect is held on the unit.
+    // Trade-off: One more binding per bubble material, in exchange for an unchanged main
+    // uniform and no rewrite of it when only a shell lane moves.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
+    pub struct ShellUniformGpu {
+        /// Linear RGB tint of the media and the share it replaces (0 = none).
+        pub tint: Vec4,
+        /// Linear RGB of the light along the outline and its strength (0 = none).
+        pub rim: Vec4,
+        /// World units the bubble is sunk below where it rests; share of it made see-through;
+        /// height in world units of the soil stain above `ground` (its fourth lane is the
+        /// world height of the ground under the unit). All zero leaves the bubble as it is.
+        pub shape: Vec4,
+        /// 1 when effects drive this bubble's concealment look (the legacy cloak shimmer of
+        /// `cloaked` is then off), else 0; the other lanes are padding.
+        pub driven: Vec4,
+    }
 }
-pub use gpu_layout::BubbleUniformGpu;
+pub use gpu_layout::{BubbleUniformGpu, ShellUniformGpu};
+
+impl Default for ShellUniformGpu {
+    fn default() -> Self {
+        Self {
+            tint: Vec4::ZERO,
+            rim: Vec4::ZERO,
+            shape: Vec4::ZERO,
+            driven: Vec4::ZERO,
+        }
+    }
+}
 
 impl Default for BubbleUniformGpu {
     fn default() -> Self {
@@ -404,22 +442,48 @@ pub struct BubbleDomeMaterial {
     /// The shared flipbook clock buffer, always [`FLIPBOOK_CLOCK_BUFFER`].
     #[storage(3, read_only, visibility(fragment))]
     pub flipbook_clock: Handle<ShaderStorageBuffer>,
+    /// The effects' modulation of the bubble (sink, tint, rim, veil, soil); neutral unless the
+    /// effect system holds a look on the unit ([`crate::effects::stance`]).
+    #[uniform(4)]
+    pub shell: ShellUniformGpu,
     /// Transparency blend mode.
     pub alpha_mode: AlphaMode,
 }
 
 impl BubbleDomeMaterial {
     /// A blended bubble material showing `video_texture` with `uniform`, bound to the shared
-    /// flipbook clock.
+    /// flipbook clock, with a neutral shell.
     #[must_use]
     pub fn new(uniform: BubbleUniformGpu, video_texture: Option<Handle<Image>>) -> Self {
         Self {
             uniform,
             video_texture,
             flipbook_clock: FLIPBOOK_CLOCK_BUFFER,
+            shell: ShellUniformGpu::default(),
             alpha_mode: AlphaMode::Blend,
         }
     }
+}
+
+/// Writes `shell` into the bubble material `handle` only when it differs, so a steady look
+/// prepares nothing again (as [`sync_bubble_material`] does for the main uniform). Returns
+/// whether the material was modified.
+pub fn sync_bubble_shell(
+    materials: &mut Assets<BubbleDomeMaterial>,
+    handle: &Handle<BubbleDomeMaterial>,
+    shell: &ShellUniformGpu,
+) -> bool {
+    if materials
+        .get(handle)
+        .is_none_or(|material| material.shell == *shell)
+    {
+        return false;
+    }
+    let Some(material) = materials.get_mut(handle) else {
+        return false;
+    };
+    material.shell = *shell;
+    true
 }
 
 /// Registers [`BubbleDomeMaterial`] together with the flipbook clock it binds.
@@ -438,6 +502,10 @@ impl Plugin for BubbleDomeMaterialPlugin {
 }
 
 impl Material for BubbleDomeMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/bubble_dome.wgsl".into()
+    }
+
     fn fragment_shader() -> ShaderRef {
         "shaders/bubble_dome.wgsl".into()
     }

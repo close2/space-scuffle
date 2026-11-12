@@ -39,8 +39,10 @@ struct SpriteInstance {
     taper_head: f32,
     front_edge: f32,
     front_seed: u32,
-    reserved_b: f32,
-    reserved_c: f32,
+    // With FLAG_ARC, the share of the turn a ring draws.
+    arc: f32,
+    // A distortion disc's lens bend towards its rim.
+    lens: f32,
 }
 
 struct DecalInstance {
@@ -93,6 +95,7 @@ const SHAPE_FRONT: u32 = 2u;
 // SpriteInstance::flags bits.
 const FLAG_MIRROR: u32 = 1u;
 const FLAG_POLAR: u32 = 2u;
+const FLAG_ARC: u32 = 4u;
 
 
 // Colour of `ramps` row `row` at luminance `x` (0..1), linearly interpolated between texels.

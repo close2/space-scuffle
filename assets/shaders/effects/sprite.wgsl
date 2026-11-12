@@ -4,7 +4,7 @@
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
-    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
     erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
     flipbook_sample, premultiply, card_mip_level, derivative_mip_level,
 }
@@ -36,6 +36,12 @@ const FRONT_CRESTS: u32 = 12u;
 const CREST_JITTER: f32 = 0.019444444;
 const CREST_HALF_WIDTH: f32 = 0.0069444444;
 const CREST_SOFT: f32 = 0.0041666667;
+// An arc's head (FLAG_ARC): the soft step's width in turns (one hundredth of a turn, so the
+// drawn share is within 1 % of the bound one), and the extra shading lit just behind it,
+// falling off over about a tenth of a turn.
+const ARC_HEAD: f32 = 0.01;
+const ARC_HEAD_LIGHT: f32 = 0.35;
+const ARC_HEAD_FALLOFF: f32 = 24.0;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -256,12 +262,29 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
     }
     let texel = flipbook_sample(atlas, atlas_sampler, uv, card.layer_a, card.layer_b, card.frame_mix, mip);
     var mask = 1.0;
+    var shading = texel.r;
     if (card.ring_inner > 0.0) {
         let outer = 1.0 - smoothstep(1.0 - edge, 1.0, radius);
         let inner = smoothstep(card.ring_inner - edge, card.ring_inner, radius);
         mask = outer * inner;
+        if ((card.flags & FLAG_ARC) != 0u && card.arc < 1.0) {
+            let arc = arc_texel(centred, card.arc);
+            mask *= arc.x;
+            shading = min(shading + arc.y, 1.0);
+        }
     }
-    return vec4<f32>(texel.r, texel.g, texel.b, mask);
+    return vec4<f32>(shading, texel.g, texel.b, mask);
+}
+
+// An arc of a ring drawn from its start angle round to `share` of the turn: (mask, head
+// light). The arc's head is a soft step `ARC_HEAD` of a turn wide and the ring is lit a little
+// just behind it, so a closing seal has a leading point and no hard cut.
+fn arc_texel(centred: vec2<f32>, share: f32) -> vec2<f32> {
+    let turn = atan2(centred.y, centred.x) / TAU + 0.5;
+    let mask = 1.0 - smoothstep(share - ARC_HEAD, share, turn);
+    let behind = max(share - turn, 0.0);
+    let light = ARC_HEAD_LIGHT * exp(-behind * ARC_HEAD_FALLOFF) * mask;
+    return vec2<f32>(mask, light);
 }
 
 @fragment

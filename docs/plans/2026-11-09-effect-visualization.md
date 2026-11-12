@@ -1477,3 +1477,65 @@ review).**
 | Crowd evidence | An annotated crop of one soft retirement would strengthen the degradation take. | scale-out 3 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
+
+## Amendment 10: WP8 concealment and stance, round 1 (2026-11-12, short note, charter §6)
+
+**What changes.** WP8 of §9 in the client, its shaders and the catalog's presentation data. No simulation state,
+golden replay or checksum changes (D-1 holds: the client reads `concealment` and `stance`, which WP2 already
+publishes).
+
+- **Held effects.** A `Mode` effect can be *held* on a unit (`EffectRuntime::hold`, `update_held`, `release`): its
+  layers marked `held: true` come in over their `duration` and stay until the look is released, then erode out
+  over their `exit` (default 0.35 s); its other layers play once. Its anchor and bound values (`UnitRadius`,
+  `ChannelProgress`) follow the unit every frame. A held effect counts against no class cap, is never retired by
+  the budget and keeps its decal reservation (it shows a unit's state, at most one of each kind per unit). A unit
+  first seen in a state is shown settled in it (`hold(.., settled)`: its one-shot layers are not replayed).
+- **`Shell` block** (§5.1): `sink` (share of the diameter), `tint`, `rim`, `veil`, `soil`, and `progress` (life =
+  the switch's progress instead of age). It is evaluated by `client::effects::stance` and written into a new,
+  separate bubble uniform at binding 4 (`ShellUniformGpu`), so `BubbleUniformGpu` keeps its 176 bytes and the
+  smog goldens, which hash it, stay unchanged. A vertex stage in `bubble_dome.wgsl` (Bevy's mesh vertex plus the
+  sink) moves the bubble into the ground, whose depth hides what is below it. A sunk or veiled bubble casts no
+  shadow. Only `Mode` effects may hold layers or have a `Shell` (load errors).
+- **Ring arc** (`arc: (bind: ChannelProgress)`, `FLAG_ARC`): a ring drawn over that share of its turn with a lit
+  head; **distortion lens** (`lens`): a glass body's radial bend, strongest just inside the rim.
+- **Looks** (`effects.ron`): `burrow_dig` (span 1.8 s), `burrow_mound`, `burrow_emerge`, `cloak_own`,
+  `cloak_shimmer`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`. `defaults.concealment` names the first six
+  and `defaults.mode.transition` the seal; `UnitEffectTables` fills every mode of every archetype from its flags
+  (`burrowed`, `is_immobile`) before the unit's block replaces slots. `railgun_crawler` (Siege-Tank analogue)
+  names `mode_seal_sweep` and `siege_anchor`; `burrow_scorpion` uses the defaults (its block keeps no mode entry,
+  so the lab fixture's `burrow_trail` entry does not repeat one).
+- **Progress and settle (D-1, D-6).** `channel_progress = clamp((nominal - remaining) / nominal, 0, 1)` holds at 0
+  during the random extra. A morph whose effect states a `span` longer than its channel plays at its own pace:
+  `presented = channel_progress × channel / span` during the channel, then the client-local settle continues at
+  `1 / span` per second until complete (`StanceTrack`, a component of the bubble; nothing in the simulation). The
+  burrow's stats change at 33 ticks and the dig ends at 45 (Q0069 option 2). A cancelled switch releases its morph
+  and shows the stance settled again.
+- **Fog (D-5, Q0076 R4).** An undetected cloaked enemy's bubble is no longer drawn (`Presence::draws_bubble`); the
+  viewer gets only `cloak_shimmer`, a colourless lensed distortion held at its body. Nothing is held on a
+  `Hidden` unit. Stances, morphs and marks are held only on a unit shown as it is.
+
+**Decisions (Q0002, reversible).**
+
+- A burrowed unit has no cover look: its stance (sunk in its mound) reads to its owner and to an enemy that detects
+  it alike. `detected_mark` marks detected *cloaked* enemies only.
+- An enemy seen starting to burrow disappears when its concealment flips at the channel's end (33 ticks), about
+  three quarters sunk; the dig's one-shot ground layers spawned while it was visible play out. Holding the
+  remaining 12 ticks of the dig for an enemy would draw a unit the fog hides.
+- The bubble shader's old sine-stripe cloak stays only for the Visual Lab preview's checkbox; in a battle the
+  effects drive every concealment look (`ShellUniformGpu::driven`).
+- No pulse in `detected_mark` (the `Shell` block has no period); a static cold outline light and a slight lens.
+- R5 (burrowed trail) and R6 (a burrowed attacker's line drawn where seen) are unchanged from Amendment 2.
+- No new texture and no spend: the looks use `smoke_puff`, `debris_atlas`, `scorch`, `earth_scar`,
+  `ground_crack` and `noise_tile`.
+
+**Tests.** `effects::stance` unit tests (hold during the random extra, clamp, leaving direction, a morph longer or
+shorter than its channel, the shell sum); `crates/client/tests/stance_gpu_tests.rs` on the production skirmish
+(radv and lavapipe): the burrowed bubble's above-ground area at most 35 % of the standing one and its looks inside
+1.8 radii; the undetected cloaked enemy bends what is behind it with no tint (the patch's mean colour moves at most
+1.5 levels; at most 5 % of bent pixels take a colour not on the ground within 12 px) and without its looks changes
+at most 2 pixels; the siege switch's arc within ±5 % of its progress; and through real mode commands, the dig goes
+on after the channel ends until fully sunk, never rises, and the emerge never sinks. `battle_fog_tests.rs` now
+expects the shimmer look and no drawn bubble for an undetected cloaked enemy, and the cover look of each case.
+
+**Gate.** The packet's section "WP8 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).

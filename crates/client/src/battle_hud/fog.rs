@@ -4,7 +4,10 @@
 //! [`refresh_battle_fog`] copies the viewer's knowledge from [`HudModel`] into
 //! [`BattleFog`], and [`apply_battle_fog`] makes the bubbles obey its [`Presence`]: an enemy
 //! outside `Visible` cells is hidden, an undetected burrowed enemy is hidden, an undetected
-//! cloaked enemy keeps its shimmer but loses its selection, and an enemy that was being inspected
+//! cloaked enemy's bubble is hidden too and loses its selection (all the viewer sees of it is
+//! its shimmer, a colourless distortion the effect system holds where it stands,
+//! [`crate::effects::stance`]; plan `2026-11-09-effect-visualization` WP8, Q0076), and an
+//! enemy that was being inspected
 //! stops being inspected once it is no longer [`Presence::Shown`]. Enemies are hidden and not
 //! shrouded, and an enemy structure disappears with sight (decision D-10).
 //!
@@ -12,9 +15,9 @@
 //! Both run in `PreparePresentation`, after scene sync, so a bubble spawned this frame is hidden
 //! on the frame it appears. For a hidden bubble, hiding is the whole mechanism: Bevy's visibility
 //! propagation carries it to the bars and rings, and smog skips hidden bubbles. A shimmering
-//! bubble stays visible, so the rule reaches its other readers directly: picking asks
-//! [`presence_of`](crate::battle_pipeline::fog::presence_of) itself, and this system clears the
-//! bubble's `selected` flag, which is what the ring and the health bar draw from.
+//! unit's bubble is hidden the same way; picking asks
+//! [`presence_of`](crate::battle_pipeline::fog::presence_of) itself, and this system also clears
+//! the bubble's `selected` flag, which is what the ring and the health bar draw from.
 //!
 //! # Invariants
 //! - Runs only under the `Player` profile, so `Sandbox` keeps every bubble as it was.
@@ -73,9 +76,10 @@ pub fn refresh_battle_fog(
 /// Hides what the viewer cannot see, and stops inspecting an enemy that has gone or gone
 /// undetected.
 ///
-/// A unit is judged at the position it is drawn at, which is what the player would see. A
-/// shimmering unit stays drawn, but its `selected` flag is cleared on this frame, before the ring
-/// and the health bar read it.
+/// A unit is judged at the position it is drawn at, which is what the player would see. Only a
+/// [`Presence::Shown`] unit's bubble is drawn: a shimmering unit's look is its shimmer effect.
+/// Any unit not shown has its `selected` flag cleared on this frame, before the ring and the
+/// health bar read it.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -87,7 +91,7 @@ pub fn apply_battle_fog(
 ) {
     for (mut bubble, mut visibility) in &mut bubbles {
         let presence = fog.presence(&bubble.0);
-        visibility.set_if_neq(if presence.is_drawn() {
+        visibility.set_if_neq(if presence.draws_bubble() {
             Visibility::Inherited
         } else {
             Visibility::Hidden
