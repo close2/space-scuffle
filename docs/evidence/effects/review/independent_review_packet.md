@@ -48,6 +48,7 @@ the viewer sees the ground (R6, unchanged).
 | Siege switch caught half way, only `Critical` layers, the unit's bubble hidden so the arc can be measured; and the same without effect layers | [wp8_siege_mid_radv.png](wp8_siege_mid_radv.png), [wp8_siege_mid_lavapipe.png](wp8_siege_mid_lavapipe.png) |
 | Sequences through real mode commands, one picture whenever the previous one was written (about every 0.15 to 0.5 s; frame numbers are picture indices) | dig [wp8_dig_sequence_radv.png](wp8_dig_sequence_radv.png), emerge [wp8_emerge_sequence_radv.png](wp8_emerge_sequence_radv.png), siege [wp8_siege_sequence_radv.png](wp8_siege_sequence_radv.png), unsiege [wp8_unsiege_sequence_radv.png](wp8_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
 | Battle capture: a burrowed unit of the player's, a cloaked unit of the player's, a cloaked enemy undetected, the Siege-Tank analogue anchored; then the same scene without effect layers; then a detector of the player's brought beside the enemy | [wp8_battle_undetected_radv.png](wp8_battle_undetected_radv.png), [wp8_battle_bare_radv.png](wp8_battle_bare_radv.png), [wp8_battle_detected_radv.png](wp8_battle_detected_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Own units, close: the player's unit standing and burrowed (pose shots); the player's cloaked unit with and without its effect layers (battle capture) | [wp8_own_burrowed_crop_radv.png](wp8_own_burrowed_crop_radv.png), [wp8_own_burrowed_crop_lavapipe.png](wp8_own_burrowed_crop_lavapipe.png), [wp8_own_cloaked_crop_radv.png](wp8_own_cloaked_crop_radv.png) |
 | The tests' printed measurements on both drivers | [wp8_measurements.txt](wp8_measurements.txt) |
 
 Where things stand in the battle capture (window pixels): the anchored Siege-Tank analogue upper left of the
@@ -56,7 +57,11 @@ enemy cloaked unit right of it (to the upper right of the row of workers).
 
 ### Points to look at
 
-- Whether the burrowed unit reads as dug in rather than as a small disc on the ground, at the default zoom.
+- Whether the burrowed unit reads as dug in rather than as a small disc on the ground, at the default zoom, and
+  whether its owner still reads the unit clearly (Q0076: own concealed units stay readable). The burrowed dome
+  shows the unit's own picture unveiled, with only a thin soil band at the ground line and an earth-coloured
+  outline; once the WP13 burrowed-mode clips land (a separate branch), the dome shows that clip. The player's
+  own cloaked unit keeps its picture at about half opacity under a cool outline.
 - Whether the shimmer is faint and colourless (item 7): compare `wp8_shimmer_pose_*` cells 1 and 2, and the battle
   capture's enemy before and after detection.
 - In the battle capture without detection, a small dark spot lies at the undetected enemy's feet; it is absent

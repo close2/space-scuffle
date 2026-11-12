@@ -1524,6 +1524,10 @@ publishes).
 - The bubble shader's old sine-stripe cloak stays only for the Visual Lab preview's checkbox; in a battle the
   effects drive every concealment look (`ShellUniformGpu::driven`).
 - No pulse in `detected_mark` (the `Shell` block has no period); a static cold outline light and a slight lens.
+- Own concealed units stay readable (Q0076; input from the WP13 review, whose burrowed-mode clip was nearly
+  invisible under the old whole-bubble cloak fade): the burrowed dome shows the unit's picture unveiled, with
+  only a thin soil band at the ground line (`soil: 0.12`, no media tint, no veil) and an earth-coloured outline;
+  `cloak_own` veils the picture to about half (`veil: 0.45`). The old fade no longer applies in a battle.
 - R5 (burrowed trail) and R6 (a burrowed attacker's line drawn where seen) are unchanged from Amendment 2.
 - No new texture and no spend: the looks use `smoke_puff`, `debris_atlas`, `scorch`, `earth_scar`,
   `ground_crack` and `noise_tile`.

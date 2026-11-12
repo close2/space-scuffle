@@ -1,0 +1,10 @@
+test a_burrow_settles_after_its_channel_and_stances_follow_their_switches ... gpu_run: driver radv (auto: radeon_icd.json, /dev/dri/renderD128, with-gpu-lock on PATH)
+driver radv: the burrow's channel ended at 1.49 s with the body 73 % sunk
+driver radv: the burrowed looks change 695 pixels, 0 beyond the ring; farthest at 0.94 radii
+driver radv: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 2181 pixels, 27 of them to a colour not on the ground near them, mean colour moves 1.11 levels
+driver radv: siege switch at 0.486, its arc draws 0.475 of the turn
+test a_burrow_settles_after_its_channel_and_stances_follow_their_switches ... gpu_run: driver lavapipe (forced)
+driver lavapipe: the burrow's channel ended at 1.75 s with the body 73 % sunk
+driver lavapipe: the burrowed looks change 687 pixels, 0 beyond the ring; farthest at 0.95 radii
+driver lavapipe: undetected cloaked enemy without its looks: 0 pixels; its shimmer bends 2149 pixels, 54 of them to a colour not on the ground near them, mean colour moves 0.97 levels
+driver lavapipe: siege switch at 0.514, its arc draws 0.500 of the turn
