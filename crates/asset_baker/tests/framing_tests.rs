@@ -502,3 +502,99 @@ fn review_writes_a_framed_sheet_of_letterboxed_squares_for_a_structure() {
         "the 16:9 sheet stays"
     );
 }
+
+// --- Reframed mode clips (independent review of WP13, item 1) ---------------------------------
+
+/// Encodes `picture` as a 1 s, 8 fps `yuv420p` clip named `<name>.mp4` in `dir`.
+fn still_clip(dir: &Path, name: &str, picture: &RgbaImage) -> PathBuf {
+    let png = dir.join(format!("{name}.png"));
+    image::DynamicImage::ImageRgba8(picture.clone())
+        .to_rgb8()
+        .save(&png)
+        .unwrap();
+    let output = dir.join(format!("{name}.mp4"));
+    let status = std::process::Command::new("/usr/bin/ffmpeg")
+        .args(["-v", "error", "-y", "-loop", "1", "-i"])
+        .arg(&png)
+        .args([
+            "-t", "1", "-r", "8", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        ])
+        .arg(&output)
+        .status()
+        .expect("ffmpeg runs");
+    assert!(status.success(), "ffmpeg could not write {name}");
+    output
+}
+
+/// The bounding box `[left, top, right, bottom]` of the pixels of frame 0 of `atlas` that
+/// `matches` accepts.
+fn bounds(atlas: &RgbaImage, matches: impl Fn(image::Rgba<u8>) -> bool) -> Option<[u32; 4]> {
+    let mut found: Option<[u32; 4]> = None;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            if matches(*atlas.get_pixel(x, y)) {
+                let b = found.get_or_insert([x, y, x, y]);
+                *b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_reframed_clip_bakes_back_to_the_default_framing_and_keeps_the_room_above() {
+    let slug = structure_slug();
+    let root = tempfile::tempdir().unwrap();
+    let [r, g, b] = BACKDROP;
+    // The default picture: a red subject in the middle of a 16:9 frame.
+    let mut picture = RgbaImage::from_pixel(320, 180, image::Rgba([r, g, b, 255]));
+    for y in 60..120 {
+        for x in 100..220 {
+            picture.put_pixel(x, y, image::Rgba([220, 30, 30, 255]));
+        }
+    }
+    // The mode's picture: the same subject reframed, with a green part above the default frame
+    // (the default frame's content starts at row 27 of the reframed canvas).
+    let mut mode = asset_baker::framing::reframe_picture(&picture, 700, 60)
+        .unwrap()
+        .image;
+    for y in 8..24 {
+        for x in 150..170 {
+            mode.put_pixel(x, y, image::Rgba([0, 255, 0, 255]));
+        }
+    }
+    let default_clip = still_clip(root.path(), "default", &picture);
+    let mode_clip = still_clip(root.path(), "mode", &mode);
+    let reframed = BakeFraming::ReframedLetterbox {
+        feather_permille: 30,
+        scale_permille: 700,
+    };
+    let (default_dir, mode_dir) = (root.path().join("default"), root.path().join("mode"));
+    library_bake(&slug, &default_clip, &default_dir, LETTERBOX_30);
+    let bake = library_bake(&slug, &mode_clip, &mode_dir, reframed);
+    let atlas = |dir: &Path| {
+        image::open(dir.join(format!("{slug}.png")))
+            .unwrap()
+            .to_rgba8()
+    };
+    let (default_atlas, mode_atlas) = (atlas(&default_dir), atlas(&mode_dir));
+
+    let red = |p: image::Rgba<u8>| p[0] > 150 && p[1] < 100 && p[2] < 100;
+    let at_default = bounds(&default_atlas, red).expect("the default frame shows the subject");
+    let at_mode = bounds(&mode_atlas, red).expect("the reframed frame shows the subject");
+    for (side, (own, want)) in at_mode.iter().zip(at_default).enumerate() {
+        assert!(
+            own.abs_diff(want) <= 1,
+            "side {side}: {at_mode:?} is not the default {at_default:?}"
+        );
+    }
+    // The part above the default frame is kept where the default bake draws its top bar.
+    let default_top_bar = (SIZE - 36) / 2;
+    let green = bounds(&mode_atlas, is_green).expect("the raised part is kept");
+    assert!(green[3] < default_top_bar, "{green:?}");
+    assert!(bounds(&default_atlas, is_green).is_none());
+    let bar = bake.bar_rgb[&AnimState::Idle].expect("a reframed letterbox has bars");
+    for (measured, wanted) in bar.iter().zip(BACKDROP) {
+        assert!(measured.abs_diff(wanted) <= 4, "{bar:?}");
+    }
+}

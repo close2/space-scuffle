@@ -198,6 +198,7 @@ impl Fixture {
                 max_frames_per_state: 1,
                 ffmpeg_version: "ffmpeg version fixture".into(),
                 framing: BakeFraming::CenterCrop,
+                reframe: None,
             },
             states,
         };
@@ -1095,6 +1096,44 @@ fn every_shipped_provenance_file_verifies() {
         .entries
         .iter()
         .any(|entry| entry.status == MediaAuditStatus::Verified));
+    // Every shipped mode atlas verifies too: its clips match, cite their download lines, and
+    // none has a standing review rejection in the ledger.
+    assert!(!report.mode_entries.is_empty(), "WP13 ships mode atlases");
+    for entry in &report.mode_entries {
+        assert!(entry.unverified.is_empty(), "{}", entry.summary());
+    }
+}
+
+#[test]
+fn a_strict_audit_fails_on_an_unverified_mode_atlas() {
+    let report = |unverified: Vec<UnverifiedReason>| MediaAuditReport {
+        format_version: 2,
+        digest_algorithm: "BLAKE3-256 lowercase hex",
+        strict_accepted: true,
+        ledger_supplied: true,
+        concept_failure: None,
+        entries: Vec::new(),
+        duplicate_groups: Vec::new(),
+        mode_entries: vec![asset_baker::media_audit::ModeAuditRecord {
+            atlas: "unit-mode".into(),
+            unverified,
+        }],
+    };
+    assert!(report(Vec::new()).require_verified().is_ok());
+    let rejected = report(vec![UnverifiedReason::ModeClipRejected {
+        slot: asset_baker::SliceKey::Morph(asset_baker::Morph::Enter),
+    }]);
+    match rejected.require_verified() {
+        Err(MediaAuditError::Unverified { identities }) => {
+            assert_eq!(identities.len(), 1);
+            assert!(identities[0].contains("unit-mode"), "{identities:?}");
+            assert!(identities[0].contains("not withdrawn"), "{identities:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let json = serde_json::to_string(&rejected.mode_entries[0]).unwrap();
+    assert!(json.contains("\"reason\":\"ModeClipRejected\""), "{json}");
+    assert!(json.contains("\"slot\":\"enter\""), "{json}");
 }
 
 /// Committed provenance records written before letterboxing name no framing and no bar colour,

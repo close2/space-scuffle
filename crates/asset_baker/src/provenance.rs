@@ -254,6 +254,26 @@ pub struct BakeParameters {
     /// letterboxing existed, which were all centre crops.
     #[serde(default)]
     pub framing: BakeFraming,
+    /// The start picture a mode's clips were reframed with ([`ReframeRecord`]); absent for every
+    /// atlas whose clips were not reframed, so their records keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reframe: Option<ReframeRecord>,
+}
+
+/// How a mode atlas's clips were reframed (a mode's `reframe` in `media_style.ron`, plan
+/// `2026-11-09-effect-visualization.md` Amendment 16): the parameters of the reframed start
+/// picture ([`crate::framing::reframe_picture`]) and its bytes. The bake's own crop is
+/// [`BakeFraming::ReframedLetterbox`] in `framing`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReframeRecord {
+    /// Scale of the unit in the reframed picture, in thousandths.
+    pub scale_permille: u32,
+    /// Blend of the shrunk picture into its margin, in thousandths of the picture's height
+    /// (not the bake's bar feather).
+    pub picture_feather_permille: u32,
+    /// SHA-256 of the reframed start picture, lowercase hex.
+    pub picture_sha256: String,
 }
 
 /// The provenance record of one atlas, `<slug>.provenance.ron`. See the module docs.
@@ -386,7 +406,7 @@ pub fn bake_with_provenance_and_seams(
             origin: clip.origin.clone(),
         })
         .collect();
-    bake_named_slices(slug, &slices, names, output_dir, spec, seams)
+    bake_named_slices(slug, &slices, names, output_dir, spec, (seams, None))
 }
 
 /// One clip of a mode atlas to bake, with its slice and origin.
@@ -409,7 +429,8 @@ pub struct SliceClip {
 /// # Errors
 /// [`ProvenanceError::SliceOutsideVideos`], a slice given twice (through
 /// [`ProvenanceError::Bake`]), any baking error, [`ProvenanceError::FfmpegVersion`] or an I/O
-/// error. Nothing is written if a clip is refused.
+/// error. Nothing is written if a clip is refused. `reframe` is recorded in the bake
+/// parameters when the mode's clips were reframed.
 pub fn bake_mode_with_provenance(
     atlas: &str,
     clips: &[SliceClip],
@@ -417,6 +438,7 @@ pub fn bake_mode_with_provenance(
     output_dir: &Path,
     spec: FrameSpec,
     seams: &BTreeMap<AnimState, SeamRepair>,
+    reframe: Option<ReframeRecord>,
 ) -> Result<MediaProvenance, ProvenanceError> {
     let videos = canonical(videos_dir)?;
     let names = clips
@@ -431,18 +453,19 @@ pub fn bake_mode_with_provenance(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    bake_named_slices(atlas, clips, names, output_dir, spec, seams)
+    bake_named_slices(atlas, clips, names, output_dir, spec, (seams, reframe))
 }
 
 /// The shared bake of [`bake_with_provenance_and_seams`] and [`bake_mode_with_provenance`]:
-/// `names` holds each clip's file name inside the videos directory, in the order of `clips`.
+/// `names` holds each clip's file name inside the videos directory, in the order of `clips`;
+/// the seam repairs and the reframe record (if any) come as one pair.
 fn bake_named_slices(
     name: &str,
     clips: &[SliceClip],
     names: Vec<String>,
     output_dir: &Path,
     spec: FrameSpec,
-    seams: &BTreeMap<AnimState, SeamRepair>,
+    (seams, reframe): (&BTreeMap<AnimState, SeamRepair>, Option<ReframeRecord>),
 ) -> Result<MediaProvenance, ProvenanceError> {
     let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;
     let pairs: Vec<(SliceKey, &Path)> = clips
@@ -496,6 +519,7 @@ fn bake_named_slices(
             max_frames_per_state: (MAX_STRIP_HEIGHT / frame_size.max(1) / state_count).max(1),
             ffmpeg_version,
             framing: spec.framing,
+            reframe,
         },
         states,
         morphs,
@@ -978,6 +1002,23 @@ pub enum UnverifiedReason {
         /// The state.
         state: AnimState,
     },
+    /// A slice of a mode atlas does not match its record or the ledger: its clip is unreadable
+    /// or differs from the record, or its cited ledger line is not that clip's
+    /// `mode_clip_downloaded` line.
+    ModeClipMismatch {
+        /// The slice.
+        #[serde(serialize_with = "crate::manifest::slice_name::serialize")]
+        slot: SliceKey,
+        /// What is wrong.
+        message: String,
+    },
+    /// The ledger rejected these mode clip bytes in review and never withdrew the rejection
+    /// (`mode_clip_rejected` without a later `mode_clip_rejection_withdrawn`).
+    ModeClipRejected {
+        /// The slice.
+        #[serde(serialize_with = "crate::manifest::slice_name::serialize")]
+        slot: SliceKey,
+    },
     /// A `Veo` origin's end frame (`last_frame_sha256`) differs from the one the request's
     /// `request_started` line recorded.
     LastFrameMismatch {
@@ -1046,6 +1087,10 @@ impl std::fmt::Display for UnverifiedReason {
             } => write!(f, "{state:?}: ledger line {line}: {message}"),
             Self::RejectedInReview { state } => {
                 write!(f, "{state:?}: the clip was rejected in review")
+            }
+            Self::ModeClipMismatch { slot, message } => write!(f, "{slot}: {message}"),
+            Self::ModeClipRejected { slot } => {
+                write!(f, "{slot}: the clip was rejected in review and not withdrawn")
             }
             Self::LastFrameMismatch {
                 state,
@@ -1362,6 +1407,132 @@ fn check_origin(
     }
 }
 
+/// Whether the ledger's last review word on the mode clip bytes `sha256` of `slug`'s `slot` in
+/// mode `stance` is a rejection: a `mode_clip_rejected` line with no later
+/// `mode_clip_rejection_withdrawn` line for the same bytes.
+#[must_use]
+pub fn mode_clip_rejection_stands(
+    ledger: &[NumberedRecord],
+    slug: &str,
+    stance: &str,
+    slot: SliceKey,
+    sha256: &str,
+) -> bool {
+    let mut stands = false;
+    for numbered in ledger {
+        match &numbered.record.event {
+            LedgerEvent::ModeClipRejected {
+                slug: s,
+                stance: m,
+                slot: k,
+                sha256: h,
+                ..
+            } if s == slug && m == stance && *k == slot && h == sha256 => stands = true,
+            LedgerEvent::ModeClipRejectionWithdrawn {
+                slug: s,
+                stance: m,
+                slot: k,
+                sha256: h,
+                ..
+            } if s == slug && m == stance && *k == slot && h == sha256 => stands = false,
+            _ => {}
+        }
+    }
+    stands
+}
+
+/// What [`verify_mode_provenance`] checks a mode atlas against.
+#[derive(Debug, Clone, Copy)]
+pub struct ModeVerifyContext<'a> {
+    /// The bundle's `textures` directory.
+    pub textures_dir: &'a Path,
+    /// The bundle's `videos` directory.
+    pub videos_dir: &'a Path,
+    /// The ledger, if supplied.
+    pub ledger: Option<&'a [NumberedRecord]>,
+}
+
+/// Every reason why the mode atlas of `slug` in mode `stance` (`<slug>-<mode>`, plan
+/// `2026-11-09-effect-visualization.md` WP13) is not verified; empty when it is. The record
+/// must be the atlas's own and match its atlas and manifest bytes. Every slice, state or morph,
+/// must match its installed clip and cite the clip's `mode_clip_downloaded` line in the ledger,
+/// and the ledger must not hold a standing rejection of the clip
+/// ([`mode_clip_rejection_stands`]).
+#[must_use]
+pub fn verify_mode_provenance(
+    slug: &str,
+    stance: &str,
+    context: &ModeVerifyContext<'_>,
+) -> Vec<UnverifiedReason> {
+    let atlas = crate::mode_media::ModeAtlasId { slug, stance }.atlas_name();
+    let loaded = provenance_path(context.textures_dir, &atlas)
+        .map_err(|error| error.to_string())
+        .and_then(|path| MediaProvenance::load(&path).map_err(|error| error.to_string()));
+    let provenance = match loaded {
+        Ok(provenance) => provenance,
+        Err(message) => return vec![UnverifiedReason::ProvenanceUnreadable { message }],
+    };
+    let mut reasons = Vec::new();
+    check_identity(&atlas, &provenance, &mut reasons);
+    check_files(&atlas, &provenance, context.textures_dir, &mut reasons);
+    let slices = provenance
+        .states
+        .iter()
+        .map(|(state, record)| (SliceKey::Action(*state), record))
+        .chain(
+            provenance
+                .morphs
+                .iter()
+                .map(|(morph, record)| (SliceKey::Morph(*morph), record)),
+        );
+    for (slot, record) in slices {
+        check_mode_slice(slug, stance, slot, record, context, &mut reasons);
+    }
+    reasons
+}
+
+/// The checks of one slice of a mode atlas ([`verify_mode_provenance`]).
+fn check_mode_slice(
+    slug: &str,
+    stance: &str,
+    slot: SliceKey,
+    record: &StateProvenance,
+    context: &ModeVerifyContext<'_>,
+    reasons: &mut Vec<UnverifiedReason>,
+) {
+    let mismatch = |message: String| UnverifiedReason::ModeClipMismatch { slot, message };
+    match file_sha256(&context.videos_dir.join(&record.clip)) {
+        Ok(actual) if actual == record.clip_sha256 => {}
+        Ok(_) => reasons.push(mismatch(format!(
+            "clip '{}' differs from the record",
+            record.clip
+        ))),
+        Err(error) => reasons.push(mismatch(error.to_string())),
+    }
+    let Some(ledger) = context.ledger else {
+        reasons.push(mismatch("no ledger was supplied (--ledger)".into()));
+        return;
+    };
+    let ClipOrigin::Veo { ledger_line, .. } = &record.origin else {
+        reasons.push(mismatch("a mode clip must have a Veo origin".into()));
+        return;
+    };
+    let downloaded = ledger.iter().any(|numbered| {
+        numbered.line == *ledger_line
+            && matches!(&numbered.record.event, LedgerEvent::ModeClipDownloaded {
+                slug: s, stance: m, slot: k, sha256, ..
+            } if s == slug && m == stance && *k == slot && *sha256 == record.clip_sha256)
+    });
+    if !downloaded {
+        reasons.push(mismatch(format!(
+            "ledger line {ledger_line} is not this clip's mode_clip_downloaded line"
+        )));
+    }
+    if mode_clip_rejection_stands(ledger, slug, stance, slot, &record.clip_sha256) {
+        reasons.push(UnverifiedReason::ModeClipRejected { slot });
+    }
+}
+
 /// Why `record` is not the `downloaded` line of this clip, or `None` if it is.
 fn downloaded_problem(
     record: &LedgerRecord,
@@ -1411,6 +1582,7 @@ mod tests {
                 framing: BakeFraming::Letterbox {
                     feather_permille: 30,
                 },
+                reframe: None,
             },
             states: BTreeMap::from([(
                 AnimState::Idle,
@@ -1495,6 +1667,7 @@ mod tests {
                 max_frames_per_state: 2,
                 ffmpeg_version: String::new(),
                 framing: BakeFraming::CenterCrop,
+                reframe: None,
             },
             states: BTreeMap::new(),
         };

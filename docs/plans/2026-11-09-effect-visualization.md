@@ -1781,7 +1781,87 @@ The effect renderer's queue, the effect runtime's sort depths and their tests. N
 replay or checksum changes (D-1 holds). Packet: section "WP8 round 5". This is round 5, the last of the owner's five
 (Q0080).
 
-## Amendment 16: WP9 status and death looks, round 1 (2026-11-12, short note, charter §6)
+## Amendment 16: WP13 reframe of the sieged tank, after the independent review of WP13 (2026-11-12, short note, charter §6)
+
+**Decision note (charter §6, short note: a single-cause media defect with an obvious test, within the owner's
+approval in [Q0075](../questions/closed/0075-veo-morph-and-mode-clips.md)).** The
+[independent review of WP13](../evidence/veo/modes/independent_review_wp13.md) accepted all eight mode clips. As
+its defect 1 it carried forward a cut: the sieged `railgun_crawler`'s raised rails and Attack blast were cut by the
+top edge of the downloaded video. That showed in Attack frames 10–13, and slightly at a muzzle in the sieged rest
+pose. Re-baking cannot fix it. A prompt cannot either: the enter morph must start on the unit's Idle picture so the
+default atlas flows into it, and Veo keeps that frame's framing with a locked camera.
+
+**What changes.**
+
+- **`reframe` of a mode** (`media_style.ron` `modes.<slug>.<mode>.reframe: Some((scale_permille, picture_feather_permille))`,
+  `asset_baker::mode_media::Reframe`). A reframed mode's morphs start and end on
+  `<slug>-<mode>_reframed_idle.png`, written by the free command `asset_baker reframe-mode-picture`. That picture is
+  the Idle picture shrunk about its centre, with its own backdrop continued into the margin
+  (`framing::reframe_picture`, deterministic). The mode's clips bake as
+  `BakeFraming::ReframedLetterbox { feather_permille, scale_permille }`, which crops the centre `scale_permille` of
+  the width (full height) before the letterbox. The tank returns to the default atlas's scale and place, and the
+  margin above and below stays where a default atlas draws its bars. That margin is room for a pose that rises out of
+  the default frame.
+- **Checks.** A reframe is refused outside 500–999 per mille, or with a feather above 500 per mille, when the style
+  loads. A reframe of a centre-cropped unit is refused by every mode command before anything is paid for, because
+  its bake would cut the margin. The identity framing policy may not name `ReframedLetterbox`.
+- **Shipped data.** `railgun_crawler` `siege_mode` reframes at 700 per mille with a 60 per mille feather. All four of
+  its clips were regenerated from the new chain. The Enter and Attack texts keep the muzzles and a compact blast
+  inside the frame, and keep the rails locked raised while firing. The scorpion is unchanged.
+- **Media.** 7 generations, $2.80 (ledger $110.85 → $113.65; WP13 total $7.20 of $20.00). Tank: 4 accepted
+  (`a0d4247d`, `d554ddc2`, `55e0ba27`, `7e984d36`) and 1 rejected (`057e9373`, rails dropped to level). The four
+  superseded clips are recorded as `mode_clip_rejected`. Scorpion Enter (review defects 2 and 3): 2 retries
+  (`21ebf9b8` and `4275320e`) both rejected for loose claws. The shipped `7581379d` stays, and its atlas re-bakes
+  byte for byte. Log, joins and sheets: [`2026-11-12-mode-clips.md`](../evidence/veo/2026-11-12-mode-clips.md), section
+  "Reframe of the sieged tank".
+
+**Tests.** `framing` unit tests: the crop filter, the even reframed side, only a letterbox reframes, the reframed
+picture's geometry and margin, determinism, and the range refusals. `framing_tests`: a clip reframed and baked with
+real FFmpeg lands within 1 px of its default bake and keeps a part above the default frame.
+`mode_media_tests`: a reframed mode's morphs chain through the reframed picture, the bake framing, the range
+refusals, the centre-crop refusal before spend, and that the shipped reframed picture is what
+`reframe-mode-picture` writes. `runtime_media_tests` and `mode_atlas_gpu_tests` admit and draw the new atlas.
+
+**Decisions and out of scope (Q0002).** Defects 2 and 3 (the scorpion Enter's one-frame claw and greyer bar) stay
+as the review recorded them. Two paid retries repeated the fault. A bake-time bar normalisation per atlas family
+(the review's suggestion for defect 3) is not built here. The reframe applies only to mode atlases; default atlases
+keep their framing policy. No simulation state, golden replay or checksum changes (D-1 holds).
+
+**Records, after the [independent review of the reframe](../evidence/veo/modes/independent_review_reframe.md)
+(art accepted; merge blocked on records only; no paid generation).**
+
+- **Withdrawing a rejection.** A new ledger event, `mode_clip_rejection_withdrawn { slug, stance, slot, sha256,
+  reason }`, is written by the free command `mode-withdraw-rejection`. That command refuses unless a rejection of
+  those bytes stands. `LedgerHistory` removes the bytes from `rejected_sha256` and undoes that rejection's unusable
+  count. The event is not a start, so the budget does not price it, and a later rejection applies again. One was
+  appended for the shipped scorpion Enter `7581379d` (`08e60832…`): its rejection was recorded only to allow the
+  two failed retries.
+- **The audit covers mode atlases.** `audit-media` now reports every shipped mode atlas
+  (`provenance::verify_mode_provenance`). It checks the record's name, the atlas and manifest bytes, every state
+  and morph clip's bytes, and the cited `mode_clip_downloaded` line. A clip whose `mode_clip_rejected` line has no
+  later withdrawal is `ModeClipRejected` (`provenance::mode_clip_rejection_stands`), and `--strict` then fails.
+  Both shipped mode atlases verify against the committed ledger. Without the withdrawal line, the scorpion's fails.
+- **Naming.** The reframe's picture blend is `picture_feather_permille`, which is not the bake's bar feather. A
+  mode atlas's provenance now records its reframe (`bake.reframe`: scale, picture feather and the start picture's
+  SHA-256). The field is absent for every other atlas, so their records keep their bytes. The tank atlas was
+  re-baked with byte-identical pixels; only its provenance gained the record.
+- **Write-up.** The `55e0ba27` row and the defects paragraph describe the blast tongue that still leaves the top of
+  the source frame for clip frames 23–31 (about 0.4 s, about 11 px wide at the edge, in the sampled blast frame).
+  The bar feather softens it, and it is invisible at battle size. The count of `mode_clip_rejected` lines is 11.
+- **Recorded as polish (Q0002), not done.** The backdrop average of `reframe_picture` could ignore bright,
+  low-saturation outliers, so that cut smoke does not leave faint haze columns in the margin. Changing it would
+  change the shipped reframed picture, which the shipped clips started from. It waits for the next reframe.
+
+**Tests.** `mode_media_tests`: the withdrawal folds, costs nothing and can be overridden; the CLI withdraws only a
+standing rejection; a fixture mode atlas fails verification with a standing rejection and passes after
+withdrawal; every shipped mode atlas records its reframe and framing. `provenance_tests`: the shipped audit
+verifies every mode atlas, and a strict audit fails on an unverified one.
+
+## Amendment 17: WP9 status and death looks, round 1 (2026-11-12, short note, charter §6)
+
+*Numbering:* WP9's three amendments were written on their branch as 16, 17 and 18, while the WP13 reframe took 16
+on `main`; they were renumbered 17, 18 and 19 at the merge. The WP9 review packet and reviews cite the branch numbers
+(16 → 17, 17 → 18, 18 → 19).
 
 **What changes.** WP9 of §9 in the client, its effect shaders and the catalog's presentation data. No simulation
 state, golden replay or checksum changes (D-1 holds: the client reads `status`, `barrier_ratio` and the
@@ -1859,9 +1939,9 @@ legacy shard is drawn for a unit whose block names its death).
 **Gate.** The packet's section "WP9 round 1"; the orchestrator runs the independent review (Q0080, up to five
 rounds).
 
-## Amendment 17: WP9 round 2, decided by the orchestrator after WP9 review 1 (2026-11-12)
+## Amendment 18: WP9 round 2, decided by the orchestrator after WP9 review 1 (2026-11-12)
 
-Numbering note: the tank-reframe branch also adds an "Amendment 16"; this amendment and WP9's own Amendment 16 are
+Numbering note: the tank-reframe branch also adds an "Amendment 17"; this amendment and WP9's own Amendment 17 are
 renumbered to the next free numbers when the branches are merged.
 
 **Decision note (charter §6, short note; the decisions are the orchestrator's, after
@@ -1918,7 +1998,7 @@ This is round 2 of the owner's five (Q0080). No simulation state, golden replay 
 
 Packet: section "WP9 round 2".
 
-## Amendment 18: WP9 round 3, decided by the orchestrator after WP9 review 2 (2026-11-12)
+## Amendment 19: WP9 round 3, decided by the orchestrator after WP9 review 2 (2026-11-12)
 
 **Decision note (charter §6, short note; the decisions are the orchestrator's, after
 [`independent_review_wp9_2.md`](../evidence/effects/review/independent_review_wp9_2.md)).** Review 2 accepted
@@ -1929,7 +2009,7 @@ replay or checksum changes (D-1 holds).
 
 1. **A2-5, the obstacle mask is removed.** Nodes and structures are already drawn after the ground marks: the marks
    are the first transparent items (`queue_effects`), and node billboards (additive) and structure domes (blended)
-   are transparent items after them. The decal exclusion discs of Amendment 17 are removed (the decal record is 144
+   are transparent items after them. The decal exclusion discs of Amendment 18 are removed (the decal record is 144
    bytes again), so no stain has a hole. What a node shows over a stain is the floor seen through its additive
    billboard; its own light is unchanged. Making node art cover the floor would need an alpha-blended node material
    (new node art), which is outside this plan. The test measures the node's own drawn pixels (its light: the scene
@@ -1963,3 +2043,4 @@ replay or checksum changes (D-1 holds).
    is outside this plan (D-9, smog untouched) and is recorded for the owner.
 
 Packet: section "WP9 round 3".
+

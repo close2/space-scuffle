@@ -762,7 +762,7 @@ fn key_clip(
     };
     let size = match framing {
         BakeFraming::CenterCrop => (2 * cell_size).min(MAX_DECODE_SIZE),
-        BakeFraming::Letterbox { .. } => MAX_DECODE_SIZE,
+        BakeFraming::Letterbox { .. } | BakeFraming::ReframedLetterbox { .. } => MAX_DECODE_SIZE,
     };
     let spec = FrameSpec {
         size,
