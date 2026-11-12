@@ -942,6 +942,7 @@ impl EffectRuntime {
             } else {
                 0.0
             },
+            front_seed: seed,
             ..surface.card()
         };
         self.push_sorted_card(card, context.camera, look.sort_bias);

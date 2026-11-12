@@ -25,10 +25,17 @@ const TAU: f32 = 6.28318530718;
 const CLIP_EDGE: f32 = 0.1;
 // Contrast of the noise that wavers a pressure front's trailing edge.
 const FRONT_WAVER_CONTRAST: f32 = 2.2;
-// Weight of a torn front's second, finer octave in the bite of its leading edge.
+// Weight of a torn front's second, finer octave in the bite of its leading edge; the mix is
+// re-contrasted by `FRONT_OCTAVE_NORM` (1 / sqrt(0.65^2 + 0.35^2)) so it keeps one octave's spread.
 const FRONT_SECOND_OCTAVE: f32 = 0.35;
-// Contrasted noise from which a torn front's leading edge is on the radius (a clump's crest).
-const FRONT_CREST: f32 = 0.7;
+const FRONT_OCTAVE_NORM: f32 = 1.355;
+// A torn front's guaranteed crests (client::effects::front, which mirrors this placement and
+// proves its gaps): 12 crests, each jittered by up to 7 degrees, 2.5 degrees half wide (one
+// footprint ray always falls on one), with a 1.5-degree soft edge; angles in turns.
+const FRONT_CRESTS: u32 = 12u;
+const CREST_JITTER: f32 = 0.019444444;
+const CREST_HALF_WIDTH: f32 = 0.0069444444;
+const CREST_SOFT: f32 = 0.0041666667;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -117,6 +124,32 @@ fn noise_offset(card: SpriteInstance) -> vec2<f32> {
     return vec2<f32>(card.noise_offset_x, card.noise_offset_y);
 }
 
+// A 32-bit integer hash (PCG output permutation): the same as `client::effects::front::crest_hash`.
+fn crest_hash(value: u32) -> u32 {
+    let state = value * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// The top 24 bits of `value` as a fraction in [0, 1).
+fn crest_unit(value: u32) -> f32 {
+    return f32(value >> 8u) / 16777216.0;
+}
+
+// How much `angle` (turns) lies on one of the guaranteed crests of the torn front drawn with
+// `seed`: 1 within a crest's half width, 0 beyond its soft edge (client::effects::front).
+fn front_crest(seed: u32, angle: f32) -> f32 {
+    let rotation = crest_unit(crest_hash(seed ^ 0x9E3779B9u));
+    var nearest = 1.0;
+    for (var index = 0u; index < FRONT_CRESTS; index++) {
+        let jitter = (2.0 * crest_unit(crest_hash(seed + index * 0x85EBCA6Bu)) - 1.0) * CREST_JITTER;
+        let centre = fract((f32(index) + rotation) / f32(FRONT_CRESTS) + jitter + 1.0);
+        let d = abs(fract(angle - centre + 1.0));
+        nearest = min(nearest, min(d, 1.0 - d));
+    }
+    return 1.0 - smoothstep(CREST_HALF_WIDTH, CREST_HALF_WIDTH + CREST_SOFT, nearest);
+}
+
 // A ring computed as a pressure front: (shading, coverage, erosion order, mask). The band's
 // inner (trailing) edge wavers with the noise around the circumference; shading and coverage
 // rise towards the outer (leading) edge, the grain breaks them up, and the noise's whole repeats
@@ -132,22 +165,22 @@ fn front_texel(card: SpriteInstance, centred: vec2<f32>, radius: f32, edge: f32,
     let waver = clamp((waver_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
     let inner = card.ring_inner - width * card.noise_amount * (waver - 0.5) * 2.0;
     // A torn skirt (`front_edge` > 0): the leading edge is bitten back where a third read of
-    // the noise (its own rows, the same whole repeats around the circle, so no seam) is low, by
-    // up to `front_edge` of the band's width, so its outline is a run of clumps whose farthest
-    // parts stay on the radius and differs per instance. A round front (0) keeps its whole edge
-    // on the radius.
+    // the noise (two octaves on their own rows, the same whole repeats around the circle, so no
+    // seam) is low, by up to `front_edge` of the band's width, except on its guaranteed crests,
+    // where it stays on the radius; the crests' rotation and jitter come from the card's own
+    // seed, so every 45 degrees has dust on the reach and no two hits share an outline
+    // (Amendment 8). A round front (0) keeps its whole edge on the radius.
     var leading = 1.0;
     if (card.front_edge > 0.0) {
-        // Two octaves (the second at twice the repeats, on its own row), so the clumps are not
-        // spaced at one regular period; the clumps' crests are broad (the edge is on the radius
-        // over the upper part of the noise), so every part of the circle has dust on the reach.
-        let bite_raw = mix(
+        let bite_mix = mix(
             noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats, 0.71) + offset.yx, card.noise_layer, level),
             noise_sample(atlas, atlas_sampler, vec2<f32>(angle * repeats * 2.0, 0.29) + offset, card.noise_layer, level),
             FRONT_SECOND_OCTAVE,
         );
+        let bite_raw = (bite_mix - 0.5) * FRONT_OCTAVE_NORM + 0.5;
         let bite = clamp((bite_raw - 0.5) * FRONT_WAVER_CONTRAST + 0.5, 0.0, 1.0);
-        leading = 1.0 - width * card.front_edge * (1.0 - smoothstep(0.0, FRONT_CREST, bite));
+        let crest = front_crest(card.front_seed, angle);
+        leading = 1.0 - width * card.front_edge * (1.0 - max(smoothstep(0.0, 1.0, bite), crest));
     }
     let across = clamp((radius - inner) / max(leading - inner, 1e-4), 0.0, 1.0);
     let grain = noise_sample(

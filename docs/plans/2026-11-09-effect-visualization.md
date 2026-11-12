@@ -1360,3 +1360,46 @@ design, and found a defect: in a battle the napalm jet reads as a thin beam. The
 Presentation data, one shader line, the runtime's budget rules, the effect tests, and the stress tool's report. No
 simulation state, golden replay or checksum (D-1 holds). Implementer checklist: [`slice_review.md`](../evidence/effects/review/slice_review.md)
 ("Scale-out round 4"). Packet: section "Scale-out round 4". This is round 4 of the owner's five (Q0080).
+
+## Amendment 8: scale-out round 5, decided by the orchestrator after independent review 4 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_scaleout4.md`](../evidence/effects/review/independent_review_scaleout4.md)).** Review 4 accepted
+the footprint rule, the decal reservations at the forced cap, the early erosion at the stress load, the jets at
+both cameras and the `Critical` body of fire, and found no regression. It rejected `cleave_impact`: to pass the
+per-sector clause, round 4 had made the front round again. Its edge was about 40 % smoother, it had no gaps, its
+bite was halved, and the four hits shared one outline. This is round 5, the owner's last review round (Q0080).
+
+1. **`cleave_impact`: guaranteed crests (the reviewer's construction).**
+   - **Round 3's bite is restored, and a little deeper.** The crest is back at 1.0. The bite's second octave is
+     re-contrasted after the mix, so it keeps one octave's spread. `edge_noise` is 0.66, so the bite is
+     0.66 × 0.3 = 0.198 of the radius, inside the 0.2 cap.
+   - **Twelve guaranteed crests** (`client::effects::front`, mirrored in `sprite.wgsl`'s `front_crest`). The edge
+     is on the radius over each crest: 2.5° half wide plus a 1.5° soft edge. The crests sit 30° apart, all turned
+     by a per-hit rotation, each jittered by up to ±7°. The rotation and jitter come from an integer hash of the
+     ring card's own seed, the same in Rust and WGSL.
+   - **Guarantee by construction.** The largest gap between crest centres is at most 30 + 2 × 7 = 44°. With the
+     2.5° half width (half the footprint test's 5° ray spacing), every 45° sector of the footprint test has a ray on
+     a crest, whatever the hit's noise phase. Between the crests the noise bites freely.
+   - **Proof across seeds.** Unit tests over 64 consecutive hits' card seeds check three things:
+     - no gap of 45° or more (`the_largest_gap_between_crests_is_below_a_sector_for_every_seed`);
+     - every footprint sector has a ray on a crest (`every_footprint_sector_has_a_ray_on_a_crest_for_every_seed`);
+     - two consecutive hits place their crests differently (`two_hits_place_their_crests_differently`): the mean
+       distance from each crest of one hit to the nearest crest of the next is at least 1° for every pair and at
+       least 5° on average. A rotation alone gives 7.5° on average.
+   - **In the capture**, the outline correlation between the four hits of the repeat take is measured: the
+     72-bin outer-radius profiles, pairwise Pearson correlation (figures in `slice_review.md`).
+2. **The pressure mark counts reservations.** The 85 % erosion threshold of Amendment 7 is measured in reserved
+   decal slots, not in decals drawn. A reservation includes decals that are too small to draw at the current
+   camera. Counting only drawable decals would make the ledger depend on the camera: a zoom-in would suddenly make
+   unreserved decals drawable, and they would then either stay hidden or force a burst of erosions. At the
+   frame-budget camera, the mark is reached at about 3 900 drawn decals. The real battle stays far below it. The
+   round-4 packet's wording is corrected: at the forced cap, no decal that was granted is ever dropped from a frame,
+   but the 444 effects refused room drew none of their marks, Critical ones included.
+3. **Optional, not taken: a minimum on-screen width for the flame's burning ground at the far camera.** The
+   reviewer accepted the far-camera jets as torn fire strips. A screen-size floor on a decal's width would be a new
+   rule of the decal shader. It is recorded here for a polish round.
+
+No simulation state, golden replay or checksum (D-1 holds). Implementer checklist:
+[`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 5"). Packet: section "Scale-out
+round 5".

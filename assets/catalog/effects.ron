@@ -1109,7 +1109,7 @@
                     // cleave's area, marked by the clumps' outer edge.
                     block: Ring(texture: "smoke_puff", ramp: "cleave_front", orient: Ground,
                         thickness: 0.3, mapping: Front, height: 0.03, erosion: "skirt_break",
-                        edge_noise: 0.5,
+                        edge_noise: 0.66,
                         breakup: (noise: "noise_tile", scale: 5.0, amount: 0.8, softness: 0.15)),
                     radius: (from: (bind: SplashFull, scale: 0.9), to: (bind: SplashReach, scale: 1.0),
                         curve: "front_fast"),

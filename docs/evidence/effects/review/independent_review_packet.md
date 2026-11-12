@@ -1,4 +1,4 @@
-# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 to 4)
+# Independent Review Packet: Effect Vertical Slice (Round 5) and Scale-Out (Rounds 1 to 5)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
@@ -6,6 +6,41 @@ judge it by, and nothing else: it holds no verdict of the implementer, on purpos
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
+
+## Scale-out round 5 (WP7)
+
+Round 4's review ([`independent_review_scaleout4.md`](independent_review_scaleout4.md), kept as written) accepted
+everything except `cleave_impact`, whose front had become round again. The orchestrator adopted that review's
+construction for the front (plan Amendment 8). This is round 5, the last of the owner's five review rounds
+(Q0080). Please write it to a new file next to this one, `independent_review_scaleout5.md`, in the same form:
+
+- judge `cleave_impact` against each of the seven checklist items;
+- confirm that nothing else regressed.
+
+The images are lavapipe captures from a debug build under Xvfb, as before. Nothing was spent and no texture was made.
+
+### Material
+
+| What | Files |
+|---|---|
+| `cleave_impact` sheet and sequence | [cleave_impact_contact.png](cleave_impact_contact.png) ([legend](cleave_impact_contact.txt)), [cleave_impact_sequence.png](cleave_impact_sequence.png) |
+| four hits on one spot, 0.6 s apart | [cleave_impact_repeat_contact.png](cleave_impact_repeat_contact.png) ([legend](cleave_impact_repeat_contact.txt)), [cleave_impact_repeat_sequence.png](cleave_impact_repeat_sequence.png) |
+| per-pixel steps between consecutive frames, rounds 2 to 5 | [cleave_impact_pops.txt](cleave_impact_pops.txt) |
+
+### What changed
+
+| Round-4 finding | Change |
+|---|---|
+| A ring again: the edge about 40 % smoother, no gaps, the bite halved | Round 3's bite is restored and slightly deepened (the declared bite is 0.198 of the radius, under the 0.2 cap), with no crest widening. The second noise octave keeps its spread. Between twelve guaranteed crests, the noise bites the edge freely. |
+| The per-sector clause met by tuning one seed | Each crest keeps the edge on the radius over 5° (plus a 1.5° soft edge). The crests are 30° apart, with a per-hit rotation and a ±7° jitter drawn from the ring card's own seed. Their largest gap is at most 44°, so every 45° sector holds a crest for every hit. Unit tests check this for 64 hits. |
+| The same outline on every hit | The crests turn and jitter per hit, and the noise between them has its own phase per hit. A unit test over 64 hits requires the crests of consecutive hits to differ. The implementer reports the outlines of the four hits in the capture. |
+| Wording: "no Critical decal dropped" | Corrected in the round-4 section: the 444 effects refused room drew none of their marks, Critical ones included. |
+
+The implementer's measurements (edge spread, mean bite, gaps, outline correlation between hits, pops) are in
+`slice_review.md`, "Scale-out round 5". As in earlier rounds, please form your verdicts before reading them.
+
+Not changed this round: the front's dark value on teal, the square clods and the crack (optional notes), and a
+screen-size floor for the flame's burning ground at the far camera (optional; recorded in Amendment 8).
 
 ## Scale-out round 4 (WP7)
 
@@ -40,7 +75,7 @@ The images are lavapipe captures from a debug build under Xvfb, as before. Nothi
 |---|---|
 | Footprint clause (b) | A torn front's farthest ray must now be within 2 px of the reach in each of eight 45° sectors, not once somewhere. Its declared bite is capped at 20 % of the reach. A test shows that a front squashed on one side, or missing a quarter, fails. |
 | `cleave_impact` front | Round 3's front failed the per-sector clause (one sector ended 3.6 px short). Its torn edge now reads two noise octaves (the round-3 note on regular bump spacing), and its clumps' crests are broader. It passes: 97 % of rays, mean −2.66 px, nothing beyond the reach. |
-| Decals at the cap | Each effect reserves its decal slots at birth and draws them whole or not at all. Above 85 % of the pool, the oldest lasting marks erode out over 0.25 s to make room. With the pool forced to 2 048, no Critical decal is dropped (round 3: about 2 050 a frame). 444 new effects drew no decal at all rather than part of their marks. |
+| Decals at the cap | Each effect reserves its decal slots at birth and draws them whole or not at all. Above 85 % of the pool, the oldest lasting marks erode out over 0.25 s to make room. With the pool forced to 2 048, no decal an effect was granted is ever dropped from a frame (round 3: about 2 050 Critical decals a frame). *Corrected in round 5:* 444 new effects were refused room and drew none of their marks, Critical ones included (whole set or none). |
 | Jets | A class cap now counts an effect only while its fire is alive. Over the cap, the oldest burning effect gives its detail up, never the newborn. `flame_line`'s body of fire and its burning ground are always kept; their look in the lab is unchanged. |
 
 **Points to look at.**

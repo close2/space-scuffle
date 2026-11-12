@@ -38,7 +38,7 @@ struct SpriteInstance {
     taper_tail: f32,
     taper_head: f32,
     front_edge: f32,
-    reserved_a: f32,
+    front_seed: u32,
     reserved_b: f32,
     reserved_c: f32,
 }

@@ -120,8 +120,10 @@ pub struct SpriteInstance {
     /// Depth of a [`SHAPE_FRONT`] ring's leading-edge noise, as a fraction of its band's
     /// width; 0 for a round leading edge.
     pub front_edge: f32,
+    /// Seed of a torn front's guaranteed crests ([`super::front`]): their rotation and jitter.
+    pub front_seed: u32,
     /// Padding to a whole 16-byte row; zero.
-    pub reserved: [f32; 3],
+    pub reserved: [f32; 2],
 }
 
 /// One decal box.
@@ -217,6 +219,7 @@ mod tests {
     fn records_are_whole_sixteen_byte_rows() {
         assert_eq!(size_of::<SpriteInstance>(), 160);
         assert_eq!(std::mem::offset_of!(SpriteInstance, front_edge), 144);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, front_seed), 148);
         assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
         assert_eq!(size_of::<DecalInstance>(), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);

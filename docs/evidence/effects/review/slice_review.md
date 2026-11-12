@@ -757,8 +757,9 @@ Evidence (lavapipe, debug, Xvfb, 2026-11-12):
 - **No room:** an effect that finds no room draws no decal at all.
 - **Runtime test** (pool of 8, 25 effects of two marks each over 2.5 s): no drawn decal disappears between frames
   unless it is eroding out or its layer ended, every effect draws both its marks or none, the pool is never overrun.
-- **Forced cap of 2 048:** 0 Critical decals dropped (round 3: about 2 050 a frame). 660 marks eroded out to make
-  room, 444 effects drew none. The stains stay whole discs, with no flicker and no hollow rings.
+- **Forced cap of 2 048:** no granted decal dropped from a frame (round 3: about 2 050 Critical decals a frame).
+  660 marks eroded out to make room, and 444 effects drew none of their marks, Critical ones included (wording
+  corrected in round 5). The stains stay whole discs, with no flicker and no hollow rings.
 - **At the normal stress load** (pool 6 144): no effect is refused room. 853 lasting marks erode early over the run,
   because reservations also count decals too small to draw at that camera, so the 85 % mark is reached at about
   3 900 drawn.
@@ -781,3 +782,49 @@ Evidence (lavapipe, debug, Xvfb, 2026-11-12):
 
 **Scale-out round 4 result (implementer):** ready for a fresh independent review (packet section "Scale-out round
 4"). The implementer does not accept its own work.
+
+## Scale-out round 5 (WP7, plan Amendment 8: the orchestrator's decisions after review 4)
+
+Evidence (lavapipe, debug, Xvfb, 2026-11-12):
+- [`cleave_impact_contact.png`](cleave_impact_contact.png) with its sequence;
+- the repeat take [`cleave_impact_repeat_contact.png`](cleave_impact_repeat_contact.png) and its sequence;
+- [`cleave_impact_pops.txt`](cleave_impact_pops.txt), round 5 row.
+
+### `cleave_impact` with guaranteed crests
+
+**Edge roundness** is measured with review 4's method on the close-zoom lab frames: the mask against the row's clean
+frame, normalised to its bounding ellipse, the outermost pixel in each of 72 bins. Spread is the s.d. of the outer
+radius as a share of the radius.
+
+| Row, age | Round 3 | Round 4 | Round 5 |
+|---|---|---|---|
+| Spread, row 3 (bright), 0.076 s / 0.142 s | 3.5 % / 3.4 % | 1.8 % / 2.0 % | **4.1 % / 4.5 %** |
+| Spread, row 7 (teal), 0.076 s / 0.142 s | 3.4 % / 3.7 % | 1.8 % / 1.9 % | **4.3 % / 4.2 %** |
+| Mean step between neighbouring rays, row 3 | 2.5 % / 2.6 % | 1.3 % / 1.4 % | **3.1 % / 3.3 %** |
+| Rays on the front, row 3 / row 7 at 0.076 s | 72 / 72 | 72 / 72 | 72 / 71 |
+| Mean ray error in the GPU test (radv; lavapipe) | −5.4 px | −2.66 px | **−4.73 px; −4.69 px** |
+
+Round 3's figures in this table are re-measured with the same script, so they differ by up to 0.5 point from review
+4's own measurement (3.5–3.9 %).
+
+- **Footprint** (radv and lavapipe): 94 % of rays end within the band (±2 px, or inside by up to the declared bite,
+  20 % of the reach). The per-sector clause holds and nothing ends beyond the reach (largest −0.07 px).
+- **Coverage:** 88 %. Largest whole-frame mean change: 0.76/255.
+- **Pops, per pixel:** every step from frame 4 on is between 716 and 1 034 px. There is no spike; round 2's pop was
+  2 638 at 7→8.
+- **Hits differ, in the capture:** the pairwise correlation of the four hits' 72-bin outer-radius profiles in the
+  repeat take (frames 3, 18, 33, 48, at default zoom) is mean **0.06**, max 0.36. Round 3 measured the same way:
+  mean 0.12, max 0.44. Round 4: mean 0.21, max 0.47.
+- **Hits differ, by construction:** the unit tests over 64 hits require a mean crest-to-nearest-crest distance of at
+  least 1° for every pair of consecutive hits and at least 5° on average. A Python mirror of the placement, with
+  stand-in seeds, gives a largest gap of 43.2° (bound 44°) and a mean crest distance of 7.5° (minimum 2.9°).
+- **Goldens:** `cleave_impact`'s goldens are re-recorded on both drivers. Every other subject's goldens pass
+  unchanged with the new card field `front_seed`.
+
+### Wording corrected (review 4)
+
+At the forced decal cap, no granted decal is dropped from a frame. The 444 effects refused room drew none of their
+marks, Critical ones included. The packet, `stress_capture.txt` and the round-4 notes above are corrected.
+
+**Scale-out round 5 result (implementer):** ready for the final independent review (packet section "Scale-out round
+5"). The implementer does not accept its own work.
