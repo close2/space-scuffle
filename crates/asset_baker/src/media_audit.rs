@@ -6,11 +6,15 @@
 //! with every reason). `Verified` means the provenance record (`provenance`) matches the
 //! committed atlas, manifest and clips, every published action has its own frame range from its
 //! own clip, no range repeats a concept frame, and every paid clip has its ledger line
-//! (plan `docs/plans/2026-11-04-phase-8-5-veo-media.md`, D-6).
+//! (plan `docs/plans/2026-11-04-phase-8-5-veo-media.md`, D-6). Every shipped mode atlas
+//! (`<slug>-<mode>`, plan `docs/plans/2026-11-09-effect-visualization.md` WP13) is checked the
+//! same way against its record and the ledger, including that no clip it ships has a standing
+//! review rejection ([`verify_mode_provenance`]).
 //!
 //! # How it fits
 //! `asset_baker audit-media` writes the report and, with `--strict`, fails unless every
-//! identity of the data-defined required set (`media/required_set.ron`) is `Verified`.
+//! identity of the data-defined required set (`media/required_set.ron`) is `Verified` and every
+//! shipped mode atlas verifies.
 //! Identities outside the set are reported, never failed. The client builds the same records
 //! without provenance checks ([`MediaAuditRecord::loaded`]) for its own diagnostics.
 //!
@@ -20,9 +24,12 @@
 //! - Entries are sorted by slug; every reason is kept.
 
 use crate::ledger::NumberedRecord;
+use crate::media::media_paths;
 use crate::media::{load_unit_media, LoadedUnitMedia, MediaLoadError};
+use crate::mode_media::ModeAtlasId;
 use crate::provenance::{
-    frame_hashes, verify_provenance, RequiredSet, Tier, UnverifiedReason, VerifyContext,
+    frame_hashes, provenance_path, verify_mode_provenance, verify_provenance, ModeVerifyContext,
+    RequiredSet, Tier, UnverifiedReason, VerifyContext,
 };
 use serde::Serialize;
 use sim_core::UnitCatalog;
@@ -203,6 +210,27 @@ pub struct MediaAuditReport {
     pub entries: Vec<MediaAuditRecord>,
     /// Slug groups with identical admitted PNG bytes, excluding singleton groups.
     pub duplicate_groups: Vec<Vec<String>>,
+    /// Every shipped mode atlas (`<slug>-<mode>`) in slug then mode order, with every reason
+    /// it is not verified ([`verify_mode_provenance`]).
+    pub mode_entries: Vec<ModeAuditRecord>,
+}
+
+/// The audit of one shipped mode atlas (plan `2026-11-09-effect-visualization.md` WP13).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModeAuditRecord {
+    /// The atlas name, `<slug>-<mode>`.
+    pub atlas: String,
+    /// Every reason it is not verified; empty when it is.
+    pub unverified: Vec<UnverifiedReason>,
+}
+
+impl ModeAuditRecord {
+    /// `<atlas>: <reasons>`.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let reasons: Vec<String> = self.unverified.iter().map(ToString::to_string).collect();
+        format!("{}: {}", self.atlas, reasons.join(", "))
+    }
 }
 
 impl MediaAuditReport {
@@ -236,7 +264,8 @@ impl MediaAuditReport {
         })
     }
 
-    /// Requires every identity of the required set to be `Verified`.
+    /// Requires every identity of the required set, and every shipped mode atlas, to be
+    /// verified.
     ///
     /// # Errors
     /// Returns [`MediaAuditError::Unverified`] naming each one that is not, with its reasons.
@@ -244,6 +273,12 @@ impl MediaAuditReport {
         let identities: Vec<String> = self
             .unverified_required()
             .map(MediaAuditRecord::summary)
+            .chain(
+                self.mode_entries
+                    .iter()
+                    .filter(|entry| !entry.unverified.is_empty())
+                    .map(ModeAuditRecord::summary),
+            )
             .collect();
         if self.strict_accepted && identities.is_empty() {
             Ok(())
@@ -325,7 +360,9 @@ pub fn audit_media(
         .filter(|group| group.len() > 1)
         .collect();
     duplicate_groups.sort();
+    let mode_entries = audit_mode_atlases(catalog, &textures, &videos, inputs.ledger);
     let strict_accepted = !inputs.required.identities.is_empty()
+        && mode_entries.iter().all(|entry| entry.unverified.is_empty())
         && inputs.required.identities.iter().all(|identity| {
             entries
                 .iter()
@@ -339,5 +376,42 @@ pub fn audit_media(
         concept_failure,
         entries,
         duplicate_groups,
+        mode_entries,
     }
+}
+
+/// The audit of every mode atlas the bundle ships: a catalog mode whose atlas or provenance
+/// record exists in `textures`. A mode without media is not reported (it shows the default
+/// atlas).
+fn audit_mode_atlases(
+    catalog: &UnitCatalog,
+    textures: &Path,
+    videos: &Path,
+    ledger: Option<&[NumberedRecord]>,
+) -> Vec<ModeAuditRecord> {
+    let context = ModeVerifyContext {
+        textures_dir: textures,
+        videos_dir: videos,
+        ledger,
+    };
+    let mut records: Vec<ModeAuditRecord> = catalog
+        .archetypes()
+        .flat_map(|archetype| {
+            archetype
+                .modes
+                .iter()
+                .map(move |mode| (archetype.slug.as_str(), mode.mode_name.as_str()))
+        })
+        .filter_map(|(slug, stance)| {
+            let atlas = ModeAtlasId { slug, stance }.atlas_name();
+            let shipped = media_paths(textures, &atlas).is_ok_and(|(png, _)| png.is_file())
+                || provenance_path(textures, &atlas).is_ok_and(|path| path.is_file());
+            shipped.then(|| ModeAuditRecord {
+                unverified: verify_mode_provenance(slug, stance, &context),
+                atlas,
+            })
+        })
+        .collect();
+    records.sort_by(|left, right| left.atlas.cmp(&right.atlas));
+    records
 }

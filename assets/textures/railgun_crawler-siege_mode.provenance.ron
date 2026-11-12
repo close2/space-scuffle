@@ -12,6 +12,11 @@
             feather_permille: 30,
             scale_permille: 700,
         ),
+        reframe: Some((
+            scale_permille: 700,
+            picture_feather_permille: 60,
+            picture_sha256: "e95f80ac6f456fed184dd16223adcf9a05bbce367db4c391f7fdd6a8013d98b8",
+        )),
     ),
     states: {
         Idle: (

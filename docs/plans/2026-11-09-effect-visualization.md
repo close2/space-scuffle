@@ -1793,7 +1793,7 @@ default atlas flows into it, and Veo keeps that frame's framing with a locked ca
 
 **What changes.**
 
-- **`reframe` of a mode** (`media_style.ron` `modes.<slug>.<mode>.reframe: Some((scale_permille, feather_permille))`,
+- **`reframe` of a mode** (`media_style.ron` `modes.<slug>.<mode>.reframe: Some((scale_permille, picture_feather_permille))`,
   `asset_baker::mode_media::Reframe`). A reframed mode's morphs start and end on
   `<slug>-<mode>_reframed_idle.png`, written by the free command `asset_baker reframe-mode-picture`. That picture is
   the Idle picture shrunk about its centre, with its own backdrop continued into the margin
@@ -1826,3 +1826,33 @@ refusals, the centre-crop refusal before spend, and that the shipped reframed pi
 as the review recorded them. Two paid retries repeated the fault. A bake-time bar normalisation per atlas family
 (the review's suggestion for defect 3) is not built here. The reframe applies only to mode atlases; default atlases
 keep their framing policy. No simulation state, golden replay or checksum changes (D-1 holds).
+
+**Records, after the [independent review of the reframe](../evidence/veo/modes/independent_review_reframe.md)
+(art accepted; merge blocked on records only; no paid generation).**
+
+- **Withdrawing a rejection.** A new ledger event, `mode_clip_rejection_withdrawn { slug, stance, slot, sha256,
+  reason }`, is written by the free command `mode-withdraw-rejection`. That command refuses unless a rejection of
+  those bytes stands. `LedgerHistory` removes the bytes from `rejected_sha256` and undoes that rejection's unusable
+  count. The event is not a start, so the budget does not price it, and a later rejection applies again. One was
+  appended for the shipped scorpion Enter `7581379d` (`08e60832…`): its rejection was recorded only to allow the
+  two failed retries.
+- **The audit covers mode atlases.** `audit-media` now reports every shipped mode atlas
+  (`provenance::verify_mode_provenance`). It checks the record's name, the atlas and manifest bytes, every state
+  and morph clip's bytes, and the cited `mode_clip_downloaded` line. A clip whose `mode_clip_rejected` line has no
+  later withdrawal is `ModeClipRejected` (`provenance::mode_clip_rejection_stands`), and `--strict` then fails.
+  Both shipped mode atlases verify against the committed ledger. Without the withdrawal line, the scorpion's fails.
+- **Naming.** The reframe's picture blend is `picture_feather_permille`, which is not the bake's bar feather. A
+  mode atlas's provenance now records its reframe (`bake.reframe`: scale, picture feather and the start picture's
+  SHA-256). The field is absent for every other atlas, so their records keep their bytes. The tank atlas was
+  re-baked with byte-identical pixels; only its provenance gained the record.
+- **Write-up.** The `55e0ba27` row and the defects paragraph describe the blast tongue that still leaves the top of
+  the source frame for clip frames 23–31 (about 0.4 s, about 11 px wide at the edge, in the sampled blast frame).
+  The bar feather softens it, and it is invisible at battle size. The count of `mode_clip_rejected` lines is 11.
+- **Recorded as polish (Q0002), not done.** The backdrop average of `reframe_picture` could ignore bright,
+  low-saturation outliers, so that cut smoke does not leave faint haze columns in the margin. Changing it would
+  change the shipped reframed picture, which the shipped clips started from. It waits for the next reframe.
+
+**Tests.** `mode_media_tests`: the withdrawal folds, costs nothing and can be overridden; the CLI withdraws only a
+standing rejection; a fixture mode atlas fails verification with a standing rejection and passes after
+withdrawal; every shipped mode atlas records its reframe and framing. `provenance_tests`: the shipped audit
+verifies every mode atlas, and a strict audit fails on an unverified one.

@@ -17,7 +17,10 @@ use asset_baker::mode_media::{
     ModeAtlasId, Reframe,
 };
 use asset_baker::prompts::{check_prompt, MediaStyle, MEDIA_STYLE_FILE};
-use asset_baker::provenance::{bake_mode_with_provenance, veo_origin_of_mode_clip, SliceClip};
+use asset_baker::provenance::{
+    bake_mode_with_provenance, veo_origin_of_mode_clip, verify_mode_provenance, ModeVerifyContext,
+    SliceClip, UnverifiedReason,
+};
 use asset_baker::veo_client::VeoParameters;
 use asset_baker::{BakeFraming, BakerError, FlipbookAtlasMeta, FrameSpec, Morph, SliceKey};
 use common::cli::{baker_with_assets, shipped_assets, shipped_catalog, text, write_picture};
@@ -289,7 +292,7 @@ fn a_reframed_mode_chains_its_morphs_through_the_reframed_idle_picture() {
     let mut spec = style.modes.spec(id).unwrap().clone();
     spec.reframe = Some(Reframe {
         scale_permille: 700,
-        feather_permille: 60,
+        picture_feather_permille: 60,
     });
     let idle = dir.path().join("idle_picture.png");
     write_picture(&idle, 1280, 720);
@@ -345,7 +348,7 @@ fn a_reframed_mode_bakes_with_the_reframed_letterbox_of_its_unit() {
     assert_eq!(spec.bake_framing(letterbox, &path).unwrap(), letterbox);
     spec.reframe = Some(Reframe {
         scale_permille: 650,
-        feather_permille: 0,
+        picture_feather_permille: 0,
     });
     assert_eq!(
         spec.bake_framing(letterbox, &path).unwrap(),
@@ -373,16 +376,16 @@ fn with_first_mode_reframe(text: String, reframe: &str) -> String {
 fn a_reframe_out_of_range_is_refused() {
     for (reframe, wanted) in [
         (
-            "(scale_permille: 400, feather_permille: 60)",
+            "(scale_permille: 400, picture_feather_permille: 60)",
             "scale_permille 400",
         ),
         (
-            "(scale_permille: 1000, feather_permille: 60)",
+            "(scale_permille: 1000, picture_feather_permille: 60)",
             "scale_permille 1000",
         ),
         (
-            "(scale_permille: 700, feather_permille: 501)",
-            "feather_permille 501",
+            "(scale_permille: 700, picture_feather_permille: 501)",
+            "picture_feather_permille 501",
         ),
     ] {
         let error = style_error(|text| with_first_mode_reframe(text, reframe));
@@ -395,7 +398,7 @@ fn a_reframe_of_a_centre_cropped_unit_is_refused_before_any_spend() {
     let (slug, stance, _) = shipped_modes().remove(0);
     let bundle = bundle_with_style(|text| {
         let text = text.replace(&format!("\"{slug}\": Letterbox(feather_permille: 30),"), "");
-        with_first_mode_reframe(text, "(scale_permille: 700, feather_permille: 60)")
+        with_first_mode_reframe(text, "(scale_permille: 700, picture_feather_permille: 60)")
     });
     let dir = tempfile::tempdir().unwrap();
     let output = baker_with_assets(bundle.path())
@@ -416,6 +419,51 @@ fn a_reframe_of_a_centre_cropped_unit_is_refused_before_any_spend() {
         "{}",
         text(&output)
     );
+}
+
+#[test]
+fn every_shipped_mode_atlas_records_its_reframe() {
+    let style = shipped_style();
+    let textures = shipped_assets().join("textures");
+    let keyframes = shipped_assets().join("ai_keyframes");
+    let mut checked = 0;
+    for (id, spec) in style.modes.modes() {
+        let path = asset_baker::provenance::provenance_path(&textures, &id.atlas_name()).unwrap();
+        if !path.is_file() {
+            continue;
+        }
+        let record = asset_baker::provenance::MediaProvenance::load(&path).unwrap();
+        let wanted = spec
+            .reframe
+            .map(|reframe| asset_baker::provenance::ReframeRecord {
+                scale_permille: reframe.scale_permille,
+                picture_feather_permille: reframe.picture_feather_permille,
+                picture_sha256: sha256_file(&id.reframed_idle_picture(&keyframes)).unwrap(),
+            });
+        assert_eq!(record.bake.reframe, wanted, "{}", id.atlas_name());
+        let shape = shipped_catalog().get_by_slug(id.slug).unwrap().shape;
+        assert_eq!(
+            record.bake.framing,
+            spec.bake_framing(
+                style.framing.framing_for(id.slug, &shape),
+                &shipped_assets().join(MEDIA_STYLE_FILE)
+            )
+            .unwrap(),
+            "{}",
+            id.atlas_name()
+        );
+        if spec.reframe.is_some() {
+            // The Enter morph started on exactly that picture.
+            let enter = &record.morphs[&Morph::Enter].origin;
+            assert!(
+                matches!(enter, asset_baker::provenance::ClipOrigin::Veo { keyframe_sha256, .. }
+                    if keyframe_sha256.as_deref() == wanted.as_ref().map(|w| w.picture_sha256.as_str())),
+                "{enter:?}"
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "the bundle ships mode atlases");
 }
 
 #[test]
@@ -597,6 +645,101 @@ fn mode_clip_events_round_trip_and_fold_into_their_own_history() {
     );
 }
 
+fn mode_rejection(sha256: &str) -> LedgerEvent {
+    LedgerEvent::ModeClipRejected {
+        slug: "fixture_unit".into(),
+        stance: "fixture_mode".into(),
+        slot: SliceKey::Morph(Morph::Enter),
+        sha256: sha256.into(),
+        reason: "superseded".into(),
+    }
+}
+
+fn mode_withdrawal(sha256: &str) -> LedgerEvent {
+    LedgerEvent::ModeClipRejectionWithdrawn {
+        slug: "fixture_unit".into(),
+        stance: "fixture_mode".into(),
+        slot: SliceKey::Morph(Morph::Enter),
+        sha256: sha256.into(),
+        reason: "the retries were worse; it stays shipped".into(),
+    }
+}
+
+#[test]
+fn a_withdrawn_mode_rejection_restores_the_clip_and_costs_nothing() {
+    let enter = SliceKey::Morph(Morph::Enter);
+    let mut events = vec![
+        mode_started("r/1", enter),
+        mode_downloaded("op-1", enter, "aaa"),
+        mode_rejection("aaa"),
+        mode_started("r/2", enter),
+        mode_downloaded("op-2", enter, "bbb"),
+        mode_rejection("bbb"),
+    ];
+    let before =
+        LedgerHistory::from_records(&events.iter().cloned().map(record).collect::<Vec<_>>());
+    events.push(mode_withdrawal("aaa"));
+    let records: Vec<LedgerRecord> = events.iter().cloned().map(record).collect();
+    let json = serde_json::to_string(records.last().unwrap()).unwrap();
+    assert!(
+        json.contains("\"event\":\"mode_clip_rejection_withdrawn\""),
+        "{json}"
+    );
+    assert_eq!(
+        &serde_json::from_str::<LedgerRecord>(&json).unwrap(),
+        records.last().unwrap()
+    );
+
+    let after = LedgerHistory::from_records(&records);
+    let clip = after
+        .mode_clip("fixture_unit", "fixture_mode", enter)
+        .unwrap();
+    assert!(!clip.rejected_sha256.contains("aaa"), "withdrawn");
+    assert!(
+        clip.rejected_sha256.contains("bbb"),
+        "the other rejection stands"
+    );
+    assert_eq!(clip.paid_attempts, 2);
+    assert_eq!(clip.unusable_results, 1);
+    assert!(clip.downloaded.is_none(), "a withdrawal awaits no review");
+    assert_eq!(
+        after.paid_start_models().count(),
+        before.paid_start_models().count(),
+        "a withdrawal is not a paid start"
+    );
+    let budget = asset_baker::budget::BudgetConfig::load(
+        &shipped_assets().join(asset_baker::budget::BUDGET_FILE),
+    )
+    .unwrap();
+    let priced = |history: &LedgerHistory| {
+        history
+            .paid_start_models()
+            .map(|_| {
+                budget
+                    .price_cents(asset_baker::veo_client::DEFAULT_VEO_MODEL)
+                    .unwrap()
+            })
+            .sum::<u64>()
+    };
+    assert_eq!(priced(&after), priced(&before));
+
+    // Withdrawing twice changes nothing more; a later rejection applies again.
+    events.push(mode_withdrawal("aaa"));
+    let twice =
+        LedgerHistory::from_records(&events.iter().cloned().map(record).collect::<Vec<_>>());
+    assert_eq!(
+        twice.mode_clip("fixture_unit", "fixture_mode", enter),
+        Some(clip)
+    );
+    events.push(mode_rejection("aaa"));
+    let again = LedgerHistory::from_records(&events.into_iter().map(record).collect::<Vec<_>>());
+    assert!(again
+        .mode_clip("fixture_unit", "fixture_mode", enter)
+        .unwrap()
+        .rejected_sha256
+        .contains("aaa"));
+}
+
 #[test]
 fn the_shipped_ledger_prices_every_mode_start() {
     let ledger = shipped_assets().join("../docs/evidence/veo/ledger.jsonl");
@@ -658,23 +801,33 @@ fn install_fixture_clips(videos: &Path, id: ModeAtlasId<'_>, slots: &[SliceKey])
         .collect()
 }
 
-#[test]
-fn a_mode_atlas_bakes_its_states_and_morphs_with_their_origins() {
-    let dir = tempfile::tempdir().unwrap();
-    let id = ModeAtlasId {
-        slug: "fixture_unit",
-        stance: "fixture_mode",
-    };
+/// A fixture mode atlas baked into `dir` from four installed copies of the fixture clip, with a
+/// ledger in `dir` that downloaded each.
+struct FixtureAtlas {
+    record: asset_baker::provenance::MediaProvenance,
+    textures: PathBuf,
+    videos: PathBuf,
+    ledger_path: PathBuf,
+}
+
+/// The fixture atlas's unit and mode.
+const FIXTURE_ID: ModeAtlasId<'static> = ModeAtlasId {
+    slug: "fixture_unit",
+    stance: "fixture_mode",
+};
+
+fn bake_fixture_atlas(dir: &Path) -> FixtureAtlas {
+    let id = FIXTURE_ID;
     let slots = [
         SliceKey::Action(AnimState::Idle),
         SliceKey::Action(AnimState::Attack),
         SliceKey::Morph(Morph::Enter),
         SliceKey::Morph(Morph::Leave),
     ];
-    let videos = dir.path().join("videos");
+    let videos = dir.join("videos");
     let paths = install_fixture_clips(&videos, id, &slots);
     let sha256 = sha256_file(&paths[0]).unwrap();
-    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger_path = dir.join("ledger.jsonl");
     let lines: Vec<String> = slots
         .iter()
         .enumerate()
@@ -708,16 +861,38 @@ fn a_mode_atlas_bakes_its_states_and_morphs_with_their_origins() {
                 .expect("the ledger downloaded every clip"),
         })
         .collect();
-    let textures = dir.path().join("textures");
+    let textures = dir.join("textures");
     let seams = BTreeMap::new();
     let spec = FrameSpec {
         size: 32,
         fps: 5,
         framing: BakeFraming::CenterCrop,
     };
-    let record =
-        bake_mode_with_provenance(&id.atlas_name(), &clips, &videos, &textures, spec, &seams)
-            .expect("the mode atlas bakes");
+    let record = bake_mode_with_provenance(
+        &id.atlas_name(),
+        &clips,
+        &videos,
+        &textures,
+        spec,
+        &seams,
+        None,
+    )
+    .expect("the mode atlas bakes");
+    FixtureAtlas {
+        record,
+        textures,
+        videos,
+        ledger_path,
+    }
+}
+
+#[test]
+fn a_mode_atlas_bakes_its_states_and_morphs_with_their_origins() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = FIXTURE_ID;
+    let FixtureAtlas {
+        record, textures, ..
+    } = bake_fixture_atlas(dir.path());
 
     let meta = FlipbookAtlasMeta::load_from_ron(
         &textures.join(format!("{}.flipbook.ron", id.atlas_name())),
@@ -757,6 +932,124 @@ fn a_mode_atlas_bakes_its_states_and_morphs_with_their_origins() {
 }
 
 #[test]
+fn a_shipped_mode_clip_with_a_standing_rejection_fails_the_audit_until_withdrawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = bake_fixture_atlas(dir.path());
+    let enter = SliceKey::Morph(Morph::Enter);
+    let sha256 = fixture.record.morphs[&Morph::Enter].clip_sha256.clone();
+    let verify = || {
+        let ledger = read_ledger_numbered(&fixture.ledger_path).unwrap();
+        verify_mode_provenance(
+            FIXTURE_ID.slug,
+            FIXTURE_ID.stance,
+            &ModeVerifyContext {
+                textures_dir: &fixture.textures,
+                videos_dir: &fixture.videos,
+                ledger: Some(&ledger),
+            },
+        )
+    };
+    let append = |event: LedgerEvent| {
+        let mut text = std::fs::read_to_string(&fixture.ledger_path).unwrap();
+        text.push_str(&serde_json::to_string(&record(event)).unwrap());
+        text.push('\n');
+        std::fs::write(&fixture.ledger_path, text).unwrap();
+    };
+    assert_eq!(verify(), Vec::new(), "the fresh bake verifies");
+
+    append(mode_rejection(&sha256));
+    let rejected = verify();
+    assert!(
+        rejected.contains(&UnverifiedReason::ModeClipRejected { slot: enter }),
+        "{rejected:?}"
+    );
+
+    append(mode_withdrawal(&sha256));
+    assert_eq!(verify(), Vec::new(), "a withdrawn rejection verifies again");
+
+    // A later rejection of the same bytes stands again.
+    append(mode_rejection(&sha256));
+    assert!(verify().contains(&UnverifiedReason::ModeClipRejected { slot: enter }));
+
+    // Without a ledger, nothing can be verified; a changed clip is reported.
+    let unsupplied = verify_mode_provenance(
+        FIXTURE_ID.slug,
+        FIXTURE_ID.stance,
+        &ModeVerifyContext {
+            textures_dir: &fixture.textures,
+            videos_dir: &fixture.videos,
+            ledger: None,
+        },
+    );
+    assert_eq!(unsupplied.len(), 4, "{unsupplied:?}");
+    std::fs::write(fixture.videos.join(FIXTURE_ID.clip_file(enter)), b"other").unwrap();
+    assert!(verify().iter().any(|reason| matches!(
+        reason,
+        UnverifiedReason::ModeClipMismatch { slot, .. } if *slot == enter
+    )));
+}
+
+#[test]
+fn a_rejection_is_withdrawn_only_where_one_stands() {
+    let (slug, stance, _) = shipped_modes().remove(0);
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("clip.mp4");
+    std::fs::write(&clip, b"clip bytes").unwrap();
+    let sha256 = sha256_file(&clip).unwrap();
+    let ledger = dir.path().join("ledger.jsonl");
+    let rejection = LedgerEvent::ModeClipRejected {
+        slug: slug.clone(),
+        stance: stance.clone(),
+        slot: SliceKey::Morph(Morph::Enter),
+        sha256: sha256.clone(),
+        reason: "superseded".into(),
+    };
+    let withdraw = || {
+        baker_with_assets(&shipped_assets())
+            .current_dir(dir.path())
+            .args([
+                "mode-withdraw-rejection",
+                "--unit",
+                &slug,
+                "--mode",
+                &stance,
+                "--slice",
+                "enter",
+                "--reason",
+                "the retries were worse",
+            ])
+            .arg("--clip")
+            .arg(&clip)
+            .arg("--ledger")
+            .arg(&ledger)
+            .output()
+            .unwrap()
+    };
+    let refused = withdraw();
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused).contains("no standing rejection"),
+        "{}",
+        text(&refused)
+    );
+
+    std::fs::write(
+        &ledger,
+        serde_json::to_string(&record(rejection)).unwrap() + "\n",
+    )
+    .unwrap();
+    let output = withdraw();
+    assert!(output.status.success(), "{}", text(&output));
+    let history = LedgerHistory::load(&ledger).unwrap();
+    let clip_history = history
+        .mode_clip(&slug, &stance, SliceKey::Morph(Morph::Enter))
+        .unwrap();
+    assert!(!clip_history.rejected_sha256.contains(&sha256));
+    assert_eq!(history.paid_start_models().count(), 0, "it costs nothing");
+    assert!(!withdraw().status.success(), "nothing left to withdraw");
+}
+
+#[test]
 fn a_mode_clip_outside_the_videos_directory_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let id = ModeAtlasId {
@@ -787,6 +1080,7 @@ fn a_mode_clip_outside_the_videos_directory_is_refused() {
             framing: BakeFraming::CenterCrop,
         },
         &BTreeMap::new(),
+        None,
     );
     assert!(matches!(
         result,

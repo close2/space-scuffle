@@ -204,9 +204,10 @@ pub struct Reframe {
     /// The scale of the unit in the reframed picture, in thousandths, from
     /// [`crate::framing::MIN_REFRAME_PERMILLE`] to [`crate::framing::MAX_REFRAME_PERMILLE`].
     pub scale_permille: u32,
-    /// Width of the blend from the shrunk picture to the margin, in thousandths of the picture's
-    /// height, at most [`crate::framing::MAX_FEATHER_PERMILLE`].
-    pub feather_permille: u32,
+    /// Width of the blend from the shrunk picture into its margin, in thousandths of the
+    /// picture's height, at most [`crate::framing::MAX_FEATHER_PERMILLE`]. It shapes only the
+    /// start picture; the bake's bar feather is the unit's letterbox feather.
+    pub picture_feather_permille: u32,
 }
 
 impl Reframe {
@@ -220,10 +221,10 @@ impl Reframe {
                 self.scale_permille
             ));
         }
-        (self.feather_permille > MAX_FEATHER_PERMILLE).then(|| {
+        (self.picture_feather_permille > MAX_FEATHER_PERMILLE).then(|| {
             format!(
-                "reframe feather_permille {} is wider than {MAX_FEATHER_PERMILLE}",
-                self.feather_permille
+                "reframe picture_feather_permille {} is wider than {MAX_FEATHER_PERMILLE}",
+                self.picture_feather_permille
             )
         })
     }

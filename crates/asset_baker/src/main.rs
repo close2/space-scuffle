@@ -763,6 +763,13 @@ fn run_audit_media(assets: Option<&Path>, args: AuditArgs) -> RunResult {
             .map_or(String::new(), |tier| format!(" [{tier:?}]"));
         println!("{}{tier}", entry.summary());
     }
+    for entry in &audit.mode_entries {
+        if entry.unverified.is_empty() {
+            println!("{} (mode atlas, Verified)", entry.atlas);
+        } else {
+            println!("{} (mode atlas, unverified)", entry.summary());
+        }
+    }
     let verified = audit
         .entries
         .iter()

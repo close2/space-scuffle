@@ -435,7 +435,9 @@
                 // cut by its top edge (independent review of WP13, item 1). The clips start on
                 // the Idle picture shrunk to 70 % with a margin of its backdrop; the bake crops
                 // them back to the default atlas's scale and keeps the margin above the hull.
-                reframe: Some((scale_permille: 700, feather_permille: 60)),
+                // picture_feather_permille is the start picture's blend into its margin, not the
+                // bake's bar feather (the unit's letterbox feather above).
+                reframe: Some((scale_permille: 700, picture_feather_permille: 60)),
             ),
         },
         "burrow_scorpion": {
