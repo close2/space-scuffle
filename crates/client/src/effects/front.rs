@@ -84,12 +84,13 @@ pub fn turn_distance(a: f32, b: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::placement::hash3;
+    use crate::effects::runtime::{instance_seed, placed_seed};
 
-    /// The ring card seeds of 64 consecutive hits, drawn as the runtime draws them (the
-    /// instance seed from the spawn sequence, then the layer's placed-instance hash).
+    /// 64 card seeds of consecutive hits of an arbitrary effect (salt 1, layer 3), drawn with
+    /// the runtime's own seed functions. The shipped torn fronts, with their real salts and layer
+    /// indices, are checked by `effect_catalog_tests.rs`.
     fn seeds() -> impl Iterator<Item = u32> {
-        (0..64_u32).map(|hit| hash3(hash3(hit, 0x5EED_0F1E, 0x00C1_EA7E), 12, 0))
+        (0..64_u32).map(|hit| placed_seed(instance_seed(hit, 1), 3, 0, 0))
     }
 
     #[test]

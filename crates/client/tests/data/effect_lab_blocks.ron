@@ -1,17 +1,14 @@
 // Lab-only presentation entries, read by crates/client/tests/support/effect_subjects.rs.
 //
-// The effect review gate of plan docs/plans/2026-11-09-effect-visualization.md accepted
-// `shell_impact`, `acid_burst` and `spine_line` in round 5 (Amendment 3), so their presentation
-// blocks live in assets/catalog/units.ron alone. What remains here is the one effect no shipped
-// unit can use yet: `burrow_trail`, the trail of a burrowed unit moving underground (plan
-// Amendment 2, R5). The shipped burrowed mode cannot move, so only the tests drive this unit
-// with a velocity. Each entry gives a shipped unit (by slug) presentation entries that are added
-// to its shipped block, so the lab binds the effect to that unit's real data.
-//
-// The scale-out's WP7 splash effects wait here for their review gate, as the slice's did
-// before round 5: `flame_line` (Hellion analogue), `lance_sweep` (Colossus analogue),
-// `flak_burst` (Liberator analogue's anti-air rockets) and `cleave_impact` (Ultralisk
-// analogue). Once the independent review accepts one, its entry moves to `units.ron`.
+// The effect review gates of plan docs/plans/2026-11-09-effect-visualization.md accepted the
+// slice's `shell_impact`, `acid_burst` and `spine_line` (round 5, Amendment 3) and the
+// scale-out's `flak_burst`, `flame_line`, `lance_sweep` and `cleave_impact` (scale-out rounds 1
+// to 5, Amendment 9), so their presentation blocks live in assets/catalog/units.ron alone. What
+// remains here is the one effect no shipped unit can use yet: `burrow_trail`, the trail of a
+// burrowed unit moving underground (plan Amendment 2, R5). The shipped burrowed mode cannot
+// move, so only the tests drive this unit with a velocity. Each entry gives a shipped unit (by
+// slug) presentation entries that are added to its shipped block, so the lab binds the effect
+// to that unit's real data.
 //
 // This is test data, not Rust, so it stays outside the zero-hardcoded-identities rule (charter
 // §3.3). An entry here must not repeat a weapon or mode entry of the unit's shipped block, and
@@ -20,17 +17,5 @@
 {
     "burrow_scorpion": (
         modes: [(mode: "burrowed", moving: Some("burrow_trail"))],
-    ),
-    "napalm_wheeler": (
-        weapons: [(weapon: Primary, splash: Some("flame_line"))],
-    ),
-    "tripod_annihilator": (
-        weapons: [(weapon: Primary, splash: Some("lance_sweep"))],
-    ),
-    "sky_bastion": (
-        weapons: [(weapon: Air, splash: Some("flak_burst"))],
-    ),
-    "stag_behemoth": (
-        weapons: [(weapon: Primary, splash: Some("cleave_impact"))],
     ),
 }

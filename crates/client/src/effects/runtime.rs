@@ -281,7 +281,7 @@ impl EffectRuntime {
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
-            seed: hash3(self.sequence, 0x5EED_0F1E, effect.salt),
+            seed: instance_seed(self.sequence, effect.salt),
             detail_retired_at: over_cap.then_some(birth),
             has_detail: effect
                 .layers
@@ -727,12 +727,13 @@ impl EffectRuntime {
         let layer = context.layer;
         let instance = context.instance;
         for (placement_index, placement) in layer.placements.iter().enumerate() {
-            let salt = u32::try_from(context.layer_index * 4 + placement_index).unwrap_or(0);
+            let layer_index = u32::try_from(context.layer_index).unwrap_or(0);
+            let placement_index = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
                 if !placed_seen(placement, index, instance.line, &instance.bound) {
                     continue;
                 }
-                let seed = hash3(instance.seed, salt, index);
+                let seed = placed_seed(instance.seed, layer_index, placement_index, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 #[expect(
                     clippy::cast_possible_truncation,
@@ -1341,6 +1342,30 @@ fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Span
         }
     }
     spans
+}
+
+/// The seed of the effect instance spawned as number `sequence` of the runtime, for an effect
+/// whose random choices are salted by `salt` ([`super::catalog::Effect::salt`]).
+#[must_use]
+pub const fn instance_seed(sequence: u32, salt: u32) -> u32 {
+    hash3(sequence, 0x5EED_0F1E, salt)
+}
+
+/// The seed of placed instance `index` of placement `placement_index` of layer `layer_index` of
+/// an effect instance seeded `instance_seed`: what a card's or decal's own random choices (and a
+/// torn front's crests) are drawn from.
+#[must_use]
+pub const fn placed_seed(
+    instance_seed: u32,
+    layer_index: u32,
+    placement_index: u32,
+    index: u32,
+) -> u32 {
+    hash3(
+        instance_seed,
+        layer_index.wrapping_mul(4).wrapping_add(placement_index),
+        index,
+    )
 }
 
 /// A length as `u32`, saturating.

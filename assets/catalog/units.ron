@@ -909,6 +909,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the napalm jet's line splash (accepted by the scale-out review in round 2, Amendment 8).
+            effects: (
+                weapons: [(weapon: Primary, splash: Some("flame_line"))],
+            ),
             veo_prompts: {
                 Idle: "Pyre Outrider: Unmanned trike of bold clean armor plates, no outline glow, three wheels only: one large front wheel and two large rear wheels, with cyan-lit spoked hubs, a long barrel at the front and two fuel tanks on its back, seen from above at a three-quarter angle, front toward the lower right, whole, floating in evenly lit empty space, no floor, no shadow.",
                 Walk: "Pyre Outrider: Flat-out high-speed run, all three wheels spinning fast.",
@@ -1259,6 +1263,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the anti-air rockets' burst among air units (accepted by the scale-out review in round 1).
+            effects: (
+                weapons: [(weapon: Air, splash: Some("flak_burst"))],
             ),
             veo_prompts: {
                 Idle: "Sky Bastion: a single heavy armored gunship with two large fixed ring-shaped lift nacelles glowing steady blue at its sides and a rocket launcher under its nose, hovering steady in mid-air, seen from above at a three-quarter angle, nose toward the lower right, whole in the middle of the frame with wide empty space around it, no other aircraft.",
@@ -2070,6 +2078,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the thermal lance's swept line splash (accepted by the scale-out review in round 2).
+            effects: (
+                weapons: [(weapon: Primary, splash: Some("lance_sweep"))],
             ),
             veo_prompts: {
                 Idle: "Thermal Tripod: Towering slender tripod walker standing high above the battlefield with dual thermal emitters.",
@@ -3292,6 +3304,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the cleave's dust front (accepted by the scale-out review in round 5).
+            effects: (
+                weapons: [(weapon: Primary, splash: Some("cleave_impact"))],
             ),
             veo_prompts: {
                 Idle: "Armored Stag Behemoth: Enormous quadrupedal juggernaut with towering multi-tined kaiser scythe horns.",

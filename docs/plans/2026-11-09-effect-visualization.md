@@ -779,7 +779,7 @@ Sizes: S ≤ 1 day, M 2–3 days, L ≥ 4 days. At most two building agents at o
 | WP6b | Author `shell_impact`, `acid_burst`, `spine_line` in `effects.ron`; presentation blocks for `railgun_crawler`, `volatile_tick`, `burrow_scorpion`; `effect_lab` capture mode in `client_diagnostics` | GPU tests per effect (§10.2): footprint against the bound radius or line, coverage ≥ 60 % of the full-damage disc at peak, no pixels after duration except the decal, no pop (frame-to-frame mean luminance change outside the impact frame ≤ 6/255), golden stills per driver within tolerance | Effects render; tests green | M |
 | WP6c | HDR and bloom decision (D-11); quality review (§7) by the implementer and an independent reviewer; frame-budget measurement with the slice at 200 splashes per second | Review log; frame budget evidence | **Gate:** all checklist items pass. Two failed review rounds → stop and hand back to the orchestrator with the contact sheets before any scale-out | S |
 | **Scale-out** (after WP6c passes) | | | | |
-| WP7 | `Ribbon` and `Distortion` blocks; `flame_line`, `lance_sweep`; projectile travel and impact (`ProjectileVisual` arrival spawns the unit's `impact` effect) | Ribbon width and endpoints ±2 px; distortion displaces only inside its mask; GPU stills; review | Reviewed | M |
+| WP7 | `Ribbon` and `Distortion` blocks; `flame_line`, `lance_sweep`; projectile travel and impact (`ProjectileVisual` arrival spawns the unit's `impact` effect) | Ribbon width and endpoints ±2 px; distortion displaces only inside its mask; GPU stills; review | Reviewed — **done** (Amendment 9; travel effects moved to WP11) | M |
 | WP8 | Concealment and stance: `Shell` hook (sink, rim, tint, refraction), `burrow_dig`/`burrow_emerge`/`burrow_mound`, `cloak_shimmer`/`cloak_own`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`; client-local settle (D-6) | Progress maths (hold during the random extra, clamp, leaving direction); GPU pose "burrow": above-ground pixel area of a burrowed bubble ≤ 35 % of the unburrowed one, mound decal inside its ring; "siege mid-transition": sweep arc within ±5 % of progress; enemy undetected cloaked: only distortion pixels, no tint | Reviewed | M |
 | WP9 | Status and death: `stim_surge`, `concussive_daze`, `charge_streak`, `barrier_shell` (absorb flash), death effects per presentation block (default stays the glass shatter) | Shell-flag unit tests; GPU pose "barrier": outer shell only while `barrier_ratio > 0` | Reviewed | S |
 | WP10 | Areas and links: `psionic_storm`-style area from a test-only ability, `abduct_tether` from a test-only snapshot; `abilities` map in presentation blocks | Area edge at `AreaRadius` ±2 px; fog per frame; tether ends on both bubbles ±2 px; steady-state window with a live area and tether | Reviewed | M |
@@ -1403,3 +1403,77 @@ bite was halved, and the four hits shared one outline. This is round 5, the owne
 No simulation state, golden replay or checksum (D-1 holds). Implementer checklist:
 [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Scale-out round 5"). Packet: section "Scale-out
 round 5".
+
+## Amendment 9: the scale-out's four effects shipped; WP7 closed (2026-11-12, short note, charter §6)
+
+**Decision note (charter §6, short note: catalog data, test fixtures and documentation).** The independent review of
+scale-out round 5 ([`independent_review_scaleout5.md`](../evidence/effects/review/independent_review_scaleout5.md))
+accepts `cleave_impact`. Across the five scale-out rounds this makes all seven effects ready to ship, with no
+regressions. This amendment ships the four new ones the way Amendment 3 shipped the slice. It changes no simulation
+state, golden replay or checksum (D-1 holds: presentation blocks are read by the client only), and no effect
+definition, texture or GPU golden.
+
+**Verdicts per scale-out round.**
+
+| Round | Review | `flak_burst` | `flame_line` | `lance_sweep` | `cleave_impact` | shipped three |
+|---|---|---|---|---|---|---|
+| 1 | [`independent_review_scaleout1.md`](../evidence/effects/review/independent_review_scaleout1.md) | **accept** | reject | reject | reject | `shell_impact` regressed |
+| 2 | [`independent_review_scaleout2.md`](../evidence/effects/review/independent_review_scaleout2.md) | accept | **accept** | **accept** | reject | restored, no regression |
+| 3 | [`independent_review_scaleout3.md`](../evidence/effects/review/independent_review_scaleout3.md) | accept | accept | accept | **accept** | no regression |
+| 4 | [`independent_review_scaleout4.md`](../evidence/effects/review/independent_review_scaleout4.md) | accept | accept (jets in battle) | accept | reject (round again) | no regression |
+| 5 | [`independent_review_scaleout5.md`](../evidence/effects/review/independent_review_scaleout5.md) | accept | accept | accept | **accept** | no regression |
+
+**What ships.**
+
+- **The four new effects** are named in `assets/catalog/units.ron` by their units' own weapon slots:
+  - `napalm_wheeler` (Hellion analogue): `(weapon: Primary, splash: Some("flame_line"))`;
+  - `tripod_annihilator` (Colossus analogue): `lance_sweep`;
+  - `sky_bastion` (Liberator analogue): `(weapon: Air, splash: Some("flak_burst"))`;
+  - `stag_behemoth` (Ultralisk analogue): `cleave_impact`.
+
+  Their blocks are those the effect lab and the GPU tests rendered in every round. No Rust names a unit or an effect
+  (C5, C6).
+- `crates/client/tests/data/effect_lab_blocks.ron` keeps only `burrow_trail`, which no shipped burrowed mode can
+  use yet (Amendment 3).
+- `effect_catalog_tests.rs`:
+  - `accepted_slice_effects_are_named_by_their_shipped_units` now covers all seven effects with their weapon slots.
+  - New: `shipped_torn_fronts_hold_every_sector_for_many_hits`. It checks every shipped torn front (today the
+    cleave's) for 64 consecutive hits. The seeds are drawn with the effect's real salt and the ring's real layer
+    index, through the runtime's own seed functions (`instance_seed`, `placed_seed`). This was review 5's note on
+    the test seeds. The unit tests in `client::effects::front` now use those same functions on an arbitrary effect.
+- **Units without media stay unpresented.** `tripod_annihilator`, `stag_behemoth` and `volatile_tick` have no unit
+  media, so the client cannot present them in a battle. Their effects are shipped and reviewed in the lab and in
+  the stress stream, and they will draw once those units have media (WP13, WP14).
+
+**WP7 status: done.**
+
+- The `Ribbon` and `Distortion` blocks and the four splash effects have shipped.
+- The projectile impact wiring (a `ProjectileVisual` arrival spawns the unit's `impact` effect) has been in
+  `client::effects::systems` since WP4.
+- The budget rules of Amendments 7 and 8 (decal reservations, class caps counted by live fire, torn fronts with
+  guaranteed crests) are in.
+- Travel effects for projectiles are not authored. They move to WP11 with the migration of the legacy looks.
+- WP8 (concealment and stance visuals, the Q0075 Veo clips) is not started.
+
+**Open polish (non-blocking, from the scale-out reviews; to be picked up in a polish round, each with its own
+review).**
+
+| Effect or area | Item | First raised |
+|---|---|---|
+| `cleave_impact` | Narrow crest teeth at close zoom on teal: soften their flanks (soft edge about 5–6°) so that they read as shoulders. | scale-out 5 |
+| `cleave_impact` | The front's dark value on teal reads as a beaded outline around light dust. | scale-out 3 |
+| `cleave_impact` | The front is faint at the default zoom on bright ground. | scale-out 3 |
+| `cleave_impact` | Square clods; the crack is not readable. | scale-out 1 |
+| `cleave_impact` | The GPU footprint test checks one seed per driver; render more than one seed. | scale-out 5 |
+| `flame_line` | A screen-size floor for the burning ground's width at the far camera (Amendment 8). | scale-out 4 |
+| `flame_line` | Flare and break up the jet rod in frames 1–4; oxblood pockets in the billows; a blunt cut at the fog edge at 0.104 s. | scale-out 2 |
+| `flame_line` (crowd) | Most `Major` effects give up their billows early in a big fight; revisit only if play-testing shows jets thinning too soon. | scale-out 4 |
+| `lance_sweep` | Spread the groove's width variation along the line instead of a wedge; larger spatter; the airborne part is weak at the default zoom. | scale-out 2 |
+| `flak_burst` | A regular scalloped inner edge (about ten even lobes), with a slight glass-rim read at close zoom; smoke that drifts and grows; shrapnel streaks. | scale-out 1 |
+| `shell_impact` | An irregular streak fringe for the blast mark (a new texture); more ring width variation; a draw space in which no instance loses its blast mark. | slice round 4, scale-out 1 |
+| `acid_burst` | Meniscus, inner rims, glob shapes, crowd variation, dried crust. Stains dominate the crowd frame (Amendment 6's proposal to fade them in crowds). | slice rounds; scale-out 2–4 |
+| `spine_line` | Torn clods; clods a step lighter than the furrows; one detached scar piece. | slice round 5, scale-out 1 |
+| Decal ledger | Optional, camera-independent: leave out of the reservations the layers that can never reach the 6-pixel floor, computed once at load. | scale-out 4 |
+| Crowd evidence | An annotated crop of one soft retirement would strengthen the degradation take. | scale-out 3 |
+
+**Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.

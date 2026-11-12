@@ -884,14 +884,33 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
     );
 }
 
-/// The slice's splash effects the review gate accepted in round 5 (plan Amendment 3): the unit
-/// that names each, the mode whose weapon override carries it (`None` for the default stance)
-/// and the effect. Test data restating the shipped catalog, so a block dropped from
+/// The splash effects the review gates accepted (the slice in round 5, plan Amendment 3; the
+/// scale-out in rounds 1 to 5, Amendment 9): the unit that names each, the weapon slot, the mode
+/// whose weapon override carries it (`None` for the default stance) and the effect. Test data restating the shipped catalog, so a block dropped from
 /// `units.ron` fails here.
-const ACCEPTED_SLICE: [(&str, Option<&str>, &str); 3] = [
-    ("railgun_crawler", Some("siege_mode"), "shell_impact"),
-    ("volatile_tick", None, "acid_burst"),
-    ("burrow_scorpion", Some("burrowed"), "spine_line"),
+const ACCEPTED_SLICE: [(&str, WeaponSlot, Option<&str>, &str); 7] = [
+    (
+        "railgun_crawler",
+        WeaponSlot::Primary,
+        Some("siege_mode"),
+        "shell_impact",
+    ),
+    ("volatile_tick", WeaponSlot::Primary, None, "acid_burst"),
+    (
+        "burrow_scorpion",
+        WeaponSlot::Primary,
+        Some("burrowed"),
+        "spine_line",
+    ),
+    ("sky_bastion", WeaponSlot::Air, None, "flak_burst"),
+    ("napalm_wheeler", WeaponSlot::Primary, None, "flame_line"),
+    (
+        "tripod_annihilator",
+        WeaponSlot::Primary,
+        None,
+        "lance_sweep",
+    ),
+    ("stag_behemoth", WeaponSlot::Primary, None, "cleave_impact"),
 ];
 
 /// Every effect the review gate accepted is named by its shipped unit's presentation block
@@ -904,13 +923,13 @@ fn accepted_slice_effects_are_named_by_their_shipped_units() {
     let units = sim_fixtures::shipped_catalogs().units;
     UnitEffectTables::build(&units, &catalog).expect("every shipped presentation block resolves");
     let subjects = effect_subjects::splash_subjects();
-    for (slug, mode, effect) in ACCEPTED_SLICE {
+    for (slug, slot, mode, effect) in ACCEPTED_SLICE {
         let archetype = units
             .id_by_slug(slug)
             .and_then(|id| units.get(id).ok())
             .unwrap_or_else(|| panic!("{slug} is a shipped unit"));
         let named = archetype.effects.weapons.iter().any(|entry| {
-            entry.weapon == WeaponSlot::Primary
+            entry.weapon == slot
                 && entry.mode.as_deref() == mode
                 && entry.splash.as_deref() == Some(effect)
         });
@@ -1216,4 +1235,73 @@ fn an_effects_salt_survives_other_effects_being_added() {
         Some(2),
         "a pinned seed is the salt"
     );
+}
+
+/// Every shipped torn front (a `Critical` `Front` ring with `edge_noise`) keeps dust on the reach
+/// in every footprint sector, and its consecutive hits place their crests differently, for 64
+/// consecutive hits drawn with the effect's real salt and the ring's real layer index through
+/// the runtime's own seed functions (plan Amendment 8; review 5: one GPU capture checks one
+/// seed, this checks the construction for many).
+#[test]
+fn shipped_torn_fronts_hold_every_sector_for_many_hits() {
+    use client::effects::catalog::schema::Priority;
+    use client::effects::front::{crest_centres, turn_distance, CREST_HALF_WIDTH_DEG};
+    use client::effects::runtime::{instance_seed, placed_seed};
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let mut fronts = 0;
+    for effect in &catalog.effects {
+        for (layer_index, layer) in effect.layers.iter().enumerate() {
+            let client::effects::catalog::Block::Ring { edge_noise, .. } = layer.block else {
+                continue;
+            };
+            if edge_noise <= 0.0 || layer.priority != Priority::Critical {
+                continue;
+            }
+            fronts += 1;
+            let layer_index = u32::try_from(layer_index).expect("a small index");
+            let seeds: Vec<u32> = (0..64_u32)
+                .map(|hit| placed_seed(instance_seed(hit, effect.salt), layer_index, 0, 0))
+                .collect();
+            for seed in &seeds {
+                let centres = crest_centres(*seed);
+                for sector in 0..8_u16 {
+                    let on_crest = (0..9_u16).any(|ray| {
+                        let angle = f32::from(sector * 9 + ray) / 72.0;
+                        centres.iter().any(|centre| {
+                            turn_distance(angle, *centre) * 360.0 <= CREST_HALF_WIDTH_DEG + 1e-3
+                        })
+                    });
+                    assert!(on_crest, "{}: seed {seed:#x}, sector {sector}", effect.name);
+                }
+            }
+            let mut total = 0.0;
+            for pair in seeds.windows(2) {
+                let (a, b) = (crest_centres(pair[0]), crest_centres(pair[1]));
+                let mean = a
+                    .iter()
+                    .map(|centre| {
+                        b.iter()
+                            .map(|other| turn_distance(*centre, *other))
+                            .fold(f32::MAX, f32::min)
+                    })
+                    .sum::<f32>()
+                    * 360.0
+                    / 12.0;
+                assert!(
+                    mean >= 1.0,
+                    "{}: consecutive hits share their crests",
+                    effect.name
+                );
+                total += mean;
+            }
+            assert!(
+                total / 63.0 >= 5.0,
+                "{}: hits differ too little",
+                effect.name
+            );
+        }
+    }
+    assert!(fronts > 0, "the shipped vocabulary has a torn front");
 }
