@@ -12,7 +12,7 @@ pub use environment::SceneEnvironmentPlugin;
 
 pub use scene::{
     manage_battle_scene, sync_scene_camera, update_map_presentation, BattleSceneRoot, MapObject,
-    MapPresentation,
+    MapObjectSnapshot, MapPresentation,
 };
 pub use verification::{BattleRenderStatus, BattleRenderVerificationPlugin};
 

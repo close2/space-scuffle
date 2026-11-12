@@ -130,6 +130,63 @@ pub fn load_effect_catalog(
     commands.insert_resource(catalog);
 }
 
+/// Refreshes the ground obstacles decals must not paint (WP9 review 1, A1-6): every shown
+/// resource node, as the disc of its billboard, and every structure, as the disc of its dome.
+/// Units are not obstacles: their glass is drawn after the decals and is not painted.
+// PERFORMANCE RATIONALE:
+// Why: The list is rebuilt every frame from the map's nodes and the live structures.
+// What: The runtime's vector is cleared and refilled in place; it reaches its size on the
+// first frames and keeps its capacity.
+// Trade-off: A pass over the nodes and bubbles per frame (a few hundred items) in exchange for
+// no bookkeeping when structures are built or destroyed.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn collect_ground_obstacles(
+    map: Option<Res<'_, crate::runtime_battle::MapPresentation>>,
+    bubbles: Query<
+        '_,
+        '_,
+        &crate::bubble_shader::BubbleInstance,
+        With<crate::scene_controller::LiveBattleBubble>,
+    >,
+    runtime: Option<ResMut<'_, EffectRuntime>>,
+) {
+    let Some(mut runtime) = runtime else {
+        return;
+    };
+    let runtime = runtime.bypass_change_detection();
+    runtime.obstacles.clear();
+    if let Some(map) = map {
+        runtime.obstacles.extend(
+            map.objects
+                .iter()
+                .filter(|object| object.visible && object.size > 0.0)
+                .map(|object| {
+                    [
+                        object.position.x,
+                        object.position.z,
+                        object.size * 0.5 * OBSTACLE_MARGIN,
+                    ]
+                }),
+        );
+    }
+    runtime.obstacles.extend(
+        bubbles
+            .iter()
+            .filter(|bubble| matches!(bubble.0.shape, sim_types::ShapeKind::BuildingDome { .. }))
+            .map(|bubble| {
+                let [x, y, _] = bubble.0.world_pos;
+                [x, y, bubble.0.radius * OBSTACLE_MARGIN]
+            }),
+    );
+}
+
+/// Factor on an obstacle's own radius for the disc a decal leaves unpainted: its silhouette's
+/// soft edge stays clean.
+const OBSTACLE_MARGIN: f32 = 1.05;
+
 /// Snapshot `[x, y, altitude]` as a Bevy world position (Y up).
 fn world(position: [f32; 3]) -> Vec3 {
     Vec3::new(position[0], position[2], position[1])

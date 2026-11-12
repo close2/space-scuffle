@@ -7,6 +7,71 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP9 round 2 (status and death looks)
+
+Round 1's review ([`independent_review_wp9_1.md`](independent_review_wp9_1.md), kept as written) accepted
+`vehicle_wreck` and every engineering and fog item; it rejected `stim_surge`, `concussive_daze`, `charge_streak`,
+`barrier_shell` and `bio_burst`, and asked for evidence on `barrier_absorb`. The orchestrator's decisions are plan
+Amendment 17. This is round 2 of at most five (Q0080). Please write it to a new file next to this one,
+`independent_review_wp9_2.md`, in the same form: judge `stim_surge`, `concussive_daze`, `charge_streak`,
+`barrier_shell`, `barrier_absorb` and `bio_burst` against each of the seven checklist items, check A1-6, E1-1, E1-2,
+E1-4 and E1-6, say whether `vehicle_wreck` (changed for P1-1 and P1-2) or anything else regressed. Nothing was spent
+and no texture was made.
+
+The pictures come from `crates/client/tests/status_gpu_tests.rs` on the production skirmish (debug build, Xvfb,
+1280×720, the battle camera's default distance) on radv and lavapipe; files start with `wp9r2_`. Round 1's files
+are unchanged.
+
+### What changed
+
+| Round-1 finding | Change |
+|---|---|
+| A1-1 `stim_surge`: fumes invisible; flare never pictured; body not visibly warmed | The picture is warmed far more (tint share 0.14 → 0.34). The fumes are 0.6 radii (was 0.3), denser (opacity 0.30 to 0.58), lifted over the crown, laid every 0.35 s. The onset is pictured (V1-1). |
+| A1-2 `concussive_daze`: rim like every bubble's; body not greyed; drag dust invisible | No rim. The picture is greyed and darkened (tint share 0.62) and the glass dulled (matte 0.75). Drag dust of 0.55 radii in a denser grey-brown, every 0.25 s. |
+| A1-3 `charge_streak`: violet rim on a violet unit; dust a speck; no lunge | A hot white outline (rim 0.88). Every 0.06 s a darker scuff of one radius with a broken outline and two dense light-tan dust puffs of 0.75 radii. The charge now crosses clear ground and the crop follows the charger (V1-2). Nothing line-like. |
+| A1-4 `barrier_shell`: faint, mostly the lower arc, gone after hits | The membrane stands at 1.32 radii, its ramp is denser (opacity up to 0.82), its floor 0.75 (was 0.45), its face crackled less. The upper arc was there but faint on the bright floor. The ring figures at 8 and at 24 levels are in the measurements. |
+| A1-5 `bio_burst`: translucent mauve disc, then a round coin; no globs | An opaque dark splash crown (thickened), larger and more globs and a fine dark spray. The stain has a lobed disc outline (edge noise 0.22, soft edge) and six satellite drops round it; it darkens the floor (dark red-brown) instead of tinting it. |
+| A1-6 decals paint a resource node | Every ground mark leaves the nearest resource nodes and structures (up to four within 4 world units) unpainted, fading out over 0.15 world units at the edge of each one's disc. Marks still spawn next to them. |
+| E1-1 deaths proven only by a total count | Each named death's effect is counted by effect id (two `vehicle_wreck`, one `bio_burst` in the take). A control unit whose block names no death dies with them and must draw legacy shards (16 near it), the named deaths none. |
+| E1-2 dust and fumes not asserted | The charge's dust is counted per frame: laid only while the charger moves under its status, never otherwise. The stim's fumes are counted against their beat (10 over 10.1 beats). |
+| E1-4 the two radv "down" pixels | The test prints them. In this round's take "down" changes no ring pixel on either driver. |
+| E1-6 the pink haze | It is the smog's wake behind a moving bubble (the bubbles' velocity stirs the smog volume), not an effect layer: `wp9r2_battle_haze_*` and `wp9r2_battle_bare_*` are consecutive frames with and without effect layers, and the haze is in both. Smog is untouched by this plan. |
+| V1-1, V1-3, V1-4 onsets and pairs | A third child stages pairs of one type side by side. At t = 1.00 s one of each takes its status while the camera watches: the stim (the simulation's own overclock), a concussive slow (the simulation's own slow; the shipped shells do not yet apply it), and a barrier raised by the first hit of a ranged (hitscan) attacker and, in a second pair, of a melee one. |
+| P1-1, P1-2 `vehicle_wreck` (accepted; advisories) | Black smoke, its own heavier dark wreckage, and embers that glow on in its scorch for 2 s, cooling from orange to dull red (a shell's die within a second). |
+| D-5 | Recorded in Amendment 17: a death of an undetected enemy in a visible cell is shown, as the glass shatter was and as StarCraft II shows it. |
+
+### Material
+
+| What | Files |
+|---|---|
+| Onsets, every second 40 ms frame from t = 0.76 s (the status sets in at 1.00 s): stim, slow, barrier raised by a ranged attacker, by a melee attacker | [stim](wp9r2_onset_stim_radv.jpg), [daze](wp9r2_onset_daze_radv.jpg), [barrier, ranged](wp9r2_onset_barrierranged_radv.jpg), [barrier, melee](wp9r2_onset_barriermelee_radv.jpg); lavapipe: the same names ending `_lavapipe` |
+| Pairs (V1-4): before the onset and with the status, at 1:1 and 3x, the acting unit on the left, its twin on the right | [stim](wp9r2_pair_stim_radv.jpg), [daze](wp9r2_pair_daze_radv.jpg), [barrier, ranged](wp9r2_pair_barrierranged_radv.jpg), [barrier, melee](wp9r2_pair_barriermelee_radv.jpg); lavapipe likewise |
+| Battle sequences, every third 40 ms frame at 1.5x: stimmed and running, slowed and walking, the charge (crop follows the charger), the barrier under fire, the deaths at t = 1.0 s | [stim](wp9r2_stim_sequence_radv.jpg), [daze](wp9r2_daze_sequence_radv.jpg), [charge](wp9r2_charge_sequence_radv.jpg), [barrier](wp9r2_barrier_sequence_radv.jpg), [deaths](wp9r2_deaths_sequence_radv.jpg); lavapipe likewise |
+| Whole battle at 0.4, 1.2, 2.0, 2.8 s; and at 1.6 s with and without effect layers (E1-6) | `wp9r2_battle_{0..3}_{radv,lavapipe}.png`, `wp9r2_battle_haze_*`, `wp9r2_battle_bare_*`; the onset take: `wp9r2_onset_whole_*` |
+| Barrier pose, default zoom, 4x: standing, 0.5 left, 0.5 without effect layers, 0.05 left, down | [radv](wp9r2_barrier_pose_radv.jpg), [lavapipe](wp9r2_barrier_pose_lavapipe.jpg) |
+| A death beside a resource node (A1-6), 3x: mask off, mask on as shipped, no effect layers | [radv](wp9r2_node_stain_radv.jpg), [lavapipe](wp9r2_node_stain_lavapipe.jpg) |
+| Effect-lab sheets (lavapipe) of `vehicle_wreck`, `bio_burst`, `barrier_absorb`, and of what the statuses lay (`charge_dust`, `stim_fumes`, `daze_drag`, repeat takes), with the bindings of round 1. The radv lab sheets were not re-taken this round: a package gate was running and long GPU captures would have starved its test children; every battle picture above is on both drivers | `wp9r2_lab/lavapipe/` |
+| Measurements on both drivers, and the clean radv `gpu_validation_tests` run | [wp9r2_measurements.txt](wp9r2_measurements.txt) |
+
+Where the subjects stand in the battle frames (radv, window pixels): the stimmed unit at (586, 383), the slowed unit
+at (551, 249), the charger at (684, 219) charging the enemy at (595, 221), the shielded unit at (793, 220) and its
+attacker at (800, 262), the dying units at (892, 231), (898, 263), (909, 288) and the control at (920, 361). In the
+onset take: stim pair (581, 384) and (622, 384), slow pair (550, 251) and (586, 251), ranged-barrier pair (691, 219)
+and (726, 219), melee-barrier pair (793, 218) and (829, 218); the acting unit is the left one of each.
+
+The red-white crescents next to the shielded units are the legacy melee slash (`combat_fx`), and the white streaks
+the legacy hitscan tracer; WP11 migrates them.
+
+### Points to look at
+
+- Whether the stim, the slow and the charge each read apart from an ordinary unit of the same type at gameplay zoom
+  (the pairs), and whether the slowed unit reads as slowed rather than as a selected, cloaked or dead unit.
+- Whether the charge's trail reads as torn ground and kicked-up dust, with nothing line-like.
+- Whether the barrier reads round the whole body at full, half and a twentieth, and the absorb flash on its own
+  (the ranged take) and next to the melee slash.
+- Whether `bio_burst` reads as an organic splash, and its stain as a splash rather than a coin.
+- The node stain: whether the unpainted disc round the node reads acceptably.
+
 ## WP9 round 1 (status and death looks)
 
 Plan [Amendment 16](../../../plans/2026-11-09-effect-visualization.md) adds WP9: the looks of four statuses and

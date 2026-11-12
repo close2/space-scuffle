@@ -57,6 +57,12 @@ impl Plugin for EffectsPlugin {
                     systems::spawn_mode_trails,
                     stance::present_stances,
                 )
+                    .after(systems::collect_ground_obstacles)
+                    .in_set(crate::battle_pipeline::BattleSet::Present),
+            )
+            .add_systems(
+                Update,
+                systems::collect_ground_obstacles
                     .in_set(crate::battle_pipeline::BattleSet::Present),
             )
             .add_systems(

@@ -79,6 +79,9 @@ pub struct EffectInstance {
     pub held_exit: f32,
     /// For a held effect, the time its one-shot layers end (its birth otherwise).
     pub oneshot_end: f64,
+    /// Ground obstacles near it its decals leave unpainted, chosen at birth
+    /// ([`super::runtime::nearest_obstacles`]).
+    pub exclude: [[f32; 4]; super::instances::MAX_DECAL_EXCLUSIONS],
 }
 
 /// A slot: its generation and its instance, if live.
@@ -270,6 +273,7 @@ mod tests {
             released_at: None,
             held_exit: 0.0,
             oneshot_end: 0.0,
+            exclude: [[0.0; 4]; super::super::instances::MAX_DECAL_EXCLUSIONS],
         }
     }
 

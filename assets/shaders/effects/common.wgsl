@@ -78,6 +78,9 @@ struct DecalInstance {
     outline_fill: f32,
     darken: f32,
     outline_soft: f32,
+    // Discs (x, z, radius, unused) in world XZ the mark does not paint: resource nodes and
+    // structures near it (client::effects::instances::DecalInstance::exclude).
+    exclude: array<vec4<f32>, 4>,
 }
 
 const ORIENT_CAMERA: u32 = 0u;

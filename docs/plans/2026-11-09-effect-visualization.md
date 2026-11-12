@@ -1858,3 +1858,62 @@ legacy shard is drawn for a unit whose block names its death).
 
 **Gate.** The packet's section "WP9 round 1"; the orchestrator runs the independent review (Q0080, up to five
 rounds).
+
+## Amendment 17: WP9 round 2, decided by the orchestrator after WP9 review 1 (2026-11-12)
+
+Numbering note: the tank-reframe branch also adds an "Amendment 16"; this amendment and WP9's own Amendment 16 are
+renumbered to the next free numbers when the branches are merged.
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp9_1.md`](../evidence/effects/review/independent_review_wp9_1.md)).** Review 1 accepted
+`vehicle_wreck` (with advisories P1-1 and P1-2) and every engineering and fog item. It rejected `stim_surge`,
+`concussive_daze`, `charge_streak`, `barrier_shell` and `bio_burst`, and asked for evidence on `barrier_absorb`.
+This is round 2 of the owner's five (Q0080). No simulation state, golden replay or checksum changes (D-1 holds).
+
+1. **D-5 exception, recorded as deliberate.** The death of an undetected enemy inside a cell the viewer sees is shown,
+   as the glass shatter always was and as StarCraft II shows it. The death effect comes from the same `BubbleShatter`
+   event the fog admits by where it lands; a death in fog draws nothing.
+2. **A1-6, ground marks leave obstacles unpainted.** Every decal carries up to four exclusion discs
+   (`DecalInstance::exclude`; the record grows from 144 to 208 bytes). They are the resource nodes and structures
+   nearest the effect's anchor or line within 4 world units, chosen at the effect's birth
+   (`effects::runtime::nearest_obstacles`) from the list `effects::systems::collect_ground_obstacles` refreshes every
+   frame: each shown node as the disc of its billboard (`MapObjectSnapshot::size`, half of it, times 1.05) and each
+   structure as the disc of its dome (radius times 1.05). Units are not obstacles. The decal shader fades a mark out
+   over 0.15 world units at each disc's edge. Decals still spawn next to nodes and structures. Diagnostics can turn
+   the mask off (`EffectRuntime::mask_obstacles`).
+3. **Looks** (data only, no new texture):
+   - `stim_surge` (A1-1): the warmed picture is stronger (tint share 0.14 → 0.34); the fumes are 0.6 radii (was
+     0.3), denser (`stim_vapour` opacity 0.30 to 0.58), lifted over the crown and laid every 0.35 s.
+   - `concussive_daze` (A1-2): no rim (every bubble already has a pale cold rim); the picture greyed and darkened
+     (tint share 0.62) and the glass dulled (matte 0.75); the drag dust is 0.55 radii in a denser grey-brown
+     `drag_dust`, every 0.25 s.
+   - `charge_streak` (A1-3): a hot white outline (rim strength 0.88); a lay every 0.06 s of a darker scuff of one
+     radius with a broken outline (more breakup) and two dense light-tan dust puffs (`charge_kick`) of 0.75 radii
+     lasting 0.55 s. Nothing line-like.
+   - `barrier_shell` (A1-4): the membrane stands at 1.32 radii (was 1.25), its ramp is denser (opacity up to 0.82),
+     its floor is 0.75 of itself (was 0.45), and its face is crackled less (erosion 0.08). The "missing upper half"
+     was a faint upper arc against bright ground, not a missing one; the stronger ramp shows it.
+   - `bio_burst` (A1-5): an opaque dark splash crown (intensity 2), larger and more ichor globs and a fine dark spray;
+     the stain has a lobed disc outline (edge noise 0.22, soft 0.2) and six satellite drops round it.
+   - `vehicle_wreck` (advisories): black smoke (`wreck_smoke`), its own heavier dark wreckage (`wreck_chunks`), and
+     embers glowing on in its scorch for 2 s, cooling from orange to dull red (a shell's die within a second), so it
+     reads apart from a shell's detonation.
+4. **Tests** (`status_gpu_tests.rs`):
+   - E1-1: each named death's effect is counted by effect id (`EffectRuntime::spawned_of`), once per dying unit, and
+     a control unit whose block names no death must draw legacy shards near it while the named deaths draw none.
+   - E1-2: the charge lays its dust only while it moves under its status; the stim's fumes keep their beat.
+   - A1-6: a creature whose block names a death dies beside a resource node; with the mask off its marks paint the
+     node's billboard, with it on at most 1 % of its pixels change.
+   - E1-4: the parent prints the pixels the "barrier down" shot changes.
+   - V1-1, V1-3, V1-4: a third child stages pairs of one type side by side, one of each taking its status while the
+     camera watches: the stim (the simulation's `apply_overclock`), a concussive slow (`apply_concussive_slow`), and a
+     barrier raised by the first hit of a ranged attacker and of a melee one. The shipped simulation does not yet
+     apply the concussive slow from the shells' hits, so the slow is set in through its own function.
+   - V1-2: the charge crosses clear ground (a direction no unit stands near) and its pictures follow it.
+   - `nearest_obstacles` unit test.
+   - A1-4: the barrier ring is also reported at 24 levels.
+5. **E1-6, the pink haze.** It is the smog's wake behind a moving bubble (`smog_volume.wgsl`, the bubbles' velocity
+   and speed boost stir the smog), not an effect layer: the battle child pictures the same frame with and without
+   effect layers, and the haze is in both. Smog is untouched by this plan (D-9).
+
+Packet: section "WP9 round 2".

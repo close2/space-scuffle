@@ -215,7 +215,14 @@ pub struct DecalInstance {
     /// Share of the half length, inside a disc outline's edge, over which the mark fades out;
     /// 0 for an edge anti-aliased over a pixel.
     pub outline_soft: f32,
+    /// Discs on the ground the mark must not paint, each `[x, z, radius, 0]` in world units
+    /// (Bevy XZ): resource nodes and structures standing near it (WP9 review 1, A1-6). A radius
+    /// of 0 is an unused slot.
+    pub exclude: [[f32; 4]; MAX_DECAL_EXCLUSIONS],
 }
+
+/// The most ground obstacles one decal leaves unpainted ([`DecalInstance::exclude`]).
+pub const MAX_DECAL_EXCLUSIONS: usize = 4;
 
 /// A point light requested this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -242,7 +249,8 @@ mod tests {
         assert_eq!(std::mem::offset_of!(SpriteInstance, arc), 152);
         assert_eq!(std::mem::offset_of!(SpriteInstance, warp), 156);
         assert_eq!(std::mem::offset_of!(SpriteInstance, strip_repeats), 128);
-        assert_eq!(size_of::<DecalInstance>(), 144);
+        assert_eq!(size_of::<DecalInstance>(), 208);
+        assert_eq!(std::mem::offset_of!(DecalInstance, exclude), 144);
         assert_eq!(std::mem::offset_of!(DecalInstance, outline_noise), 128);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_feather), 104);
         assert_eq!(std::mem::offset_of!(DecalInstance, dry_below), 124);
