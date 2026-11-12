@@ -7,6 +7,66 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP9 round 3 (status and death looks)
+
+Round 2's review ([`independent_review_wp9_2.md`](independent_review_wp9_2.md), kept as written) accepted
+`stim_surge`, the art of `barrier_shell`, `barrier_absorb`, E1-1, E1-2, E1-4, E1-6 and the fog rules. It rejected
+`concussive_daze` (narrowly), `charge_streak`, `bio_burst`, `vehicle_wreck` (its round-2 embers) and the A1-6 mask,
+and asked about the barrier shell's first 0.8 s (E2-1). The orchestrator's decisions are plan Amendment 18. This is
+round 3 of at most five (Q0080). Please write it to a new file next to this one, `independent_review_wp9_3.md`, in
+the same form: judge `concussive_daze`, `charge_streak`, `bio_burst` and `vehicle_wreck` against each of the seven
+checklist items, check A2-5 and E2-1, and say whether anything accepted in round 2 regressed. Nothing was spent and
+no texture was made.
+
+The pictures come from `crates/client/tests/status_gpu_tests.rs` on the production skirmish (debug build, Xvfb,
+1280×720, the battle camera's default distance) on radv and lavapipe, and from the effect lab on both drivers;
+files start with `wp9r3_`. Only the evidence of what changed was re-taken; rounds 1 and 2's files are unchanged
+(the stim, onset and pair pictures of round 2 stand).
+
+### What changed
+
+| Round-2 finding | Change |
+|---|---|
+| A2-1 `concussive_daze`: the drag dust cannot be seen | Dropped, as the review allowed: `daze_drag` and its ramp are removed. The greyed, dulled body and its one pale flare at the blow carry the slow; nothing else of the look changed. |
+| A2-2 `charge_streak`: scuffs fade in over 0.5 s; dust has no value contrast on a light floor; the scuffs merge into one band | A scuff is whole from its first frame (new curve `scuff_hold`: full strength from 0, fading over its last quarter; erosion only at its end, `erode_tail`). It is three quarters of a radius long, narrower (width 0.45) and less broken up, laid every 0.1 s (was 0.06 s) so that lays are separate marks. The dust is much darker (`charge_kick`: near-black brown to a dark umber, opacity 0.70 to 0.82) and larger (0.95 radii). |
+| A2-3 `bio_burst`: the stain is a round disc with a hair fringe; drops alike | The stain is a smaller core with three large soft lobes thrown out round it (each a soft-edged disc whose outline wavers only gently: edge noise 0.06, soft 0.45 to 0.5, breakup at a lower frequency), so its silhouette is irregular at low frequency and its edge filtered. Drops: four round ones of very different sizes further out (size jitter 0.6) and three elongated drips (width 0.35). |
+| A2-4 `vehicle_wreck`: the round-2 ember decal read as flat filled shapes | Removed. The brief ember glow of round 1 is back under the blast, and 12 to 20 burning coals (`wreck_coals`, new additive ramp `coal`) lie in the wreck, small points seen through its smoke, cooling from yellow-white through orange to dull red as they age and flickering (`coal_flicker`) until they go out after 1.2 to 2.2 s. |
+| A2-5 the exclusion disc round a node | Removed: no decal has a hole any more (`DecalInstance` is 144 bytes again; `collect_ground_obstacles`, `nearest_obstacles` and the shader's exclusion loop are gone). Nodes and structures are already drawn after the ground marks: the marks are the first transparent items, and node billboards (additive) and structure domes (blended) come after them. A node's own light is therefore unchanged over a stain; what changes inside its outline is the floor seen through its additive billboard. Covering that floor would need an alpha-blended node material (new node art), which is outside this plan. The node shots are now: stain as shipped, stain with the node hidden, no effect layers, and no effect layers with the node hidden. The node's pixels are where its billboard adds 24 levels or more over the floor; the test asserts that the stain dims the node's own light on at most 5 % of them and that the floor round it stays stained. |
+| E2-1 the barrier shell invisible for the first 0.8 s of the battle take | A defect, fixed. The effect renderer asked for its card and decal pipelines only once cards existed, and a pipeline compiles on first use, so the first effects of a session went undrawn while it compiled; the barrier, staged before anything else drew, was its victim. The shell's card was built from the unit's third frame in round 2 as well (now printed and asserted), so the hold was sound. The four pipelines are now asked for every frame (`queue_effects`, with a performance rationale). A runtime test also checks that a look first seen settled draws as fully as one that came in. |
+| P2-2 `barrier_absorb` (advisory) | The flash's peak is whiter and hotter (`barrier_flash` top `(1.00, 1.00, 0.94)` at opacity 0.75). |
+| P2-1, ranged absorb take (advisories) | Not taken this round. |
+| P2-3 the smog's pink wake | Outside this plan (D-9: the smog is untouched); recorded for the owner in Amendment 18. It is still visible behind the charger. |
+
+The dust test now counts a lay as the charge's when either of the two frames it shows between charges: the lay and
+the sample are not ordered against each other, and on lavapipe one lay landed in the frame the charge began.
+
+### Material
+
+| What | Files |
+|---|---|
+| Battle sequences at 1.5x: the barrier under fire, every 40 ms frame of the first 1.2 s (E2-1), the charge (crop follows the charger), every 40 ms frame; the slowed unit and the deaths at t = 1.0 s, every third frame | [barrier](wp9r3_barrier_sequence_radv.jpg), [charge](wp9r3_charge_sequence_radv.jpg), [daze](wp9r3_daze_sequence_radv.jpg), [deaths](wp9r3_deaths_sequence_radv.jpg); lavapipe: the same names ending `_lavapipe` |
+| Whole battle at 0.4, 1.2, 2.0, 2.8 s | `wp9r3_battle_{0..3}_{radv,lavapipe}.png` |
+| A death beside a resource node (A2-5), 3x: stain as shipped, stain with the node hidden, no effect layers, no effect layers with the node hidden (the hidden shots exist only to measure) | [radv](wp9r3_node_stain_radv.jpg), [lavapipe](wp9r3_node_stain_lavapipe.jpg) |
+| Effect-lab contact sheets and sequences on both drivers: `vehicle_wreck` (`UnitRadius` 0.6), `bio_burst` (0.5), `barrier_absorb` (0.5), and `charge_dust` (0.5, six lays 0.1 s apart on one spot: in the lab the lays overlap, in a battle each is left behind the moving charger) | `wp9r3_lab/<driver>/<effect>_contact.jpg` and `_sequence.jpg` (legend `_contact.txt`) |
+| Measurements on both drivers | [wp9r3_measurements.txt](wp9r3_measurements.txt) |
+
+Where the subjects stand in the battle frames (radv, window pixels): as in round 2. The slowed unit at (551, 249),
+the charger at (684, 219) charging the enemy at (595, 221), the shielded unit at (793, 220) and its attacker at
+(800, 262), the dying units at (892, 231) and (898, 263) (`vehicle_wreck`), (909, 288) (`bio_burst`) and the
+control at (920, 361). The red-white crescents next to the shielded unit are the legacy melee slash, and the white
+streaks the legacy hitscan tracer; WP11 migrates them.
+
+### Points to look at
+
+- Whether the slowed unit still reads as slowed without the dust.
+- Whether the charge's trail reads as torn ground and kicked-up dust at gameplay zoom, as separate marks, and from
+  the frame it is laid.
+- Whether `bio_burst`'s stain reads as an organic splash with irregular, soft lobes and varied drops.
+- Whether `vehicle_wreck`'s coals read as hot points cooling in the wreck, not as painted shapes.
+- Whether the node reads as standing over the stain, and whether the stained floor seen through its additive
+  billboard is acceptable.
+- Whether the barrier shell is there from the first frames of the battle take.
+
 ## WP9 round 2 (status and death looks)
 
 Round 1's review ([`independent_review_wp9_1.md`](independent_review_wp9_1.md), kept as written) accepted

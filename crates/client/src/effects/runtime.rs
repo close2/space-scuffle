@@ -212,64 +212,9 @@ pub struct EffectRuntime {
     /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
     /// lab and the GPU tests isolate the `Critical` layers to measure their footprint).
     pub only: Option<Priority>,
-    /// Ground obstacles decals must not paint, `[x, z, radius]` in Bevy world XZ: resource
-    /// nodes and structures, refreshed every frame by
-    /// [`super::systems::collect_ground_obstacles`] (WP9 review 1, A1-6).
-    pub obstacles: Vec<[f32; 3]>,
-    /// Whether decals leave the obstacles unpainted (always in a game; diagnostics turn it off
-    /// to picture what the mask removes).
-    pub mask_obstacles: bool,
     /// Effects spawned or held since the runtime was made, by effect id (diagnostics and tests:
     /// which effect a death or a status laid).
     pub spawned_per_effect: Vec<u32>,
-}
-
-/// World units from an effect's anchor (or its line) within which the ground obstacles its
-/// decals leave unpainted are sought: beyond every shipped decal's extent.
-pub const OBSTACLE_REACH: f32 = 4.0;
-
-/// The ground obstacles (`[x, z, radius]`) nearest to `anchor`, or to the segment `line`,
-/// whose discs come within [`OBSTACLE_REACH`] of it, nearest first, as decal exclusions
-/// `[x, z, radius, 0]`; unused slots have radius 0.
-#[must_use]
-pub fn nearest_obstacles(
-    obstacles: &[[f32; 3]],
-    anchor: Vec3,
-    line: Option<WorldLine>,
-) -> [[f32; 4]; super::instances::MAX_DECAL_EXCLUSIONS] {
-    let distance = |point: Vec2| match line {
-        Some(line) => {
-            let flat = |point: Vec3| Vec2::new(point.x, point.z);
-            let (from, to) = (flat(line.from), flat(line.to));
-            let along = to - from;
-            let share =
-                ((point - from).dot(along) / along.length_squared().max(1e-6)).clamp(0.0, 1.0);
-            point.distance(from + along * share)
-        }
-        None => point.distance(Vec2::new(anchor.x, anchor.z)),
-    };
-    let mut chosen = [[0.0_f32; 4]; super::instances::MAX_DECAL_EXCLUSIONS];
-    let mut gaps = [f32::INFINITY; super::instances::MAX_DECAL_EXCLUSIONS];
-    for obstacle in obstacles {
-        let gap = distance(Vec2::new(obstacle[0], obstacle[1])) - obstacle[2];
-        if gap > OBSTACLE_REACH || obstacle[2] <= 0.0 {
-            continue;
-        }
-        // PERFORMANCE RATIONALE:
-        // Why: An effect is born many times a second in a fight and the obstacle list holds
-        // every node and structure of the map.
-        // What: One pass keeping the few nearest in a fixed array (insertion into four slots).
-        // Trade-off: O(obstacles) per birth with no allocation, instead of a sorted copy.
-        if let Some(slot) = gaps.iter().position(|kept| gap < *kept) {
-            for index in (slot + 1..gaps.len()).rev() {
-                gaps[index] = gaps[index - 1];
-                chosen[index] = chosen[index - 1];
-            }
-            gaps[slot] = gap;
-            chosen[slot] = [obstacle[0], obstacle[1], obstacle[2], 0.0];
-        }
-    }
-    chosen
 }
 
 /// Where and how an effect is spawned.
@@ -307,8 +252,6 @@ impl EffectRuntime {
             ledger: BudgetLedger::default(),
             last_build: None,
             only: None,
-            obstacles: Vec::new(),
-            mask_obstacles: true,
             spawned_per_effect: vec![0; catalog.effects.len()],
         }
     }
@@ -373,7 +316,6 @@ impl EffectRuntime {
             released_at: None,
             held_exit: 0.0,
             oneshot_end: birth,
-            exclude: nearest_obstacles(&self.obstacles, request.anchor, request.line),
         };
         self.place(&instance)
     }
@@ -456,7 +398,6 @@ impl EffectRuntime {
             released_at: None,
             held_exit: effect.held_exit,
             oneshot_end: birth + f64::from(effect.lifetime),
-            exclude: nearest_obstacles(&self.obstacles, request.anchor, None),
         };
         self.place(&instance)
     }
@@ -1364,11 +1305,6 @@ impl EffectRuntime {
             outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
             outline_soft: look.outline.map_or(0.0, |outline| outline.soft),
             darken: if look.darken { 1.0 } else { 0.0 },
-            exclude: if self.mask_obstacles {
-                context.instance.exclude
-            } else {
-                [[0.0; 4]; super::instances::MAX_DECAL_EXCLUSIONS]
-            },
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
         if look.darken {
@@ -2097,38 +2033,6 @@ fn sort_depth(depth: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
-
-    #[test]
-    fn decals_leave_the_nearest_obstacles_within_reach_unpainted() {
-        let obstacles = [
-            [10.0, 0.0, 0.5],
-            [1.0, 0.0, 0.4],
-            [0.0, 2.0, 1.0],
-            [3.0, 3.0, 0.5],
-            [-2.5, 0.0, 0.3],
-            [0.0, -1.5, 0.2],
-            [0.0, 0.0, 0.0],
-        ];
-        let chosen = nearest_obstacles(&obstacles, Vec3::ZERO, None);
-        // Gaps from the anchor to each disc's edge: 0.6, 1.0, 3.74, 2.2, 1.3; the node 10
-        // away is beyond reach, and a zero radius is no obstacle.
-        assert_eq!(chosen[0], [1.0, 0.0, 0.4, 0.0]);
-        assert_eq!(chosen[1], [0.0, 2.0, 1.0, 0.0]);
-        assert_eq!(chosen[2], [0.0, -1.5, 0.2, 0.0]);
-        assert_eq!(chosen[3], [-2.5, 0.0, 0.3, 0.0]);
-        let none = nearest_obstacles(&[], Vec3::ZERO, None);
-        assert!(
-            none.iter().all(|slot| slot[2] == 0.0),
-            "unused slots have radius 0"
-        );
-        // Along a line, the distance is to the segment: a node by its far end is found.
-        let line = WorldLine::whole(Vec3::ZERO, Vec3::new(9.0, 0.0, 0.0));
-        let along = nearest_obstacles(&obstacles, Vec3::ZERO, Some(line));
-        assert!(
-            along.iter().any(|slot| (slot[0] - 10.0).abs() < 1e-6),
-            "{along:?}"
-        );
-    }
 
     #[test]
     fn a_bound_strength_scales_the_intensity_down_to_its_floor() {

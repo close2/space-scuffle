@@ -10,9 +10,10 @@
 //!   is drawn only while `barrier_ratio > 0`. It changes at least [`SHELL_RING_SHARE`] of that
 //!   ring with half the barrier left and at least [`SHELL_LOW_PIXELS`] pixels with a twentieth
 //!   left, and at most [`TOLERATED_PIXELS`] once the barrier is down or without its layers.
-//!   Then a creature whose block names a death dies beside a resource node, pictured with the
-//!   ground marks' obstacle mask off, on, and without effect layers: the marks must leave the
-//!   node's billboard unpainted (review 1, A1-6).
+//!   Then a creature whose block names a death dies beside a resource node, pictured with and
+//!   without effect layers, each with and without the map's node billboards: the node's own
+//!   light must be the same over the stain as over the bare floor (it is drawn after the
+//!   marks), and the floor round it must stay stained (review 2, A2-5).
 //! - **A battle** ([`status_battle_child`]): at once, one of the player's units stimmed and
 //!   running, one slowed and walking, one charging an enemy across clear ground, one with a
 //!   barrier under an enemy's fire, and a row of dying units (those whose blocks name a death,
@@ -171,33 +172,37 @@ enum Shot {
     BarrierUpBare,
     BarrierLow,
     BarrierDown,
-    /// A creature whose block names a death has died beside a resource node; ground marks
-    /// paint everything (the mask is off).
-    NodeUnmasked,
-    /// The same, the mask on (WP9 review 1, A1-6).
-    NodeMasked,
-    /// The same without effect layers.
+    /// A creature whose block names a death has died beside a resource node; its marks lie
+    /// round the node (review 2, A2-5).
+    NodeStain,
+    /// The same with the map's node billboards hidden.
+    NodeStainHidden,
+    /// The same scene without effect layers.
     NodeBare,
+    /// Without effect layers and with the billboards hidden.
+    NodeBareHidden,
 }
 
-const SHOTS: [Shot; 9] = [
+const SHOTS: [Shot; 10] = [
     Shot::Empty,
     Shot::Standing,
     Shot::BarrierUp,
     Shot::BarrierUpBare,
     Shot::BarrierLow,
     Shot::BarrierDown,
-    Shot::NodeUnmasked,
-    Shot::NodeMasked,
+    Shot::NodeStain,
+    Shot::NodeStainHidden,
     Shot::NodeBare,
+    Shot::NodeBareHidden,
 ];
 
 /// Seconds the clock runs before the first node shot: the death's flash, globs and vapour
 /// are over (they end by 1.8 s) and only its ground marks are left.
 const NODE_SETTLE_SECONDS: f64 = 2.2;
-/// Share of the pixels of the node's ground disc the death's marks may change with the mask on:
-/// the mask's soft edge.
-const NODE_TOLERATED_SHARE: f64 = 0.01;
+/// Share of the node's drawn pixels whose own light the marks may dim: anti-aliased edges.
+const NODE_TOLERATED_SHARE: f64 = 0.05;
+/// A pixel is the node's own when the node adds at least this many levels to it.
+const NODE_LIGHT_LEVEL: u8 = 24;
 
 impl Shot {
     fn file(self) -> String {
@@ -229,8 +234,8 @@ struct Published {
 struct PoseReport {
     unit: UnitView,
     published: Vec<Published>,
-    /// The ground disc the node's marks are kept off, on screen: `[centre x, centre y, half
-    /// width, half height]` of its ellipse, window pixels (the node's billboard stands in it).
+    /// The patch round the node measured, on screen: `[centre x, centre y, half width, half
+    /// height]` of an ellipse round the node's foot, window pixels.
     node_disc: [f32; 4],
     /// Whether the creature beside the node died (its death published).
     node_death: bool,
@@ -347,23 +352,53 @@ fn the_outer_shell_is_drawn_only_while_the_barrier_has_absorption_left() -> Test
         report.node_death,
         "the creature beside the node died: {report:?}"
     );
-    let bare = shot(Shot::NodeBare)?;
-    let rect_pixels = disc_pixels(&bare, report.node_disc);
-    let masked = disc_changes(&bare, &shot(Shot::NodeMasked)?, report.node_disc);
-    let unmasked = disc_changes(&bare, &shot(Shot::NodeUnmasked)?, report.node_disc);
+    // The node is drawn after the ground marks (its billboard is a transparent item and the
+    // marks are the first ones): its own light, what it adds over the floor, must be the same
+    // over the stained floor as over the bare one, and the floor round it must stay stained.
+    let (stain, stain_hidden) = (shot(Shot::NodeStain)?, shot(Shot::NodeStainHidden)?);
+    let (bare, bare_hidden) = (shot(Shot::NodeBare)?, shot(Shot::NodeBareHidden)?);
+    let light = |with: &image::RgbImage, without: &image::RgbImage, x: u32, y: u32| {
+        let (a, b) = (with.get_pixel(x, y).0, without.get_pixel(x, y).0);
+        [0, 1, 2].map(|c| i16::from(a[c]) - i16::from(b[c]))
+    };
+    let (mut node_pixels, mut dimmed, mut floor_stained, mut node_changed) =
+        (0_usize, 0_usize, 0_usize, 0_usize);
+    for_disc(&bare, report.node_disc, |x, y| {
+        let own = light(&bare, &bare_hidden, x, y);
+        if own
+            .iter()
+            .any(|level| *level >= i16::from(NODE_LIGHT_LEVEL))
+        {
+            node_pixels += 1;
+            let over_stain = light(&stain, &stain_hidden, x, y);
+            if (0..3).any(|c| over_stain[c] < own[c] - 12) {
+                dimmed += 1;
+            }
+            if change(stain.get_pixel(x, y).0, bare.get_pixel(x, y).0) > 12 {
+                node_changed += 1;
+            }
+        } else if change(
+            stain_hidden.get_pixel(x, y).0,
+            bare_hidden.get_pixel(x, y).0,
+        ) > 12
+        {
+            floor_stained += 1;
+        }
+    });
     eprintln!(
-        "driver {driver}: a death's marks beside a resource node change {unmasked} of the \
-         {rect_pixels} pixels of the node's ground disc (its billboard and the ground under it) \
-         with the mask off and {masked} with it on (against the same scene without effect \
-         layers)"
+        "driver {driver}: a death's marks beside a resource node: the node draws {node_pixels} \
+         pixels of its patch; its own light is dimmed on {dimmed} of them; {node_changed} of \
+         them change colour (the floor seen through its additive billboard); {floor_stained} \
+         pixels of floor round it are stained"
+    );
+    assert!(node_pixels >= 30, "the node is in its patch: {node_pixels}");
+    assert!(
+        floor_stained >= 100,
+        "the stain lies round the node: {floor_stained}"
     );
     assert!(
-        unmasked >= 30,
-        "the stain reaches the node, so the check means something: {unmasked}"
-    );
-    assert!(
-        (masked as f64) <= NODE_TOLERATED_SHARE * rect_pixels as f64,
-        "the marks paint the node: {masked} of {rect_pixels}"
+        (dimmed as f64) <= NODE_TOLERATED_SHARE * node_pixels as f64,
+        "the marks paint over the node: {dimmed} of {node_pixels}"
     );
     Ok(())
 }
@@ -385,8 +420,8 @@ fn ring_changed_pixels(
     changed
 }
 
-/// Share of the node's ground disc measured: inside the mask's soft edge.
-const NODE_DISC_SHARE: f32 = 0.9;
+/// Share of the patch ellipse measured.
+const NODE_DISC_SHARE: f32 = 1.0;
 
 /// Visits every pixel of `image` inside [`NODE_DISC_SHARE`] of the screen ellipse `disc`
 /// (`[centre x, centre y, half width, half height]`).
@@ -409,24 +444,6 @@ fn for_disc(image: &image::RgbImage, disc: [f32; 4], mut visit: impl FnMut(u32, 
             }
         }
     }
-}
-
-/// Pixels in the screen ellipse `disc`.
-fn disc_pixels(image: &image::RgbImage, disc: [f32; 4]) -> usize {
-    let mut count = 0;
-    for_disc(image, disc, |_, _| count += 1);
-    count
-}
-
-/// Pixels in the screen ellipse `disc` that differ between `a` and `b` by more than 12 levels.
-fn disc_changes(a: &image::RgbImage, b: &image::RgbImage, disc: [f32; 4]) -> usize {
-    let mut changed = 0;
-    for_disc(a, disc, |x, y| {
-        if change(a.get_pixel(x, y).0, b.get_pixel(x, y).0) > 12 {
-            changed += 1;
-        }
-    });
-    changed
 }
 
 /// Copies every PNG of `directory` whose name starts with `prefix` to the evidence directory,
@@ -717,25 +734,36 @@ fn unit_view(bubble: &BubbleInstance, camera: (&Camera, &GlobalTransform)) -> Un
 struct EffectView {
     /// No effect layer is drawn.
     bare: bool,
-    /// Ground marks paint resource nodes and structures too (the mask of A1-6 off).
-    unmasked: bool,
+    /// The map's node billboards are hidden.
+    hide_nodes: bool,
 }
 
 /// Applies [`EffectView`] after the frame's effects are built: a bare shot draws no card,
-/// decal, distortion or light; an unmasked one turns the obstacle mask off from the next frame.
+/// decal, distortion or light.
 fn apply_effect_view(view: Res<'_, EffectView>, runtime: Option<ResMut<'_, EffectRuntime>>) {
     let Some(mut runtime) = runtime else {
         return;
     };
-    if runtime.mask_obstacles == view.unmasked {
-        runtime.mask_obstacles = !view.unmasked;
-    }
     if view.bare {
         runtime.frame.sorted.clear();
         runtime.frame.decals.clear();
         runtime.frame.decal_owners.clear();
         runtime.frame.distortions.clear();
         runtime.frame.lights.clear();
+    }
+}
+
+/// Hides the map's node billboards when [`EffectView::hide_nodes`] asks (after the map's
+/// presentation has shown them this frame).
+fn hide_nodes(
+    view: Res<'_, EffectView>,
+    mut objects: Query<'_, '_, &mut Visibility, With<client::runtime_battle::MapObject>>,
+) {
+    if !view.hide_nodes {
+        return;
+    }
+    for mut visibility in &mut objects {
+        visibility.set_if_neq(Visibility::Hidden);
     }
 }
 
@@ -854,7 +882,12 @@ fn run_child<S: Resource, M>(staging: S, system: impl IntoSystemConfigs<M>) {
         .add_systems(Update, system.in_set(BattleSet::Present))
         .add_systems(
             PostUpdate,
-            apply_effect_view.after(client::effects::systems::build_effect_frame),
+            (
+                apply_effect_view.after(client::effects::systems::build_effect_frame),
+                hide_nodes
+                    .after(client::runtime_battle::update_map_presentation)
+                    .before(bevy::render::view::VisibilitySystems::CheckVisibility),
+            ),
         )
         .add_systems(Last, finish_capture);
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
@@ -957,8 +990,7 @@ fn change_pose_world(
             set_barrier(world, staging.unit.expect("spawned"), None);
             staging.creature = staging.node.and_then(|node| spawn_beside(world, node));
         }
-        Shot::NodeUnmasked => {
-            view.unmasked = true;
+        Shot::NodeStain => {
             if let Some(unit) = staging
                 .creature
                 .and_then(|creature| world.entities.get_mut(&creature))
@@ -966,8 +998,12 @@ fn change_pose_world(
                 unit.hp = SimScalar::ZERO;
             }
         }
-        Shot::NodeMasked => {}
+        Shot::NodeStainHidden => view.hide_nodes = true,
         Shot::NodeBare => view.bare = true,
+        Shot::NodeBareHidden => {
+            view.bare = true;
+            view.hide_nodes = true;
+        }
     }
 }
 
@@ -1006,7 +1042,7 @@ fn spawn_beside(world: &mut SimWorld, (centre, size): (Vec3, f32)) -> Option<Ent
 
 /// The screen ellipse `[centre x, centre y, half width, half height]` of the ground disc of
 /// `radius` round the billboard centred at `centre` (Bevy world) of `size`, whose foot is on
-/// the ground: the disc ground marks are kept off ([`client::effects::runtime::nearest_obstacles`]).
+/// the ground.
 fn ground_disc(
     centre: Vec3,
     size: f32,
@@ -1045,10 +1081,10 @@ fn record_pose(
     if SHOTS[index] == Shot::Standing {
         staging.report.unit = unit_view(bubble, camera);
         if let Some((centre, size)) = staging.node {
-            staging.report.node_disc = ground_disc(centre, size, size * 0.5, camera);
+            staging.report.node_disc = ground_disc(centre, size, size * 0.9, camera);
         }
     }
-    if SHOTS[index] == Shot::NodeMasked {
+    if SHOTS[index] == Shot::NodeStainHidden {
         staging.report.node_death = staging
             .creature
             .is_some_and(|creature| !bubbles.iter().any(|(b, ..)| b.0.entity_id == creature));
@@ -1140,7 +1176,7 @@ fn stage_poses(
         PosePhase::Settling { shot, frames, at }
             if frames < SETTLE_FRAMES
                 || now - at
-                    < if SHOTS[shot] == Shot::NodeUnmasked {
+                    < if SHOTS[shot] == Shot::NodeStain {
                         NODE_SETTLE_SECONDS
                     } else {
                         SETTLE_SECONDS
@@ -1272,6 +1308,9 @@ struct BattleSample {
     barrier_hit: bool,
     /// When the barrier unit's last absorb flash spawned.
     last_flash: Option<f64>,
+    /// Cards drawn at the barrier unit's body this frame, and their strongest intensity
+    /// (review 2, E2-1).
+    shell_cards: (u32, f32),
     /// Whether the charging unit moves (its published velocity).
     charger_moving: bool,
     /// Spawns so far of the effects the statuses lay: `(charge dust, stim fumes)`.
@@ -1711,6 +1750,20 @@ fn battle_step(
                 sample.barrier_hit = bubble.0.status.barrier_hit;
                 sample.last_flash =
                     track.and_then(|track| track.last_hit[status_index(StatusKind::Barrier)]);
+                // E2-1: the shell's cards this frame and their strongest intensity.
+                let [x, y, altitude] = bubble.0.world_pos;
+                let body = Vec3::new(x, altitude + bubble.0.radius, y);
+                let near: Vec<f32> = runtime
+                    .frame
+                    .sorted
+                    .iter()
+                    .filter(|card| Vec3::from(card.center).distance(body) < bubble.0.radius * 0.5)
+                    .map(|card| card.intensity)
+                    .collect();
+                sample.shell_cards = (
+                    u32::try_from(near.len()).unwrap_or(u32::MAX),
+                    near.iter().copied().fold(0.0, f32::max),
+                );
             }
             Subject::Charge => {
                 let [vx, vy] = bubble.0.velocity;
@@ -2040,8 +2093,13 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
     let mut laid_otherwise = 0;
     for pair in samples.windows(2) {
         let new = pair[1].laid.0 - pair[0].laid.0;
-        // A lay is decided on the frame before its count shows.
-        if charge(&pair[0]) && pair[0].charger_moving {
+        // A lay shows in the frame it is decided in or in the next one (the sample and the
+        // emission are not ordered against each other), so a lay belongs to the charge when
+        // either frame of the pair charges.
+        if pair
+            .iter()
+            .any(|sample| charge(sample) && sample.charger_moving)
+        {
             laid_charging += new;
         } else {
             laid_otherwise += new;
@@ -2087,6 +2145,24 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
     assert!(
         hits > 0 && !flashes.is_empty(),
         "the barrier was hit and flashed"
+    );
+    // Review 2, E2-1: the shell's card is written from the barrier unit's first frames; the
+    // effect pipelines are compiled before the first effect, so it is drawn from then on too.
+    let first_shell = samples
+        .iter()
+        .position(|sample| sample.shell_cards.0 > 0 && sample.shell_cards.1 > 0.5);
+    let shell: Vec<String> = samples
+        .iter()
+        .take(12)
+        .map(|sample| format!("{:.2}:{}", sample.at, sample.shell_cards.0))
+        .collect();
+    eprintln!(
+        "driver {driver}: shell cards at the barrier's body from frame {first_shell:?}: {}",
+        shell.join(" ")
+    );
+    assert!(
+        first_shell.is_some_and(|frame| frame <= 4),
+        "the shell is written from the unit's first frames: {first_shell:?}"
     );
     assert!(
         flashes

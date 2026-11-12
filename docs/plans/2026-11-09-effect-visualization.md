@@ -1917,3 +1917,49 @@ This is round 2 of the owner's five (Q0080). No simulation state, golden replay 
    effect layers, and the haze is in both. Smog is untouched by this plan (D-9).
 
 Packet: section "WP9 round 2".
+
+## Amendment 18: WP9 round 3, decided by the orchestrator after WP9 review 2 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp9_2.md`](../evidence/effects/review/independent_review_wp9_2.md)).** Review 2 accepted
+`stim_surge`, the art of `barrier_shell`, `barrier_absorb`, E1-1, E1-2, E1-4, E1-6 and the fog rules. It rejected
+`concussive_daze` (narrowly), `charge_streak`, `bio_burst`, `vehicle_wreck` (its round-2 embers) and the A1-6
+obstacle mask. This is round 3 of the owner's five (Q0080), kept to what the review asks. No simulation state, golden
+replay or checksum changes (D-1 holds).
+
+1. **A2-5, the obstacle mask is removed.** Nodes and structures are already drawn after the ground marks: the marks
+   are the first transparent items (`queue_effects`), and node billboards (additive) and structure domes (blended)
+   are transparent items after them. The decal exclusion discs of Amendment 17 are removed (the decal record is 144
+   bytes again), so no stain has a hole. What a node shows over a stain is the floor seen through its additive
+   billboard; its own light is unchanged. Making node art cover the floor would need an alpha-blended node material
+   (new node art), which is outside this plan. The test measures the node's own drawn pixels (its light: the scene
+   with its billboard against the same scene without it) over the stained and the bare floor, and the floor round
+   it, which must stay stained; it no longer measures inside a disc the mask excluded.
+2. **E2-1, a defect, fixed.** The effect renderer asked for its card and decal pipelines only once cards existed, and
+   a pipeline compiles on first use, so the first effects of a session went undrawn while it compiled (about 0.9 s in
+   a debug build): the battle take's barrier, staged up before anything else drew, showed its shell only from then.
+   The four card and decal pipelines are now asked for every frame (`queue_effects`), so they are compiled before the
+   first effect. Diagnosis: the shell's card was built from the unit's third frame on in round 2 as well (counted
+   at the unit's body), so the hold was sound and the gap was in drawing. The battle test now asserts the card from
+   the first frames, which is necessary but not sufficient; the drawn shell is shown by the re-taken barrier
+   sequence (every frame of the first 1.2 s), and a runtime test checks that a look first seen settled draws as
+   fully as one that came in.
+3. **A2-1, the slow's drag dust is dropped.** Dust that reads on this light floor read as a trail; the greyed, dulled
+   body carries the slow (`concussive_daze` keeps its held body look and its onset flare; `daze_drag` and its ramp
+   are removed).
+4. **A2-2, `charge_streak`.** A scuff is whole from its first frame (curve `scuff_hold`, erosion only at its end),
+   three quarters of a radius long and narrower (width 0.45), with less breakup, laid every 0.1 s so that
+   consecutive lays are separate marks; the dust is darker (`charge_kick`) and larger (0.95 radius) for value
+   contrast on light floors.
+5. **A2-3, `bio_burst`.** The stain's body is a smaller core with three large lobes round it, each a soft-edged disc
+   whose edge wavers only gently (no hair fringe); drops thrown further out vary in size, and elongated drips are
+   added.
+6. **A2-4, `vehicle_wreck`.** The round-2 ember decal is replaced: the brief ember glow of round 1 is back, and
+   burning coals (`wreck_coals`, 12 to 20 small additive points with their own ramp `coal`) lie in the wreck,
+   seen through its smoke, cooling from yellow-white through orange to dull red as they age and flickering out
+   over 1.2 to 2.2 s (`coal_flicker`).
+7. **Advisories.** P2-2 taken: a whiter, hotter peak in `barrier_flash`. P2-1 (the stim next to a red team) and a
+   ranged take with a continuing attacker are not taken this round. P2-3 (the smog's pink wake behind moving bubbles)
+   is outside this plan (D-9, smog untouched) and is recorded for the owner.
+
+Packet: section "WP9 round 3".

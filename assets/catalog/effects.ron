@@ -96,6 +96,15 @@
             (0.60, (0.10, 0.085, 0.07, 1.0)),
             (1.00, (0.30, 0.26, 0.21, 1.0)),
         ],
+        // Burning coals cooling over their life (additive): yellow-white, orange, dull red,
+        // out (review 2, A2-4).
+        "coal": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.25, (0.45, 0.06, 0.010, 0.0)),
+            (0.55, (1.00, 0.32, 0.05, 0.0)),
+            (0.85, (1.00, 0.75, 0.30, 0.0)),
+            (1.00, (1.00, 0.95, 0.70, 0.0)),
+        ],
         // Sparks, cooling over their life (additive).
         "sparks": [
             (0.00, (0.00, 0.00, 0.00, 0.0)),
@@ -382,13 +391,6 @@
             (0.60, (0.30, 0.095, 0.060, 0.50)),
             (1.00, (0.55, 0.24, 0.15, 0.58)),
         ],
-        // Dust a slowed body's dragging feet scuff up (alpha): grey-brown, denser than the
-        // battle's dust so it reads on a light floor (WP9 review 1, A1-2).
-        "drag_dust": [
-            (0.00, (0.060, 0.050, 0.040, 0.42)),
-            (0.60, (0.20, 0.17, 0.14, 0.58)),
-            (1.00, (0.36, 0.32, 0.27, 0.62)),
-        ],
         // Black smoke of a burning wreck (alpha): darker than a shell's smoke (WP9 review 1,
         // P1-1).
         "wreck_smoke": [
@@ -408,9 +410,9 @@
         // A barrier absorbing a hit, or snapping up: the membrane flaring pale gold.
         "barrier_flash": [
             (0.00, (0.20, 0.14, 0.040, 0.0)),
-            (0.40, (0.70, 0.52, 0.20, 0.30)),
-            (0.80, (1.00, 0.86, 0.50, 0.55)),
-            (1.00, (1.00, 0.97, 0.82, 0.65)),
+            (0.40, (0.75, 0.56, 0.22, 0.30)),
+            (0.80, (1.00, 0.92, 0.62, 0.60)),
+            (1.00, (1.00, 1.00, 0.94, 0.75)),
         ],
         // Scuffs a charging body's feet tear in the ground (darkening): the share of the
         // ground's light they leave, a warm brown.
@@ -422,9 +424,9 @@
         // Dust a charging body's feet kick up (alpha): a light warm tan, dense, so it reads on
         // a light floor at gameplay zoom (WP9 review 1, A1-3).
         "charge_kick": [
-            (0.00, (0.12, 0.090, 0.060, 0.55)),
-            (0.60, (0.38, 0.30, 0.21, 0.72)),
-            (1.00, (0.62, 0.52, 0.40, 0.78)),
+            (0.00, (0.030, 0.022, 0.014, 0.70)),
+            (0.60, (0.13, 0.10, 0.070, 0.80)),
+            (1.00, (0.30, 0.24, 0.17, 0.82)),
         ],
         // The bubble's glass breaking (alpha): pale, cool, lit on its faces.
         "glass": [
@@ -566,6 +568,12 @@
         "membrane_crackle": [(0.00, 0.10, Linear), (0.40, 0.25, EaseInQuad), (1.00, 1.00, Linear)],
         // Size of a flaring membrane: a slight swell outward.
         "membrane_swell": [(0.00, 0.97, EaseOutCubic), (1.00, 1.06, Linear)],
+        // A scuff: whole from its first frame, holding, fading over its last quarter.
+        "scuff_hold": [(0.00, 1.00, Linear), (0.75, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Coals cooling: a flickering glow that dies out (review 2, A2-4).
+        "coal_flicker": [(0.00, 1.00, Linear), (0.12, 0.70, Linear), (0.22, 1.00, Linear),
+            (0.35, 0.60, Linear), (0.48, 0.90, Linear), (0.62, 0.50, Linear), (0.78, 0.65, EaseInQuad),
+            (1.00, 0.00, Linear)],
         // Erosion: a noise-shaped edge from the start, eaten away in the last part of life.
         "edge_then_tail": [(0.00, 0.10, Linear), (0.70, 0.12, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: a front with a noise-broken trailing edge, eaten away as it ends.
@@ -687,6 +695,14 @@
             speed: (3.0, 6.0), cone_deg: 70.0, gravity: 12.0, drag: 1.4, lifetime: (0.25, 0.45),
             size: (0.04, 0.08), texture: "droplet", orient: VelocityStretched(1.4),
             roll_deg: 90.0, ramp: "ichor", curve: "particle_fade",
+        ),
+        // Burning coals left in a wreck: small hot points lying in the scorch, cooling and
+        // flickering out over one to two seconds.
+        "wreck_coals": (
+            spawn: Burst(count: (base: 12, per_unit_radius: 10.0, max: 20)), shape: Disc,
+            speed: (0.05, 0.3), cone_deg: 80.0, gravity: 0.0, drag: 4.0, lifetime: (1.2, 2.2),
+            size: (0.05, 0.1), texture: "droplet", orient: Camera, rotation: Random,
+            ramp: "coal", curve: "coal_flicker",
         ),
         // Heavy dark hull wreckage thrown out of a destroyed vehicle, larger than a shell's
         // rock chunks (WP9 review 1, P1-2).
@@ -1705,12 +1721,12 @@
         ),
         // Slowed (the Marauder analogue's concussive shells, or any slowing status;
         // defaults.status.Slowed): the body is dulled, its picture greyed and darkened and its
-        // glass highlight dimmed; the blow lands as one pale flare of the rim; while it drags
-        // itself on, its feet scuff up grey-brown dust.
+        // glass highlight dimmed; the blow lands as one pale flare of the rim. No drag dust:
+        // the greyed body carries the slow (review 2, A2-1: dust that reads on this floor read
+        // as a trail).
         "concussive_daze": (
             class: Minor,
             event: Status,
-            emit: Some((effect: "daze_drag", every: 0.25, moving: true)),
             layers: [
                 (
                     // Review 1, A1-2: no rim (every bubble has a pale cold rim of its own); the
@@ -1721,21 +1737,6 @@
                 (block: Shell(rim: (0.85, 0.88, 1.0, 0.8)), duration: 0.3, curve: "flash"),
             ],
         ),
-        // A slowed unit's dragging feet (laid by `concussive_daze` while it moves): a low,
-        // small puff of dust.
-        "daze_drag": (
-            class: Ambient,
-            event: Status,
-            layers: [
-                (
-                    block: Sprite(texture: "smoke_puff", ramp: "drag_dust", soft_depth: 0.25, rotation: Random,
-                        erosion: "erode_rise", lift: 0.5, spread: 0.2,
-                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.45)),
-                    size: (bind: UnitRadius, scale: 0.55), size_jitter: 0.3, size_curve: "dust_grow",
-                    duration: 0.7, curve: "puff_fade",
-                ),
-            ],
-        ),
         // Charging (Zealot analogue's charge; defaults.status.Dash): the body lit from within
         // by a cold violet-white outline while it lunges, and the ground torn up behind it: its
         // feet kick up warm dust and leave dark scuffs every few steps, which stay a moment.
@@ -1743,7 +1744,7 @@
         "charge_streak": (
             class: Minor,
             event: Status,
-            emit: Some((effect: "charge_dust", every: 0.06, moving: true)),
+            emit: Some((effect: "charge_dust", every: 0.1, moving: true)),
             layers: [
                 (
                     // Review 1, A1-3: a hot white outline, which a violet unit's own picture
@@ -1759,18 +1760,20 @@
             event: Status,
             layers: [
                 (
-                    block: Decal(texture: "earth_scar", ramp: "scuff", erosion: "edge_then_tail", depth: 0.6,
-                        width: 0.75, darken: true,
-                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.6, softness: 0.2)),
-                    size: (bind: UnitRadius, scale: 1.0), size_jitter: 0.25,
-                    duration: 1.6, curve: "linger",
+                    // Review 2, A2-2: whole from its first frame (no erosion while it holds),
+                    // short enough that two lays a tenth of a second apart leave a gap.
+                    block: Decal(texture: "earth_scar", ramp: "scuff", erosion: "erode_tail", depth: 0.6,
+                        width: 0.45, darken: true,
+                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.35, softness: 0.2)),
+                    size: (bind: UnitRadius, scale: 0.75), size_jitter: 0.25,
+                    duration: 1.6, curve: "scuff_hold",
                 ),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "charge_kick", soft_depth: 0.3, rotation: Random,
                         erosion: "erode_rise", lift: 0.5, spread: 0.35,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.4, softness: 0.2, shade: 0.4)),
                     placement: Disc(count: 2, radius: (bind: UnitRadius, scale: 0.35)),
-                    size: (bind: UnitRadius, scale: 0.75), size_jitter: 0.3, size_curve: "dust_grow",
+                    size: (bind: UnitRadius, scale: 0.95), size_jitter: 0.3, size_curve: "dust_grow",
                     duration: 0.55, curve: "puff_fade",
                 ),
             ],
@@ -1862,13 +1865,14 @@
                     start: 0.16, duration: 2.2, curve: "puff_fade",
                 ),
                 (
-                    // The hull's embers glow on in the wreck's scorch for a while (review 1,
-                    // P1-2: a shell's embers die within a second).
                     block: Decal(texture: "scorch", ramp: "ember", erosion: "erode_rise", depth: 0.6,
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.5, softness: 0.2)),
-                    size: (bind: UnitRadius, scale: 0.6), ramp_curve: "cool_fast", start: 0.02, duration: 2.0,
-                    curve: "glow_out",
+                    size: (bind: UnitRadius, scale: 1.1), start: 0.02, duration: 1.0, curve: "flash",
                 ),
+                // Burning coals of the hull glowing on in the wreck, cooling from yellow-white to
+                // dull red and flickering as they die (review 2, A2-4: points of light, not
+                // painted shapes).
+                (block: Particles(emitter: "wreck_coals"), size: (bind: UnitRadius, scale: 0.7), start: 0.1),
                 (
                     block: Decal(texture: "scorch", ramp: "char", erosion: "erode_tail", depth: 0.6,
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.4, softness: 0.12)),
@@ -1905,22 +1909,41 @@
                     start: 0.1, duration: 1.6, curve: "puff_fade",
                 ),
                 (
-                    // The stain: a lobed, broken outline (a disc outline wavering by a fifth of
-                    // its radius, its edge feathered), not a round coin (review 1, A1-5).
+                    // The stain's body: a smaller core with three large lobes thrown out round it
+                    // (review 2, A2-3: a low-frequency irregular silhouette, not a disc), each a
+                    // soft-edged disc whose edge wavers only gently, so the union is a splash
+                    // with no hair fringe.
                     block: Decal(texture: "acid_stain", ramp: "ichor_stain", erosion: "edge_then_tail", depth: 0.6,
-                        darken: true, outline: (edge_noise: 0.22, fill: 0.75, soft: 0.2),
-                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.55, softness: 0.15)),
-                    size: (bind: UnitRadius, scale: 1.0), size_jitter: 0.08, size_curve: "stain_spread",
+                        darken: true, outline: (edge_noise: 0.06, fill: 0.75, soft: 0.45),
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.25)),
+                    size: (bind: UnitRadius, scale: 0.72), size_jitter: 0.08, size_curve: "stain_spread",
                     start: 0.03, duration: 5.0, curve: "linger", priority: Critical,
                 ),
                 (
-                    // Satellite drops thrown out round the stain.
                     block: Decal(texture: "acid_stain", ramp: "ichor_stain", erosion: "edge_then_tail", depth: 0.6,
-                        darken: true,
-                        breakup: (noise: "noise_tile", scale: 2.0, amount: 0.5, softness: 0.15)),
-                    placement: Circle(count: 6, radius: (bind: UnitRadius, scale: 1.35), spread: 0.35),
-                    size: (bind: UnitRadius, scale: 0.2), size_jitter: 0.5,
+                        darken: true, width: 0.6, outline: (edge_noise: 0.06, fill: 0.75, soft: 0.5),
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.25)),
+                    placement: Circle(count: 3, radius: (bind: UnitRadius, scale: 0.6), spread: 0.3),
+                    size: (bind: UnitRadius, scale: 0.55), size_jitter: 0.35, size_curve: "stain_spread",
+                    start: 0.05, duration: 4.8, curve: "linger",
+                ),
+                (
+                    // Drops thrown further out: round ones of very different sizes...
+                    block: Decal(texture: "acid_stain", ramp: "ichor_stain", erosion: "edge_then_tail", depth: 0.6,
+                        darken: true, outline: (edge_noise: 0.05, fill: 0.75, soft: 0.4),
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.4, softness: 0.25)),
+                    placement: Circle(count: 4, radius: (bind: UnitRadius, scale: 1.5), spread: 0.45),
+                    size: (bind: UnitRadius, scale: 0.13), size_jitter: 0.6,
                     start: 0.25, duration: 4.5, curve: "linger",
+                ),
+                (
+                    // ...and elongated drips.
+                    block: Decal(texture: "acid_stain", ramp: "ichor_stain", erosion: "edge_then_tail", depth: 0.6,
+                        darken: true, width: 0.35, outline: (edge_noise: 0.05, fill: 0.75, soft: 0.4),
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.4, softness: 0.25)),
+                    placement: Circle(count: 3, radius: (bind: UnitRadius, scale: 1.1), spread: 0.35),
+                    size: (bind: UnitRadius, scale: 0.26), size_jitter: 0.4,
+                    start: 0.2, duration: 4.5, curve: "linger",
                 ),
             ],
         ),

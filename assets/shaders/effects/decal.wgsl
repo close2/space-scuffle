@@ -17,8 +17,6 @@
 // Liquid material (DecalInstance::relief > 0): the element's shading is the liquid's
 // thickness, varied by low-frequency noise and lit by a key light from the upper left of the
 // screen (the units' studio light).
-// World units over which a mark fades out at the edge of a ground obstacle it leaves unpainted.
-const EXCLUDE_FEATHER: f32 = 0.15;
 // Texels of the thickness field's finite differences, at the sampled mip.
 const LIQUID_STEP_TEXELS: f32 = 1.5;
 // Mips above the footprint's at which the relief is read: only broad swells and the thick
@@ -199,17 +197,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let inward = clamp((edge - radius) / max(decal.outline_soft * edge, radius_step), 0.0, 1.0);
         outline = inward * inward;
     }
-    // Ground obstacles (resource nodes, structures) inside the box keep their own look: the mark
-    // fades out over `EXCLUDE_FEATHER` world units at each one's disc (WP9 review 1, A1-6).
-    var kept = 1.0;
-    for (var index = 0u; index < 4u; index++) {
-        let obstacle = decal.exclude[index];
-        if (obstacle.z > 0.0) {
-            kept *= smoothstep(obstacle.z, obstacle.z + EXCLUDE_FEATHER, distance(world.xz, obstacle.xy));
-        }
-    }
     // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
-    let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0) * outline * kept;
+    let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0) * outline;
     if (!inside || coverage <= 0.0) {
         discard;
     }

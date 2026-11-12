@@ -1207,3 +1207,50 @@ fn an_unevenly_spaced_line_is_merged_by_its_far_end() {
     );
     assert_eq!(ready[0].line.map(|line| line.seen & 0xF), Some(0xF));
 }
+
+/// WP9 review 2, E2-1: a status look first seen settled (a unit already in its status when
+/// the viewer first sees it) draws its held layers as fully as one that came in.
+#[test]
+fn a_status_look_held_settled_draws_as_one_that_came_in() {
+    use client::effects::binding::BoundValues;
+    use client::effects::catalog::schema::Binding;
+    use client::effects::runtime::SpawnRequest;
+    let root = ResolvedAssetsRoot::resolve().expect("assets root");
+    let catalog = EffectCatalog::load(&root.as_path().join("catalog/effects.ron"), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let look = catalog
+        .defaults
+        .status
+        .get(&sim_types::StatusKind::Barrier)
+        .copied()
+        .expect("a barrier look");
+    let request = SpawnRequest {
+        effect: look,
+        anchor: Vec3::new(0.0, 0.5, 0.0),
+        bound: BoundValues::default()
+            .with(Binding::UnitRadius, 0.5)
+            .with(Binding::UnitHeight, 1.0)
+            .with(Binding::BarrierRatio, 1.0),
+        line: None,
+        delay: 0.0,
+    };
+    let strongest = |settled: bool| {
+        let mut runtime = EffectRuntime::new(&catalog);
+        runtime
+            .hold(&catalog, &request, 100.0, settled)
+            .expect("held");
+        runtime.build_frame(&catalog, 101.0, Some(&camera()));
+        runtime
+            .frame
+            .sorted
+            .iter()
+            .map(|card| card.intensity)
+            .fold(0.0_f32, f32::max)
+    };
+    let (came_in, settled) = (strongest(false), strongest(true));
+    assert!(came_in > 0.5, "the look that came in draws: {came_in}");
+    assert!(
+        (settled - came_in).abs() < 1e-3,
+        "settled {settled} against came in {came_in}"
+    );
+}
