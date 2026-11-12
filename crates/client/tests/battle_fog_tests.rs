@@ -34,15 +34,18 @@
 )]
 
 use bevy::prelude::*;
+use bevy::render::batching::NoAutomaticBatching;
 use client::battle_hud::card::CommandCard;
 use client::battle_hud::model::HudModel;
 use client::battle_hud::result::ResultScreen;
 use client::battle_hud::HudGeometry;
+use client::battle_pipeline::commands::ModeDirection;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::{BattlePresentation, PlayerPresentation};
+use client::bubble_shader::BubbleDomeMaterial;
 use client::effects::catalog::EffectCatalog;
-use client::effects::stance::StanceTrack;
+use client::effects::stance::{casts_own_shadow, StanceTrack};
 use client::runtime_battle::{MapObject, MapPresentation, SKIRMISH_SCENARIO};
 use client::scene_controller::RenderEntityMap;
 use client::smog::SmogStats;
@@ -579,6 +582,124 @@ fn seen(watcher: Watcher, concealment: Concealment) -> Seen {
         cover: cover(&harness, hidden),
         picked,
     }
+}
+
+/// What one frame of the batching check saw: whether the bubble was unbatched and whether its
+/// shell moves its shadow caster.
+fn batching_now(harness: &Harness, id: EntityId) -> (bool, bool) {
+    let world = harness.app.world();
+    let entity = bubble(harness, id);
+    let unbatched = world.entity(entity).contains::<NoAutomaticBatching>();
+    let material = world
+        .get::<MeshMaterial3d<BubbleDomeMaterial>>(entity)
+        .expect("a bubble has its material");
+    let shell = world
+        .resource::<Assets<BubbleDomeMaterial>>()
+        .get(&material.0)
+        .expect("the bubble's material is loaded")
+        .shell;
+    (unbatched, casts_own_shadow(&shell))
+}
+
+/// Steps `frames` frames, checking on every one that unit `id`'s bubble is unbatched exactly
+/// while its shell moves its shadow caster, and counts the frames with a moved caster and the
+/// frames the component appeared and went.
+fn step_checking_batching(
+    harness: &mut Harness,
+    id: EntityId,
+    frames: usize,
+    seen: &mut BatchingSeen,
+) {
+    harness.resume();
+    for frame in 0..frames {
+        harness.step(1);
+        let (unbatched, moved) = batching_now(harness, id);
+        assert_eq!(
+            unbatched, moved,
+            "frame {frame} of {}: unbatched {unbatched}, caster moved {moved}",
+            seen.phase
+        );
+        seen.moved += usize::from(moved);
+        seen.inserted += usize::from(unbatched && !seen.last);
+        seen.removed += usize::from(!unbatched && seen.last);
+        seen.last = unbatched;
+    }
+    harness.pause();
+}
+
+/// What [`step_checking_batching`] counted.
+#[derive(Debug, Default)]
+struct BatchingSeen {
+    phase: &'static str,
+    last: bool,
+    moved: usize,
+    inserted: usize,
+    removed: usize,
+}
+
+/// WP8 review 3, E3-2: through a cloak (shadow lane only) and a burrow and emerge (sink and
+/// shadow lane), on every frame, a bubble carries `NoAutomaticBatching` exactly while its shell
+/// moves its shadow caster, including the frames it is inserted and removed, so a batched
+/// shadow bin only ever holds neutral bubbles.
+#[test]
+fn the_batching_marker_follows_the_shell_on_every_frame() {
+    let mut harness = skirmish();
+    let own = mobile(&harness, LOCAL_PLAYER);
+    submit(&mut harness, LOCAL_PLAYER, &own, UnitOrder::HoldPosition);
+    let place = harness.open_ground(home(&harness), 4.0);
+    let id = harness.spawn_concealed(LOCAL_PLAYER, place, Concealment::None);
+    let (_, mode) = harness.burrower();
+    run_ticks(&mut harness, 3);
+    harness.look_at(place);
+    let mut seen = BatchingSeen::default();
+    let set_cloak = |harness: &mut Harness, cloaked: bool| {
+        harness
+            .world_mut()
+            .entities
+            .get_mut(&id)
+            .expect("it stands")
+            .is_cloaked = cloaked;
+    };
+    let switch = |harness: &mut Harness, direction: ModeDirection| {
+        let mut session = harness.app.world_mut().resource_mut::<BattleSession>();
+        let (world, queue) = session.world_and_commands();
+        queue
+            .submit_mode_switch(
+                world.expect("committed battle"),
+                LOCAL_PLAYER,
+                &[id],
+                &mode,
+                direction,
+                false,
+            )
+            .expect("the unit can switch now");
+    };
+    seen.phase = "neutral";
+    step_checking_batching(&mut harness, id, 20, &mut seen);
+    assert_eq!(seen.moved, 0, "a neutral unit casts batched");
+    seen.phase = "cloaked";
+    set_cloak(&mut harness, true);
+    step_checking_batching(&mut harness, id, 40, &mut seen);
+    seen.phase = "uncloaked";
+    set_cloak(&mut harness, false);
+    step_checking_batching(&mut harness, id, 40, &mut seen);
+    assert_eq!(
+        (seen.inserted, seen.removed),
+        (1, 1),
+        "the cloak inserts the marker once and removes it once: {seen:?}"
+    );
+    seen.phase = "burrowing and burrowed";
+    switch(&mut harness, ModeDirection::Enter);
+    step_checking_batching(&mut harness, id, 120, &mut seen);
+    seen.phase = "emerging and up";
+    switch(&mut harness, ModeDirection::Leave);
+    step_checking_batching(&mut harness, id, 120, &mut seen);
+    assert_eq!(
+        (seen.inserted, seen.removed),
+        (2, 2),
+        "the burrow inserts it once and the emerge removes it once: {seen:?}"
+    );
+    assert!(!seen.last, "the unit ends neutral and batched");
 }
 
 #[test]

@@ -77,7 +77,7 @@ struct DecalInstance {
     outline_noise: f32,
     outline_fill: f32,
     darken: f32,
-    padding_b: f32,
+    outline_soft: f32,
 }
 
 const ORIENT_CAMERA: u32 = 0u;

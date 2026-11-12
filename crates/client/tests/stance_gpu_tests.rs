@@ -164,6 +164,20 @@ const MOUND_RING_SHARE: f64 = 0.5;
 /// Reach of a shimmer's bend in pixels: its colours must already be on the ground this near
 /// (the largest bend, lens plus noise, is about 3 px at the default zoom).
 const SHIMMER_REACH_PX: i64 = 6;
+/// World units behind the anchoring unit (away from the camera) at which a neutral unit stands
+/// on its switch's furrow: the furrow's radius, 1.85 of the anchoring unit's radius of 0.875.
+const BEHIND_DISTANCE: f32 = 1.62;
+/// A body pixel of a unit standing on a darkening element keeps at least this share of its
+/// light (linear luminance): what the bubble's slight translucency lets through from the
+/// darkened ground behind it, about 0.92, and no more (the soil leaves about 0.6).
+const BODY_KEPT: f32 = 0.85;
+/// Share of that body's pixels allowed below [`BODY_KEPT`] (its rim, which blends with the
+/// ground at the outline).
+const BODY_DARKENED_SHARE: f64 = 0.05;
+/// Outer falloff of the anchored look: the ground's factor goes from 0.95 to 0.75 over at
+/// least this share of the unit's radius (review 3, A3-1: round 3's edge stepped within a pixel).
+const FALLOFF_RADII: f32 = 0.15;
+
 /// Euclidean RGB distance, in levels, a shimmer pixel may lie from the colours a filtered read
 /// of the ground around it can give ([`blend_of_neighbours`]).
 const SHIMMER_SLACK: f32 = 6.0;
@@ -301,6 +315,8 @@ struct PoseReport {
     neutral: UnitView,
     /// The other bubbles near it, whose animated pictures its shadow ring must leave out.
     neutral_neighbours: Vec<UnitView>,
+    /// The neutral unit on the back of the siege switch's furrow (review 3, E3-1).
+    behind: UnitView,
     /// Whether the burrowing unit shows its own burrowed clip (WP13 media).
     burrower_has_clip: bool,
     /// Concealment and presence published in each shot, by shot.
@@ -378,6 +394,31 @@ fn concealment_and_stance_poses_read_as_the_plan_asks() -> TestResult {
         (shadow_burrowed as f64) <= SHADOW_LEFT_SHARE * shadow_standing as f64,
         "the burrowed unit's shadow is gone: {shadow_burrowed} of {shadow_standing}"
     );
+    // A unit standing on the back of the siege switch's furrow (review 3, E3-1): the furrow
+    // darkens the ground round its foot, and its body keeps its light (darkening elements are
+    // drawn before every transparent item, so they never multiply a bubble).
+    let behind = report.behind;
+    assert!(
+        behind.radius_px > 0.0,
+        "the unit behind the furrow is in sight"
+    );
+    let (siege_mid, siege_mid_bare) = (shot(Shot::SiegeMid)?, shot(Shot::SiegeMidBare)?);
+    let body = body_kept(&siege_mid_bare, &siege_mid, behind);
+    let ground_round = foot_darkened(&siege_mid_bare, &siege_mid, behind);
+    eprintln!(
+        "driver {driver}: a unit on the back of the siege furrow: {} of {} body pixels keep less \
+         than {BODY_KEPT} of their light (lowest {:.3}); the furrow darkens {ground_round} pixels \
+         round its foot",
+        body.darkened, body.pixels, body.lowest
+    );
+    assert!(ground_round > 0, "the furrow runs under the unit behind it");
+    assert!(
+        (body.darkened as f64) <= BODY_DARKENED_SHARE * body.pixels as f64,
+        "the furrow darkens the body of the unit standing on it: {} of {}",
+        body.darkened,
+        body.pixels
+    );
+
     // Mixed bubbles (review 2, S-2): while the burrowed unit's shell moves its own shadow
     // caster (it alone is unbatched), a neutral unit of the viewer's, batched with the others,
     // casts the same shadow as when no shell moved any caster.
@@ -551,6 +592,114 @@ fn ring_changes(a: &image::RgbImage, b: &image::RgbImage, unit: UnitView) -> usi
         }
     });
     changed
+}
+
+/// Linear luminance of an sRGB pixel (Rec. 709 weights).
+fn linear_luminance(pixel: [u8; 3]) -> f32 {
+    let channel = |value: u8| {
+        let c = f32::from(value) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(pixel[0]) + 0.7152 * channel(pixel[1]) + 0.0722 * channel(pixel[2])
+}
+
+/// How much light the body of `unit` keeps in `after` against `before`.
+struct BodyKept {
+    /// Body pixels (within 0.9 screen radii, short of the rim).
+    pixels: usize,
+    /// Of them, those keeping less than [`BODY_KEPT`] of their light.
+    darkened: usize,
+    /// The lowest share kept.
+    lowest: f32,
+}
+
+/// [`BodyKept`] of `unit` between `before` and `after`.
+fn body_kept(before: &image::RgbImage, after: &image::RgbImage, unit: UnitView) -> BodyKept {
+    let mut kept = BodyKept {
+        pixels: 0,
+        darkened: 0,
+        lowest: 1.0,
+    };
+    for_disc(before, unit, 0.9, |x, y| {
+        let was = linear_luminance(before.get_pixel(x, y).0);
+        if was <= 1e-3 {
+            return;
+        }
+        let share = linear_luminance(after.get_pixel(x, y).0) / was;
+        kept.pixels += 1;
+        kept.lowest = kept.lowest.min(share);
+        kept.darkened += usize::from(share < BODY_KEPT);
+    });
+    kept
+}
+
+/// Pixels between 1.1 and 2 screen radii of `unit` that `after` darkens to below
+/// [`BODY_KEPT`] of their light in `before`: the ground round it.
+fn foot_darkened(before: &image::RgbImage, after: &image::RgbImage, unit: UnitView) -> usize {
+    let [cx, cy] = unit.centre_px;
+    let mut darkened = 0;
+    for_disc(before, unit, 2.0, |x, y| {
+        let distance = Vec2::new(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy).length();
+        let was = linear_luminance(before.get_pixel(x, y).0);
+        if distance > 1.1 * unit.radius_px
+            && was > 1e-3
+            && linear_luminance(after.get_pixel(x, y).0) / was < BODY_KEPT
+        {
+            darkened += 1;
+        }
+    });
+    darkened
+}
+
+/// The outer falloff of a darkening look round `unit`, in pixels: along every horizontal-ish
+/// ray from its centre (within 30 degrees of left and right, where the screen is not
+/// foreshortened), the distance from the outermost pixel keeping at most 0.75 of its light to
+/// the outermost keeping at most 0.95; the median over the rays that reach 0.75, and their
+/// count.
+fn outer_falloff(
+    before: &image::RgbImage,
+    after: &image::RgbImage,
+    unit: UnitView,
+) -> (f32, usize) {
+    let [cx, cy] = unit.centre_px;
+    let reach = 3.0 * unit.radius_px;
+    let mut widths = Vec::new();
+    for step in -6_i32..=6 {
+        for side in [1.0_f32, -1.0] {
+            let angle = (step as f32 * 5.0).to_radians();
+            let direction = Vec2::new(side * angle.cos(), angle.sin());
+            let (mut at_75, mut at_95) = (None, None);
+            let mut distance = unit.radius_px;
+            while distance < reach {
+                let point = Vec2::new(cx, cy) + direction * distance;
+                let (x, y) = (point.x.round(), point.y.round());
+                if x < 0.0 || y < 0.0 || x >= before.width() as f32 || y >= before.height() as f32 {
+                    break;
+                }
+                let was = linear_luminance(before.get_pixel(x as u32, y as u32).0);
+                if was > 1e-3 {
+                    let kept = linear_luminance(after.get_pixel(x as u32, y as u32).0) / was;
+                    if kept <= 0.75 {
+                        at_75 = Some(distance);
+                    }
+                    if kept <= 0.95 {
+                        at_95 = Some(distance);
+                    }
+                }
+                distance += 0.5;
+            }
+            if let (Some(inner), Some(outer)) = (at_75, at_95) {
+                widths.push(outer - inner);
+            }
+        }
+    }
+    widths.sort_by(f32::total_cmp);
+    let median = widths.get(widths.len() / 2).copied().unwrap_or(0.0);
+    (median, widths.len())
 }
 
 /// Pixels within `scale` screen radii of `unit`'s body that `after` makes lighter and darker
@@ -1326,6 +1475,8 @@ struct PoseStaging {
     enemy: Option<EntityId>,
     siege: Option<EntityId>,
     plain: Option<(EntityId, String)>,
+    /// A neutral unit of the viewer's standing on the back of the siege switch's furrow.
+    behind: Option<EntityId>,
     report: PoseReport,
 }
 
@@ -1376,6 +1527,16 @@ fn change_pose_world(
             let (unit_type, mode) = anchoring_unit(world);
             let id = spawn_still(world, unit_type, VIEWER, staging.spots[2]);
             staging.siege = Some(id);
+            // A unit of the viewer's on the furrow's back half (away from the camera, which the
+            // arc covers first), its body over the darkened band (review 3, E3-1).
+            let worker = world
+                .entities
+                .values()
+                .find(|unit| unit.owner == VIEWER && !unit.is_immobile && unit.id != id)
+                .map(|unit| unit.unit_type_id)
+                .expect("the viewer has a mobile unit");
+            let behind = staging.spots[2] - Vec2::new(0.0, BEHIND_DISTANCE);
+            staging.behind = Some(spawn_still(world, worker, VIEWER, behind));
             session.publish();
             switch_mode(session, id, &mode, ModeDirection::Enter);
             view.critical_only = true;
@@ -1519,6 +1680,9 @@ fn record_pose(
         1 => staging.report.shimmer = view,
         2 => {
             staging.report.siege = view;
+            if let Some((behind, ..)) = find(staging.behind) {
+                staging.report.behind = unit_view(behind, camera);
+            }
             if shot == Shot::SiegeMid {
                 staging.report.siege_progress = track
                     .and_then(|track| track.morph)
@@ -2358,6 +2522,25 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
         "the anchored unit's looks lighten {lightened} of {patch} pixels"
     );
     assert!(darkened > 0, "the anchored unit's looks are drawn");
+    let (falloff, rays) = outer_falloff(
+        &picture("seq_tableau_bare.png")?,
+        &picture("seq_tableau.png")?,
+        anchored,
+    );
+    eprintln!(
+        "driver {driver}: battle tableau, anchored unit: its looks' outer edge fades from 0.95 to \
+         0.75 of the ground's light over {falloff:.1} pixels ({:.2} radii), median of {rays} \
+         rays",
+        falloff / anchored.radius_px
+    );
+    assert!(
+        rays > 0,
+        "the anchored look darkens the ground beside the hull"
+    );
+    assert!(
+        falloff >= FALLOFF_RADII * anchored.radius_px,
+        "the anchored look's edge is hard: {falloff:.1} pixels"
+    );
 
     // The body's depth once dug in: whatever the unit's sink (shallow with its own clip, deep
     // without), the dig ends there.

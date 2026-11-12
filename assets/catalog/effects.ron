@@ -351,14 +351,15 @@
         // Soil pressed flat under an anchored hull and its stabilisers: an even, slightly warm
         // darkening of the ground (compacted soil, not a pale film).
         "crushed": [
-            (0.00, (0.50, 0.42, 0.34, 0.00)),
-            (0.50, (0.50, 0.42, 0.34, 0.65)),
-            (1.00, (0.42, 0.35, 0.28, 0.75)),
+            (0.00, (0.32, 0.25, 0.19, 0.00)),
+            (0.25, (0.32, 0.25, 0.19, 0.85)),
+            (1.00, (0.26, 0.20, 0.15, 0.92)),
         ],
-        // Cracks where an anchored hull's stabilisers bite (darkening).
-        "crack_shade": [
-            (0.00, (0.12, 0.09, 0.07, 0.80)),
-            (1.00, (0.22, 0.17, 0.12, 0.90)),
+        // Where an anchored hull's stabilisers press: darker, compacted soil (darkening).
+        "pressed": [
+            (0.00, (0.22, 0.17, 0.12, 0.00)),
+            (0.25, (0.22, 0.17, 0.12, 0.88)),
+            (1.00, (0.16, 0.12, 0.09, 0.95)),
         ],
         // Clods of soil thrown up by a digging or anchoring body (alpha): dark brown, lit on
         // their tops.
@@ -1482,7 +1483,7 @@
                         darken: true,
                         breakup: (noise: "noise_tile", scale: 6.0, amount: 0.3, softness: 0.2, shade: 0.3)),
                     radius: (from: (bind: UnitRadius, scale: 1.85), to: (bind: UnitRadius, scale: 1.85)),
-                    duration: 0.01, curve: "soil_in", held: true, exit: 0.3, priority: Critical,
+                    duration: 0.01, curve: "soil_in", held: true, exit: 0.6, priority: Critical,
                 ),
                 (block: Particles(emitter: "burrow_clods"), size: (bind: UnitRadius, scale: 1.5)),
                 (
@@ -1495,38 +1496,38 @@
                 ),
             ],
         ),
-        // Anchored (the Siege-Tank analogue in siege mode): the closed furrow stays round the
-        // hull, and the soil is pressed flat and cracked out to where the stabilisers stand,
-        // beyond the hull (review 1, B-6), so friend and enemy read the stance at a glance; the
-        // hull settling kicks up a short puff of dust as it anchors. Review 2, B2-3: the furrow,
-        // the pressed soil and the cracks darken the floor, the hull's shadow included (round
-        // 2's lighter soil made the shadow's straight flank show as an edge); the dust is short.
+        // Anchored (the Siege-Tank analogue in siege mode): the soil is pressed down under the
+        // hull and, darker, in patches where its stabilisers stand round it (review 1, B-6), so
+        // friend and enemy read the stance at a glance; the hull settling kicks up a short puff
+        // of dust as it anchors. Everything darkens the floor, the hull's shadow included (review
+        // 2, B2-3). Review 3, A3-1: no ring and no outline. Round 3's held furrow and disc-edged
+        // pressed soil made a hard-edged round pad, an aura's or a range's language; the soil's
+        // edge fades out over the outer half of the mark and the patches' over most of theirs
+        // (`outline.soft`, applied after the soil's thickening intensity, so it stays soft), and
+        // the stabilisers' darker patches round it break the round boundary. The cracks,
+        // invisible at the default zoom, are gone. The switch's furrow erodes out as these come
+        // in.
         "siege_anchor": (
             class: Minor,
             event: Mode,
             layers: [
                 (
-                    block: Ring(texture: "scorch", ramp: "plough", orient: Ground, thickness: 0.24,
-                        mapping: Polar, height: 0.02, waver: 0.45, darken: true,
-                        breakup: (noise: "noise_tile", scale: 6.0, amount: 0.3, softness: 0.2, shade: 0.3)),
-                    radius: (from: (bind: UnitRadius, scale: 1.85), to: (bind: UnitRadius, scale: 1.85)),
-                    duration: 0.01, curve: "soil_in", held: true, priority: Critical,
-                ),
-                (
-                    // The ground pressed flat round the hull, out past it.
+                    // The ground pressed down under and round the hull: a soft disc fading out
+                    // from about 0.8 to 1.6 radii (no edge noise: a wavering edge under a soft
+                    // fade reads as rays).
                     block: Decal(texture: "smoke_puff", ramp: "crushed", depth: 0.6, darken: true,
-                        outline: (edge_noise: 0.15, fill: 0.9),
-                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.25)),
-                    size: (bind: UnitRadius, scale: 1.5), duration: 0.4, curve: "soil_in", held: true,
+                        outline: (edge_noise: 0.0, fill: 0.7, soft: 0.5),
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.3)),
+                    size: (bind: UnitRadius, scale: 1.6), duration: 0.6, curve: "soil_in", held: true,
                 ),
                 (
-                    // Cracks where the stabilisers bite, mostly beyond the hull's outline.
-                    block: Decal(texture: "ground_crack", ramp: "crack_shade", depth: 0.6, darken: true,
-                        outline: (edge_noise: 0.2, fill: 0.85),
-                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.2)),
-                    placement: Circle(count: 5, radius: (bind: UnitRadius, scale: 1.35), spread: 0.08),
-                    size: (bind: UnitRadius, scale: 0.4), size_jitter: 0.2,
-                    duration: 0.4, curve: "soil_in", held: true,
+                    // Where the stabilisers press: irregular, darker compaction round the hull.
+                    block: Decal(texture: "smoke_puff", ramp: "pressed", depth: 0.6, darken: true,
+                        outline: (edge_noise: 0.05, fill: 0.7, soft: 0.8),
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.3, shade: 0.3)),
+                    placement: Circle(count: 4, radius: (bind: UnitRadius, scale: 1.4), spread: 0.1),
+                    size: (bind: UnitRadius, scale: 0.9), size_jitter: 0.15,
+                    duration: 0.6, curve: "soil_in", held: true,
                 ),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "dig_dust", soft_depth: 0.3, rotation: Random,

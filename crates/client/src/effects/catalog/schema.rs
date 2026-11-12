@@ -666,6 +666,12 @@ pub struct OutlineDef {
     pub edge_noise: f32,
     /// Share of the texture's half width read across the disc's radius, in [0.25, 1].
     pub fill: f32,
+    /// Share of the half length, inside the edge, over which the mark fades out to it (as the
+    /// square of the distance in from the edge, so its outermost part fades in slowly), in
+    /// [0, 0.8]; 0 for an edge anti-aliased over a pixel (WP8 review 3, A3-1: soil pressed
+    /// down by a hull fades into the floor round it).
+    #[serde(default)]
+    pub soft: f32,
 }
 
 /// Whether a layer may be dropped by the budget.

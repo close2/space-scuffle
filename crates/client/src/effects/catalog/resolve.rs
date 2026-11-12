@@ -261,7 +261,13 @@ impl Resolver<'_> {
 
     /// Checks a decal's disc outline against the ranges [`OutlineDef`] states.
     fn outline(&self, at: &Site, outline: OutlineDef) -> Result<(), EffectCatalogError> {
-        let checks: [(&'static str, f32, bool, &'static str); 2] = [
+        let checks: [(&'static str, f32, bool, &'static str); 3] = [
+            (
+                "outline.soft",
+                outline.soft,
+                (0.0..=0.8).contains(&outline.soft),
+                "it must be in [0, 0.8]",
+            ),
             (
                 "outline.edge_noise",
                 outline.edge_noise,

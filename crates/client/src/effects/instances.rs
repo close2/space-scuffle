@@ -210,8 +210,9 @@ pub struct DecalInstance {
     /// 1 for a mark that darkens what lies under it (drawn in the darkening pass, multiplying
     /// the ground by its colour), 0 for one blended over it.
     pub darken: f32,
-    /// Padding to a whole 16-byte row; always zero.
-    pub padding: f32,
+    /// Share of the half length, inside a disc outline's edge, over which the mark fades out;
+    /// 0 for an edge anti-aliased over a pixel.
+    pub outline_soft: f32,
 }
 
 /// A point light requested this frame.

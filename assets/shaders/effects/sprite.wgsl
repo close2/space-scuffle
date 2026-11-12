@@ -39,8 +39,8 @@ const CREST_JITTER: f32 = 0.019444444;
 const CREST_HALF_WIDTH: f32 = 0.0069444444;
 const CREST_SOFT: f32 = 0.0041666667;
 // An arc's head (FLAG_ARC): a soft end 0.05 of a turn (18 degrees) wide, centred on the bound
-// share so the drawn share stays within 3 % of it; a furrow thickened by an intensity of about 2
-// shows its fade over the outer two thirds of it, about 12 degrees. Freshly turned earth is lit
+// share so the drawn share stays within 3 % of it (a wavering band applies its mask after its
+// intensity, so the whole fade shows however much it is thickened). Freshly turned earth is lit
 // just behind it: its shading rises by up to `ARC_HEAD_LIGHT`, falling off over about a
 // twentieth of a turn (WP8 review 2, B2-2: round 2's 3.6-degree step read as a progress ring's
 // cut end).
@@ -51,6 +51,10 @@ const ARC_HEAD_FALLOFF: f32 = 20.0;
 // its shading runs this far towards its position across the band (furrow to thrown soil).
 const WAVER_RADIAL: f32 = 0.1;
 const WAVER_ACROSS: f32 = 0.6;
+// A wavering band's edges fade over this share of its width each (WP8 review 3, A3-1: a band
+// cut within one pixel read as a drawn outline). Its mask is applied after the intensity, so a
+// thickened band keeps the whole fade.
+const WAVER_SOFT: f32 = 0.5;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -284,7 +288,8 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
     var shading = texel.r;
     if (card.ring_inner > 0.0 && card.warp > 0.0) {
         let band = waver_band(card, centred, radius, mip);
-        mask = (1.0 - smoothstep(band.y - edge, band.y, radius)) * smoothstep(band.x - edge, band.x, radius);
+        let soft = max(WAVER_SOFT * (band.y - band.x), edge);
+        mask = (1.0 - smoothstep(band.y - soft, band.y, radius)) * smoothstep(band.x, band.x + soft, radius);
         // Dark furrow on the inner edge, lighter thrown soil on the outer one.
         let across = clamp((radius - band.x) / max(band.y - band.x, 1e-4), 0.0, 1.0);
         shading = mix(texel.r, across, WAVER_ACROSS);
@@ -380,8 +385,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let scene = textureLoad(depth_prepass, vec2<i32>(floor(in.position.xy)), 0);
     let soft = soft_depth_fade(scene, in.view_z, card.soft_depth, view.clip_from_view);
     let survive = erosion_step(order, card.erosion, card.softness, noisy);
-    // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
-    let coverage = min(texel.g * survive * texel.a * card.intensity * soft * clip, 1.0);
+    // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1. A wavering
+    // band's mask (its soft edges) is applied after it, so thickening does not sharpen them.
+    let wavering = !ribbon && card.ring_inner > 0.0 && card.warp > 0.0;
+    let thickened = select(texel.a, 1.0, wavering);
+    let outline = select(1.0, texel.a, wavering);
+    let coverage = min(texel.g * survive * thickened * card.intensity * soft * clip, 1.0) * outline;
     if (coverage <= 0.0) {
         discard;
     }

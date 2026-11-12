@@ -7,6 +7,55 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP8 round 4 (concealment and stance)
+
+Round 3's review ([`independent_review_wp8_3.md`](independent_review_wp8_3.md), kept as written) accepted every look
+but the settled `siege_anchor` (A3-1). It asked for the darkening cards' order (E3-1), with E3-2 and E3-3 advisory.
+The orchestrator's decisions are plan Amendment 14. This is round 4 of at most five (Q0080). Please write it to a new
+file next to this one, `independent_review_wp8_4.md`, in the same form:
+- judge `siege_anchor` against each of the seven checklist items, and `mode_seal_sweep`'s softened band;
+- check E3-1 to E3-3;
+- say whether anything accepted earlier, or any shipped splash effect, regressed.
+
+The pictures come from `crates/client/tests/stance_gpu_tests.rs` on the production skirmish, as before (debug build,
+Xvfb, 1280×720, default camera distance), on radv and lavapipe. This round's files start with `wp8r4_`; earlier
+rounds' files are unchanged. As before, "bare" keeps the unit's Shell and clears only the effect renderer's layers.
+Nothing was spent and no texture was made.
+
+### What changed
+
+| Round-3 finding | Change |
+|---|---|
+| A3-1: the settled anchor reads as a hard-edged, evenly tinted round pad with a darker rim; the cracks do not show | The held ring and the cracks are gone. The anchor is soil pressed down under and round the hull, a soft disc fading out from about 0.8 to 1.6 radii, plus four darker compaction patches round it where the stabilisers press, which break the round boundary. Everything darkens only. A decal's disc outline gains `soft`: the mark fades out over that share of its half length inside its edge, as the square of the distance in from it, after the coverage is clamped, so thickening does not sharpen it. The pressed soil has no edge noise, because a trial with a wavering edge under the soft fade read as rays. |
+| A3-1: the sweep band's crisp edges | A wavering band now fades over half its width at each edge, its mask applied after the intensity. The furrow erodes out over 0.6 s as the anchor comes in. |
+| A3-1: a falloff figure | The test prints the anchored look's outer falloff: the width over which the ground keeps from 0.95 down to 0.75 of its light, as the median over near-horizontal rays from the unit's centre. It requires at least 0.15 of the unit's radius. The figures are in the measurements file. |
+| E3-1: a darkening card queued at its run's distance | Darkening cards sort as the farthest of all, so they are the first cards of the sorted buffer. One darkening item at `f32::MIN` draws that prefix, before every other transparent item. In the pose shot of the switch half way, a unit of the viewer's stands on the back half of the furrow; the test requires its body to keep its light while the furrow darkens the ground round its foot. |
+| E3-2 (advisory) | A headless test steps a unit through neutral, cloaked, neutral, burrowing, burrowed and emerging. On every frame it asserts that the bubble is unbatched exactly while its shell moves its shadow caster. |
+| E3-3 (advisory) | Taken in the contained form: the single darkening item draws only the darkening cards, with no second item per card run, so no frame-budget run was taken for it. |
+| Optional lit crest on the burrow heaps | Not done, so `burrow_mound` stays as accepted. |
+
+### Material
+
+| What | Files |
+|---|---|
+| The anchored unit, close: in the tableau, without effect layers | [wp8r4_anchored_crop_radv.png](wp8r4_anchored_crop_radv.png), [wp8r4_anchored_crop_lavapipe.png](wp8r4_anchored_crop_lavapipe.png) |
+| Siege switch half way, `Critical` layers only, the tank's bubble hidden, a unit of the viewer's on the back of the furrow; and without effect layers | [wp8r4_siege_mid_radv.png](wp8r4_siege_mid_radv.png), [wp8r4_siege_mid_lavapipe.png](wp8r4_siege_mid_lavapipe.png) |
+| Sequences at 40 ms steps: siege (the furrow closing, then the anchor coming in) and unsiege | [siege](wp8r4_siege_sequence_radv.png), [unsiege](wp8r4_unsiege_sequence_radv.png); lavapipe: the same names ending `_lavapipe` |
+| The same sequences for dig and emerge, unchanged looks | [dig](wp8r4_dig_sequence_radv.png), [emerge](wp8r4_emerge_sequence_radv.png); lavapipe likewise |
+| Battle: before the tableau; the tableau; without effect layers; detected; detected without effect layers | [before](wp8r4_battle_before_radv.png), [tableau](wp8r4_battle_undetected_radv.png), [bare](wp8r4_battle_bare_radv.png), [detected](wp8r4_battle_detected_radv.png), [detected, bare](wp8r4_battle_detected_bare_radv.png); lavapipe: the same names ending `_lavapipe` |
+| Burrow poses, shimmer pose and the player's cloaked unit (for regressions) | `wp8r4_burrow_pose_*`, `wp8r4_plain_burrow_pose_*`, `wp8r4_shimmer_pose_*`, `wp8r4_own_cloaked_crop_*` |
+| The tests' printed measurements on both drivers | [wp8r4_measurements.txt](wp8r4_measurements.txt) |
+
+The anchored Siege-Tank analogue stands at about (548, 244) in the battle captures, at the upper left corner of the
+platform. Its hull's shadow falls to its lower right.
+
+### Points to look at
+
+- Whether the settled anchor reads as soil pressed down by the hull and its stabilisers, with no outline, ring, rim,
+  aura or range language, and whether its edge is soft and its boundary broken.
+- Whether the sweep's band still reads as ploughed earth with its softened edges.
+- E3-1: the unit on the back of the furrow in `wp8r4_siege_mid_*`.
+
 ## WP8 round 3 (concealment and stance)
 
 Round 2's review ([`independent_review_wp8_2.md`](independent_review_wp8_2.md), kept as written) accepted the fog

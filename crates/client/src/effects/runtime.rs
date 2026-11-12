@@ -144,8 +144,8 @@ pub struct EffectFrame {
     pub distortions: Vec<SpriteInstance>,
     /// Cards written this frame (not particles).
     card_count: u32,
-    /// Cards this frame that darken what lies under them (the renderer then adds the
-    /// darkening pass).
+    /// Cards this frame that darken what lies under them: the first this many of `sorted`
+    /// (they sort as the farthest), which the renderer draws in its darkening item.
     pub darkening_cards: u32,
     /// Decals this frame that darken what lies under them.
     pub darkening_decals: u32,
@@ -1205,10 +1205,19 @@ impl EffectRuntime {
     }
 
     /// Appends a card and its depth, moved `bias` world units towards the camera in the sort.
+    ///
+    /// A darkening card ([`FLAG_DARKEN`]) sorts as the farthest of all, so the darkening cards
+    /// are the first [`EffectFrame::darkening_cards`] of `sorted`: the renderer draws that
+    /// prefix in one darkening item before every other transparent item (WP8 review 3, E3-1),
+    /// and multiplication does not depend on their order.
     fn push_sorted_card(&mut self, card: SpriteInstance, camera: Option<&CameraView>, bias: f32) {
-        let depth = camera.map_or(0.0, |camera| {
-            camera.depth(Vec3::from_array(card.center)) - bias
-        });
+        let depth = if card.flags & FLAG_DARKEN != 0 {
+            f32::MAX
+        } else {
+            camera.map_or(0.0, |camera| {
+                camera.depth(Vec3::from_array(card.center)) - bias
+            })
+        };
         self.frame.cards.push(card);
         self.frame.depth.push(depth);
     }
@@ -1272,6 +1281,7 @@ impl EffectRuntime {
             dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
             outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
             outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
+            outline_soft: look.outline.map_or(0.0, |outline| outline.soft),
             darken: if look.darken { 1.0 } else { 0.0 },
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });

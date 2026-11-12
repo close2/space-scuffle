@@ -187,7 +187,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (disc) {
         edge = outline_edge(decal, local.xz, radius, level, noise_offset);
     }
-    let outline = 1.0 - smoothstep(edge - radius_step, edge, radius);
+    // A soft outline fades out over `outline_soft` of the half length inside its edge, as the
+    // square of the distance in from the edge, so its outermost part fades in slowly (WP8
+    // review 3, A3-1). The coverage is clamped before the outline multiplies it, so an
+    // intensity above 1 does not sharpen the fade. Without it the edge is anti-aliased over a
+    // pixel.
+    var outline = 1.0 - smoothstep(edge - radius_step, edge, radius);
+    if (decal.outline_soft > 0.0) {
+        let inward = clamp((edge - radius) / max(decal.outline_soft * edge, radius_step), 0.0, 1.0);
+        outline = inward * inward;
+    }
     // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
     let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0) * outline;
     if (!inside || coverage <= 0.0) {

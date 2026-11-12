@@ -567,11 +567,27 @@ fn liquid_feather_and_repeat_values_are_range_checked() {
         &vocabulary(&manifest, "", &splash_effect(&outline(0.02, 0.76)), ""),
     )
     .expect("a decal with a disc outline loads (review round 5)");
+    load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&decal(
+                ", outline: (edge_noise: 0.2, fill: 0.7, soft: 0.55)",
+            )),
+            "",
+        ),
+    )
+    .expect("a disc outline with a soft fade loads (WP8 review 3)");
     for (layer, field) in [
         (outline(-0.01, 0.76), "outline.edge_noise"),
         (outline(0.3, 0.76), "outline.edge_noise"),
         (outline(0.02, 0.2), "outline.fill"),
         (outline(0.02, 1.1), "outline.fill"),
+        (
+            decal(", outline: (edge_noise: 0.02, fill: 0.76, soft: 0.9)"),
+            "outline.soft",
+        ),
         (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
         (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
         (liquid(0.05, 1.0, 0.5, 0.5, 0.5), "liquid.gloss"),

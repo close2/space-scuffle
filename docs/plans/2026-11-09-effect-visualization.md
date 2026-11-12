@@ -1708,3 +1708,42 @@ not its centre of shrinking or its unconditional cost. The orchestrator decided:
 Presentation data, the effect and bubble shaders, the effect renderer's darkening pass, a placement, the client's
 stance presentation and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
 "WP8 round 3". This is round 3 of the owner's five (Q0080).
+
+## Amendment 14: WP8 round 4, decided by the orchestrator after WP8 review 3 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_3.md`](../evidence/effects/review/independent_review_wp8_3.md)).** Review 3 accepted every
+look but the settled `siege_anchor` (A3-1), closed S-1, accepted S-2 and the darkening pass for decals and the
+shipped effects, and asked for the darkening cards' order (E3-1). The orchestrator decided:
+
+1. **A3-1, the settled anchor.** No held ring, no hard outline and no cracks (invisible at the default zoom). The
+   anchor is soil pressed down under and round the hull, a soft disc fading out from about 0.8 to 1.6 radii, plus
+   four darker compaction patches round it where the stabilisers press (`Circle` at 1.4 radii), which break the
+   round boundary; everything darkens only. A decal's disc outline gains `soft` (`OutlineDef::soft`, in [0, 0.8]):
+   the mark fades out over that share of its half length inside the edge, as the square of the distance in from
+   the edge, applied after the coverage is clamped, so a thickening intensity does not sharpen it (outlines without
+   it are unchanged). The pressed soil has no edge noise: a wavering edge under a soft fade read as rays in a trial
+   of this round. The switch's furrow (`mode_seal_sweep`, the element round 3's anchor ring shared) gets soft edges:
+   a wavering band fades over half its width at each edge, its mask applied after the intensity (shipped effects
+   have no wavering band and are unchanged); it erodes out over 0.6 s as the anchor comes in. Test: the anchored
+   look's outer edge fades from 0.95 to 0.75 of the ground's light over at least 0.15 of the unit's radius (median
+   over near-horizontal rays from its centre, printed), and it lightens nothing.
+2. **E3-1, the darkening cards' order.** Darkening cards sort as the farthest of all, so they are the first
+   `EffectFrame::darkening_cards` cards of the sorted buffer, and the renderer draws that prefix in one darkening item
+   at `f32::MIN`, after the darkening decals and before every other transparent item, so it multiplies only the
+   opaque scene. Tests: the darkening cards lead the sorted cards (runtime test), and in the pose shot of the siege
+   switch half way a unit of the viewer's on the back half of the furrow keeps at least 0.85 of its light on at
+   least 95 % of its body (the bubble's translucency lets about 0.92 through) while the furrow darkens the ground
+   round its foot.
+3. **E3-2.** A headless test steps a unit through neutral, cloaked, neutral, burrowing, burrowed and emerging, and on
+   every frame asserts that its bubble carries `NoAutomaticBatching` exactly while `casts_own_shadow` holds for its
+   shell, the marker being inserted and removed once for the cloak and once for the burrow.
+4. **E3-3: the contained form.** Item 2's single darkening item draws only the darkening cards (the sorted prefix),
+   so the per-run second items are gone: the darkening pass now costs one item and the prefix's vertices per frame,
+   and the other card runs draw as before. No new buffer or bind group was needed, so no `frame_budget` run was
+   taken for it.
+5. **Not done (optional):** a lit crest on the burrow heaps, left out so `burrow_mound`'s acceptance stands.
+
+Presentation data, the card and decal shaders, a field of the decal outline, the effect runtime's sort and the
+renderer's queue, and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
+"WP8 round 4". This is round 4 of the owner's five (Q0080).
