@@ -26,3 +26,12 @@ readability gap.
 **Option 2 — Spend up to $20.00 (target < $10.00, e.g., the planned ~$6.80) on WP13 for morph and mode unit animations (siege, burrow).**
 
 **Engine & gameplay insight:** In StarCraft II, telling at a glance whether enemy Siege Tanks are in Tank Mode or Siege Mode (and seeing the 3-second siege/unsiege transformation animation) is critical for tactical decision-making and combat readability. Baking dedicated Veo mode and morph flipbook slices (targeting < $10, with a ceiling of up to $20 if extra retries are needed) is well within the remaining media budget and closes this readability gap.
+
+## Resolution
+
+Carried out by WP13 of plan [`2026-11-09-effect-visualization`](../../plans/2026-11-09-effect-visualization.md)
+(Amendment 10), branch `effects-wp13`, 2026-11-12. The sieged `railgun_crawler` and the burrowed `burrow_scorpion`
+each have a mode atlas (Idle and Attack in the mode, and the enter and leave morphs), shown by the client from the
+published stance and played over the mode switch's channel. 11 Veo generations: 8 accepted, 3 rejected in review;
+**$4.40**, the ledger going from $106.45 to $110.85, within the target of $10.00. Evidence and the accept/reject log:
+[`docs/evidence/veo/2026-11-12-mode-clips.md`](../../evidence/veo/2026-11-12-mode-clips.md).

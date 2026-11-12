@@ -25,7 +25,9 @@
 //!
 //! The effect-texture commands (`effect-noise`, `effect-bake`, `effect-review`,
 //! `effect-prompt`, `effect-image`, `effect-image-preflight`, `effect-veo`; plan
-//! `docs/plans/2026-11-09-effect-visualization.md` §6) live in `effect_cli`.
+//! `docs/plans/2026-11-09-effect-visualization.md` §6) live in `effect_cli`; the mode-media
+//! commands (`mode-veo`, `mode-reject`, `install-mode-clip`, `bake-mode-videos`; the same plan's
+//! WP13) live in `mode_cli`.
 //!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
@@ -63,6 +65,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod effect_cli;
+mod mode_cli;
 
 #[derive(Parser, Debug)]
 #[command(name = "asset_baker")]
@@ -411,6 +414,11 @@ enum Commands {
     /// prompts and the image model.
     #[command(flatten)]
     Effects(effect_cli::EffectCommand),
+
+    /// Media of units' catalog modes (plan `2026-11-09-effect-visualization.md` WP13): mode
+    /// clips, their review, installation and the mode atlas bake.
+    #[command(flatten)]
+    Modes(mode_cli::ModeCommand),
 }
 
 /// Result of a subcommand; any error ends the process with a nonzero status.
@@ -538,6 +546,7 @@ fn run(cli: Cli) -> RunResult {
             run_bake_terrain_theme(assets, &theme, catalog)
         }
         Commands::Effects(command) => effect_cli::run(assets, command),
+        Commands::Modes(command) => mode_cli::run(assets, command),
     }
 }
 

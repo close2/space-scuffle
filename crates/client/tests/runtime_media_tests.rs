@@ -498,3 +498,154 @@ fn reject_action(
     );
     Ok(())
 }
+
+// --- Mode atlases (plan `2026-11-09-effect-visualization.md` WP13) -------------------------------
+
+/// Every catalog mode whose atlas `<slug>-<mode>` ships: (archetype slug, unit type, mode index,
+/// atlas name).
+fn shipped_mode_atlases(catalog: &UnitCatalog) -> Vec<(String, UnitTypeId, u8, String)> {
+    catalog
+        .archetypes()
+        .flat_map(|arch| {
+            arch.modes.iter().enumerate().filter_map(|(index, mode)| {
+                let name = asset_baker::mode_media::ModeAtlasId {
+                    slug: &arch.slug,
+                    stance: &mode.mode_name,
+                }
+                .atlas_name();
+                let index = u8::try_from(index).ok()?;
+                ships_media(&name).then(|| (arch.slug.clone(), arch.unit_type_id, index, name))
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn shipped_mode_atlases_are_admitted_with_their_identity() -> TestResult {
+    let (app, catalog) = shipped_media()?;
+    let atlases = shipped_mode_atlases(&catalog);
+    assert!(!atlases.is_empty(), "WP13 ships mode atlases");
+    let registry = app.world().resource::<FlipbookRegistry>();
+    for (slug, unit_type, mode, name) in &atlases {
+        presentable(&app, *unit_type)?;
+        let atlas = registry
+            .get_mode(*unit_type, *mode)
+            .ok_or_else(|| format!("{name} is not registered"))?;
+        assert_eq!(&atlas.meta.name, name);
+        assert!(atlas.meta.actions.contains_key(&AnimState::Idle), "{name}");
+        assert_eq!(atlas.meta.morphs.len(), 2, "{name} holds both morphs");
+        assert_ne!(
+            Some(&atlas.texture),
+            registry.get_texture(*unit_type).as_ref(),
+            "{slug}: the mode atlas has its own texture"
+        );
+    }
+    // A mode that ships no atlas keeps the default one: no entry, and its unit stays presentable.
+    assert_eq!(registry.modes_by_id.len(), atlases.len());
+    Ok(())
+}
+
+/// Boots the media registry on a temporary root holding `slug`'s default and mode files, after
+/// `damage` edits the mode atlas's metadata. The directory must outlive the app.
+fn mode_media_with(
+    catalog: &UnitCatalog,
+    slug: &str,
+    mode_atlas: &str,
+    damage: impl Fn(&mut FlipbookAtlasMeta),
+) -> Result<(tempfile::TempDir, App), Box<dyn std::error::Error>> {
+    let directory = temporary_root()?;
+    copy_media(directory.path(), slug, true)?;
+    copy_media(directory.path(), mode_atlas, true)?;
+    let metadata_path = directory
+        .path()
+        .join("textures")
+        .join(format!("{mode_atlas}.flipbook.ron"));
+    let mut metadata: FlipbookAtlasMeta = ron::from_str(&std::fs::read_to_string(&metadata_path)?)?;
+    damage(&mut metadata);
+    std::fs::write(&metadata_path, ron::to_string(&metadata)?)?;
+    let mut app = app(
+        directory.path(),
+        catalog.clone(),
+        LabState::default(),
+        MediaFailurePolicy::default(),
+    )?;
+    app.update();
+    Ok((directory, app))
+}
+
+#[test]
+fn a_mode_atlas_missing_a_morph_or_an_action_refuses_its_identity() -> TestResult {
+    let catalog = bundle()?.catalogs.units;
+    let (slug, unit_type, _, name) = shipped_mode_atlases(&catalog)
+        .into_iter()
+        .next()
+        .ok_or("a shipped mode atlas")?;
+
+    let (_directory, app) = mode_media_with(&catalog, &slug, &name, |meta| {
+        meta.morphs.remove(&asset_baker::Morph::Leave);
+    })?;
+    let Err(error) = presentable(&app, unit_type) else {
+        return Err("a mode atlas without its leave morph was admitted".into());
+    };
+    assert!(
+        matches!(error, ClientMediaError::Unavailable { ref source, .. }
+            if matches!(source.as_ref(), MediaLoadError::MissingMorph { morph: asset_baker::Morph::Leave, .. })),
+        "{error}"
+    );
+
+    let (_directory, app) = mode_media_with(&catalog, &slug, &name, |meta| {
+        meta.actions.remove(&AnimState::Idle);
+    })?;
+    let Err(error) = presentable(&app, unit_type) else {
+        return Err("a mode atlas without its Idle was admitted".into());
+    };
+    assert!(
+        matches!(error, ClientMediaError::Unavailable { ref source, .. }
+            if matches!(source.as_ref(), MediaLoadError::MissingAction { action: AnimState::Idle, .. })),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mode_atlas_named_for_another_identity_is_refused() -> TestResult {
+    let catalog = bundle()?.catalogs.units;
+    let (slug, unit_type, _, name) = shipped_mode_atlases(&catalog)
+        .into_iter()
+        .next()
+        .ok_or("a shipped mode atlas")?;
+    let (_directory, app) = mode_media_with(&catalog, &slug, &name, |meta| {
+        meta.name = slug.clone();
+    })?;
+    assert!(matches!(
+        presentable(&app, unit_type),
+        Err(ClientMediaError::Unavailable { ref source, .. })
+            if matches!(source.as_ref(), MediaLoadError::Representation { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_unit_whose_modes_ship_no_atlas_keeps_its_default_atlas() -> TestResult {
+    let catalog = bundle()?.catalogs.units;
+    let (slug, unit_type, _, _) = shipped_mode_atlases(&catalog)
+        .into_iter()
+        .next()
+        .ok_or("a shipped mode atlas")?;
+    let directory = temporary_root()?;
+    copy_media(directory.path(), &slug, true)?;
+    let mut app = app(
+        directory.path(),
+        catalog.clone(),
+        LabState::default(),
+        MediaFailurePolicy::default(),
+    )?;
+    app.update();
+    presentable(&app, unit_type)?;
+    assert!(app
+        .world()
+        .resource::<FlipbookRegistry>()
+        .modes_by_id
+        .is_empty());
+    Ok(())
+}

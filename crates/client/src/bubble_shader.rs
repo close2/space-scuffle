@@ -530,6 +530,19 @@ pub struct FlipbookRegistry {
     pub textures: BTreeMap<String, Handle<Image>>,
     /// 2D strip images for UI portraits in egui.
     pub portrait_images: BTreeMap<String, Handle<Image>>,
+    /// Mode atlases (plan `2026-11-09-effect-visualization.md` WP13) keyed by `UnitTypeId` and
+    /// the mode's index in the archetype's `modes`: what a unit shows in that mode and while it
+    /// morphs into or out of it. A mode without an entry shows the default atlas.
+    pub modes_by_id: BTreeMap<(UnitTypeId, u8), ModeAtlas>,
+}
+
+/// One admitted mode atlas: its metadata and GPU texture array.
+#[derive(Debug, Clone)]
+pub struct ModeAtlas {
+    /// Validated metadata, with the mode's actions and both morphs.
+    pub meta: FlipbookAtlasMeta,
+    /// GPU texture array handle.
+    pub texture: Handle<Image>,
 }
 
 impl FlipbookRegistry {
@@ -537,6 +550,13 @@ impl FlipbookRegistry {
     #[must_use]
     pub fn get_meta(&self, unit_type: UnitTypeId) -> Option<&FlipbookAtlasMeta> {
         self.manifests_by_id.get(&unit_type)
+    }
+
+    /// Looks up the admitted atlas of `unit_type`'s mode `mode` (an index into its archetype's
+    /// `modes`), if it has one.
+    #[must_use]
+    pub fn get_mode(&self, unit_type: UnitTypeId, mode: u8) -> Option<&ModeAtlas> {
+        self.modes_by_id.get(&(unit_type, mode))
     }
 
     /// Looks up only the exact admitted texture for the given unit type ID.

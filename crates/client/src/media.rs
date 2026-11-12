@@ -4,11 +4,22 @@
 //! handles together with immutable admission evidence, retains unavailable entries
 //! for diagnostics, and makes runtime requests fail explicitly. Existing legacy art
 //! remains visible but unapproved; this status is never an authenticity certificate.
+//!
+//! A unit with catalog modes may also ship one **mode atlas** per mode, `<slug>-<mode>` (plan
+//! `2026-11-09-effect-visualization.md` WP13): what it shows in the mode and while it morphs
+//! into or out of it. A mode atlas is admitted with the identity: it must hold every slice its
+//! mode needs ([`asset_baker::mode_media::required_mode_slices`]), or the identity is not
+//! admitted at all. A mode without an atlas shows the default atlas, as before mode media
+//! existed.
 
-use crate::bubble_shader::FlipbookRegistry;
+use crate::bubble_shader::{FlipbookRegistry, ModeAtlas};
 use asset_baker::{
-    media::{load_unit_media, LoadedUnitMedia, MediaLoadError, TextureLimits},
+    media::{
+        load_unit_media, media_paths, require_slices, LoadedUnitMedia, MediaLoadError,
+        TextureLimits,
+    },
     media_audit::{MediaAuditRecord, MediaAuditStatus},
+    mode_media::{required_mode_slices, ModeAtlasId},
     FlipbookAtlasMeta,
 };
 use bevy::{
@@ -20,7 +31,7 @@ use bevy::{
         },
     },
 };
-use sim_core::{ActionSet, UnitCatalog};
+use sim_core::{ActionSet, UnitArchetype, UnitCatalog};
 use sim_types::{AnimState, UnitTypeId};
 use std::{
     collections::BTreeMap,
@@ -294,6 +305,12 @@ pub(crate) fn load_registry(
             &mut registry,
         );
         entry.publishable = catalog.publishable_actions(archetype);
+        if entry.admission.is_ok() {
+            if let Err(error) = register_modes(directory, archetype, limits, images, &mut registry)
+            {
+                entry.admission = Err(Arc::new(error));
+            }
+        }
         entries.insert(archetype.unit_type_id, entry);
     }
     let loaded = entries
@@ -339,22 +356,7 @@ fn register(
         }
     };
     let audit = MediaAuditRecord::loaded(slug, &media, concept_digest);
-    let mut array = Image::new(
-        Extent3d {
-            width: media.metadata.frame_width,
-            height: media.metadata.frame_height,
-            depth_or_array_layers: media.metadata.total_frames,
-        },
-        TextureDimension::D2,
-        media.rgba.clone(),
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    );
-    array.texture_view_descriptor = Some(TextureViewDescriptor {
-        dimension: Some(TextureViewDimension::D2Array),
-        ..default()
-    });
-    let texture = images.add(array);
+    let texture = images.add(texture_array(&media.metadata, media.rgba.clone()));
     let portrait = images.add(Image::new(
         Extent3d {
             width: media.metadata.frame_width,
@@ -385,6 +387,72 @@ fn register(
         }),
         publishable: ActionSet::EMPTY,
     }
+}
+
+/// The texture array of an atlas: one layer per frame of the vertical strip `rgba`.
+fn texture_array(metadata: &FlipbookAtlasMeta, rgba: Vec<u8>) -> Image {
+    let mut array = Image::new(
+        Extent3d {
+            width: metadata.frame_width,
+            height: metadata.frame_height,
+            depth_or_array_layers: metadata.total_frames,
+        },
+        TextureDimension::D2,
+        rgba,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    array.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..default()
+    });
+    array
+}
+
+/// Admits the mode atlas of each of `archetype`'s modes that ships one (see the module docs)
+/// into `registry.modes_by_id`, keyed by the mode's index.
+///
+/// # Errors
+/// The first mode atlas that cannot be loaded, lacks a slice its mode needs, or belongs to a
+/// mode whose index the snapshot cannot publish (more than 256 modes); nothing of that mode is
+/// registered.
+fn register_modes(
+    directory: &Path,
+    archetype: &UnitArchetype,
+    limits: Option<TextureLimits>,
+    images: &mut Assets<Image>,
+    registry: &mut FlipbookRegistry,
+) -> Result<(), MediaLoadError> {
+    for (index, mode) in archetype.modes.iter().enumerate() {
+        let name = ModeAtlasId {
+            slug: &archetype.slug,
+            stance: &mode.mode_name,
+        }
+        .atlas_name();
+        let (png_path, metadata_path) = media_paths(directory, &name)?;
+        if !png_path.exists() && !metadata_path.exists() {
+            continue;
+        }
+        let media = load_unit_media(directory, &name, limits)?;
+        require_slices(
+            &media.metadata,
+            &metadata_path,
+            &required_mode_slices(archetype, mode),
+        )?;
+        let index = u8::try_from(index).map_err(|_| MediaLoadError::Representation {
+            path: metadata_path.clone(),
+            reason: "a mode index beyond 255 cannot be published by the snapshot".into(),
+        })?;
+        let texture = images.add(texture_array(&media.metadata, media.rgba));
+        registry.modes_by_id.insert(
+            (archetype.unit_type_id, index),
+            ModeAtlas {
+                meta: media.metadata,
+                texture,
+            },
+        );
+    }
+    Ok(())
 }
 
 /// Stops presentation after a typed media failure and preserves visible diagnostics.

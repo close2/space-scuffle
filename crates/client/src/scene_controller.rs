@@ -29,7 +29,7 @@ use crate::bubble_shader::{
     FLAG_SPEED_BOOSTED,
 };
 use crate::flipbook_clock::{
-    battle_uniform, displayed_action, elapsed_clock, scene_lanes, FlipbookPhase,
+    battle_uniform, displayed_action, elapsed_clock, scene_lanes, shown_stance, FlipbookPhase,
 };
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
@@ -828,12 +828,23 @@ impl<'a> LiveBubbleFrame<'a> {
         presented: Tick,
         phase: Option<FlipbookPhase>,
     ) -> Result<Self, crate::player_presentation::PresentationError> {
-        let meta = registry.get_meta(instance.unit_type);
-        let texture = registry.get_texture(instance.unit_type);
+        let stance = shown_stance(instance, |mode| {
+            registry.get_mode(instance.unit_type, mode).is_some()
+        });
+        let (meta, texture) = match stance
+            .atlas_mode()
+            .and_then(|mode| registry.get_mode(instance.unit_type, mode))
+        {
+            Some(atlas) => (Some(&atlas.meta), Some(atlas.texture.clone())),
+            None => (
+                registry.get_meta(instance.unit_type),
+                registry.get_texture(instance.unit_type),
+            ),
+        };
         let action = displayed_action(meta, instance);
         let phase = phase.map_or_else(
-            || FlipbookPhase::new(action, presented),
-            |phase| phase.observed(action, presented),
+            || FlipbookPhase::in_stance(action, stance, presented),
+            |phase| phase.observed_in(action, stance, presented),
         );
         let uniform = battle_uniform(meta, instance, style, presented, phase)
             .map_err(

@@ -9,7 +9,7 @@ sheet, which cell or frame, what you see), and put your review in a new file nex
 
 ## WP8 round 1 (concealment and stance)
 
-This is the first review round of WP8 (plan Amendment 10; Q0080 allows up to five). Please write it to a new file
+This is the first review round of WP8 (plan Amendment 11; Q0080 allows up to five). Please write it to a new file
 next to this one, `independent_review_wp8_1.md`, in the same form as earlier rounds: judge each look below against
 each of the seven checklist items (item 7, fog, carries most weight here), write **accept** or **reject** with a
 concrete reason (file, cell or frame, what you see), and say whether the shipped seven splash effects regressed

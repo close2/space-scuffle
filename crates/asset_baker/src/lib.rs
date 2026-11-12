@@ -54,7 +54,9 @@ pub mod loop_metrics;
 pub mod manifest;
 pub mod media;
 pub mod media_audit;
+pub mod mode_media;
 pub mod omni_client;
+pub mod paid_clip;
 pub mod procedural_generator;
 pub mod prompts;
 pub mod provenance;
@@ -69,10 +71,11 @@ pub use assets_root::{load_catalogs, resolve_assets_root};
 pub use error::BakerError;
 pub use ffmpeg_importer::{
     bake_framed_action_videos, bake_multi_action_videos, bake_multi_action_videos_with_states,
-    extract_and_pack_video, probe_video, FfmpegExtractConfig, FrameSpec, FramedBake, VideoProbe,
+    extract_and_pack_video, probe_video, FfmpegExtractConfig, FrameSpec, FramedBake, SliceBake,
+    VideoProbe,
 };
 pub use framing::{BakeFraming, FramingPolicy};
-pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout, Morph, SliceKey};
 pub use omni_client::{is_omni_model, OmniClient, OmniPreflightReport, DEFAULT_OMNI_MODEL};
 pub use procedural_generator::{
     ensure_outside_runtime_assets, generate_procedural_atlas, generate_procedural_dome_atlas,

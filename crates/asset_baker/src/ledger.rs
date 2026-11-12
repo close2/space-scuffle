@@ -2,7 +2,9 @@
 //! decision D-3), every paid image-model request for effect textures (plan
 //! `2026-11-09-effect-visualization.md` §6.6, `image_*` events) and every paid Veo request for
 //! an effect element (`effect_clip_*` events, keyed by texture set and element instead of a
-//! unit and its animation state).
+//! unit and its animation state), and every paid Veo request for a unit's mode or morph clip
+//! (`mode_clip_*` events, keyed by unit, catalog mode and slice; plan
+//! `2026-11-09-effect-visualization.md` WP13).
 //!
 //! # Responsibility
 //! Records each event of a generation run as one JSON object per line, and reads a ledger back
@@ -25,6 +27,7 @@
 //! - A line that cannot be parsed stops the reader with its line number: a ledger that cannot
 //!   be read cannot prove what was spent, so no run may start on it.
 
+use crate::manifest::{slice_name, SliceKey};
 use crate::veo_client::VeoParameters;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -437,6 +440,137 @@ pub enum LedgerEvent {
         /// The error, with the key redacted.
         error: String,
     },
+    /// A paid Veo start request for a unit's mode or morph clip (plan
+    /// `2026-11-09-effect-visualization.md` WP13, `asset_baker mode-veo`) is about to be sent.
+    /// Counted at its model's price like a unit clip's start.
+    ModeClipRequestStarted {
+        /// `<run id>/<sequence>`, linking the events of one request.
+        request_id: String,
+        /// Catalog slug.
+        slug: String,
+        /// The catalog mode the clip belongs to (`mode_name`).
+        stance: String,
+        /// The slice of the mode atlas: an animation state in the mode, or a morph.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// Model identifier.
+        model: String,
+        /// API the request goes to.
+        mode: ApiMode,
+        /// SHA-256 of the prompt text, lowercase hex.
+        prompt_sha256: String,
+        /// The prompt text.
+        prompt: String,
+        /// SHA-256 of the start picture sent, if any.
+        keyframe_sha256: Option<String>,
+        /// SHA-256 of the end frame sent as `lastFrame`, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_frame_sha256: Option<String>,
+        /// The generation parameters sent.
+        parameters: VeoParameters,
+    },
+    /// The service named the operation of a started mode-clip request.
+    ModeClipOperationNamed {
+        /// The request this operation belongs to.
+        request_id: String,
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// Model the operation runs on, which polling needs.
+        model: String,
+        /// Operation resource name.
+        operation: String,
+    },
+    /// A mode-clip operation finished.
+    ModeClipOperationDone {
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// Operation resource name.
+        operation: String,
+        /// What it returned.
+        outcome: OperationOutcome,
+    },
+    /// A mode clip was downloaded and validated.
+    ModeClipDownloaded {
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// Operation that produced the clip.
+        operation: String,
+        /// File size in bytes.
+        bytes: u64,
+        /// SHA-256 of the file, lowercase hex.
+        sha256: String,
+        /// Container duration measured by ffprobe, in seconds.
+        duration_seconds: f64,
+        /// Video packets read by ffprobe.
+        frames: u64,
+        /// Frame width in pixels.
+        width: u32,
+        /// Frame height in pixels.
+        height: u32,
+        /// Where the clip was stored.
+        path: String,
+    },
+    /// A mode-clip start request was refused for quota. It cost nothing.
+    ModeClipQuotaRefused {
+        /// The refused request.
+        request_id: String,
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// HTTP status of the refusal.
+        http_status: u16,
+        /// The error's `status` field, such as `RESOURCE_EXHAUSTED`.
+        status: Option<String>,
+        /// The error's reason or message.
+        reason: Option<String>,
+    },
+    /// A mode-clip start request failed in a way that may have started paid work.
+    ModeClipStartFailed {
+        /// The failed request.
+        request_id: String,
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// The error, with the key redacted.
+        error: String,
+    },
+    /// A reviewer rejected a downloaded mode clip.
+    ModeClipRejected {
+        /// Catalog slug.
+        slug: String,
+        /// Catalog mode.
+        stance: String,
+        /// Slice of the mode atlas.
+        #[serde(with = "slice_name")]
+        slot: SliceKey,
+        /// SHA-256 of the rejected clip.
+        sha256: String,
+        /// Why it was rejected.
+        reason: String,
+    },
     /// A reviewer rejected a downloaded clip.
     RejectedInReview {
         /// Catalog slug.
@@ -484,7 +618,14 @@ impl LedgerEvent {
             | Self::EffectClipOperationDone { .. }
             | Self::EffectClipDownloaded { .. }
             | Self::EffectClipQuotaRefused { .. }
-            | Self::EffectClipStartFailed { .. } => None,
+            | Self::EffectClipStartFailed { .. }
+            | Self::ModeClipRequestStarted { .. }
+            | Self::ModeClipOperationNamed { .. }
+            | Self::ModeClipOperationDone { .. }
+            | Self::ModeClipDownloaded { .. }
+            | Self::ModeClipQuotaRefused { .. }
+            | Self::ModeClipStartFailed { .. }
+            | Self::ModeClipRejected { .. } => None,
         }
     }
 
@@ -502,6 +643,123 @@ impl LedgerEvent {
             _ => None,
         }
     }
+
+    /// The mode clip (`slug`, `stance`, `slot`) of a mode-clip event, or `None` for any other
+    /// event.
+    #[must_use]
+    pub fn mode_clip(&self) -> Option<(&str, &str, SliceKey)> {
+        match self {
+            Self::ModeClipRequestStarted {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipOperationNamed {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipOperationDone {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipDownloaded {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipQuotaRefused {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipStartFailed {
+                slug, stance, slot, ..
+            }
+            | Self::ModeClipRejected {
+                slug, stance, slot, ..
+            } => Some((slug, stance, *slot)),
+            _ => None,
+        }
+    }
+
+    /// What this event does to the history of the clip it concerns, or `None` for an event
+    /// that names no clip (an image-model event, or a step the history ignores).
+    fn clip_step(&self) -> Option<ClipStep<'_>> {
+        Some(match self {
+            Self::RequestStarted {
+                request_id, model, ..
+            }
+            | Self::EffectClipRequestStarted {
+                request_id, model, ..
+            }
+            | Self::ModeClipRequestStarted {
+                request_id, model, ..
+            } => ClipStep::Started { request_id, model },
+            Self::OperationNamed {
+                operation, model, ..
+            }
+            | Self::EffectClipOperationNamed {
+                operation, model, ..
+            }
+            | Self::ModeClipOperationNamed {
+                operation, model, ..
+            } => ClipStep::Named { operation, model },
+            Self::OperationDone { outcome, .. }
+            | Self::EffectClipOperationDone { outcome, .. }
+            | Self::ModeClipOperationDone { outcome, .. } => ClipStep::Done { outcome },
+            Self::Downloaded {
+                sha256,
+                path,
+                operation,
+                ..
+            }
+            | Self::EffectClipDownloaded {
+                sha256,
+                path,
+                operation,
+                ..
+            }
+            | Self::ModeClipDownloaded {
+                sha256,
+                path,
+                operation,
+                ..
+            } => ClipStep::Downloaded {
+                sha256,
+                path,
+                operation,
+            },
+            Self::QuotaRefused { request_id, .. }
+            | Self::EffectClipQuotaRefused { request_id, .. }
+            | Self::ModeClipQuotaRefused { request_id, .. } => {
+                ClipStep::QuotaRefused { request_id }
+            }
+            Self::StartFailed { .. }
+            | Self::EffectClipStartFailed { .. }
+            | Self::ModeClipStartFailed { .. } => ClipStep::StartFailed,
+            Self::RejectedInReview { sha256, .. } | Self::ModeClipRejected { sha256, .. } => {
+                ClipStep::Rejected { sha256 }
+            }
+            Self::ImageRequestStarted { .. }
+            | Self::ImageDownloaded { .. }
+            | Self::ImageQuotaRefused { .. }
+            | Self::ImageRequestFailed { .. } => return None,
+        })
+    }
+}
+
+/// One step of a clip's history, common to unit, effect and mode clips.
+enum ClipStep<'a> {
+    /// A paid start request.
+    Started { request_id: &'a str, model: &'a str },
+    /// The service named the operation.
+    Named { operation: &'a str, model: &'a str },
+    /// The operation finished.
+    Done { outcome: &'a OperationOutcome },
+    /// The clip was downloaded and validated.
+    Downloaded {
+        sha256: &'a str,
+        path: &'a str,
+        operation: &'a str,
+    },
+    /// The start was refused for quota and cost nothing.
+    QuotaRefused { request_id: &'a str },
+    /// The start failed ambiguously.
+    StartFailed,
+    /// A reviewer rejected a download.
+    Rejected { sha256: &'a str },
 }
 
 /// One line of the ledger: when and in which run an event happened.
@@ -697,6 +955,8 @@ pub struct LedgerHistory {
     clips: BTreeMap<(String, AnimState), ClipHistory>,
     /// Effect clips by (`set`, `element`).
     effect_clips: BTreeMap<(String, String), ClipHistory>,
+    /// Mode clips by (`slug`, `stance`, `slot`).
+    mode_clips: BTreeMap<(String, String, SliceKey), ClipHistory>,
     failure_kinds: BTreeSet<String>,
     /// `(request id, model)` of every start request, in ledger order.
     starts: Vec<(String, String)>,
@@ -723,33 +983,38 @@ impl LedgerHistory {
     }
 
     fn apply(&mut self, record: &LedgerRecord) {
-        if let Some((set, element)) = record.event.effect_clip() {
-            let key = (set.to_string(), element.to_string());
-            self.apply_effect_clip(key, &record.event);
-            return;
-        }
-        let Some((slug, state)) = record.event.clip() else {
-            self.apply_image(&record.event);
+        let event = &record.event;
+        let Some(step) = event.clip_step() else {
+            self.apply_image(event);
             return;
         };
-        let clip = self.clips.entry((slug.to_string(), state)).or_default();
-        match &record.event {
-            LedgerEvent::RequestStarted {
-                request_id, model, ..
-            } => {
+        let clip = if let Some((set, element)) = event.effect_clip() {
+            self.effect_clips
+                .entry((set.to_string(), element.to_string()))
+                .or_default()
+        } else if let Some((slug, stance, slot)) = event.mode_clip() {
+            self.mode_clips
+                .entry((slug.to_string(), stance.to_string(), slot))
+                .or_default()
+        } else if let Some((slug, state)) = event.clip() {
+            self.clips.entry((slug.to_string(), state)).or_default()
+        } else {
+            return;
+        };
+        match step {
+            ClipStep::Started { request_id, model } => {
                 clip.paid_attempts += 1;
-                self.starts.push((request_id.clone(), model.clone()));
+                self.starts
+                    .push((request_id.to_string(), model.to_string()));
             }
-            LedgerEvent::OperationNamed {
-                operation, model, ..
-            } => {
-                clip.named_operations.insert(operation.clone());
+            ClipStep::Named { operation, model } => {
+                clip.named_operations.insert(operation.to_string());
                 clip.pending = Some(PendingOperation {
-                    operation: operation.clone(),
-                    model: model.clone(),
+                    operation: operation.to_string(),
+                    model: model.to_string(),
                 });
             }
-            LedgerEvent::OperationDone { outcome, .. } => {
+            ClipStep::Done { outcome } => {
                 if !outcome.has_video() {
                     clip.pending = None;
                     clip.unusable_results += 1;
@@ -758,92 +1023,33 @@ impl LedgerHistory {
                     self.failure_kinds.insert(kind);
                 }
             }
-            LedgerEvent::Downloaded {
+            ClipStep::Downloaded {
                 sha256,
                 path,
                 operation,
-                ..
             } => {
                 clip.pending = None;
-                clip.downloaded_sha256.insert(sha256.clone());
+                clip.downloaded_sha256.insert(sha256.to_string());
                 if !clip.rejected_sha256.contains(sha256) {
                     clip.downloaded = Some(DownloadedClip {
                         path: PathBuf::from(path),
-                        sha256: sha256.clone(),
-                        operation: operation.clone(),
+                        sha256: sha256.to_string(),
+                        operation: operation.to_string(),
                     });
                 }
             }
-            LedgerEvent::QuotaRefused { request_id, .. } => {
+            ClipStep::QuotaRefused { request_id } => {
                 clip.paid_attempts = clip.paid_attempts.saturating_sub(1);
-                self.quota_refused.insert(request_id.clone());
+                self.quota_refused.insert(request_id.to_string());
             }
-            LedgerEvent::StartFailed { .. } => clip.unusable_results += 1,
-            LedgerEvent::RejectedInReview { sha256, .. } => {
-                clip.rejected_sha256.insert(sha256.clone());
+            ClipStep::StartFailed => clip.unusable_results += 1,
+            ClipStep::Rejected { sha256 } => {
+                clip.rejected_sha256.insert(sha256.to_string());
                 clip.unusable_results += 1;
-                if clip
-                    .downloaded
-                    .as_ref()
-                    .is_some_and(|d| &d.sha256 == sha256)
-                {
+                if clip.downloaded.as_ref().is_some_and(|d| d.sha256 == sha256) {
                     clip.downloaded = None;
                 }
             }
-            _ => {}
-        }
-    }
-
-    /// Folds an effect-clip event into the history of its element, as [`Self::apply`] folds
-    /// a unit clip's: a start is paid at its model's price unless refused for quota, and a
-    /// named operation is pending until it finishes without a video or downloads.
-    fn apply_effect_clip(&mut self, key: (String, String), event: &LedgerEvent) {
-        let clip = self.effect_clips.entry(key).or_default();
-        match event {
-            LedgerEvent::EffectClipRequestStarted {
-                request_id, model, ..
-            } => {
-                clip.paid_attempts += 1;
-                self.starts.push((request_id.clone(), model.clone()));
-            }
-            LedgerEvent::EffectClipOperationNamed {
-                operation, model, ..
-            } => {
-                clip.named_operations.insert(operation.clone());
-                clip.pending = Some(PendingOperation {
-                    operation: operation.clone(),
-                    model: model.clone(),
-                });
-            }
-            LedgerEvent::EffectClipOperationDone { outcome, .. } => {
-                if !outcome.has_video() {
-                    clip.pending = None;
-                    clip.unusable_results += 1;
-                }
-                if let Some(kind) = outcome.failure_kind() {
-                    self.failure_kinds.insert(kind);
-                }
-            }
-            LedgerEvent::EffectClipDownloaded {
-                sha256,
-                path,
-                operation,
-                ..
-            } => {
-                clip.pending = None;
-                clip.downloaded_sha256.insert(sha256.clone());
-                clip.downloaded = Some(DownloadedClip {
-                    path: PathBuf::from(path),
-                    sha256: sha256.clone(),
-                    operation: operation.clone(),
-                });
-            }
-            LedgerEvent::EffectClipQuotaRefused { request_id, .. } => {
-                clip.paid_attempts = clip.paid_attempts.saturating_sub(1);
-                self.quota_refused.insert(request_id.clone());
-            }
-            LedgerEvent::EffectClipStartFailed { .. } => clip.unusable_results += 1,
-            _ => {}
         }
     }
 
@@ -874,6 +1080,14 @@ impl LedgerHistory {
             .get(&(set.to_string(), element.to_string()))
     }
 
+    /// The history of one mode clip (`slug`'s `slot` in catalog mode `stance`), if the ledger
+    /// mentions it.
+    #[must_use]
+    pub fn mode_clip(&self, slug: &str, stance: &str, slot: SliceKey) -> Option<&ClipHistory> {
+        self.mode_clips
+            .get(&(slug.to_string(), stance.to_string(), slot))
+    }
+
     /// Whether a failure of `kind` (see [`OperationOutcome::failure_kind`]) was recorded.
     #[must_use]
     pub fn knows_failure(&self, kind: &str) -> bool {
@@ -881,7 +1095,8 @@ impl LedgerHistory {
     }
 
     /// The model of every start that may have cost a generation, in ledger order: every
-    /// `request_started`, `image_request_started` and `effect_clip_request_started` line except
+    /// `request_started`, `image_request_started`, `effect_clip_request_started` and
+    /// `mode_clip_request_started` line except
     /// those the service refused for quota (those cost nothing).
     /// A start that failed ambiguously counts, because it may have started paid work.
     pub fn paid_start_models(&self) -> impl Iterator<Item = &str> {

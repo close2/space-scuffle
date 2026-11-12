@@ -309,6 +309,10 @@ struct FlipbookCoverage {
     catalog_units: BTreeSet<String>,
     /// Flipbooks in `assets/textures` that belong to no catalog archetype.
     non_catalog: BTreeSet<String>,
+    /// Mode atlases, `<slug>-<mode>` (plan `2026-11-09-effect-visualization.md` WP13): the media
+    /// of one catalog mode of one catalog unit.
+    #[serde(default)]
+    mode_atlases: BTreeSet<String>,
 }
 
 #[test]
@@ -327,9 +331,29 @@ fn test_flipbook_textures_512_invariants() {
         .collect();
     let declared: BTreeSet<String> = coverage
         .catalog_units
-        .union(&coverage.non_catalog)
+        .iter()
+        .chain(&coverage.non_catalog)
+        .chain(&coverage.mode_atlases)
         .cloned()
         .collect();
+    for name in &coverage.mode_atlases {
+        let (slug, mode) = name
+            .split_once('-')
+            .unwrap_or_else(|| panic!("mode atlas {name} is not <slug>-<mode>"));
+        let unit = catalog
+            .get_by_slug(slug)
+            .unwrap_or_else(|| panic!("mode atlas {name} names no catalog unit"));
+        assert!(
+            unit.modes
+                .iter()
+                .any(|candidate| candidate.mode_name == mode),
+            "mode atlas {name} names no catalog mode of {slug}"
+        );
+        assert!(
+            coverage.catalog_units.contains(slug),
+            "mode atlas {name} belongs to a unit without its default flipbook"
+        );
+    }
     assert_eq!(
         on_disk, declared,
         "assets/textures and tests/data/flipbook_coverage.ron disagree"

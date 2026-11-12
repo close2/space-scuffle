@@ -725,7 +725,7 @@ fn d12_the_dry_run_prints_the_spend_of_the_committed_ledger_and_the_planned_cost
     let output = dirs.generate(&shim, &[&unit], &["--dry-run"]);
     assert!(output.status.success(), "{}", text(&output));
     let out = stdout(&output);
-    // The committed ledger records Veo starts (unit and effect clips, 40 cents each) and paid
+    // The committed ledger records Veo starts (unit, effect and mode clips, 40 cents each) and paid
     // image-model requests (11 cents each; a quota refusal is free). It grows with every batch,
     // so the expected spend is counted from it rather than written down.
     let ledger = std::fs::read_to_string(&committed).expect("committed ledger");
@@ -735,9 +735,12 @@ fn d12_the_dry_run_prints_the_spend_of_the_committed_ledger_and_the_planned_cost
             .filter(|line| line.contains(&format!("\"event\":\"{event}\"")))
             .count()
     };
-    let clips = count("request_started") + count("effect_clip_request_started")
+    let clips = count("request_started")
+        + count("effect_clip_request_started")
+        + count("mode_clip_request_started")
         - count("quota_refused")
-        - count("effect_clip_quota_refused");
+        - count("effect_clip_quota_refused")
+        - count("mode_clip_quota_refused");
     let images = count("image_request_started") - count("image_quota_refused");
     let spent_cents = 40 * clips + 11 * images;
     let remaining_cents = 20_000 - spent_cents;

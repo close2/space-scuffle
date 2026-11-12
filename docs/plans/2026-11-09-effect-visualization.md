@@ -66,7 +66,7 @@ so that **no battle outcome, golden replay or checksum moves** (D-1); a work pac
 | [Q0020](../questions/closed/0020-smog-velocity-quiescence.md) answer: "The agent is always allowed to decide visual questions" | Standing rule | §7, D-11 |
 | [Q0069](../questions/open/0069-lurker-burrow-sections.md) when a burrowing Lurker becomes burrowed | Answered (option 2: `Stats` at 33 ticks, `Actor` animation to 45) but not yet implemented | D-6 |
 | [Q0070](../questions/open/0070-lurker-without-burrow-button.md) no Burrow button in the skirmish | Open, default option 1; plan `2026-11-09-client-mode-commands` adds the button | §2.4, WP12 |
-| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) (filed) Veo spend for morph and mode unit clips | Filed by WP0 (2026-11-09), default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
+| [Q0075](../questions/closed/0075-veo-morph-and-mode-clips.md) (filed) Veo spend for morph and mode unit clips | Filed by WP0 (2026-11-09), default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
 | [Q0076](../questions/closed/0076-undetected-cloaked-enemies.md) (filed) what an enemy sees of an undetected cloaked unit | Filed by WP0 (2026-11-09), default "shimmer, as StarCraft II" | D-5 |
 | [Q0077](../questions/closed/0077-caster-spells.md) (filed) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0 (2026-11-09), default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
 | [Q0078](../questions/closed/0078-image-model-for-effect-textures.md) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**; default changed by the orchestrator to **"yes, within $25.25 of the $200 total"**, because the owner proposed generated images in chat (2026-11-09) | §6, D-4 |
@@ -786,7 +786,7 @@ Sizes: S ≤ 1 day, M 2–3 days, L ≥ 4 days. At most two building agents at o
 | WP11 | Migrate every existing weapon look (tracers, beams, lightning, slashes, plasma orbs, shatter) into effect definitions and presentation blocks for all shipped units and structures; retire the matching `combat_fx` kinds | Coverage test over the whole catalog with no defaults left for splash weapons; existing visual tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) green or re-baselined with that cause only | Every unit chooses its effects in data | M |
 | **Integration, media, showcase, bookkeeping** | | | | |
 | WP12 | Mode-command integration (after plan `2026-11-09-client-mode-commands` lands): skirmish headless test burrows and sieges through input, checks stance and the fog rule end to end | `skirmish_match_tests.rs` extension | Green | S |
-| WP13 | Morph and mode unit clips (only if Q0075 = yes): atlas slices keyed by `(AnimState, mode)`; ≈ 12 clips | `asset_baker` prompt validation; `runtime_media_tests.rs` admission of mode slices | Clips accepted in review | M + ≤ $6.80 |
+| WP13 | Morph and mode unit clips (only if Q0075 = yes): atlas slices keyed by `(AnimState, mode)`; ≈ 12 clips | `asset_baker` prompt validation; `runtime_media_tests.rs` admission of mode slices | Clips accepted in review — **done** (Amendment 10: 8 clips, $4.40) | M + ≤ $6.80 |
 | WP14 | Remaining texture sets (`fx_energy`, variants), showcase beats (tank sieges and fires, Hellion flame, Baneling burst and Lurker spines once those identities have media), frame budget with every effect | `showcase_tests.rs`: the take contains each showcase effect at least once; frame-budget evidence (§10.3) | CI showcase renders on lavapipe within its budget | M + ≤ $8.80 Veo (+ ≤ $20 images if allowed) |
 | WP15 | Bookkeeping: evidence `docs/evidence/2026-11-09-effect-visualization.md` (bit-identity, captures, pixel statistics, frame budget, spend), `DESIGN.md` presentation row, register entries closed, `crates/gate/suites.ron` rules and GPU classes for every new test (C22), plan row → Done | `workspace_checks`, `suite_catalog_tests.rs` | Green | S |
 
@@ -947,7 +947,7 @@ textures).
 | [Q0080](../questions/closed/0080-effect-review-outcome.md) | Option 1: continue the review loop for `acid_burst` and `spine_line`, **up to five rounds in all** before asking again; the WP7+ scale-out is unblocked | The WP6c stop rule of two failed rounds becomes **five**. Rounds 1 and 2 are spent; **round 3** works from the round-2 reviewer's ranked changes as the owner restated them (below). When round 3 accepts both effects, the scale-out re-enables them for `volatile_tick` and `burrow_scorpion` (presentation blocks back in `units.ron`); until then they stay unused (Amendment 1). |
 | [Q0076](../questions/closed/0076-undetected-cloaked-enemies.md) | Option 1 plus StarCraft II's cues for burrowed units | D-5 is extended by rules R4 to R6 (below). |
 | [Q0078](../questions/closed/0078-image-model-for-effect-textures.md) | Yes: target about **$25** for effect textures, cap **below $50**, within the $200 total; every call in the ledger | §6.6's image line becomes "target $25.25, cap < $50". Every request goes through `asset_baker effect-image`, which ledgers it. |
-| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) | Option 2, up to $20 (target < $10) for morph and mode clips | WP13 is approved at that cap. **Not in round 3**: it runs in the scale-out. |
+| [Q0075](../questions/closed/0075-veo-morph-and-mode-clips.md) | Option 2, up to $20 (target < $10) for morph and mode clips | WP13 is approved at that cap. **Not in round 3**: it runs in the scale-out. |
 
 **Round 3 changes (from [`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md)).**
 
@@ -1478,7 +1478,61 @@ review).**
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
 
-## Amendment 10: WP8 concealment and stance, round 1 (2026-11-12, short note, charter §6)
+## Amendment 10: WP13, mode and morph unit clips (2026-11-12, short note, charter §6)
+
+**Decision note (charter §6, short note: media the owner approved in
+[Q0075](../questions/closed/0075-veo-morph-and-mode-clips.md), a client presentation change and its tests).** It
+changes no simulation state, golden replay or checksum (D-1 holds: the client reads the stance the snapshot already
+publishes, `StanceView`, and no simulation crate changed).
+
+**What ships.**
+
+- **Mode atlases, one per catalog mode.** A unit with mode media ships `<slug>-<mode>.{png,flipbook.ron,provenance.ron}`
+  beside its default atlas: the states the client can show in the mode (`required_mode_slices`: Idle; Walk when the
+  mode is not immobile; Attack when the unit is armed in it; Cast for a worker) and the two morphs, `Enter` and
+  `Leave`, in the manifest's new `morphs` map (absent, and then neither read nor written, in every default atlas, so
+  committed manifests keep their bytes). This is "atlas slices keyed by `(AnimState, mode)`" of §9 as a second atlas
+  rather than more slices in the first: the 16 384-pixel strip holds 32 frames of 512 pixels, so seven slices in one
+  atlas would have kept 4 frames each; a mode atlas keeps 8 per slice and leaves the reviewed default atlas
+  untouched. The bubble's material binds the mode atlas's texture while the unit shows it (a texture switch per stance
+  change, none in steady state).
+- **What a bubble shows** (`client::flipbook_clock::shown_stance`): the enter morph while the snapshot publishes a
+  channel into a mode with an atlas, the leave morph while it publishes a channel out of one, the mode atlas while
+  the unit is settled in such a mode, and the default atlas otherwise (a mode without media looks as before). A morph
+  is stretched over the channel's nominal ticks and holds its last frame; a channel's random extra is a hold on its
+  first frame (`ModeTransitionView`, D-1). The lanes are constant through a channel, so no material is prepared
+  while it runs.
+- **Admission** (`client::media`): a mode atlas is admitted with its identity and must hold every slice its mode
+  needs, or the identity is not presentable (`MediaLoadError::MissingMorph`, `MissingAction`); its name must be its
+  own.
+- **Pipeline** (`asset_baker`): the `modes` section of `media_style.ron` (text per slice, an optional `look`, loop
+  treatment), checked against the catalog at load; `mode-veo` (one paid clip, or `--dry-run`), `mode-reject`,
+  `install-mode-clip`, `bake-mode-videos`; `mode_clip_*` ledger events counted by the budget like every other start.
+  The paid run shares one runner with `effect-veo` (`asset_baker::paid_clip`). The pictures chain the clips: the
+  enter morph starts on the Idle picture and its last frame is the mode's picture, on which the states start (and,
+  pinned, end); the leave morph ends on the Idle picture.
+- **Media:** 8 accepted clips of 11 generated ($4.40; ledger $106.45 → $110.85); review log and evidence in
+  [`docs/evidence/veo/2026-11-12-mode-clips.md`](../evidence/veo/2026-11-12-mode-clips.md).
+
+**Tests.** `asset_baker/tests/mode_media_tests.rs` (prompt validation of the `modes` section and of every shipped
+mode prompt, the picture chain, the ledger events and the budget, the dry run, the mode atlas bake and its
+provenance); `client/tests/runtime_media_tests.rs` (admission of the shipped mode atlases, refusal of one missing a
+morph or an action or named for another identity, a unit without mode media keeping its default atlas);
+`client::flipbook_clock` unit tests (the stance table, morph lanes through the random hold, the channel and after);
+`client/tests/mode_atlas_gpu_tests.rs` (the shipped skirmish on a real GPU: default, morphing and settled shots, the
+bound texture and changed pixels); `round2_visual_tests` audits the mode atlases in `flipbook_coverage.ron`.
+
+**Decisions and out of scope (Q0002).**
+
+- The Lab preview, the inspector portrait and the swarm keep showing the default stance; only the battle shows mode
+  atlases.
+- `audit-media --strict` audits catalog identities against `required_set.ron`; mode atlases carry provenance records
+  checked by the bake and by `mode_media_tests`, and are not yet in the strict audit.
+- The tank's sieged Attack is played over the sieged weapon's period like any Attack; the morph clips are 4 s of
+  source compressed into channels of 2.88 s (siege), 2.52 s (unsiege), 1.32 s (burrow) and 0.44 s (unburrow).
+- B-111 is fixed and leaves the register.
+
+## Amendment 11: WP8 concealment and stance, round 1 (2026-11-12, short note, charter §6)
 
 **What changes.** WP8 of §9 in the client, its shaders and the catalog's presentation data. No simulation state,
 golden replay or checksum changes (D-1 holds: the client reads `concealment` and `stance`, which WP2 already
