@@ -1,0 +1,84 @@
+WP9 round 3: printed measurements of crates/client/tests/status_gpu_tests.rs (debug build, Xvfb, 1280x720,
+the battle camera's default distance), every line a test prints with its driver; then the effect GPU test
+binaries on both drivers.
+
+== radv
+driver radv: Stim stands at (586, 383)
+driver radv: Daze stands at (551, 249)
+driver radv: Charge stands at (684, 219), (595, 221)
+driver radv: Barrier stands at (793, 220), (800, 262)
+driver radv: Deaths stands at (892, 231), (898, 263), (909, 288), (920, 361)
+driver radv: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver radv: Daze: status shown on 74 of 88 frames, look held differently on 0
+driver radv: Charge: status shown on 10 of 88 frames, look held differently on 0
+driver radv: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver radv: the stimmed unit's rim runs from 0.252 to 0.620
+driver radv: the charge moved under its status on 10 frames and laid 4 dust effects then, 0 otherwise; the stim laid 10 fumes over 3.52 s (10.1 beats)
+driver radv: the barrier absorbed hits on 8 frames and flashed 8 times
+driver radv: shell cards at the barrier's body from frame Some(2): 0.04:0 0.08:0 0.12:1 0.16:1 0.20:1 0.24:1 0.28:1 0.32:1 0.36:1 0.40:1 0.44:1 0.48:2
+driver radv: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver radv: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver radv: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver radv: dying unit 3 (default shatter) had at most 16 legacy shards near it
+driver radv: bio_burst spawned 1 times at the deaths (expected 1)
+driver radv: vehicle_wreck spawned 2 times at the deaths (expected 2)
+driver radv: pair Stim stands at (581, 384), (622, 384) (acting, twin)
+driver radv: pair Daze stands at (550, 251), (586, 251) (acting, twin)
+driver radv: pair BarrierRanged stands at (691, 219), (726, 219) (acting, twin)
+driver radv: pair BarrierMelee stands at (793, 218), (829, 218) (acting, twin)
+driver radv: pair BarrierRanged attacker pulse_bot weapon Some((Hitscan, 5.0))
+driver radv: pair BarrierMelee attacker psi_grey weapon Some((MeleeSlash, 0.1))
+driver radv: pair Stim: status before the onset on 0 frames; look first held at Some(1.08) s
+driver radv: pair Daze: status before the onset on 0 frames; look first held at Some(1.08) s
+driver radv: pair BarrierRanged: status before the onset on 0 frames; look first held at Some(1.16) s
+driver radv: pair BarrierMelee: status before the onset on 0 frames; look first held at Some(1.16) s
+driver radv: absorb flashes spawned: 7
+driver radv: ring of 378 pixels round the unit (1.08..1.30 radii, 14.9 px radius): barrier at 0.5 changes 358 (94.7 %), without its layers 0, at 0.05 351, down 0; the unit itself changes 134 of the ring against empty ground
+driver radv: at 24 levels or more, the barrier at 0.5 changes 202 of the 378 ring pixels (53.4 %), at 0.05 156 (41.3 %)
+driver radv: barrier down, changed ring pixels (x, y, largest channel change): []
+driver radv: a death's marks beside a resource node: the node draws 183 pixels of its patch; its own light is dimmed on 0 of them; 22 of them change colour (the floor seen through its additive billboard); 946 pixels of floor round it are stained
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 175.75s
+
+== lavapipe
+driver lavapipe: Stim stands at (586, 383)
+driver lavapipe: Daze stands at (551, 249)
+driver lavapipe: Charge stands at (684, 219), (595, 221)
+driver lavapipe: Barrier stands at (793, 220), (800, 262)
+driver lavapipe: Deaths stands at (892, 231), (898, 263), (909, 288), (920, 361)
+driver lavapipe: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: Daze: status shown on 74 of 88 frames, look held differently on 0
+driver lavapipe: Charge: status shown on 10 of 88 frames, look held differently on 0
+driver lavapipe: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: the stimmed unit's rim runs from 0.252 to 0.620
+driver lavapipe: the charge moved under its status on 10 frames and laid 4 dust effects then, 0 otherwise; the stim laid 10 fumes over 3.52 s (10.1 beats)
+driver lavapipe: the barrier absorbed hits on 8 frames and flashed 8 times
+driver lavapipe: shell cards at the barrier's body from frame Some(2): 0.04:0 0.08:0 0.12:1 0.16:1 0.20:1 0.24:1 0.28:1 0.32:1 0.36:1 0.40:1 0.44:1 0.48:2
+driver lavapipe: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver lavapipe: dying unit 3 (default shatter) had at most 16 legacy shards near it
+driver lavapipe: bio_burst spawned 1 times at the deaths (expected 1)
+driver lavapipe: vehicle_wreck spawned 2 times at the deaths (expected 2)
+driver lavapipe: pair Stim stands at (581, 384), (622, 384) (acting, twin)
+driver lavapipe: pair Daze stands at (550, 251), (586, 251) (acting, twin)
+driver lavapipe: pair BarrierRanged stands at (691, 219), (726, 219) (acting, twin)
+driver lavapipe: pair BarrierMelee stands at (793, 218), (829, 218) (acting, twin)
+driver lavapipe: pair BarrierRanged attacker pulse_bot weapon Some((Hitscan, 5.0))
+driver lavapipe: pair BarrierMelee attacker psi_grey weapon Some((MeleeSlash, 0.1))
+driver lavapipe: pair Stim: status before the onset on 0 frames; look first held at Some(1.08) s
+driver lavapipe: pair Daze: status before the onset on 0 frames; look first held at Some(1.08) s
+driver lavapipe: pair BarrierRanged: status before the onset on 0 frames; look first held at Some(1.16) s
+driver lavapipe: pair BarrierMelee: status before the onset on 0 frames; look first held at Some(1.16) s
+driver lavapipe: absorb flashes spawned: 7
+driver lavapipe: ring of 378 pixels round the unit (1.08..1.30 radii, 14.9 px radius): barrier at 0.5 changes 354 (93.7 %), without its layers 0, at 0.05 348, down 0; the unit itself changes 134 of the ring against empty ground
+driver lavapipe: at 24 levels or more, the barrier at 0.5 changes 194 of the 378 ring pixels (51.3 %), at 0.05 152 (40.2 %)
+driver lavapipe: barrier down, changed ring pixels (x, y, largest channel change): []
+driver lavapipe: a death's marks beside a resource node: the node draws 183 pixels of its patch; its own light is dimmed on 0 of them; 22 of them change colour (the floor seen through its additive billboard); 947 pixels of floor round it are stained
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 239.48s
+
+effect_gpu_tests on radv: test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.93s
+effect_slice_gpu_tests on radv: test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 740.61s
+stance_gpu_tests on radv: test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 209.49s
+effect_gpu_tests on lavapipe: test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.17s
+effect_slice_gpu_tests on lavapipe: test result: ok. 10 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 622.32s
+stance_gpu_tests on lavapipe: test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 319.22s
