@@ -38,7 +38,7 @@ use crate::framing::{frame_to_square, BakeFraming, FramedFrames};
 use crate::loop_metrics::{
     apply_scale_lock, crossfade_into_first, downsample_half, plan_scale_lock, SeamRepair,
 };
-use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout, SliceKey};
 use crate::prompts::{atlas_loops, MAX_ATLAS_STRIP_HEIGHT};
 use crate::provenance::{FrameSampling, SeamRecord};
 use image::RgbaImage;
@@ -444,6 +444,7 @@ pub fn extract_and_pack_video(
         total_frames,
         layout: FlipbookLayout::VerticalStrip,
         actions,
+        morphs: BTreeMap::new(),
     };
 
     meta.save_to_ron(output_meta_path)?;
@@ -608,6 +609,58 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
     spec: FrameSpec,
     seams: &BTreeMap<AnimState, SeamRepair>,
 ) -> Result<FramedBake, BakerError> {
+    let slices: Vec<(SliceKey, &Path)> = clips
+        .iter()
+        .map(|(state, path)| (SliceKey::Action(*state), path.as_ref()))
+        .collect();
+    let baked = bake_slices(unit_name, &slices, output_dir, spec, seams)?;
+    Ok(FramedBake {
+        meta: baked.meta,
+        bar_rgb: by_state(baked.bar_rgb),
+        seam: by_state(baked.seam),
+    })
+}
+
+/// The entries of `map` keyed by an action, rekeyed by its state; morphs are left out.
+fn by_state<T>(map: BTreeMap<SliceKey, T>) -> BTreeMap<AnimState, T> {
+    map.into_iter()
+        .filter_map(|(slot, value)| match slot {
+            SliceKey::Action(state) => Some((state, value)),
+            SliceKey::Morph(_) => None,
+        })
+        .collect()
+}
+
+/// The result of [`bake_slices`]: [`FramedBake`] keyed by slice, so that it also covers the
+/// morphs of a mode atlas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliceBake {
+    /// The manifest written beside the atlas.
+    pub meta: FlipbookAtlasMeta,
+    /// The bar colour chosen for each slice's clip, as in [`FramedBake::bar_rgb`].
+    pub bar_rgb: BTreeMap<SliceKey, Option<[u8; 3]>>,
+    /// What the seam repair did to each slice's frames, as in [`FramedBake::seam`].
+    pub seam: BTreeMap<SliceKey, Option<SeamRecord>>,
+}
+
+/// Bakes one clip per slice into one vertical strip PNG and `.flipbook.ron` manifest: the
+/// states into `actions`, the morphs of a mode atlas into `morphs` (plan
+/// `2026-11-09-effect-visualization.md` WP13). This is [`bake_repaired_action_videos`] for any
+/// slice; a morph plays once and holds its last frame, and cannot have a seam repair.
+///
+/// The clips are packed in the order given, each keeping at most
+/// [`frames_per_state`]`(spec.size, clips.len())` frames.
+///
+/// # Errors
+/// As [`bake_repaired_action_videos`], and [`BakerError::ValidationFailed`] for a slice given
+/// twice. Nothing is written on error.
+pub fn bake_slices(
+    unit_name: &str,
+    clips: &[(SliceKey, &Path)],
+    output_dir: &Path,
+    spec: FrameSpec,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<SliceBake, BakerError> {
     let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
     if !ffmpeg_path.exists() {
@@ -629,10 +682,21 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
     let max_frames_per_clip = frames_per_state(spec.size, clips.len());
 
     let mut actions = BTreeMap::new();
+    let mut morphs = BTreeMap::new();
     let mut bar_rgb = BTreeMap::new();
     let mut seam = BTreeMap::new();
     let mut all_frames: Vec<RgbaImage> = Vec::new();
-    for (state, video_path_ref) in clips {
+    for (slot, video_path) in clips {
+        if bar_rgb.contains_key(slot) {
+            return Err(BakerError::ValidationFailed {
+                name: unit_name.to_string(),
+                reason: format!("the {slot} slice is given twice"),
+            });
+        }
+        let repair = match slot {
+            SliceKey::Action(state) => seams.get(state).copied(),
+            SliceKey::Morph(_) => None,
+        };
         // PERFORMANCE RATIONALE:
         // Why: WebGPU limits 2D texture dimensions to 16384 pixels.
         // What: We keep max_frames_per_clip = (16384 / frame_size) / K frames, sampled across each clip.
@@ -640,20 +704,28 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
         // at the cost of temporal resolution in clips that exceed their share.
         let repaired = decode_repaired_clip(
             &ffmpeg_path,
-            video_path_ref.as_ref(),
+            video_path,
             spec,
             max_frames_per_clip,
-            &format!("{unit_name} {state:?}"),
-            seams.get(state).copied(),
+            &format!("{unit_name} {slot}"),
+            repair,
         )?;
-        bar_rgb.insert(*state, repaired.framed.bar_rgb);
-        seam.insert(*state, repaired.seam);
+        bar_rgb.insert(*slot, repaired.framed.bar_rgb);
+        seam.insert(*slot, repaired.seam);
         let start = all_frames.len() as u32;
         let frames = repaired.framed.frames;
-        actions.insert(
-            *state,
-            pack_action(*state, start, frames.len() as u32, repaired.duration_ms),
-        );
+        let count = frames.len() as u32;
+        match slot {
+            SliceKey::Action(state) => {
+                actions.insert(
+                    *state,
+                    pack_action(*state, start, count, repaired.duration_ms),
+                );
+            }
+            SliceKey::Morph(morph) => {
+                morphs.insert(*morph, pack_morph(start, count, repaired.duration_ms));
+            }
+        }
         all_frames.extend(frames);
     }
 
@@ -665,6 +737,7 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
         total_frames: all_frames.len() as u32,
         layout: FlipbookLayout::VerticalStrip,
         actions,
+        morphs,
     };
     write_atlas(
         &meta,
@@ -673,7 +746,7 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
         &output_png_path,
         &output_meta_path,
     )?;
-    Ok(FramedBake {
+    Ok(SliceBake {
         meta,
         bar_rgb,
         seam,
@@ -964,6 +1037,18 @@ fn pack_action(
         frame_count,
         looping: atlas_loops(state),
         hold_last_frame: matches!(state, AnimState::Die | AnimState::Constructing),
+        duration_ms,
+    }
+}
+
+/// The slice of a morph: played once over the mode switch's channel, holding its last frame
+/// until the stance changes.
+fn pack_morph(start_frame: u32, frame_count: u32, duration_ms: Option<u32>) -> ActionSlice {
+    ActionSlice {
+        start_frame,
+        frame_count,
+        looping: false,
+        hold_last_frame: true,
         duration_ms,
     }
 }

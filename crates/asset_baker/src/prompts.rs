@@ -493,6 +493,11 @@ pub struct MediaStyle {
     /// The prompt class "effect element": texts for effect texture requests (plan
     /// `2026-11-09-effect-visualization.md` §6), which name a set and an element, not a unit.
     pub effect_element: crate::effects::prompt::EffectElementStyle,
+    /// The clips of units' catalog modes and their morphs (plan
+    /// `2026-11-09-effect-visualization.md` WP13): per slug and mode, the text of each slice
+    /// and the loop treatment of its states. Absent means no unit has mode media.
+    #[serde(default)]
+    pub modes: crate::mode_media::ModeStyle,
 }
 
 impl MediaStyle {
@@ -516,6 +521,7 @@ impl MediaStyle {
         style.framing.check(catalog, &path)?;
         style.actions.check(catalog, &path)?;
         style.loops.check(catalog, &path)?;
+        style.modes.check(catalog, &path)?;
         Ok(style)
     }
 

@@ -37,11 +37,11 @@
 //!   bars or seam repair. `seam` is written only when a repair was done.
 
 use crate::error::BakerError;
-use crate::ffmpeg_importer::{bake_repaired_action_videos, FrameSpec};
+use crate::ffmpeg_importer::{bake_slices, FrameSpec};
 use crate::framing::BakeFraming;
 use crate::ledger::{sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord};
 use crate::loop_metrics::SeamRepair;
-use crate::manifest::FlipbookAtlasMeta;
+use crate::manifest::{FlipbookAtlasMeta, Morph, SliceKey};
 use crate::media::{media_paths, LoadedUnitMedia};
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,19 @@ pub enum ProvenanceError {
     DuplicateState {
         /// The repeated state.
         state: AnimState,
+    },
+    /// A mode clip to bake is not a file directly inside the videos directory, so the record
+    /// could not name it.
+    #[error(
+        "clip '{clip}' for the {slot} slice is not a file directly inside the videos directory '{videos}'"
+    )]
+    SliceOutsideVideos {
+        /// The slice of the clip.
+        slot: SliceKey,
+        /// The clip.
+        clip: PathBuf,
+        /// The videos directory.
+        videos: PathBuf,
     },
     /// The FFmpeg version could not be read.
     #[error("cannot read the FFmpeg version from '{path}': {reason}")]
@@ -259,6 +272,11 @@ pub struct MediaProvenance {
     pub bake: BakeParameters,
     /// Every baked state.
     pub states: BTreeMap<AnimState, StateProvenance>,
+    /// Every baked morph of a mode atlas (plan `2026-11-09-effect-visualization.md` WP13).
+    /// Empty, and then neither read nor written, for a default atlas, so every record written
+    /// before mode atlases keeps its exact text.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub morphs: BTreeMap<Morph, StateProvenance>,
 }
 
 impl MediaProvenance {
@@ -360,47 +378,116 @@ pub fn bake_with_provenance_and_seams(
     seams: &BTreeMap<AnimState, SeamRepair>,
 ) -> Result<MediaProvenance, ProvenanceError> {
     let names = clip_names(clips, videos_dir)?;
-    let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;
-    let pairs: Vec<(AnimState, &Path)> = clips
+    let slices: Vec<SliceClip> = clips
         .iter()
-        .map(|clip| (clip.state, clip.path.as_path()))
+        .map(|clip| SliceClip {
+            slot: SliceKey::Action(clip.state),
+            path: clip.path.clone(),
+            origin: clip.origin.clone(),
+        })
         .collect();
-    let crate::FramedBake {
+    bake_named_slices(slug, &slices, names, output_dir, spec, seams)
+}
+
+/// One clip of a mode atlas to bake, with its slice and origin.
+#[derive(Debug, Clone)]
+pub struct SliceClip {
+    /// The slice the clip shows: a state in the mode, or a morph.
+    pub slot: SliceKey,
+    /// The clip, a file directly inside the videos directory.
+    pub path: PathBuf,
+    /// Where it came from.
+    pub origin: ClipOrigin,
+}
+
+/// Bakes the clips of a mode atlas (plan `2026-11-09-effect-visualization.md` WP13) into
+/// `<output_dir>/<atlas>.{png,flipbook.ron}` and writes `<atlas>.provenance.ron` beside them, as
+/// [`bake_with_provenance_and_seams`] does for a default atlas: the states go to `states`, the
+/// morphs to `morphs`. `atlas` is the mode atlas's name
+/// ([`crate::mode_media::ModeAtlasId::atlas_name`]).
+///
+/// # Errors
+/// [`ProvenanceError::SliceOutsideVideos`], a slice given twice (through
+/// [`ProvenanceError::Bake`]), any baking error, [`ProvenanceError::FfmpegVersion`] or an I/O
+/// error. Nothing is written if a clip is refused.
+pub fn bake_mode_with_provenance(
+    atlas: &str,
+    clips: &[SliceClip],
+    videos_dir: &Path,
+    output_dir: &Path,
+    spec: FrameSpec,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<MediaProvenance, ProvenanceError> {
+    let videos = canonical(videos_dir)?;
+    let names = clips
+        .iter()
+        .map(|clip| {
+            file_name_inside(&videos, &clip.path).ok_or_else(|| {
+                ProvenanceError::SliceOutsideVideos {
+                    slot: clip.slot,
+                    clip: clip.path.clone(),
+                    videos: videos_dir.to_path_buf(),
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    bake_named_slices(atlas, clips, names, output_dir, spec, seams)
+}
+
+/// The shared bake of [`bake_with_provenance_and_seams`] and [`bake_mode_with_provenance`]:
+/// `names` holds each clip's file name inside the videos directory, in the order of `clips`.
+fn bake_named_slices(
+    name: &str,
+    clips: &[SliceClip],
+    names: Vec<String>,
+    output_dir: &Path,
+    spec: FrameSpec,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<MediaProvenance, ProvenanceError> {
+    let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;
+    let pairs: Vec<(SliceKey, &Path)> = clips
+        .iter()
+        .map(|clip| (clip.slot, clip.path.as_path()))
+        .collect();
+    let crate::SliceBake {
         meta,
         bar_rgb,
         seam,
-    } = bake_repaired_action_videos(slug, &pairs, output_dir, spec, seams)?;
+    } = bake_slices(name, &pairs, output_dir, spec, seams)?;
     let frame_size = spec.size;
     let (png, manifest) =
-        media_paths(output_dir, slug).map_err(|_| ProvenanceError::InvalidSlug {
-            slug: slug.to_string(),
+        media_paths(output_dir, name).map_err(|_| ProvenanceError::InvalidSlug {
+            slug: name.to_string(),
         })?;
     let mut states = BTreeMap::new();
-    for (clip, name) in clips.iter().zip(names) {
-        let slice = meta
-            .actions
-            .get(&clip.state)
-            .ok_or_else(|| BakerError::ValidationFailed {
-                name: slug.to_string(),
-                reason: format!("the baked manifest has no {:?} slice", clip.state),
-            })?;
-        states.insert(
-            clip.state,
-            StateProvenance {
-                clip: name,
-                clip_sha256: file_sha256(&clip.path)?,
-                start_frame: slice.start_frame,
-                frame_count: slice.frame_count,
-                origin: clip.origin.clone(),
-                bar_rgb: bar_rgb.get(&clip.state).copied().flatten(),
-                seam: seam.get(&clip.state).copied().flatten(),
-            },
-        );
+    let mut morphs = BTreeMap::new();
+    for (clip, clip_name) in clips.iter().zip(names) {
+        let slice = match clip.slot {
+            SliceKey::Action(state) => meta.actions.get(&state),
+            SliceKey::Morph(morph) => meta.morphs.get(&morph),
+        }
+        .ok_or_else(|| BakerError::ValidationFailed {
+            name: name.to_string(),
+            reason: format!("the baked manifest has no {} slice", clip.slot),
+        })?;
+        let record = StateProvenance {
+            clip: clip_name,
+            clip_sha256: file_sha256(&clip.path)?,
+            start_frame: slice.start_frame,
+            frame_count: slice.frame_count,
+            origin: clip.origin.clone(),
+            bar_rgb: bar_rgb.get(&clip.slot).copied().flatten(),
+            seam: seam.get(&clip.slot).copied().flatten(),
+        };
+        match clip.slot {
+            SliceKey::Action(state) => states.insert(state, record),
+            SliceKey::Morph(morph) => morphs.insert(morph, record),
+        };
     }
     let state_count = u32::try_from(clips.len()).unwrap_or(u32::MAX).max(1);
     let provenance = MediaProvenance {
         format_version: PROVENANCE_FORMAT_VERSION,
-        name: slug.to_string(),
+        name: name.to_string(),
         atlas_sha256: file_sha256(&png)?,
         manifest_sha256: file_sha256(&manifest)?,
         bake: BakeParameters {
@@ -411,9 +498,17 @@ pub fn bake_with_provenance_and_seams(
             framing: spec.framing,
         },
         states,
+        morphs,
     };
-    provenance.save(&provenance_path(output_dir, slug)?)?;
+    provenance.save(&provenance_path(output_dir, name)?)?;
     Ok(provenance)
+}
+
+/// The file name of `path` when it is a file directly inside the canonical directory `videos`.
+fn file_name_inside(videos: &Path, path: &Path) -> Option<String> {
+    let path = std::fs::canonicalize(path).ok()?;
+    let name = path.file_name()?.to_str()?.to_string();
+    (path.parent() == Some(videos) && path.is_file()).then_some(name)
 }
 
 /// The file name of each clip, refusing one outside `videos_dir` or a repeated state.
@@ -575,8 +670,56 @@ pub fn veo_origin_by_clip_sha256(
     }
 }
 
-/// The `request_started` (or `effect_clip_request_started`) event of the request whose
-/// operation the ledger named `operation`.
+/// The origin of a mode clip with SHA-256 `clip_sha256` that the ledger downloaded for
+/// `slug`'s `slot` in mode `stance` (`mode_clip_downloaded`), with the model, prompt and
+/// pictures of the request whose operation produced it. `None` if the ledger never downloaded
+/// these bytes for that clip.
+#[must_use]
+pub fn veo_origin_of_mode_clip(
+    ledger: &[NumberedRecord],
+    slug: &str,
+    stance: &str,
+    slot: SliceKey,
+    clip_sha256: &str,
+) -> Option<ClipOrigin> {
+    let (line, operation) =
+        ledger
+            .iter()
+            .rev()
+            .find_map(|numbered| match &numbered.record.event {
+                LedgerEvent::ModeClipDownloaded {
+                    slug: s,
+                    stance: m,
+                    slot: k,
+                    sha256,
+                    operation,
+                    ..
+                } if s == slug && m == stance && *k == slot && sha256 == clip_sha256 => {
+                    Some((numbered.line, operation.clone()))
+                }
+                _ => None,
+            })?;
+    match started_request(ledger, &operation)? {
+        LedgerEvent::ModeClipRequestStarted {
+            model,
+            prompt_sha256,
+            keyframe_sha256,
+            last_frame_sha256,
+            ..
+        } => Some(ClipOrigin::Veo {
+            model: model.clone(),
+            operation,
+            prompt_sha256: prompt_sha256.clone(),
+            keyframe_sha256: keyframe_sha256.clone(),
+            last_frame_sha256: last_frame_sha256.clone(),
+            ledger_line: line,
+        }),
+        _ => None,
+    }
+}
+
+/// The `request_started` (or `effect_clip_request_started`, `mode_clip_request_started`) event
+/// of the request whose operation the ledger named `operation`.
 fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<&'a LedgerEvent> {
     let request_id = ledger
         .iter()
@@ -590,6 +733,11 @@ fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<
                 operation: named,
                 request_id,
                 ..
+            }
+            | LedgerEvent::ModeClipOperationNamed {
+                operation: named,
+                request_id,
+                ..
             } if named == operation => Some(request_id.as_str()),
             _ => None,
         })?;
@@ -599,6 +747,7 @@ fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<
         .find(|event| {
             matches!(event, LedgerEvent::RequestStarted { request_id: started, .. }
             | LedgerEvent::EffectClipRequestStarted { request_id: started, .. }
+            | LedgerEvent::ModeClipRequestStarted { request_id: started, .. }
             if started == request_id)
         })
 }
@@ -1250,6 +1399,7 @@ mod tests {
     fn a_record_round_trips_through_ron() -> Result<(), Box<dyn std::error::Error>> {
         let record = MediaProvenance {
             format_version: PROVENANCE_FORMAT_VERSION,
+            morphs: BTreeMap::new(),
             name: "probe".into(),
             atlas_sha256: "a".repeat(64),
             manifest_sha256: "b".repeat(64),
@@ -1330,10 +1480,12 @@ mod tests {
             fps: 1,
             total_frames: 4,
             layout: crate::FlipbookLayout::VerticalStrip,
+            morphs: BTreeMap::new(),
             actions: BTreeMap::from([(AnimState::Idle, slice(0, 2)), (AnimState::Walk, walk)]),
         };
         let provenance = MediaProvenance {
             format_version: PROVENANCE_FORMAT_VERSION,
+            morphs: BTreeMap::new(),
             name: "probe".into(),
             atlas_sha256: String::new(),
             manifest_sha256: String::new(),

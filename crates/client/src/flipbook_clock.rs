@@ -16,6 +16,10 @@
 //! - The battle's side (WP5, D-5 and D-8): [`update_flipbook_clock_system`] is the only writer of
 //!   the clock, [`displayed_action`] says what a bubble shows, [`FlipbookPhase`] remembers since
 //!   when, and [`battle_uniform`] packs a live bubble's lanes from its presented record.
+//! - Mode atlases (plan `docs/plans/2026-11-09-effect-visualization.md` WP13): [`shown_stance`]
+//!   says whether a bubble shows its default atlas, the atlas of the mode it is in, or a morph of
+//!   a mode atlas while the simulation channels a mode switch; a morph plays once over the
+//!   channel's nominal ticks ([`ShownStance`]).
 //! - The scenes without a battle (WP6, D-9): [`scene_lanes`] packs the lanes of the Lab preview,
 //!   the inspector portrait and the swarm, on the same clock, which those scenes read as
 //!   [`elapsed_clock`] of Bevy's time.
@@ -37,14 +41,14 @@
 //!   unchanged, and it advances by game time at every battle speed. It depends on ticks only, so
 //!   a capture that steps one tick per frame is reproducible.
 //! - A battle bubble's lanes depend on its presented record and its [`FlipbookPhase`] only, never
-//!   on the clock: Attack and Constructing lanes come from the record alone, and a free loop's
-//!   lanes are constant while its action lasts.
+//!   on the clock: Attack, Constructing and morph lanes come from the record alone, and a free
+//!   loop's lanes are constant while its action lasts.
 //! - The lanes constructors guarantee `count >= 1`, `period >= 1`, `offset < period` and
 //!   `period · count < 2³²`, so the arithmetic of a constructed lane never wraps except in the clock.
 
 use std::time::Duration;
 
-use asset_baker::manifest::{ActionSlice, FlipbookAtlasMeta};
+use asset_baker::manifest::{ActionSlice, FlipbookAtlasMeta, Morph};
 use bevy::prelude::*;
 use bevy::render::render_asset::{RenderAssetUsages, RenderAssets};
 use bevy::render::render_resource::BufferUsages;
@@ -575,29 +579,109 @@ pub fn update_flipbook_clock_system(
 pub struct FlipbookPhase {
     /// What the bubble shows ([`displayed_action`]).
     pub action: AnimState,
-    /// Presented simulation tick at which `action` began to show.
+    /// Which atlas, or which morph of a mode atlas, the bubble shows ([`shown_stance`]).
+    pub stance: ShownStance,
+    /// Presented simulation tick at which `action` (in `stance`) began to show.
     pub since: Tick,
 }
 
 impl FlipbookPhase {
-    /// A phase that begins `action` at the presented tick `tick`.
+    /// A phase that begins `action` of the default atlas at the presented tick `tick`.
     #[must_use]
     pub const fn new(action: AnimState, tick: Tick) -> Self {
+        Self::in_stance(action, ShownStance::Default, tick)
+    }
+
+    /// A phase that begins `action` in `stance` at the presented tick `tick`.
+    #[must_use]
+    pub const fn in_stance(action: AnimState, stance: ShownStance, tick: Tick) -> Self {
         Self {
             action,
+            stance,
             since: tick,
         }
     }
 
-    /// The phase after the bubble shows `action` at the presented tick `tick`: unchanged while
-    /// the action lasts, restarted at `tick` when it changes.
+    /// The phase after the bubble shows `action` of the default atlas at the presented tick
+    /// `tick`: unchanged while the action lasts, restarted at `tick` when it changes.
     #[must_use]
     pub fn observed(self, action: AnimState, tick: Tick) -> Self {
-        if self.action == action {
+        self.observed_in(action, ShownStance::Default, tick)
+    }
+
+    /// The phase after the bubble shows `action` in `stance` at the presented tick `tick`:
+    /// unchanged while both last, restarted at `tick` when either changes.
+    #[must_use]
+    pub fn observed_in(self, action: AnimState, stance: ShownStance, tick: Tick) -> Self {
+        if self.action == action && self.stance == stance {
             self
         } else {
-            Self::new(action, tick)
+            Self::in_stance(action, stance, tick)
         }
+    }
+}
+
+/// Which atlas a battle bubble shows, and whether it plays a morph of it (plan
+/// `2026-11-09-effect-visualization.md` WP13). Each mode is named by its index in the
+/// archetype's `modes`, as [`sim_types::StanceView`] publishes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShownStance {
+    /// The default atlas: the default stance, or a mode without a mode atlas.
+    #[default]
+    Default,
+    /// The atlas of the mode the unit is in.
+    Mode(u8),
+    /// The enter morph of a mode's atlas, while the unit channels into the mode.
+    Enter(u8),
+    /// The leave morph of a mode's atlas, while the unit channels out of the mode.
+    Leave(u8),
+}
+
+impl ShownStance {
+    /// The mode whose atlas is shown, or `None` for the default atlas.
+    #[must_use]
+    pub const fn atlas_mode(self) -> Option<u8> {
+        match self {
+            Self::Default => None,
+            Self::Mode(mode) | Self::Enter(mode) | Self::Leave(mode) => Some(mode),
+        }
+    }
+
+    /// The morph played, if any.
+    #[must_use]
+    pub const fn morph(self) -> Option<Morph> {
+        match self {
+            Self::Enter(_) => Some(Morph::Enter),
+            Self::Leave(_) => Some(Morph::Leave),
+            Self::Default | Self::Mode(_) => None,
+        }
+    }
+}
+
+/// What a battle bubble showing `record` shows, given which of its modes have an atlas
+/// (`has_atlas`, by mode index):
+///
+/// | Published stance | Shown |
+/// |---|---|
+/// | a switch into mode `m` is channelled, and `m` has an atlas | `Enter(m)` |
+/// | a switch out of mode `m` is channelled, and `m` has an atlas | `Leave(m)` |
+/// | in mode `m`, no switch, and `m` has an atlas | `Mode(m)` |
+/// | anything else | `Default` |
+///
+/// A mode without an atlas keeps the default atlas in every phase, as before mode media
+/// existed, so a channel out of such a mode shows the default atlas too.
+#[must_use]
+pub fn shown_stance(record: &BubbleRenderInstance, has_atlas: impl Fn(u8) -> bool) -> ShownStance {
+    let stance = record.stance;
+    match (stance.transition, stance.mode) {
+        (Some(transition), _) if transition.entering.is_some_and(&has_atlas) => transition
+            .entering
+            .map_or(ShownStance::Default, ShownStance::Enter),
+        (Some(transition), Some(mode)) if transition.entering.is_none() && has_atlas(mode) => {
+            ShownStance::Leave(mode)
+        }
+        (None, Some(mode)) if has_atlas(mode) => ShownStance::Mode(mode),
+        _ => ShownStance::Default,
     }
 }
 
@@ -657,6 +741,9 @@ pub fn battle_lanes(
     presented: Tick,
     phase: FlipbookPhase,
 ) -> Result<FlipbookLanes, FlipbookLanesError> {
+    if let Some(morph) = phase.stance.morph() {
+        return morph_lanes(meta, record, presented, morph);
+    }
     let Some((meta, slice)) =
         meta.and_then(|meta| meta.actions.get(&phase.action).map(|slice| (meta, slice)))
     else {
@@ -680,6 +767,51 @@ pub fn battle_lanes(
         (AnimState::Constructing, _) => construction_lanes(slice, record.build_or_queue_progress),
         _ => clip_lanes(meta, slice, clock_at_tick(i64::from(phase.since.0))),
     }
+}
+
+/// The lanes of a battle bubble that plays `morph` of its mode atlas `meta` while the simulation
+/// channels the mode switch that `record` publishes (plan
+/// `2026-11-09-effect-visualization.md` WP13).
+///
+/// The morph is stretched over the channel's nominal ticks and plays once, holding its last
+/// frame. A random extra drawn for the channel is a hold on the first frame before the morph
+/// begins (`ModeTransitionView`). The start is `presented - (nominal - remaining)`, which stays
+/// the same from tick to tick of one channel, so the lanes are constant while it runs.
+///
+/// | Record | lanes |
+/// |---|---|
+/// | no morph slice, or no switch under way | the slice's last layer (layer 0 without a slice) |
+/// | a nominal length of 0 | the last layer |
+/// | more ticks left than the nominal length (the random hold) | the first layer |
+/// | otherwise | once over the slice, from the start, holding the last layer |
+///
+/// # Errors
+/// As [`FlipbookSpan::new`].
+fn morph_lanes(
+    meta: Option<&FlipbookAtlasMeta>,
+    record: &BubbleRenderInstance,
+    presented: Tick,
+    morph: Morph,
+) -> Result<FlipbookLanes, FlipbookLanesError> {
+    let Some(slice) = meta.and_then(|meta| meta.morphs.get(&morph)) else {
+        return Ok(FlipbookLanes::fixed(0));
+    };
+    let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, 1)?;
+    let last = FlipbookLanes::fixed(span.base() + span.count() - 1);
+    let Some(transition) = record.stance.transition else {
+        return Ok(last);
+    };
+    let (nominal, remaining) = (transition.nominal_ticks, transition.remaining_ticks);
+    if nominal == 0 {
+        return Ok(last);
+    }
+    if remaining > nominal {
+        return Ok(FlipbookLanes::fixed(span.base()));
+    }
+    let period = u32::from(nominal).wrapping_mul(CLOCK_UNITS_PER_TICK);
+    let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, period)?;
+    let start = i64::from(presented.0) - i64::from(nominal - remaining);
+    Ok(FlipbookLanes::once(span, clock_at_tick(start), true))
 }
 
 /// The flipbook lanes of a bubble in a scene without a battle: the Lab preview, the inspector
@@ -1118,7 +1250,181 @@ mod tests {
                 (AnimState::Attack, slice(20, false, false)),
                 (AnimState::Constructing, slice(30, false, true)),
             ]),
+            morphs: BTreeMap::new(),
         }
+    }
+
+    /// A mode atlas: Idle and Attack in the mode, and both morphs of ten frames each.
+    fn mode_atlas() -> FlipbookAtlasMeta {
+        let slice = |start_frame, looping, hold_last_frame| ActionSlice {
+            start_frame,
+            frame_count: 10,
+            looping,
+            hold_last_frame,
+            duration_ms: Some(4000),
+        };
+        FlipbookAtlasMeta {
+            name: "fixture-mode".to_owned(),
+            frame_width: 8,
+            frame_height: 8,
+            fps: 15,
+            total_frames: 40,
+            layout: FlipbookLayout::VerticalStrip,
+            actions: BTreeMap::from([
+                (AnimState::Idle, slice(0, true, false)),
+                (AnimState::Attack, slice(10, false, false)),
+            ]),
+            morphs: BTreeMap::from([
+                (Morph::Enter, slice(20, false, true)),
+                (Morph::Leave, slice(30, false, true)),
+            ]),
+        }
+    }
+
+    /// `record` in `mode` (an index of the archetype's modes), channelling `transition`.
+    fn in_stance(
+        mut record: BubbleRenderInstance,
+        mode: Option<u8>,
+        transition: Option<(Option<u8>, u16, u16)>,
+    ) -> BubbleRenderInstance {
+        record.stance = sim_types::StanceView {
+            mode,
+            transition: transition.map(|(entering, remaining_ticks, nominal_ticks)| {
+                sim_types::ModeTransitionView {
+                    entering,
+                    remaining_ticks,
+                    nominal_ticks,
+                }
+            }),
+        };
+        record
+    }
+
+    #[test]
+    fn the_shown_stance_follows_the_published_stance_where_a_mode_has_an_atlas() {
+        let idle = record(AnimState::Idle, None);
+        let only_mode_0 = |mode: u8| mode == 0;
+        let cases = [
+            (None, None, ShownStance::Default),
+            (Some(0), None, ShownStance::Mode(0)),
+            (None, Some((Some(0), 40, 72)), ShownStance::Enter(0)),
+            (Some(0), Some((None, 40, 63)), ShownStance::Leave(0)),
+            // A mode without an atlas keeps the default atlas in every phase.
+            (Some(1), None, ShownStance::Default),
+            (None, Some((Some(1), 40, 72)), ShownStance::Default),
+            (Some(1), Some((None, 40, 63)), ShownStance::Default),
+        ];
+        for (mode, transition, shown) in cases {
+            assert_eq!(
+                shown_stance(&in_stance(idle.clone(), mode, transition), only_mode_0),
+                shown,
+                "{mode:?} {transition:?}"
+            );
+        }
+        assert_eq!(ShownStance::Enter(3).atlas_mode(), Some(3));
+        assert_eq!(ShownStance::Leave(3).morph(), Some(Morph::Leave));
+        assert_eq!(ShownStance::Mode(3).morph(), None);
+        assert_eq!(ShownStance::Default.atlas_mode(), None);
+    }
+
+    #[test]
+    fn a_morph_holds_its_first_frame_through_the_random_delay_then_spans_the_nominal_channel() {
+        let meta = mode_atlas();
+        let lanes_at = |tick: u32, remaining: u16| {
+            let record = in_stance(
+                record(AnimState::Idle, None),
+                None,
+                Some((Some(0), remaining, 72)),
+            );
+            let phase = FlipbookPhase::in_stance(AnimState::Idle, ShownStance::Enter(0), Tick(100));
+            battle_lanes(Some(&meta), &record, Tick(tick), phase)
+                .expect("invariant: the fixture's morphs are playable")
+        };
+        // The random extra: 80 ticks left of a 72-tick channel shows the first frame.
+        assert_eq!(lanes_at(100, 80), FlipbookLanes::fixed(20));
+        // The morph proper starts when the nominal channel remains, and its lanes stay the same
+        // from tick to tick.
+        let started = lanes_at(108, 72);
+        for elapsed in 1_u16..72 {
+            assert_eq!(
+                lanes_at(108 + u32::from(elapsed), 72 - elapsed),
+                started,
+                "{elapsed}"
+            );
+        }
+        let at = |tick: u32| flipbook_sample(clock_at_tick(i64::from(tick)), &started).layer;
+        assert_eq!(at(108), 20, "the first frame at the morph's start");
+        assert_eq!(at(108 + 36), 25, "half way through the channel");
+        assert_eq!(at(108 + 71), 29, "the last frame at the channel's end");
+        assert_eq!(at(108 + 500), 29, "held afterwards");
+    }
+
+    #[test]
+    fn a_leave_morph_plays_its_own_slice_and_degenerate_channels_show_an_end_frame() {
+        let meta = mode_atlas();
+        let lanes = |stance: ShownStance, transition| {
+            let record = in_stance(record(AnimState::Idle, None), Some(0), transition);
+            battle_lanes(
+                Some(&meta),
+                &record,
+                Tick(500),
+                FlipbookPhase::in_stance(AnimState::Idle, stance, Tick(500)),
+            )
+            .expect("invariant: the fixture's morphs are playable")
+        };
+        let leaving = lanes(ShownStance::Leave(0), Some((None, 63, 63)));
+        assert_eq!(
+            flipbook_sample(clock_at_tick(500), &leaving).layer,
+            30,
+            "the leave slice starts at its first frame"
+        );
+        assert_eq!(
+            lanes(ShownStance::Leave(0), Some((None, 0, 0))),
+            FlipbookLanes::fixed(39),
+            "a zero-length channel shows the last frame"
+        );
+        assert_eq!(
+            lanes(ShownStance::Leave(0), None),
+            FlipbookLanes::fixed(39),
+            "no channel: the morph has finished"
+        );
+        assert_eq!(
+            battle_lanes(
+                Some(&atlas()),
+                &record(AnimState::Idle, None),
+                Tick(500),
+                FlipbookPhase::in_stance(AnimState::Idle, ShownStance::Enter(0), Tick(500)),
+            )
+            .expect("invariant: no slice is playable"),
+            FlipbookLanes::fixed(0),
+            "an atlas without the morph shows layer 0"
+        );
+    }
+
+    #[test]
+    fn a_phase_restarts_when_its_stance_changes() {
+        let phase = FlipbookPhase::new(AnimState::Idle, Tick(10));
+        assert_eq!(phase.stance, ShownStance::Default);
+        assert_eq!(phase.observed(AnimState::Idle, Tick(20)), phase);
+        let entering = phase.observed_in(AnimState::Idle, ShownStance::Enter(0), Tick(20));
+        assert_eq!(entering.since, Tick(20));
+        assert_eq!(
+            entering.observed_in(AnimState::Idle, ShownStance::Enter(0), Tick(30)),
+            entering
+        );
+        assert_eq!(
+            entering
+                .observed_in(AnimState::Idle, ShownStance::Mode(0), Tick(40))
+                .since,
+            Tick(40)
+        );
+    }
+
+    #[test]
+    fn a_mode_atlas_shows_its_own_attack_during_an_immobile_attack_cycle() {
+        let meta = mode_atlas();
+        let sieged = in_stance(record(AnimState::Idle, Some(swing(4))), Some(0), None);
+        assert_eq!(displayed_action(Some(&meta), &sieged), AnimState::Attack);
     }
 
     fn record(anim_state: AnimState, attack_swing: Option<AttackSwing>) -> BubbleRenderInstance {

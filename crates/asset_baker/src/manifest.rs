@@ -4,6 +4,11 @@
 //! which describe the layout of packed image atlases, frame rates, dimensions, and
 //! the sub-slice ranges corresponding to gameplay animation states ([`AnimState`]).
 //!
+//! A mode atlas (plan `2026-11-09-effect-visualization.md` WP13, Amendment 10) holds the clips
+//! of one catalog mode of a unit: its [`AnimState`] slices in `actions`, and the two morphs into
+//! and out of the mode ([`Morph`]) in `morphs`. A default atlas has no morphs, and the field is
+//! then neither read nor written, so every manifest baked before it keeps its bytes.
+//!
 //! In accordance with the Space Scuffle architectural charter, all action mappings use
 //! deterministic ordered collections ([`BTreeMap`]) to guarantee reproducible serialization
 //! across runs and platform targets. Written files end every line in `\n` on every host.
@@ -72,6 +77,107 @@ pub struct ActionSlice {
     pub duration_ms: Option<u32>,
 }
 
+/// A morph between a unit's default stance and one of its catalog modes (plan
+/// `2026-11-09-effect-visualization.md` WP13): the clip played while the simulation channels the
+/// mode switch (`sim_types::ModeTransitionView`), stretched over the channel's nominal ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Morph {
+    /// From the default stance into the mode (siege, burrow).
+    Enter,
+    /// From the mode back to the default stance (unsiege, unburrow).
+    Leave,
+}
+
+impl Morph {
+    /// Both morphs, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Enter, Self::Leave];
+
+    /// File-name stem of the morph (`enter`, `leave`).
+    #[must_use]
+    pub const fn stem(self) -> &'static str {
+        match self {
+            Self::Enter => "enter",
+            Self::Leave => "leave",
+        }
+    }
+}
+
+/// What one slice of an atlas shows: an animation state, or a morph of a mode atlas.
+///
+/// Ordered with every action before every morph, so a bake that packs its clips in key order
+/// lays a mode atlas out as its actions, then its morphs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SliceKey {
+    /// An animation state the simulation publishes (or the client displays).
+    Action(AnimState),
+    /// A morph into or out of the atlas's mode.
+    Morph(Morph),
+}
+
+impl SliceKey {
+    /// File-name stem of the slice: the state's (`idle`, `attack`, ...) or the morph's
+    /// (`enter`, `leave`).
+    #[must_use]
+    pub fn stem(self) -> &'static str {
+        match self {
+            Self::Action(state) => crate::veo_plan::state_slug(state),
+            Self::Morph(morph) => morph.stem(),
+        }
+    }
+
+    /// Parses a stem written by [`Self::stem`].
+    ///
+    /// # Errors
+    /// [`UnknownSlice`] for any other text.
+    pub fn parse(text: &str) -> Result<Self, UnknownSlice> {
+        Morph::ALL
+            .into_iter()
+            .find(|morph| morph.stem() == text)
+            .map(Self::Morph)
+            .or_else(|| crate::veo_plan::parse_state(text).ok().map(Self::Action))
+            .ok_or_else(|| UnknownSlice {
+                name: text.to_string(),
+            })
+    }
+}
+
+impl std::fmt::Display for SliceKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.stem())
+    }
+}
+
+/// A text that names no slice.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown slice '{name}'; valid: idle, walk, attack, constructing, cast, die, enter, leave")]
+pub struct UnknownSlice {
+    /// The text given.
+    pub name: String,
+}
+
+/// Serializes a [`SliceKey`] as its stem (`idle`, `enter`, ...), as the ledger writes it.
+pub mod slice_name {
+    use super::SliceKey;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    /// Writes the slice's stem.
+    ///
+    /// # Errors
+    /// Only the serializer's own errors.
+    pub fn serialize<S: Serializer>(slice: &SliceKey, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(slice.stem())
+    }
+
+    /// Reads a slice's stem.
+    ///
+    /// # Errors
+    /// A string that names no slice.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SliceKey, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        SliceKey::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Authoritative flipbook atlas metadata matching `<atlas_name>.flipbook.ron`.
 ///
 /// Contains all geometric and timing parameters necessary for the client rendering
@@ -94,6 +200,11 @@ pub struct FlipbookAtlasMeta {
     /// Deterministic mapping of animation states to frame slices.
     #[serde(deserialize_with = "deserialize_unique_actions")]
     pub actions: BTreeMap<AnimState, ActionSlice>,
+    /// The morphs of a mode atlas, played once over the mode switch's channel and held on their
+    /// last frame (see the module docs). Empty, and then neither read nor written, for a
+    /// default atlas.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub morphs: BTreeMap<Morph, ActionSlice>,
 }
 
 fn deserialize_unique_actions<'de, D>(
@@ -186,18 +297,26 @@ impl FlipbookAtlasMeta {
                 });
             }
         }
-        for (state, slice) in &self.actions {
+        let actions = self
+            .actions
+            .iter()
+            .map(|(state, slice)| (SliceKey::Action(*state), slice));
+        let morphs = self
+            .morphs
+            .iter()
+            .map(|(morph, slice)| (SliceKey::Morph(*morph), slice));
+        for (state, slice) in actions.chain(morphs) {
             if slice.frame_count == 0 {
                 return Err(BakerError::ValidationFailed {
                     name: self.name.clone(),
-                    reason: format!("Action state '{state:?}' has a frame count of 0"),
+                    reason: format!("Slice '{state}' has a frame count of 0"),
                 });
             }
             if slice.duration_ms == Some(0) {
                 return Err(BakerError::ValidationFailed {
                     name: self.name.clone(),
                     reason: format!(
-                        "Action state '{state:?}' has a duration of 0 ms; an unknown duration is omitted"
+                        "Slice '{state}' has a duration of 0 ms; an unknown duration is omitted"
                     ),
                 });
             }
@@ -206,7 +325,7 @@ impl FlipbookAtlasMeta {
                 return Err(BakerError::ValidationFailed {
                     name: self.name.clone(),
                     reason: format!(
-                        "Action state '{state:?}' range ({}..{}) exceeds total frames {}",
+                        "Slice '{state}' range ({}..{}) exceeds total frames {}",
                         slice.start_frame, end_frame, self.total_frames
                     ),
                 });
@@ -269,6 +388,7 @@ mod tests {
             total_frames: 4,
             layout: FlipbookLayout::VerticalStrip,
             actions: BTreeMap::new(),
+            morphs: BTreeMap::new(),
         }
     }
 
