@@ -13,6 +13,10 @@
 //!   `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4). It declares
 //!   `--display-path xvfb-software-present`, the harness's path, and checks that the report
 //!   records it (`WP5b`).
+//! - `the_400_match_lasts_the_measured_window_with_combat_inside_it` steps the `400` scenario in
+//!   the simulation alone for the measured window and checks that the match does not end and that
+//!   the combat window fits inside it (plan `docs/plans/2026-11-11-scenario-outer-rings.md`,
+//!   Amendment 2).
 //! - `a_contradicting_display_path_is_refused_before_anything_is_written` runs the binary with a
 //!   declared path its environment contradicts. It exits before any renderer exists, so it needs
 //!   neither the GPU harness nor the lock.
@@ -37,7 +41,7 @@ mod gpu_run;
 
 use client_diagnostics::frame_budget::display::DisplayPath;
 use client_diagnostics::frame_budget::{fixture, report::FrameBudgetReport, FrameBudgetSpec};
-use sim_types::ShapeKind;
+use sim_types::{MatchResult, ShapeKind, Tick, TickBundle};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -108,6 +112,48 @@ fn fixture_root_scenarios_spawn_exactly_their_units() -> Result<(), Box<dyn Erro
         .map(|(name, count)| (name.to_owned(), count))
         .collect();
     assert_eq!(totals, expected);
+    Ok(())
+}
+
+/// The two armies fight for the whole measured window: stepped by the simulation alone, as the
+/// client steps it, the `400` scenario's match is still in progress after `measure_ticks`, and
+/// its first damage leaves room for the whole combat window inside the measured one (plan
+/// Amendment 2: sent to each other's start, one army won and destroyed the other hall).
+#[test]
+fn the_400_match_lasts_the_measured_window_with_combat_inside_it() -> Result<(), Box<dyn Error>> {
+    let spec = spec()?;
+    let work = tempfile::tempdir()?;
+    let root = fixture::build_fixture_root(&spec, &assets(), work.path())?;
+    let mut world =
+        sim_core::scenario::load_scenario_battle(&root, &fixture::scenario_path("400"))?;
+    let health = |world: &sim_core::SimWorld| -> i64 {
+        world.entities.values().map(|entity| entity.hp.raw()).sum()
+    };
+    let mut last = health(&world);
+    let mut first_damage = None;
+    for tick in 1..=spec.measure_ticks {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let now = health(&world);
+        if first_damage.is_none() && now < last {
+            first_damage = Some(tick);
+        }
+        last = now;
+        assert!(
+            matches!(world.match_state.result, MatchResult::InProgress),
+            "the match ended at tick {tick}: {:?}",
+            world.match_state.result
+        );
+    }
+    let first_damage = first_damage.ok_or("no unit took damage in the measured window")?;
+    assert!(
+        first_damage + spec.combat_window_ticks <= spec.measure_ticks,
+        "combat from tick {first_damage} leaves no room for the {}-tick combat window",
+        spec.combat_window_ticks
+    );
     Ok(())
 }
 

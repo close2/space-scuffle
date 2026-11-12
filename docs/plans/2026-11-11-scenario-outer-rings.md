@@ -1,6 +1,6 @@
 # Blueprint: Starting Units on Outer Rings, and the Two-Army Frame Budget (Q0018 option (b))
 
-The owner's update to [Q0018](../questions/open/0018-frame-budget-army-layout.md) (2026-11-11) asks for option (b)
+The owner's update to [Q0018](../questions/closed/0018-frame-budget-army-layout.md) (2026-11-11) asks for option (b)
 now. The scenario builder continues placing a player's starting units on rings 4, 5, … around its town hall when
 rings 1 to 3 are full, so two armies of 100 and 200 units can load. Placement on rings 1 to 3 stays exactly as it
 is, so no existing scenario's checksum changes. The 200- and 400-unit frame budget is then measured again with two
@@ -13,11 +13,14 @@ requires a full plan. It does not move battle outcomes or golden replays (§4).
 `959ce4c`. Line numbers drift, so search for the quoted symbol. Claims not confirmed while planning are marked
 **verify**.
 
+**Status: Done (2026-11-12).** WP1 `5085308` and WP2 `b0d373b` merged in `c05b766`; Amendment 2 `0eb6fbf`; WP3's
+measurement and documents are recorded in Amendment 3. Q0018 is closed.
+
 **Questions.**
 
 | Question | State | Where in this plan |
 |---|---|---|
-| Q0018: how the frame-budget scenarios field 200 and 400 units | Answered 2026-11-11: option (b), now | Whole plan; closed by WP3 |
+| Q0018: how the frame-budget scenarios field 200 and 400 units | Answered 2026-11-11: option (b), now; closed 2026-11-12 | Whole plan; closed by WP3 |
 | Q0015: frame budget is measured and published against 16.7 and 33.3 ms, no pass or fail | Standing | §7 |
 | Q0019: the display path of record is headless KWin (`kwin-virtual`) | Standing | §7 |
 | Q0051 (charter §8): mechanics follow StarCraft II | Not engaged: §3.6 | §3.6 |
@@ -416,3 +419,48 @@ are merged to `main`, because the measured commit must be on `main`.
   (`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, `frame_budget_smoke_run_writes_a_valid_report`: no warm-up frame,
   10 measured frames, every frame at least 95 % of 400 units in view) finished in 68 s with the camera pose
   unchanged.
+
+## Amendment 2 (orchestrator, 2026-11-12): the armies meet at the arena centre
+
+**What WP3 found.** With two armies that attack-move to each other's start, one army wins and then destroys the other
+town hall, so the match ends before the 1,500-tick window does: at tick 1,087 for `200` and tick 1,434 for `400`.
+Player 0 wins every time, in the simulation alone as in the client. The eight-player spec never hit this, because the
+melee wore every army down. §6 allowed only camera changes in the data, and none of them keeps 1,500 measured ticks.
+
+**Decision.** A frame-budget spec player may attack-move to a stated cell instead of the opposite start. The
+two-army spec sends both armies to the arena centre `(64, 64)`: they fight in the middle and in view, the survivors
+stop there, and no town hall falls. This keeps the 1,500-tick window and the 750-tick combat window of the
+2026-11-03 figures of record, and changes no simulation behaviour. Rejected: shortening `measure_ticks` to about
+1,000 (a different window from the figures of record) and invulnerable halls or disabled defeat in the fixture (a
+simulation change for a diagnostic's sake).
+
+**Change.** `crates/client_diagnostics` only: the spec's per-player order gains an optional attack-move target cell
+(default: the opposite start, so the old eight-player layout still reads the same), validated to lie on the map;
+`frame_budget.ron` sets `(64, 64)` for both players.
+
+**Tests.** A unit test of the spec field (default and explicit target, off-map target rejected), and a
+simulation-only test that the `400` scenario runs the full 1,500-tick window without the match ending and with
+combat inside the combat window. The lavapipe smoke run of `400` still passes the 95 % in-view check.
+
+**Measurement.** WP3 reruns all fifteen runs from scratch under §7. The runs wait until CPUs 32–47 (this user's
+slice) are under 15 % busy for 5 s, and the evidence records that figure and the machine load per run, because the
+machine-wide load includes another user's builds on CPUs 0–31. A run with a single stall above 1 s is repeated.
+
+## Amendment 3 (WP3, 2026-11-12): the measurement and what it recorded
+
+- **Measured commit:** `0eb6fbf` on branch `outer-rings-wp3` (`main` at `c05b766` plus Amendment 2), not `main`
+  itself as §7 step 1 says, because Amendment 2's change had to be measured before it merged. The branch merges
+  with this record.
+- **Runs:** twenty-four locked runs, all passing the tool's own checks. Fifteen are the record: 01, 02, 03, 05, 06,
+  07, 08, 09, 10, 12, 13 and 21 to 24. Run 04 had a 1,516 ms first frame; runs 11 and 14 to 20 ran while another
+  agent's GPU tests held 21 to 65 % of CPUs 32 to 47. Runs 21 to 24 replace 04, 11, 14 and 15. The machine-wide
+  load average (19 to 48, the other user's builds on CPUs 0 to 31) is recorded but is not the acceptance measure.
+- **Figures of record** (medians of five, ms): frame interval p50, p95, p99 and max 7.1, 8.3, 9.2, 23.6 at 0 units;
+  9.2, 13.4, 15.2, 27.7 at 200; 11.8, 19.1, 22.5, 50.7 at 400. Every run had 100 % of units in view with the camera
+  unchanged (§6). Statistics recomputed from the rows match the tool's summaries to 0.01 ms.
+- **Documents:** the evidence is `docs/evidence/2026-11-12-frame-budget-two-armies.md`, dated by the day of the
+  measurement rather than the `2026-11-11` name of §8, with the screenshot `2026-11-12-frame-budget-two-armies-400.jpg`
+  (tick 285, in contact). `DESIGN.md` §5 carries the new table, and the 2026-11-03 figures and the C-17 and C-18
+  paragraph as history. `DESIGN.md` §3 and §4 do not describe scenario placement, so §8's **verify** needs no
+  change there. The 2026-11-03 evidence has a note under its title. Q0018 has its resolution and is in `closed/`,
+  and every link to it points there.
