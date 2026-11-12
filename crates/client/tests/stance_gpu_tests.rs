@@ -135,18 +135,20 @@ const MOUND_RING_RADII: f32 = 1.8;
 const EDGE_PX: f32 = 2.0;
 /// The mound is drawn: at least this many pixels change.
 const MOUND_MIN_PIXELS: usize = 40;
-/// Reach of a shimmer's bend in pixels: its colours must already be on the ground this near.
-const SHIMMER_REACH_PX: i64 = 12;
+/// Reach of a shimmer's bend in pixels: its colours must already be on the ground this near
+/// (the largest bend, lens plus noise, is about 3 px at the default zoom).
+const SHIMMER_REACH_PX: i64 = 6;
 /// Levels a shimmer pixel may lie outside the colours of the ground around it (filtering).
-const SHIMMER_SLACK: i16 = 6;
-/// Share of bent pixels tolerated outside the ground's colours near them: the bend reads the
-/// opaque scene before the smog and the transparent layers are drawn over it, so a few pixels
-/// take a colour the final frame shows nowhere near. Measured on radv (2026-11-12) at two spots:
-/// 88 of 2 097 and 84 of 2 170 bent pixels with a 6 or 8 px reach, 5 of 2 083 at 8 px; at
-/// 12 px, 28 of 2 171 on radv and 54 of 2 149 (2.5 %) on lavapipe.
-const SHIMMER_FOREIGN_SHARE: f64 = 0.05;
-/// A shimmer moves a patch's mean colour by at most this many levels (no tint).
-const SHIMMER_MEAN_LEVELS: f64 = 1.5;
+const SHIMMER_SLACK: i16 = 4;
+/// Share of bent pixels tolerated outside the ground's colours near them (filtering at the
+/// bend's edges). Round 1 read the scene copy at viewport-relative coordinates, i.e. from
+/// elsewhere on the screen, and failed this at 133 of 2 074 bent pixels with a shadow-coloured
+/// spot at the enemy's feet; with the copy read where the fragment is, 0 of 1 172 (pose) and
+/// 0 of 1 279 (tableau) on radv (2026-11-12).
+const SHIMMER_FOREIGN_SHARE: f64 = 0.005;
+/// A shimmer moves a patch's mean colour by at most this many levels (no tint); measured 0.18
+/// to 0.19 on radv after the fix, 4.10 before it.
+const SHIMMER_MEAN_LEVELS: f64 = 0.75;
 /// A pixel counts as bent by the shimmer when a channel moves by more than this.
 const SHIMMER_LEVEL: u8 = 4;
 /// The shimmer is there to see: at least this many pixels bend.
@@ -1280,6 +1282,8 @@ struct SequenceReport {
     siege: Vec<Sample>,
     /// Samples while it unsieges.
     unsiege: Vec<Sample>,
+    /// The tableau's enemy cloaked unit, undetected, as the camera saw it.
+    enemy: UnitView,
 }
 
 /// The sequences, in order.
@@ -1477,14 +1481,14 @@ fn stage_sequences(
     fog: Option<Res<'_, BattleFog>>,
     bubbles: ShellQuery<'_, '_>,
     materials: Res<'_, Assets<BubbleDomeMaterial>>,
-    cameras: Query<'_, '_, &RtsCamera>,
+    cameras: Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
     idle: Res<'_, LabRenderIdle>,
 ) {
     let fog = fog.expect("the skirmish presents a player, so it keeps a fog");
     if !session.is_ready() {
         return;
     }
-    let Ok(rts) = cameras.get_single() else {
+    let Ok((camera, camera_transform, rts)) = cameras.get_single() else {
         return;
     };
     let tick = published_tick(&session);
@@ -1570,6 +1574,14 @@ fn stage_sequences(
         }
         SequencePhase::Tableau { .. } => {
             lab.battle_paused = true;
+            let enemy = bubbles.iter().find(|(bubble, ..)| {
+                bubble.0.owner == ENEMY
+                    && bubble.0.concealment == Concealment::Cloaked
+                    && fog.presence(&bubble.0) == client::battle_pipeline::fog::Presence::Shimmer
+            });
+            if let Some((bubble, ..)) = enemy {
+                staging.report.enemy = unit_view(bubble, (camera, camera_transform));
+            }
             let text = ron::to_string(&staging.report).expect("plain data");
             std::fs::write(staging.directory.join(REPORT_FILE), text)
                 .expect("the parent's directory is writable");
@@ -1634,6 +1646,42 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
         directory.path().join(REPORT_FILE),
     )?)?;
     keep_evidence(directory.path(), "seq_")?;
+    // The battle tableau's undetected cloaked enemy: against the same frame without the effect
+    // layers, its shimmer only bends what is there, with no colour, shadow or contact darkening
+    // of its own (WP8 round 1 found a shadow-coloured spot at its feet: the distortion read the
+    // scene copy at viewport-relative coordinates, i.e. from elsewhere on the screen).
+    let enemy = report.enemy;
+    assert!(
+        enemy.radius_px > 0.0,
+        "the tableau has an undetected cloaked enemy"
+    );
+    let picture = |name: &str| -> TestResult<image::RgbImage> {
+        Ok(image::open(directory.path().join(name))?.to_rgb8())
+    };
+    let tableau = shimmer_check(
+        &picture("seq_tableau_bare.png")?,
+        &picture("seq_tableau.png")?,
+        enemy,
+    );
+    eprintln!(
+        "driver {}: battle tableau, undetected cloaked enemy: its shimmer bends {} pixels, {} of \
+         them to a colour not near them without it, mean colour moves {:.2} levels",
+        gpu_run::selected_driver().driver,
+        tableau.bent,
+        tableau.foreign,
+        tableau.mean_shift
+    );
+    assert!(
+        (tableau.foreign as f64) <= SHIMMER_FOREIGN_SHARE * tableau.bent.max(1) as f64,
+        "the tableau's shimmer draws colours of its own: {} of {}",
+        tableau.foreign,
+        tableau.bent
+    );
+    assert!(
+        tableau.mean_shift <= SHIMMER_MEAN_LEVELS,
+        "the tableau's shimmer moves its patch's mean colour by {:.2} levels",
+        tableau.mean_shift
+    );
     let full = 0.9 * 2.0 * report.radius;
     let driver = gpu_run::selected_driver().driver;
 

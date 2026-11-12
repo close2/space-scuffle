@@ -64,10 +64,14 @@ enemy cloaked unit right of it (to the upper right of the row of workers).
   own cloaked unit keeps its picture at about half opacity under a cool outline.
 - Whether the shimmer is faint and colourless (item 7): compare `wp8_shimmer_pose_*` cells 1 and 2, and the battle
   capture's enemy before and after detection.
-- In the battle capture without detection, a small dark spot lies at the undetected enemy's feet; it is absent
-  without the effect layers (`wp8_battle_bare_*`) and absent in the pose test's shimmer at another spot. Its colour
-  is that of a unit's shadow on the tiles. The implementer has not found its cause; please judge it as a possible
-  leak (item 7).
+- Before hand-off, the implementer's battle capture showed a small shadow-coloured spot at the undetected
+  enemy's feet. Cause: the distortion block read the scene copy at viewport-relative coordinates, while the copy
+  covers the whole window and the battle camera's viewport excludes the HUD panels, so every distortion in a
+  battle copied the scene from elsewhere on the screen (here a shadow). It now reads the copy where the fragment
+  is (`distortion.wgsl`; the effect lab's full-window viewport is unaffected). The battle test now compares the
+  capture with and without effect layers around that enemy: before the fix 133 of 2 074 bent pixels took a
+  colour not near them and the mean colour moved 4.10 levels; after it, none, and 0.18 levels. Please check the
+  battle captures for any remaining trace (item 7).
 - Whether the siege furrow reads during the switch and while anchored, and whether it reads as ploughed ground or
   as a drawn ring.
 

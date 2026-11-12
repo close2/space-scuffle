@@ -81,19 +81,24 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let along_y = noise_sample(atlas, atlas_sampler, noise_uv.yx + SECOND_READ, disc.noise_layer, 0.0) - 0.5;
     let intensity = clamp(disc.intensity, 0.0, 1.0);
     let strength = disc.noise_amount * intensity * mask;
-    // Screen UV y runs down; the aspect ratio keeps the offset round on screen.
-    let aspect = view.viewport.w / max(view.viewport.z, 1.0);
-    var offset = vec2<f32>(along_x * aspect, along_y) * 2.0 * strength * in.radius_uv;
+    // The offset is computed in framebuffer pixels (round on screen; y runs down) from the disc's
+    // radius on screen, which `radius_uv` gives as a share of the viewport's height.
+    let radius_px = in.radius_uv * view.viewport.w;
+    var offset_px = vec2<f32>(along_x, along_y) * 2.0 * strength * radius_px;
     if (lensed) {
         // A glass body's refraction: the scene is read from further out along the radius, most
         // a little inside the rim and not at all at the centre or beyond the rim, so the body's
         // outline shows as a bent ring of what lies behind it and nothing of its own.
         let profile = smoothstep(0.0, LENS_PEAK, radius) * (1.0 - smoothstep(LENS_PEAK, 1.0, radius));
-        let outward = centred / max(radius, 1e-4) * disc.lens * intensity * profile;
-        offset += vec2<f32>(outward.x * aspect, outward.y) * in.radius_uv;
+        offset_px += centred / max(radius, 1e-4) * disc.lens * intensity * profile * radius_px;
     }
-    let screen_uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
-    let bent = textureSampleLevel(scene, scene_sampler, clamp(screen_uv + offset, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+    // The scene copy covers the whole render target, of which the camera's viewport may be a
+    // part (the battle's HUD panels lie outside it), and the fragment position is in the
+    // target's pixels: the copy is read at that position, never re-scaled to the viewport
+    // (a viewport-relative read copied the scene from elsewhere on the screen, WP8 round 1).
+    let target_px = vec2<f32>(textureDimensions(scene));
+    let read_px = clamp(in.position.xy + offset_px, view.viewport.xy, view.viewport.xy + view.viewport.zw - 1.0);
+    let bent = textureSampleLevel(scene, scene_sampler, read_px / target_px, 0.0);
     // Premultiplied: the bent scene over the scene, as opaque as the disc's mask.
     return vec4<f32>(bent.rgb * mask, mask);
 }

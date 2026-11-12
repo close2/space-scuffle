@@ -521,10 +521,13 @@ pub fn present_stances(
     tables: Option<Res<'_, UnitEffectTables>>,
     runtime: Option<ResMut<'_, EffectRuntime>>,
     time: Res<'_, Time<Virtual>>,
-    mut materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
+    materials: Option<ResMut<'_, Assets<BubbleDomeMaterial>>>,
     mut bubbles: StanceQuery<'_, '_>,
 ) {
-    let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
+    // Apps without bubbles (the effect lab) have no bubble materials and nothing to present.
+    let (Some(catalog), Some(tables), Some(mut runtime), Some(mut materials)) =
+        (catalog, tables, runtime, materials)
+    else {
         return;
     };
     let fog = fog.as_deref();

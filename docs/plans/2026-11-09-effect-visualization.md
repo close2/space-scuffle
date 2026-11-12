@@ -1524,6 +1524,14 @@ publishes).
 - The bubble shader's old sine-stripe cloak stays only for the Visual Lab preview's checkbox; in a battle the
   effects drive every concealment look (`ShellUniformGpu::driven`).
 - No pulse in `detected_mark` (the `Shell` block has no period); a static cold outline light and a slight lens.
+- **Fix (a leak found in the WP8 battle capture):** the `Distortion` block read Bevy's scene copy at
+  viewport-relative coordinates, but the copy covers the whole render target and the battle camera's viewport
+  excludes the HUD panels; in a battle every distortion copied the scene from elsewhere on the screen, which put a
+  shadow-coloured spot at an undetected cloaked enemy's feet. `distortion.wgsl` now reads the copy at the
+  fragment's own target position with offsets in pixels (identical in the effect lab, whose viewport is the
+  window). `stance_gpu_tests.rs` checks that setup: against the same battle frame without effect layers, the
+  shimmer may not take colours absent near it (before: 133 of 2 074 bent pixels, mean shift 4.10 levels; after:
+  0, 0.18).
 - Own concealed units stay readable (Q0076; input from the WP13 review, whose burrowed-mode clip was nearly
   invisible under the old whole-bubble cloak fade): the burrowed dome shows the unit's picture unveiled, with
   only a thin soil band at the ground line (`soil: 0.12`, no media tint, no veil) and an earth-coloured outline;
@@ -1536,7 +1544,7 @@ publishes).
 shorter than its channel, the shell sum); `crates/client/tests/stance_gpu_tests.rs` on the production skirmish
 (radv and lavapipe): the burrowed bubble's above-ground area at most 35 % of the standing one and its looks inside
 1.8 radii; the undetected cloaked enemy bends what is behind it with no tint (the patch's mean colour moves at most
-1.5 levels; at most 5 % of bent pixels take a colour not on the ground within 12 px) and without its looks changes
+0.75 levels; at most 0.5 % of bent pixels take a colour not on the ground within 6 px, in the pose and in the battle tableau) and without its looks changes
 at most 2 pixels; the siege switch's arc within ±5 % of its progress; and through real mode commands, the dig goes
 on after the channel ends until fully sunk, never rises, and the emerge never sinks. `battle_fog_tests.rs` now
 expects the shimmer look and no drawn bubble for an undetected cloaked enemy, and the cover look of each case.
