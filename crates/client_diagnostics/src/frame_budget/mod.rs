@@ -24,9 +24,11 @@
 //! through the GPU harness (`crates/client_diagnostics/tests/frame_budget_tests.rs`); the real
 //! measurement runs on the RX 580 (WP6).
 //!
-//! The scenarios have eight players with 0, 25 or 50 units each, not two with 100 or 200 as the
-//! plan proposed: the production placement fits at most 96 units around a 5×5 town hall
-//! (`docs/questions/open/0018-frame-budget-army-layout.md`).
+//! The scenarios have two players, opposite each other, with 0, 100 or 200 units each. The
+//! production placement fills rings 1 to 3 around a 5×5 town hall (96 units) and continues on
+//! rings 4, 5, … (`docs/plans/2026-11-11-scenario-outer-rings.md`, the owner's answer to
+//! `docs/questions/open/0018-frame-budget-army-layout.md`, option (b)); until then they had eight
+//! players with 0, 25 or 50 units each.
 //!
 //! # Invariants
 //! - No unit, structure or loadout is named in Rust: the spec names the source loadout.

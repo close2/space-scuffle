@@ -6,7 +6,9 @@
 //! ## Subsystem Invariants Tested
 //! 1. **Complete Entity Spawning:** Two-player setup spawns exactly 2 dome town halls and 12 welder drones.
 //! 2. **Exact Positioning:** Town hall center matches the start location footprint center.
-//! 3. **Placement Validity:** Units are placed strictly on ground-pathable, non-ramp, non-abyss cells within Chebyshev distance 1..=3.
+//! 3. **Placement Validity:** Units are placed strictly on ground-pathable, non-ramp, non-abyss cells, on
+//!    rings 1..=3 around the town hall first and on outer rings 4, 5, … of the hall's ground region only
+//!    when those are full; a loadout the region cannot hold is a typed error.
 //! 4. **Deterministic Checksums:** Stepping two identically initialized worlds for 200 ticks yields bit-for-bit identical checksums.
 //! 5. **Error Coverage:** Every typed [`ScenarioError`] variant is explicitly verified with negative test cases.
 //! 6. **Catalog Integrity:** Authoritative starting loadouts file on disk resolves fully against the starter unit roster.
@@ -419,8 +421,9 @@ fn error_town_hall_does_not_fit() {
 #[test]
 fn error_not_enough_spawn_cells() {
     let doc = base_valid_doc();
-    // A 5x5 footprint at distances 1..=3 has exactly (24 + 32 + 40) = 96 available perimeter cells.
-    // Requesting 100 units exceeds the available spawn ring capacity.
+    // The hall's ground region is enclosed by the map's edges: the 32x32 map less slot 0's 5x5
+    // hall and slot 1's footprint grown by three cells (11x11, reserved) holds
+    // 1024 - 25 - 121 = 878 cells. Requesting 900 units exhausts it.
     let raw_ron = r#"
     (
         loadouts: [
@@ -430,7 +433,10 @@ fn error_not_enough_spawn_cells() {
                 editor_default: true,
                 town_hall: "foundry_core_dome",
                 units: [
-                    (slug: "welder_drone", count: 100),
+                    (slug: "welder_drone", count: 250),
+                    (slug: "welder_drone", count: 250),
+                    (slug: "welder_drone", count: 250),
+                    (slug: "welder_drone", count: 150),
                 ],
             ),
         ],
@@ -444,8 +450,78 @@ fn error_not_enough_spawn_cells() {
 
     let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
-        matches!(res, Err(ScenarioError::NotEnoughSpawnCells { slot: 0 })),
+        matches!(res, Err(ScenarioError::NotEnoughSpawnCells { slot: 0, .. })),
         "expected NotEnoughSpawnCells for slot 0"
+    );
+    assert!(
+        matches!(
+            res,
+            Err(ScenarioError::NotEnoughSpawnCells {
+                requested: 900,
+                placed: 878,
+                ..
+            })
+        ),
+        "expected 878 of 900 placed, got {:?}",
+        res.err()
+    );
+}
+
+/// The loadout that overflowed rings 1 to 3 before outer rings existed now loads: 96 units on
+/// rings 1 to 3 as before, and the last 4 on ring 4.
+#[test]
+fn hundred_units_load_with_four_on_ring_four() {
+    let doc = base_valid_doc();
+    let raw_ron = r#"
+    (
+        loadouts: [
+            (
+                slug: "hundred",
+                display_name: "One Hundred Units",
+                editor_default: true,
+                town_hall: "foundry_core_dome",
+                units: [
+                    (slug: "welder_drone", count: 100),
+                ],
+            ),
+        ],
+    )
+    "#;
+    let loadouts = StartLoadoutCatalog::from_ron_str(raw_ron).expect("valid RON");
+    let players = vec![PlayerSetup {
+        player_slot: 0,
+        loadout_slug: "hundred".to_string(),
+    }];
+    let world = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1).expect("100 units load");
+
+    let hall = world
+        .map
+        .structures()
+        .values()
+        .next()
+        .expect("one town hall");
+    let x0 = hall.top_left.0 as i32;
+    let y0 = hall.top_left.1 as i32;
+    let x1 = x0 + i32::from(hall.width) - 1;
+    let y1 = y0 + i32::from(hall.height) - 1;
+    let mut by_distance = std::collections::BTreeMap::new();
+    for entity in world.entities.values() {
+        if world.map.structures().contains_key(&entity.id) {
+            continue;
+        }
+        let x = i32::try_from(entity.position.x.saturating_to_u32()).unwrap_or(i32::MAX);
+        let y = i32::try_from(entity.position.y.saturating_to_u32()).unwrap_or(i32::MAX);
+        let distance = (x0 - x).max(x - x1).max(y0 - y).max(y - y1);
+        *by_distance.entry(distance).or_insert(0u32) += 1;
+    }
+    let units: u32 = by_distance.values().sum();
+    assert_eq!(units, 100);
+    let inner: u32 = (1..=3).filter_map(|d| by_distance.get(&d)).sum();
+    assert_eq!(inner, 96, "rings 1 to 3 hold 96 units: {by_distance:?}");
+    assert_eq!(
+        by_distance.get(&4),
+        Some(&4),
+        "four units on ring 4: {by_distance:?}"
     );
 }
 
