@@ -429,9 +429,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             * bubble.hull_hit_flash * bubble.optics_glare.z;
     }
 
-    // 7. Speed Boost: a warm pulsing arc on the rim behind the direction of travel.
+    // 7. Speed Boost: a warm pulsing arc on the rim behind the direction of travel. Where the
+    // effects drive the shell (a live battle bubble), a stim is their status look instead (plan
+    // 2026-11-09-effect-visualization WP9); the arc stays for the Visual Lab's checkbox.
     var boost_glow = vec3<f32>(0.0);
-    if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_SPEED_BOOSTED) != 0u) {
+    if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_SPEED_BOOSTED) != 0u
+        && shell.driven.x < 0.5) {
         let heading_2d = normalize(vec2<f32>(dot(heading_dir, screen_right), -dot(heading_dir, screen_up)));
         let trailing = smoothstep(0.15, 0.90, -dot(disk_dir, heading_2d));
         let pulse = 0.75 + 0.25 * sin(globals.time * 14.0);

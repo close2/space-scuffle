@@ -7,7 +7,9 @@
 //! - [`spawn_effects_from_events`] turns each admitted [`CombatVisualEvent`] into an effect
 //!   spawn through [`UnitEffectTables`]: a `SplashVisual` spawns its weapon's `splash` effect
 //!   sized by its zones; a tracer, beam, projectile or melee event spawns its weapon's `impact`
-//!   effect where it lands.
+//!   effect where it lands; a `BubbleShatter` spawns the dead unit's `death` effect, sized by
+//!   its radius, where it stood (plan WP9), and the legacy glass shatter is then left out
+//!   ([`replaces_shatter`]).
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -22,8 +24,9 @@
 //! anchored at the source, so an undetected attacker is never drawn. A line is admitted point
 //! by point: it spawns once from any admitted search point and draws only at the points the
 //! viewer sees ([`LineAssembly`], plan Amendment 2, R6), so an undetected burrowed attacker's
-//! line shows wherever it is seen, from its first point on. Launch and travel effects
-//! (anchored at the source) and death effects are wired by later work packages.
+//! line shows wherever it is seen, from its first point on. A death is anchored where the unit
+//! stood, which is where the fog judged it. Launch and travel effects (anchored at the source)
+//! are wired by later work packages.
 //!
 //! # Invariants
 //! - Without effects named in data, nothing is spawned and nothing new is drawn.
@@ -255,8 +258,33 @@ pub fn spawn_request(
             ];
             impact(source, arrival, flight)
         }
-        CombatEventVisual::BubbleShatter { .. } => None,
+        CombatEventVisual::BubbleShatter {
+            pos,
+            radius,
+            unit_type,
+            ..
+        } => tables.death(*unit_type).map(|effect| SpawnRequest {
+            effect,
+            anchor: world(*pos),
+            bound: BoundValues::default()
+                .with(Binding::UnitRadius, *radius)
+                .with(Binding::UnitHeight, *radius * 2.0),
+            line: None,
+            delay: 0.0,
+        }),
     }
+}
+
+/// Whether the death of a unit of `unit_type` draws its own `death` effect instead of the
+/// legacy glass shatter (plan WP9: the default stays the shatter; a unit's presentation block,
+/// or the vocabulary's `defaults.death`, may name an effect that replaces it). Without the
+/// effect tables (an app without the effect system) the shatter is drawn.
+#[must_use]
+pub fn replaces_shatter(
+    tables: Option<&UnitEffectTables>,
+    unit_type: sim_types::UnitTypeId,
+) -> bool {
+    tables.is_some_and(|tables| tables.death(unit_type).is_some())
 }
 
 /// Spawns the effect of every admitted combat event.

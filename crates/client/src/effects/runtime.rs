@@ -45,7 +45,7 @@ use super::catalog::{
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_DARKEN, FLAG_MIRROR, FLAG_POLAR,
     NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
-    ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
+    ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_MEMBRANE, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
@@ -888,7 +888,10 @@ impl EffectRuntime {
         let LayerClock { age, life, exit } = clock;
         // A released held layer erodes out (its erosion rises with `exit`, see `push_card` and
         // `push_decal`) and dims with it, so it never pops.
-        let intensity = catalog.sample(layer.curve, life, 1.0) * context.fade * (1.0 - exit * exit);
+        let intensity = catalog.sample(layer.curve, life, 1.0)
+            * context.fade
+            * (1.0 - exit * exit)
+            * layer_strength(layer, &context.instance.bound);
         let jitter = 1.0 + layer.size_jitter * (2.0 * unit_float(hash3(seed, 0x51CE, 0)) - 1.0);
         let size = resolve_value(&layer.size, &context.instance.bound)
             * catalog.sample(layer.size_curve, life, 1.0)
@@ -1036,6 +1039,7 @@ impl EffectRuntime {
         };
         let shape = match (look.shape, look.mapping) {
             (CardShape::Radial, _) => SHAPE_RADIAL,
+            (CardShape::Membrane, _) => SHAPE_MEMBRANE,
             (_, RingMapping::Front) if ring_inner > 0.0 => SHAPE_FRONT,
             _ => SHAPE_TEXTURE,
         };
@@ -1189,8 +1193,9 @@ impl EffectRuntime {
             clip_axis: [clip[0], clip[1]],
             clip_min: clip[2],
             clip_max: clip[3],
+            // A ribbon never draws a membrane (refused at load); it would read as its core.
             shape: match look.shape {
-                CardShape::Radial => SHAPE_RADIAL,
+                CardShape::Radial | CardShape::Membrane => SHAPE_RADIAL,
                 CardShape::Texture => SHAPE_TEXTURE,
             },
             strip_repeats: drawn / look.repeat,
@@ -1582,6 +1587,17 @@ pub fn layer_clock(
         age,
         life: (age / layer.duration).clamp(0.0, 1.0),
         exit,
+    })
+}
+
+/// The factor `layer`'s `strength` puts on its intensity for the values `bound`:
+/// `floor + (1 - floor) · clamp(value, 0, 1)`, or 1 without one (plan WP9: a barrier's shell
+/// thins as it absorbs).
+#[must_use]
+pub fn layer_strength(layer: &Layer, bound: &BoundValues) -> f32 {
+    layer.strength.map_or(1.0, |strength| {
+        let value = bound.get(strength.bind).clamp(0.0, 1.0);
+        strength.floor + (1.0 - strength.floor) * value
     })
 }
 
@@ -2000,6 +2016,55 @@ fn sort_depth(depth: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+
+    #[test]
+    fn a_bound_strength_scales_the_intensity_down_to_its_floor() {
+        use crate::effects::catalog::schema::{Binding, StrengthDef};
+        let layer = |strength: Option<StrengthDef>| Layer {
+            block: Block::Shell(super::super::catalog::ShellLook {
+                sink: 0.0,
+                tint: bevy::math::Vec4::ZERO,
+                rim: bevy::math::Vec4::ZERO,
+                veil: 0.0,
+                soil: 0.0,
+                progress: false,
+                clip_sink: None,
+                matte: 0.0,
+                shadow: 0.0,
+                pulse: None,
+            }),
+            start: 0.0,
+            duration: 1.0,
+            curve: None,
+            priority: Priority::Critical,
+            size: crate::effects::catalog::schema::ValueDef {
+                bind: Binding::Const,
+                scale: 1.0,
+            },
+            size_curve: None,
+            ramp_curve: None,
+            size_jitter: 0.0,
+            radius: None,
+            placements: Vec::new(),
+            clip_to_line: false,
+            held: true,
+            exit: 0.3,
+            strength,
+        };
+        let bound = |ratio: f32| BoundValues::default().with(Binding::BarrierRatio, ratio);
+        assert_eq!(layer_strength(&layer(None), &bound(0.2)), 1.0);
+        let barrier = layer(Some(StrengthDef {
+            bind: Binding::BarrierRatio,
+            floor: 0.4,
+        }));
+        assert!((layer_strength(&barrier, &bound(1.0)) - 1.0).abs() < 1e-6);
+        assert!((layer_strength(&barrier, &bound(0.5)) - 0.7).abs() < 1e-6);
+        assert!((layer_strength(&barrier, &bound(0.0)) - 0.4).abs() < 1e-6);
+        assert!(
+            (layer_strength(&barrier, &bound(3.0)) - 1.0).abs() < 1e-6,
+            "the value is read as a fraction"
+        );
+    }
 
     #[test]
     fn no_card_sorts_before_a_darkening_card() {

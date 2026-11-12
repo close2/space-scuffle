@@ -1,0 +1,32 @@
+WP9 round 1: printed measurements of crates/client/tests/status_gpu_tests.rs (debug build, Xvfb, 1280x720,
+the battle camera's default distance), every line a test prints with its driver.
+
+== radv
+driver radv: Stim stands at (586, 383)
+driver radv: Daze stands at (551, 249)
+driver radv: Charge stands at (691, 225), (695, 301)
+driver radv: Barrier stands at (793, 220), (800, 266)
+driver radv: Deaths stands at (892, 231), (899, 270), (913, 303)
+driver radv: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver radv: Daze: status shown on 88 of 88 frames, look held differently on 0
+driver radv: Charge: status shown on 63 of 88 frames, look held differently on 0
+driver radv: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver radv: the stimmed unit's rim runs from 0.252 to 0.620
+driver radv: the barrier absorbed hits on 3 frames and flashed 3 times
+driver radv: effects spawned 22 before the deaths, 51 at the end
+driver radv: ring of 198 pixels round the unit (1.08..1.30 radii, 11.1 px radius): barrier at 0.5 changes 104 (52.5 %), without its layers 0, at 0.05 62, down 2; the unit itself changes 79 of the ring against empty ground
+
+== lavapipe
+driver lavapipe: Stim stands at (586, 383)
+driver lavapipe: Daze stands at (551, 249)
+driver lavapipe: Charge stands at (691, 225), (695, 301)
+driver lavapipe: Barrier stands at (793, 220), (800, 266)
+driver lavapipe: Deaths stands at (892, 231), (899, 270), (913, 303)
+driver lavapipe: Stim: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: Daze: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: Charge: status shown on 63 of 88 frames, look held differently on 0
+driver lavapipe: Barrier: status shown on 88 of 88 frames, look held differently on 0
+driver lavapipe: the stimmed unit's rim runs from 0.252 to 0.620
+driver lavapipe: the barrier absorbed hits on 3 frames and flashed 3 times
+driver lavapipe: effects spawned 22 before the deaths, 51 at the end
+driver lavapipe: ring of 198 pixels round the unit (1.08..1.30 radii, 11.1 px radius): barrier at 0.5 changes 104 (52.5 %), without its layers 0, at 0.05 64, down 0; the unit itself changes 76 of the ring against empty ground

@@ -75,6 +75,7 @@ pub(super) fn resolve(
     for (name, effect) in &file.effects {
         effects.push(resolver.effect(name, effect)?);
     }
+    check_status_links(path, &effects)?;
     let budget = resolver.budget(file, &effects)?;
     let defaults = resolver.defaults(file)?;
     let effect_names = resolver
@@ -93,6 +94,32 @@ pub(super) fn resolve(
         budget,
         defaults,
     })
+}
+
+/// Checks that every effect a `Status` effect lays or spawns on a hit is itself a `Status`
+/// effect, so it binds what the held look binds (the unit's radius, the barrier's fraction).
+fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatalogError> {
+    for effect in effects {
+        let links = [
+            ("emit", effect.emit.map(|emit| emit.effect)),
+            ("hit", effect.hit.map(|hit| hit.effect)),
+        ];
+        for (field, linked) in links {
+            let Some(linked) = linked.and_then(|id| effects.get(usize::from(id.0))) else {
+                continue;
+            };
+            if linked.event != EventKind::Status {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: path.to_path_buf(),
+                    site: site(&effect.name, None),
+                    field,
+                    value: 0.0,
+                    rule: "the effect it names must be a `Status` effect",
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
@@ -509,6 +536,7 @@ impl Resolver<'_> {
                 });
             }
         }
+        let (emit, hit) = self.status_links(name, effect)?;
         Ok(Effect {
             name: name.to_owned(),
             class: effect.class,
@@ -519,7 +547,56 @@ impl Resolver<'_> {
             span: effect.span,
             repeat: effect.repeat,
             salt: effect.seed.unwrap_or_else(|| name_hash(name)),
+            emit,
+            hit,
         })
+    }
+
+    /// Resolves what a `Status` effect lays while it is held and spawns on a hit (plan WP9);
+    /// any other effect may have neither. Each names a `Status` effect (checked once every
+    /// effect is resolved, [`check_status_links`]) and a positive beat.
+    fn status_links(
+        &self,
+        name: &str,
+        effect: &EffectDefRaw,
+    ) -> Result<(Option<super::Emit>, Option<super::Hit>), EffectCatalogError> {
+        let at = site(name, None);
+        for (field, present) in [
+            ("emit", effect.emit.is_some()),
+            ("hit", effect.hit.is_some()),
+        ] {
+            if present && effect.event != EventKind::Status {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at,
+                    field,
+                    value: 0.0,
+                    rule: "only a `Status` effect is held on a unit to lay or spawn another",
+                });
+            }
+        }
+        let emit = match &effect.emit {
+            Some(emit) => {
+                self.positive_seconds(&at, "emit.every", emit.every)?;
+                Some(super::Emit {
+                    effect: EffectId(self.id(NameKind::Effect, &emit.effect, &at)?),
+                    every: emit.every,
+                    moving: emit.moving,
+                })
+            }
+            None => None,
+        };
+        let hit = match &effect.hit {
+            Some(hit) => {
+                self.positive_seconds(&at, "hit.every", hit.every)?;
+                Some(super::Hit {
+                    effect: EffectId(self.id(NameKind::Effect, &hit.effect, &at)?),
+                    every: hit.every,
+                })
+            }
+            None => None,
+        };
+        Ok((emit, hit))
     }
 
     /// Checks that `value` is a positive, finite number of seconds.
@@ -543,7 +620,7 @@ impl Resolver<'_> {
     }
 
     /// Checks that a layer of an effect of kind `event` may hold or modulate the bubble: both
-    /// belong to an effect held on a unit, which only `Mode` effects are.
+    /// belong to an effect held on a unit, which only `Mode` and `Status` effects are.
     fn unit_bound(
         &self,
         at: &Site,
@@ -558,13 +635,14 @@ impl Resolver<'_> {
         } else {
             return Ok(());
         };
-        if event != EventKind::Mode {
+        if !matches!(event, EventKind::Mode | EventKind::Status) {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
                 site: at.clone(),
                 field,
                 value: 0.0,
-                rule: "only a `Mode` effect is held on a unit and may hold a layer or shape its bubble",
+                rule: "only a `Mode` or `Status` effect is held on a unit and may hold a layer or \
+                       shape its bubble",
             });
         }
         if matches!(block, Block::Particles(_)) && layer.held {
@@ -610,6 +688,10 @@ impl Resolver<'_> {
         }
         self.unit_bound(at, event, layer, &block)?;
         self.fraction(at, "size_jitter", layer.size_jitter)?;
+        if let Some(strength) = layer.strength {
+            self.unit_range(at, "strength.floor", strength.floor, 0.0)?;
+            self.require(at, event, strength.bind)?;
+        }
         for placement in &placements {
             match placement {
                 PlacementDef::Point => {}
@@ -680,6 +762,7 @@ impl Resolver<'_> {
             ),
             held: layer.held,
             exit: layer.exit,
+            strength: layer.strength,
         })
     }
 
@@ -1074,10 +1157,15 @@ impl Resolver<'_> {
             clip_sink,
             matte,
             shadow,
+            pulse,
         } = *block
         else {
             return self.block(at, block);
         };
+        if let Some(pulse) = pulse {
+            self.positive_seconds(at, "pulse.period", pulse.period)?;
+            self.unit_range(at, "pulse.depth", pulse.depth, 0.0)?;
+        }
         let fields: [(&'static str, f32); 14] = [
             ("sink", sink),
             ("clip_sink", clip_sink.unwrap_or(0.0)),
@@ -1107,6 +1195,7 @@ impl Resolver<'_> {
             clip_sink,
             matte,
             shadow,
+            pulse,
         }))
     }
 
@@ -1277,6 +1366,15 @@ impl Resolver<'_> {
         else {
             return self.block(at, block);
         };
+        if *shape == super::schema::CardShape::Membrane {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "shape",
+                value: 0.0,
+                rule: "a membrane is the outline of a body, which only a `Sprite` draws",
+            });
+        }
         self.at_least(at, "repeat", *repeat, 0.001)?;
         self.at_least(at, "travel", *travel, 0.0)?;
         self.at_least(at, "height", *height, 0.0)?;

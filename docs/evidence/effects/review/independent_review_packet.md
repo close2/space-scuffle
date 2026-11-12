@@ -7,6 +7,78 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP9 round 1 (status and death looks)
+
+Plan [Amendment 16](../../../plans/2026-11-09-effect-visualization.md) adds WP9: the looks of four statuses and
+death effects chosen by a unit's presentation block. Please write this review to a new file next to this one,
+`independent_review_wp9_1.md`, in the same form as the WP8 reviews: each look below against each of the seven
+checklist items (at the end of this packet), **accept** or **reject** with a concrete reason (which picture, which
+frame, what you see), and say whether any shipped effect or WP8 look regressed. This is round 1 of at most five
+(Q0080). Nothing was spent and no texture was made: every look is built from the existing texture sets.
+
+### What the looks are meant to be (StarCraft II analogues; looks stay original)
+
+| Look | Shown when | Meant to read like |
+|---|---|---|
+| `stim_surge` | the overclock (stim) runs: Marine and Marauder analogues `pulse_bot`, `shock_golem` | the body running hot: a deep red rim beating at 0.6 s over a warmed picture; one flare and a breath of red vapour as the stim goes in; thin warm vapour off its crown every 0.45 s, left behind as it runs (`stim_fumes`) |
+| `concussive_daze` | a unit is slowed (the Marauder analogue's concussive shells) | dulled and heavy: the picture cooled and greyed, glass highlight dimmed, a dull cold rim; one pale flare as the blow lands; a little dust at its feet while it drags itself on (`daze_drag`) |
+| `charge_streak` | the attack dash (charge) runs: Zealot analogue `psi_grey` | a lunge that tears up the ground: a cold violet-white rim on the body, and warm dust and dark scuffs left behind every 0.08 s (`charge_dust`). Deliberately no streaks, rays or speed lines |
+| `barrier_shell` and `barrier_absorb` | the barrier is raised and still has absorption left: Immortal analogue `void_goliath` | an energy membrane round the body, a little larger than its bubble: faint where it faces the camera, amber glass and a pale gold light towards its edge, a fine crackle open in its face; it thins as it absorbs and snaps up with one bright pass; every absorbed hit flares it and crackles away, with a short warm light |
+| `vehicle_wreck` | death of `railgun_crawler` (Siege Tank) and `napalm_wheeler` (Hellion) | a vehicle destroyed: its glass bubble bursts into pale shards, a short hot flash and a ball of fire, sparks and wreckage thrown out, black smoke for two seconds, a charred scorch |
+| `bio_burst` | death of `burrow_scorpion` (Lurker) | a creature burst open: glass shards, a dark ichor splash and globs on arcs, low foul vapour, a dark wet stain |
+
+Every other unit still dies with the legacy glass shatter (the default death). A named death replaces it.
+
+**Shown only in tests.** The only shipped unit with a barrier (`void_goliath`) has no unit media, so the client
+does not present it in a battle yet. The pictures below give a presentable unit a copy of the shipped barrier in
+the test world's catalog only.
+
+### Material
+
+The battle pictures come from the new `crates/client/tests/status_gpu_tests.rs` on the production skirmish (debug
+build, Xvfb, 1280×720, the battle camera's default distance, which is gameplay zoom) on radv and lavapipe. The
+sequences are 260×180 window crops round each subject, every third 40 ms frame (120 ms apart, labelled with their time since the subjects were staged), shown at 1.5 times their size; the
+whole-window frames are at 1:1. Files start with `wp9r1_`. Where the subjects stand in the whole-window frames
+(radv, window pixels): the stimmed unit at about (586, 383) left of the headquarters; the slowed unit at (551, 249);
+the charging unit at (691, 225) and the enemy it charges at (695, 301); the shielded unit at (793, 220) and the
+enemy firing on it at (800, 266); the three dying units at (892, 231), (899, 270) and (913, 303).
+
+| What | Files |
+|---|---|
+| Stimmed unit running, from the moment it is staged | [radv](wp9r1_stim_sequence_radv.jpg), [lavapipe](wp9r1_stim_sequence_lavapipe.jpg) |
+| Slowed unit walking | [radv](wp9r1_daze_sequence_radv.jpg), [lavapipe](wp9r1_daze_sequence_lavapipe.jpg) |
+| A real charge (the dash unlocked, an attack order on an enemy 3.8 units away) | [radv](wp9r1_charge_sequence_radv.jpg), [lavapipe](wp9r1_charge_sequence_lavapipe.jpg) |
+| Barrier raised in full when staged, then absorbing an enemy's fire (three absorbed hits, three flashes) | [radv](wp9r1_barrier_sequence_radv.jpg), [lavapipe](wp9r1_barrier_sequence_lavapipe.jpg) |
+| Three deaths at t = 1.0 s (two vehicles, one creature) | [radv](wp9r1_deaths_sequence_radv.jpg), [lavapipe](wp9r1_deaths_sequence_lavapipe.jpg) |
+| The whole battle at 0.4, 1.2, 2.0 and 2.8 s | `wp9r1_battle_0_radv.png` to `wp9r1_battle_3_radv.png`; lavapipe likewise |
+| Barrier pose, default zoom: standing, barrier 0.5 left, the same without effect layers, 0.05 left, down | [radv](wp9r1_barrier_pose_radv.jpg), [lavapipe](wp9r1_barrier_pose_lavapipe.jpg) |
+| Effect-lab contact sheets and sequences of the one-shot parts (the slice's layout: eight ages across, bright and dark ground, default and close zoom), radv and lavapipe | `wp9r1_lab/<driver>/<effect>_contact.png` and `_sequence.png` (legend `_contact.txt`) for `vehicle_wreck`, `bio_burst`, `barrier_absorb`, `charge_dust` (six lays 0.08 s apart), `stim_fumes`, `daze_drag` |
+| The tests' printed measurements on both drivers | [wp9r1_measurements.txt](wp9r1_measurements.txt) |
+
+"Without effect layers" clears the effect renderer's cards, decals, distortions and lights only; a unit's Shell
+(its rim, tint and veil) still applies, as in the WP8 rounds.
+
+### Engineering to check
+
+- Status looks are held per unit in `client::effects::stance` (`keep_statuses`), only on a unit the viewer sees as
+  it is; a barrier only while `barrier_ratio > 0` (`status_shown`).
+- New vocabulary: `Shell.pulse`, a layer's `strength` bound to a value, a `Status` effect's `emit` and `hit`, the
+  `Membrane` card shape; each with typed load errors (`effect_catalog_tests.rs`).
+- A death named by a block is spawned from `BubbleShatter` and the legacy shatter is left out for that unit only
+  (`effects::systems::replaces_shatter`, used by `vfx.rs`); the battle test counts legacy shards after the deaths.
+- The legacy stim arc of `bubble_dome.wgsl` is off on effect-driven bubbles.
+- No simulation crate changed; `units.ron` gains three `death` names (presentation data, not hashed).
+
+### Points to look at
+
+- Whether the stim's beat reads as a pulse and not a blinking light; whether the daze reads as "slowed" rather
+  than "selected" or "cloaked".
+- Whether the charge's trail reads as torn ground and dust, with nothing line-like.
+- Whether the barrier membrane reads as a shell round the body at gameplay zoom without hiding the unit, and
+  whether its outline reads as a drawn circle.
+- Whether the deaths read as a vehicle and a creature dying, and whether the glass shards keep the bubble's
+  identity.
+
 ## WP8 round 5 (concealment and stance: engineering only)
 
 Round 4's review ([`independent_review_wp8_4.md`](independent_review_wp8_4.md), kept as written) accepted every

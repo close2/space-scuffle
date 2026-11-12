@@ -804,6 +804,7 @@ pub fn process_combat_events_system(
     camera_query: Query<'_, '_, &Transform, With<Camera3d>>,
     mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
     mut fx_pool: ResMut<'_, CombatFxMaterialPool>,
+    effect_tables: Option<Res<'_, crate::effects::catalog::UnitEffectTables>>,
 ) {
     let camera_position = camera_query
         .get_single()
@@ -819,6 +820,13 @@ pub fn process_combat_events_system(
     };
 
     for event_wrapper in event_reader.read() {
+        // A unit whose block names a death effect draws it instead of the glass shatter (the
+        // effect system spawns it, plan WP9).
+        if let CombatEventVisual::BubbleShatter { unit_type, .. } = &event_wrapper.0 {
+            if crate::effects::systems::replaces_shatter(effect_tables.as_deref(), *unit_type) {
+                continue;
+            }
+        }
         let owner = event_wrapper.0.owner();
         let resolved = if lab.current_tab == crate::LabTab::LiveBattle {
             owners.palette.battle_style(owner, &session.metadata)

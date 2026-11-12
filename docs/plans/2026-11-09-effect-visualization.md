@@ -1780,3 +1780,81 @@ orchestrator decided:
 The effect renderer's queue, the effect runtime's sort depths and their tests. No look, simulation state, golden
 replay or checksum changes (D-1 holds). Packet: section "WP8 round 5". This is round 5, the last of the owner's five
 (Q0080).
+
+## Amendment 16: WP9 status and death looks, round 1 (2026-11-12, short note, charter §6)
+
+**What changes.** WP9 of §9 in the client, its effect shaders and the catalog's presentation data. No simulation
+state, golden replay or checksum changes (D-1 holds: the client reads `status`, `barrier_ratio` and the
+`BubbleShatter` event's `unit_type`, which WP1 and WP2 already publish; `sim_core` is not touched).
+
+- **Status looks are held looks.** `client::effects::stance` holds one look per status kind on a unit
+  (`StanceTrack::status`), the unit's own or the vocabulary's `defaults.status`, while the status is shown
+  (`status_shown`: published, and for a barrier only while `barrier_ratio > 0`), anchored at the body's centre and
+  bound to `UnitRadius`, `UnitHeight` and `BarrierRatio`. Released, its held layers erode out over their `exit` as
+  WP8's looks do, and a unit first seen in a status is shown settled in it. Nothing is held on a unit the viewer
+  does not see as it is (`Presence::Shown` only, D-5).
+- **Vocabulary.** `Status` effects, like `Mode` effects, may hold layers and have a `Shell`. New, each with typed
+  load errors and range checks:
+  - `Shell.pulse: Some((period, depth))`: the tint and rim beat (a stim's racing pulse, §5.5);
+  - a layer's `strength: Some((bind, floor))`: its intensity times `floor + (1 - floor) · clamp(value, 0, 1)` (a
+    barrier's shell thins as it absorbs, never below its floor while it stands);
+  - a `Status` effect's `emit: Some((effect, every, moving))`: another `Status` effect laid at the unit's foot every
+    `every` seconds at a phase of the unit's own, only while it moves when `moving` (a charge's dust, a stim's
+    fumes); and `hit: Some((effect, every))`: one spawned at the body when the simulation publishes a hit on the
+    status (only a barrier has one, `barrier_hit`), at most once per `every` while hits go on;
+  - the card shape `Membrane` (sprites only): a thin shell round a body seen from the camera, faint where it faces
+    the camera and densest just inside its softened outline.
+- **Deaths.** A `BubbleShatter` spawns the dead unit's `death` effect where it stood, sized by its radius
+  (`effects::systems::spawn_request`), and the legacy glass shatter is then left out for that unit
+  (`replaces_shatter`, as `ArchetypeEffects::death` documents: "replacing the default shatter"). The vocabulary
+  names no `defaults.death`, so the glass shatter stays the default death.
+- **Looks** (`effects.ron`; no new texture, nothing spent):
+  - `stim_surge` (`defaults.status.Overclock`): a deep red rim beating at 0.6 s over a warmed picture, one flare of
+    the rim and a breath of red vapour as the stim goes in, thin warm vapour off the crown every 0.45 s
+    (`stim_fumes`);
+  - `concussive_daze` (`Slowed`): a cooled, greyed picture with its glass highlight dimmed and a dull cold rim, one
+    pale flare as the blow lands, a little dust at the feet while it walks (`daze_drag`);
+  - `charge_streak` (`Dash`): a cold violet-white rim while it lunges, and the ground torn up behind it every
+    0.08 s: warm dust and dark scuffs that darken the floor (`charge_dust`). No streak, ray or speed line: the
+    trail is the disturbed ground;
+  - `barrier_shell` (`Barrier`): a pale gold `Membrane` at 1.25 radii round the body with a fine crackle open in
+    its face, snapping up with one bright pass; every absorbed hit flares it (`barrier_absorb`: a brighter membrane
+    that crackles away, and a short warm light);
+  - `vehicle_wreck` and `bio_burst` (`Death`): each with the bubble's glass breaking into pale shards
+    (`glass_shards`); a vehicle's hot flash, fireball, sparks, wreckage, black smoke and a charred scorch; a
+    creature's dark ichor splash, globs on arcs (`ichor_globs`), foul vapour and a dark stain. Named by
+    `railgun_crawler` and `napalm_wheeler` (vehicle) and `burrow_scorpion` (creature) in `units.ron`.
+- **The legacy stim arc.** `bubble_dome.wgsl`'s warm arc behind a boosted unit stays only for the Visual Lab's
+  checkbox; on a bubble the effects drive (`ShellUniformGpu::driven`) the stim look replaces it.
+
+**Decisions (Q0002, reversible).**
+
+- A named death replaces the shatter rather than playing beside it, as the archetype schema already says; every
+  death effect therefore breaks the glass itself (`glass_shards`), so a unit's death still reads as its bubble
+  bursting.
+- The absorb flash has no direction: the simulation publishes that the barrier was hit, not from where. The whole
+  membrane flares; a directional flash would need a presentation-only hit angle in the snapshot (recorded for a
+  later round).
+- Statuses other than the four (damage over time, stun, range reduced, revealed, from Q0077's spells) get no default
+  look in this WP; the tables carry them, so a later look is data only.
+- **Shown only in the lab, or by a stand-in in the tests:** the only shipped unit with a barrier, `void_goliath`
+  (Immortal analogue), has no unit media, so the client does not present it in a battle; `barrier_shell` and
+  `barrier_absorb` show on it once it has media. The GPU tests give a presentable unit a copy of the shipped barrier
+  in the test world's catalog. `stim_surge` shows on `pulse_bot` and `shock_golem`, `charge_streak` on `psi_grey`,
+  `concussive_daze` on any presented unit a concussive shell slows, and the deaths on their three units, all of
+  which have media.
+
+**Tests.** `effects::stance` unit tests (a status is shown while published and a barrier only while
+`barrier_ratio > 0`; only a barrier is hit and its flashes keep their beat; an emitted effect is laid once per beat
+at the unit's own phase; a pulse beats the tint and rim only); `effects::runtime` (a bound strength scales the
+intensity down to its floor); `effect_catalog_tests.rs` (status effects hold, lay and spawn, every new value is
+range-checked and a splash effect may do none of it; the shipped statuses' looks are held and `Critical`, there is
+no default death, and a named death replaces the shatter for its unit only); new `status_gpu_tests.rs` on the
+production skirmish (radv and lavapipe): the plan's pose "barrier" (the outer shell changes a ring just outside the
+bubble's outline while the barrier holds half and still with a twentieth left, and at most 2 pixels once it is down
+or without its layers), and a battle with a stimmed, a slowed, a charging and a shielded unit under fire and three
+deaths (each look held exactly while its status is shown, the stim's rim beats, every flash keeps its beat, no
+legacy shard is drawn for a unit whose block names its death).
+
+**Gate.** The packet's section "WP9 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).

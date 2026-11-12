@@ -1438,3 +1438,253 @@ fn shipped_torn_fronts_hold_every_sector_for_many_hits() {
     }
     assert!(fronts > 0, "the shipped vocabulary has a torn front");
 }
+
+/// Plan WP9: a `Status` effect, like a `Mode` effect, may hold layers and shape its unit's
+/// bubble (with a pulse of its tint and rim) and may lay or spawn other `Status` effects; any
+/// other kind may not, and every new value is range-checked, naming its field.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one fixture per new rule, read top to bottom"
+)]
+fn status_effects_hold_layers_lay_and_spawn_and_their_values_are_checked() {
+    let (dir, manifest) = fixture();
+    let shell = r"(block: Shell(rim: (1.0, 0.3, 0.2, 0.6), pulse: Some((period: 0.6, depth: 0.5))),
+        duration: 0.3, held: true)";
+    let card = r#"(block: Sprite(texture: "soft_disc", ramp: "white", shape: Membrane),
+        size: (bind: UnitRadius, scale: 1.2), duration: 0.3, held: true,
+        strength: Some((bind: BarrierRatio, floor: 0.4)))"#;
+    let status = |extra: &str, layers: &str| {
+        format!(
+            r#""look": (class: Minor, event: Status{extra}, layers: [ {layers} ]),
+               "puff": (class: Ambient, event: Status, layers: [ {card} ])"#
+        )
+    };
+    let catalog = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &status(
+                r#", emit: Some((effect: "puff", every: 0.1, moving: true)),
+                     hit: Some((effect: "puff", every: 0.2))"#,
+                &format!("{shell}, {card}"),
+            ),
+            r#"status: { Barrier: "look" }"#,
+        ),
+    )
+    .expect("a status look that holds, lays and spawns loads");
+    let look_id = catalog.effect_id("look").expect("defined");
+    let look = catalog.effect(look_id).expect("loaded");
+    let puff = catalog.effect_id("puff").expect("defined");
+    let emit = look.emit.expect("it lays an effect");
+    assert_eq!((emit.effect, emit.every, emit.moving), (puff, 0.1, true));
+    let hit = look.hit.expect("it spawns on a hit");
+    assert_eq!((hit.effect, hit.every), (puff, 0.2));
+    let Block::Shell(shell_look) = &look.layers[0].block else {
+        panic!("the first layer shapes the bubble");
+    };
+    assert!(
+        (shell_look.beat(0.0) - 1.0).abs() < 1e-6,
+        "a beat peaks at its start"
+    );
+    assert!(
+        (shell_look.beat(0.3) - 0.5).abs() < 1e-5,
+        "half a period later it is down by its depth"
+    );
+    assert!(
+        look.layers[1].strength.is_some(),
+        "the membrane's strength is bound"
+    );
+    assert_eq!(
+        catalog.defaults.status.get(&sim_types::StatusKind::Barrier),
+        Some(&look_id)
+    );
+
+    // A splash effect may not hold, shape a bubble, lay or spawn.
+    for (effect, field) in [
+        (
+            format!(r#""boom": (class: Major, event: Splash, layers: [ {shell} ])"#),
+            "held",
+        ),
+        (
+            format!(
+                r#""boom": (class: Major, event: Splash, emit: Some((effect: "boom", every: 0.1)),
+                    layers: [ {SPRITE} ])"#
+            ),
+            "emit",
+        ),
+        (
+            format!(
+                r#""boom": (class: Major, event: Splash, hit: Some((effect: "boom", every: 0.1)),
+                    layers: [ {SPRITE} ])"#
+            ),
+            "hit",
+        ),
+    ] {
+        let error = load(dir.path(), &vocabulary(&manifest, "", &effect, "")).expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+    }
+    // What a status lays or spawns must be a status effect itself.
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &format!(
+                r#""look": (class: Minor, event: Status, hit: Some((effect: "boom", every: 0.1)),
+                    layers: [ {shell} ]), {}"#,
+                splash_effect(SPRITE)
+            ),
+            "",
+        ),
+    )
+    .expect_err("a hit naming a splash effect");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue { field: "hit", .. }
+        ),
+        "{error}"
+    );
+    // Out-of-range values name their field.
+    let shell_with = |pulse: &str| {
+        format!(r"(block: Shell(rim: (1.0, 0.3, 0.2, 0.6), pulse: Some({pulse})), duration: 0.3)")
+    };
+    let card_with = |strength: &str| {
+        format!(
+            r#"(block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 1.0),
+                duration: 0.3, strength: Some({strength}))"#
+        )
+    };
+    for (effects, field) in [
+        (
+            status("", &shell_with("(period: 0.0, depth: 0.5)")),
+            "pulse.period",
+        ),
+        (
+            status("", &shell_with("(period: 0.6, depth: 1.5)")),
+            "pulse.depth",
+        ),
+        (
+            status("", &card_with("(bind: BarrierRatio, floor: 1.2)")),
+            "strength.floor",
+        ),
+        (
+            status(r#", emit: Some((effect: "puff", every: 0.0))"#, shell),
+            "emit.every",
+        ),
+        (
+            status(r#", hit: Some((effect: "puff", every: -1.0))"#, shell),
+            "hit.every",
+        ),
+    ] {
+        let error = load(dir.path(), &vocabulary(&manifest, "", &effects, "")).expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+    }
+    // A splash effect does not publish the barrier's fraction.
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(&card_with("(bind: BarrierRatio, floor: 0.2)")),
+            "",
+        ),
+    )
+    .expect_err("an unbound strength");
+    assert!(
+        matches!(&error, EffectCatalogError::UnboundBinding { .. }),
+        "{error}"
+    );
+    // A membrane is the outline of a body: a ribbon cannot draw it.
+    let ribbon = r#"(block: Ribbon(texture: "soft_disc", ramp: "white", shape: Membrane),
+        size: (scale: 0.2), duration: 0.5)"#;
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &format!(r#""jet": (class: Major, event: Line, layers: [ {ribbon} ])"#),
+            "",
+        ),
+    )
+    .expect_err("a membrane ribbon");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue { field: "shape", .. }
+        ),
+        "{error}"
+    );
+}
+
+/// Plan WP9: the shipped vocabulary shows the four statuses by default, each a `Status` effect
+/// whose look is held and `Critical`; it names no default death (the glass shatter stays the
+/// default), and every death a shipped block names is a `Death` effect that replaces the
+/// shatter for that unit only.
+#[test]
+fn shipped_statuses_have_held_looks_and_named_deaths_replace_the_shatter() {
+    use sim_types::StatusKind;
+    let root = ResolvedAssetsRoot::resolve().expect("assets root");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    for kind in [
+        StatusKind::Overclock,
+        StatusKind::Slowed,
+        StatusKind::Dash,
+        StatusKind::Barrier,
+    ] {
+        let id = catalog
+            .defaults
+            .status
+            .get(&kind)
+            .copied()
+            .expect("a default look");
+        let effect = catalog.effect(id).expect("loaded");
+        assert_eq!(effect.event, EventKind::Status, "{kind:?}");
+        assert!(
+            effect.layers.iter().any(|layer| layer.held
+                && layer.priority == client::effects::catalog::schema::Priority::Critical),
+            "{kind:?}: {} holds a Critical layer",
+            effect.name
+        );
+    }
+    assert_eq!(
+        catalog.defaults.death, None,
+        "the glass shatter stays the default"
+    );
+    let units = sim_fixtures::shipped_catalogs().units;
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the shipped blocks resolve");
+    let mut named = 0;
+    for arch in units.archetypes() {
+        let death = tables.death(arch.unit_type_id);
+        assert_eq!(
+            death.is_some(),
+            arch.effects.death.is_some(),
+            "{}: a death effect exactly where the block names one",
+            arch.slug
+        );
+        assert_eq!(
+            client::effects::systems::replaces_shatter(Some(&tables), arch.unit_type_id),
+            death.is_some(),
+            "{}",
+            arch.slug
+        );
+        if let Some(id) = death {
+            named += 1;
+            assert_eq!(catalog.effect(id).expect("loaded").event, EventKind::Death);
+        }
+    }
+    assert!(named > 0, "some shipped unit names its death");
+    assert!(!client::effects::systems::replaces_shatter(
+        None,
+        sim_types::UnitTypeId(0)
+    ));
+}
