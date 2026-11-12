@@ -6,8 +6,11 @@
 // one start loadout per scenario and one scenario file per entry of `scenarios`. Nothing here is
 // shipped to players and nothing in the repository's `assets/` changes.
 //
-// Two armies: every scenario has the same two players, opposite each other, each attack-moving to
-// the other's start, and differs only in units per player: 0, 100 and 200 (0, 200 and 400 units).
+// Two armies: every scenario has the same two players, opposite each other, both attack-moving to
+// the arena's centre cell (64, 64), and differs only in units per player: 0, 100 and 200 (0, 200
+// and 400 units). The armies meet in the middle and in view, the survivors stop there and no town
+// hall falls, so the match lasts the whole measured window (plan Amendment 2: sent to each other's
+// start, one army won and destroyed the other hall at tick 1,087 or 1,434).
 // The production scenario path places a player's units on rings 1 to 3 around its 5x5 town hall
 // (96 cells) and continues on rings 4, 5, ... when those are full, so 200 units fill rings 1 to 5,
 // a 15x15 block around each hall. Owner's answer to Q0018, option (b):
@@ -30,10 +33,11 @@
         start_footprint: (5, 5),
     ),
     // Start cells are the top-left cells of the footprints: slots 0 and 4 of the former eight-player
-    // circle around (64.5, 64.5), 44 cells apart on one row.
+    // circle around (64.5, 64.5), 44 cells apart on one row. `target_cell` overrides the attack-move
+    // to `target_slot`'s start.
     players: [
-        (slot: 0, start_cell: (84, 62), target_slot: 1),
-        (slot: 1, start_cell: (40, 62), target_slot: 0),
+        (slot: 0, start_cell: (84, 62), target_slot: 1, target_cell: Some((64, 64))),
+        (slot: 1, start_cell: (40, 62), target_slot: 0, target_cell: Some((64, 64))),
     ],
     // The 0 scenario keeps the two town halls and fields no unit: the baseline of map, smog, HUD
     // and presentation with nothing moving, for this scene (not comparable with the former
