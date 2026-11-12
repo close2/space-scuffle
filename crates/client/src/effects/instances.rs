@@ -30,6 +30,11 @@ pub const FLAG_POLAR: u32 = 2;
 /// [`SpriteInstance::flags`] bit: a ring draws only the arc [`SpriteInstance::arc`] of its
 /// turn, with a brighter head (a mode switch's seal closing).
 pub const FLAG_ARC: u32 = 4;
+/// [`SpriteInstance::flags`] bit: the card darkens what lies under it. It is drawn in the
+/// darkening pass, which multiplies the target by `mix(1, c, a)` (`c` its ramp colour, `a` its
+/// ramp opacity times its coverage), so it never lightens anything, a shadow included (WP8
+/// review 2, B2-2).
+pub const FLAG_DARKEN: u32 = 8;
 /// The card stands upright and turns about world up to face the camera.
 pub const ORIENT_UPRIGHT: u32 = 4;
 /// A ribbon: the card faces the camera about its length along `axis` (as
@@ -202,8 +207,11 @@ pub struct DecalInstance {
     /// Share of the texture's half width read across a disc outline's radius; 0 for no disc
     /// outline.
     pub outline_fill: f32,
+    /// 1 for a mark that darkens what lies under it (drawn in the darkening pass, multiplying
+    /// the ground by its colour), 0 for one blended over it.
+    pub darken: f32,
     /// Padding to a whole 16-byte row; always zero.
-    pub padding: [f32; 2],
+    pub padding: f32,
 }
 
 /// A point light requested this frame.

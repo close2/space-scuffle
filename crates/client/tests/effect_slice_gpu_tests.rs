@@ -792,7 +792,9 @@ fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) 
                 .placements
                 .iter()
                 .map(|placement| match placement {
-                    PlacementDef::Disc { radius, .. } => resolve_value(radius, &subject.bound),
+                    PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                        resolve_value(radius, &subject.bound)
+                    }
                     _ => 0.0,
                 })
                 .fold(0.0, f32::max);

@@ -92,10 +92,10 @@ use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
-use sim_types::BubbleRenderInstance;
 use sim_types::{
     AbilityEffectSpec, Concealment, EntityId, MoverType, PlayerId, SimScalar, UnitOrder, UnitTypeId,
 };
+use sim_types::{BubbleRenderInstance, ShapeKind};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,6 +156,11 @@ const MOUND_RING_RADII: f32 = 1.8;
 const EDGE_PX: f32 = 2.0;
 /// The mound is drawn: at least this many pixels change.
 const MOUND_MIN_PIXELS: usize = 40;
+/// The ground ring round a burrowed body, in radii, whose share the looks change is checked
+/// (WP8 review 2, B2-1).
+const MOUND_GROUND_RING: (f32, f32) = (1.05, 1.6);
+/// The looks change at least this share of that ring where it shows beside the body.
+const MOUND_RING_SHARE: f64 = 0.5;
 /// Reach of a shimmer's bend in pixels: its colours must already be on the ground this near
 /// (the largest bend, lens plus noise, is about 3 px at the default zoom).
 const SHIMMER_REACH_PX: i64 = 6;
@@ -198,11 +203,13 @@ enum Shot {
     SiegeMidBare,
     /// A unit without a burrowed clip of its own, standing (the stand-in).
     PlainUpright,
+    /// The same unit burrowed, with its looks (review 2, F2-1).
+    PlainBurrowed,
     /// The same unit burrowed, without the effect layers: the deep sink.
     PlainBurrowedBare,
 }
 
-const SHOTS: [Shot; 10] = [
+const SHOTS: [Shot; 11] = [
     Shot::Empty,
     Shot::Upright,
     Shot::Burrowed,
@@ -212,6 +219,7 @@ const SHOTS: [Shot; 10] = [
     Shot::SiegeMid,
     Shot::SiegeMidBare,
     Shot::PlainUpright,
+    Shot::PlainBurrowed,
     Shot::PlainBurrowedBare,
 ];
 
@@ -288,6 +296,11 @@ struct PoseReport {
     burrowed: UnitView,
     /// The unit without a burrowed clip of its own.
     plain: UnitView,
+    /// A unit of the viewer's with a neutral shell, away from the staged units: its shadow
+    /// must be the same while a burrowed unit's shell moves its own (review 2, S-2).
+    neutral: UnitView,
+    /// The other bubbles near it, whose animated pictures its shadow ring must leave out.
+    neutral_neighbours: Vec<UnitView>,
     /// Whether the burrowing unit shows its own burrowed clip (WP13 media).
     burrower_has_clip: bool,
     /// Concealment and presence published in each shot, by shot.
@@ -365,6 +378,28 @@ fn concealment_and_stance_poses_read_as_the_plan_asks() -> TestResult {
         (shadow_burrowed as f64) <= SHADOW_LEFT_SHARE * shadow_standing as f64,
         "the burrowed unit's shadow is gone: {shadow_burrowed} of {shadow_standing}"
     );
+    // Mixed bubbles (review 2, S-2): while the burrowed unit's shell moves its own shadow
+    // caster (it alone is unbatched), a neutral unit of the viewer's, batched with the others,
+    // casts the same shadow as when no shell moved any caster.
+    let neutral = report.neutral;
+    assert!(
+        neutral.radius_px > 0.0,
+        "a neutral unit of the viewer's is in sight"
+    );
+    let neutral_shadow = ring_changes_outside(
+        &empty,
+        &shot(Shot::Burrowed)?,
+        neutral,
+        &report.neutral_neighbours,
+    );
+    eprintln!(
+        "driver {driver}: a neutral unit beside the burrowed one: {neutral_shadow} pixels of its \
+         shadow ring changed against the empty shot"
+    );
+    assert!(
+        neutral_shadow <= TOLERATED_PIXELS,
+        "the neutral unit's shadow changed: {neutral_shadow} pixels"
+    );
     let plain = report.plain;
     let plain_standing = disc_changes(&empty, &shot(Shot::PlainUpright)?, plain);
     let sunk = disc_changes(&empty, &shot(Shot::PlainBurrowedBare)?, plain);
@@ -382,19 +417,36 @@ fn concealment_and_stance_poses_read_as_the_plan_asks() -> TestResult {
         (sunk as f64) >= BURROW_AREA_FLOOR * plain_standing as f64,
         "its owner still sees the burrowed unit: {sunk} of {plain_standing}"
     );
-    // The mound: every pixel the looks change lies inside its ring on the ground.
-    let (mound, outside, farthest) = mound_changes(
+    // The mound: every pixel the looks change lies inside its ring on the ground, and they
+    // change most of the ground round the body that shows beside it (review 2, B2-1: the
+    // ground, not only the body, reads as dug in).
+    let mound = mound_changes(
         &shot(Shot::BurrowedBare)?,
         &shot(Shot::Burrowed)?,
         &report.camera,
         unit,
     );
     eprintln!(
-        "driver {driver}: the burrowed looks change {mound} pixels, {outside} beyond the ring; \
-         farthest at {farthest:.2} radii"
+        "driver {driver}: the burrowed looks change {} pixels, {} beyond the ring; farthest at \
+         {:.2} radii; they change {:.1} % of the ground between {} and {} radii beside the body",
+        mound.changed,
+        mound.outside,
+        mound.farthest,
+        100.0 * mound.ring_share,
+        MOUND_GROUND_RING.0,
+        MOUND_GROUND_RING.1
     );
-    assert!(mound >= MOUND_MIN_PIXELS, "the mound is drawn: {mound}");
-    assert_eq!(outside, 0, "the mound stays inside its ring");
+    assert!(
+        mound.changed >= MOUND_MIN_PIXELS,
+        "the mound is drawn: {}",
+        mound.changed
+    );
+    assert_eq!(mound.outside, 0, "the mound stays inside its ring");
+    assert!(
+        mound.ring_share >= MOUND_RING_SHARE,
+        "the mound changes {:.1} % of the ground round the body",
+        100.0 * mound.ring_share
+    );
 
     // Undetected cloaked enemy: only a bend of what is behind it, and nothing without it.
     let enemy = report.shimmer;
@@ -501,6 +553,56 @@ fn ring_changes(a: &image::RgbImage, b: &image::RgbImage, unit: UnitView) -> usi
     changed
 }
 
+/// Pixels within `scale` screen radii of `unit`'s body that `after` makes lighter and darker
+/// than `before` by more than [`LIGHTEN_LEVELS`] of luminance (Rec. 709 weights), and the
+/// patch's size.
+fn lightening(
+    before: &image::RgbImage,
+    after: &image::RgbImage,
+    unit: UnitView,
+    scale: f32,
+) -> (usize, usize, usize) {
+    let luminance = |pixel: [u8; 3]| {
+        0.2126 * f32::from(pixel[0]) + 0.7152 * f32::from(pixel[1]) + 0.0722 * f32::from(pixel[2])
+    };
+    let (mut lighter, mut darker, mut patch) = (0, 0, 0);
+    for_disc(before, unit, scale, |x, y| {
+        patch += 1;
+        let step = luminance(after.get_pixel(x, y).0) - luminance(before.get_pixel(x, y).0);
+        if step > LIGHTEN_LEVELS {
+            lighter += 1;
+        } else if step < -LIGHTEN_LEVELS {
+            darker += 1;
+        }
+    });
+    (lighter, darker, patch)
+}
+
+/// [`ring_changes`] leaving out the pixels of `others`' bodies on screen (with a pixel's
+/// margin), whose pictures animate.
+fn ring_changes_outside(
+    a: &image::RgbImage,
+    b: &image::RgbImage,
+    unit: UnitView,
+    others: &[UnitView],
+) -> usize {
+    let [cx, cy] = unit.centre_px;
+    let mut changed = 0;
+    for_disc(a, unit, SHADOW_REACH_RADII, |x, y| {
+        let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+        let on_other = others
+            .iter()
+            .any(|other| at.distance(Vec2::from_array(other.centre_px)) <= other.radius_px + 1.0);
+        if !on_other
+            && at.distance(Vec2::new(cx, cy)) > unit.radius_px * SHADOW_FROM_RADII
+            && change(a.get_pixel(x, y).0, b.get_pixel(x, y).0) > CHANGE_LEVEL
+        {
+            changed += 1;
+        }
+    });
+    changed
+}
+
 /// Pixels within `scale` screen radii of `unit`'s body that differ between `a` and `b`.
 fn disc_patch_changes(
     a: &image::RgbImage,
@@ -534,35 +636,66 @@ fn for_disc(image: &image::RgbImage, unit: UnitView, scale: f32, mut visit: impl
     }
 }
 
-/// The pixels `with` changes against `without` around `unit` (within 2.6 radii on screen: the ring and a margin beyond it, short of the units nearby),
-/// how many of them lie on the ground beyond the mound's ring (2 px tolerance), and the
-/// farthest one's distance in radii.
+/// What a burrowed unit's looks change on the ground round it.
+struct Mound {
+    /// Pixels changed within 2.6 screen radii (the ring and a margin beyond it, short of the
+    /// units nearby).
+    changed: usize,
+    /// Changed pixels on the ground beyond the mound's ring (2 px tolerance).
+    outside: usize,
+    /// The farthest changed pixel's distance on the ground, radii.
+    farthest: f32,
+    /// Share of the ground ring between [`MOUND_GROUND_RING`] radii, where it shows beside the
+    /// body (not behind it on screen), that the looks change.
+    ring_share: f64,
+}
+
+/// What `with` changes against `without` round `unit`: see [`Mound`].
 fn mound_changes(
     without: &image::RgbImage,
     with: &image::RgbImage,
     camera: &CameraView,
     unit: UnitView,
-) -> (usize, usize, f32) {
+) -> Mound {
     let ground = Vec3::from_array(unit.ground);
     let world_per_px = unit.radius / unit.radius_px.max(1.0);
     let ring = MOUND_RING_RADII * unit.radius + EDGE_PX * world_per_px;
-    let (mut changed, mut outside, mut farthest) = (0, 0, 0.0_f32);
+    let [cx, cy] = unit.centre_px;
+    let mut mound = Mound {
+        changed: 0,
+        outside: 0,
+        farthest: 0.0,
+        ring_share: 0.0,
+    };
+    let (mut ring_pixels, mut ring_changed) = (0_usize, 0_usize);
     for_disc(without, unit, 2.6, |x, y| {
-        if change(without.get_pixel(x, y).0, with.get_pixel(x, y).0) <= CHANGE_LEVEL {
+        let changed = change(without.get_pixel(x, y).0, with.get_pixel(x, y).0) > CHANGE_LEVEL;
+        let point = camera.unproject(x as f32, y as f32, ground.y);
+        let distance = point
+            .map(|point| Vec2::new(point.x - ground.x, point.z - ground.z).length() / unit.radius);
+        let beside_body =
+            Vec2::new(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy).length() > unit.radius_px;
+        if let Some(distance) = distance {
+            if beside_body && (MOUND_GROUND_RING.0..=MOUND_GROUND_RING.1).contains(&distance) {
+                ring_pixels += 1;
+                ring_changed += usize::from(changed);
+            }
+        }
+        if !changed {
             return;
         }
-        changed += 1;
-        let Some(point) = camera.unproject(x as f32, y as f32, ground.y) else {
-            outside += 1;
+        mound.changed += 1;
+        let Some(distance) = distance else {
+            mound.outside += 1;
             return;
         };
-        let distance = Vec2::new(point.x - ground.x, point.z - ground.z).length();
-        farthest = farthest.max(distance / unit.radius);
-        if distance > ring {
-            outside += 1;
+        mound.farthest = mound.farthest.max(distance);
+        if distance * unit.radius > ring {
+            mound.outside += 1;
         }
     });
-    (changed, outside, farthest)
+    mound.ring_share = ring_changed as f64 / ring_pixels.max(1) as f64;
+    mound
 }
 
 /// What a shimmer did to its patch.
@@ -607,12 +740,17 @@ fn shimmer_check(empty: &image::RgbImage, shimmer: &image::RgbImage, unit: UnitV
     result
 }
 
-/// Whether `colour` is, as a whole colour, what a bent read of `reference` near `(x, y)` can
-/// give: a filtered read blends the four pixels of one 2 by 2 block, so the colour must lie
-/// within [`SHIMMER_SLACK`] (Euclidean RGB distance) of the box those four colours span, for some
-/// block within [`SHIMMER_REACH_PX`]. Unlike a box over the whole neighbourhood, this refuses a
-/// colour assembled from channels of different pixels, such as a dark neutral spot on
-/// multi-coloured ground (review 1's note on the per-channel check).
+/// Whether `colour` is, as a whole colour, near what a bent read of `reference` near `(x, y)`
+/// can give. A filtered read blends the four pixels of one 2 by 2 block, so the colour is
+/// accepted when it lies within [`SHIMMER_SLACK`] (Euclidean RGB distance) of the per-channel
+/// box those four pixels span, for some block whose top-left pixel lies within
+/// [`SHIMMER_REACH_PX`] of `(x, y)` (-6 to 5 either way; the block reaches one pixel further).
+/// The box, not the four colours' convex hull, is tested: within one block a colour assembled
+/// from channels of its different pixels still passes, which a 2 by 2 block's blend nearly
+/// spans anyway. Across blocks it does not: unlike a box over the whole neighbourhood, this
+/// refuses a colour assembled from channels of pixels in different blocks, such as a dark
+/// neutral spot on multi-coloured ground (review 1's note on the per-channel check; review 2's
+/// note on this comment).
 fn blend_of_neighbours(reference: &image::RgbImage, x: u32, y: u32, colour: [u8; 3]) -> bool {
     let (width, height) = (i64::from(reference.width()), i64::from(reference.height()));
     for dy in -SHIMMER_REACH_PX..SHIMMER_REACH_PX {
@@ -1254,7 +1392,7 @@ fn change_pose_world(
                 .is_immobile = true;
             staging.plain = Some((id, mode));
         }
-        Shot::PlainBurrowedBare => {
+        Shot::PlainBurrowed => {
             let (id, mode) = staging
                 .plain
                 .clone()
@@ -1264,9 +1402,8 @@ fn change_pose_world(
                 id,
                 &mode,
             );
-            view.bare = true;
         }
-        Shot::BurrowedBare | Shot::ShimmerBare => view.bare = true,
+        Shot::BurrowedBare | Shot::ShimmerBare | Shot::PlainBurrowedBare => view.bare = true,
         Shot::SiegeMidBare => {
             view.bare = true;
             view.hidden = staging.siege;
@@ -1315,9 +1452,43 @@ fn record_pose(
         Shot::Upright | Shot::Burrowed | Shot::BurrowedBare => (burrower, 0),
         Shot::Shimmer | Shot::ShimmerBare => (staging.enemy, 1),
         Shot::SiegeMid | Shot::SiegeMidBare => (staging.siege, 2),
-        Shot::PlainUpright | Shot::PlainBurrowedBare => (plain, 4),
+        Shot::PlainUpright | Shot::PlainBurrowed | Shot::PlainBurrowedBare => (plain, 4),
         Shot::Empty => (None, 3),
     };
+    if shot == Shot::Empty {
+        // The viewer's mobile unit nearest the burrowing unit's spot (at least the spots'
+        // clearance from it), whose shell stays neutral in every shot.
+        let spot = staging.spots[0];
+        let neutral = bubbles
+            .iter()
+            .filter(|(bubble, ..)| {
+                bubble.0.owner == VIEWER
+                    && bubble.0.concealment == Concealment::None
+                    && bubble.0.stance.mode.is_none()
+                    && !matches!(bubble.0.shape, ShapeKind::BuildingDome { .. })
+            })
+            .min_by(|(a, ..), (b, ..)| {
+                let distance = |bubble: &BubbleInstance| {
+                    Vec2::new(bubble.0.world_pos[0], bubble.0.world_pos[1]).distance(spot)
+                };
+                distance(a).total_cmp(&distance(b))
+            });
+        if let Some((bubble, ..)) = neutral {
+            let view = unit_view(bubble, camera);
+            staging.report.neutral = view;
+            staging.report.neutral_neighbours = bubbles
+                .iter()
+                .filter(|(other, ..)| other.0.entity_id != bubble.0.entity_id)
+                .map(|(other, ..)| unit_view(other, camera))
+                .filter(|other| {
+                    let [x, y] = other.centre_px;
+                    let [cx, cy] = view.centre_px;
+                    Vec2::new(x - cx, y - cy).length()
+                        < view.radius_px * SHADOW_REACH_RADII + other.radius_px
+                })
+                .collect();
+        }
+    }
     let Some((bubble, material, track)) = find(watched) else {
         return;
     };
@@ -1522,6 +1693,10 @@ struct SequenceReport {
     enemy: UnitView,
     /// The tableau's enemy burrowed unit, undetected, where it stands (review 1, F-1).
     burrowed_enemy: UnitView,
+    /// The tableau's anchored unit of the viewer's.
+    anchored: UnitView,
+    /// The tableau's cloaked unit of the viewer's.
+    own_cloaked: UnitView,
 }
 
 /// The sequences, in order.
@@ -1580,6 +1755,13 @@ enum SequencePhase {
 /// Seconds the detected tableau runs before its picture: detection is published, the mark
 /// comes in.
 const DETECT_SECONDS: f64 = 1.5;
+/// Seconds the tableau runs before its picture: the anchoring unit's switch (up to 81 ticks)
+/// and its anchor's short dust have ended, so every look stands settled.
+const TABLEAU_SECONDS: f64 = 5.0;
+/// Levels of luminance a darkening look may raise a pixel by (filtering at its edges).
+const LIGHTEN_LEVELS: f32 = 6.0;
+/// Share of the anchored unit's patch its looks may lighten by more than [`LIGHTEN_LEVELS`].
+const LIGHTEN_SHARE: f64 = 0.005;
 /// Seconds a bare tableau is shown before its picture.
 const BARE_SECONDS: f64 = 0.4;
 
@@ -1907,11 +2089,18 @@ fn end_act(
 /// Records the tableau's undetected enemies as the camera sees them.
 fn record_tableau(
     report: &mut SequenceReport,
+    anchored: Option<EntityId>,
     fog: &BattleFog,
     bubbles: &ShellQuery<'_, '_>,
     camera: (&Camera, &GlobalTransform),
 ) {
     for (bubble, ..) in bubbles.iter() {
+        if Some(bubble.0.entity_id) == anchored {
+            report.anchored = unit_view(bubble, camera);
+        }
+        if bubble.0.owner == VIEWER && bubble.0.concealment == Concealment::Cloaked {
+            report.own_cloaked = unit_view(bubble, camera);
+        }
         if bubble.0.owner != ENEMY {
             continue;
         }
@@ -1990,11 +2179,15 @@ fn stage_sequences(
             (camera, camera_transform),
             (act, at, pictures),
         ),
-        SequencePhase::Tableau { at } if now - at < ACT_SECONDS[2] => SequencePhase::Tableau { at },
+        SequencePhase::Tableau { at } if now - at < TABLEAU_SECONDS => {
+            SequencePhase::Tableau { at }
+        }
         SequencePhase::Tableau { .. } => {
             lab.battle_paused = true;
+            let anchored = staging.siege.as_ref().map(|(id, _)| *id);
             record_tableau(
                 &mut staging.report,
+                anchored,
                 &fog,
                 &bubbles,
                 (camera, camera_transform),
@@ -2144,6 +2337,27 @@ fn a_burrow_settles_after_its_channel_and_stances_follow_their_switches() -> Tes
         hidden_changes <= TOLERATED_PIXELS,
         "the undetected burrowed enemy changes {hidden_changes} pixels"
     );
+
+    // The anchored unit's furrow, pressed soil and cracks darken the floor, its shadow
+    // included, and lighten nothing (review 2, B2-2, B2-3): against the same frame without the
+    // effect layers, within 2.2 radii.
+    let anchored = report.anchored;
+    assert!(anchored.radius_px > 0.0, "the tableau has an anchored unit");
+    let (lightened, darkened, patch) = lightening(
+        &picture("seq_tableau_bare.png")?,
+        &picture("seq_tableau.png")?,
+        anchored,
+        2.2,
+    );
+    eprintln!(
+        "driver {driver}: battle tableau, anchored unit: its looks darken {darkened} and lighten \
+         {lightened} of {patch} pixels within 2.2 radii (by more than {LIGHTEN_LEVELS} levels)"
+    );
+    assert!(
+        (lightened as f64) <= LIGHTEN_SHARE * patch as f64,
+        "the anchored unit's looks lighten {lightened} of {patch} pixels"
+    );
+    assert!(darkened > 0, "the anchored unit's looks are drawn");
 
     // The body's depth once dug in: whatever the unit's sink (shallow with its own clip, deep
     // without), the dig ends there.

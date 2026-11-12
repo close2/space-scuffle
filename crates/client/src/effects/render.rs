@@ -231,6 +231,10 @@ struct EffectGpu {
     decal_count: u32,
     /// Distortion discs to draw this frame.
     distortion_count: u32,
+    /// Whether any card this frame darkens what lies under it ([`super::instances::FLAG_DARKEN`]).
+    darkening_cards: bool,
+    /// Whether any decal this frame darkens what lies under it.
+    darkening_decals: bool,
     /// Card centres in draw order (retained), for the runs.
     centers: Vec<Vec3>,
 }
@@ -260,6 +264,8 @@ impl EffectGpu {
             card_count: 0,
             decal_count: 0,
             distortion_count: 0,
+            darkening_cards: false,
+            darkening_decals: false,
             centers: Vec::new(),
         }
     }
@@ -432,6 +438,8 @@ fn extract_effects(
     gpu.card_count = u32::try_from(frame.sorted.len()).unwrap_or(0);
     gpu.decal_count = u32::try_from(frame.decals.len()).unwrap_or(0);
     gpu.distortion_count = u32::try_from(frame.distortions.len()).unwrap_or(0);
+    gpu.darkening_cards = frame.darkening_cards > 0;
+    gpu.darkening_decals = frame.darkening_decals > 0;
     if !runtime.is_changed() {
         return;
     }
@@ -540,6 +548,9 @@ struct EffectPipelineKey {
     samples: u32,
     /// Whether the view renders to an HDR target.
     hdr: bool,
+    /// The darkening pass: draws only the elements that darken what lies under them and
+    /// multiplies the target by their output (`DARKEN_PASS`); the other pass draws the rest.
+    darken: bool,
 }
 
 impl SpecializedRenderPipeline for EffectPipeline {
@@ -556,6 +567,9 @@ impl SpecializedRenderPipeline for EffectPipeline {
         if key.samples > 1 {
             defs.push("MULTISAMPLED".into());
         }
+        if key.darken {
+            defs.push("DARKEN_PASS".into());
+        }
         let view_layout = match (key.kind, key.samples > 1) {
             (RunKind::Distortions, _) => self.distortion_view_layout.clone(),
             (_, true) => self.view_layout_msaa.clone(),
@@ -565,6 +579,27 @@ impl SpecializedRenderPipeline for EffectPipeline {
             src_factor: BlendFactor::One,
             dst_factor: BlendFactor::OneMinusSrcAlpha,
             operation: BlendOperation::Add,
+        };
+        // The darkening pass multiplies the target's colour by the shader's output and leaves
+        // its alpha alone.
+        let blend = if key.darken {
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Dst,
+                    dst_factor: BlendFactor::Zero,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::Zero,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+            }
+        } else {
+            BlendState {
+                color: premultiplied,
+                alpha: premultiplied,
+            }
         };
         RenderPipelineDescriptor {
             label: Some(
@@ -593,10 +628,7 @@ impl SpecializedRenderPipeline for EffectPipeline {
                     } else {
                         TextureFormat::bevy_default()
                     },
-                    blend: Some(BlendState {
-                        color: premultiplied,
-                        alpha: premultiplied,
-                    }),
+                    blend: Some(blend),
                     write_mask: ColorWrites::ALL,
                 })],
             }),
@@ -654,27 +686,40 @@ fn queue_effects(
     let Some(phase) = phases.get_mut(&view_entity) else {
         return;
     };
-    let key = |kind| EffectPipelineKey {
+    let key = |kind, darken| EffectPipelineKey {
         kind,
         samples: msaa.samples(),
         hdr: view.hdr,
+        darken,
     };
     let placeholder = MainEntity::from(Entity::PLACEHOLDER);
     if gpu.decal_count > 0 && gpu.decal_group.is_some() {
         runs.decals = 0..gpu.decal_count;
-        phase.add(Transparent3d {
-            distance: f32::MIN,
-            pipeline: pipelines.specialize(&cache, &pipeline, key(RunKind::Decals)),
-            entity: (entities.decal, placeholder),
-            draw_function: draw,
-            batch_range: 0..1,
-            extra_index: PhaseItemExtraIndex::NONE,
-        });
+        // The darkening marks first, then the others over them (the phase's sort is stable,
+        // so items of one distance keep the order they were added in).
+        let passes: &[bool] = if gpu.darkening_decals {
+            &[true, false]
+        } else {
+            &[false]
+        };
+        for &darken in passes {
+            phase.add(Transparent3d {
+                distance: f32::MIN,
+                pipeline: pipelines.specialize(&cache, &pipeline, key(RunKind::Decals, darken)),
+                entity: (entities.decal, placeholder),
+                draw_function: draw,
+                batch_range: 0..1,
+                extra_index: PhaseItemExtraIndex::NONE,
+            });
+        }
     }
     if gpu.card_count == 0 || gpu.card_group.is_none() {
         return;
     }
-    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(RunKind::Cards));
+    let card_pipeline = pipelines.specialize(&cache, &pipeline, key(RunKind::Cards, false));
+    let darkening_pipeline = gpu
+        .darkening_cards
+        .then(|| pipelines.specialize(&cache, &pipeline, key(RunKind::Cards, true)));
     let runs = &mut *runs;
     runs.others.clear();
     runs.others
@@ -697,14 +742,18 @@ fn queue_effects(
             .get(range.start as usize)
             .copied()
             .unwrap_or_default();
-        phase.add(Transparent3d {
-            distance: rangefinder.distance_translation(&first),
-            pipeline: card_pipeline,
-            entity: (entity, placeholder),
-            draw_function: draw,
-            batch_range: 0..1,
-            extra_index: PhaseItemExtraIndex::NONE,
-        });
+        let distance = rangefinder.distance_translation(&first);
+        // A run's darkening cards first, then its other cards over them.
+        for pipeline in darkening_pipeline.into_iter().chain([card_pipeline]) {
+            phase.add(Transparent3d {
+                distance,
+                pipeline,
+                entity: (entity, placeholder),
+                draw_function: draw,
+                batch_range: 0..1,
+                extra_index: PhaseItemExtraIndex::NONE,
+            });
+        }
     }
 }
 
@@ -744,6 +793,7 @@ fn queue_distortions(
         kind: RunKind::Distortions,
         samples: msaa.samples(),
         hdr: view.hdr,
+        darken: false,
     };
     phase.add(Transmissive3d {
         distance: f32::MAX,

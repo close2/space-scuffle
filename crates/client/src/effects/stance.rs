@@ -49,6 +49,7 @@ use crate::scene_controller::LiveBattleBubble;
 use bevy::ecs::component::ComponentId;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
+use bevy::render::batching::NoAutomaticBatching;
 use sim_types::{BubbleRenderInstance, Concealment, ModeTransitionView, ShapeKind};
 
 /// Seconds of one simulation tick.
@@ -575,9 +576,22 @@ type StanceQuery<'w, 's> = Query<
         &'static BubbleInstance,
         Option<&'static mut StanceTrack>,
         &'static MeshMaterial3d<BubbleDomeMaterial>,
+        Has<NoAutomaticBatching>,
     ),
     With<LiveBattleBubble>,
 >;
+
+/// Whether a bubble with `shell` must cast its shadow with its own material: its shadow lane or
+/// its sink moves its shadow caster (`bubble_shadow.wgsl`).
+///
+/// Bevy 0.15 bins shadow draws by pipeline and mesh only (`ShadowBinKey`), and every bubble
+/// shares one sphere, so a batch of bubbles casts with one representative's material and shell.
+/// Only bubbles with a neutral shell are left batched, where any representative casts the
+/// right shape; the others get [`NoAutomaticBatching`] while their shell moves the caster.
+#[must_use]
+pub fn casts_own_shadow(shell: &ShellUniformGpu) -> bool {
+    shell.driven.z > 0.0 || shell.shape.x > 0.0
+}
 
 /// Whether `bubble`'s unit shows its own clip for the mode its switch enters or its stance
 /// holds (WP13 media), so its looks sink it only a little.
@@ -627,7 +641,14 @@ pub fn present_stances(
         runtime: &mut runtime,
         now: time.elapsed_secs_f64(),
     };
-    for (entity, bubble, track, material) in &mut bubbles {
+    // PERFORMANCE RATIONALE:
+    // Why: An unbatched bubble costs one shadow draw per cascade; marking all 400 units of a
+    // battle would add about a thousand draws (WP8 review 2, S-2).
+    // What: Only bubbles whose shell moves their shadow caster are unbatched, and only while it
+    // does; the component is inserted or removed on the frame that changes.
+    // Trade-off: A structural change on a unit's concealment or stance switch, in exchange for
+    // no extra draw for ordinary units.
+    for (entity, bubble, track, material, unbatched) in &mut bubbles {
         let presence = presence_of(fog, &bubble.0);
         let own = fog.is_none_or(|fog| fog.viewer() == Some(bubble.0.owner));
         let clip = shows_mode_clip(registry, &bubble.0);
@@ -640,6 +661,15 @@ pub fn present_stances(
             shell
         };
         sync_bubble_shell(&mut materials, &material.0, &shell);
+        match (casts_own_shadow(&shell), unbatched) {
+            (true, false) => {
+                commands.entity(entity).insert(NoAutomaticBatching);
+            }
+            (false, true) => {
+                commands.entity(entity).remove::<NoAutomaticBatching>();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -653,6 +683,29 @@ mod tests {
             remaining_ticks: remaining,
             nominal_ticks: nominal,
         }
+    }
+
+    #[test]
+    fn only_a_shell_that_moves_the_shadow_caster_casts_unbatched() {
+        // A neutral shell, and one that only tints or veils: batched with the other bubbles.
+        assert!(!casts_own_shadow(&ShellUniformGpu::default()));
+        let veiled = ShellSum {
+            veil: 0.45,
+            tint: Vec4::new(0.3, 0.4, 0.6, 0.15),
+            ..ShellSum::default()
+        };
+        assert!(!casts_own_shadow(&veiled.uniform(0.5, 0.0)));
+        // A shadow lane or a sink moves the caster.
+        let shaded = ShellSum {
+            shadow: 0.7,
+            ..ShellSum::default()
+        };
+        assert!(casts_own_shadow(&shaded.uniform(0.5, 0.0)));
+        let sunk = ShellSum {
+            sink: 0.12,
+            ..ShellSum::default()
+        };
+        assert!(casts_own_shadow(&sunk.uniform(0.5, 0.0)));
     }
 
     #[test]

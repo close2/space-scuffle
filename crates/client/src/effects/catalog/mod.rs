@@ -167,6 +167,8 @@ pub struct DecalLook {
     pub liquid: Option<schema::LiquidDef>,
     /// The disc outline, if the mark's visible edge is a disc and not its texture's outline.
     pub outline: Option<schema::OutlineDef>,
+    /// Whether the mark darkens the ground under it (multiplied, never lightened).
+    pub darken: bool,
 }
 
 /// The look of a ribbon (see [`schema::BlockDef::Ribbon`]).
@@ -264,6 +266,8 @@ pub enum Block {
         arc: Option<ValueDef>,
         /// How much the band's width and radius waver round the turn; 0 for an even band.
         waver: f32,
+        /// Whether the ring darkens the ground under it (multiplied, never lightened).
+        darken: bool,
     },
     /// A projected ground mark.
     Decal(DecalLook),

@@ -1,12 +1,14 @@
 // Effect cards: sprites, rings, ribbons and particles drawn from one retained instance buffer
 // (client::effects::render). Premultiplied output; soft depth against the depth prepass; noise
-// breakup with a phase per card; an optional clip window along an event line.
+// breakup with a phase per card; an optional clip window along an event line. The pipeline with
+// `DARKEN_PASS` draws only cards flagged `FLAG_DARKEN` and outputs the factor the target is
+// multiplied by; the other draws every other card.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
-    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
     erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
-    flipbook_sample, premultiply, card_mip_level, derivative_mip_level,
+    flipbook_sample, premultiply, card_mip_level, derivative_mip_level, darkening_factor, NOWHERE,
 }
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -36,12 +38,15 @@ const FRONT_CRESTS: u32 = 12u;
 const CREST_JITTER: f32 = 0.019444444;
 const CREST_HALF_WIDTH: f32 = 0.0069444444;
 const CREST_SOFT: f32 = 0.0041666667;
-// An arc's head (FLAG_ARC): the soft step's width in turns (one hundredth of a turn, so the
-// drawn share is within 1 % of the bound one), and the extra shading lit just behind it,
-// falling off over about a tenth of a turn.
-const ARC_HEAD: f32 = 0.01;
-const ARC_HEAD_LIGHT: f32 = 0.35;
-const ARC_HEAD_FALLOFF: f32 = 24.0;
+// An arc's head (FLAG_ARC): a soft end 0.05 of a turn (18 degrees) wide, centred on the bound
+// share so the drawn share stays within 3 % of it; a furrow thickened by an intensity of about 2
+// shows its fade over the outer two thirds of it, about 12 degrees. Freshly turned earth is lit
+// just behind it: its shading rises by up to `ARC_HEAD_LIGHT`, falling off over about a
+// twentieth of a turn (WP8 review 2, B2-2: round 2's 3.6-degree step read as a progress ring's
+// cut end).
+const ARC_HEAD: f32 = 0.05;
+const ARC_HEAD_LIGHT: f32 = 0.6;
+const ARC_HEAD_FALLOFF: f32 = 20.0;
 // A wavering band (`warp`): its middle radius wanders by this share of `warp` either way, and
 // its shading runs this far towards its position across the band (furrow to thrown soil).
 const WAVER_RADIAL: f32 = 0.1;
@@ -126,6 +131,16 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
     out.mip = card_mip_level(f32(textureDimensions(atlas).x), pixels);
     out.world_xz = world.xz;
     out.instance = instance_index;
+    let darkening = (card.flags & FLAG_DARKEN) != 0u;
+#ifdef DARKEN_PASS
+    if (!darkening) {
+        out.position = NOWHERE;
+    }
+#else
+    if (darkening) {
+        out.position = NOWHERE;
+    }
+#endif
     return out;
 }
 
@@ -312,7 +327,7 @@ fn waver_band(card: SpriteInstance, centred: vec2<f32>, radius: f32, mip: f32) -
 // just behind it, so a closing seal has a leading point and no hard cut.
 fn arc_texel(centred: vec2<f32>, share: f32) -> vec2<f32> {
     let turn = atan2(centred.y, centred.x) / TAU + 0.5;
-    let mask = 1.0 - smoothstep(share - ARC_HEAD, share, turn);
+    let mask = 1.0 - smoothstep(share - 0.5 * ARC_HEAD, share + 0.5 * ARC_HEAD, turn);
     let behind = max(share - turn, 0.0);
     let light = ARC_HEAD_LIGHT * exp(-behind * ARC_HEAD_FALLOFF) * mask;
     return vec2<f32>(mask, light);
@@ -372,5 +387,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let shading = self_shade(texel.r, texel.g, card.shade);
     let colour = ramp_lookup(ramps, card.ramp_row, shading * card.ramp_scale);
+#ifdef DARKEN_PASS
+    return darkening_factor(colour, coverage);
+#else
     return premultiply(colour, coverage);
+#endif
 }

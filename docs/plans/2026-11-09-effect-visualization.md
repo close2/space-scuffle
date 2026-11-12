@@ -1656,3 +1656,55 @@ unchanged.
 
 Presentation data, three shaders, the client's stance presentation and its tests. No simulation state, golden replay
 or checksum (D-1 holds). Packet: section "WP8 round 2". This is round 2 of the owner's five (Q0080).
+
+## Amendment 13: WP8 round 3, decided by the orchestrator after WP8 review 2 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp8_2.md`](../evidence/effects/review/independent_review_wp8_2.md)).** Review 2 accepted the fog
+rule (F-1 closed), the whole-colour shimmer check, `cloak_shimmer`, `detected_mark` (C-1 closed), `burrow_dig`,
+`burrow_emerge` and the unchanged splash effects. It rejected `cloak_own` (a regression: a detached dark dot from its
+shadow lane), `burrow_mound`, `mode_seal_sweep` and `siege_anchor`, and accepted the shadow batching diagnosis but
+not its centre of shrinking or its unconditional cost. The orchestrator decided:
+
+1. **S-1, the shadow's shape.** The bubble's shadow caster shrinks about the sphere's lowest point, where it stands on
+   the ground (`bubble_shadow.wgsl`), so a fading shadow contracts to the unit's foot and stays attached. `cloak_own`
+   keeps an attached, smaller shadow at its foot (`shadow: 0.6`).
+2. **S-2, the shadow's cost (the conditional form).** `NoAutomaticBatching` is no longer on every bubble. It is
+   inserted on a bubble whose shell moves its shadow caster (shadow lane or sink above 0;
+   `effects::stance::casts_own_shadow`) on the frame that starts, and removed on the frame the shell is neutral
+   again, so batched bins hold only neutral bubbles. Bevy 0.15 rebuilds the render mesh instances every frame with
+   `Has<NoAutomaticBatching>`, so the change takes effect on that frame. Test: in the pose shot with the burrowed
+   unit (unbatched, its shadow gone), a neutral unit of the viewer's among the batched others casts the same shadow
+   as in the empty shot (pixels of other bodies, whose pictures animate, left out). One 400-unit `frame_budget`
+   measurement on the RX 580 (two runs of this build interleaved with two of `main`'s, the protocol of
+   [`2026-11-12-frame-budget-two-armies.md`](../evidence/2026-11-12-frame-budget-two-armies.md) at reduced scale) is
+   recorded in [`2026-11-12-frame-budget-wp8-shadows.md`](../evidence/2026-11-12-frame-budget-wp8-shadows.md).
+3. **B2-1, the burrowed ground.** The heaped earth lies outside a burrowed clip unit's near-full body: twelve heaps
+   on a circle of 1.2 radii (a new `Circle` placement: evenly round a circle from a start angle drawn per effect,
+   each turned by up to a third of the spacing and moved in or out by up to `spread`; a `Disc` scattered most of
+   them under the body), and the hollow is a dark lip out to 1.4 radii. The same holds for `burrow_dig`'s heaps
+   and `burrow_emerge`'s lingering earth. Test: the burrowed looks change at least half of the ground between 1.05
+   and 1.6 radii where it shows beside the body.
+4. **B2-2 and B2-3, the furrow and the anchor: everything darkens the ground.** A new darkening mode (`darken: true`
+   on a `Decal` or a ground `Ring`) draws an element in a second pass whose blend multiplies the target by the
+   element's output, `mix(1, colour, opacity × coverage)` (`common.wgsl`, `darkening_factor`), so it tints the
+   floor and never lightens it, a shadow included. The renderer adds that pass only on frames that hold a darkening
+   element, drawing the same instance buffers with the elements of the other pass collapsed in the vertex stage, so
+   the shipped effects draw exactly as before. The furrow, the hollow, the heaps, the pressed soil and the cracks
+   darken; their ramps are the share of the ground's light they leave, and a soil intensity above 1 thickens their
+   soft textures. The sweep's head is a soft end 18 degrees wide (its fade showing over about 12), with the freshly
+   turned earth lit behind it. The straight edge across the tank's shadow was the shadow's own flank, revealed
+   where round 2's lighter soil lightened the shadow and not the floor beside it; multiplied soil leaves no such
+   step. The pressed soil is a darker, warm compaction, and the anchor's dust is shorter. Test: within 2.2 radii of
+   the anchored unit, its looks lighten at most 0.5 % of the pixels against the frame without them. A catalog test
+   refuses a darkening standing ring or liquid decal.
+5. **Evidence.** F2-1: the unit without mode media is pictured burrowed with its looks. F2-2: every measurement line
+   is in the measurements file. F2-3: the packet notes that the "bare" view keeps the Shell. The battle tableau is
+   taken 5 s after it is staged, when every look stands settled.
+6. **The `shimmer_check` comment** states what it accepts: a colour within 6 levels of the per-channel box of one
+   2×2 block, so a colour assembled from channels of pixels in different blocks fails, and one assembled within a
+   block passes.
+
+Presentation data, the effect and bubble shaders, the effect renderer's darkening pass, a placement, the client's
+stance presentation and their tests. No simulation state, golden replay or checksum (D-1 holds). Packet: section
+"WP8 round 3". This is round 3 of the owner's five (Q0080).

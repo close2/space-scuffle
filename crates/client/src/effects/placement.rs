@@ -140,7 +140,9 @@ pub fn instance_count(
 ) -> u32 {
     match placement {
         PlacementDef::Point => 1,
-        PlacementDef::Disc { count, .. } => (*count).min(MAX_INSTANCES_PER_PLACEMENT),
+        PlacementDef::Disc { count, .. } | PlacementDef::Circle { count, .. } => {
+            (*count).min(MAX_INSTANCES_PER_PLACEMENT)
+        }
         PlacementDef::Line {
             spacing,
             between,
@@ -189,6 +191,33 @@ pub fn place(
             let radius = resolve_value(radius, bound);
             let distance = radius * unit_float(hash3(seed, index, 0x0D15_C001)).sqrt();
             let angle = std::f32::consts::TAU * unit_float(hash3(seed, index, 0x0A16_1E00));
+            Placed {
+                offset: Vec3::new(angle.cos() * distance, 0.0, angle.sin() * distance),
+                delay: 0.0,
+            }
+        }
+        PlacementDef::Circle {
+            count,
+            radius,
+            spread,
+        } => {
+            let radius = resolve_value(radius, bound);
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a placement makes at most MAX_INSTANCES_PER_PLACEMENT instances"
+            )]
+            let step = 1.0 / (*count).max(1) as f32;
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "an index below MAX_INSTANCES_PER_PLACEMENT is exact in f32"
+            )]
+            let slot = index as f32;
+            let start = unit_float(hash3(seed, 0, 0x0C12_C1E0));
+            let jitter = (unit_float(hash3(seed, index, 0x0C12_C1E1)) - 0.5) * (2.0 / 3.0);
+            let turn = start + (slot + jitter) * step;
+            let distance =
+                radius * (1.0 + spread * (2.0 * unit_float(hash3(seed, index, 0x0C12_C1E2)) - 1.0));
+            let angle = std::f32::consts::TAU * turn;
             Placed {
                 offset: Vec3::new(angle.cos() * distance, 0.0, angle.sin() * distance),
                 delay: 0.0,
@@ -277,6 +306,54 @@ mod tests {
         assert_eq!(
             instance_count(&many, &bound, None),
             MAX_INSTANCES_PER_PLACEMENT
+        );
+    }
+
+    #[test]
+    fn a_circle_places_its_count_evenly_round_its_radius() {
+        let circle = PlacementDef::Circle {
+            count: 8,
+            radius: constant(2.0),
+            spread: 0.1,
+        };
+        let bound = BoundValues::default();
+        assert_eq!(instance_count(&circle, &bound, None), 8);
+        let mut angles: Vec<f32> = (0..8)
+            .map(|index| {
+                let placed = place(&circle, index, 42, &bound, None);
+                let distance = placed.offset.length();
+                assert!(
+                    (1.8 - 1e-4..=2.2 + 1e-4).contains(&distance),
+                    "on the circle within its spread: {distance}"
+                );
+                assert!(placed.offset.y.abs() < 1e-6, "on the ground plane");
+                assert_eq!(
+                    placed,
+                    place(&circle, index, 42, &bound, None),
+                    "deterministic"
+                );
+                placed
+                    .offset
+                    .z
+                    .atan2(placed.offset.x)
+                    .rem_euclid(std::f32::consts::TAU)
+            })
+            .collect();
+        angles.sort_by(f32::total_cmp);
+        // Evenly round: no gap between neighbours wider than a spacing and two thirds of one
+        // (each turned by at most a third either way).
+        let spacing = std::f32::consts::TAU / 8.0;
+        for (index, angle) in angles.iter().enumerate() {
+            let next = angles
+                .get(index + 1)
+                .copied()
+                .unwrap_or(angles[0] + std::f32::consts::TAU);
+            assert!(next - angle <= spacing * (5.0 / 3.0) + 1e-4, "{angles:?}");
+        }
+        // Another effect starts the circle elsewhere.
+        assert_ne!(
+            place(&circle, 0, 42, &bound, None),
+            place(&circle, 0, 43, &bound, None)
         );
     }
 

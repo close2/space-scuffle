@@ -37,7 +37,6 @@ use crate::selection::{HeroLineupIndex, SelectionState};
 use crate::CatalogResource;
 use bevy::app::AppExit;
 use bevy::prelude::*;
-use bevy::render::batching::NoAutomaticBatching;
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
@@ -776,12 +775,6 @@ impl BubbleSceneAssets<'_> {
             .spawn((
                 Mesh3d(mesh),
                 MeshMaterial3d(material),
-                // Bevy bins shadow draws by pipeline and mesh only, so bubbles sharing the
-                // sphere would cast with one representative's material, and with its effect
-                // shell (`bubble_shadow.wgsl` shrinks each caster by its own shell). Unbatched,
-                // every bubble casts with its own material. A blended bubble's main draw is a
-                // sorted transparent item, which this does not change.
-                NoAutomaticBatching,
                 Transform::from_translation(translation).with_scale(Vec3::splat(instance.radius)),
                 BubbleInstance(instance.clone()),
                 components,

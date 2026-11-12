@@ -319,36 +319,46 @@
             (0.00, (0.090, 0.075, 0.058, 0.20)),
             (1.00, (0.46, 0.41, 0.34, 0.42)),
         ],
-        // WP8, concealment and stance. Soil heaped up around a burrowed body (alpha; WP8 review
-        // 1, B-3): warm brown earth, mostly opaque so it reads as soil on a light metal floor
-        // at default zoom, dark in its hollows and lighter on its raised clumps.
+        // WP8, concealment and stance. The ground looks below are darkening ramps (`darken`
+        // blocks; WP8 review 2, B2-2): each colour is the share of the ground's light the mark
+        // leaves, per channel (linear), reached where its opacity times the coverage is 1, so
+        // the soil tints the floor warm brown and is darker still in a unit's shadow, never
+        // lighter. Soil heaped up around a burrowed body: a warm mid-brown, darker in the
+        // hollows between its clumps and lighter on their tops.
         "mound": [
-            (0.00, (0.010, 0.006, 0.003, 0.00)),
-            (0.25, (0.022, 0.012, 0.006, 0.86)),
-            (0.60, (0.050, 0.030, 0.015, 0.90)),
-            (1.00, (0.110, 0.072, 0.040, 0.88)),
+            (0.00, (0.30, 0.21, 0.13, 0.00)),
+            (0.25, (0.30, 0.21, 0.13, 0.85)),
+            (0.60, (0.42, 0.30, 0.19, 0.88)),
+            (1.00, (0.58, 0.43, 0.28, 0.85)),
         ],
-        // The hollow a burrowed body sits in (alpha): dark, damp, compacted soil.
+        // The hollow a burrowed body sits in: dark, damp, compacted soil, its lip showing just
+        // outside the body's outline.
         "hollow": [
-            (0.00, (0.006, 0.004, 0.002, 0.00)),
-            (0.40, (0.012, 0.007, 0.004, 0.70)),
-            (1.00, (0.022, 0.014, 0.008, 0.82)),
+            (0.00, (0.14, 0.10, 0.07, 0.00)),
+            (0.40, (0.14, 0.10, 0.07, 0.80)),
+            (1.00, (0.20, 0.14, 0.09, 0.90)),
         ],
-        // The furrow an anchoring hull ploughs round itself (alpha; review 1, B-5): dark turned
-        // soil in the trench, lighter freshly thrown earth on the berm and at the head.
+        // The furrow an anchoring hull ploughs round itself: dark turned soil in the trench,
+        // lighter thrown earth on the berm, and the freshly turned earth at a sweep's head the
+        // lightest, still darker than the ground it lies on.
         "plough": [
-            (0.00, (0.008, 0.005, 0.003, 0.00)),
-            (0.20, (0.014, 0.008, 0.004, 0.86)),
-            (0.55, (0.040, 0.024, 0.012, 0.90)),
-            (0.85, (0.120, 0.080, 0.045, 0.88)),
-            (1.00, (0.200, 0.140, 0.085, 0.86)),
+            (0.00, (0.16, 0.11, 0.07, 0.00)),
+            (0.20, (0.16, 0.11, 0.07, 0.90)),
+            (0.55, (0.28, 0.20, 0.13, 0.90)),
+            (0.85, (0.50, 0.37, 0.24, 0.88)),
+            (1.00, (0.72, 0.55, 0.36, 0.85)),
         ],
-        // Soil pressed flat under an anchored hull and its stabilisers (alpha): a dark, even
-        // compaction of the ground.
+        // Soil pressed flat under an anchored hull and its stabilisers: an even, slightly warm
+        // darkening of the ground (compacted soil, not a pale film).
         "crushed": [
-            (0.00, (0.010, 0.007, 0.004, 0.00)),
-            (0.50, (0.018, 0.012, 0.007, 0.55)),
-            (1.00, (0.030, 0.020, 0.011, 0.66)),
+            (0.00, (0.50, 0.42, 0.34, 0.00)),
+            (0.50, (0.50, 0.42, 0.34, 0.65)),
+            (1.00, (0.42, 0.35, 0.28, 0.75)),
+        ],
+        // Cracks where an anchored hull's stabilisers bite (darkening).
+        "crack_shade": [
+            (0.00, (0.12, 0.09, 0.07, 0.80)),
+            (1.00, (0.22, 0.17, 0.12, 0.90)),
         ],
         // Clods of soil thrown up by a digging or anchoring body (alpha): dark brown, lit on
         // their tops.
@@ -374,6 +384,12 @@
         "emerge_sink": [(0.00, 1.00, EaseOutCubic), (0.60, 0.25, EaseOutQuad), (1.00, 0.00, Linear)],
         // A held look coming in: eased in over its duration.
         "come_in": [(0.00, 0.00, EaseOutQuad), (1.00, 1.00, Linear)],
+        // WP8 review 2: the darkening soil's intensity, above 1 so its textures' thin, soft
+        // coverage is thickened into solid earth (the coverage itself stays at most 1): in as
+        // `come_in`, handed over as `hand_over`, lingering as `linger`.
+        "soil_in": [(0.00, 0.00, EaseOutQuad), (1.00, 2.20, Linear)],
+        "soil_hand_over": [(0.00, 0.00, EaseOutQuad), (0.25, 2.20, Linear), (0.75, 2.20, EaseInQuad), (1.00, 0.00, Linear)],
+        "soil_linger": [(0.00, 0.00, EaseOutQuad), (0.02, 2.20, Linear), (0.80, 2.20, EaseInQuad), (1.00, 0.00, Linear)],
         // A morph's mark on the ground that hands over to its stance's: in, held, then out over
         // its last quarter while the stance's mark comes in.
         "hand_over": [(0.00, 0.00, EaseOutQuad), (0.25, 1.00, Linear), (0.75, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
@@ -1299,19 +1315,31 @@
                 ),
                 (
                     // Loose earth heaping up round the hole, handing over to the mound: round,
-                    // noise-edged heaps (a disc outline, so no box edge shows; review 1, B-3).
-                    block: Decal(texture: "earth_scar", ramp: "mound", depth: 0.6, width: 0.8,
+                    // noise-edged heaps (a disc outline, so no box edge shows; review 1, B-3)
+                    // centred outside the body, so they show beyond its outline, and darkening
+                    // the floor, its shadow included (review 2, B2-1).
+                    block: Decal(texture: "smoke_puff", ramp: "mound", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.2, fill: 0.85),
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.2, shade: 0.3)),
-                    placement: Disc(count: 7, radius: (bind: UnitRadius, scale: 1.0)),
-                    size: (bind: UnitRadius, scale: 0.45), size_jitter: 0.25, size_curve: "dust_grow",
-                    start: 0.2, duration: 2.0, curve: "hand_over",
+                    placement: Circle(count: 12, radius: (bind: UnitRadius, scale: 1.2), spread: 0.06),
+                    size: (bind: UnitRadius, scale: 0.42), size_jitter: 0.15, size_curve: "dust_grow",
+                    start: 0.2, duration: 2.0, curve: "soil_hand_over",
+                ),
+                (
+                    // The hollow opening round the body as it goes down, handing over to the
+                    // mound's: a dark lip just outside its outline.
+                    block: Decal(texture: "smoke_puff", ramp: "hollow", depth: 0.6, darken: true,
+                        outline: (edge_noise: 0.15, fill: 0.9),
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.25)),
+                    size: (bind: UnitRadius, scale: 1.4), start: 0.5, duration: 1.6, curve: "soil_hand_over",
                 ),
             ],
         ),
         // Standing burrowed (defaults.concealment.burrowed): the body low in a dark hollow with
         // no highlight and no shadow, a soil band at the ground line, a rim of heaped earth and
-        // clods round it. A unit with its own burrowed clip shows that clip almost whole; one
+        // clods round it. The hollow's lip and the heaps lie outside the body's outline (review
+        // 2, B2-1: a unit with its own clip is nearly full size and covered round 2's heaps),
+        // and they darken the floor. A unit with its own burrowed clip shows that clip almost whole; one
         // without is sunk to a low dome. Shown to its owner and to an enemy that detects it; an
         // enemy that does not sees nothing (D-5).
         "burrow_mound": (
@@ -1324,23 +1352,23 @@
                     duration: 0.01, held: true, priority: Critical,
                 ),
                 (
-                    block: Decal(texture: "scorch", ramp: "hollow", depth: 0.6,
+                    block: Decal(texture: "smoke_puff", ramp: "hollow", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.15, fill: 0.9),
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.25)),
-                    size: (bind: UnitRadius, scale: 1.15), duration: 0.5, curve: "come_in", held: true,
+                    size: (bind: UnitRadius, scale: 1.4), duration: 0.5, curve: "soil_in", held: true,
                 ),
                 (
-                    block: Decal(texture: "earth_scar", ramp: "mound", depth: 0.6, width: 0.8,
+                    block: Decal(texture: "smoke_puff", ramp: "mound", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.2, fill: 0.85),
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.2, shade: 0.3)),
-                    placement: Disc(count: 7, radius: (bind: UnitRadius, scale: 1.0)),
-                    size: (bind: UnitRadius, scale: 0.45), size_jitter: 0.25,
-                    duration: 0.5, curve: "come_in", held: true,
+                    placement: Circle(count: 12, radius: (bind: UnitRadius, scale: 1.2), spread: 0.06),
+                    size: (bind: UnitRadius, scale: 0.42), size_jitter: 0.15,
+                    duration: 0.5, curve: "soil_in", held: true,
                 ),
                 (
                     // Clods lying on the heaped earth.
                     block: Sprite(texture: "debris_atlas", ramp: "clod", rotation: Random, lift: 0.5),
-                    placement: Disc(count: 10, radius: (bind: UnitRadius, scale: 1.2)),
+                    placement: Circle(count: 10, radius: (bind: UnitRadius, scale: 1.3), spread: 0.12),
                     size: (bind: UnitRadius, scale: 0.11), size_jitter: 0.4,
                     duration: 0.4, curve: "come_in", held: true,
                 ),
@@ -1369,32 +1397,33 @@
                     start: 0.02, duration: 1.0, curve: "puff_fade",
                 ),
                 (
-                    block: Decal(texture: "earth_scar", ramp: "mound", erosion: "erode_tail", depth: 0.6, width: 0.8,
-                        outline: (edge_noise: 0.2, fill: 0.85),
+                    block: Decal(texture: "smoke_puff", ramp: "mound", erosion: "erode_tail", depth: 0.6,
+                        darken: true, outline: (edge_noise: 0.2, fill: 0.85),
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.2, shade: 0.3)),
-                    placement: Disc(count: 7, radius: (bind: UnitRadius, scale: 1.0)),
-                    size: (bind: UnitRadius, scale: 0.45), size_jitter: 0.25,
-                    duration: 3.0, curve: "linger",
+                    placement: Circle(count: 12, radius: (bind: UnitRadius, scale: 1.2), spread: 0.06),
+                    size: (bind: UnitRadius, scale: 0.42), size_jitter: 0.15,
+                    duration: 3.0, curve: "soil_linger",
                 ),
                 (
-                    block: Decal(texture: "scorch", ramp: "hollow", erosion: "erode_tail", depth: 0.6,
+                    block: Decal(texture: "smoke_puff", ramp: "hollow", erosion: "erode_tail", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.15, fill: 0.9),
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.25)),
-                    size: (bind: UnitRadius, scale: 1.15), duration: 2.5, curve: "linger",
+                    size: (bind: UnitRadius, scale: 1.4), duration: 2.5, curve: "soil_linger",
                 ),
             ],
         ),
         // A cloaked unit its viewer owns (defaults.concealment.cloaked_own): a cool, translucent
         // glass shape whose picture stays readable (Q0076), a soft outline light, a faint bend
-        // of what is behind it and a fainter shadow, so its owner reads "hidden" at a glance and
-        // still sees where it is. The shadow fades in and out with the veil (review 1, B-2).
+        // of what is behind it and a smaller shadow at its foot, so its owner reads "hidden" at
+        // a glance and still sees where it is. The shadow shrinks to the foot and back with the
+        // veil (review 1, B-2; review 2, S-1: it stays attached to the body).
         "cloak_own": (
             class: Minor,
             event: Mode,
             layers: [
                 (
                     block: Shell(veil: 0.45, tint: (0.30, 0.46, 0.62, 0.15), rim: (0.55, 0.78, 1.0, 0.55),
-                        shadow: 0.7),
+                        shadow: 0.6),
                     duration: 0.35, curve: "come_in", held: true, priority: Critical,
                 ),
                 (
@@ -1439,8 +1468,10 @@
         // unlocks, the furrow's arc closing with the switch's progress (Critical: the switch is
         // readable for its whole channel, R4). Review 1, B-5: a trench of dark turned soil whose
         // width and radius waver round the turn, with lighter thrown earth on its outer berm and
-        // freshly turned earth lit at its head, mostly opaque; dark clods and warm dust are
-        // thrown up as the switch begins.
+        // freshly turned earth lit at its soft head; dark clods and warm dust are thrown up as
+        // the switch begins. Review 2, B2-2: the furrow darkens the floor it is ploughed into,
+        // the unit's shadow included, and its head is a soft, lighter stretch of about 13
+        // degrees.
         "mode_seal_sweep": (
             class: Minor,
             event: Mode,
@@ -1448,9 +1479,10 @@
                 (
                     block: Ring(texture: "scorch", ramp: "plough", orient: Ground, thickness: 0.24,
                         mapping: Polar, height: 0.02, arc: (bind: ChannelProgress, scale: 1.0), waver: 0.45,
+                        darken: true,
                         breakup: (noise: "noise_tile", scale: 6.0, amount: 0.3, softness: 0.2, shade: 0.3)),
                     radius: (from: (bind: UnitRadius, scale: 1.85), to: (bind: UnitRadius, scale: 1.85)),
-                    duration: 0.01, held: true, exit: 0.3, priority: Critical,
+                    duration: 0.01, curve: "soil_in", held: true, exit: 0.3, priority: Critical,
                 ),
                 (block: Particles(emitter: "burrow_clods"), size: (bind: UnitRadius, scale: 1.5)),
                 (
@@ -1466,41 +1498,43 @@
         // Anchored (the Siege-Tank analogue in siege mode): the closed furrow stays round the
         // hull, and the soil is pressed flat and cracked out to where the stabilisers stand,
         // beyond the hull (review 1, B-6), so friend and enemy read the stance at a glance; the
-        // hull settling kicks up a short puff of dust as it anchors.
+        // hull settling kicks up a short puff of dust as it anchors. Review 2, B2-3: the furrow,
+        // the pressed soil and the cracks darken the floor, the hull's shadow included (round
+        // 2's lighter soil made the shadow's straight flank show as an edge); the dust is short.
         "siege_anchor": (
             class: Minor,
             event: Mode,
             layers: [
                 (
                     block: Ring(texture: "scorch", ramp: "plough", orient: Ground, thickness: 0.24,
-                        mapping: Polar, height: 0.02, waver: 0.45,
+                        mapping: Polar, height: 0.02, waver: 0.45, darken: true,
                         breakup: (noise: "noise_tile", scale: 6.0, amount: 0.3, softness: 0.2, shade: 0.3)),
                     radius: (from: (bind: UnitRadius, scale: 1.85), to: (bind: UnitRadius, scale: 1.85)),
-                    duration: 0.01, held: true, priority: Critical,
+                    duration: 0.01, curve: "soil_in", held: true, priority: Critical,
                 ),
                 (
                     // The ground pressed flat round the hull, out past it.
-                    block: Decal(texture: "scorch", ramp: "crushed", depth: 0.6,
+                    block: Decal(texture: "smoke_puff", ramp: "crushed", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.15, fill: 0.9),
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.25)),
-                    size: (bind: UnitRadius, scale: 1.5), duration: 0.4, curve: "come_in", held: true,
+                    size: (bind: UnitRadius, scale: 1.5), duration: 0.4, curve: "soil_in", held: true,
                 ),
                 (
                     // Cracks where the stabilisers bite, mostly beyond the hull's outline.
-                    block: Decal(texture: "ground_crack", ramp: "crack", depth: 0.6,
+                    block: Decal(texture: "ground_crack", ramp: "crack_shade", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.2, fill: 0.85),
                         breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.2)),
-                    placement: Disc(count: 5, radius: (bind: UnitRadius, scale: 1.35)),
+                    placement: Circle(count: 5, radius: (bind: UnitRadius, scale: 1.35), spread: 0.08),
                     size: (bind: UnitRadius, scale: 0.4), size_jitter: 0.2,
-                    duration: 0.4, curve: "come_in", held: true,
+                    duration: 0.4, curve: "soil_in", held: true,
                 ),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "dig_dust", soft_depth: 0.3, rotation: Random,
                         erosion: "erode_rise", lift: 0.2, spread: 0.5,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.45)),
-                    placement: Disc(count: 6, radius: (bind: UnitRadius, scale: 1.3)),
-                    size: (bind: UnitRadius, scale: 0.42), size_jitter: 0.3, size_curve: "dust_grow",
-                    duration: 0.8, curve: "puff_fade",
+                    placement: Disc(count: 4, radius: (bind: UnitRadius, scale: 1.3)),
+                    size: (bind: UnitRadius, scale: 0.36), size_jitter: 0.3, size_curve: "dust_grow",
+                    duration: 0.5, curve: "puff_fade",
                 ),
             ],
         ),

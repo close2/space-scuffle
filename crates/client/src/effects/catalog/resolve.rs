@@ -607,7 +607,9 @@ impl Resolver<'_> {
         for placement in &placements {
             match placement {
                 PlacementDef::Point => {}
-                PlacementDef::Disc { radius, .. } => values.push(*radius),
+                PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                    values.push(*radius);
+                }
                 PlacementDef::Line {
                     spacing,
                     per_point,
@@ -760,7 +762,19 @@ impl Resolver<'_> {
             });
         }
         for placement in &placements {
-            if let PlacementDef::Disc { count, .. } = placement {
+            if let PlacementDef::Circle { spread, .. } = placement {
+                if !(0.0..=0.5).contains(spread) {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        field: "spread",
+                        value: *spread,
+                        rule: "it must be in [0, 0.5]",
+                    });
+                }
+            }
+            if let PlacementDef::Disc { count, .. } | PlacementDef::Circle { count, .. } = placement
+            {
                 if *count > MAX_INSTANCES_PER_PLACEMENT || *count == 0 {
                     return Err(EffectCatalogError::TooManyInstances {
                         path: self.path.to_path_buf(),
@@ -920,6 +934,7 @@ impl Resolver<'_> {
             edge_noise: *edge_noise,
             arc: None,
             waver: 0.0,
+            darken: false,
         })
     }
 
@@ -972,10 +987,20 @@ impl Resolver<'_> {
             edge_noise,
             arc,
             waver,
+            darken,
         } = block
         else {
             return self.block(at, block);
         };
+        if *darken && *orient != super::schema::Orient::Ground {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: "darken",
+                value: 1.0,
+                rule: "only a ring lying on the ground (`orient: Ground`) can darken the ground",
+            });
+        }
         self.fraction(at, "waver", *waver)?;
         if *waver > 0.0 && (*mapping == super::schema::RingMapping::Front || breakup.is_none()) {
             return Err(EffectCatalogError::InvalidValue {
@@ -1025,6 +1050,7 @@ impl Resolver<'_> {
                 edge_noise,
                 arc: *arc,
                 waver: *waver,
+                darken: *darken,
             },
             other => other,
         })
@@ -1095,8 +1121,18 @@ impl Resolver<'_> {
                 breakup,
                 liquid,
                 outline,
+                darken,
             } => {
                 self.at_least(at, "depth", *depth, 0.01)?;
+                if *darken && liquid.is_some() {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        field: "darken",
+                        value: 1.0,
+                        rule: "a liquid catches light and cannot only darken the ground",
+                    });
+                }
                 self.at_least(at, "clip_feather", *clip_feather, 0.005)?;
                 if let Some(liquid) = liquid {
                     self.liquid(at, liquid)?;
@@ -1127,6 +1163,7 @@ impl Resolver<'_> {
                     breakup: self.breakup(breakup.as_ref(), at)?,
                     liquid: *liquid,
                     outline: *outline,
+                    darken: *darken,
                 }))
             }
             BlockDef::Sprite { .. }

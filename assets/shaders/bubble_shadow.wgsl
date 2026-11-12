@@ -4,7 +4,7 @@
 // bubble takes no part in the camera's depth prepass. It is bevy_pbr's prepass vertex
 // (prepass.wgsl) without skinning or morph targets, which bubbles never have, plus the effect
 // shell (plan 2026-11-09-effect-visualization WP8): the caster sinks with the bubble and
-// shrinks towards its centre by the shell's shadow lane, so a unit's shadow fades as it digs in
+// shrinks towards its foot by the shell's shadow lane, so a unit's shadow fades as it digs in
 // or cloaks and comes back as it emerges or uncloaks, never popping. With a neutral shell it
 // computes exactly what Bevy's does.
 
@@ -31,8 +31,13 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     let fade = clamp(shell.driven.z, 0.0, 1.0);
     if (fade > 0.0 || shell.shape.x > 0.0) {
+        // The caster shrinks about the sphere's lowest point, where the bubble stands on the
+        // ground (the mesh is a unit sphere scaled by the radius), so a fading shadow contracts
+        // to the unit's foot and stays attached to it (WP8 review 2, S-1: shrunk about the
+        // centre, the shadow pulled away from the body along the light).
         let centre = world_from_local[3].xyz;
-        world = vec4<f32>(centre + (world.xyz - centre) * (1.0 - fade), world.w);
+        let foot = centre - vec3<f32>(0.0, length(world_from_local[1].xyz), 0.0);
+        world = vec4<f32>(foot + (world.xyz - foot) * (1.0 - fade), world.w);
         world.y -= shell.shape.x;
     }
     out.world_position = world;

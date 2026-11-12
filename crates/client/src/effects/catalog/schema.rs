@@ -402,6 +402,12 @@ pub enum BlockDef {
         /// WP8 review 1, B-5). 0 keeps an even band.
         #[serde(default)]
         waver: f32,
+        /// A `Ground` ring only: the ring darkens the ground under it, multiplying it by its
+        /// colour where it covers it, and never lightens it, shadows included (a furrow in
+        /// the shade of its unit; WP8 review 2, B2-2). Its ramp then reads as the colour the
+        /// ground is multiplied by.
+        #[serde(default)]
+        darken: bool,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -444,6 +450,12 @@ pub enum BlockDef {
         /// instead of the texture's own outline: see [`OutlineDef`].
         #[serde(default)]
         outline: Option<OutlineDef>,
+        /// The mark darkens the ground under it, multiplying it by its colour where it covers
+        /// it, and never lightens it, shadows included (soil pressed into the shade of its
+        /// unit; WP8 review 2). Its ramp then reads as the colour the ground is multiplied
+        /// by. A liquid cannot darken.
+        #[serde(default)]
+        darken: bool,
     },
     /// A strip along the event's line (plan WP7): a flame jet's core, a lance's burning
     /// stroke. Its half width is the layer's `size`; it runs from the line's first search
@@ -677,6 +689,19 @@ pub enum PlacementDef {
         count: u32,
         /// Disc radius.
         radius: ValueDef,
+    },
+    /// `count` instances round a circle of `radius`, evenly spaced from a start angle drawn per
+    /// effect, each turned by up to a third of the spacing and moved in or out by up to
+    /// `spread` of the radius (both hashed): a ring of heaped earth round a body, which a
+    /// `Disc` would mostly scatter under it (WP8 review 2, B2-1).
+    Circle {
+        /// Instances.
+        count: u32,
+        /// Circle radius.
+        radius: ValueDef,
+        /// Largest move in or out, as a fraction of the radius, in [0, 0.5].
+        #[serde(default)]
+        spread: f32,
     },
     /// Instances every `spacing` along the event's line, each delayed by its distance
     /// divided by `travel` (world units per second; 0 for no delay).

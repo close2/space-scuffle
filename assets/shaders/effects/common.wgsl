@@ -76,7 +76,7 @@ struct DecalInstance {
     dry_below: f32,
     outline_noise: f32,
     outline_fill: f32,
-    padding_a: f32,
+    darken: f32,
     padding_b: f32,
 }
 
@@ -96,6 +96,7 @@ const SHAPE_FRONT: u32 = 2u;
 const FLAG_MIRROR: u32 = 1u;
 const FLAG_POLAR: u32 = 2u;
 const FLAG_ARC: u32 = 4u;
+const FLAG_DARKEN: u32 = 8u;
 
 
 // Colour of `ramps` row `row` at luminance `x` (0..1), linearly interpolated between texels.
@@ -197,6 +198,21 @@ fn flipbook_sample(
 fn premultiply(ramp: vec4<f32>, coverage: f32) -> vec4<f32> {
     return vec4<f32>(ramp.rgb * coverage, ramp.a * coverage);
 }
+
+// The darkening pass's output for ramp colour `ramp` at coverage `coverage`: the factor the
+// pipeline multiplies the target by (its blend is destination × source), 1 where nothing is
+// covered and the ramp's colour where its opacity times the coverage is 1. A darkening ramp's
+// colour is thus the share of the ground's light the mark leaves, per channel; the element
+// tints what lies under it and never lightens it, a shadow included. The target's alpha is
+// left alone by the pass's blend.
+fn darkening_factor(ramp: vec4<f32>, coverage: f32) -> vec4<f32> {
+    let weight = clamp(ramp.a * coverage, 0.0, 1.0);
+    return vec4<f32>(mix(vec3<f32>(1.0), clamp(ramp.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), weight), 1.0);
+}
+
+// A position no fragment is drawn at: every corner of an element the current pass does not
+// draw is moved here, so its triangles have no area.
+const NOWHERE: vec4<f32> = vec4<f32>(2.0, 2.0, 2.0, 1.0);
 
 // Mip level for a card `pixels` projected pixels wide sampled from cells `cell` texels wide.
 fn card_mip_level(cell: f32, pixels: f32) -> f32 {

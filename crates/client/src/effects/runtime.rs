@@ -43,8 +43,8 @@ use super::catalog::{
     ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_MIRROR, FLAG_POLAR, NO_NOISE,
-    ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_DARKEN, FLAG_MIRROR, FLAG_POLAR,
+    NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
     ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
@@ -144,6 +144,11 @@ pub struct EffectFrame {
     pub distortions: Vec<SpriteInstance>,
     /// Cards written this frame (not particles).
     card_count: u32,
+    /// Cards this frame that darken what lies under them (the renderer then adds the
+    /// darkening pass).
+    pub darkening_cards: u32,
+    /// Decals this frame that darken what lies under them.
+    pub darkening_decals: u32,
 }
 
 impl EffectFrame {
@@ -160,6 +165,8 @@ impl EffectFrame {
             lights: Vec::with_capacity(lights),
             distortions: Vec::with_capacity(distortions),
             card_count: 0,
+            darkening_cards: 0,
+            darkening_decals: 0,
         }
     }
 
@@ -467,6 +474,8 @@ impl EffectRuntime {
         self.frame.decal_owners.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
+        self.frame.darkening_cards = 0;
+        self.frame.darkening_decals = 0;
         self.ledger.clear();
         self.last_build = None;
     }
@@ -494,6 +503,8 @@ impl EffectRuntime {
         self.frame.lights.clear();
         self.frame.distortions.clear();
         self.frame.card_count = 0;
+        self.frame.darkening_cards = 0;
+        self.frame.darkening_decals = 0;
         let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
         let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
         self.stats.critical_overflow += u64::from(overflowed_critical);
@@ -923,6 +934,7 @@ impl EffectRuntime {
                 edge_noise,
                 arc,
                 waver,
+                darken,
             } => self.push_card(
                 context,
                 look,
@@ -940,6 +952,7 @@ impl EffectRuntime {
                     arc: arc
                         .map(|arc| resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)),
                     waver: *waver,
+                    darken: *darken,
                 },
             ),
             Block::Decal(look) => {
@@ -995,6 +1008,10 @@ impl EffectRuntime {
         let (rotation, mut flags) = roll_and_mirror(look.rotation, seed);
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
+        }
+        if ring.darken {
+            flags |= FLAG_DARKEN;
+            self.frame.darkening_cards += 1;
         }
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
@@ -1255,8 +1272,12 @@ impl EffectRuntime {
             dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
             outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
             outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
+            darken: if look.darken { 1.0 } else { 0.0 },
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
+        if look.darken {
+            self.frame.darkening_decals += 1;
+        }
         Written::Yes
     }
 
@@ -1344,6 +1365,8 @@ struct RingShape {
     arc: Option<f32>,
     /// How much the band wavers round the turn; 0 for an even band.
     waver: f32,
+    /// Whether the ring darkens the ground under it.
+    darken: bool,
 }
 
 impl RingShape {
@@ -1353,6 +1376,7 @@ impl RingShape {
         edge_noise: 0.0,
         arc: None,
         waver: 0.0,
+        darken: false,
     };
 }
 
