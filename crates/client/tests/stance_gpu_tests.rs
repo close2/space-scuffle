@@ -30,10 +30,12 @@
 //!
 //! # How it fits
 //! Each child re-executes this test binary through `support/gpu_run.rs` (charter §7, C21), as
-//! `concealment_gpu_tests.rs` does. The shipped burrowing unit has no media yet, so the burrowing
-//! unit is the presentable stand-in of `battle_harness::burrower`, given the shipped unit's
-//! mode-switch ability in the session's catalog, with the effect tables rebuilt from that
-//! catalog so it names its mode's looks. Every unit is chosen by catalog properties.
+//! `concealment_gpu_tests.rs` does. The burrowing unit is the shipped one, with its own
+//! burrowed-mode clip (plan WP13), whenever it has media, else the presentable stand-in of
+//! `battle_harness::burrower` given the shipped unit's mode-switch ability in the session's
+//! catalog; the effect tables are rebuilt from the session's catalog so a stand-in names its
+//! mode's looks. The cloaked units are `burrower`'s unarmed unit. Every unit is chosen by
+//! catalog properties.
 //!
 //! # Invariants verified
 //! - The staging published what it claims (concealment, presence, a mode switch under way).
@@ -686,9 +688,18 @@ fn hold_own_units(session: &mut BattleSession) {
 }
 
 /// The presentable burrowing unit type of `world` that can switch into its burrowed mode by
-/// command, and that mode's name: [`burrower`]'s unit, given the shipped burrowing unit's
-/// mode-switch ability in the session's catalog when it is a stand-in.
+/// command, and that mode's name: the shipped burrowing unit itself once it has media (its own
+/// burrowed-mode clip then plays in its dome, plan WP13), else [`burrower`]'s stand-in given the
+/// shipped unit's mode-switch ability in the session's catalog. The shipped unit is armed in
+/// its mode; nothing it could target is near the spots it is put on.
 fn burrowing_unit(world: &mut SimWorld) -> (UnitTypeId, String) {
+    let shipped = world.catalog.archetypes().find_map(|arch| {
+        let mode = arch.modes.iter().find(|mode| mode.burrowed)?;
+        presentable(&assets(), &arch.slug).then(|| (arch.unit_type_id, mode.mode_name.clone()))
+    });
+    if let Some(shipped) = shipped {
+        return shipped;
+    }
     let (unit, mode) = burrower(world, &assets());
     let switch = world
         .catalog

@@ -18,9 +18,9 @@ concrete reason (file, cell or frame, what you see), and say whether the shipped
 Unlike the earlier rounds, these looks are not drawn in the effect lab but on units in the production client
 playing the shipped skirmish, because they modify the units' own bubbles. The pictures are screenshots of
 `crates/client/tests/stance_gpu_tests.rs`'s two children (debug build, Xvfb, 1280×720 window), on radv (the
-physical GPU) and on lavapipe, at the camera's default distance. The burrowing unit is the presentable stand-in
-`battle_harness::burrower` picks (a scorpion picture in its bubble), given the shipped burrowing unit's burrowed
-mode and Burrow ability in the test session's catalog; the anchoring unit is the shipped Siege-Tank analogue.
+physical GPU) and on lavapipe, at the camera's default distance. The burrowing unit is the shipped Lurker
+analogue (a scorpion picture, with WP13's burrowed and morph clips), the anchoring unit the shipped Siege-Tank
+analogue (with WP13's sieged clip); the cloaked units are an unarmed stand-in `battle_harness::burrower` picks.
 Nothing was spent and no texture was made.
 
 ### The looks (what each is meant to be)
@@ -60,8 +60,11 @@ enemy cloaked unit right of it (to the upper right of the row of workers).
 - Whether the burrowed unit reads as dug in rather than as a small disc on the ground, at the default zoom, and
   whether its owner still reads the unit clearly (Q0076: own concealed units stay readable). The burrowed dome
   shows the unit's own picture unveiled, with only a thin soil band at the ground line and an earth-coloured
-  outline; once the WP13 burrowed-mode clips land (a separate branch), the dome shows that clip. The player's
-  own cloaked unit keeps its picture at about half opacity under a cool outline.
+  outline. Since WP13 merged, the burrowing unit in these captures is the shipped Lurker analogue, and its dome
+  shows its own burrowed-mode clip (the Siege-Tank analogue likewise plays its sieged clip). The dome is sunk to
+  at most 35 % of the standing bubble's area, as WP8's test requires, so only the clip's middle shows; whether
+  that is readable enough for its owner is a question for this review. The player's own cloaked unit keeps its
+  picture at about half opacity under a cool outline.
 - Whether the shimmer is faint and colourless (item 7): compare `wp8_shimmer_pose_*` cells 1 and 2, and the battle
   capture's enemy before and after detection.
 - Before hand-off, the implementer's battle capture showed a small shadow-coloured spot at the undetected
