@@ -416,3 +416,29 @@ are merged to `main`, because the measured commit must be on `main`.
   (`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, `frame_budget_smoke_run_writes_a_valid_report`: no warm-up frame,
   10 measured frames, every frame at least 95 % of 400 units in view) finished in 68 s with the camera pose
   unchanged.
+
+## Amendment 2 (orchestrator, 2026-11-12): the armies meet at the arena centre
+
+**What WP3 found.** With two armies that attack-move to each other's start, one army wins and then destroys the other
+town hall, so the match ends before the 1,500-tick window does: at tick 1,087 for `200` and tick 1,434 for `400`.
+Player 0 wins every time, in the simulation alone as in the client. The eight-player spec never hit this, because the
+melee wore every army down. §6 allowed only camera changes in the data, and none of them keeps 1,500 measured ticks.
+
+**Decision.** A frame-budget spec player may attack-move to a stated cell instead of the opposite start. The
+two-army spec sends both armies to the arena centre `(64, 64)`: they fight in the middle and in view, the survivors
+stop there, and no town hall falls. This keeps the 1,500-tick window and the 750-tick combat window of the
+2026-11-03 figures of record, and changes no simulation behaviour. Rejected: shortening `measure_ticks` to about
+1,000 (a different window from the figures of record) and invulnerable halls or disabled defeat in the fixture (a
+simulation change for a diagnostic's sake).
+
+**Change.** `crates/client_diagnostics` only: the spec's per-player order gains an optional attack-move target cell
+(default: the opposite start, so the old eight-player layout still reads the same), validated to lie on the map;
+`frame_budget.ron` sets `(64, 64)` for both players.
+
+**Tests.** A unit test of the spec field (default and explicit target, off-map target rejected), and a
+simulation-only test that the `400` scenario runs the full 1,500-tick window without the match ending and with
+combat inside the combat window. The lavapipe smoke run of `400` still passes the 95 % in-view check.
+
+**Measurement.** WP3 reruns all fifteen runs from scratch under §7. The runs wait until CPUs 32–47 (this user's
+slice) are under 15 % busy for 5 s, and the evidence records that figure and the machine load per run, because the
+machine-wide load includes another user's builds on CPUs 0–31. A run with a single stall above 1 s is repeated.
