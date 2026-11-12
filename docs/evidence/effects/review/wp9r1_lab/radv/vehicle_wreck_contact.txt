@@ -1,0 +1,12 @@
+Effect contact sheet of 'vehicle_wreck' (plan 2026-11-09-effect-visualization §6.5), made by
+`battle_capture --effect-lab vehicle_wreck` on the production effect plugin and shaders.
+Bindings: . Lifetime: 6.040 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: shipped camera (no HDR, no bloom).
+vehicle_wreck_contact.jpg columns: ages 0 (0.000 s), 0.03 (0.181 s), 0.08 (0.483 s), 0.15 (0.906 s), 0.3 (1.812 s), 0.5 (3.020 s), 0.75 (4.530 s), 1 (6.040 s).
+Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
+damage, yellow reach; for a line, the line and the full radius at each search point), bright
+close zoom, its reference, dark default, its reference, dark close, its reference.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
+vehicle_wreck_sequence.jpg: the first 3 s on the bright ground at the default zoom, one frame every
+40 ms, read left to right, top to bottom.
