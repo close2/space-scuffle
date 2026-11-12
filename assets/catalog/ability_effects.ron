@@ -1,0 +1,203 @@
+// Ability effect trees (plan 2026-11-10-spellcaster-mechanics, Amendment 1, D-1). Node kinds
+// mirror the StarCraft II editor's CEffect classes: Set, Search, Persistent, LaunchMissile,
+// Damage, ApplyStatus, RemoveStatus, ModifyVitals, CancelOrders and Displace, plus Use("name")
+// to reference a named node. Times are 25 Hz ticks; speeds world units per tick
+// (Normal × 1.4 ÷ 25). Values cite SC2GameData 5.0.14 (5444e12f13); a line without a layer is
+// in the layer of its block's heading.
+(
+    effects: [
+        // ---- Psionic Storm: liberty EffectData:2069-2101 (no later layer overrides it) ----
+        (
+            // PsiStormPersistent, :2069-2076. Searches on the cast tick, then six more at
+            // round(k × 10.2): ticks 0, 10, 20, 31, 41, 51, 61 (plan §5.2).
+            name: "psionic_storm",
+            node: Persistent((
+                anchor: TargetPoint,                            // CEffectCreatePersistent default, core EffectData:35
+                initial: Some(Use("psionic_storm_search")),     // InitialEffect, :2071
+                periodic: Some(Use("psionic_storm_search")),    // PeriodicEffectArray, :2073
+                period_ticks: 10.2,                             // PeriodicPeriodArray 0.5712 Normal s, :2074
+                count: 6,                                       // PeriodCount, :2072
+            )),
+        ),
+        (
+            // PsiStormSearch, :2077-2084: every unit within 1.5 of the centre, any owner, ground and
+            // air, cloaked and burrowed alike; never structures (SearchFilters
+            // "-;Structure,Missile,Destructible,Stasis,Dead,Hidden,Invulnerable", :2079).
+            name: "psionic_storm_search",
+            node: Search((
+                radius: 1.5,                                    // AreaArray Radius, :2080
+                filter: (alliance: Any, planes: [Ground, Air], structures: Exclude),
+                child: ApplyStatus((status: "psionic_storm")),  // PsiStormApplyBehavior, :2085-2088
+            )),
+        ),
+        (
+            // PsiStormDamageInitial, :2089-2096: spell damage (no Kind, core EffectData:61-70),
+            // asking the victim to strike back and to flee.
+            name: "psionic_storm_damage_initial",
+            node: Damage((
+                amount: 10.0,                                   // :2091
+                responses: (acquire: true, flee: true),         // ResponseFlags Acquire, Flee, :2093-2094
+            )),
+        ),
+        (
+            // PsiStormDamage, :2097-2101: the periodic pulse, without responses.
+            name: "psionic_storm_damage",
+            node: Damage((amount: 10.0)),                       // :2100
+        ),
+
+        // ---- Abduct: swarm EffectData:1447-1611 (voidmulti :1035-1045) ----
+        (
+            // YoinkStartCreatePlaceholder, :1447-1471, then YoinkStartSet, :1472-1478. The cast
+            // is refused on a unit that carries the mark of an Abduct cast less than 2 s ago
+            // (ValidatorArray NoYoink, :1468; swarm ValidatorData:812-815, "Can't target multiple
+            // Abduct"); otherwise it marks the target (YoinkMarkerBehavior, :1482-1485, on the
+            // placeholder effect's target) and launches the tongue. The mark outlasts every pull
+            // (tongue, delay and flight end within 2 s), so no second tongue reaches a unit whose
+            // pull is under way (bug B-114). The ability's target filter (units.ron) refuses the
+            // order on the same mark.
+            name: "abduct",
+            node: Set((
+                require: Some((without_status: Some("abduct_mark"))),
+                children: [
+                    ApplyStatus((status: "abduct_mark")),       // YoinkMarkerBehavior, :1475, :1482-1485
+                    Use("abduct_tongue"),                       // YoinkLaunchMissile, :1476
+                ],
+            )),
+        ),
+        (
+            // YoinkLaunchMissile, :1486-1494: the tongue from the caster to the target, homing
+            // (guidance driver), whose impact runs YoinkSet on the target. The landing point is
+            // the ability's origin placement (YoinkStartCreatePlaceholder, :1447-1471; units.ron).
+            // A tongue whose target dies, loads or turns untargetable is dropped (plan D-8).
+            name: "abduct_tongue",
+            node: LaunchMissile((
+                to: TargetUnit,
+                speed: 1.05,                                    // YoinkMissile MaxSpeed 18.75 (x 1.4 / 25), swarm MoverData:147
+                view: Tether,
+                impact: Use("abduct_contact"),                  // ImpactEffect YoinkSet, :1490
+            )),
+        ),
+        (
+            // YoinkSet, :1498-1509 (voidmulti :1035-1037 adds a validator for a unit we lack).
+            // RemoveRecallingBehavior and RemoveCoreRecallingBehavior (:1500-1501) touch
+            // behaviours no catalog unit has; YoinkApplyTentacleBehavior (:1502) is subsumed by
+            // the abducted status's stun (plan D-8).
+            name: "abduct_contact",
+            node: Set((children: [
+                // YoinkCancelOrders, :1525-1531 (Count 32, Uninterruptible), then InstantUnburrow
+                // (:1504, swarm :222-225). A mode channel in progress continues and a settled mode
+                // stays, so a sieged tank lands sieged (plan D-8).
+                CancelOrders((force_unburrow: true)),
+                ApplyStatus((status: "abducted")),              // YoinkApplyBehavior, :1532-1537
+                Use("abduct_delay"),                            // YoinkDelayPersistent, :1539-1547
+            ])),
+        ),
+        (
+            // YoinkDelayPersistent, :1539-1547: on the target, pulse 0.1 Normal s later (1.79,
+            // so 2 ticks) launches the target. Its PeriodCount 50 (:1543) are retries until the
+            // launch succeeds; ours succeeds on the first pulse (plan D-8), so one pulse.
+            name: "abduct_delay",
+            node: Persistent((
+                anchor: TargetUnit,                             // WhichLocation TargetUnit, :1541
+                periodic: Some(Use("abduct_flight")),           // PeriodicEffectArray, :1544
+                period_ticks: 1.785714,                         // PeriodicPeriodArray 0.1 Normal s, :1545
+                count: 1,
+            )),
+        ),
+        (
+            // YoinkLaunchTarget, :1554-1565 (and its Air and Glide cases, :1566-1589, which differ
+            // in height only): the target flies to the placeholder (ImpactLocation
+            // Effect="YoinkStartSet", :1557), a straight line in the plane over any terrain
+            // (YoinkMover PathMode Flying, swarm MoverData:170; the arc is presentation).
+            name: "abduct_flight",
+            node: Displace((
+                to: Origin,
+                flight_ticks: 18,                               // YoinkMover FlightTime 1 Normal s = 17.86, swarm MoverData:167
+                tether: true,
+                // FinishEffect YoinkImpactSet, :1560 and :1595-1600: YoinkRemoveBehavior, :1601-1605.
+                on_land: Some(RemoveStatus((status: "abducted"))),
+            )),
+        ),
+
+        // ---- Fungal Growth: liberty EffectData:416-420, :603-607, :714-741; void :221-223,
+        // :1138-1146; voidmulti :407-409, :693-695, :1558-1572, :2388-2390 ----
+        (
+            // FungalGrowthLaunchMissile, void :1141-1146: a missile to the point, whose impact
+            // runs FungalGrowthInitialSet (liberty :416-420; its SurfaceForSpellcast step is
+            // removed at voidmulti :693-695). The missile flies on if its caster dies.
+            name: "fungal_growth",
+            node: LaunchMissile((
+                to: TargetPoint,                                // ImpactLocation TargetPoint, void :1143
+                speed: 0.672,                                   // FungalGrowthWeapon MaxSpeed 12 (x 1.4 / 25), void MoverData:18
+                view: Projectile,                               // AmmoUnit FungalGrowthMissile, void :1145
+                impact: Use("fungal_growth_search"),            // ImpactEffect FungalGrowthInitialSet, void :1144
+            )),
+        ),
+        (
+            // FungalGrowthSearch, liberty :728-735: enemies only, ground and air, cloaked and
+            // burrowed alike; never structures (SearchFilters "-;Player,Ally,Neutral,Structure,
+            // Missile,Stasis,Dead,Hidden,Invulnerable", :731).
+            name: "fungal_growth_search",
+            node: Search((
+                radius: 2.25,                                   // AreaArray Radius, voidmulti :1559
+                filter: (alliance: Enemy, planes: [Ground, Air], structures: Exclude),
+                // FungalGrowthSet, liberty :714-719, with voidmulti :1562's slow in slot 1. The
+                // set's sibling FungalGrowthSearchDummy (liberty :736-741; radius 2.25, voidmulti
+                // :407-409; the same filters, void :221-223) only raises responses, so it runs
+                // here, once per unit found (plan SU-10).
+                child: Set((children: [
+                    ApplyStatus((status: "fungal_growth")),     // FungalGrowthApplyBehavior, liberty :720-723
+                    ApplyStatus((status: "fungal_growth_slow")),   // FungalGrowthSlowMovementApplyBehavior, voidmulti :1569-1572
+                    Damage((
+                        amount: 0.0,                            // no Amount: a dummy
+                        responses: (acquire: true, flee: true), // ResponseFlags Acquire, Flee, liberty :738-739
+                    )),
+                ])),
+            )),
+        ),
+        (
+            // FungalGrowthDamage, liberty :603-607: spell damage on the buff's pulse, without
+            // responses; armoured bonus 0 (void :1138-1140, over swarm's 0.625).
+            name: "fungal_growth_damage",
+            node: Damage((amount: 1.5625)),                     // Amount, voidmulti :2389
+        ),
+        // ---- Blinding Cloud: swarm EffectData:3-12, :232-258; voidmulti :157-159 ----
+        (
+            // BlindingCloudCP, swarm :236-242 (PeriodCount 19 at swarm :239, 27 at void
+            // EffectData:1012-1014, 15 at voidmulti :157-159): the cloud opens at the target
+            // point on the cast tick (the ability's effect, swarm AbilData:1207; no missile) and
+            // searches at once, then 15 times every 0.5 Normal s: round(k × 8.928571), ticks 0,
+            // 9, 18, 27, 36, 45, 54, 63, 71, 80, 89, 98, 107, 116, 125, 134 (plan §5.2). The
+            // period is authored rounded up, as Fungal's is: 8.928571 would land the eighth
+            // search on 62 instead of the exact product's 62.5, which rounds half up to 63.
+            name: "blinding_cloud",
+            node: Persistent((
+                anchor: TargetPoint,                            // ImpactLocation TargetPoint, :245
+                initial: Some(Use("blinding_cloud_search")),    // InitialEffect, :238
+                periodic: Some(Use("blinding_cloud_search")),   // PeriodicEffectArray, :240
+                period_ticks: 8.928572,                         // PeriodicPeriodArray 0.5 Normal s, :241
+                count: 15,                                      // PeriodCount, voidmulti :158
+            )),
+        ),
+        (
+            // BlindingCloudSearch, swarm :243-248: ground units and structures of every owner
+            // but the caster itself, cloaked and burrowed alike (SearchFilters
+            // "Ground;Self,Neutral,Missile,Dead", :246). Its child is BlindingCloudSwitch
+            // (:254-258), a switch on IsStructure, written as a set of two filtered branches.
+            // The structure branch's BlindingCloudStructureSet (:3-7) also enumerates a bunker's
+            // passengers (BlindingCloudTransportIterateTransport, :8-12); no bunker analogue
+            // exists (plan §16).
+            name: "blinding_cloud_search",
+            node: Search((
+                radius: 2.0,                                    // AreaArray Radius, :247
+                filter: (alliance: AnyButSelf, planes: [Ground], structures: Include),
+                child: Set((children: [
+                    // CaseDefault BlindingCloudAB, :257 and :232-235.
+                    ApplyStatus((status: "blinding_cloud", require: Some((structures: Exclude)))),
+                    // Case IsStructure, :256: BlindingCloudStructureAB, :249-253.
+                    ApplyStatus((status: "blinding_cloud_structure", require: Some((structures: Only)))),
+                ])),
+            )),
+        ),
+    ],
+)

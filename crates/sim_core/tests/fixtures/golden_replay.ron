@@ -274,8 +274,21 @@
 // unchanged on the trees of Amendment 24's Charge (93dffe7) and braking (cd02e88 with 993ee14)
 // rules, which hash nothing new; the Lurker analogue, whose data the round changed, is not in
 // this replay.
+// Re-recorded for checksum schema 29 (plan 2026-11-10-spellcaster-mechanics D-12, D-13 item 2),
+// which no longer encodes the hazard zones, the next hazard id or each unit's last storm damage
+// tick; every checkpoint changed from checkpoint 1 and no behaviour did. Traced tick by tick against
+// schema 28 (5a79962): Debug dumps of every entity, projectile, player's resources, the effect state
+// and the render snapshot after every tick are byte-identical once the removed field's lines are
+// dropped, but for each snapshot's checksum.
+// Re-recorded for plan 2026-11-11-contact-and-missiles WP3 and WP4 (B-113; Amendment 1): a ground
+// body's disc no longer goes deeper into a wall, and steering's probes test the disc and slide a
+// step along the wall. Checkpoints 1 to 3 (ticks 1 to 150) are unchanged; from checkpoint 4 (ticks
+// 151 to 200) every checkpoint changed. Traced tick by tick against the tree before the rule
+// (34a92e7): the first difference is at tick 164, "blue_infantry" pulse bot entity 15 at
+// (30.34, 30.21), whose disc the crowd pressed into the wall face x = 30; it now stays at the
+// radius from it, x = 30.375, and its neighbours differ from tick 165.
 (
-    checksum_schema: 27,
+    checksum_schema: 29,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -301,25 +314,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xded39b1fb4efa0ba,
-        0x6d97a4c77b937a5b,
-        0xaac9d1c885099449,
-        0xfbb238d35ee384c0,
-        0xec257b16f7570be9,
-        0x399037c4870d66aa,
-        0x7c5fe44db040716a,
-        0x4953c86026c60f77,
-        0x4bbb4900afda4156,
-        0x1064f0af6aa51477,
-        0xcb2715a65501cdb0,
-        0x008ba436c5461cd1,
-        0x09dab1183934fc16,
-        0x4ce8c90d2cdb5d79,
-        0x61498a3811e3246e,
-        0x06c1198f93c1edfe,
-        0xcb1ff4de94e33390,
-        0x61b7bed3567f2c8d,
-        0xf5d936d5c15bedb6,
-        0x0155a405bbf57f94,
+        0x14190d65eff736c8,
+        0xaedbd3380b9aec1b,
+        0x4e75572844f7482e,
+        0x6a74f517d468e04c,
+        0xfb4faeff0f122688,
+        0xd97e8b7d8b5ad08f,
+        0xb7dbf5190b1cd588,
+        0xcb60aa9a6dffd901,
+        0x5968ec79b9db866e,
+        0x748226eb7a903b53,
+        0x5fac17aaffabd17d,
+        0x356b2e2429197e93,
+        0x9715b820e4f0b85d,
+        0xb1e75597f4df6505,
+        0x8c138611b1e72164,
+        0x69f83ede3d3f90b0,
+        0x6fec97ac37a1531a,
+        0xd4c801402da24a77,
+        0xd72c1b7e0729cf03,
+        0xff413175addedf36,
     ],
 )

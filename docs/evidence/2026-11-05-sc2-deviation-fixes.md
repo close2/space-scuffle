@@ -1871,3 +1871,36 @@ now reaches ramp W (1.656 / 1.869, 250° / 712°); give-ups 1 / 0; player 1 wins
 winner flip. Rejected. With variants A to C (plan `2026-11-09-sc2-pathfinding` evidence, Amendment 5)
 four route-following variants have failed; a fix likely needs the body to slide along the wall it is
 wedged against (a contact rule), not a route rule. B-113 stays open.
+
+### 18.6 B-113: contact variants E to H, rejected (2026-11-11)
+
+**Forward pointer.** B-113 is fixed by plan [`2026-11-11-contact-and-missiles`](../plans/2026-11-11-contact-and-missiles.md) with a non-deepening rule in the physics itself (no walk or push presses a disc deeper into a wall; a step into one slides), measured in its evidence [`2026-11-11-contact-and-missiles`](2026-11-11-contact-and-missiles.md).
+
+On the spellcaster head `fc4c811` (schema 29), four contact rules were tried in the collision phase
+instead of a route rule, with a new exact mesh query (the nearest point of the blocking edges a disc
+overlaps, found by the segment predicate's flood, and whether it is a convex corner the centre lies
+beyond). Each was measured on the whole showcase (`route_trace --ticks 1800`, release; outputs under
+`~/scratch/bugfix-113/`, not committed). Base: ramp W foot P0 1.301 / 1.473, 157° / 301°; ramp E foot
+P0 1.198 / 1.300, 190° / 454° (6 units), P1 1.149 / 1.168, 81° / 152°; reversals 17 / 7; give-ups
+0 / 0; player 0 wins at tick 1,693.
+
+| Variant | Ramp W P0 | Ramp E P0 | Ramp E P1 | Reversals, give-ups | Outcome |
+|---|---|---|---|---|---|
+| E: a pushed ground disc is moved off every wall, to its radius from the nearest wall point (two passes; kept only where the disc fits) | 1.334 / 1.473, 173° / 296° | not reached by tick 1,800; player 1 reaches ramp W (2 units) | 1.152 / 1.167, 69° / 89° | 14 / 8, 2 / 0 | not over at tick 5,000 |
+| F: as E for a convex corner only (radially off the vertex) | 1.348 / 1.473, 224° / 415° | 1.161 / 1.184, 65° / 71° (4 units) | 1.150 / 1.172, 83° / 171° | 10 / 5, 0 / 0 | player 0 at tick 2,157 |
+| G: every ground body, pushed or not, off every wall each tick | 1.334 / 1.473, 173° / 296° | not reached by tick 1,800 | 1.153 / 1.167, 73° / 88° | 10 / 9, 0 / 0 | not over at tick 5,000 |
+| H: as F, but a push only stops a body going deeper onto the corner (back to the smaller of its radius and its distance before the push) | 1.304 / 1.473, 163° / 322° | 1.176 / 1.231, 186° / 518° (5 units) | 1.149 / 1.168, 81° / 152° | 18 / 7, 0 / 0 | not over at tick 1,800 |
+
+F fixes the corner of B-113 (pulse bot 7 no longer wedges at (35, 52); ramp E's maximum turn falls
+from 454° to 71°, below the grid's 287°) but makes ramp W worse for six of its ten units. Its first
+divergence is the cause: on tick 167 pulse bot 7 leaves ramp W along the ramp's north wall (y = 12),
+its disc 0.355 into it, as the centre-only physics allows along a straight wall; when its centre
+passes the wall's end (29, 12) by 0.003, the corner rule moves it 0.35 south, against its walk, and
+the column behind it follows. A corner rule is discontinuous wherever a straight wall's overlap is
+allowed and the corner's is not; E and G remove that by applying the rule to every wall, and change
+the battle's shape (player 0 no longer reaches ramp E, the match does not end within 5,000 ticks).
+H removes the jump but leaves the wedge (the crowd still carries the body inside its radius over
+several ticks). None meets the stop rule (no box worse, no winner change), so none is kept and the
+matrix and battle 33 were not run for them; B-113 stays open. A fix that keeps the showcase needs disc
+contact everywhere with the battle re-tuned around it, or a route rule; both are larger than a
+single-cause fix.

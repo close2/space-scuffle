@@ -27,6 +27,15 @@
 // lane fight; `march` follows one survivor to the enemy base at 4x until it opens fire there (the
 // army's centroid would include the viewer's workers at home); `assault` shows the base at 2x;
 // `closing` pauses before the result. Scene ticks of the checking render are in docs/evidence/2026-11-09-sc2-pathfinding.md.
+// Retold for plan 2026-11-11-contact-and-missiles (Amendment 1: bodies are discs against walls, and
+// the near-tied lane fight now goes to player 1). The lane fight runs from about tick 340 to 650:
+// the viewer's army dies there, and the enemy's four surviving pulse bots walk to the viewer's base,
+// kill its workers (ticks 1,163 and 1,245) and fire on its hall until it falls at tick 2,218.
+// `clash` is longer so that it covers the whole fight; `march` follows the enemy's first survivor,
+// whom the fog hides until the viewer's base sees it; `assault` shows the viewer's base falling
+// at 2x; `closing` pauses before the result. Render-checked on radv: `clash` runs from the first shot
+// (tick 305) to tick 677, past the fight's last death (650); `march` ends on combat at the viewer's
+// base (tick 968), above its minimum. Scene ticks are in docs/evidence/2026-11-11-contact-and-missiles.md §4c.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -96,7 +105,7 @@
                 (
                     name: "clash",
                     speed: Speed(1),
-                    length: Frames(270),
+                    length: Frames(370),
                     camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
                     overlay: Caption(
                         title: "Combat",
@@ -109,10 +118,10 @@
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
                     length: UntilCombat(min: 5, max: 200),
-                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    camera: FollowUnit(player: 1, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Pathfinding",
-                        body: "The survivors head for the enemy base; each unit finds its own route on a navigation mesh, sized to its body.",
+                        body: "The enemy's survivors head for your base, each on its own route on a navigation mesh sized to its body; the fog hides them until your base sees them.",
                         subsystems: ["Movement and pathfinding"],
                     ),
                 ),
@@ -124,7 +133,7 @@
                     camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Assault",
-                        body: "The attackers cut down the base's workers and lay siege to its hall.",
+                        body: "The attackers cut down your workers and lay siege to your hall.",
                         subsystems: ["Combat"],
                     ),
                 ),

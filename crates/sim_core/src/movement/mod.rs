@@ -7,6 +7,7 @@
 //! surface invariant diagnostics before advancing an unhealthy match.
 
 pub(crate) mod collision;
+pub(crate) mod contact;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
@@ -280,6 +281,13 @@ impl MotionPolicy {
         })
     }
 
+    /// The radius of the body's disc against terrain and structures, in world units (plan
+    /// `2026-11-11-contact-and-missiles` D-1). `StarCraft` II separates it from the unit radius
+    /// (`InnerRadius`); ours is the collision radius until B-116 adds the second radius.
+    pub const fn terrain_radius(self) -> SimScalar {
+        self.radius
+    }
+
     /// Which bodies this one touches: two bodies steer around, push and block each other only
     /// when their classes are equal. Ground and air bodies keep their layer's index; a burrowed
     /// body has a class of its own, below the ground, so ground units walk over it and it
@@ -499,6 +507,23 @@ impl SimWorld {
         id: EntityId,
         point: SimVec2,
     ) -> Result<(), DisplacementAdmissionError> {
+        self.validate_placement_terrain(id, point)?;
+        self.validate_placement_unoccupied(id, point)
+    }
+
+    /// Validates `point` for `id`'s movement layer against terrain and structure footprints
+    /// only, ignoring every other unit: the placement of an effect that sets
+    /// `PlacementIgnoreBlockers` (`StarCraft` II `CEffectCreateUnit`; Abduct's landing point,
+    /// plan `2026-11-10-spellcaster-mechanics` D-8). Structures block through the map's
+    /// footprint cells; the overlap of units is resolved afterwards by separation.
+    ///
+    /// # Errors
+    /// Returns a typed destination rejection or malformed live-state invariant.
+    pub(crate) fn validate_placement_terrain(
+        &self,
+        id: EntityId,
+        point: SimVec2,
+    ) -> Result<(), DisplacementAdmissionError> {
         let actor = self
             .entities
             .get(&id)
@@ -518,6 +543,20 @@ impl SimWorld {
         {
             return Err(DisplacementAdmissionError::Terrain(id));
         }
+        Ok(())
+    }
+
+    /// Validates that no other live unit of `id`'s body class overlaps `point`.
+    fn validate_placement_unoccupied(
+        &self,
+        id: EntityId,
+        point: SimVec2,
+    ) -> Result<(), DisplacementAdmissionError> {
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(DisplacementAdmissionError::MissingEntity(id))?;
+        let policy = MotionPolicy::resolve(&self.catalog, &self.map, actor)?;
         for other in self
             .entities
             .values()

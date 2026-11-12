@@ -15,7 +15,8 @@
 //! It also records the battle's outcome: the winner and the tick the match ended; each owner's
 //! blocking counters ([`super::blocking`], plan `2026-11-09-friendly-blocking` WP1); and, at
 //! [`IN_RANGE_TICK`], how many of each owner's attackers have a target inside their weapon's
-//! band (that plan's §7 acceptance).
+//! band (that plan's §7 acceptance); and each owner's wall overlap ([`super::route_overlap`],
+//! plan `2026-11-11-contact-and-missiles` WP2), listed per unit-tick in `overlap.csv`.
 //!
 //! # How it fits
 //! The instrument of plan `2026-11-09-sc2-pathfinding` (§3.1, WP1). The example
@@ -32,6 +33,9 @@
 use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics};
 use super::cli::RunError;
 use super::route_groups::{groups_markdown, lanes_csv, GroupMeter};
+use super::route_overlap::{
+    overlap_csv, overlap_markdown, OverlapMeter, OverlapMetrics, OverlapSample,
+};
 use sim_core::catalog::{MovementRules, RuntimeCatalogs};
 use sim_core::scenario::{
     apply_initial_orders, build_world_with_catalogs, InitialOrder, ScenarioError, ScenarioManifest,
@@ -54,7 +58,7 @@ const STILL_SEGMENT: f64 = 1e-6;
 /// The usage text printed on an argument error.
 pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--assets <dir>] \
 [--ticks <n>] [--box <name>=<x0>,<y0>,<x1>,<y1>]... [--lane-line <y>] [--order <ron>]... \
-[--lane-tolerance <permille>]
+[--lane-tolerance <permille>] [--seed <n>]
   --scenario <file>  scenario path relative to the assets directory, e.g. scenarios/showcase.ron
   --out <dir>        output directory for units.csv, passes.csv and summary.md
   --assets <dir>     assets directory (default: the repository's assets/)
@@ -65,7 +69,9 @@ pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--ass
   --order <ron>      an initial order replacing the scenario's own (repeatable), e.g.
                      \"AttackMoveToStart(player_slot: 1, target_player_slot: 0)\"; built in memory
   --lane-tolerance   group-routing tolerance in permille replacing the catalog's
-  Always writes groups.md: route groups, their lanes and GroupLane events.";
+  --seed <n>         the world's random seed replacing the scenario's
+  Always writes groups.md (route groups, their lanes and GroupLane events) and overlap.csv
+  (every unit-tick on which a ground body's disc overlaps a wall).";
 
 /// A named axis-aligned box of the map in world units, bounds inclusive.
 #[derive(Debug, Clone, PartialEq)]
@@ -254,6 +260,9 @@ pub struct RouteTraceArgs {
     pub orders: Vec<InitialOrder>,
     /// Group-routing tolerance replacing the catalog's, in permille.
     pub lane_tolerance: Option<u32>,
+    /// The world's random seed replacing the scenario's (plan `2026-11-11-contact-and-missiles`
+    /// WP2: the showcase draws its weapons' random delays from it).
+    pub seed: Option<u64>,
 }
 
 /// Ticks played when `--ticks` is not given (plan §D-11).
@@ -270,6 +279,7 @@ impl RouteTraceArgs {
         let mut args = args.into_iter();
         let (mut scenario, mut out, mut boxes) = (None, None, Vec::new());
         let (mut lane_line, mut orders, mut lane_tolerance) = (None, Vec::new(), None);
+        let mut seed = None;
         let mut assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let mut ticks = DEFAULT_TICKS;
         while let Some(flag) = args.next() {
@@ -305,6 +315,11 @@ impl RouteTraceArgs {
                         usage(format!("--lane-tolerance needs permille, got {value}"))
                     })?);
                 }
+                "--seed" => {
+                    seed = Some(value.parse().map_err(|_| {
+                        usage(format!("--seed needs an unsigned integer, got {value}"))
+                    })?);
+                }
                 _ => return Err(usage(format!("unknown argument {flag}"))),
             }
         }
@@ -321,6 +336,7 @@ impl RouteTraceArgs {
             lane_line,
             orders,
             lane_tolerance,
+            seed,
         })
     }
 }
@@ -399,6 +415,11 @@ pub struct RouteTraceOutput {
     pub in_range: Vec<(u8, (u32, u32))>,
     /// Route groups, `GroupLane` events and lane-line crossings (plan `2026-11-10-group-routing`).
     pub groups: GroupMeter,
+    /// Each owner's wall-overlap figures, by owner slot (plan `2026-11-11-contact-and-missiles`
+    /// WP2).
+    pub overlap: Vec<(u8, OverlapMetrics)>,
+    /// Every unit-tick on which a ground body's disc overlapped a wall.
+    pub overlap_samples: Vec<OverlapSample>,
 }
 
 /// Starts the scenario as [`sim_core::scenario::load_scenario_battle`] does, with the initial
@@ -427,7 +448,7 @@ pub fn start_battle(args: &RouteTraceArgs) -> Result<SimWorld, RouteTraceError> 
         &document,
         &loadouts,
         &manifest.players,
-        manifest.seed,
+        args.seed.unwrap_or(manifest.seed),
         catalogs.units,
         catalogs.upgrades,
     )?;
@@ -450,6 +471,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
     let mut groups = GroupMeter::new(args.lane_line);
     let mut ticks_played = 0;
     let mut meter = BlockingMeter::new();
+    let mut overlap = OverlapMeter::new();
     let mut in_range = Vec::new();
     let owners = scenario_owners(&world);
     while ticks_played < args.ticks && !world.match_state.result.is_over() {
@@ -473,6 +495,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
         record_samples(&world, ticks_played, &mut samples);
         meter.observe(&world);
         groups.observe(&world, ticks_played);
+        overlap.observe(&mut world, ticks_played);
         ticks_played += 1;
         if ticks_played == IN_RANGE_TICK {
             in_range = owners
@@ -493,6 +516,11 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
             .collect(),
         in_range,
         groups,
+        overlap: owners
+            .iter()
+            .map(|&owner| (owner, overlap.of_owner(owner)))
+            .collect(),
+        overlap_samples: overlap.samples().to_vec(),
     };
     write_outputs(&args.out, &output)?;
     Ok(output)
@@ -584,6 +612,9 @@ fn write_outputs(out: &Path, output: &RouteTraceOutput) -> Result<(), RunError> 
     std::fs::write(&passes_path, passes_csv(&output.boxes)).map_err(io(&passes_path))?;
     let summary_path = out.join("summary.md");
     std::fs::write(&summary_path, summary_markdown(output)).map_err(io(&summary_path))?;
+    let overlap_path = out.join("overlap.csv");
+    std::fs::write(&overlap_path, overlap_csv(&output.overlap_samples))
+        .map_err(io(&overlap_path))?;
     let groups_path = out.join("groups.md");
     let groups = groups_markdown(&output.groups.groups(), output.groups.events());
     std::fs::write(&groups_path, groups).map_err(io(&groups_path))?;
@@ -688,6 +719,8 @@ pub fn summary_markdown(output: &RouteTraceOutput) -> String {
             blocking.blocked_attacker_ticks, blocking.reversals, blocking.stall_giveups
         ));
     }
+    rows.push(String::new());
+    rows.extend(overlap_markdown(&output.overlap));
     lines(&rows)
 }
 

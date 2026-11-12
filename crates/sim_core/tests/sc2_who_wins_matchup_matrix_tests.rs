@@ -16,7 +16,8 @@
 //!
 //! # Invariants
 //! - Units are spawned, then ordered through `TickBundle` commands, exactly as a player would.
-//!   The one fixture a command cannot express is a hazard, because no shipped unit casts one.
+//!   Scripted casts are commands on their own ticks; the one setting a command cannot express
+//!   is a squad's starting energy.
 //! - The simulation draws no randomness in these battles, so a seed alone would replay the
 //!   same fight. Every seed after the first therefore also nudges each spawn point, which
 //!   shows whether an outcome is a property of the units or of one exact formation.

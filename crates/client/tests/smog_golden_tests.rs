@@ -123,6 +123,23 @@
 //!   `concealment.is_concealed()`, false for every bubble here). With the old spelling
 //!   substituted back (the text cut at `, stance: ` and `concealment: None` read as
 //!   `cloaked: false`), all four reproduced their previous values, so no smog output changed.
+//! - The spellcaster status flags (plan `2026-11-10-spellcaster-mechanics`, package 1a)
+//!   re-recorded the four system goldens (glibc 2.41, `x86_64`) because `StatusFlags` gained `damage_over_time`,
+//!   `stunned`, `range_reduced` and `revealed`, which lengthens every bubble record's `Debug`
+//!   text. With `, damage_over_time: false, stunned: false, range_reduced: false, revealed:
+//!   false` cut from that text, all seventeen tests passed on the previous values (the bubble
+//!   uniform bytes are hashed unchanged), so no smog output changed. Old values: startup
+//!   `0x7c1d_cfbb_0f5a_8a85`, Visual Lab `0xac8a_ffb3_30dc_18f2`, swarm `0xd5f6_b250_61a5_4171`,
+//!   live battle `0xb4a5_3438_4cb2_65cf`.
+//! - The smog contract (plan `2026-11-11-faster-gates` WP4) re-recorded the four system goldens
+//!   (glibc 2.41, `x86_64`) because each showcase bubble's render instance is no longer hashed by
+//!   its `Debug` text but by [`hash_smog_inputs`]: the raw bits of exactly the fields the smog
+//!   reads or writes, so a `sim_types` field the smog never reads no longer moves them. On the
+//!   same tree the `Debug` term still reproduced the previous values, all fifteen other tests
+//!   passed unchanged, and the bubble transforms and uniform bytes were byte-identical to those
+//!   of the previous file, so no smog output changed. Old values: startup
+//!   `0xac23_14d4_13dd_e3ed`, Visual Lab `0x5150_d25b_ae37_bbfc`, swarm `0xb9ec_a555_c65c_d6cf`,
+//!   live battle `0xb986_235a_dab0_bdd5`.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -137,6 +154,8 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
+use client::bubble_shader::BubbleUniformGpu;
+use client::player_presentation::PlayerStyle;
 use client::smog::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
     step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble, BubbleSmogSource,
@@ -144,6 +163,8 @@ use client::smog::{
     SmogStepMetrics, SmogTextures, GRID_NX, GRID_NY, GRID_NZ, LAB_VOLUME_MAX, LAB_VOLUME_MIN,
 };
 use client::ResolvedAssetsRoot;
+use sim_types::enums::{AnimState, ShapeKind};
+use sim_types::snapshot::BubbleRenderInstance;
 
 /// Fluid steps run per fluid scenario.
 const FLUID_STEPS: usize = 120;
@@ -739,9 +760,9 @@ fn production_smog_app(lab: client::LabState) -> Result<App, Box<dyn std::error:
 
 /// A mobile battle unit sphere moving at `velocity` world units per tick along world X and Z.
 fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleInstance {
-    client::BubbleInstance(sim_types::snapshot::BubbleRenderInstance {
+    client::BubbleInstance(BubbleRenderInstance {
         entity_id: sim_types::EntityId(entity_id),
-        shape: sim_types::enums::ShapeKind::UnitSphere,
+        shape: ShapeKind::UnitSphere,
         silhouette: sim_types::enums::SilhouetteClass::LightProngs,
         unit_type: sim_types::ids::UnitTypeId(1),
         owner: sim_types::PlayerId(1),
@@ -754,7 +775,7 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
         is_attacking: false,
         weapon_visual: sim_types::enums::WeaponVisualKind::Hitscan,
         attack_target_pos: None,
-        anim_state: sim_types::enums::AnimState::Walk,
+        anim_state: AnimState::Walk,
         attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
@@ -771,9 +792,129 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
     })
 }
 
+/// Hashes, by raw bits, exactly the [`BubbleRenderInstance`] fields the smog code reads or writes.
+///
+/// `setup_smog_volume_system` reads `anim_state` (through `still_frame_lanes`);
+/// `sync_bouncing_smog_bubbles_system` reads `heading_angle_rad` and writes `world_pos`,
+/// `velocity` and `heading_angle_rad`; `update_smog_field_system` reads `shape` and `ground_z`
+/// (window floor, vertical anchoring), `velocity`, `radius` and `entity_id` (team colour of a
+/// non-showcase bubble). Every other field reaches the shader only through
+/// `BubbleUniformGpu::from_instance`, whose bytes the caller hashes, or is never read. Enums are
+/// hashed through exhaustive matches with no `_` arm, so a new variant fails to compile here
+/// rather than silently hashing like an old one.
+fn hash_smog_inputs(h: &mut Fnv64, instance: &BubbleRenderInstance) {
+    h.u64(u64::from(instance.entity_id.0));
+    match instance.shape {
+        ShapeKind::UnitSphere => h.u64(0),
+        ShapeKind::BuildingDome {
+            footprint_w,
+            footprint_h,
+        } => {
+            h.u64(1);
+            h.u64(u64::from(footprint_w));
+            h.u64(u64::from(footprint_h));
+        }
+    }
+    for component in instance.world_pos {
+        h.f32(component);
+    }
+    h.f32(instance.ground_z);
+    h.f32(instance.radius);
+    for component in instance.velocity {
+        h.f32(component);
+    }
+    h.f32(instance.heading_angle_rad);
+    h.u64(match instance.anim_state {
+        AnimState::Constructing => 0,
+        AnimState::Idle => 1,
+        AnimState::Walk => 2,
+        AnimState::Attack => 3,
+        AnimState::Cast => 4,
+        AnimState::Die => 5,
+    });
+}
+
+/// The two terms the system goldens hash for one bubble record: the smog's inputs and the bytes
+/// of the material uniform built from it (with `style` and still-frame lanes, as at spawn).
+fn bubble_record_hash(instance: &BubbleRenderInstance, style: PlayerStyle) -> u64 {
+    let mut h = Fnv64::new();
+    hash_smog_inputs(&mut h, instance);
+    let uniform = BubbleUniformGpu::from_instance(
+        instance,
+        style,
+        client::bubble_shader::still_frame_lanes(None, instance.anim_state),
+    );
+    h.bytes(bytemuck::bytes_of(&uniform));
+    h.finish()
+}
+
+/// A fixed ownership style for the bubble-record tests.
+fn test_style() -> PlayerStyle {
+    PlayerStyle {
+        srgb: [0.2, 0.5, 0.9],
+        linear: Vec4::new(0.033, 0.214, 0.787, 1.0),
+        ui: bevy_egui::egui::Color32::from_rgb(51, 128, 230),
+    }
+}
+
+/// A bubble record that differs only in fields neither the smog nor the uniform reads (owner,
+/// status, stance, barrier, silhouette, catalog identity, weapon visual, attack target and swing)
+/// hashes equal, so a new or renamed `sim_types` field of that kind leaves the goldens green.
+#[test]
+fn a_bubble_field_the_smog_never_reads_does_not_move_the_system_hash() {
+    let base = battle_unit(42, Vec3::new(1.0, 0.5, -2.0), [0.3, -0.1]).0;
+    let other = BubbleRenderInstance {
+        owner: sim_types::PlayerId(2),
+        status: sim_types::StatusFlags {
+            overclock: true,
+            slowed: true,
+            stunned: true,
+            revealed: true,
+            ..sim_types::StatusFlags::default()
+        },
+        stance: sim_types::StanceView {
+            mode: Some(1),
+            transition: None,
+        },
+        barrier_ratio: 0.75,
+        silhouette: sim_types::enums::SilhouetteClass::HeavyHex,
+        unit_type: sim_types::ids::UnitTypeId(7),
+        weapon_visual: sim_types::enums::WeaponVisualKind::LaserBeam,
+        attack_target_pos: Some([3.0, 4.0, 0.0]),
+        attack_swing: Some(sim_types::snapshot::AttackSwing {
+            elapsed_ticks: 2,
+            damage_point_ticks: 4,
+            period_ticks: 10,
+        }),
+        ..base.clone()
+    };
+    assert_ne!(base, other, "the two records must differ");
+    assert_eq!(
+        bubble_record_hash(&base, test_style()),
+        bubble_record_hash(&other, test_style())
+    );
+}
+
+/// A field the smog reads moves the hash: position and radius each change it.
+#[test]
+fn a_field_the_smog_reads_moves_the_system_hash() {
+    let base = battle_unit(42, Vec3::new(1.0, 0.5, -2.0), [0.3, -0.1]).0;
+    let base_hash = bubble_record_hash(&base, test_style());
+    let moved = BubbleRenderInstance {
+        world_pos: [1.0, -2.0, 0.5 + f32::EPSILON],
+        ..base.clone()
+    };
+    let grown = BubbleRenderInstance {
+        radius: 0.46,
+        ..base.clone()
+    };
+    assert_ne!(base_hash, bubble_record_hash(&moved, test_style()));
+    assert_ne!(base_hash, bubble_record_hash(&grown, test_style()));
+}
+
 /// Hashes the published uniform, stats, field, volume proxy and every showcase bubble: its
-/// kinematics, transform (rotation included), render instance (heading and aim included),
-/// visibility and material uniform.
+/// kinematics, transform (rotation included), the render-instance fields the smog reads
+/// ([`hash_smog_inputs`]), visibility and material uniform.
 fn hash_smog_app(app: &mut App, h: &mut Fnv64) {
     let world = app.world_mut();
     let frame = world.resource::<SmogGpuFrame>();
@@ -829,7 +970,7 @@ fn hash_smog_app(app: &mut App, h: &mut Fnv64) {
         h.vec3(transform.translation);
         h.quat(transform.rotation);
         h.vec3(transform.scale);
-        h.bytes(format!("{instance:?}").as_bytes());
+        hash_smog_inputs(h, instance);
         h.bytes(format!("{visibility:?}").as_bytes());
         let material = materials.get(material).expect("bubble material exists");
         h.bytes(bytemuck::bytes_of(&material.uniform));
@@ -870,11 +1011,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x7c1d_cfbb_0f5a_8a85;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0x4459_0814_2009_2b71;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xac8a_ffb3_30dc_18f2;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xd5f6_b250_61a5_4171;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xb4a5_3438_4cb2_65cf;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x33ee_40dd_7e58_d19e;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xc4b0_ef45_a4e7_36ab;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xdac9_628c_19f9_46f1;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

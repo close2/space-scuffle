@@ -41,6 +41,7 @@ pub use navmesh::{
     lanes::{LaneCut, LaneCuts, LaneWord},
     predicates::LatticePoint,
     search::MeshRoute,
+    segment::WallContact,
     EdgeKind, NavMesh, NavMeshError, TriangleKind, TriangleLabel,
 };
 pub use pathfinding::{

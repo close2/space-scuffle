@@ -58,6 +58,8 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
         SubmissionError::PlayerDefeated(_) => "you have been defeated",
         SubmissionError::InvalidStructure(_) => "this structure is unavailable",
         SubmissionError::SiteRefused(refusal) => site_reason(*refusal),
+        SubmissionError::NoCastTarget => "there is no unit there to cast on",
+        SubmissionError::CastRefused => "no selected unit can cast that there",
     }
 }
 

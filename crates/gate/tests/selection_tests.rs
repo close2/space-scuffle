@@ -16,8 +16,9 @@
 //! - The paths used are real files of the repository; the tests check that before selecting.
 
 use gate::{
-    select, ClippyScope, CompleteCause, GateError, Inputs, Selection, SourceIndex, SuiteCatalog,
-    TargetId, TestClass, Tier, Workspace,
+    select, select_change, Change, ClippyScope, CompleteCause, FileVersions, GateError, Inputs,
+    Reason, Selection, SourceIndex, SuiteCatalog, TargetId, TestClass, Tier, Workspace,
+    CATALOG_PATH, LOCKFILE_PATH,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,31 @@ impl Repo {
         };
         let changed = paths.iter().map(ToString::to_string).collect();
         select(tier, inputs, &changed)
+    }
+
+    /// The selection of `tier` for `paths`, with both versions of the files in `contents`.
+    fn select_change<const N: usize>(
+        &self,
+        tier: Tier,
+        paths: &[&str],
+        contents: [(&str, FileVersions); N],
+    ) -> Result<Selection, GateError> {
+        for path in paths {
+            assert!(root().join(path).exists(), "{path} must be a real file");
+        }
+        let inputs = Inputs {
+            catalog: &self.catalog,
+            workspace: &self.workspace,
+            sources: &self.sources,
+        };
+        let change = Change {
+            paths: paths.iter().map(ToString::to_string).collect(),
+            contents: contents
+                .into_iter()
+                .map(|(path, versions)| (path.to_string(), versions))
+                .collect(),
+        };
+        select_change(tier, inputs, &change)
     }
 }
 
@@ -254,7 +280,7 @@ fn docs_only_runs_the_charter_checks_alone() -> Result<(), GateError> {
 #[test]
 fn a_workspace_input_selects_the_complete_suite() -> Result<(), GateError> {
     let repo = Repo::load()?;
-    let selection = repo.select(Tier::Package, &["Cargo.lock"])?;
+    let selection = repo.select(Tier::Package, &["Cargo.toml"])?;
     assert!(matches!(
         selection.complete,
         Some(CompleteCause::Global { .. })
@@ -263,6 +289,27 @@ fn a_workspace_input_selects_the_complete_suite() -> Result<(), GateError> {
         selection.targets.len(),
         repo.workspace.test_targets().count()
     );
+    Ok(())
+}
+
+#[test]
+fn the_sim_fixtures_contract_selects_its_callers_without_a_list() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let selection = repo.select(Tier::Package, &["crates/sim_fixtures/src/lib.rs"])?;
+    assert!(selection.complete.is_none());
+    let callers = Reason::Callers("sim_fixtures".to_string());
+    for wanted in [
+        "sim_core/golden_replay_tests",
+        "client/lib",
+        "asset_baker/veo_tests",
+    ] {
+        let reasons = selection.targets.get(&id(wanted)).map(|s| &s.reasons);
+        assert!(
+            reasons.is_some_and(|r| r.contains(&callers)),
+            "{wanted} must be selected as a caller: {reasons:?}"
+        );
+    }
+    assert!(!has(&selection, "client/gpu_validation_tests"));
     Ok(())
 }
 
@@ -283,6 +330,383 @@ fn quick_keeps_only_the_changed_crates_fast_targets() -> Result<(), GateError> {
     assert_eq!(
         selection.clippy,
         ClippyScope::Packages(BTreeSet::from(["sim_core".to_string()]))
+    );
+    Ok(())
+}
+
+/// The real text of `path` in this checkout.
+fn real_text(path: &str) -> Result<String, GateError> {
+    let full = root().join(path);
+    std::fs::read_to_string(&full).map_err(|source| GateError::Io { path: full, source })
+}
+
+/// `text` with `from` (which must occur exactly once) replaced by `to`.
+fn edited(text: &str, from: &str, to: &str) -> String {
+    assert_eq!(text.matches(from).count(), 1, "{from:?} must occur once");
+    text.replacen(from, to, 1)
+}
+
+/// The catalog's selection when its base version was `before` and its version now is the
+/// real file.
+fn catalog_edit(repo: &Repo, before: Option<String>) -> Result<Selection, GateError> {
+    let after = Some(real_text(CATALOG_PATH)?);
+    repo.select_change(
+        Tier::Package,
+        &[CATALOG_PATH],
+        [(CATALOG_PATH, FileVersions { before, after })],
+    )
+}
+
+/// The crates of the selected targets.
+fn crates(selection: &Selection) -> BTreeSet<String> {
+    selection.crates()
+}
+
+/// The crates a catalog edit selects whatever it changes: the gate's own and the charter checks.
+fn gate_and_checks() -> BTreeSet<String> {
+    BTreeSet::from(["gate".to_string(), "workspace_checks".to_string()])
+}
+
+#[test]
+fn a_new_downstream_reference_in_the_catalog_selects_that_target_not_the_complete_suite(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let before = edited(
+        &real_text(CATALOG_PATH)?,
+        "            // The client proof of cast admission (`would_accept_cast_order`, `cast_states`).\n            \"client/battle_cast_tests\",\n",
+        "",
+    );
+    let selection = catalog_edit(&repo, Some(before))?;
+    assert!(selection.complete.is_none(), "{:?}", selection.complete);
+    let reasons = &selection.targets[&id("client/battle_cast_tests")].reasons;
+    assert!(reasons.contains(&Reason::Catalog(
+        "downstream `sim_core` gained it".to_string()
+    )));
+    let mut expected = gate_and_checks();
+    expected.insert("client".to_string());
+    assert_eq!(crates(&selection), expected);
+    assert!(!has(&selection, "client/lib"));
+    assert!(has(&selection, "gate/suite_catalog_tests"));
+    Ok(())
+}
+
+#[test]
+fn a_comment_only_catalog_edit_selects_only_the_gate_crate_and_the_charter_checks(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let before = edited(
+        &real_text(CATALOG_PATH)?,
+        "        // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.\n",
+        "",
+    );
+    let selection = catalog_edit(&repo, Some(before))?;
+    assert!(selection.complete.is_none());
+    assert_eq!(crates(&selection), gate_and_checks());
+    assert!(selection.commands.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_test_threads_change_selects_only_that_target_and_the_gate_crate() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let before = edited(
+        &real_text(CATALOG_PATH)?,
+        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(2)),",
+        "\"client/editor_app_tests\": (class: Gpu, test_threads: Some(3)),",
+    );
+    let selection = catalog_edit(&repo, Some(before))?;
+    assert!(selection.complete.is_none());
+    let client: Vec<&TargetId> = selection
+        .targets
+        .keys()
+        .filter(|id| id.package == "client")
+        .collect();
+    assert_eq!(client, [&id("client/editor_app_tests")]);
+    let path = &selection.paths[0];
+    assert!(
+        path.covered_by
+            .iter()
+            .any(|line| line.contains("client/editor_app_tests")
+                && line.contains("test_threads 3")
+                && line.contains("test_threads 2")),
+        "{path:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rule_edit_selects_the_old_and_new_rule_targets() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let before = edited(
+        &real_text(CATALOG_PATH)?,
+        "                \"client/battle_result_window_tests\",\n",
+        "",
+    );
+    let selection = catalog_edit(&repo, Some(before))?;
+    assert!(selection.complete.is_none());
+    for wanted in [
+        "client/battle_hud_window_tests",
+        "client/battle_result_window_tests",
+        "client/concealment_gpu_tests",
+    ] {
+        assert!(has(&selection, wanted), "{wanted} must be selected");
+    }
+    assert!(!has(&selection, "client/lib"));
+    Ok(())
+}
+
+#[test]
+fn a_global_or_docs_catalog_edit_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let text = real_text(CATALOG_PATH)?;
+    for before in [
+        edited(&text, "        \".gitignore\",\n", ""),
+        edited(&text, "        \"rust-toolchain*\",\n", ""),
+    ] {
+        let selection = catalog_edit(&repo, Some(before))?;
+        assert!(
+            matches!(&selection.complete, Some(CompleteCause::Content { why, .. }) if why.contains("scope")),
+            "{:?}",
+            selection.complete
+        );
+        assert_eq!(
+            selection.targets.len(),
+            repo.workspace.test_targets().count()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_base_catalog_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    for before in [None, Some("SuiteCatalog(".to_string())] {
+        let selection = catalog_edit(&repo, before)?;
+        assert!(
+            matches!(&selection.complete, Some(CompleteCause::Content { why, .. }) if why == "base catalog unreadable"),
+            "{:?}",
+            selection.complete
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_ci_workflow_change_runs_the_charter_checks_only() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let selection = repo.select(Tier::Package, &[".github/workflows/ci.yml"])?;
+    assert!(selection.complete.is_none());
+    assert_eq!(
+        crates(&selection),
+        BTreeSet::from(["workspace_checks".to_string()])
+    );
+    assert!(selection.commands.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_gate_source_change_still_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let selection = repo.select(Tier::Package, &["crates/gate/src/select.rs"])?;
+    assert!(matches!(
+        selection.complete,
+        Some(CompleteCause::Global { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_gate_test_change_selects_only_the_gate_crate() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let selection = repo.select(Tier::Package, &["crates/gate/tests/selection_tests.rs"])?;
+    assert!(selection.complete.is_none());
+    assert_eq!(crates(&selection), gate_and_checks());
+    Ok(())
+}
+
+#[test]
+fn the_path_only_form_still_selects_the_complete_suite_for_the_catalog_and_the_lockfile(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    for path in [CATALOG_PATH, LOCKFILE_PATH, "crates/sim_core/Cargo.toml"] {
+        let selection = repo.select(Tier::Package, &[path])?;
+        assert!(selection.complete.is_some(), "{path}");
+        assert_eq!(
+            selection.targets.len(),
+            repo.workspace.test_targets().count()
+        );
+    }
+    Ok(())
+}
+
+/// The real `Cargo.lock` and `crates/sim_core/Cargo.toml`, and their versions without the
+/// dev-dependency `proptest` of `sim_core`.
+struct ProptestEdit {
+    lock: String,
+    lock_before: String,
+    manifest: String,
+    manifest_before: String,
+}
+
+const SIM_CORE_MANIFEST: &str = "crates/sim_core/Cargo.toml";
+
+impl ProptestEdit {
+    fn new() -> Result<Self, GateError> {
+        let lock = real_text(LOCKFILE_PATH)?;
+        let lock_before = edited(
+            &lock,
+            "name = \"sim_core\"\nversion = \"0.1.0\"\ndependencies = [\n \"proptest\",\n",
+            "name = \"sim_core\"\nversion = \"0.1.0\"\ndependencies = [\n",
+        );
+        let manifest = real_text(SIM_CORE_MANIFEST)?;
+        let manifest_before = edited(&manifest, "proptest.workspace = true\n", "");
+        Ok(Self {
+            lock,
+            lock_before,
+            manifest,
+            manifest_before,
+        })
+    }
+
+    fn lock_versions(&self) -> FileVersions {
+        FileVersions {
+            before: Some(self.lock_before.clone()),
+            after: Some(self.lock.clone()),
+        }
+    }
+
+    fn manifest_versions(&self) -> FileVersions {
+        FileVersions {
+            before: Some(self.manifest_before.clone()),
+            after: Some(self.manifest.clone()),
+        }
+    }
+}
+
+/// The complete-suite cause's text, or a note that the selection is narrower.
+fn cause(selection: &Selection) -> String {
+    selection
+        .complete
+        .as_ref()
+        .map_or_else(|| "narrower".to_string(), ToString::to_string)
+}
+
+#[test]
+fn a_dev_dependency_only_change_selects_the_member_crate_not_the_complete_suite(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH, SIM_CORE_MANIFEST],
+        [
+            (LOCKFILE_PATH, edit.lock_versions()),
+            (SIM_CORE_MANIFEST, edit.manifest_versions()),
+        ],
+    )?;
+    assert!(selection.complete.is_none(), "{}", cause(&selection));
+    assert!(has(&selection, "sim_core/lib"));
+    assert!(has(
+        &selection,
+        "sim_core/sc2_who_wins_matchup_matrix_tests"
+    ));
+    assert!(selection.commands.contains_key("golden-replay-release"));
+    assert_eq!(
+        crates(&selection),
+        BTreeSet::from(["sim_core".to_string(), "workspace_checks".to_string()])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dev_only_change_selects_no_downstream_contract() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[SIM_CORE_MANIFEST],
+        [(SIM_CORE_MANIFEST, edit.manifest_versions())],
+    )?;
+    assert!(selection.complete.is_none(), "{}", cause(&selection));
+    for unwanted in [
+        "sim_fixtures/lib",
+        "client/skirmish_match_tests",
+        "asset_baker/runtime_catalog_tests",
+    ] {
+        assert!(!has(&selection, unwanted), "{unwanted} is downstream");
+    }
+    assert!(selection.changed_crates.contains("sim_core"));
+    Ok(())
+}
+
+#[test]
+fn a_runtime_dependency_change_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let manifest = real_text(SIM_CORE_MANIFEST)?;
+    let before = edited(&manifest, "ron.workspace = true\n", "");
+    let selection = repo.select_change(
+        Tier::Package,
+        &[SIM_CORE_MANIFEST],
+        [(
+            SIM_CORE_MANIFEST,
+            FileVersions {
+                before: Some(before),
+                after: Some(manifest),
+            },
+        )],
+    )?;
+    assert_eq!(
+        cause(&selection),
+        "crates/sim_core/Cargo.toml: [dependencies] changed"
+    );
+    assert_eq!(
+        selection.targets.len(),
+        repo.workspace.test_targets().count()
+    );
+    Ok(())
+}
+
+#[test]
+fn an_external_version_change_selects_the_complete_suite() -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let lock = real_text(LOCKFILE_PATH)?;
+    let before = edited(
+        &lock,
+        "name = \"toml_edit\"\nversion = \"0.22.27\"\n",
+        "name = \"toml_edit\"\nversion = \"0.22.26\"\n",
+    );
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH],
+        [(
+            LOCKFILE_PATH,
+            FileVersions {
+                before: Some(before),
+                after: Some(lock),
+            },
+        )],
+    )?;
+    assert!(
+        cause(&selection).starts_with("Cargo.lock: external package toml_edit 0.22.2"),
+        "{}",
+        cause(&selection)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_lock_change_without_a_dev_only_manifest_change_selects_the_complete_suite(
+) -> Result<(), GateError> {
+    let repo = Repo::load()?;
+    let edit = ProptestEdit::new()?;
+    let selection = repo.select_change(
+        Tier::Package,
+        &[LOCKFILE_PATH],
+        [(LOCKFILE_PATH, edit.lock_versions())],
+    )?;
+    assert_eq!(
+        cause(&selection),
+        "Cargo.lock: sim_core dependencies changed without a dev-only manifest change"
     );
     Ok(())
 }

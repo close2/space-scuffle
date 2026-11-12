@@ -222,6 +222,21 @@ impl SimWorld {
         Self::effective_range_from_upgrades(&self.player_upgrades, weapon, unit_slug, owner)
     }
 
+    /// The range, in world units, of `entity`'s `weapon` (of archetype `unit_slug`): its owner's
+    /// upgrades, then its statuses (plan `2026-11-10-spellcaster-mechanics` §6.4).
+    #[must_use]
+    pub fn entity_weapon_range(
+        &self,
+        entity: &crate::Entity,
+        weapon: &WeaponSpec,
+        unit_slug: &str,
+    ) -> SimScalar {
+        entity.status_modifiers().weapon_range(
+            self.effective_weapon_range(weapon, unit_slug, entity.owner),
+            weapon.melee,
+        )
+    }
+
     /// Computes the upgraded interval in 25 Hz ticks, clamped to `1..=u16::MAX`.
     /// Temporary rate buffs are excluded from this upgrade-only query.
     #[must_use]

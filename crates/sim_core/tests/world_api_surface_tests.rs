@@ -2,8 +2,11 @@
 //!
 //! # Responsibility
 //! Pins the exact public surface of `sim_core::world` (every `pub` method of `SimWorld` with its
-//! full signature, every `pub` field with its type, and the fields of `PlayerResources` and
-//! `ActiveHazardZone`) and names every item `sim_core` re-exports at its root.
+//! full signature, every `pub` field with its type, and the fields of `PlayerResources`) and
+//! names every item `sim_core` re-exports at its root. The hazard zones (`ActiveHazardZone`,
+//! `active_hazards`, `next_hazard_id`) left the API with plan
+//! `2026-11-10-spellcaster-mechanics` D-12; the effect engine's state is read through
+//! `SimWorld::effects`.
 //!
 //! # How it fits
 //! Phase 9 restructures `world.rs` (WP1) and then changes this API on purpose (WP10 removes the
@@ -15,14 +18,14 @@
 //! # Invariants
 //! - Every method is coerced to a function pointer whose type spells out each parameter and the
 //!   return type, so a changed signature is a compile error here, not a silent pass.
-//! - The two plain-data structs are built with struct literals naming every field, so adding,
+//! - The plain-data struct is built with a struct literal naming every field, so adding,
 //!   removing or retyping a field fails to compile.
 //! - The checks run at compile time; the single `#[test]` only makes the binary part of the suite.
 
 use rand_chacha::ChaCha8Rng;
 use sim_core::match_state::MatchState;
 use sim_core::movement::{MovementInvariant, MovementMathError};
-use sim_core::world::{ActiveHazardZone, PlayerResources, SimWorld};
+use sim_core::world::{PlayerResources, SimWorld};
 use sim_core::{
     calculate_hit_damage, calculate_hit_damage_upgraded, calculate_splash_damage,
     calculate_splash_damage_upgraded, check_cluster_arrival, compute_concave_arc_steering,
@@ -123,14 +126,11 @@ fn sim_world_public_fields_keep_their_types() {
     let _: fn(&SimWorld) -> &u64 = |w| &w.last_checksum;
     let _: fn(&SimWorld) -> &Vec<CombatEventVisual> = |w| &w.pending_events;
     let _: fn(&SimWorld) -> &MatchState = |w| &w.match_state;
-    let _: fn(&SimWorld) -> &Vec<ActiveHazardZone> = |w| &w.active_hazards;
-    let _: fn(&SimWorld) -> &u32 = |w| &w.next_hazard_id;
     let _: fn(&SimWorld) -> &bool = |w| &w.vision_aware_pathfinding;
     let _: fn(&SimWorld) -> &PerPlayer<Vec<bool>> = |w| &w.known_blocked_cells;
 }
 
-/// `PlayerResources` and `ActiveHazardZone` are built field by field, so their field sets and
-/// types are pinned.
+/// `PlayerResources` is built field by field, so its field set and types are pinned.
 #[test]
 fn plain_world_records_keep_their_fields() {
     let resources = PlayerResources {
@@ -140,23 +140,10 @@ fn plain_world_records_keep_their_fields() {
         supply_max: 0_u32,
         supply_provided_total: 0_u32,
     };
-    let hazard = ActiveHazardZone {
-        id: 0_u32,
-        owner: PlayerId(0),
-        center: SimVec2::ZERO,
-        radius: SimScalar::ZERO,
-        delay_ticks: 0_u16,
-        remaining_ticks: 0_u16,
-        interval_ticks: 0_u16,
-        ticks_until_next_interval: 0_u16,
-        damage_per_interval: SimScalar::ZERO,
-        targets_friendly: false,
-    };
     assert_eq!(resources.minerals, 0);
-    assert!(!hazard.targets_friendly);
 }
 
-// Every type re-exported at the crate root (and the three `world` types) must keep its name.
+// Every type re-exported at the crate root (and the two `world` types) must keep its name.
 const _: PhantomData<SplashSpec> = PhantomData;
 const _: PhantomData<UnitArchetype> = PhantomData;
 const _: PhantomData<UnitCatalog> = PhantomData;
@@ -185,7 +172,6 @@ const _: PhantomData<AttackRate> = PhantomData;
 const _: PhantomData<InvalidAttackRate> = PhantomData;
 const _: PhantomData<InvalidBuffAttackRate> = PhantomData;
 const _: PhantomData<SimulationDiagnostic> = PhantomData;
-const _: PhantomData<ActiveHazardZone> = PhantomData;
 const _: PhantomData<PlayerResources> = PhantomData;
 const _: PhantomData<SimWorld> = PhantomData;
 

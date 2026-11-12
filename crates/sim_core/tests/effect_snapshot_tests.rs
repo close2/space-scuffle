@@ -4,7 +4,7 @@
 //! tick already keeps, what the client's effect system needs: each bubble's concealment,
 //! stance (with the progress of a mode switch), status flags and barrier fraction; one
 //! `SplashVisual` per splash search with the weapon's zones; the source unit type and weapon
-//! of every weapon event; and the open hazard zones as areas.
+//! of every weapon event; and the open area spells (point persistents that search) as areas.
 //!
 //! These tests drive the shipped catalog (and scratch archetypes cloned from it) through
 //! `SimWorld::step` and `SimWorld::execute_ability`. Slugs are read from data; the simulation
@@ -17,6 +17,10 @@
     clippy::cast_precision_loss
 )]
 
+#[path = "support/scratch_storm.rs"]
+mod scratch_storm;
+
+use scratch_storm::ScratchStorm;
 use sim_core::entity::{ActiveBuff, ATTACK_DASH_BUFF_ID, OVERCLOCK_BUFF_ID};
 use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
@@ -547,9 +551,10 @@ fn line_splash_emits_one_event_per_offset(period_ticks: u16) {
     }
 }
 
-/// Registers a clone of a shipped mobile unit whose first ability opens a hazard zone lasting
-/// `duration_ticks`.
-fn register_storm_caster(world: &mut SimWorld, duration_ticks: u16) -> UnitTypeId {
+/// Registers a clone of a shipped mobile unit whose first ability casts the scratch storm
+/// (`support/scratch_storm.rs`), which it installs.
+fn register_storm_caster(world: &mut SimWorld) -> UnitTypeId {
+    ScratchStorm::GAME.install(world);
     let mut arch = world
         .catalog
         .archetypes()
@@ -569,24 +574,24 @@ fn register_storm_caster(world: &mut SimWorld, duration_ticks: u16) -> UnitTypeI
         energy_cost: SimScalar::ZERO,
         cooldown_ticks: 0,
         cast_range: SimScalar::from_num(20),
-        effect: AbilityEffectSpec::SpawnHazardZone {
-            radius: SimScalar::from_num(1.5),
-            delay_ticks: 0,
-            duration_ticks,
-            interval_ticks: 5,
-            damage_per_interval: SimScalar::ONE,
-            friendly_fire: false,
-        },
+        effect: AbilityEffectSpec::Effect("scratch_storm".to_owned()),
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     world.catalog.register(arch);
     free
 }
 
+/// A storm is an area from its cast until its last search (plan
+/// `2026-11-10-spellcaster-mechanics` D-19): six periodic searches 10.2 ticks apart close it
+/// 61 ticks after the cast, the hazard zone's replacement (D-12).
 #[test]
-fn a_hazard_zone_is_an_area_until_it_expires() {
+fn a_storm_is_an_area_until_it_closes() {
     let mut world = flat_world(0x0e_ff07);
-    let caster_type = register_storm_caster(&mut world, 20);
+    let caster_type = register_storm_caster(&mut world);
     let caster = world
         .spawn_unit(caster_type, ATTACKER, at(20.0, 20.0))
         .expect("spawn the caster");
@@ -602,7 +607,7 @@ fn a_hazard_zone_is_an_area_until_it_expires() {
         assert_eq!(area.owner, ATTACKER);
         assert_eq!(area.center[..2], [24.0, 20.0]);
         assert!((area.radius - 1.5).abs() < 1e-4);
-        assert_eq!(area.total_ticks, 20);
+        assert_eq!(area.total_ticks, 61);
         assert_eq!(
             area.source,
             Some(AbilitySource {
@@ -612,14 +617,12 @@ fn a_hazard_zone_is_an_area_until_it_expires() {
         );
         remaining.push(area.remaining_ticks);
     }
-    assert!(!remaining.is_empty(), "the zone was published");
-    assert!(
-        remaining.windows(2).all(|pair| pair[1] < pair[0]),
-        "{remaining:?}"
-    );
-    assert!(
-        remaining.len() >= 20,
-        "it lasts its duration: {remaining:?}"
+    // One frame a tick after the cast's: 60 left after the first tick, down to 1 on the tick
+    // before the last search, which closes it.
+    assert_eq!(
+        remaining,
+        (1..=60).rev().collect::<Vec<u16>>(),
+        "it lasts until its last search"
     );
     assert_eq!(step(&mut world).areas, [], "and stays gone");
 }
@@ -761,7 +764,7 @@ fn the_barrier_publishes_its_hits_and_what_it_has_left() {
 fn equal_worlds_publish_equal_records() {
     let build = || {
         let mut world = flat_world(0x0e_ff0a);
-        let caster_type = register_storm_caster(&mut world, 500);
+        let caster_type = register_storm_caster(&mut world);
         let (arch, mode) = moded(&world, |mode| mode.burrowed);
         let burrower = world
             .spawn_unit(arch.unit_type_id, ATTACKER, at(20.0, 20.0))
@@ -774,7 +777,7 @@ fn equal_worlds_publish_equal_records() {
         world
     };
     let (mut first, mut second) = (build(), build());
-    for _ in 0..60 {
+    for _ in 0..40 {
         assert_eq!(step(&mut first), step(&mut second));
     }
     let checksum = first.compute_checksum();
@@ -795,5 +798,5 @@ fn equal_worlds_publish_equal_records() {
     }
     stepped.combat_events.clear();
     assert_eq!(rewritten, stepped);
-    assert_eq!(rewritten.areas.len(), 1, "the zone is still open");
+    assert_eq!(rewritten.areas.len(), 1, "the storm is still open");
 }

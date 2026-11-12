@@ -36,7 +36,7 @@ pub const HISTORY_LIMIT: usize = 50;
 
 /// One first-parent change of `main` and the targets its `package` selection runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Change {
+pub struct MainCommit {
     /// The commit (a merge, or a direct commit on `main`).
     pub commit: String,
     /// Its subject line.
@@ -50,8 +50,8 @@ pub struct Change {
 #[must_use]
 pub fn suspects_for<'a>(
     failing: &BTreeSet<TargetId>,
-    changes: &'a [Change],
-) -> BTreeMap<TargetId, Vec<&'a Change>> {
+    changes: &'a [MainCommit],
+) -> BTreeMap<TargetId, Vec<&'a MainCommit>> {
     failing
         .iter()
         .map(|target| {
@@ -86,7 +86,7 @@ pub fn last_green_full(
 ///
 /// # Errors
 /// Git, catalog and selection errors.
-pub fn changes_since(context: &Context, since: Option<&str>) -> Result<Vec<Change>, GateError> {
+pub fn changes_since(context: &Context, since: Option<&str>) -> Result<Vec<MainCommit>, GateError> {
     let git = &context.git;
     let every: BTreeSet<TargetId> = context
         .workspace
@@ -106,7 +106,7 @@ pub fn changes_since(context: &Context, since: Option<&str>) -> Result<Vec<Chang
             Err(GateError::CommandFailed { .. }) => every.clone(),
             Err(error) => return Err(error),
         };
-        changes.push(Change {
+        changes.push(MainCommit {
             commit,
             subject,
             selected,
@@ -152,7 +152,7 @@ fn short(hash: &str) -> &str {
 
 /// The suspect list as text, with the red rule's next steps.
 #[must_use]
-pub fn render_suspects(suspects: &BTreeMap<TargetId, Vec<&Change>>, scope: &str) -> String {
+pub fn render_suspects(suspects: &BTreeMap<TargetId, Vec<&MainCommit>>, scope: &str) -> String {
     let mut out = format!("\nRed rule, suspects ({scope}; newest first):\n");
     for (target, changes) in suspects {
         let _ = writeln!(out, "  {target}");
@@ -179,8 +179,8 @@ mod tests {
     use crate::catalog::TestClass;
     use crate::stamp::StampTarget;
 
-    fn change(commit: &str, targets: &[TargetId]) -> Change {
-        Change {
+    fn change(commit: &str, targets: &[TargetId]) -> MainCommit {
+        MainCommit {
             commit: commit.to_string(),
             subject: format!("Merge {commit}"),
             selected: targets.iter().cloned().collect(),
@@ -203,7 +203,7 @@ mod tests {
             |id: &TargetId| -> Vec<&str> { found[id].iter().map(|c| c.commit.as_str()).collect() };
         assert_eq!(commits(&core), ["c3", "c1"]);
         assert_eq!(commits(&app), ["c2", "c1"]);
-        assert_eq!(found[&lost], Vec::<&Change>::new());
+        assert_eq!(found[&lost], Vec::<&MainCommit>::new());
         let text = render_suspects(&found, "test");
         assert!(text.contains("  app/lost_tests\n    no change selects it: a catalog miss"));
         assert!(
@@ -226,11 +226,16 @@ mod tests {
                 wall_ms: 1,
                 cpu_ms: None,
                 passed,
+                peak_anon_mib: None,
             }],
             commands: Vec::new(),
             flakes: Vec::new(),
             retries: Vec::new(),
             reused: None,
+            slice_peak_anon_mib: None,
+            jobs: None,
+            test_wall_ms: None,
+            overlapped_flakes: Vec::new(),
         }
     }
 

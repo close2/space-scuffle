@@ -286,9 +286,15 @@ fn write_scenarios(spec: &FrameBudgetSpec, root: &Path) -> Result<(), FixtureErr
         } else {
             spec.players
                 .iter()
-                .map(|player| BattleInitialOrder::AttackMoveToStart {
-                    player_slot: player.slot,
-                    target_player_slot: player.target_slot,
+                .map(|player| match player.target_cell {
+                    Some(cell) => BattleInitialOrder::AttackMoveToCell {
+                        player_slot: player.slot,
+                        cell,
+                    },
+                    None => BattleInitialOrder::AttackMoveToStart {
+                        player_slot: player.slot,
+                        target_player_slot: player.target_slot,
+                    },
                 })
                 .collect()
         };

@@ -421,7 +421,7 @@ impl SimWorld {
                     radius,
                     mover,
                     damageable: Self::is_damageable(entity),
-                    cloaked: entity.is_cloaked,
+                    cloaked: entity.is_concealed(),
                 },
             ));
         }
@@ -453,6 +453,7 @@ impl SimWorld {
             Self::advance_pending_strikes(&context, combat, *id, entity, attack_mult);
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
+                || entity.is_action_locked()
                 || entity.is_loaded_in_transport()
                 || !entity.is_completed
             {
@@ -664,8 +665,12 @@ impl SimWorld {
         attack_rate: AttackRate,
     ) -> Option<ResolvedWeapon<'a>> {
         let spec = arch.weapon_against(target_mover, entity.active_siege_weapon())?;
-        let max_range =
-            Self::effective_range_from_upgrades(upgrades, spec, &arch.slug, entity.owner);
+        // Statuses change the range after upgrades (plan `2026-11-10-spellcaster-mechanics`
+        // §6.4); neutral modifiers leave it as it is.
+        let max_range = entity.status_modifiers().weapon_range(
+            Self::effective_range_from_upgrades(upgrades, spec, &arch.slug, entity.owner),
+            spec.melee,
+        );
         let delta = Self::upgrades_of(upgrades, entity.owner)
             .unit_stat_modifiers
             .get(&arch.slug)
@@ -1278,5 +1283,108 @@ impl SimWorld {
             };
             self.apply_splash(source, splash, hit, None);
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use crate::catalog::EffectNode;
+    use crate::effects::ActiveMissile;
+    use crate::entity::ActiveProjectile;
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AbilitySource, EffectAnchor, EffectContext, EffectId, EffectTarget, MoverType, PlayerId,
+        SimScalar, SimVec2,
+    };
+
+    /// T-M4 (plan `2026-11-11-contact-and-missiles` D-6): a weapon projectile and an effect
+    /// missile with the same speed, start and target, the target receding 0.25 a tick, impact
+    /// on the same step. Each step moves the target first, so both paths see the same aim.
+    #[test]
+    fn a_projectile_and_an_effect_missile_impact_on_the_same_step() {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = world(map, 5);
+        let spells = world.catalog.spells_handle();
+        let (node, speed) = (0..spells.node_count())
+            .find_map(|index| {
+                let id = EffectId(u16::try_from(index).ok()?);
+                match spells.node(id)?.kind {
+                    EffectNode::LaunchMissile {
+                        to: EffectAnchor::TargetUnit,
+                        speed,
+                        ..
+                    } => Some((id, speed)),
+                    _ => None,
+                }
+            })
+            .expect("the shipped catalog launches a homing missile");
+        let weapon = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| arch.weapon.clone())
+            .expect("the shipped catalog has a weapon");
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a mobile ground unit");
+        let owner = PlayerId(0);
+        let start = SimVec2::from_i32(10, 20);
+        let target = world
+            .spawn_unit(kind, owner, SimVec2::from_i32(16, 20))
+            .expect("invariant: a free spot on an empty map");
+        world.projectiles.push(ActiveProjectile {
+            id: 0,
+            owner,
+            attacker_id: None,
+            source_pos: start,
+            current_pos: start,
+            target_id: Some(target),
+            target_pos: SimVec2::from_i32(16, 20),
+            target_mover: MoverType::Ground,
+            speed,
+            weapon_spec: weapon,
+            source_slug: None,
+            remaining_lifetime_ticks: u16::MAX,
+            strikes: 1,
+        });
+        let unit = EffectTarget::Unit(target);
+        world.effects.missiles.push(ActiveMissile {
+            id: 0,
+            node,
+            context: EffectContext {
+                owner,
+                caster: None,
+                ability: AbilitySource::default(),
+                origin: start,
+                source_point: start,
+                target: unit,
+            },
+            position: start,
+            target: unit,
+        });
+        let receding = SimScalar::from_num(0.25);
+        let (mut projectile_step, mut missile_step) = (None, None);
+        for step in 1..=40_u32 {
+            world.entities.get_mut(&target).expect("alive").position.x += receding;
+            if projectile_step.is_none() {
+                world.advance_projectiles();
+                if world.projectiles.is_empty() {
+                    projectile_step = Some(step);
+                }
+            }
+            if missile_step.is_none() {
+                world.step_effect_missiles();
+                if world.effects.missiles.is_empty() {
+                    missile_step = Some(step);
+                }
+            }
+        }
+        assert!(projectile_step.is_some(), "the projectile impacts");
+        assert_eq!(projectile_step, missile_step);
     }
 }

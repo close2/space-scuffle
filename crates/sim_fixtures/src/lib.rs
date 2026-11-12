@@ -32,7 +32,7 @@ pub mod trace;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
-use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs};
+use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs, SpellCatalog};
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
@@ -49,6 +49,10 @@ pub const STRUCTURES_RON: &str = include_str!("../../../assets/catalog/structure
 pub const UPGRADES_RON: &str = include_str!("../../../assets/catalog/upgrades.ron");
 /// The shipped `assets/catalog/movement_rules.ron`.
 pub const MOVEMENT_RULES_RON: &str = include_str!("../../../assets/catalog/movement_rules.ron");
+/// The shipped `assets/catalog/statuses.ron`.
+pub const STATUSES_RON: &str = include_str!("../../../assets/catalog/statuses.ron");
+/// The shipped `assets/catalog/ability_effects.ron`.
+pub const ABILITY_EFFECTS_RON: &str = include_str!("../../../assets/catalog/ability_effects.ron");
 /// The shipped `assets/catalog/start_loadouts.ron`.
 pub const START_LOADOUTS_RON: &str = include_str!("../../../assets/catalog/start_loadouts.ron");
 
@@ -81,7 +85,39 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
         MovementRules::from_ron_str(MOVEMENT_RULES_RON)
             .expect("invariant: the shipped movement_rules.ron is valid"),
     );
+    units
+        .set_spell_catalog(
+            SpellCatalog::from_ron_strs(STATUSES_RON, ABILITY_EFFECTS_RON)
+                .expect("invariant: the shipped statuses.ron and ability_effects.ron are valid"),
+        )
+        .expect("invariant: the shipped abilities name only shipped effects and statuses");
     RuntimeCatalogs { units, upgrades }
+}
+
+/// The shipped spell tables with the scratch statuses and effects of `statuses_ron` and
+/// `effects_ron` (each a whole `statuses.ron` or `ability_effects.ron` text) appended, flattened
+/// and validated as one catalog.
+///
+/// A test installs it with `UnitCatalog::set_spell_catalog`, which requires every shipped
+/// ability's effect to resolve: the shipped tables stay in, so the scratch entries must use
+/// names of their own.
+///
+/// # Errors
+/// The scratch text's parse error, or the first rule of the merged catalog it violates.
+///
+/// # Panics
+/// Panics if the shipped `statuses.ron` or `ability_effects.ron` does not parse.
+pub fn spells_with(
+    statuses_ron: &str,
+    effects_ron: &str,
+) -> Result<SpellCatalog, sim_core::SimCoreError> {
+    let mut statuses = SpellCatalog::parse_statuses(STATUSES_RON)
+        .expect("invariant: the shipped statuses.ron parses");
+    let mut effects = SpellCatalog::parse_effects(ABILITY_EFFECTS_RON)
+        .expect("invariant: the shipped ability_effects.ron parses");
+    statuses.extend(SpellCatalog::parse_statuses(statuses_ron)?);
+    effects.extend(SpellCatalog::parse_effects(effects_ron)?);
+    Ok(SpellCatalog::from_defs(statuses, effects)?)
 }
 
 /// Removes the random firing delay (plan `2026-11-05-sc2-deviation-fixes` WP11, B-3) from every

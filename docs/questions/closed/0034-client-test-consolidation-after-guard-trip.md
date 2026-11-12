@@ -36,3 +36,13 @@ consolidate. If you meant the trigger literally, answer "consolidate" and it wil
 ## Answer
 
 Owner (2026-11-04): Option A only for now (free preinstalled runner software before the build; keep client integration tests as separate binaries).
+
+Owner update (2026-11-11): **Close Q0034 and plan `2026-11-04-ci-disk-guard-tripped.md` now based on the verified 30 GiB freed on the Azure runner.** Do not keep Q0034 or the plan open waiting for GitHub Actions to randomly assign an AWS `us-west-2` runner; move Q0034 to `closed/`.
+
+## Resolution
+
+Option A, as the owner answered (2026-11-04): CI frees preinstalled runner software before the build, and the
+client integration tests stay separate binaries. The owner closed the question on 2026-11-11 on the verified Azure
+figures (run 41744388382 freed 30 GiB) without waiting for an AWS `us-west-2` runner. Plan
+[`2026-11-04-ci-disk-guard-tripped.md`](../../plans/2026-11-04-ci-disk-guard-tripped.md) is set to Done; its §7
+remains the guide if the guard ever trips on an AWS runner.

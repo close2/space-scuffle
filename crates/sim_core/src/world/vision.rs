@@ -100,7 +100,10 @@ impl SimWorld {
                             arch,
                             entity.owner,
                         ),
-                        is_detector: arch.is_detector,
+                        // A status may suppress detection (plan
+                        // `2026-11-10-spellcaster-mechanics` §6.4).
+                        is_detector: arch.is_detector
+                            && !entity.status_modifiers().suppress_detection,
                     },
                 });
             }

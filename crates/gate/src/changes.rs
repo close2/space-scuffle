@@ -3,7 +3,8 @@
 //! # Responsibility
 //! Wraps the few Git questions the gate asks: the repository root, the merge base with `main`,
 //! the paths a change touches (committed, uncommitted and untracked), whether the working tree is
-//! clean, the tree hash that names what was tested, and the commits of a branch.
+//! clean, the tree hash that names what was tested, the commits of a branch, and a file's text
+//! at a revision ([`Git::show`]) for the files the selection judges by content.
 //!
 //! # How it fits
 //! The selection consumes the changed paths as plain strings; stamps are keyed by the tree hash;
@@ -15,6 +16,7 @@
 //! - Renames count as a deletion and an addition (`--no-renames`), so both paths are judged.
 //! - A failing Git command is an error, never an empty change set.
 
+use crate::select::FileVersions;
 use crate::GateError;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -179,6 +181,44 @@ impl Git {
         }
     }
 
+    /// The text of `path` at revision `rev`, or `None` when `rev` has no such file.
+    ///
+    /// # Errors
+    /// As [`capture`], when `rev` names no commit or Git fails.
+    pub fn show(&self, rev: &str, path: &str) -> Result<Option<String>, GateError> {
+        let listed = self.git(&["ls-tree", "--name-only", rev, "--", path])?;
+        if listed.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(self.git(&["show", &format!("{rev}:{path}")])?))
+    }
+
+    /// The two versions of `path` that `spec` compares: `base:path` and the working-tree file
+    /// for [`ChangeSpec::Since`], `a:path` and `b:path` for [`ChangeSpec::Between`].
+    ///
+    /// # Errors
+    /// As [`Git::show`]; [`GateError::Io`] when the working-tree file exists but cannot be read.
+    pub fn versions(&self, spec: &ChangeSpec, path: &str) -> Result<FileVersions, GateError> {
+        match spec {
+            ChangeSpec::Since(base) => {
+                let full = self.root.join(path);
+                let after = match std::fs::read_to_string(&full) {
+                    Ok(text) => Some(text),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(source) => return Err(GateError::Io { path: full, source }),
+                };
+                Ok(FileVersions {
+                    before: self.show(base, path)?,
+                    after,
+                })
+            }
+            ChangeSpec::Between(from, to) => Ok(FileVersions {
+                before: self.show(from, path)?,
+                after: self.show(to, path)?,
+            }),
+        }
+    }
+
     /// Every tracked path, sorted.
     ///
     /// # Errors
@@ -298,6 +338,60 @@ mod tests {
         assert!(repo.is_ancestor(&first, "HEAD")?);
         assert!(!repo.is_ancestor("HEAD", &first)?);
         assert!(repo.is_ancestor("no-such-ref", "HEAD").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn show_and_versions_read_both_sides_of_a_change() -> Result<(), GateError> {
+        let dir = tempfile::tempdir().map_err(|source| GateError::Io {
+            path: "tempdir".into(),
+            source,
+        })?;
+        let root = dir.path();
+        let git = |args: &[&str]| capture("git", args, root);
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|source| GateError::Io {
+                path: root.join(name),
+                source,
+            })
+        };
+        let commit = |subject: &str| {
+            git(&["add", "-A"])?;
+            git(&[
+                "-c",
+                "user.name=gate",
+                "-c",
+                "user.email=gate@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                subject,
+            ])
+        };
+        git(&["init", "--quiet"])?;
+        write("a.txt", "one\n")?;
+        commit("one")?;
+        write("a.txt", "two\n")?;
+        write("b.txt", "new\n")?;
+        commit("two")?;
+        write("a.txt", "three\n")?;
+        let repo = Git::discover(root)?;
+        assert_eq!(repo.show("HEAD~1", "a.txt")?.as_deref(), Some("one\n"));
+        assert_eq!(repo.show("HEAD~1", "b.txt")?, None);
+        assert!(repo.show("no-such-ref", "a.txt").is_err());
+        let since = repo.versions(&ChangeSpec::Since("HEAD~1".into()), "a.txt")?;
+        assert_eq!(since.before.as_deref(), Some("one\n"));
+        assert_eq!(since.after.as_deref(), Some("three\n"));
+        let between = ChangeSpec::Between("HEAD~1".into(), "HEAD".into());
+        let added = repo.versions(&between, "b.txt")?;
+        assert_eq!(
+            (added.before, added.after.as_deref()),
+            (None, Some("new\n"))
+        );
+        let gone = repo.versions(&ChangeSpec::Since("HEAD".into()), "missing.txt")?;
+        assert_eq!((gone.before, gone.after), (None, None));
         Ok(())
     }
 

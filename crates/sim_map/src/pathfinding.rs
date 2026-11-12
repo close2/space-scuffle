@@ -25,6 +25,7 @@ use crate::error::{MapError, Result};
 use crate::grid::{CellFlags, GameMap};
 use crate::navmesh::lanes::{LaneCuts, LaneWord};
 use crate::navmesh::search::{LaneRestriction, MeshRoute, MeshSearch};
+use crate::navmesh::segment::WallContact;
 use crate::navmesh::{self, NavMesh};
 use crate::vision::PlayerVisionMap;
 use sim_types::{SimScalar, SimVec2};
@@ -565,6 +566,39 @@ impl Pathfinder {
                 goal,
             )
         })
+    }
+
+    /// The contact query of disc physics (plan `2026-11-11-contact-and-missiles` D-5, bug
+    /// B-113): the nearest point of the mesh edges that block `request` (walls, cliffs, the
+    /// map's border, structures and closed triangles) within `request.radius` world units of
+    /// `point`, with its exact squared distance and the edge's open-side normal. `None` when no
+    /// such edge lies within the radius, when `point` is off the mesh or in a closed triangle,
+    /// or when the map has no mesh. Which triangles are open follows `request` as for routes
+    /// (its `start` decides the level). Exact on the fixed-point grid.
+    ///
+    /// Takes `&mut self` for the mesh's reusable flood buffer, so it allocates nothing.
+    pub fn wall_contact(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        point: SimVec2,
+    ) -> Option<WallContact> {
+        let mesh = self.navmesh.as_ref()?;
+        navmesh::search::wall_contact(mesh, &mut self.mesh_search, map, request, point)
+    }
+
+    /// [`Self::wall_contact`] computed from every blocking edge of the mesh with no flood: the
+    /// reference the flood is tested against. Equal distance; of two equally near edges it may
+    /// name the other. O(triangles), for tests and diagnostic tools.
+    #[must_use]
+    pub fn wall_contact_exhaustive(
+        &self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        point: SimVec2,
+    ) -> Option<WallContact> {
+        let mesh = self.navmesh.as_ref()?;
+        navmesh::search::wall_contact_exhaustive(mesh, map, request, point)
     }
 
     /// Finds the world point closest to `request.goal` that a disc of `request.radius` can reach

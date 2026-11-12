@@ -115,14 +115,14 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Tick and checksum | Working | The phase pipeline of §3; versioned checksum over persistent state and RNG | `crates/sim_core/tests/checksum_state_tests.rs` | none known |
 | Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI; a second fixture pins vision before acquisition and route upkeep before arrival (`c271226`) | `crates/sim_core/tests/golden_replay_tests.rs` (`golden_replay_orders_reproduces_every_checkpoint`) | none known |
 | Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; a hull-mounted weapon waits for its hull to face the target within the weapon's StarCraft II arc; turrets turning at their rates; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007); battle 33 investigated in [`docs/evidence/2026-11-03-battle-33-investigation.md`](docs/evidence/2026-11-03-battle-33-investigation.md), changes proposed in Q0035 to Q0041; how StarCraft II spaces melee attackers around a solid enemy is not researched: the contact rules of `d4109e2` stay for now; how StarCraft II spaces melee attackers is recorded bug B-50 in plan `2026-11-05-sc2-deviation-fixes` (WP16), follow-up F-1 of plan `2026-11-04-combat-sc2-alignment` (Q0035); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
-| Movement and pathfinding | Working | Constrained Delaunay navigation mesh rebuilt on structure change, triangle A* with radius widths and the radius funnel (StarCraft II's reported design), each unit routed at its own radius (B-102 fixed, plan `2026-11-09-sc2-pathfinding` WP5 to WP10), steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050); routes are never rewritten for bodies: a corner is passed by position and terrain view, and a unit steers past a body parked on its corner on the outside of the turn, and corner waypoints keep each unit's own radius plus 0.05 from the corner (B-99, B-100 and B-101 fixed, plan `2026-11-09-sc2-pathfinding` WP2 to WP4); a unit blocked by friends that will not yield waits instead of stepping into a gap it cannot pass, and an attacker walks round the crowd on a side it keeps; only idle, standing friends are pushed, at StarCraft II's push priorities; a burrowed body touches only burrowed bodies (B-104, B-105, B-48 and B-93 fixed, B-103 narrowed, plan `2026-11-09-friendly-blocking`); ground units ordered together keep one lane round terrain obstacles: each member takes its group leader's lane (a homotopy class of terrain cut crossings) when that route is at most `lane_tolerance_permille` (75 ‰, `assets/catalog/movement_rules.ron`) longer than its own, and its own route otherwise (sanctioned deviation S-7, Q0079; 0 is StarCraft II's per-unit routing; plan `2026-11-10-group-routing`) | `crates/sim_map/tests/navmesh_tests.rs`, `crates/sim_map/tests/lane_tests.rs`, `crates/sim_core/tests/group_routing_tests.rs`, `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/second_line_tests.rs`, `crates/sim_core/tests/burrow_attack_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs`, `crates/sim_core/tests/route_following_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
+| Movement and pathfinding | Working | Constrained Delaunay navigation mesh rebuilt on structure change, triangle A* with radius widths and the radius funnel (StarCraft II's reported design), each unit routed at its own radius (B-102 fixed, plan `2026-11-09-sc2-pathfinding` WP5 to WP10), steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050); routes are never rewritten for bodies: a corner is passed by position and terrain view, and a unit steers past a body parked on its corner on the outside of the turn, and corner waypoints keep each unit's own radius plus 0.05 from the corner (B-99, B-100 and B-101 fixed, plan `2026-11-09-sc2-pathfinding` WP2 to WP4); a unit blocked by friends that will not yield waits instead of stepping into a gap it cannot pass, and an attacker walks round the crowd on a side it keeps; only idle, standing friends are pushed, at StarCraft II's push priorities; a burrowed body touches only burrowed bodies (B-104, B-105, B-48 and B-93 fixed, B-103 narrowed, plan `2026-11-09-friendly-blocking`); bodies are discs against terrain and structures, as in StarCraft II: no walk or push presses a disc deeper into a wall, a step into one slides along it, and a sliver of slide is waited out (B-113 fixed, plan `2026-11-11-contact-and-missiles`); ground units ordered together keep one lane round terrain obstacles: each member takes its group leader's lane (a homotopy class of terrain cut crossings) when that route is at most `lane_tolerance_permille` (75 ‰, `assets/catalog/movement_rules.ron`) longer than its own, and its own route otherwise (sanctioned deviation S-7, Q0079; 0 is StarCraft II's per-unit routing; plan `2026-11-10-group-routing`) | `crates/sim_map/tests/navmesh_tests.rs`, `crates/sim_map/tests/lane_tests.rs`, `crates/sim_core/tests/group_routing_tests.rs`, `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/second_line_tests.rs`, `crates/sim_core/tests/burrow_attack_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs`, `crates/sim_core/tests/route_following_tests.rs`, `crates/sim_map/tests/wall_contact_tests.rs`, `crates/sim_core/tests/wall_contact_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
 | Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher; `MapDocument::encode` returns a typed error (`f53f73b`, tests `encode_rejects_*`); the terrain chunks cover the last dual column and row (`94130d5`, test `spawned_chunks_cover_every_dual_cell`); a ramp owns its footprint and the walls on its edges, so the upper floor ends where the ramp begins (`3baab60`, `ef26242`, plan `2026-11-09-ramp-geometry`) | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/sim_map/tests/map_format_tests.rs`, `crates/client/tests/mesher_golden_tests.rs`, `crates/client/tests/terrain_tests.rs`, `crates/client/tests/ramp_geometry_tests.rs` | none known |
 | Simulation vision and watchtowers | Working | Per-player vision with high ground, air reveal and watchtowers | `crates/sim_map/tests/vision_tests.rs`, `crates/sim_core/tests/watchtower_tick_tests.rs` | none known |
 | Economy and gas | Working | Harvesting and income for minerals and gas; gas is enabled in the shipped game since its media was baked (Veo batch 1, `2c5ed5e`) | `crates/sim_core/tests/harvest_income_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`gas_through_the_card_extractor_snap_harvest_and_income`) | none known |
 | Construction | Working | Transactional build admission and a construction lifecycle | `crates/sim_core/tests/construction_lifecycle_tests.rs` | none known |
 | Production and research | Working | Production and research queues, cancel and refund | `crates/sim_core/tests/production_transactions_tests.rs`, `crates/sim_core/tests/research_transaction_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`research_through_the_card_then_overclock_works`) | none known; research is enabled in the shipped game since Veo batch 1 (`2c5ed5e`) |
 | Transport | Working | Load and unload orders with ownership checks; enabled in the shipped game since Veo batch 1 (`2c5ed5e`) | `crates/sim_core/tests/transport_ownership_tests.rs`, `crates/sim_core/tests/load_orders_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`load_and_unload_through_right_click_and_the_card`) | none known |
-| Abilities and hazard zones | Working | Data-defined abilities, modes and hazard zones; a mode switch given without Shift replaces the unit's orders, and a queued one reaches an anchored unit (plan `2026-11-09-client-mode-commands` D-6) | `crates/sim_core/tests/spells_and_abilities_tests.rs` | the skirmish client issues only mode switches; other abilities have no command (B-69) |
+| Abilities and spells | Working | Data-defined abilities and modes, and spells as composable effect trees with statuses read from `assets/catalog/ability_effects.ron` and `statuses.ron` (plan `2026-11-10-spellcaster-mechanics`); Psionic Storm, Abduct, Fungal Growth and Blinding Cloud are shipped ([evidence](docs/evidence/2026-11-10-spellcaster-mechanics.md)); a mode switch given without Shift replaces the unit's orders, and a queued one reaches an anchored unit (plan `2026-11-09-client-mode-commands` D-6) | `crates/sim_core/tests/spells_and_abilities_tests.rs`, `crates/sim_core/tests/psionic_storm_tests.rs`, `crates/sim_core/tests/abduct_tests.rs`, `crates/sim_core/tests/fungal_growth_tests.rs`, `crates/sim_core/tests/blinding_cloud_tests.rs`, `crates/sim_core/tests/effect_tree_tests.rs` | The storm's and the cloud's area rings, Abduct's tether line and Fungal Growth's missile wait on Q0080; other missing abilities (B-69) |
 | Match result | Working | Victory and defeat from the game rules | `crates/sim_core/tests/match_result_tests.rs` | Rules accepted by the owner (Q0008); where the spec is silent, they follow StarCraft II (charter §8) |
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
@@ -162,8 +162,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
-| B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
-| B-24 | Matrix battle 13's storm values | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
@@ -191,11 +189,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-65 | Unload sets every passenger down at once and stops the carrier | WP17 |
 | B-66 | A blocked exit stalls production | WP17 |
 | B-67 | Next-patch search radius 12 is unsourced | WP17 |
-| B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
+| B-68 | 13 researchable upgrades have no effect | WP13d, WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
 | B-77 | Hard-coded Concussive slow | WP13d |
-| B-78 | Hard-coded storm evacuation margin | WP18 |
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
@@ -217,7 +214,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-109 | Barrier, Charge dash and the concussive slow are invisible | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP9; unblocked by [Q0080](docs/questions/closed/0080-effect-review-outcome.md) (Amendment 2), not started |
 | B-110 | A projectile shows no impact when it arrives | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP7; unblocked by [Q0080](docs/questions/closed/0080-effect-review-outcome.md) (Amendment 2), not started |
 | B-111 | A unit's flipbook does not change with its mode (a sieged tank looks mobile) | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP13 ([Q0075](docs/questions/open/0075-veo-morph-and-mode-clips.md)); unblocked by [Q0080](docs/questions/closed/0080-effect-review-outcome.md) (Amendment 2), not started |
-| B-113 | A unit that the crowd pushes inside its own radius of a route corner (0.30 from the vertex for a radius of 0.375) passes the corner's arc points by terrain view, its next leg cuts the corner and is refused, and it steps back and forth until the crowd frees it (one pulse bot, ticks 756 to 769 of the showcase battle; 454° of turning at the ramp E foot); the game's units slide round the corner. Four route-following variants are measured and rejected (that plan's evidence, Amendment 5, A to C; deviation-fix evidence §18.5, D) | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Amendment 6, open |
+| B-116 | Terrain and structures collide with a ground unit's disc at its collision radius (`Radius`); the game uses `min(InnerRadius, Radius)`, which is smaller for several 5.0.14 units (Stalker 0.5 against 0.625, Marauder and Hydralisk 0.375, workers 0.3125), so their routes and their queues at walls are wider than the game's. Isolated behind `MotionPolicy::terrain_radius()` | [`2026-11-11-contact-and-missiles`](docs/plans/2026-11-11-contact-and-missiles.md) §9, open |
 
 ---
 
@@ -247,39 +244,50 @@ Amendment 5). The slowest scenario runs at about five times real time. The figur
 `throughput` job runs the benchmark with `--floor 25`, the tick rate: a scenario below real time fails the job, and
 every run's table is published in the job summary (charter §3.1).
 
+Re-measured on 2026-11-11 after plan `2026-11-11-contact-and-missiles` (bodies are discs against walls, with the contact query's exact early-out), medians of three runs at load average 25 to 37: 3360, 953, 165, 196 and 210 ticks/s on the flat rows, 122 on `showcase_canyon` and 236 on the 67-caster battle below, within 5 % of the tree before the plan measured alongside ([evidence](docs/evidence/2026-11-11-contact-and-missiles.md) §4b).
+
+A seventh row (plan `2026-11-10-spellcaster-mechanics` WP6) adds 67 spellcasters to the 64x64 battle of 400
+units, casting Blinding Cloud, Psionic Storm and Fungal Growth throughout (13.7 live areas and 101 statuses per
+measured tick): 243 ticks/s on 2026-11-11, when the other rows measured within 3 % of the table above
+([evidence](docs/evidence/2026-11-10-spellcaster-mechanics.md) §6).
+
 The handover's higher figures (11,114 ticks/s on the empty map, 639 at 400 units) came from the owner's notebook
 and were never reproduced on this server at any commit. The 3 to 4 % residual at 400 units since `b263734` is code
 layout (branch prediction), not a regression in the simulation
 ([`docs/evidence/2026-11-03-throughput-history.md`](docs/evidence/2026-11-03-throughput-history.md)).
 
 **Frame budget.** `frame_budget` (`crates/client_diagnostics`) runs the real client on a flat 128×128 arena where
-eight players attack-move across a circle with 0, 25 or 50 units each (Q0018, option (a), chosen by the owner). It measures 1,500 ticks
-(60 s of game time) after a warm-up. Measured on 2026-11-03 at `c918aa9` on the RX 580 through a headless KWin
-compositor, with hardware present, 1280×720 and vsync off, and no monitor (the owner's choice, Q0019). Release build, 16
-dedicated cores, load average 1.6 to 3.9 (one run of the 0 scenario at 8.5). Each figure is the median of five
+two players with 0, 100 or 200 units each attack-move to the arena's centre (Q0018, option (b), chosen by the owner;
+plan `2026-11-11-scenario-outer-rings`). It measures 1,500 ticks (60 s of game time) after a warm-up. Measured on
+2026-11-12 at `0eb6fbf` on the RX 580 through a headless KWin compositor, with hardware present, 1280×720 and vsync
+off, and no monitor (the owner's choice, Q0019). Release build, the 16 CPUs of this user's slice, each run started
+with them under 15 % busy and kept only if they stayed under 20 % busy during it. Each figure is the median of five
 interleaved runs, in ms:
 
 | Units | Frame interval p50 | p95 | p99 | max | Main update p50 | Simulation p50 |
 |---:|---:|---:|---:|---:|---:|---:|
-| 0 | 12.3 | 15.2 | 16.6 | 22.6 | 10.8 | 0.07 |
-| 200 | 15.6 | 19.0 | 20.6 | 44.7 | 13.9 | 0.09 |
-| 400 | 16.3 | 20.9 | 23.6 | 68.7 | 14.1 | 0.10 |
+| 0 | 7.1 | 8.3 | 9.2 | 23.6 | 4.4 | 0.04 |
+| 200 | 9.2 | 13.4 | 15.2 | 27.7 | 7.3 | 0.10 |
+| 400 | 11.8 | 19.1 | 22.5 | 50.7 | 9.3 | 0.15 |
 
-Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. The maximum at 200 and
-400 units is the single frame of the first tick. The client is CPU-bound in the main world: a quarter of the pixels
-changes the 400 median by 3 %, and the GPU passes Bevy times add up to 3.6 ms. Commands, every run, the attribution
-runs and why Xvfb's figures are not the game's are in
-[`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md).
+Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. At 400 units the median
+is under 16.7 ms and p95 and p99 are over it, set by the fight: in its 750-tick combat window p95 and p99 are 20.3
+and 23.5 ms, and after it 14.3 and 15.4 ms. Commands, every run, the runs repeated because another agent loaded
+the slice, and the windows of the fight are in
+[`docs/evidence/2026-11-12-frame-budget-two-armies.md`](docs/evidence/2026-11-12-frame-budget-two-armies.md).
 
-**Since that measurement.** The table above is the figure of record at `c918aa9`; it has not been re-measured with
-the five-run protocol. At `c918aa9` the largest cost was the smog solver, about 8.2 ms of every frame at any unit
-count (finding C-18). Plan `2026-11-04-open-findings-c17-c18-p9-gaps` pooled the combat-effect materials (C-17,
-`690be35`) and made the solver skip resting bricks and bring a still field to rest (C-18, WP7 to WP9, last
-`3f3ab76`). An A/B against the plan's base `e85f79f`, on the RX 580 through headless KWin, medians of three
-interleaved runs at 400 units: frame interval p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms, main update p50
-14.97 → 9.82 ms. The solver's own cost per frame (`perf`) fell from 5.0 to 0.3 ms at 0 units and from 7.8 to 6.1 ms
-at 400 units. The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly fixed and a lower
-fixed smog rate or a worker thread is left for a later plan. These runs are attribution, not figures of record:
+**History.** The figures of record before were the eight-player arena (eight armies of 0, 25 or 50 units on a
+circle) at `c918aa9` on 2026-11-03: 12.3, 15.6 and 16.3 ms median at 0, 200 and 400 units
+([`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md)). They are not like for
+like with the table above: a different scene, and a client before the C-17 and C-18 work. At `c918aa9` the
+largest cost was the smog solver, about 8.2 ms of every frame at any unit count (finding C-18). Plan
+`2026-11-04-open-findings-c17-c18-p9-gaps` pooled the combat-effect materials (C-17, `690be35`) and made the solver
+skip resting bricks and bring a still field to rest (C-18, WP7 to WP9, last `3f3ab76`); both lie inside the
+measured commit. An A/B against that plan's base `e85f79f`, medians of three interleaved runs at 400 units in the
+eight-player arena: frame interval p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms, main update p50 14.97 → 9.82 ms.
+The solver's own cost per frame (`perf`) fell from 5.0 to 0.3 ms at 0 units and from 7.8 to 6.1 ms at 400 units.
+The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly fixed and a lower fixed smog rate or
+a worker thread is left for a later plan:
 [`docs/evidence/2026-11-04-c18-smog-solver.md`](docs/evidence/2026-11-04-c18-smog-solver.md) §7 and §8, and
 [`docs/evidence/2026-11-03-c17-combat-fx-pool.md`](docs/evidence/2026-11-03-c17-combat-fx-pool.md).
 

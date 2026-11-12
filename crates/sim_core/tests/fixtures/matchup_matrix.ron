@@ -2,8 +2,8 @@
 //
 // Each battle spawns two sides, orders them through PlayerCommand on the first tick, and runs
 // until one side is gone or `ticks` elapse. `expect` records survivors as inclusive ranges,
-// plus an optional hull range for each side's first unit. Every outcome must hold on every
-// seed. See tests/sc2_who_wins_matchup_matrix_tests.rs, and explain any rebaseline in the
+// plus an optional hull range for each side's first unit and, for a claim about one unit's fate,
+// whether that unit is alive at the end. Every outcome must hold on every seed. See tests/sc2_who_wins_matchup_matrix_tests.rs, and explain any rebaseline in the
 // commit that changes this file.
 (
     seeds: [3203386110, 11, 22, 33],
@@ -454,14 +454,23 @@
         ),
         expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
+    // Rewritten for plan 2026-11-10-spellcaster-mechanics WP2b (B-24): the placed hazard (radius 3,
+    // 20 every 10 ticks, no caster) became the High Templar analogue casting the shipped 5.0.14 storm
+    // on the first tick (start energy 75, Psionic Storm researched). Every zergling is inside 1.5 of
+    // the centroid and dies to the fourth pulse, on tick 31 (10 + 10 + 10 + 10 against 35 life plus
+    // regeneration); the battle ends on tick 32 on all 20 matrix seeds, the caster alive.
     (
         name: "13_storm_vs_held_lings",
-        claim: "A storm wipes zerglings held inside it",
+        claim: "One Psionic Storm (80 over 71 ticks within 1.5) kills every zergling held inside it",
         map_cells: 64,
         ticks: 70,
         blue: (
-            squads: [],
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (8.0, 32.0), spacing: 1.0, energy: Some(75.0)),
+            ],
             order: None,
+            research: ["psionic_storm"],
+            casts: [(tick: 0, ability: "Psionic Storm", at: EnemyCentroid)],
         ),
         red: (
             squads: [
@@ -469,8 +478,7 @@
             ],
             order: HoldPosition,
         ),
-        hazard: Some((center: (15.0, 32.0), radius: 3, remaining_ticks: 60, interval_ticks: 10, damage_per_interval: 20)),
-        expect: (blue: (0, 0), red: (0, 0)),
+        expect: (blue: (1, 1), red: (0, 0)),
     ),
     (
         name: "14_thor_vs_ultralisk",
@@ -1063,6 +1071,215 @@
             order: AttackMove(28, 48),
         ),
         expect: (blue: (12, 12), red: (0, 1)),
+    ),
+    // Plan 2026-11-10-spellcaster-mechanics §10.2, WP2b. The High Templar analogue stands behind six
+    // zealots; sixteen marines attack-move into them and are in contact from tick 109. On tick 150 the
+    // templar storms the marines' centroid (the 5.0.14 storm: 80 over 71 ticks within 1.5). Measured
+    // on the 20 matrix seeds: the zealots win every one, 4 or 5 of blue's 7 left (11 and 9 seeds),
+    // ending on ticks 248 to 325. The control, 36b, the same armies without the cast, is a marine
+    // win on every seed, 9 to 11 marines left. Army sizes are the plan's, untuned.
+    // Evidence: docs/evidence/2026-11-10-spellcaster-mechanics.md §2.
+    (
+        name: "36a_storm_turns_marines",
+        claim: "A Psionic Storm on the marine ball turns a fight the marines win into a zealot win",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (46.0, 44.6), spacing: 1.0, energy: Some(75.0)),
+                (unit: "psi_grey", count: 6, columns: 3, origin: (42.0, 44.0), spacing: 1.2),
+            ],
+            order: None,
+            research: ["psionic_storm"],
+            casts: [(tick: 150, ability: "Psionic Storm", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 16, columns: 4, origin: (20.0, 43.8), spacing: 0.8),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        expect: (blue: (4, 5), red: (0, 0)),
+    ),
+    // Control of 36a (plan 2026-11-10-spellcaster-mechanics §10.2): no cast. The marines win on all
+    // 20 matrix seeds with 9 to 11 left (1, 8 and 11 seeds), ending on ticks 345 to 368.
+    (
+        name: "36b_marines_beat_zealots_without_storm",
+        claim: "Control of 36a: without the storm the same marines beat the zealots and the High Templar analogue",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "cerebral_elder", count: 1, columns: 1, origin: (46.0, 44.6), spacing: 1.0, energy: Some(75.0)),
+                (unit: "psi_grey", count: 6, columns: 3, origin: (42.0, 44.0), spacing: 1.2),
+            ],
+            order: None,
+            research: ["psionic_storm"],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 16, columns: 4, origin: (20.0, 43.8), spacing: 0.8),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        expect: (blue: (0, 0), red: (9, 11)),
+    ),
+    // Battles 37a/37b (plan 2026-11-10-spellcaster-mechanics §10.2, Amendment 6): Abduct's own
+    // effect. Two sieged tanks 6 apart hold behind four marines; the Viper analogue waits on the
+    // flank while eight zerglings attack-move past it, and on tick 90 pulls the first tank (red's
+    // lead) to a landing point out of the second tank's range 13, where the zerglings kill it. The
+    // fight itself stays the tanks' (opposite winners measured impossible with these armies,
+    // evidence §3), so the pair claims the pulled tank's fate. 37a: the pulled tank dies on all 20
+    // matrix seeds, red keeps 5 (18 seeds) or 4 (2); every zergling dies; the battle runs to its
+    // limit with the Viper alive.
+    (
+        name: "37a_abduct_sieged_tank",
+        claim: "Abduct pulls a sieged tank out of its partner's cover and the zerglings kill it",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (50.0, 37.3), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 8, columns: 2, origin: (39.0, 20.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 56),
+            casts: [(tick: 90, ability: "Abduct", at: FirstEnemyOfType("railgun_crawler"))],
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (4, 5), red_lead_alive: Some(false)),
+    ),
+    // Control of 37a: no cast. The first tank survives on all 20 seeds and red keeps all 6.
+    (
+        name: "37b_sieged_tank_survives_without_abduct",
+        claim: "Control of 37a: without Abduct the same zerglings never reach the first tank",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (50.0, 37.3), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 8, columns: 2, origin: (39.0, 20.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 56),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (6, 6), red_lead_alive: Some(true)),
+    ),
+    // Battles 38a/38b (plan 2026-11-10-spellcaster-mechanics §10.2): Fungal Growth flips a fight.
+    // Ten marines hold in a clump; sixteen zerglings attack-move into them while the Infestor
+    // analogue waits 9 from the marines, out of their range, and on tick 70 casts at their
+    // centroid as the zerglings arrive: 25 damage over 2.86 s and the slow on every marine. 38a:
+    // the zerglings win all 20 matrix seeds with 2 to 7 left (blue 3 to 8 with the caster),
+    // ending on ticks 222 to 286.
+    (
+        name: "38a_fungal_turns_zerglings",
+        claim: "A Fungal Growth on the marine clump turns a fight the marines win into a zergling win",
+        map_cells: 96,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "mycelium_shaman", count: 1, columns: 1, origin: (41.0, 45.0), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 16, columns: 4, origin: (30.0, 42.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 45),
+            casts: [(tick: 70, ability: "Fungal Growth", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 10, columns: 5, origin: (50.0, 42.5), spacing: 0.8),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (3, 8), red: (0, 0)),
+    ),
+    // Control of 38a: no cast. The marines win all 20 seeds with 6 to 8 left (5 once in 52
+    // seeds); every zergling dies and the idle caster outlives the 400-tick limit.
+    (
+        name: "38b_marines_beat_zerglings_without_fungal",
+        claim: "Control of 38a: without Fungal Growth the same marines beat the zerglings",
+        map_cells: 96,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "mycelium_shaman", count: 1, columns: 1, origin: (41.0, 45.0), spacing: 1.0, energy: Some(75.0), order: Some(None)),
+                (unit: "razor_mantis", count: 16, columns: 4, origin: (30.0, 42.5), spacing: 1.0),
+            ],
+            order: AttackMove(60, 45),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 10, columns: 5, origin: (50.0, 42.5), spacing: 0.8),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (5, 8)),
+    ),
+    // Battles 39a/39b (plan 2026-11-10-spellcaster-mechanics §10.2): Blinding Cloud flips a fight.
+    // Three sieged tanks hold in a column 1.8 apart, every one within 2 of their centroid; eight
+    // roaches attack-move into them from 18 away while the Viper analogue waits 9 from the tanks
+    // (they cannot shoot air), and on tick 40 clouds the tanks' centroid as the roaches come into the
+    // tanks' range. For the cloud's 146 ticks the tanks' range is 0.1, inside their minimum range
+    // 2, so they cannot fire, and the roaches close and shoot unanswered. 39a: the roaches win
+    // all 20 matrix seeds with 6 to 8 left (blue 7 to 9 with the caster), ending on ticks 260
+    // to 298; on 52 seeds blue keeps 5 to 9.
+    (
+        name: "39a_cloud_on_tanks",
+        claim: "A Blinding Cloud on sieged tanks turns a fight the tanks win into a roach win",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (47.0, 45.8), spacing: 1.0, energy: Some(100.0), order: Some(None)),
+                (unit: "rhino_beetle", count: 8, columns: 2, origin: (38.0, 44.5), spacing: 1.1),
+            ],
+            order: AttackMove(60, 46),
+            casts: [(tick: 40, ability: "Blinding Cloud", at: EnemyCentroid)],
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (5, 9), red: (0, 0)),
+    ),
+    // Control of 39a: no cast. The tanks win all 20 seeds with 2 or 3 left (11 and 9 seeds), as on
+    // 52 seeds; every roach dies and the Viper analogue, out of reach in the air, outlives the
+    // 600-tick limit.
+    (
+        name: "39b_tanks_beat_roaches_without_cloud",
+        claim: "Control of 39a: without Blinding Cloud the same sieged tanks beat the roaches",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "tongue_chameleon", count: 1, columns: 1, origin: (47.0, 45.8), spacing: 1.0, energy: Some(100.0), order: Some(None)),
+                (unit: "rhino_beetle", count: 8, columns: 2, origin: (38.0, 44.5), spacing: 1.1),
+            ],
+            order: AttackMove(60, 46),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
+            ],
+            order: HoldPosition,
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (1, 1), red: (2, 3)),
     ),
     ],
 )

@@ -6,11 +6,14 @@
 //! it. It also scans code, with comments and string literals blanked out, for the markers the
 //! catalog test relies on: the GPU harness (`run_test_child`, `GpuCommand`,
 //! `virtual_gpu_command`), a valgrind invocation, and paths into a given crate (`sim_fixtures::`).
+//! From those paths it records, per workspace crate, the targets of other crates that call it
+//! ([`SourceIndex::callers_of`]).
 //!
 //! # How it fits
 //! The selection uses the index for the "own file" trigger of `gpu` and `valgrind` targets
-//! (blueprint §3.3); the catalog test (check C22) uses the scanners to prove every GPU and
-//! valgrind file is classed and every `sim_fixtures` caller is a downstream contract.
+//! (blueprint §3.3) and to resolve a `downstream` contract written `@callers` (plan
+//! 2026-11-11-faster-gates §4.3); the catalog test (check C22) uses the scanners to prove every
+//! GPU and valgrind file is classed and that the computed callers equal an independent scan.
 //!
 //! # Invariants
 //! - A library owns every file under its crate's `src/` except `src/main.rs` and `src/bin/**`.
@@ -20,6 +23,7 @@
 //!   a file loaded through `#[path]`, a crate root or a `mod.rs` owns its directory.
 //! - Module declarations inside inline modules (`mod a { mod b; }`) are read as if top-level;
 //!   no test target of this workspace nests one.
+//! - A target is never a caller of its own crate.
 //! - [`blank`] keeps every character position and every newline, so offsets found in blanked
 //!   text index the original.
 
@@ -227,6 +231,21 @@ pub fn mentions_path_root(source: &str, krate: &str) -> bool {
         .chars()
         .collect();
     !token_starts(&code, &format!("{krate}::")).is_empty()
+}
+
+/// The crates of `names` that code in `source` names a path into (`name::...`).
+///
+/// Equivalent to [`mentions_path_root`] for each name, blanking `source` once.
+#[must_use]
+pub fn mentioned_path_roots<'a>(source: &str, names: &[&'a str]) -> BTreeSet<&'a str> {
+    let code: Vec<char> = blank(source, Blanking::CommentsAndLiterals)
+        .chars()
+        .collect();
+    names
+        .iter()
+        .copied()
+        .filter(|name| !token_starts(&code, &format!("{name}::")).is_empty())
+        .collect()
 }
 
 /// One `mod name;` declaration and its `#[path]` attribute, if any.
@@ -440,21 +459,37 @@ fn files_under(root: &Path, dir: &str) -> Result<BTreeSet<String>, GateError> {
     Ok(out)
 }
 
-/// The files of every test target, and the reverse map.
+/// The files of every test target, the reverse map, and which targets call which crate.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceIndex {
     /// Files compiled into each target, relative to the repository root.
     files: BTreeMap<TargetId, BTreeSet<String>>,
+    /// Per workspace crate, the targets of other crates whose Rust files name `<crate>::` in
+    /// code (the `@callers` of a downstream contract).
+    callers: BTreeMap<String, BTreeSet<TargetId>>,
 }
 
 impl SourceIndex {
-    /// An index from explicit file lists, for tests and synthetic workspaces.
+    /// An index from explicit file lists, for tests and synthetic workspaces; it records no
+    /// callers.
     #[must_use]
     pub fn from_files(files: BTreeMap<TargetId, BTreeSet<String>>) -> Self {
-        Self { files }
+        Self {
+            files,
+            callers: BTreeMap::new(),
+        }
     }
 
-    /// Reads the sources of every test target of `workspace` under `root`.
+    /// The same index with `targets` recorded as the callers of crate `krate`, for synthetic
+    /// workspaces.
+    #[must_use]
+    pub fn with_callers(mut self, krate: &str, targets: BTreeSet<TargetId>) -> Self {
+        self.callers.insert(krate.to_string(), targets);
+        self
+    }
+
+    /// Reads the sources of every test target of `workspace` under `root`, and records for
+    /// every workspace crate the targets of other crates whose Rust files name it in code.
     ///
     /// # Errors
     /// [`GateError::Io`] when a source file or directory cannot be read.
@@ -465,7 +500,15 @@ impl SourceIndex {
                 files.insert(target.id.clone(), target_files(root, package, target)?);
             }
         }
-        Ok(Self { files })
+        let callers = callers_by_crate(root, workspace, &files)?;
+        Ok(Self { files, callers })
+    }
+
+    /// The targets outside crate `krate` whose own Rust files (support files included) name
+    /// `krate::` in code, sorted; empty for a crate nothing calls or an unknown name.
+    #[must_use]
+    pub fn callers_of(&self, krate: &str) -> BTreeSet<TargetId> {
+        self.callers.get(krate).cloned().unwrap_or_default()
     }
 
     /// The files of `target` (empty for an unknown target).
@@ -497,6 +540,45 @@ impl SourceIndex {
     pub fn all_files(&self) -> BTreeSet<String> {
         self.files.values().flatten().cloned().collect()
     }
+}
+
+/// Whether `path` names a Rust source file.
+fn is_rust(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "rs")
+}
+
+/// For every workspace crate, the targets of other crates whose Rust files name it in code.
+///
+/// Each file is read and blanked once, however many targets compile it.
+fn callers_by_crate(
+    root: &Path,
+    workspace: &Workspace,
+    files: &BTreeMap<TargetId, BTreeSet<String>>,
+) -> Result<BTreeMap<String, BTreeSet<TargetId>>, GateError> {
+    let names: Vec<&str> = workspace.packages.keys().map(String::as_str).collect();
+    let mut mentioned: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut callers: BTreeMap<String, BTreeSet<TargetId>> = BTreeMap::new();
+    for (target, target_files) in files {
+        for file in target_files.iter().filter(|file| is_rust(file)) {
+            if !mentioned.contains_key(file.as_str()) {
+                let full = root.join(file);
+                let text = std::fs::read_to_string(&full)
+                    .map_err(|source| GateError::Io { path: full, source })?;
+                mentioned.insert(file.as_str(), mentioned_path_roots(&text, &names));
+            }
+            for krate in mentioned.get(file.as_str()).into_iter().flatten() {
+                if *krate != target.package {
+                    callers
+                        .entry((*krate).to_string())
+                        .or_default()
+                        .insert(target.clone());
+                }
+            }
+        }
+    }
+    Ok(callers)
 }
 
 /// The files of one target, by the rules in the module documentation.
@@ -651,6 +733,69 @@ mod tests {
         .map(ToString::to_string)
         .collect();
         assert_eq!(files, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn callers_are_found_through_support_files_in_code_only_outside_the_key_crate(
+    ) -> Result<(), GateError> {
+        let dir = tempfile::tempdir().map_err(|source| GateError::Io {
+            path: "tempdir".into(),
+            source,
+        })?;
+        let root = dir.path();
+        let write = |path: &str, text: &str| -> Result<(), GateError> {
+            let full = root.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|source| GateError::Io {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+            std::fs::write(&full, text).map_err(|source| GateError::Io { path: full, source })
+        };
+        write(
+            "crates/app/tests/via_support.rs",
+            "#[path = \"support/fx.rs\"]\nmod fx;",
+        )?;
+        write(
+            "crates/app/tests/support/fx.rs",
+            "pub fn w() { fixtures::world(); }",
+        )?;
+        write(
+            "crates/app/tests/in_text.rs",
+            "// fixtures::world\nconst S: &str = \"fixtures::world\";",
+        )?;
+        write("crates/fixtures/tests/own.rs", "fn f() { fixtures::x(); }")?;
+        let mut workspace = Workspace::default();
+        for (name, tests) in [
+            ("app", vec!["via_support", "in_text"]),
+            ("fixtures", vec!["own"]),
+        ] {
+            workspace.packages.insert(
+                name.to_string(),
+                Package {
+                    name: name.to_string(),
+                    version: "0.1.0".to_string(),
+                    dir: format!("crates/{name}"),
+                    dependencies: BTreeMap::new(),
+                    targets: tests
+                        .into_iter()
+                        .map(|test| crate::workspace::Target {
+                            id: TargetId::test(name, test),
+                            src_path: format!("crates/{name}/tests/{test}.rs"),
+                        })
+                        .collect(),
+                },
+            );
+        }
+        let index = SourceIndex::build(root, &workspace)?;
+        assert_eq!(
+            index.callers_of("fixtures"),
+            BTreeSet::from([TargetId::test("app", "via_support")])
+        );
+        assert!(index.callers_of("app").is_empty());
+        assert!(index.callers_of("unknown").is_empty());
         Ok(())
     }
 

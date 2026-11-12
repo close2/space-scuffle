@@ -43,6 +43,7 @@ pub mod matrix;
 pub mod report;
 pub mod route;
 pub mod route_groups;
+pub mod route_overlap;
 pub mod summary;
 pub mod swing;
 

@@ -24,9 +24,13 @@
 //! through the GPU harness (`crates/client_diagnostics/tests/frame_budget_tests.rs`); the real
 //! measurement runs on the RX 580 (WP6).
 //!
-//! The scenarios have eight players with 0, 25 or 50 units each, not two with 100 or 200 as the
-//! plan proposed: the production placement fits at most 96 units around a 5×5 town hall
-//! (`docs/questions/open/0018-frame-budget-army-layout.md`).
+//! The scenarios have two players, opposite each other, with 0, 100 or 200 units each, both
+//! attack-moving to the arena's centre (a player's `target_cell`) so that no town hall falls and
+//! the match lasts the measured window (the plan's Amendment 2). The
+//! production placement fills rings 1 to 3 around a 5×5 town hall (96 units) and continues on
+//! rings 4, 5, … (`docs/plans/2026-11-11-scenario-outer-rings.md`, the owner's answer to
+//! `docs/questions/closed/0018-frame-budget-army-layout.md`, option (b)); until then they had eight
+//! players with 0, 25 or 50 units each.
 //!
 //! # Invariants
 //! - No unit, structure or loadout is named in Rust: the spec names the source loadout.
@@ -220,8 +224,13 @@ pub struct PlayerSpec {
     pub slot: u8,
     /// Top-left cell of the player's start footprint.
     pub start_cell: (u32, u32),
-    /// Slot whose start this player's units attack-move to.
+    /// Slot whose start this player's units attack-move to, unless `target_cell` names a cell.
+    /// It must name another player either way.
     pub target_slot: u8,
+    /// Cell `(x, y)`, in grid cells, that this player's units attack-move to instead of
+    /// `target_slot`'s start; it must lie on the arena. Omitted, the units go to that start.
+    #[serde(default)]
+    pub target_cell: Option<(u32, u32)>,
 }
 
 /// One measured scenario.
@@ -378,6 +387,14 @@ impl FrameBudgetSpec {
                     "player {} has no other player as target",
                     player.slot
                 ));
+            }
+            if let Some((x, y)) = player.target_cell {
+                if x >= self.map.width || y >= self.map.height {
+                    return invalid(format!(
+                        "player {} targets cell ({x}, {y}) off the {}x{} arena",
+                        player.slot, self.map.width, self.map.height
+                    ));
+                }
             }
         }
         let mut names = std::collections::BTreeSet::new();
@@ -703,9 +720,33 @@ mod tests {
         let mut broken = spec.clone();
         broken.min_in_view_fraction = 0.0;
         assert!(broken.validate().is_err());
+        let mut broken = spec.clone();
+        broken.players[0].target_cell = Some((spec.map.width, 0));
+        assert!(broken.validate().is_err());
+        let mut broken = spec.clone();
+        broken.players[0].target_cell = Some((0, spec.map.height));
+        assert!(broken.validate().is_err());
         let mut broken = spec;
         broken.measure_ticks = 0;
         assert!(broken.validate().is_err());
+        Ok(())
+    }
+
+    /// `target_cell` is optional: omitted, a player goes to `target_slot`'s start; given, it
+    /// names an attack-move cell on the arena. The shipped spec sends both armies to the centre.
+    #[test]
+    fn a_player_target_cell_is_optional_and_on_the_arena() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let omitted: PlayerSpec = ron::from_str("(slot: 0, start_cell: (84, 62), target_slot: 1)")?;
+        assert_eq!(omitted.target_cell, None);
+        let given: PlayerSpec = ron::from_str(
+            "(slot: 0, start_cell: (84, 62), target_slot: 1, target_cell: Some((64, 64)))",
+        )?;
+        assert_eq!(given.target_cell, Some((64, 64)));
+        let mut spec = FrameBudgetSpec::load(&FrameBudgetSpec::default_path())?;
+        assert!(spec.players.iter().all(|p| p.target_cell == Some((64, 64))));
+        spec.players[0].target_cell = Some((spec.map.width - 1, spec.map.height - 1));
+        assert!(spec.validate().is_ok(), "the last cell is on the arena");
         Ok(())
     }
 
