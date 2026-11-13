@@ -1478,6 +1478,7 @@ review).**
 | `mode_seal_sweep` | The softened band lost its trench-and-berm structure and reads as a soft stroke, a thin ellipse when closed: lower `WAVER_SOFT` to about 0.35 or raise the band's core intensity so a darker core of about two pixels survives, with the `WAVER_ACROSS` shading across it (P4-1). | WP8 4 |
 | `siege_anchor` | The 3 o'clock patch falls in the hull's shadow and the fourth hides under the bubble: raise `size_jitter` (to about 0.35) and `spread`, stretch the patches tangentially (pads, not dots; never radially) (P4-2). | WP8 4 |
 | `siege_anchor` | The outer falloff is 0.19 radii against the test's 0.15 floor: a thin margin if the soil is later thickened (A4-2). | WP8 4 |
+| Effect renderer | `queue_distortions` still requests its pipeline only once distortions exist, the first-use gap E2-1 fixed for cards and decals (heat haze and the WP8 shimmer can go undrawn in a session's first second): warm it in the same loop; the warming also starts only once a 3D view with a depth prepass exists, so a warm-up during scene load would close the first frames too (E3-1). In `status_gpu_tests.rs`, document the up-to-two-frame offset between the shell-card samples and the pictures, and assert the ring's pixels in the first frames, not only its card (E3-2). | WP9 3 |
 | `burrow_mound` | A small premultiplied lit crest on a few heaps over the darkening, so the stains read as raised heaps. | WP8 3 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
