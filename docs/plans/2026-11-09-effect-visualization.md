@@ -2147,3 +2147,109 @@ displacements; no simulation crate is touched.
 
 **Gate.** The packet's section "WP10 round 1"; the orchestrator runs the independent review (Q0080, up to five
 rounds).
+
+## Amendment 21: WP10 round 2, decided by the orchestrator after WP10 review 1 (2026-11-13)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp10_1.md`](../evidence/effects/review/independent_review_wp10_1.md)).** Review 1 rejected
+`psionic_storm`, `blinding_cloud` and `abduct_tether`, accepted the fog rules, and asked for small engineering fixes.
+This is round 2 of the owner's five (Q0080). It changes no simulation state, golden replay or checksum (D-1 holds),
+and touches no ramp of a look that has already shipped.
+
+**Orchestrator decisions.**
+
+- The straight-line fog cut is accepted for now, on the reviewer's conditions:
+  - E1-1 makes it exact;
+  - the per-pixel fog mask (P1-1) must come before any area larger than radius 2 ships.
+- Fungal Growth's look (F1: impact, status and missile, presentation only) is a separate later round, not part of
+  WP10.
+- P1-2 (sag) and P1-3 (staging away from the map corner) are taken only if cheap. Neither was cheap this round; both
+  are recorded below.
+
+**Engineering (`client::effects::areas`).**
+
+- **E1-1, exact fail-closed cut.**
+  - `area_sight` reads the fog cells the disc overlaps. They are 1-unit squares with integer corners, as
+    `BattleFog::sees` keeps them.
+  - Along each of 32 axes, the cut lies `CUT_MARGIN` (0.05) beyond the farthest corner of every unseen cell. The
+    margin covers the decals' clip feather, which reaches `0.6 × clip_feather` past the cut.
+  - Of those cuts, the one that keeps the most seen ground is taken.
+  - A unit test places the fog edge between two samples of the old grid, and adds a diagonal staircase case. It
+    asserts that no unseen corner lies on the drawn side.
+- **E1-2, sight lost.**
+  - An enemy area the viewer stops seeing is cut to `CLIP_NOTHING` on that frame, together with every effect it
+    laid, and is then released.
+  - While held, its laid effects (up to `CHILD_SLOTS` = 16) follow its current clip every frame.
+  - Asserted in `effect_runtime_tests.rs` through `keep_views_seen`, the production body with the fog's two
+    questions given. This is a frame-exact check without a GPU.
+- **E1-3, no linear slot search.** Area slots stay sorted by id and tether slots by `(from, to, source)`. Each
+  published view is found by binary search, and a new slot is inserted within the retained capacity.
+- **E1-4, valgrind window.** The effect-stream window holds three things every frame through `keep_views` under a
+  real `BattleFog` (refilled from a `PlayerView` with a block of unseen cells):
+  - the viewer's area;
+  - an enemy area seen in part, which exercises `area_sight`, the `Part` clip and the clipping of its laid
+    effects;
+  - a tether.
+
+  The window counts 0 blocks; the counts are in the measurements file.
+- **E1-5, edge visibility.** The GPU test adds two checks:
+  - (a) The median luminance change of the whole look against the bare floor, in the 3 px band just inside the
+    projected radius, must be at least 32 levels.
+  - (b) The whole look may change no pixel more than 4 px outside the radius along the near half's rays, out to
+    1.2 radii. Beyond that stand the staged units at 3.4 units and their shadows.
+
+**Looks (A1-1 to A1-4).** Every WP10 ramp is the linear value of the brief's display colour, converted from sRGB, with
+the sRGB colour noted beside each key.
+
+- **`psionic_storm` (A1-1):**
+  - a dark, saturated indigo body: alpha-blended flat sheets just above the ground (18 sheets, in a disc and a ring
+    kept inside the radius), plus four low billows, with folds at sRGB (35, 18, 80) to (45, 25, 95);
+  - small flares (`storm_flare`, every 0.16 s) that peak at about sRGB (188, 170, 240) at opacity 0.5, so that two
+    overlapping storms stay below display white;
+  - a darkening violet floor instead of the additive glow;
+  - a `Front` edge band that is darkest and densest at its outer lip.
+- **`blinding_cloud` (A1-2):**
+  - 18 flat murk sheets just above the ground (a disc and a ring inside the radius) and rolling billows;
+  - ground darkened to about half its display brightness by a `Critical` shade;
+  - a darker front at the edge.
+
+  Units inside stand above the low sheets.
+- **`abduct_tether` (A1-3):**
+  - an opaque dark red-brown core of 0.3 units wide, at sRGB (95, 30, 28) with edges at (45, 12, 12), and no lighter
+    key;
+  - a strip of bulges 0.42 units wide scrolling towards the caster;
+  - a grip 0.68 units across at each end (one at the victim, one where the tongue leaves the caster).
+
+  A tether's anchor is now its caster's end, and a `Line` placement may span a tether's line. The ribbon still has
+  no sag.
+
+**Evidence (V1-1 to V1-3).**
+
+- **V1-1:** a second GPU child pictures every 40 ms frame:
+  - of each area, from its publication to 0.4 s and from 0.2 s before its end to 0.5 s after it;
+  - of the tether, from its publication to 0.5 s after its end.
+
+  The areas are cast longest first, so the cloud's end falls inside the take.
+- **V1-2:**
+  - eight units (four of each side) in each area;
+  - a second storm overlapping the first;
+  - the whole window at 2.0 s, and 2x crops of each area.
+- **V1-3:**
+  - The fog shot is also shown with the viewer's unseen cells darkened (an evidence-only overlay).
+  - The test first looks for a fog edge along a change of ground level. The shipped skirmish's start platform has
+    none on screen (`fog_cliff: false` on both drivers), so the cliff case is not pictured. It is recorded for a
+    later round, with P1-3.
+
+**Measured (radv and lavapipe).**
+
+| Measure | `psionic_storm` | `blinding_cloud` |
+|---|---|---|
+| Worst edge error | 1.72 px | 1.52 px |
+| Edge band, median luminance change | 64.8 levels (radv), 64.3 (lavapipe) | 53.5 levels (radv), 52.7 (lavapipe) |
+| Spill outside the edge | 0 px | 0 px |
+
+The tether's ends are 0.52 and 0.71 px from the bubbles' surfaces. Its centre line samples sRGB (90, 35, 33) on radv
+and (90, 42, 41) on lavapipe. The fog case changes 0 of 277 unseen ground samples, and the exact cut keeps 16 of 57
+seen ones on both drivers (round 1: 22 and 17). All figures are in `wp10r2_measurements.txt`.
+
+Packet: section "WP10 round 2".

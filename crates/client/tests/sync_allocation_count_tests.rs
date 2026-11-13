@@ -93,8 +93,9 @@ enum Variant {
     /// The battle driver alone on the resumed, idle skirmish.
     RunningBaseline,
     /// The live synchroniser, a splash event every frame and the effect systems (plan
-    /// `2026-11-09-effect-visualization` WP4, D-7), with a live area and a live tether held
-    /// every frame (WP10).
+    /// `2026-11-09-effect-visualization` WP4, D-7), with a live area of the viewer's, an enemy
+    /// area the viewer sees in part under a real `BattleFog`, and a live tether held every
+    /// frame (WP10; review 1, E1-4).
     EffectStream,
     /// The same splash stream and live synchroniser without the effect systems.
     EffectBaseline,
@@ -330,11 +331,14 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
     Ok(())
 }
 
-/// One published area and one published tether, held every frame of the stream (WP10).
+/// Two published areas (the viewer's, and an enemy's across the viewer's sight edge) and one
+/// published tether, held every frame of the stream under `fog` (WP10).
 #[derive(Resource)]
 struct HeldViews {
-    /// The area.
-    area: [sim_types::AreaView; 1],
+    /// The areas.
+    area: [sim_types::AreaView; 2],
+    /// The viewer's fog: every cell seen but a block the enemy area reaches into.
+    fog: client::battle_pipeline::fog::BattleFog,
     /// The tether.
     link: [sim_types::LinkView; 1],
 }
@@ -374,19 +378,63 @@ fn held_views(
         return Err("the default battle presents two units".into());
     };
     let owner = first.owner;
+    let enemy = sim_types::PlayerId(owner.0 + 1);
+    let map = &app
+        .world()
+        .resource::<BattleSession>()
+        .world()
+        .ok_or("a ready session has a world")?
+        .map;
+    let (width, height) = (map.width(), map.height());
+    // The enemy area stands 8 units from the first unit, towards the map's middle, on the edge
+    // of a block of unseen cells (columns from its centre's on, rows round it).
+    let toward = if f64::from(first.world_pos[0]) < f64::from(width) / 2.0 {
+        8.0
+    } else {
+        -8.0
+    };
+    let enemy_center = [first.world_pos[0] + toward, first.world_pos[1]];
+    let unseen = |column: u32, row: u32| {
+        let (x, y) = (f64::from(column), f64::from(row));
+        let (cx, cy) = (f64::from(enemy_center[0]), f64::from(enemy_center[1]));
+        x >= cx.floor() && (y - cy).abs() < 4.0 && x < cx + 4.0
+    };
+    let view = sim_types::PlayerView {
+        viewer: owner,
+        map_width: width,
+        map_height: height,
+        visibility: (0..height)
+            .flat_map(|row| (0..width).map(move |column| (column, row)))
+            .map(|(column, row)| {
+                if unseen(column, row) {
+                    sim_types::VisibilityState::Fogged
+                } else {
+                    sim_types::VisibilityState::Visible
+                }
+            })
+            .collect(),
+        ..sim_types::PlayerView::default()
+    };
+    let mut fog = client::battle_pipeline::fog::BattleFog::default();
+    fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+    let area = |id: u32, owner, center: [f32; 2]| sim_types::AreaView {
+        id,
+        owner,
+        center: [center[0], center[1], first.ground_z],
+        radius: 1.5,
+        remaining_ticks: 60,
+        total_ticks: 61,
+        source: Some(sim_types::AbilitySource {
+            unit_type: caster,
+            ability: 0,
+        }),
+    };
     Ok(HeldViews {
-        area: [sim_types::AreaView {
-            id: 1,
-            owner,
-            center: [first.world_pos[0] + 2.0, first.world_pos[1], first.ground_z],
-            radius: 1.5,
-            remaining_ticks: 60,
-            total_ticks: 61,
-            source: Some(sim_types::AbilitySource {
-                unit_type: caster,
-                ability: 0,
-            }),
-        }],
+        area: [
+            area(1, owner, [first.world_pos[0] + 2.0, first.world_pos[1]]),
+            area(2, enemy, enemy_center),
+        ],
+        fog,
         link: [sim_types::LinkView {
             from: first.entity_id,
             to: second.entity_id,
@@ -425,7 +473,7 @@ fn hold_area_and_link(
         &mut looks,
         (&views.area, &views.link),
         session.frames.presented().bubbles.as_slice(),
-        None,
+        Some(&views.fog),
         &mut keep,
     );
 }
@@ -489,10 +537,11 @@ fn run_child(variant: Variant) -> TestResult {
             .world()
             .resource::<client::effects::areas::AreaLooks>()
             .held();
-        if held != (1, 1) {
-            return Err(
-                format!("the stream must hold one area and one tether, held {held:?}").into(),
-            );
+        if held != (2, 1) {
+            return Err(format!(
+                "the stream must hold two areas (one seen in part) and one tether, held {held:?}"
+            )
+            .into());
         }
         let spawned = effects_spawned(&app) - spawned_before;
         if spawned < u64::from(frames) {

@@ -1254,3 +1254,98 @@ fn a_status_look_held_settled_draws_as_one_that_came_in() {
         "settled {settled} against came in {came_in}"
     );
 }
+
+/// WP10 review 1, E1-2: an enemy area the viewer stops seeing is cut to nothing on that frame,
+/// with every effect it laid, and released; while it is seen in part, what it laid follows its
+/// current clip.
+#[test]
+fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid() {
+    use client::effects::areas::{
+        area_sight, keep_views_seen, AreaLooks, AreaSight, Keep, CLIP_NOTHING,
+    };
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let manifest = write_fixture_set(dir.path());
+    let effects = r#"
+        "cloud": (class: Major, event: Area, emit: Some((effect: "puff_area", every: 0.05)), layers: [
+            (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: AreaRadius, scale: 1.0),
+             duration: 0.1, held: true, exit: 0.4, priority: Critical),
+        ]),
+        "puff_area": (class: Minor, event: Area, layers: [
+            (block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: AreaRadius, scale: 0.3),
+             duration: 1.0),
+        ])"#;
+    let text = vocabulary(&manifest, "", effects, "");
+    let catalog = EffectCatalog::from_text(&text, &dir.path().join("effects.ron"), dir.path())
+        .expect("the vocabulary loads");
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<_> = units.archetypes().map(|arch| arch.unit_type_id).collect();
+    for id in &ids {
+        units.get_mut(*id).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
+    let caster = units
+        .archetypes()
+        .find(|arch| !arch.abilities.is_empty())
+        .map(|arch| arch.unit_type_id)
+        .expect("a shipped unit has an ability");
+    let archetype = units.get_mut(caster).expect("the archetype exists");
+    let name = archetype.abilities[0].name.clone();
+    archetype.effects.abilities = [(name, "cloud".to_owned())].into_iter().collect();
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the block resolves");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut looks = AreaLooks::default();
+    let area = sim_types::AreaView {
+        id: 7,
+        owner: PlayerId(1),
+        center: [10.2, 10.4, 0.0],
+        radius: 1.5,
+        remaining_ticks: 60,
+        total_ticks: 61,
+        source: Some(sim_types::AbilitySource {
+            unit_type: caster,
+            ability: 0,
+        }),
+    };
+    let sight = area_sight(bevy::math::Vec2::new(10.2, 10.4), 1.5, |x, _| {
+        x.floor() >= 10.0
+    });
+    let AreaSight::Part(clip) = sight else {
+        panic!("the area straddles the fog's edge: {sight:?}");
+    };
+    let frame = |looks: &mut AreaLooks, runtime: &mut EffectRuntime, index: u32, seen| {
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime,
+            now: f64::from(index) * 0.04,
+            delta: 0.04,
+        };
+        keep_views_seen(looks, (&[area], &[]), &[], |_| seen, |_| true, &mut keep);
+    };
+    for index in 1..=10 {
+        frame(&mut looks, &mut runtime, index, sight);
+    }
+    assert_eq!(looks.held(), (1, 0));
+    let clips: Vec<_> = runtime
+        .pool
+        .iter()
+        .map(|(_, instance)| instance.fog_clip)
+        .collect();
+    assert!(
+        clips.len() >= 4,
+        "the area and what it laid live: {}",
+        clips.len()
+    );
+    assert!(
+        clips.iter().all(|live| *live == clip),
+        "what the area laid follows its clip: {clips:?}"
+    );
+    frame(&mut looks, &mut runtime, 11, AreaSight::Hidden);
+    assert_eq!(looks.held(), (0, 0), "the unseen area is released");
+    assert!(
+        runtime
+            .pool
+            .iter()
+            .all(|(_, instance)| instance.fog_clip == CLIP_NOTHING),
+        "nothing of it is drawn from the frame the viewer stops seeing it"
+    );
+}

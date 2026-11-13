@@ -35,6 +35,7 @@
 //! - Each world change is published by a tick before the clock stops for its shot.
 
 #![allow(
+    clippy::single_match_else,
     clippy::expect_used,
     clippy::panic,
     clippy::too_many_lines,
@@ -145,9 +146,33 @@ const FOG_MARGIN: f32 = 0.25;
 /// the rays' reach over the smaller ones).
 const GROUND_REACH: f32 = 2.6;
 /// Seconds of the evidence sequences, from the casts.
-const SEQUENCE_SECONDS: f64 = 2.8;
-/// Frames between two pictures of a sequence.
-const SEQUENCE_EVERY: u32 = 2;
+const SEQUENCE_SECONDS: f64 = 6.2;
+/// Seconds of an area's coming in pictured every frame, from its publication (V1-1).
+const COME_IN_SECONDS: f64 = 0.4;
+/// Seconds before an area's end from which it is pictured every frame (V1-1).
+const BEFORE_END_SECONDS: f64 = 0.2;
+/// Seconds after an area's or the tether's end it is still pictured every frame (V1-1).
+const AFTER_END_SECONDS: f64 = 0.5;
+/// Frame of the sequence at which the whole window is pictured with every unit in the areas
+/// (V1-2), 2.0 s after the casts.
+const CROWD_FRAME: u32 = 50;
+/// Frames between two whole-window pictures of the battle sheet.
+const BATTLE_EVERY: u32 = 20;
+/// Units of each side staged in each area of the evidence sequences (V1-2).
+const CROWD_PER_SIDE: usize = 4;
+/// Pixels of a 2x crop of the crowd picture round each area.
+const CROWD_CROP: [u32; 2] = [200, 150];
+/// Least median luminance change, in levels, of the band just inside an area's projected
+/// radius against the bare floor (WP10 review 1, E1-5 (a)).
+const EDGE_CONTRAST: f32 = 32.0;
+/// Window pixels outside an area's projected radius beyond which its whole look changes no
+/// pixel along the near half's rays (E1-5 (b)).
+const OUTSIDE_SPILL_PX: f32 = 4.0;
+/// Radii out to which E1-5 (b) seeks spill: beyond lie the staged units at
+/// [`SPOT_CLEARANCE`] and their shadows.
+const SPILL_REACH: f32 = 1.2;
+/// Band, in window pixels, just inside the projected radius for E1-5 (a).
+const EDGE_BAND_PX: f32 = 3.0;
 /// Unchanged ray samples (0.01 radii each) bridged inside an area's footprint.
 const EDGE_GAP: usize = 4;
 /// Window pixels of a sequence's crop round its subject.
@@ -188,6 +213,8 @@ struct AreaShot {
     /// Per ground sample of the disc: its window pixel and whether the viewer sees it (`None`
     /// within [`FOG_MARGIN`] of a fog boundary).
     ground: Vec<([f32; 2], Option<bool>)>,
+    /// Window pixel of the centre.
+    centre_px: [f32; 2],
 }
 
 /// The tether as pictured.
@@ -216,6 +243,12 @@ struct Report {
     fog_links: usize,
     /// Sequence pictures written: `(look, files)`.
     sequences: Vec<(String, Vec<String>)>,
+    /// The fog shot's unseen cells near the enemy area, as window-pixel quads (V1-3 overlay).
+    fog_cells: Vec<[[f32; 2]; 4]>,
+    /// Whether the fog edge chosen runs along a change of ground level (a cliff, V1-3).
+    fog_cliff: bool,
+    /// Window pixels of the areas' centres in the crowd picture (V1-2).
+    crowd: Vec<[f32; 2]>,
 }
 
 /// How the effect layers are drawn for a shot.
@@ -294,6 +327,27 @@ struct Staging {
     report: Report,
     /// The evidence child: the casts at once, pictured as sequences, no measured shots.
     sequence_only: bool,
+    /// A second caster of the evidence child, for a storm overlapping the first (V1-2).
+    second_caster: Option<EntityId>,
+    /// What the evidence child pictures, by published area or tether.
+    watches: Vec<Watch>,
+}
+
+/// An area or the tether the evidence child pictures (V1-1).
+#[derive(Debug, Clone, Default)]
+struct Watch {
+    /// Name of its sheets: the look and a count, or `tether`.
+    key: String,
+    /// The area's id; `None` for the tether.
+    id: Option<u32>,
+    /// Where it stands, map `x, y`.
+    at: Vec2,
+    /// When it was first published, seconds of `Time<Virtual>`.
+    first: f64,
+    /// When it entered its last [`BEFORE_END_SECONDS`].
+    ending: Option<f64>,
+    /// When it was no longer published.
+    gone: Option<f64>,
 }
 
 /// Whether the ground round `point` is open and walkable: every cell centre within 2 world
@@ -427,6 +481,7 @@ fn find_fog_edge(
     world: &SimWorld,
     fog: &BattleFog,
     around: Vec2,
+    cliff: bool,
     visible: impl Fn(Vec2) -> bool,
 ) -> Option<(Vec2, Vec2, Vec2)> {
     (0..48).find_map(|step| {
@@ -450,7 +505,11 @@ fn find_fog_edge(
                 && visible(edge + direction * 1.5)
                 && open(world, edge)
                 && unseen_open(&victim)
-                && clear(world, edge);
+                && clear(world, edge)
+                && (!cliff || {
+                    let level = |at: Vec2| world.map.terrain_altitude_at(sim_position(at));
+                    (level(edge) - level(edge + direction * 1.5)).abs() > 0.3
+                });
             return ok.then_some((edge, caster, victim));
         }
         None
@@ -747,6 +806,7 @@ fn area_shot(
         radius,
         rays,
         ground,
+        centre_px: project(world, camera, centre),
     }
 }
 
@@ -811,8 +871,11 @@ fn record(
             // The fog stage's places, with every staged unit of the viewer's in sight.
             let visible = on_screen(world, camera);
             let around = staging.spots[2];
+            let cliff = find_fog_edge(world, fog, around, true, &visible);
+            staging.report.fog_cliff = cliff.is_some();
             staging.fog = Some(
-                find_fog_edge(world, fog, around, &visible)
+                cliff
+                    .or_else(|| find_fog_edge(world, fog, around, false, &visible))
                     .expect("the viewer's sight ends on screen"),
             );
         }
@@ -822,6 +885,21 @@ fn record(
                 .iter()
                 .find(|area| area.owner == ENEMY)
                 .map(|area| area_shot(world, camera, fog, area, look_of(world, area.source)));
+            // The unseen cells round it, for the evidence overlay (V1-3).
+            if let Some(area) = snapshot.areas.iter().find(|area| area.owner == ENEMY) {
+                let centre = Vec2::new(area.center[0], area.center[1]).floor();
+                for row in -5..=5 {
+                    for column in -5..=5 {
+                        let corner = centre + Vec2::new(column as f32, row as f32);
+                        if !fog.sees(corner.x + 0.5, corner.y + 0.5) {
+                            staging.report.fog_cells.push(
+                                [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y]
+                                    .map(|offset| project(world, camera, corner + offset)),
+                            );
+                        }
+                    }
+                }
+            }
             staging.report.fog_held = looks.held();
             staging.report.fog_links = snapshot.links.len();
             staging.report.fog_own_links = snapshot
@@ -943,15 +1021,28 @@ fn after_shot(world: &mut World, shot: usize) {
 /// Orders the evidence sequence's casts: both areas, then the tether, from the viewer's caster.
 fn begin_sequence(staging: &Staging, sim: &mut SimWorld) {
     let caster = staging.caster.expect("spawned");
-    let targets = [staging.spots[0], staging.spots[1]];
-    order_casts(
-        sim,
-        staging,
-        caster,
-        AbilityTargetKind::TargetPosition,
-        &targets,
-        None,
-    );
+    // The areas in reverse order (the longest last-listed first), each on its own spot, so the
+    // longest area's end falls inside the sequence (V1-1).
+    let areas: Vec<(usize, u8)> = staging
+        .abilities
+        .iter()
+        .filter(|(_, _, kind)| *kind == AbilityTargetKind::TargetPosition)
+        .map(|(_, index, _)| *index)
+        .enumerate()
+        .collect();
+    let unit = sim.entities.get_mut(&caster).expect("the caster stands");
+    unit.energy = SimScalar::from_num(1000);
+    for (order, (spot, index)) in areas.iter().rev().enumerate() {
+        unit.issue_order(
+            UnitOrder::CastAbility {
+                ability_index: *index,
+                target_pos: Some(sim_position(staging.spots[*spot])),
+                target_entity: None,
+            },
+            order > 0,
+        )
+        .expect("the cast is admitted");
+    }
     let (_, tether, _) = staging
         .abilities
         .iter()
@@ -970,6 +1061,29 @@ fn begin_sequence(staging: &Staging, sim: &mut SimWorld) {
             true,
         )
         .expect("the tether is admitted");
+    // V1-2: a second storm overlapping the first.
+    if let Some(second) = staging.second_caster {
+        let (_, storm, _) = staging
+            .abilities
+            .iter()
+            .find(|(_, _, kind)| *kind == AbilityTargetKind::TargetPosition)
+            .cloned()
+            .expect("an area look");
+        let unit = sim
+            .entities
+            .get_mut(&second)
+            .expect("the second caster stands");
+        unit.energy = SimScalar::from_num(1000);
+        unit.issue_order(
+            UnitOrder::CastAbility {
+                ability_index: storm,
+                target_pos: Some(sim_position(staging.spots[0] + Vec2::new(1.3, 0.4))),
+                target_entity: None,
+            },
+            false,
+        )
+        .expect("the second storm is admitted");
+    }
 }
 
 /// Sets the effect view of shot `index`.
@@ -1019,6 +1133,25 @@ fn set_up(
     // The victim, of the same unarmed type, stands within the tether's range of the caster.
     let victim_at = spots[2] + (spots[3] - spots[2]).normalize_or_zero() * 3.6;
     staging.victim = Some(spawn_still(sim, kind, ENEMY, victim_at));
+    if staging.sequence_only {
+        // V1-2: units of both sides in each area, alternating round a ring inside it, and a
+        // second caster for a storm overlapping the first.
+        for spot in &spots[..2] {
+            for index in 0..2 * CROWD_PER_SIDE {
+                let angle = index as f32 * std::f32::consts::TAU / (2 * CROWD_PER_SIDE) as f32;
+                let owner = if index % 2 == 0 { VIEWER } else { ENEMY };
+                let place = *spot + Vec2::from_angle(angle) * 0.85;
+                if let Ok(id) = sim.spawn_unit(kind, owner, sim_position(place)) {
+                    let unit = sim.entities.get_mut(&id).expect("just spawned");
+                    unit.unpushable = true;
+                    unit.issue_order(UnitOrder::HoldPosition, false)
+                        .expect("hold admitted");
+                }
+            }
+        }
+        let beside = spots[2] + (spots[3] - spots[2]).normalize_or_zero().perp() * 1.6;
+        staging.second_caster = Some(spawn_still(sim, kind, VIEWER, beside));
+    }
     staging.spots = spots;
 }
 
@@ -1132,49 +1265,8 @@ fn stage(
         }
         Phase::Capturing => Phase::Capturing,
         Phase::Sequence { frame, since } if now - since < SEQUENCE_SECONDS => {
-            if frame % SEQUENCE_EVERY == 0 {
-                let sim = session.world().expect("a ready session has a world");
-                let mut crops = Vec::new();
-                let subjects = [
-                    ("area_a", staging.spots[0]),
-                    ("area_b", staging.spots[1]),
-                    ("tether", staging.spots[2]),
-                ];
-                for (name, at) in subjects {
-                    let [x, y] = project(sim, (camera, transform), at);
-                    let file = format!("seq_{name}_{frame:03}.png");
-                    let left = (x - CROP[0] as f32 / 2.0).max(0.0) as u32;
-                    let top = (y - CROP[1] as f32 / 2.0).max(0.0) as u32;
-                    crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
-                    let entry = staging
-                        .report
-                        .sequences
-                        .iter_mut()
-                        .find(|(look, _)| look == name);
-                    match entry {
-                        Some((_, files)) => files.push(file),
-                        None => staging.report.sequences.push((name.to_owned(), vec![file])),
-                    }
-                }
-                if frame % (SEQUENCE_EVERY * 10) == 0 {
-                    let whole = format!("seq_battle_{frame:03}.png");
-                    crops.push((
-                        staging.directory.join(&whole),
-                        [0, 0, u32::MAX / 4, u32::MAX / 4],
-                    ));
-                    let entry = staging
-                        .report
-                        .sequences
-                        .iter_mut()
-                        .find(|(look, _)| look == "battle");
-                    match entry {
-                        Some((_, files)) => files.push(whole),
-                        None => staging
-                            .report
-                            .sequences
-                            .push(("battle".to_owned(), vec![whole])),
-                    }
-                }
+            let crops = sequence_frame(&mut staging, &session, (camera, transform), now, frame);
+            if !crops.is_empty() {
                 let outstanding = Arc::clone(&staging.outstanding);
                 capture_crops(&mut commands, crops, &outstanding);
             }
@@ -1197,6 +1289,121 @@ fn stage(
     if std::mem::discriminant(&staging.phase) != before {
         eprintln!("area_link: {:?} at tick {tick}, {now:.2} s", staging.phase);
     }
+}
+
+/// Adds `file` to the sequence `key` of the report.
+fn note(report: &mut Report, key: &str, file: String) {
+    match report.sequences.iter_mut().find(|(look, _)| look == key) {
+        Some((_, files)) => files.push(file),
+        None => report.sequences.push((key.to_owned(), vec![file])),
+    }
+}
+
+/// The crops the evidence child writes this frame (V1-1, V1-2): every frame of each of the
+/// viewer's areas from its publication for [`COME_IN_SECONDS`], from [`BEFORE_END_SECONDS`]
+/// before its end to [`AFTER_END_SECONDS`] after it, and of the tether while it is published
+/// and [`AFTER_END_SECONDS`] after; the whole window every [`BATTLE_EVERY`] frames and at
+/// [`CROWD_FRAME`].
+fn sequence_frame(
+    staging: &mut Staging,
+    session: &BattleSession,
+    camera: (&Camera, &GlobalTransform),
+    now: f64,
+    frame: u32,
+) -> Vec<(PathBuf, [u32; 4])> {
+    let sim = session.world().expect("a ready session has a world");
+    let snapshot = session.frames.current();
+    let mut wanted: Vec<(String, Vec2)> = Vec::new();
+    for area in snapshot.areas.iter().filter(|area| area.owner == VIEWER) {
+        let index = match staging
+            .watches
+            .iter()
+            .position(|watch| watch.id == Some(area.id))
+        {
+            Some(index) => index,
+            None => {
+                let look = look_of(sim, area.source);
+                let count = staging
+                    .watches
+                    .iter()
+                    .filter(|watch| watch.key.starts_with(&look))
+                    .count();
+                staging.watches.push(Watch {
+                    key: format!("{look}_{count}"),
+                    id: Some(area.id),
+                    at: Vec2::new(area.center[0], area.center[1]),
+                    first: now,
+                    ..Watch::default()
+                });
+                staging.watches.len() - 1
+            }
+        };
+        let watch = &mut staging.watches[index];
+        if f64::from(area.remaining_ticks) * 0.04 <= BEFORE_END_SECONDS {
+            watch.ending.get_or_insert(now);
+        }
+        if now - watch.first <= COME_IN_SECONDS {
+            wanted.push((format!("{}_in", watch.key), watch.at));
+        }
+        if watch.ending.is_some() {
+            wanted.push((format!("{}_out", watch.key), watch.at));
+        }
+    }
+    let tether = snapshot.links.iter().any(|link| link.owner == VIEWER);
+    if tether && !staging.watches.iter().any(|watch| watch.key == "tether") {
+        staging.watches.push(Watch {
+            key: "tether".to_owned(),
+            at: staging.spots[2],
+            first: now,
+            ..Watch::default()
+        });
+    }
+    for watch in &mut staging.watches {
+        let published = match watch.id {
+            Some(id) => snapshot.areas.iter().any(|area| area.id == id),
+            None => tether,
+        };
+        if published {
+            if watch.id.is_none() {
+                wanted.push(("tether".to_owned(), watch.at));
+            }
+            continue;
+        }
+        let gone = *watch.gone.get_or_insert(now);
+        if now - gone <= AFTER_END_SECONDS {
+            let key = if watch.id.is_some() {
+                format!("{}_out", watch.key)
+            } else {
+                "tether".to_owned()
+            };
+            wanted.push((key, watch.at));
+        }
+    }
+    let mut crops = Vec::new();
+    for (key, at) in wanted {
+        let [x, y] = project(sim, camera, at);
+        let file = format!("seq_{key}_{frame:03}.png");
+        let left = (x - CROP[0] as f32 / 2.0).max(0.0) as u32;
+        let top = (y - CROP[1] as f32 / 2.0).max(0.0) as u32;
+        crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
+        note(&mut staging.report, &key, file);
+    }
+    let whole = [0, 0, u32::MAX / 4, u32::MAX / 4];
+    if frame.is_multiple_of(BATTLE_EVERY) {
+        let file = format!("seq_battle_{frame:03}.png");
+        crops.push((staging.directory.join(&file), whole));
+        note(&mut staging.report, "battle", file);
+    }
+    if frame == CROWD_FRAME {
+        let file = format!("seq_crowd_{frame:03}.png");
+        crops.push((staging.directory.join(&file), whole));
+        note(&mut staging.report, "crowd", file);
+        staging.report.crowd = staging.spots[..2]
+            .iter()
+            .map(|spot| project(sim, camera, *spot))
+            .collect();
+    }
+    crops
 }
 
 /// Boots the production client on the skirmish with the staging.
@@ -1324,7 +1531,7 @@ fn keep_evidence(directory: &Path, report: &Report, driver: &str) -> TestResult 
     for (look, files) in &report.sequences {
         let pictures: Vec<image::RgbImage> = files
             .iter()
-            .step_by(if look == "battle" { 1 } else { 3 })
+            .step_by(1)
             .filter_map(|file| {
                 image::open(directory.join(file))
                     .ok()
@@ -1335,7 +1542,11 @@ fn keep_evidence(directory: &Path, report: &Report, driver: &str) -> TestResult 
             continue;
         };
         let (width, height) = (first.width(), first.height());
-        let columns = if look == "battle" { 2 } else { 6 };
+        let columns = if look == "battle" || look == "crowd" {
+            2
+        } else {
+            6
+        };
         let rows = pictures.len().div_ceil(columns) as u32;
         let mut sheet = image::RgbImage::new(width * columns as u32, height * rows);
         for (index, picture) in pictures.iter().enumerate() {
@@ -1348,6 +1559,36 @@ fn keep_evidence(directory: &Path, report: &Report, driver: &str) -> TestResult 
             );
         }
         sheet.save(directory.join(format!("sheet_{look}_{driver}.png")))?;
+    }
+    // V1-2: the crowd at 2x round each area.
+    if let Some(file) = report
+        .sequences
+        .iter()
+        .find(|(look, _)| look == "crowd")
+        .and_then(|(_, files)| files.first())
+    {
+        let picture = image::open(directory.join(file))?.to_rgb8();
+        for (index, [x, y]) in report.crowd.iter().enumerate() {
+            let left = (*x - CROWD_CROP[0] as f32 / 2.0).max(0.0) as u32;
+            let top = (*y - CROWD_CROP[1] as f32 / 2.0).max(0.0) as u32;
+            let crop = image::imageops::crop_imm(&picture, left, top, CROWD_CROP[0], CROWD_CROP[1])
+                .to_image();
+            image::imageops::resize(
+                &crop,
+                CROWD_CROP[0] * 2,
+                CROWD_CROP[1] * 2,
+                image::imageops::FilterType::Nearest,
+            )
+            .save(directory.join(format!("sheet_crowd2x_{index}_{driver}.png")))?;
+        }
+    }
+    // V1-3: the fog shot with the viewer's unseen cells darkened.
+    if !report.fog_cells.is_empty() {
+        let mut picture = image::open(directory.join(Shot::Fog.file()))?.to_rgb8();
+        for quad in &report.fog_cells {
+            darken_quad(&mut picture, quad);
+        }
+        picture.save(directory.join(format!("sheet_fogcells_{driver}.png")))?;
     }
     let Some(target) = std::env::var_os(EVIDENCE_VAR) else {
         return Ok(());
@@ -1373,6 +1614,93 @@ fn keep_evidence(directory: &Path, report: &Report, driver: &str) -> TestResult 
     Ok(())
 }
 
+/// Halves the brightness of the pixels of `picture` inside the convex quad `quad` (window
+/// pixels, in order round it): the evidence overlay of an unseen cell (V1-3).
+fn darken_quad(picture: &mut image::RgbImage, quad: &[[f32; 2]; 4]) {
+    let xs = quad.iter().map(|corner| corner[0]);
+    let ys = quad.iter().map(|corner| corner[1]);
+    let (low_x, high_x) = (
+        xs.clone().fold(f32::MAX, f32::min),
+        xs.fold(f32::MIN, f32::max),
+    );
+    let (low_y, high_y) = (
+        ys.clone().fold(f32::MAX, f32::min),
+        ys.fold(f32::MIN, f32::max),
+    );
+    if low_x < 0.0 || low_y < 0.0 {
+        return;
+    }
+    let side = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
+        (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+    };
+    for y in low_y as u32..=(high_y as u32).min(picture.height() - 1) {
+        for x in low_x as u32..=(high_x as u32).min(picture.width() - 1) {
+            let point = [x as f32 + 0.5, y as f32 + 0.5];
+            let sides: Vec<f32> = (0..4)
+                .map(|index| side(quad[index], quad[(index + 1) % 4], point))
+                .collect();
+            if sides.iter().all(|value| *value >= 0.0) || sides.iter().all(|value| *value <= 0.0) {
+                let pixel = picture.get_pixel_mut(x, y);
+                pixel.0 = pixel.0.map(|channel| channel / 2);
+            }
+        }
+    }
+}
+
+/// Luminance (Rec. 709 weights on the display values) of a pixel, 0 to 255.
+fn luminance(pixel: [u8; 3]) -> f32 {
+    0.2126 * f32::from(pixel[0]) + 0.7152 * f32::from(pixel[1]) + 0.0722 * f32::from(pixel[2])
+}
+
+/// The pixel of `picture` at window point `at`, if inside.
+fn pixel_at(picture: &image::RgbImage, at: [f32; 2]) -> Option<[u8; 3]> {
+    let (x, y) = (at[0].round(), at[1].round());
+    (x >= 0.0 && y >= 0.0 && x < picture.width() as f32 && y < picture.height() as f32)
+        .then(|| picture.get_pixel(x as u32, y as u32).0)
+}
+
+/// E1-5 for `area`: the median luminance change of the whole look against the bare floor in the
+/// band [`EDGE_BAND_PX`] just inside the projected radius, over every ray; and the pixels the
+/// whole look changes more than [`OUTSIDE_SPILL_PX`] outside it along the near half's rays.
+fn edge_visibility(
+    area: &AreaShot,
+    whole: &image::RgbImage,
+    bare: &image::RgbImage,
+) -> (f32, usize) {
+    let at_radius =
+        ((1.0 - RAY_FROM) / (RAY_TO - RAY_FROM) * (RAY_SAMPLES - 1) as f32).round() as usize;
+    // Spill is sought out to SPILL_REACH radii: farther lie the staged units at
+    // SPOT_CLEARANCE and their shadows.
+    let spill_end = ((SPILL_REACH - RAY_FROM) / (RAY_TO - RAY_FROM) * (RAY_SAMPLES - 1) as f32)
+        .round() as usize;
+    let mut band = Vec::new();
+    let mut spill = 0;
+    for ray in &area.rays {
+        let edge = ray[at_radius];
+        for (index, at) in ray.iter().enumerate() {
+            let from_edge = distance(*at, edge);
+            if index <= at_radius && from_edge <= EDGE_BAND_PX {
+                if let (Some(a), Some(b)) = (pixel_at(whole, *at), pixel_at(bare, *at)) {
+                    band.push((luminance(a) - luminance(b)).abs());
+                }
+            }
+            // The near half: rays running down the window, towards the camera.
+            let near = ray[RAY_SAMPLES - 1][1] > ray[0][1];
+            if near
+                && index > at_radius
+                && index <= spill_end
+                && from_edge > OUTSIDE_SPILL_PX
+                && changed_at(whole, bare, *at)
+            {
+                spill += 1;
+            }
+        }
+    }
+    band.sort_by(f32::total_cmp);
+    let median = band.get(band.len() / 2).copied().unwrap_or(0.0);
+    (median, spill)
+}
+
 #[test]
 fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -> TestResult {
     if gpu_run::gpu_tests_opted_out() {
@@ -1395,6 +1723,7 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
         "both area looks were pictured: {report:?}"
     );
     let (critical, bare) = (shot(Shot::AreasCritical)?, shot(Shot::AreasBare)?);
+    let whole = shot(Shot::Areas)?;
     let mut looks = BTreeMap::new();
     for area in &report.areas {
         let errors = edge_errors(area, &critical, &bare);
@@ -1414,6 +1743,35 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
             area.look
         );
         looks.insert(area.look.clone(), worst);
+        // E1-5: the edge can be seen, and nothing of the look spills past it on the ground.
+        let (contrast, spill) = edge_visibility(area, &whole, &bare);
+        // A1-4: the display colours at the centre, mid radius and edge, against the bare floor.
+        let near = area
+            .rays
+            .iter()
+            .max_by(|a, b| {
+                (a[RAY_SAMPLES - 1][1] - a[0][1]).total_cmp(&(b[RAY_SAMPLES - 1][1] - b[0][1]))
+            })
+            .expect("rays");
+        let edge_index =
+            ((0.95 - RAY_FROM) / (RAY_TO - RAY_FROM) * (RAY_SAMPLES - 1) as f32).round() as usize;
+        let colour = |at: [f32; 2]| (pixel_at(&whole, at), pixel_at(&bare, at));
+        eprintln!(
+            "driver {driver}: area '{}': edge band median luminance change {contrast:.1} levels \
+             (least {EDGE_CONTRAST}); {spill} pixels changed beyond {OUTSIDE_SPILL_PX} px outside \
+             on the near half; sRGB (look, bare floor) at the centre {:?}, mid radius {:?}, 0.95 \
+             radius {:?}",
+            area.look,
+            colour(area.centre_px),
+            colour(near[0]),
+            colour(near[edge_index])
+        );
+        assert!(
+            contrast >= EDGE_CONTRAST,
+            "'{}': the edge can be seen: {contrast}",
+            area.look
+        );
+        assert_eq!(spill, 0, "'{}': nothing spills past the edge", area.look);
     }
     assert!(looks.len() >= 2, "two different area looks: {looks:?}");
 
@@ -1444,6 +1802,30 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
         along(*last),
         changed.len(),
         steps + 1
+    );
+    // A1-4: the tongue's display colour on its centre line and at its edge, at the middle.
+    let middle = along(steps / 2);
+    let across = Vec2::from_array(line.to_array()).perp().normalize_or_zero();
+    let tether_whole = shot(Shot::Tether)?;
+    let mut edge_px = 0.0;
+    while edge_px < 20.0
+        && changed_at(
+            &tether_whole,
+            &without,
+            (Vec2::from_array(middle) + across * (edge_px + 1.0)).to_array(),
+        )
+    {
+        edge_px += 1.0;
+    }
+    eprintln!(
+        "driver {driver}: tether sRGB at its middle: centre line {:?}, edge ({edge_px} px off the \
+         line) {:?}, bare floor {:?}",
+        pixel_at(&tether_whole, middle),
+        pixel_at(
+            &tether_whole,
+            (Vec2::from_array(middle) + across * edge_px).to_array()
+        ),
+        pixel_at(&without, middle)
     );
     assert!(
         start_error <= EDGE_TOLERANCE_PX,
@@ -1491,6 +1873,10 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
          changes {seen_full} seen and {unseen_full} unseen (cards standing in sight over ground \
          beyond it); looks held {:?} with {} tethers published, {} of them the viewer's",
         report.fog_held, report.fog_links, report.fog_own_links
+    );
+    eprintln!(
+        "driver {driver}: fog edge along a change of ground level (a cliff): {}",
+        report.fog_cliff
     );
     assert!(
         seen > 20 && unseen > 20,

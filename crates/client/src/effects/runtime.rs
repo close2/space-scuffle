@@ -417,7 +417,7 @@ impl EffectRuntime {
         }
     }
 
-    /// Moves the held tether `handle` to `line` (world space; its anchor is the line's far end)
+    /// Moves the held tether `handle` to `line` (world space; its anchor is the line's start)
     /// with the values `bound`; a released or stale handle does nothing. Returns whether the
     /// effect is still held (WP10: a tether's ends follow its two bubbles every frame).
     pub fn update_held_line(
@@ -428,7 +428,7 @@ impl EffectRuntime {
     ) -> bool {
         match self.pool.get_mut(handle) {
             Some(instance) if instance.held && instance.released_at.is_none() => {
-                instance.anchor = line.to;
+                instance.anchor = line.from;
                 instance.line = Some(line);
                 instance.bound = bound;
                 true

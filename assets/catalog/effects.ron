@@ -455,66 +455,68 @@
             (0.00, (0.020, 0.018, 0.010, 0.22)),
             (1.00, (0.16, 0.14, 0.090, 0.40)),
         ],
-        // WP10, areas and tethers. The storm's floor (additive): a violet glow cast on the
-        // ground under the storm, brightest where the cloud is densest.
+        // WP10, areas and tethers (round 2: WP10 review 1, A1-4). Every value below is the
+        // linear value of the display colour the brief names, converted from sRGB; the comment
+        // after a key gives that sRGB colour.
+        //
+        // The storm's floor (darkening): the share of the ground's light it keeps, a violet
+        // tint, so the floor reads darker inside, never whiter (A1-1).
         "storm_floor": [
-            (0.00, (0.00, 0.00, 0.00, 0.0)),
-            (0.35, (0.07, 0.03, 0.16, 0.0)),
-            (0.75, (0.20, 0.09, 0.42, 0.0)),
-            (1.00, (0.34, 0.20, 0.62, 0.0)),
+            (0.00, (0.80, 0.76, 0.90, 0.00)),
+            (0.20, (0.1559, 0.0908, 0.3515, 0.90)),   // sRGB (110, 85, 160)
+            (1.00, (0.1329, 0.0742, 0.3185, 0.92)),   // sRGB (102, 77, 153)
         ],
-        // The storm's edge on the ground: a dark violet band, light at its outer lip.
+        // The storm's edge band (alpha), densest and darkest at its outer lip, which is the
+        // area's true edge (A1-1, E1-5).
         "storm_rim": [
-            (0.00, (0.00, 0.00, 0.00, 0.00)),
-            (0.30, (0.12, 0.05, 0.26, 0.60)),
-            (0.70, (0.36, 0.20, 0.74, 0.45)),
-            (1.00, (0.62, 0.52, 1.00, 0.20)),
+            (0.00, (0.0000, 0.0000, 0.0000, 0.00)),
+            (0.25, (0.1022, 0.0319, 0.4020, 0.70)),   // sRGB (90, 50, 170)
+            (0.60, (0.0612, 0.0176, 0.2582, 0.90)),   // sRGB (70, 35, 140)
+            (1.00, (0.0452, 0.0097, 0.1878, 0.95)),   // sRGB (60, 25, 120)
         ],
-        // A blinding cloud's edge on the ground (darkening): the share of the ground's light the
-        // front of its murk leaves, darkest at its outer lip.
-        "murk_edge": [
-            (0.00, (0.80, 0.78, 0.84, 0.00)),
-            (0.30, (0.62, 0.60, 0.68, 0.80)),
-            (1.00, (0.36, 0.35, 0.42, 0.95)),
-        ],
-        // The storm's cloud: an indigo body, opaque where thin and dark, glowing violet-blue
-        // where dense.
+        // The storm's cloud (alpha): a dark, saturated indigo body, darkest in its folds and a
+        // deep violet where dense; opaque, never lighter than the floor (A1-1).
         "storm_cloud": [
-            (0.00, (0.00, 0.00, 0.00, 0.00)),
-            (0.15, (0.04, 0.015, 0.10, 0.62)),
-            (0.45, (0.15, 0.06, 0.38, 0.50)),
-            (0.75, (0.30, 0.18, 0.72, 0.22)),
-            (1.00, (0.48, 0.40, 0.95, 0.05)),
+            (0.00, (0.0000, 0.0000, 0.0000, 0.00)),
+            (0.15, (0.0168, 0.0060, 0.0802, 0.88)),   // sRGB (35, 18, 80)
+            (0.55, (0.0262, 0.0097, 0.1144, 0.90)),   // sRGB (45, 25, 95)
+            (1.00, (0.0802, 0.0319, 0.2831, 0.86)),   // sRGB (80, 50, 145)
         ],
-        // Pockets of discharge flaring inside the cloud (additive): violet to near white.
+        // Pockets of discharge flaring inside the cloud: partly opaque, so two storms
+        // overlapping stay below display white; peak about sRGB (188, 170, 240) (A1-1).
         "storm_flare": [
-            (0.00, (0.00, 0.00, 0.00, 0.0)),
-            (0.40, (0.28, 0.14, 0.62, 0.0)),
-            (0.80, (0.64, 0.54, 1.00, 0.0)),
-            (1.00, (0.94, 0.92, 1.00, 0.0)),
+            (0.00, (0.0000, 0.0000, 0.0000, 0.00)),
+            (0.40, (0.1878, 0.0802, 0.5776, 0.30)),   // sRGB (120, 80, 200)
+            (1.00, (0.5000, 0.4020, 0.8550, 0.50)),   // sRGB (188, 170, 240)
         ],
-        // A blinding cloud's murk (alpha): dark grey smoke with a cold violet cast, denser
-        // and darker in its folds.
+        // A blinding cloud's murk (alpha): dark grey smoke with a cold cast (A1-2).
         "murk": [
-            (0.00, (0.000, 0.000, 0.000, 0.00)),
-            (0.20, (0.030, 0.028, 0.040, 0.78)),
-            (0.55, (0.085, 0.080, 0.105, 0.86)),
-            (0.85, (0.17, 0.16, 0.20, 0.82)),
-            (1.00, (0.26, 0.25, 0.30, 0.75)),
+            (0.00, (0.0000, 0.0000, 0.0000, 0.00)),
+            (0.20, (0.0212, 0.0212, 0.0319, 0.82)),   // sRGB (40, 40, 50)
+            (0.60, (0.0612, 0.0612, 0.0844, 0.80)),   // sRGB (70, 70, 82)
+            (1.00, (0.1274, 0.1274, 0.1620, 0.72)),   // sRGB (100, 100, 112)
         ],
-        // The ground in a blinding cloud's shade (darkening): the share of its light it keeps.
+        // The ground in a blinding cloud's shade (darkening): about half its display
+        // brightness, a little cold (A1-2).
         "murk_shade": [
-            (0.00, (0.62, 0.60, 0.66, 0.00)),
-            (0.30, (0.62, 0.60, 0.66, 0.85)),
-            (1.00, (0.46, 0.44, 0.52, 0.90)),
+            (0.00, (0.50, 0.50, 0.55, 0.00)),
+            (0.25, (0.2159, 0.2159, 0.2623, 0.85)),   // display factor (128, 128, 140)
+            (1.00, (0.2159, 0.2159, 0.2623, 0.92)),
         ],
-        // Abduct's tongue (alpha): a dark red-brown muscle, mottled, opaque; no glow, no bright core.
+        // A blinding cloud's front at its edge (darkening): darker than the shade, darkest at
+        // its outer lip on the area's true edge.
+        "murk_edge": [
+            (0.00, (0.50, 0.50, 0.55, 0.00)),
+            (0.40, (0.1500, 0.1500, 0.1900, 0.80)),   // display factor (108, 108, 121)
+            (1.00, (0.1022, 0.1022, 0.1413, 0.95)),   // display factor (90, 90, 105)
+        ],
+        // Abduct's tongue (alpha): an opaque dark red-brown muscle with darker edges; its
+        // lightest key is the body colour itself, so there is no light core (A1-3).
         "tongue": [
-            (0.00, (0.000, 0.000, 0.000, 0.00)),
-            (0.15, (0.07, 0.020, 0.025, 0.92)),
-            (0.55, (0.20, 0.055, 0.060, 0.96)),
-            (0.85, (0.34, 0.12, 0.11, 0.96)),
-            (1.00, (0.46, 0.22, 0.19, 0.96)),
+            (0.00, (0.0262, 0.0037, 0.0037, 0.00)),   // sRGB (45, 12, 12)
+            (0.10, (0.0262, 0.0037, 0.0037, 0.95)),
+            (0.50, (0.0612, 0.0070, 0.0060, 0.97)),   // sRGB (70, 20, 18)
+            (1.00, (0.1144, 0.0130, 0.0116, 0.97)),   // sRGB (95, 30, 28)
         ],
     },
     // Timing curves: (time 0..1, value, easing to the next key).
@@ -2015,72 +2017,92 @@
         ),
         // WP10, areas and tethers (plan §5.5, D-8), named by their casters' `abilities`. Each
         // is held while the simulation publishes its area or tether and erodes out over its
-        // exit when it ends; an area is drawn only where its viewer sees it.
+        // exit when it ends; an area is drawn only where its viewer sees it. No light: a point
+        // light is not cut where the fog begins. Round 2 (WP10 review 1): the colours are the
+        // briefs' display colours in linear values (A1-4); the bodies lie low over the disc so
+        // units inside stay readable and nothing spills past the far edge.
         //
-        // Psionic Storm (High Templar analogue): a churning indigo-violet cloud over the
-        // area, lit from within by pockets of discharge that flare and fade all over it (laid
-        // again every 0.11 s, `storm_flare`), a violet glow cast on the ground under it, and a
-        // dark violet band whose outer lip is the area's true edge (`AreaRadius`, Critical). No
-        // lightning strokes or rays: the discharge is light in the cloud.
+        // Psionic Storm (High Templar analogue): a dark, saturated indigo cloud lying over the
+        // area and hiding most of the floor (flat sheets just above the ground, and a few
+        // billows standing in it), lit from within by small pockets of discharge that flare
+        // and fade (`storm_flare`, every 0.16 s) and stay below display white; the floor under
+        // it tinted darker violet; a dark violet band whose outer lip is the area's true edge
+        // (`Critical`). No lightning strokes or rays.
         "psionic_storm": (
             class: Major,
             event: Area,
-            emit: Some((effect: "storm_flare", every: 0.11)),
+            emit: Some((effect: "storm_flare", every: 0.16)),
             layers: [
                 (
-                    // The area's edge: a band inside the radius, densest at its outer lip on it.
+                    // The area's edge: a band inside the radius, darkest and densest at its outer
+                    // lip on it.
                     block: Ring(texture: "smoke_puff", ramp: "storm_rim", orient: Ground,
-                        thickness: 0.2, mapping: Front, height: 0.03,
-                        breakup: (noise: "noise_tile", scale: 4.0, amount: 0.4, softness: 0.25)),
+                        thickness: 0.28, mapping: Front, height: 0.03,
+                        breakup: (noise: "noise_tile", scale: 4.0, amount: 0.3, softness: 0.25)),
                     radius: (from: (bind: AreaRadius, scale: 1.0), to: (bind: AreaRadius, scale: 1.0)),
                     duration: 0.12, curve: "come_in", held: true, exit: 0.3, priority: Critical,
                 ),
                 (
-                    // The glow on the ground under the cloud, ending on the edge.
-                    block: Decal(texture: "smoke_puff", ramp: "storm_floor", depth: 0.6,
-                        outline: (edge_noise: 0.01, fill: 0.7),
-                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.3)),
+                    // The floor under the storm, tinted darker violet, ending on the edge.
+                    block: Decal(texture: "smoke_puff", ramp: "storm_floor", depth: 0.6, darken: true,
+                        outline: (edge_noise: 0.005, fill: 0.5),
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.2, softness: 0.3)),
                     size: (bind: AreaRadius, scale: 1.0), duration: 0.15, curve: "come_in",
                     held: true, exit: 0.3, priority: Critical,
                 ),
                 (
-                    // The standing body of the cloud.
-                    block: Sprite(texture: "smoke_puff", ramp: "storm_cloud", soft_depth: 0.5,
-                        rotation: Random, lift: 0.55,
-                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.5, softness: 0.3, shade: 0.4)),
-                    placement: Disc(count: 6, radius: (bind: AreaRadius, scale: 0.55)),
-                    size: (bind: AreaRadius, scale: 0.55), size_jitter: 0.2,
+                    // The body of the cloud: flat sheets just above the ground, overlapping so
+                    // that they hide most of the floor, kept inside the disc.
+                    block: Sprite(texture: "smoke_puff", ramp: "storm_cloud", orient: Ground,
+                        soft_depth: 0.05, rotation: Random, lift: 0.12,
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.3, shade: 0.5)),
+                    placements: [
+                        Disc(count: 9, radius: (bind: AreaRadius, scale: 0.5)),
+                        Circle(count: 9, radius: (bind: AreaRadius, scale: 0.6), spread: 0.06),
+                    ],
+                    size: (bind: AreaRadius, scale: 0.34), size_jitter: 0.12,
+                    duration: 0.2, curve: "come_in", held: true, exit: 0.3,
+                ),
+                (
+                    // A few billows standing in it, low, so the storm has body.
+                    block: Sprite(texture: "smoke_puff", ramp: "storm_cloud", soft_depth: 0.4,
+                        rotation: Random, lift: 0.35,
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.5, softness: 0.3, shade: 0.5)),
+                    placement: Disc(count: 4, radius: (bind: AreaRadius, scale: 0.45)),
+                    size: (bind: AreaRadius, scale: 0.3), size_jitter: 0.2,
                     duration: 0.2, curve: "come_in", held: true, exit: 0.3,
                 ),
             ],
         ),
         // A pocket of a storm's discharge, laid by `psionic_storm` at a random place in it: a
-        // swelling billow of cloud and a short flare of light inside it.
+        // billow of the cloud swelling and thinning, and a small flare of violet light in it.
         "storm_flare": (
             class: Minor,
             event: Area,
             layers: [
                 (
-                    block: Sprite(texture: "smoke_puff", ramp: "storm_cloud", soft_depth: 0.5,
-                        rotation: Random, lift: 0.6, erosion: "erode_late",
-                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.5, softness: 0.3, shade: 0.4)),
-                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.7)),
-                    size: (bind: AreaRadius, scale: 0.42), size_jitter: 0.25, size_curve: "billow_grow",
+                    block: Sprite(texture: "smoke_puff", ramp: "storm_cloud", soft_depth: 0.4,
+                        rotation: Random, lift: 0.4, erosion: "erode_late",
+                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.5, softness: 0.3, shade: 0.5)),
+                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.55)),
+                    size: (bind: AreaRadius, scale: 0.3), size_jitter: 0.25, size_curve: "billow_grow",
                     duration: 0.8, curve: "billow",
                 ),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "storm_flare", soft_depth: 0.4,
-                        rotation: Random, lift: 0.7,
+                        rotation: Random, lift: 0.5,
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.55, softness: 0.25)),
-                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.7)),
-                    size: (bind: AreaRadius, scale: 0.26), size_jitter: 0.3,
+                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.55)),
+                    size: (bind: AreaRadius, scale: 0.16), size_jitter: 0.3,
                     duration: 0.28, curve: "flare",
                 ),
             ],
         ),
-        // Blinding Cloud (Viper analogue): a low pall of dark grey murk over the area, rolling
-        // as billows swell and thin in it (`murk_billow`, every 0.2 s), and the ground under it
-        // in its shade, whose edge is the area's true edge (`AreaRadius`, Critical).
+        // Blinding Cloud (Viper analogue): a dense, low murk covering the whole disc evenly
+        // (flat sheets just above the ground in a disc and a ring), rolling as billows swell and
+        // thin in it (`murk_billow`, every 0.2 s), over ground darkened to about half its
+        // brightness, out to a darker front whose outer lip is the area's true edge
+        // (`Critical`). Units inside stand out of the low sheets.
         "blinding_cloud": (
             class: Major,
             event: Area,
@@ -2091,60 +2113,76 @@
                     // outer lip on the radius.
                     block: Ring(texture: "smoke_puff", ramp: "murk_edge", orient: Ground,
                         thickness: 0.22, mapping: Front, height: 0.03, darken: true,
-                        breakup: (noise: "noise_tile", scale: 4.0, amount: 0.4, softness: 0.25)),
+                        breakup: (noise: "noise_tile", scale: 4.0, amount: 0.3, softness: 0.25)),
                     radius: (from: (bind: AreaRadius, scale: 1.0), to: (bind: AreaRadius, scale: 1.0)),
                     duration: 0.3, curve: "come_in", held: true, exit: 0.4, priority: Critical,
                 ),
                 (
                     block: Decal(texture: "smoke_puff", ramp: "murk_shade", depth: 0.6, darken: true,
-                        outline: (edge_noise: 0.005, fill: 0.75),
-                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.3, softness: 0.3)),
+                        outline: (edge_noise: 0.005, fill: 0.5),
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.2, softness: 0.3)),
                     size: (bind: AreaRadius, scale: 1.0), duration: 0.3, curve: "come_in",
                     held: true, exit: 0.4, priority: Critical,
                 ),
                 (
-                    block: Sprite(texture: "smoke_puff", ramp: "murk", soft_depth: 0.6,
-                        rotation: Random, lift: 0.35,
-                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.3, shade: 0.5)),
-                    placement: Disc(count: 10, radius: (bind: AreaRadius, scale: 0.6)),
-                    size: (bind: AreaRadius, scale: 0.55), size_jitter: 0.25,
+                    // The pall: flat sheets just above the ground, evenly over the disc.
+                    block: Sprite(texture: "smoke_puff", ramp: "murk", orient: Ground,
+                        soft_depth: 0.05, rotation: Random, lift: 0.1,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.35, softness: 0.3, shade: 0.5)),
+                    placements: [
+                        Disc(count: 8, radius: (bind: AreaRadius, scale: 0.5)),
+                        Circle(count: 10, radius: (bind: AreaRadius, scale: 0.6), spread: 0.06),
+                    ],
+                    size: (bind: AreaRadius, scale: 0.31), size_jitter: 0.12,
                     duration: 0.35, curve: "come_in", held: true, exit: 0.45,
                 ),
             ],
         ),
-        // A billow rolling in a blinding cloud.
+        // A billow rolling in a blinding cloud, low over the pall.
         "murk_billow": (
             class: Minor,
             event: Area,
             layers: [
                 (
-                    block: Sprite(texture: "smoke_puff", ramp: "murk", soft_depth: 0.6,
-                        rotation: Random, lift: 0.4, erosion: "erode_late", drift: (0.0, 0.12, 0.0),
+                    block: Sprite(texture: "smoke_puff", ramp: "murk", soft_depth: 0.4,
+                        rotation: Random, lift: 0.25, erosion: "erode_late", drift: (0.0, 0.06, 0.0),
                         breakup: (noise: "noise_tile", scale: 1.3, amount: 0.5, softness: 0.3, shade: 0.5)),
-                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.65)),
-                    size: (bind: AreaRadius, scale: 0.45), size_jitter: 0.25, size_curve: "billow_grow",
+                    placement: Disc(count: 1, radius: (bind: AreaRadius, scale: 0.55)),
+                    size: (bind: AreaRadius, scale: 0.28), size_jitter: 0.25, size_curve: "billow_grow",
                     duration: 1.4, curve: "billow",
                 ),
             ],
         ),
-        // Abduct (Viper analogue): the tongue from the caster's body to its victim's, a wet
-        // dark-red muscle (opaque, no glow, never a beam) rippling back towards the caster,
-        // with a grip clamped on the victim. Its ends follow the two bubbles.
+        // Abduct (Viper analogue): the tongue from the caster's body to its victim's, an opaque
+        // dark red-brown muscle with darker edges (no light core, no glow, never a beam): a core
+        // 0.3 units wide, and over it soft bulges up to 0.42 units wide that travel back towards
+        // the caster; a grip clamped on the victim and a swelling where it leaves the caster,
+        // each 0.68 units across. Its ends follow the two bubbles.
         "abduct_tether": (
             class: Minor,
             event: Link,
             layers: [
                 (
-                    block: Ribbon(texture: "droplet", ramp: "tongue", shape: Radial, taper: (0.03, 0.08),
-                        repeat: 0.45, scroll: -2.5, soft_depth: 0.1,
-                        breakup: (noise: "noise_tile", scale: 2.0, amount: 0.25, softness: 0.3, shade: 0.7)),
-                    size: (scale: 0.24), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                    block: Ribbon(texture: "droplet", ramp: "tongue", shape: Radial, taper: (0.02, 0.04),
+                        soft_depth: 0.1,
+                        breakup: (noise: "noise_tile", scale: 2.0, amount: 0.2, softness: 0.3, shade: 0.6)),
+                    size: (scale: 0.15), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
                     priority: Critical,
                 ),
                 (
+                    // The bulges: a strip of the puff texture, its blobs wider than the core,
+                    // scrolling towards the caster at about half a unit a second.
+                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.03, 0.06),
+                        repeat: 0.32, scroll: -1.6, soft_depth: 0.1,
+                        breakup: (noise: "noise_tile", scale: 2.5, amount: 0.2, softness: 0.3, shade: 0.6)),
+                    size: (scale: 0.21), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                ),
+                (
+                    // The grip on the victim and the swelling at the caster: one at each end.
                     block: Sprite(texture: "smoke_puff", ramp: "tongue", soft_depth: 0.1, rotation: Random,
-                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.3, softness: 0.25, shade: 0.5)),
-                    size: (scale: 0.3), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.3, softness: 0.25, shade: 0.6)),
+                    placement: Line(spacing: (bind: LinkLength, scale: 1.0)),
+                    size: (scale: 0.34), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
                 ),
             ],
         ),

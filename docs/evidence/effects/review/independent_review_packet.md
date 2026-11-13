@@ -7,6 +7,80 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP10 round 2 (areas and tethers)
+
+Round 1's review ([`independent_review_wp10_1.md`](independent_review_wp10_1.md), kept as written) rejected all three
+looks and accepted the fog rules, asking for small engineering fixes. The orchestrator's decisions are plan
+Amendment 21. This is round 2 of at most five (Q0080).
+
+Please write the review to a new file next to this one, `independent_review_wp10_2.md`, in the same form:
+
+- judge `psionic_storm`, `blinding_cloud` and `abduct_tether` against each of the seven checklist items;
+- check E1-1 to E1-5 and V1-1 to V1-3;
+- say whether anything accepted in round 1 has regressed.
+
+Nothing was spent and no texture was made. Files start with `wp10r2_` and come from the same GPU test, now with two
+children: the measured shots and the evidence take.
+
+### What changed
+
+| Round-1 finding | Change |
+|---|---|
+| A1-4: ramps authored as display values | Every WP10 ramp is the linear value of the brief's display colour, converted from sRGB, with the sRGB colour noted beside each key in `effects.ron`. No ramp of an already-shipped effect was touched. |
+| A1-1 `psionic_storm` | Body: 18 alpha-blended flat sheets just above the ground (a disc and a ring kept inside the radius) and four low billows, with folds at sRGB (35, 18, 80) to (45, 25, 95) and opacity 0.86 to 0.90. Flares: smaller, laid every 0.16 s (was 0.11), peak about sRGB (188, 170, 240) at opacity 0.5. Floor: a darkening violet tint replaces the additive glow. Edge: a `Front` band, darkest and densest at its outer lip (thickness 0.28). |
+| A1-2 `blinding_cloud` | 18 flat murk sheets just above the ground (a disc of 8 and a ring of 10, kept inside the radius) and rolling billows. The `Critical` shade darkens the ground to about half its display brightness; a darker front marks the edge. Units stand above the low sheets. |
+| A1-3 `abduct_tether` | A core 0.3 units wide at sRGB (95, 30, 28) with darker edges (45, 12, 12) and no lighter key (no light core). A strip of puff-texture bulges up to 0.42 units wide scrolls towards the caster at about 0.5 units per second. A grip 0.68 units across sits at each end. No sag (P1-2 not taken). |
+| E1-1 the cut is not provably fail-closed | The cut lies 0.05 beyond the farthest corner of every unseen fog cell the disc overlaps, along the best of 32 axes. Unit test: an edge between two old samples, and a diagonal staircase. |
+| E1-2 stale clips | An area the viewer stops seeing is cut to nothing on that frame, its laid effects with it, and released. While held, its laid effects follow its current clip every frame. Asserted frame-exactly in `effect_runtime_tests.rs`, not in the GPU fog shot. |
+| E1-3 O(N²) slot search | Area and tether slots are kept sorted and found by binary search. |
+| E1-4 valgrind window | The window adds an enemy area seen in part under a real `BattleFog`. Counts are in the measurements file. |
+| E1-5 the edge test proves position only | Added (a): the median luminance change in the 3 px band just inside the projected radius must be at least 32 levels. Added (b): no pixel changed more than 4 px outside the radius on the near half's rays, out to 1.2 radii (beyond that stand the staged units and their shadows). |
+| V1-1 timing not judgeable | Every 40 ms frame of each area from publication to 0.4 s and from 0.2 s before its end to 0.5 s after, and of the tether from publication to 0.5 s after its end. |
+| V1-2 crowd and overlap | Eight units (four of each side) in each area, a second storm overlapping the first, the whole window at 2.0 s and 2x crops. Units in the storms take its damage, so some burst before 2.0 s. |
+| V1-3 fog evidence | The fog shot is shown with the viewer's unseen cells darkened. No fog edge along a change of ground level exists on screen in the shipped skirmish's start area (`fog_cliff: false`), so the cliff case is not shown (Amendment 21). |
+| P1-3 staging away from the map corner | Not taken: the staging uses the start area the camera opens on. |
+| F1 Fungal Growth | A separate later round (Amendment 21). |
+
+### Material
+
+| What | Files |
+|---|---|
+| The storm's come-in and end, every 40 ms frame | [in](wp10r2_psionic_storm_0_in_radv.jpg), [out](wp10r2_psionic_storm_0_out_radv.jpg); the overlapping second storm: [in](wp10r2_psionic_storm_1_in_radv.jpg), [out](wp10r2_psionic_storm_1_out_radv.jpg) |
+| The cloud's come-in and end, every 40 ms frame | [in](wp10r2_blinding_cloud_0_in_radv.jpg), [out](wp10r2_blinding_cloud_0_out_radv.jpg) |
+| The tether, every 40 ms frame from the cast to 0.5 s after its end | [radv](wp10r2_tether_sequence_radv.jpg) |
+| Units of both sides in each area and two overlapping storms, 1:1 at 2.0 s, then 2x (storm, cloud) | [1:1](wp10r2_crowd_radv.jpg), [storms 2x](wp10r2_crowd2x_0_radv.jpg), [cloud 2x](wp10r2_crowd2x_1_radv.jpg) |
+| Whole battle window every 0.8 s | [radv](wp10r2_battle_radv.jpg) |
+| Measured area shots, 2x: whole look, `Critical` only, none (cloud at top, storm below) | [radv](wp10r2_areas_radv.jpg) |
+| Measured tether shots, 3x: whole, `Critical` only, none | [radv](wp10r2_tether_radv.jpg) |
+| Fog: enemy storm across the sight edge (whole, `Critical`, none, 2x), and the same frame with the unseen cells darkened | [radv](wp10r2_fog_radv.jpg), [cells](wp10r2_fogcells_radv.jpg) |
+| Every file above on lavapipe | the same names ending `_lavapipe` |
+| Measurements: edge errors, edge contrast, spill, sampled sRGB colours, tether ends and colours, fog counts, valgrind counts | [wp10r2_measurements.txt](wp10r2_measurements.txt) |
+
+### Sampled display colours (radv; lavapipe within 1 to 7 levels, see the measurements)
+
+| Where | Look | Bare floor |
+|---|---|---|
+| Storm, centre | (79, 59, 133) | (176, 178, 172) |
+| Storm, mid radius | (74, 46, 138) | (179, 180, 175) |
+| Storm, 0.95 radius | (118, 106, 168) | (178, 183, 182) |
+| Cloud, centre | (113, 114, 123) | (193, 196, 196) |
+| Cloud, mid radius | (101, 101, 114) | (176, 182, 179) |
+| Cloud, 0.95 radius | (116, 118, 122) | (196, 198, 198) |
+| Tongue, centre line at its middle | (90, 35, 33) | (147, 151, 151) |
+| Tongue, 2 px off the line | (102, 85, 84) | |
+
+### Points to look at
+
+- Whether the storm reads as a dark storm cloud rather than a glass bubble, and whether two overlapping storms stay
+  below white.
+- Whether the cloud reads as a low, even murk over the whole disc, and whether the units inside stay readable. P1-4:
+  check both areas against `barrier_shell` and the glass bubbles.
+- Whether the tongue reads as a fleshy tongue at 1:1: its bulges travelling, its grip at the victim. Check that it
+  does not read as a beam.
+- The come-in and end sequences: pops, and how each area erodes out.
+- The fog cut: in the fog shot, the exact fail-closed cut keeps 16 of 57 seen ground samples on both drivers (round 1:
+  22 and 17).
+
 ## WP10 round 1 (areas and tethers)
 
 WP10 adds looks for the persistent areas and the tethers the simulation publishes (`RenderSnapshot::areas` and

@@ -690,7 +690,8 @@ impl Resolver<'_> {
         self.positive_seconds(at, "exit", layer.exit)
     }
 
-    /// Resolves one layer of an effect of kind `event`.
+    /// Resolves one layer of an effect of kind `event`. A line placement needs the event's
+    /// line, which a `Link` effect has of its own (WP10: a grip at each end of a tether).
     fn layer(
         &self,
         at: &Site,
@@ -739,7 +740,7 @@ impl Resolver<'_> {
                     ..
                 } => {
                     values.push(*spacing);
-                    self.require(at, event, super::schema::Binding::LineSpacing)?;
+                    self.require_line(at, event, super::schema::Binding::LineSpacing)?;
                     if *per_point == 0 || *per_point > MAX_INSTANCES_PER_PLACEMENT {
                         return Err(EffectCatalogError::TooManyInstances {
                             path: self.path.to_path_buf(),
@@ -799,6 +800,20 @@ impl Resolver<'_> {
         })
     }
 
+    /// Checks that an effect of kind `event` has a line: an event line providing `binding`, or a
+    /// tether's own line from its caster's bubble to its target's (WP10).
+    fn require_line(
+        &self,
+        at: &Site,
+        event: EventKind,
+        binding: super::schema::Binding,
+    ) -> Result<(), EffectCatalogError> {
+        if event == EventKind::Link {
+            return Ok(());
+        }
+        self.require(at, event, binding)
+    }
+
     /// Checks that a ribbon layer spans its event's line once: a `Line` or `Link` event and
     /// only the `Point` placement. Other blocks pass.
     fn ribbon_spans_line(
@@ -811,10 +826,7 @@ impl Resolver<'_> {
         if !matches!(block, Block::Ribbon(_)) {
             return Ok(());
         }
-        // A tether's line runs from its caster's bubble to its target's (WP10).
-        if event != EventKind::Link {
-            self.require(at, event, super::schema::Binding::LineLength)?;
-        }
+        self.require_line(at, event, super::schema::Binding::LineLength)?;
         if placements
             .iter()
             .any(|placement| *placement != PlacementDef::Point)

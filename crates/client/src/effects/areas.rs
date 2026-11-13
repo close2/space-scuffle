@@ -15,9 +15,13 @@
 //!
 //! # Fog (D-5), judged per frame
 //! - An area of the viewer's own (or with no fog kept) is drawn whole. An enemy's area is drawn
-//!   only where the viewer sees it: [`area_sight`] samples the disc against the viewer's
-//!   visible cells; an area wholly in fog holds nothing, and one seen in part is cut where the
-//!   fog begins (a clip window across the disc, [`EffectRuntime::set_fog_clip`]).
+//!   only where the viewer sees it: [`area_sight`] tests the fog cells the disc overlaps; an
+//!   area wholly in fog holds nothing, and one seen in part is cut by a half plane that lies
+//!   beyond every corner of every unseen cell (fail-closed by construction; a clip window across
+//!   the disc, [`EffectRuntime::set_fog_clip`]). The cut also holds for the effects the area
+//!   lays, which follow its current clip every frame.
+//! - An enemy area the viewer stops seeing is cut to nothing on that frame ([`CLIP_NOTHING`]),
+//!   with what it laid, and released: it erodes out unseen.
 //! - A tether is drawn only while both its bubbles are drawn as they are
 //!   ([`Presence::Shown`]); otherwise it would point at a unit the viewer may not see.
 //!
@@ -49,11 +53,24 @@ const TICK_SECONDS: f32 = 1.0 / sim_types::TICKS_PER_SECOND as f32;
 /// [`AreaLooks::refused`]). A battle of 400 units has a few dozen spells live at most.
 pub const HELD_SLOTS: usize = 64;
 
-/// Samples across an area's diameter for [`area_sight`].
+/// Effects an area lays (its flares, its billows) whose clip the area keeps in step with its
+/// own sight: more than live at once for the shipped looks (a lay every 0.11 s living 0.8 s).
+pub const CHILD_SLOTS: usize = 16;
+
+/// Samples across an area's diameter, for choosing among cuts the one that keeps the most.
 const SIGHT_SAMPLES: usize = 17;
 
 /// Axes tried for the cut of an area seen in part, evenly round the turn.
 const CUT_DIRECTIONS: usize = 32;
+
+/// World units the cut keeps beyond the unseen cells: the decals' clip feather reaches
+/// `0.6 × clip_feather` past a clip's end (`decal.wgsl`, `CLIP_FEATHER_OUTSIDE`), 0.009 for the
+/// default feather; this margin covers feathers up to 0.08.
+const CUT_MARGIN: f32 = 0.05;
+
+/// A clip window no point lies inside: a look whose area the viewer stopped seeing draws
+/// nothing while it erodes out (WP10 review 1, E1-2).
+pub const CLIP_NOTHING: LineClip = [1.0, 0.0, 1.0e6, 2.0e6];
 
 /// How the viewer sees an area.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,52 +83,61 @@ pub enum AreaSight {
     Part(LineClip),
 }
 
-/// How the viewer sees the area of radius `radius` (world units) centred at `center` (map
-/// `x, y`), where `sees(x, y)` says whether a map point is in a visible cell.
-///
-/// The disc is sampled on a 17 × 17 grid. With every sample seen it is [`AreaSight::Whole`],
-/// with none [`AreaSight::Hidden`]; otherwise the fog's edge across so small a disc is close to
-/// a line, so the area is cut by a half plane. The cut fails closed (D-5): along each of
-/// [`CUT_DIRECTIONS`] axes it lies half a sample step beyond the farthest unseen sample, so no
-/// unseen sample is drawn, and of those cuts the one that keeps the most seen samples is taken;
-/// an area none of whose seen samples any cut keeps is [`AreaSight::Hidden`].
-#[must_use]
-pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) -> AreaSight {
-    let mut samples = [(Vec2::ZERO, false); SIGHT_SAMPLES * SIGHT_SAMPLES];
-    let mut count = 0;
-    let mut seen_count = 0_u32;
+/// The fog cells, 1-unit squares with integer corners, that the disc of `radius` round
+/// `center` overlaps, as `(lower corner, seen)`; `sees` is asked at each cell's centre.
+fn disc_cells(
+    center: Vec2,
+    radius: f32,
+    sees: &impl Fn(f32, f32) -> bool,
+) -> impl Iterator<Item = (Vec2, bool)> + '_ {
+    let low = (center - Vec2::splat(radius)).floor();
+    let high = (center + Vec2::splat(radius)).floor();
     #[expect(
-        clippy::cast_precision_loss,
-        reason = "sample indices below 17 are exact in f32"
+        clippy::cast_possible_truncation,
+        reason = "cell indices of a map are far below i32::MAX"
     )]
-    let step = 2.0 * radius / (SIGHT_SAMPLES - 1) as f32;
-    for row in 0..SIGHT_SAMPLES {
-        for column in 0..SIGHT_SAMPLES {
+    let (columns, rows) = ((high.x - low.x) as i32 + 1, (high.y - low.y) as i32 + 1);
+    (0..rows).flat_map(move |row| {
+        (0..columns).filter_map(move |column| {
             #[expect(
                 clippy::cast_precision_loss,
-                reason = "sample indices below 17 are exact in f32"
+                reason = "a few cells across an area are exact in f32"
             )]
-            let offset = Vec2::new(column as f32, row as f32) * step - Vec2::splat(radius);
-            if offset.length() > radius * 1.0001 {
-                continue;
-            }
-            let point = center + offset;
-            let seen = sees(point.x, point.y);
-            samples[count] = (point, seen);
-            count += 1;
-            seen_count += u32::from(seen);
+            let corner = low + Vec2::new(column as f32, row as f32);
+            let nearest = center.clamp(corner, corner + Vec2::ONE);
+            (nearest.distance(center) < radius)
+                .then(|| (corner, sees(corner.x + 0.5, corner.y + 0.5)))
+        })
+    })
+}
+
+/// How the viewer sees the area of radius `radius` (world units) centred at `center` (map
+/// `x, y`), where `sees(x, y)` says whether a map point lies in a visible cell. The fog is
+/// kept per 1-unit cell with integer corners (`BattleFog::sees`).
+///
+/// With every cell the disc overlaps seen it is [`AreaSight::Whole`], with none
+/// [`AreaSight::Hidden`]. Otherwise the fog's edge across so small a disc is close to a line,
+/// and the area is cut by a half plane that is fail-closed by construction (D-5; WP10 review 1,
+/// E1-1): along each of [`CUT_DIRECTIONS`] axes the cut lies [`CUT_MARGIN`] beyond the
+/// farthest corner of any unseen cell the disc overlaps, so no unseen ground is drawn; of those
+/// cuts the one that keeps the most seen ground (counted on a 17 × 17 grid of the disc) is
+/// taken, and an area none of whose seen ground any cut keeps is [`AreaSight::Hidden`].
+#[must_use]
+pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) -> AreaSight {
+    let (mut seen_cells, mut unseen_cells) = (0_u32, 0_u32);
+    for (_, seen) in disc_cells(center, radius, &sees) {
+        if seen {
+            seen_cells += 1;
+        } else {
+            unseen_cells += 1;
         }
     }
-    let samples = &samples[..count];
-    let total = u32::try_from(count).unwrap_or(u32::MAX);
-    if seen_count == 0 {
+    if seen_cells == 0 {
         return AreaSight::Hidden;
     }
-    if seen_count == total {
+    if unseen_cells == 0 {
         return AreaSight::Whole;
     }
-    // The cut that keeps the most seen samples: for each of CUT_DIRECTIONS axes, the half plane
-    // half a step beyond the farthest unseen sample.
     let mut best: Option<(u32, Vec2, f32)> = None;
     for direction in 0..CUT_DIRECTIONS {
         #[expect(
@@ -120,17 +146,14 @@ pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) ->
         )]
         let axis =
             Vec2::from_angle(direction as f32 * std::f32::consts::TAU / CUT_DIRECTIONS as f32);
-        let threshold = samples
-            .iter()
+        let threshold = disc_cells(center, radius, &sees)
             .filter(|(_, seen)| !*seen)
-            .map(|(point, _)| point.dot(axis))
+            .flat_map(|(corner, _)| {
+                [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE].map(|offset| (corner + offset).dot(axis))
+            })
             .fold(f32::NEG_INFINITY, f32::max)
-            + 0.5 * step;
-        let kept = samples
-            .iter()
-            .filter(|(point, seen)| *seen && point.dot(axis) >= threshold)
-            .count();
-        let kept = u32::try_from(kept).unwrap_or(u32::MAX);
+            + CUT_MARGIN;
+        let kept = kept_samples(center, radius, axis, threshold, &sees);
         if kept > best.map_or(0, |(most, _, _)| most) {
             best = Some((kept, axis, threshold));
         }
@@ -140,6 +163,37 @@ pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) ->
     };
     let far = center.dot(axis) + 4.0 * radius + 1.0;
     AreaSight::Part([axis.x, axis.y, threshold, far])
+}
+
+/// Seen points of a 17 × 17 grid over the disc that lie on the drawn side of the cut
+/// `dot(point, axis) >= threshold`.
+fn kept_samples(
+    center: Vec2,
+    radius: f32,
+    axis: Vec2,
+    threshold: f32,
+    sees: &impl Fn(f32, f32) -> bool,
+) -> u32 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "sample indices below 17 are exact in f32"
+    )]
+    let step = 2.0 * radius / (SIGHT_SAMPLES - 1) as f32;
+    let mut kept = 0;
+    for row in 0..SIGHT_SAMPLES {
+        for column in 0..SIGHT_SAMPLES {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "sample indices below 17 are exact in f32"
+            )]
+            let offset = Vec2::new(column as f32, row as f32) * step - Vec2::splat(radius);
+            let point = center + offset;
+            if offset.length() <= radius && point.dot(axis) >= threshold && sees(point.x, point.y) {
+                kept += 1;
+            }
+        }
+    }
+    kept
 }
 
 /// The ends of a tether between two bodies of radius `from_radius` and `to_radius` centred at
@@ -159,25 +213,28 @@ pub fn tether_ends(from: Vec3, from_radius: f32, to: Vec3, to_radius: f32) -> (V
 /// One held area.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AreaSlot {
-    /// The published area's id.
+    /// The published area's id: the slots are kept sorted by it.
     id: u32,
     /// The effect held.
     effect: EffectId,
     /// Its live instance.
     handle: EffectHandle,
+    /// The effects it laid lately, whose clip follows its own (stale handles are skipped).
+    children: [Option<EffectHandle>; CHILD_SLOTS],
+    /// The slot of `children` the next laid effect takes.
+    next_child: usize,
     /// Whether it was kept this frame.
     kept: bool,
 }
 
+/// The key a tether's slot is sorted by: caster, target and ability.
+type LinkKey = (EntityId, EntityId, AbilitySource);
+
 /// One held tether.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct LinkSlot {
-    /// Its caster.
-    from: EntityId,
-    /// Its target.
-    to: EntityId,
-    /// The ability that made it.
-    source: AbilitySource,
+    /// Caster, target and ability: the slots are kept sorted by it.
+    key: LinkKey,
     /// The effect held.
     effect: EffectId,
     /// Its live instance.
@@ -189,9 +246,9 @@ struct LinkSlot {
 /// The looks held on the published areas and tethers.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct AreaLooks {
-    /// Held areas.
+    /// Held areas, sorted by area id.
     areas: Vec<AreaSlot>,
-    /// Held tethers.
+    /// Held tethers, sorted by [`LinkKey`].
     links: Vec<LinkSlot>,
     /// Areas and tethers not drawn because [`HELD_SLOTS`] were held.
     pub refused: u64,
@@ -265,58 +322,103 @@ pub struct Keep<'a> {
     pub delta: f64,
 }
 
-/// Keeps `area`'s look held in `looks`, seen as `sight`.
+/// Cuts `slot`'s look and every effect it laid that is still live to `clip`.
+fn clip_area(slot: &AreaSlot, clip: LineClip, runtime: &mut EffectRuntime) {
+    runtime.set_fog_clip(slot.handle, clip);
+    for child in slot.children.iter().flatten() {
+        runtime.set_fog_clip(*child, clip);
+    }
+}
+
+// PERFORMANCE RATIONALE:
+// Why: Every frame each published area must find its held slot; a scan of the slots per area
+// would be quadratic in the live areas (WP10 review 1, E1-3; charter §3.3).
+// What: The slots stay sorted by area id: a binary search per area, and a new slot is inserted
+// in place within the slots' retained capacity.
+// Trade-off: An insertion moves the later slots (at most HELD_SLOTS small records), once per
+// new area, in exchange for O(log N) per area and frame and no allocation.
+/// Keeps `area`'s look held in `looks`, seen as `sight`. An area the viewer stopped seeing is
+/// cut to nothing at once, its laid effects with it, and left unkept, so it is released and
+/// erodes out unseen (E1-2).
 fn keep_area(looks: &mut AreaLooks, area: &AreaView, sight: AreaSight, keep: &mut Keep<'_>) {
     let Some(effect) = ability_effect(keep.catalog, keep.tables, area.source, EventKind::Area)
     else {
         return;
     };
+    let found = looks.areas.binary_search_by_key(&area.id, |slot| slot.id);
     let clip = match sight {
-        AreaSight::Hidden => return,
+        AreaSight::Hidden => {
+            if let Ok(index) = found {
+                clip_area(&looks.areas[index], CLIP_NOTHING, keep.runtime);
+            }
+            return;
+        }
         AreaSight::Whole => NO_CLIP,
         AreaSight::Part(clip) => clip,
     };
     let anchor = world(area.center);
     let bound = area_bound(area);
-    let index = looks
-        .areas
-        .iter()
-        .position(|slot| slot.id == area.id && slot.effect == effect);
-    let handle = if let Some(index) = index {
-        let slot = &mut looks.areas[index];
-        if !keep.runtime.update_held(slot.handle, anchor, bound) {
-            return;
+    let index = match found {
+        Ok(index) if looks.areas[index].effect == effect => {
+            if !keep
+                .runtime
+                .update_held(looks.areas[index].handle, anchor, bound)
+            {
+                return;
+            }
+            index
         }
-        slot.kept = true;
-        slot.handle
-    } else {
-        if looks.areas.len() == looks.areas.capacity() {
-            looks.refused += 1;
-            return;
+        Ok(_) => return,
+        Err(index) => {
+            if looks.areas.len() == looks.areas.capacity() {
+                looks.refused += 1;
+                return;
+            }
+            // An area seen on the tick it opened comes in; one first seen later (out of the
+            // fog, or after a scene load) is shown settled.
+            let fresh = area.total_ticks.saturating_sub(area.remaining_ticks) <= 1;
+            let request = SpawnRequest {
+                effect,
+                anchor,
+                bound,
+                line: None,
+                delay: 0.0,
+            };
+            let Some(handle) = keep.runtime.hold(keep.catalog, &request, keep.now, !fresh) else {
+                return;
+            };
+            looks.areas.insert(
+                index,
+                AreaSlot {
+                    id: area.id,
+                    effect,
+                    handle,
+                    children: [None; CHILD_SLOTS],
+                    next_child: 0,
+                    kept: false,
+                },
+            );
+            index
         }
-        // An area seen on the tick it opened comes in; one first seen later (out of the fog,
-        // or after a scene load) is shown settled.
-        let fresh = area.total_ticks.saturating_sub(area.remaining_ticks) <= 1;
-        let request = SpawnRequest {
-            effect,
-            anchor,
-            bound,
-            line: None,
-            delay: 0.0,
-        };
-        let Some(handle) = keep.runtime.hold(keep.catalog, &request, keep.now, !fresh) else {
-            return;
-        };
-        looks.areas.push(AreaSlot {
-            id: area.id,
-            effect,
-            handle,
-            kept: true,
-        });
-        handle
     };
-    keep.runtime.set_fog_clip(handle, clip);
-    let Some(emit) = keep.catalog.effect(effect).and_then(|effect| effect.emit) else {
+    let slot = &mut looks.areas[index];
+    slot.kept = true;
+    lay(slot, area, (anchor, bound), keep);
+    clip_area(slot, clip, keep.runtime);
+}
+
+/// Lays `slot`'s `emit` effect when its beat is due, remembering it as a child of the area.
+fn lay(
+    slot: &mut AreaSlot,
+    area: &AreaView,
+    (anchor, bound): (Vec3, BoundValues),
+    keep: &mut Keep<'_>,
+) {
+    let Some(emit) = keep
+        .catalog
+        .effect(slot.effect)
+        .and_then(|effect| effect.emit)
+    else {
         return;
     };
     // The area's own phase, so two storms side by side do not flare in step.
@@ -325,17 +427,19 @@ fn keep_area(looks: &mut AreaLooks, area: &AreaView, sight: AreaSight, keep: &mu
         reason = "the phase needs only the low bits of the id"
     )]
     let phase = (area.id % 97) as f32 / 97.0;
-    if emit_due(keep.now, keep.delta, emit.every, phase) {
-        let request = SpawnRequest {
-            effect: emit.effect,
-            anchor,
-            bound,
-            line: None,
-            delay: 0.0,
-        };
-        if let Some(laid) = keep.runtime.spawn(keep.catalog, &request, keep.now) {
-            keep.runtime.set_fog_clip(laid, clip);
-        }
+    if !emit_due(keep.now, keep.delta, emit.every, phase) {
+        return;
+    }
+    let request = SpawnRequest {
+        effect: emit.effect,
+        anchor,
+        bound,
+        line: None,
+        delay: 0.0,
+    };
+    if let Some(laid) = keep.runtime.spawn(keep.catalog, &request, keep.now) {
+        slot.children[slot.next_child] = Some(laid);
+        slot.next_child = (slot.next_child + 1) % CHILD_SLOTS;
     }
 }
 
@@ -347,12 +451,13 @@ fn bubble_of(bubbles: &[BubbleRenderInstance], id: EntityId) -> Option<&BubbleRe
         .and_then(|index| bubbles.get(index))
 }
 
-/// Keeps `link`'s look held in `looks`, its ends on the presented bubbles.
+/// Keeps `link`'s look held in `looks`, its ends on the presented bubbles, while `shown`
+/// says both are drawn as they are (slots found by binary search, as for the areas).
 fn keep_link(
     looks: &mut AreaLooks,
     link: &LinkView,
     bubbles: &[BubbleRenderInstance],
-    fog: Option<&BattleFog>,
+    shown: &impl Fn(&BubbleRenderInstance) -> bool,
     keep: &mut Keep<'_>,
 ) {
     let Some(effect) = ability_effect(
@@ -367,43 +472,43 @@ fn keep_link(
     else {
         return;
     };
-    if presence_of(fog, from) != Presence::Shown || presence_of(fog, to) != Presence::Shown {
+    if !shown(from) || !shown(to) {
         return;
     }
     let (from_end, to_end) = tether_ends(anchors(from).1, from.radius, anchors(to).1, to.radius);
     let line = WorldLine::whole(from_end, to_end);
     let bound = BoundValues::default().with(Binding::LinkLength, from_end.distance(to_end));
-    let index = looks.links.iter().position(|slot| {
-        slot.from == link.from
-            && slot.to == link.to
-            && slot.source == link.source
-            && slot.effect == effect
-    });
-    if let Some(index) = index {
-        let slot = &mut looks.links[index];
-        slot.kept = keep.runtime.update_held_line(slot.handle, line, bound);
-        return;
-    }
-    if looks.links.len() == looks.links.capacity() {
-        looks.refused += 1;
-        return;
-    }
-    let request = SpawnRequest {
-        effect,
-        anchor: to_end,
-        bound,
-        line: Some(line),
-        delay: 0.0,
-    };
-    if let Some(handle) = keep.runtime.hold(keep.catalog, &request, keep.now, false) {
-        looks.links.push(LinkSlot {
-            from: link.from,
-            to: link.to,
-            source: link.source,
-            effect,
-            handle,
-            kept: true,
-        });
+    let key = (link.from, link.to, link.source);
+    match looks.links.binary_search_by_key(&key, |slot| slot.key) {
+        Ok(index) if looks.links[index].effect == effect => {
+            let slot = &mut looks.links[index];
+            slot.kept = keep.runtime.update_held_line(slot.handle, line, bound);
+        }
+        Ok(_) => {}
+        Err(index) => {
+            if looks.links.len() == looks.links.capacity() {
+                looks.refused += 1;
+                return;
+            }
+            let request = SpawnRequest {
+                effect,
+                anchor: from_end,
+                bound,
+                line: Some(line),
+                delay: 0.0,
+            };
+            if let Some(handle) = keep.runtime.hold(keep.catalog, &request, keep.now, false) {
+                looks.links.insert(
+                    index,
+                    LinkSlot {
+                        key,
+                        effect,
+                        handle,
+                        kept: true,
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -445,14 +550,48 @@ pub fn present_areas_and_links(
     keep_views(&mut looks, views, bubbles, fog.as_deref(), &mut keep);
 }
 
+/// How the viewer under `fog` (`None`: no fog kept) sees `area`: its own whole, another's by
+/// [`area_sight`] against the visible cells.
+#[must_use]
+pub fn sight_under(fog: Option<&BattleFog>, area: &AreaView) -> AreaSight {
+    match fog {
+        Some(fog) if fog.viewer() != Some(area.owner) => area_sight(
+            Vec2::new(area.center[0], area.center[1]),
+            area.radius,
+            |x, y| fog.sees(x, y),
+        ),
+        _ => AreaSight::Whole,
+    }
+}
+
 /// Brings `looks` up to the published `views` (areas and tethers) of a frame whose presented
 /// bubbles are `bubbles` (in entity order) under `fog` (`None`: no fog kept), and releases the
 /// looks of those no longer published or seen: the body of [`present_areas_and_links`].
 pub fn keep_views(
     looks: &mut AreaLooks,
-    (areas, links): (&[AreaView], &[LinkView]),
+    views: (&[AreaView], &[LinkView]),
     bubbles: &[BubbleRenderInstance],
     fog: Option<&BattleFog>,
+    keep: &mut Keep<'_>,
+) {
+    keep_views_seen(
+        looks,
+        views,
+        bubbles,
+        |area| sight_under(fog, area),
+        |bubble| presence_of(fog, bubble) == Presence::Shown,
+        keep,
+    );
+}
+
+/// [`keep_views`] with the fog's two questions given: how each area is seen (`sight`) and
+/// whether a bubble is drawn as it is (`shown`); tests ask them directly.
+pub fn keep_views_seen(
+    looks: &mut AreaLooks,
+    (areas, links): (&[AreaView], &[LinkView]),
+    bubbles: &[BubbleRenderInstance],
+    sight: impl Fn(&AreaView) -> AreaSight,
+    shown: impl Fn(&BubbleRenderInstance) -> bool,
     keep: &mut Keep<'_>,
 ) {
     for slot in &mut looks.areas {
@@ -462,18 +601,10 @@ pub fn keep_views(
         slot.kept = false;
     }
     for area in areas {
-        let sight = match fog {
-            Some(fog) if fog.viewer() != Some(area.owner) => area_sight(
-                Vec2::new(area.center[0], area.center[1]),
-                area.radius,
-                |x, y| fog.sees(x, y),
-            ),
-            _ => AreaSight::Whole,
-        };
-        keep_area(looks, area, sight, keep);
+        keep_area(looks, area, sight(area), keep);
     }
     for link in links {
-        keep_link(looks, link, bubbles, fog, keep);
+        keep_link(looks, link, bubbles, &shown, keep);
     }
     let now = keep.now;
     looks.areas.retain(|slot| {
@@ -494,13 +625,6 @@ pub fn keep_views(
 mod tests {
     use super::*;
 
-    #[test]
-    fn an_area_wholly_seen_or_unseen_is_whole_or_hidden() {
-        let center = Vec2::new(10.0, 10.0);
-        assert_eq!(area_sight(center, 1.5, |_, _| true), AreaSight::Whole);
-        assert_eq!(area_sight(center, 1.5, |_, _| false), AreaSight::Hidden);
-    }
-
     /// The clip of an area seen in part (asserted), or no clip.
     fn part(sight: AreaSight) -> LineClip {
         assert!(
@@ -513,23 +637,89 @@ mod tests {
         }
     }
 
+    /// A fog of 1-unit cells (as `BattleFog::sees` keeps it) whose cell `(column, row)` is seen
+    /// when `seen_cell` says so.
+    fn cells(seen_cell: impl Fn(i32, i32) -> bool) -> impl Fn(f32, f32) -> bool {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "test coordinates are small"
+        )]
+        move |x: f32, y: f32| seen_cell(x.floor() as i32, y.floor() as i32)
+    }
+
+    /// Whether any corner of an unseen cell the disc overlaps lies on the drawn side of `clip`.
+    fn unseen_corner_drawn(
+        center: Vec2,
+        radius: f32,
+        clip: LineClip,
+        sees: &impl Fn(f32, f32) -> bool,
+    ) -> bool {
+        let axis = Vec2::new(clip[0], clip[1]);
+        disc_cells(center, radius, sees)
+            .filter(|(_, seen)| !*seen)
+            .flat_map(|(corner, _)| [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE].map(|o| corner + o))
+            .any(|corner| corner.dot(axis) >= clip[2])
+    }
+
+    #[test]
+    fn an_area_wholly_seen_or_unseen_is_whole_or_hidden() {
+        let center = Vec2::new(10.0, 10.0);
+        assert_eq!(area_sight(center, 1.5, |_, _| true), AreaSight::Whole);
+        assert_eq!(area_sight(center, 1.5, |_, _| false), AreaSight::Hidden);
+    }
+
     #[test]
     fn an_area_seen_in_part_is_cut_where_the_fog_begins() {
         let center = Vec2::new(10.0, 10.0);
-        // The viewer sees the half plane x >= 10.4.
-        let [ax, az, min, max] = part(area_sight(center, 2.0, |x, _| x >= 10.4));
+        // The viewer sees the cells from column 11 on.
+        let sees = cells(|column, _| column >= 11);
+        let [ax, az, min, max] = part(area_sight(center, 2.0, &sees));
         assert!(
             ax > 0.99 && az.abs() < 0.05,
             "the axis points to the seen side"
         );
         assert!(
-            (min - 10.4).abs() <= 0.26,
-            "the cut lies at the fog's edge: {min}"
+            (min - (11.0 + CUT_MARGIN)).abs() < 1e-4,
+            "the cut lies on the fog's edge: {min}"
         );
         assert!(max > center.x + 2.0, "nothing is cut on the seen side");
         // A fog edge across the other axis turns the cut with it.
-        let [ax, az, ..] = part(area_sight(center, 2.0, |_, y| y < 9.5));
+        let [ax, az, ..] = part(area_sight(center, 2.0, cells(|_, row| row < 9)));
         assert!(az < -0.99 && ax.abs() < 0.05);
+    }
+
+    /// E1-1 (WP10 review 1): the fog's edge between two samples of the grid. A cut half a sample
+    /// step beyond the last unseen sample would draw unseen ground; the cut from the unseen
+    /// cells' corners draws none, for an edge along either axis and for a diagonal staircase.
+    #[test]
+    fn the_cut_draws_no_corner_of_an_unseen_cell() {
+        // Samples of a radius-2 disc centred at x = 10.1 lie at 8.1 + 0.25 k: 10.85 and 11.1
+        // straddle the edge at 11.
+        let center = Vec2::new(10.1, 10.3);
+        let straight = cells(|column, _| column >= 11);
+        let clip = part(area_sight(center, 2.0, &straight));
+        assert!(
+            clip[2] >= 11.0,
+            "the cut lies beyond the last unseen cell: {clip:?}"
+        );
+        assert!(!unseen_corner_drawn(center, 2.0, clip, &straight));
+        let staircase = cells(|column, row| column + row >= 21);
+        let clip = part(area_sight(center, 2.0, &staircase));
+        assert!(!unseen_corner_drawn(center, 2.0, clip, &staircase));
+        let storm = cells(|column, row| column >= 10 && row >= 10);
+        let clip = part(area_sight(Vec2::new(10.2, 10.4), 1.5, &storm));
+        assert!(!unseen_corner_drawn(
+            Vec2::new(10.2, 10.4),
+            1.5,
+            clip,
+            &storm
+        ));
+    }
+
+    #[test]
+    fn clip_nothing_draws_nothing_anywhere_on_a_map() {
+        let axis = Vec2::new(CLIP_NOTHING[0], CLIP_NOTHING[1]);
+        assert!(Vec2::splat(10_000.0).dot(axis) < CLIP_NOTHING[2]);
     }
 
     #[test]
