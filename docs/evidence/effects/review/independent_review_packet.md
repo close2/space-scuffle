@@ -7,6 +7,90 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP10 round 3 (areas and tethers)
+
+Round 2's review ([`independent_review_wp10_2.md`](independent_review_wp10_2.md), kept as written) accepted
+`psionic_storm` and `blinding_cloud` on condition A2-1 and rejected `abduct_tether` (A2-2). It accepted the
+engineering except the fog overlay (V2-1) and the E1-2 test (E2-1). The orchestrator's decisions are plan Amendment
+22. This is round 3 of at most five (Q0080).
+
+Please write the review to a new file next to this one, `independent_review_wp10_3.md`, and judge:
+
+- the two areas on A2-1's numbers and on the crowd 2x and `out` sheets;
+- the tether against A2-2 and the seven checklist items;
+- V2-1 and E2-1;
+- whether anything accepted before has regressed.
+
+Nothing was spent and no texture was made. Files start with `wp10r3_`. The GPU test was re-run on both drivers.
+
+### What changed
+
+| Round-2 finding | Change |
+|---|---|
+| A2-1 the areas' lighter rim, glass outline and bare ring on exit | Catalog only, in four parts. (1) The ring of flat body sheets stands at 0.8 R (was 0.6 R), 15 sheets of 0.24 R, reaching about the edge. (2) The edge band is held at 2.5 times its coverage (`hold_dense`) and its lip is torn by noise (`edge_noise` 0.05). (3) The floor tint decal is sized 1.01 R. (4) The edge band and the floor tint erode out over 0.2 s (storm) and 0.25 s (cloud), before the body (0.35 s and 0.45 s). The GPU test asserts the luminance rule below. |
+| A2-2 (a) a visible period | Two bulge strips: repeat 0.32 at scroll −1.6, and repeat 0.53 at scroll −1.04, both towards the caster. |
+| A2-2 (b) a translucent silhouette | The core, the strips and the grips are held at 2.5 times their coverage, and the ramp's edge key, sRGB (45, 12, 12), is opaque. |
+| A2-2 (c) the grip hidden by the bubble | The victim's grip is set back along the tongue by 7 % of its length. The caster's swelling stays at the caster's surface. |
+| V2-1 the overlay | Only cells on the map are darkened, and neighbouring cells' projected areas are asserted within a factor of 2. The true circle (yellow) and the cut (cyan) are drawn. The fog stage keeps its edge point 6 units from every side of the map. |
+| E2-1 | The test moves the area from clip A to clip B and asserts B on every live laid effect on B's first frame. It then asserts `CLIP_NOTHING` on the frame sight is lost. |
+| P2-1 | Cells are taken over `radius + CUT_MARGIN`, with a unit test of a cell that only that margin reaches. The `CHILD_SLOTS` comment is corrected. |
+| P2-4 | A tether with an end out of sight is retired at once, with no exit. The grip stays `Detail`. |
+| P2-2, P2-3, P2-5; the cliff case | Recorded in the plan's open polish list. |
+
+### A2-1: median luminance over the 32 rays (the rule: 0.92 R and 0.97 R at most 4 above 0.5 R)
+
+| Driver | Area | 0.5 R | 0.8 R | 0.92 R | 0.97 R |
+|---|---|---|---|---|---|
+| radv | `psionic_storm` | 96.8 | 85.9 | 83.5 | 83.5 |
+| radv | `blinding_cloud` | 116.0 | 111.6 | 109.3 | 103.7 |
+| lavapipe | `psionic_storm` | 97.6 | 86.9 | 83.5 | 84.2 |
+| lavapipe | `blinding_cloud` | 116.2 | 113.4 | 109.8 | 104.2 |
+
+E1-5 holds:
+
+- edge band median change: 89.6 (storm) and 68.9 (cloud) on radv; 89.1 and 69.1 on lavapipe;
+- spill: 0 on both drivers;
+- worst edge errors: 1.72 px (storm) and 1.51 px (cloud) on both drivers.
+
+### A2-2: widths and colours (3x shot)
+
+| Driver | Median width, middle half | Grip at the victim | Ratio | Centre line sRGB | 1 px inside each edge, sRGB |
+|---|---|---|---|---|---|
+| radv | 7 px | 18 px | 2.57 | (88, 27, 25) | (88, 27, 25), (78, 24, 21) |
+| lavapipe | 7 px | 14 px | 2.00 | (84, 25, 23) | (83, 25, 23), (91, 29, 26) |
+
+The tether's ends remain 0.52 and 0.71 px from the bubbles' surfaces.
+
+### Fog
+
+- The new stage puts the enemy storm mostly in sight. On radv the `Critical` layers change 248 of the 248 seen ground
+  samples; on lavapipe they change 245 of 248, and the whole look changes all 248. On both drivers 0 of the 194
+  unseen samples change.
+- The overlay shows 36 unseen cells on the map, with a worst neighbour area ratio of 1.08.
+
+### Material
+
+| What | Files (radv; lavapipe: same names ending `_lavapipe`) |
+|---|---|
+| Measured area shots, 2x: whole, `Critical`, none | [areas](wp10r3_areas_radv.jpg) |
+| Come-in and end, every 40 ms frame: storm, the overlapping second storm, cloud | [storm in](wp10r3_psionic_storm_0_in_radv.jpg), [storm out](wp10r3_psionic_storm_0_out_radv.jpg), [second in](wp10r3_psionic_storm_1_in_radv.jpg), [second out](wp10r3_psionic_storm_1_out_radv.jpg), [cloud in](wp10r3_blinding_cloud_0_in_radv.jpg), [cloud out](wp10r3_blinding_cloud_0_out_radv.jpg) |
+| Crowd at 2.0 s: 1:1, then 2x for the storms and the cloud | [1:1](wp10r3_crowd_radv.jpg), [storms](wp10r3_crowd2x_0_radv.jpg), [cloud](wp10r3_crowd2x_1_radv.jpg) |
+| Tether, 3x: whole, `Critical`, none; and every 40 ms frame of it | [shots](wp10r3_tether_radv.jpg), [sequence](wp10r3_tether_sequence_radv.jpg) |
+| Fog, 2x: whole, `Critical`, none; and the overlay with the unseen cells, the true circle and the cut | [fog](wp10r3_fog_radv.jpg), [overlay](wp10r3_fogcells_radv.jpg) |
+| Whole battle every 0.8 s | [battle](wp10r3_battle_radv.jpg) |
+| Measurements on both drivers | [wp10r3_measurements.txt](wp10r3_measurements.txt) |
+
+The crowd sheet still has its black half, and the ring of units still sits between the two storms (P2-5, recorded,
+not taken). The valgrind window was not re-run this round (see `wp10r2_measurements.txt`).
+
+### Points to look at
+
+- The rim of each area at 1:1 and 2x: whether the outline still reads as glass.
+- The `out` sheets: whether any frame shows a ring without its body.
+- The tongue at 1:1 and 3x: whether it still reads as beads, whether its edges are opaque, and how the grip at the
+  victim reads. On lavapipe the grip ratio sits exactly at 2.0 (minimum 1.8).
+- The overlay: whether the cells, the circle and the cut agree with the drawn crescent.
+
 ## WP10 round 2 (areas and tethers)
 
 Round 1's review ([`independent_review_wp10_1.md`](independent_review_wp10_1.md), kept as written) rejected all three

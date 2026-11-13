@@ -171,6 +171,15 @@ const OUTSIDE_SPILL_PX: f32 = 4.0;
 /// Radii out to which E1-5 (b) seeks spill: beyond lie the staged units at
 /// [`SPOT_CLEARANCE`] and their shadows.
 const SPILL_REACH: f32 = 1.2;
+/// Levels by which an area's median luminance at 0.92 R and 0.97 R may exceed it at 0.5 R
+/// (WP10 review 2, A2-1).
+const RIM_ALLOWANCE: f32 = 4.0;
+/// Least ratio of the grip's visible width at the victim to the tongue's median width
+/// (A2-2 (c)).
+const GRIP_WIDTH_RATIO: f32 = 1.8;
+/// Levels per channel by which the tongue's colour 1 px inside its edge may lie outside the
+/// brief's range from sRGB (45, 12, 12) to (95, 30, 28) (A2-2 (b)).
+const TONGUE_EDGE_TOLERANCE: u8 = 25;
 /// Band, in window pixels, just inside the projected radius for E1-5 (a).
 const EDGE_BAND_PX: f32 = 3.0;
 /// Unchanged ray samples (0.01 radii each) bridged inside an area's footprint.
@@ -243,8 +252,13 @@ struct Report {
     fog_links: usize,
     /// Sequence pictures written: `(look, files)`.
     sequences: Vec<(String, Vec<String>)>,
-    /// The fog shot's unseen cells near the enemy area, as window-pixel quads (V1-3 overlay).
-    fog_cells: Vec<[[f32; 2]; 4]>,
+    /// The fog shot's unseen cells on the map near the enemy area, as `(column, row)` and
+    /// window-pixel quads (V1-3 overlay; WP10 review 2, V2-1).
+    fog_cells: Vec<([i32; 2], [[f32; 2]; 4])>,
+    /// The enemy area's true circle in window pixels, and the cut's line across it (V2-1).
+    fog_circle: Vec<[f32; 2]>,
+    /// The cut's line across the enemy area, window pixels, if it is seen in part.
+    fog_cut: Option<[[f32; 2]; 2]>,
     /// Whether the fog edge chosen runs along a change of ground level (a cliff, V1-3).
     fog_cliff: bool,
     /// Window pixels of the areas' centres in the crowd picture (V1-2).
@@ -392,6 +406,19 @@ fn open_cells(world: &SimWorld, point: Vec2) -> bool {
     })
 }
 
+/// World units round the fog stage's edge point that lie on the map, so the overlay's cells and
+/// the whole area are on it (WP10 review 2, V2-1).
+const FOG_ON_MAP: f32 = 6.0;
+
+/// Whether the square of half side `margin` round `point` lies on `world`'s map.
+fn on_map(world: &SimWorld, point: Vec2, margin: f32) -> bool {
+    let (width, height) = (world.map.width() as f32, world.map.height() as f32);
+    point.x - margin >= 0.0
+        && point.y - margin >= 0.0
+        && point.x + margin < width
+        && point.y + margin < height
+}
+
 /// Whether `point` is clear of every unit and node by [`SPOT_CLEARANCE`].
 fn clear(world: &SimWorld, point: Vec2) -> bool {
     let units = world.entities.values().all(|unit| {
@@ -506,6 +533,7 @@ fn find_fog_edge(
                 && open(world, edge)
                 && unseen_open(&victim)
                 && clear(world, edge)
+                && on_map(world, edge, FOG_ON_MAP)
                 && (!cliff || {
                     let level = |at: Vec2| world.map.terrain_altitude_at(sim_position(at));
                     (level(edge) - level(edge + direction * 1.5)).abs() > 0.3
@@ -887,17 +915,41 @@ fn record(
                 .map(|area| area_shot(world, camera, fog, area, look_of(world, area.source)));
             // The unseen cells round it, for the evidence overlay (V1-3).
             if let Some(area) = snapshot.areas.iter().find(|area| area.owner == ENEMY) {
-                let centre = Vec2::new(area.center[0], area.center[1]).floor();
-                for row in -5..=5 {
-                    for column in -5..=5 {
-                        let corner = centre + Vec2::new(column as f32, row as f32);
-                        if !fog.sees(corner.x + 0.5, corner.y + 0.5) {
-                            staging.report.fog_cells.push(
+                let centre = Vec2::new(area.center[0], area.center[1]);
+                let cell = centre.floor();
+                for row in -4..=4 {
+                    for column in -4..=4 {
+                        let corner = cell + Vec2::new(column as f32, row as f32);
+                        // Only cells on the map (V2-1).
+                        if on_map(world, corner + Vec2::splat(0.5), 0.5)
+                            && !fog.sees(corner.x + 0.5, corner.y + 0.5)
+                        {
+                            staging.report.fog_cells.push((
+                                [corner.x as i32, corner.y as i32],
                                 [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y]
                                     .map(|offset| project(world, camera, corner + offset)),
-                            );
+                            ));
                         }
                     }
+                }
+                staging.report.fog_circle = (0..96)
+                    .map(|step| {
+                        let angle = step as f32 * std::f32::consts::TAU / 96.0;
+                        project(
+                            world,
+                            camera,
+                            centre + Vec2::from_angle(angle) * area.radius,
+                        )
+                    })
+                    .collect();
+                if let client::effects::areas::AreaSight::Part(clip) =
+                    client::effects::areas::sight_under(Some(fog), area)
+                {
+                    let axis = Vec2::new(clip[0], clip[1]);
+                    let on_cut = axis * clip[2] + axis.perp() * axis.perp().dot(centre);
+                    staging.report.fog_cut = Some([-1.0, 1.0].map(|side| {
+                        project(world, camera, on_cut + axis.perp() * side * area.radius)
+                    }));
                 }
             }
             staging.report.fog_held = looks.held();
@@ -1585,8 +1637,17 @@ fn keep_evidence(directory: &Path, report: &Report, driver: &str) -> TestResult 
     // V1-3: the fog shot with the viewer's unseen cells darkened.
     if !report.fog_cells.is_empty() {
         let mut picture = image::open(directory.join(Shot::Fog.file()))?.to_rgb8();
-        for quad in &report.fog_cells {
+        for (_, quad) in &report.fog_cells {
             darken_quad(&mut picture, quad);
+        }
+        for pair in report.fog_circle.windows(2) {
+            draw_line(&mut picture, pair[0], pair[1], [255, 220, 0]);
+        }
+        if let (Some(first), Some(last)) = (report.fog_circle.first(), report.fog_circle.last()) {
+            draw_line(&mut picture, *last, *first, [255, 220, 0]);
+        }
+        if let Some([from, to]) = report.fog_cut {
+            draw_line(&mut picture, from, to, [0, 230, 255]);
         }
         picture.save(directory.join(format!("sheet_fogcells_{driver}.png")))?;
     }
@@ -1645,6 +1706,81 @@ fn darken_quad(picture: &mut image::RgbImage, quad: &[[f32; 2]; 4]) {
             }
         }
     }
+}
+
+/// Draws a 1-pixel line of `colour` from `from` to `to` (window pixels) on `picture`.
+fn draw_line(picture: &mut image::RgbImage, from: [f32; 2], to: [f32; 2], colour: [u8; 3]) {
+    let steps = distance(from, to).ceil().max(1.0) as u32;
+    for step in 0..=steps {
+        let share = step as f32 / steps as f32;
+        let at = [
+            from[0] + (to[0] - from[0]) * share,
+            from[1] + (to[1] - from[1]) * share,
+        ];
+        let (x, y) = (at[0].round(), at[1].round());
+        if x >= 0.0 && y >= 0.0 && x < picture.width() as f32 && y < picture.height() as f32 {
+            picture.put_pixel(x as u32, y as u32, image::Rgb(colour));
+        }
+    }
+}
+
+/// Area in square pixels of a convex quad.
+fn quad_area(quad: &[[f32; 2]; 4]) -> f32 {
+    (0..4)
+        .map(|index| {
+            let (a, b) = (quad[index], quad[(index + 1) % 4]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f32>()
+        .abs()
+        / 2.0
+}
+
+/// The largest ratio of projected areas between two overlay cells that share a side (V2-1: a
+/// grid of 1-unit cells on the ground projects to quads of slowly varying size).
+fn worst_neighbour_ratio(cells: &[([i32; 2], [[f32; 2]; 4])]) -> f32 {
+    let mut worst = 1.0_f32;
+    for (cell, quad) in cells {
+        for (other, other_quad) in cells {
+            let apart = (cell[0] - other[0]).abs() + (cell[1] - other[1]).abs();
+            if apart == 1 {
+                let (a, b) = (quad_area(quad), quad_area(other_quad));
+                worst = worst.max(a.max(b) / a.min(b).max(1e-3));
+            }
+        }
+    }
+    worst
+}
+
+/// Median luminance of the whole look over every ray at `share` of the radius (A2-1).
+fn ring_luminance(area: &AreaShot, whole: &image::RgbImage, share: f32) -> f32 {
+    let index =
+        ((share - RAY_FROM) / (RAY_TO - RAY_FROM) * (RAY_SAMPLES - 1) as f32).round() as usize;
+    let mut values: Vec<f32> = area
+        .rays
+        .iter()
+        .filter_map(|ray| pixel_at(whole, ray[index]).map(luminance))
+        .collect();
+    values.sort_by(f32::total_cmp);
+    values.get(values.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// Pixels the tether changes either side of the window point `at`, across the line `along`
+/// (unit window vector): `(left, right)`, each counted until the first unchanged pixel.
+fn across(with: &image::RgbImage, without: &image::RgbImage, at: Vec2, along: Vec2) -> (u32, u32) {
+    let normal = along.perp();
+    let reach = |sign: f32| {
+        (1..40_u32)
+            .take_while(|step| {
+                changed_at(
+                    with,
+                    without,
+                    (at + normal * sign * *step as f32).to_array(),
+                )
+            })
+            .count() as u32
+    };
+    (reach(1.0), reach(-1.0))
 }
 
 /// Luminance (Rec. 709 weights on the display values) of a pixel, 0 to 255.
@@ -1771,6 +1907,18 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
             "'{}': the edge can be seen: {contrast}",
             area.look
         );
+        // A2-1 (WP10 review 2): the outer band no lighter than the body.
+        let rings = [0.5, 0.8, 0.92, 0.97].map(|share| ring_luminance(area, &whole, share));
+        eprintln!(
+            "driver {driver}: area '{}': median luminance over 32 rays at 0.5 R {:.1}, 0.8 R {:.1}, \
+             0.92 R {:.1}, 0.97 R {:.1}",
+            area.look, rings[0], rings[1], rings[2], rings[3]
+        );
+        assert!(
+            rings[2] <= rings[0] + RIM_ALLOWANCE && rings[3] <= rings[0] + RIM_ALLOWANCE,
+            "'{}': the outer band is no lighter than the body: {rings:?}",
+            area.look
+        );
         assert_eq!(spill, 0, "'{}': nothing spills past the edge", area.look);
     }
     assert!(looks.len() >= 2, "two different area looks: {looks:?}");
@@ -1803,6 +1951,64 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
         changed.len(),
         steps + 1
     );
+    // A2-2 (WP10 review 2): the tongue's width along its middle half, the grip's at the victim,
+    // and the colour 1 px inside its edge.
+    {
+        let whole = shot(Shot::Tether)?;
+        let direction = line.normalize_or_zero();
+        let start = Vec2::from_array(tether.from_end);
+        let end = Vec2::from_array(tether.to_end);
+        let length = start.distance(end);
+        let mut widths: Vec<u32> = (0..=40)
+            .map(|step| {
+                let at = start + direction * length * (0.25 + 0.5 * step as f32 / 40.0);
+                let (left, right) = across(&whole, &without, at, direction);
+                left + right + 1
+            })
+            .collect();
+        widths.sort_unstable();
+        let median = widths[widths.len() / 2];
+        let grip = (0..=20)
+            .map(|step| {
+                let at = start + direction * length * (0.8 + 0.2 * step as f32 / 20.0);
+                let (left, right) = across(&whole, &without, at, direction);
+                left + right + 1
+            })
+            .max()
+            .unwrap_or(0);
+        let middle = start + direction * length * 0.5;
+        let (left, right) = across(&whole, &without, middle, direction);
+        let normal = direction.perp();
+        let inside = |reach: u32, sign: f32| {
+            pixel_at(
+                &whole,
+                (middle + normal * sign * reach.saturating_sub(1) as f32).to_array(),
+            )
+        };
+        let edges = [inside(left, 1.0), inside(right, -1.0)];
+        let centre = pixel_at(&whole, middle.to_array());
+        eprintln!(
+            "driver {driver}: tether widths: median {median} px over its middle half, grip {grip} px \
+             at the victim (ratio {:.2}); sRGB on the centre line {centre:?}, 1 px inside each edge \
+             {edges:?}",
+            grip as f32 / median.max(1) as f32
+        );
+        assert!(
+            grip as f32 >= GRIP_WIDTH_RATIO * median as f32,
+            "the grip is at least {GRIP_WIDTH_RATIO} times the tongue's width: {grip} / {median}"
+        );
+        let low = [45_u8, 12, 12];
+        let high = [95_u8, 30, 28];
+        for edge in edges.iter().flatten() {
+            for channel in 0..3 {
+                assert!(
+                    edge[channel] + TONGUE_EDGE_TOLERANCE >= low[channel]
+                        && edge[channel] <= high[channel].saturating_add(TONGUE_EDGE_TOLERANCE),
+                    "the tongue is opaque and dark to its edge: {edge:?}"
+                );
+            }
+        }
+    }
     // A1-4: the tongue's display colour on its centre line and at its edge, at the middle.
     let middle = along(steps / 2);
     let across = Vec2::from_array(line.to_array()).perp().normalize_or_zero();
@@ -1877,6 +2083,21 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
     eprintln!(
         "driver {driver}: fog edge along a change of ground level (a cliff): {}",
         report.fog_cliff
+    );
+    // V2-1 (WP10 review 2): the overlay's cells project to quads of slowly varying size.
+    let ratio = worst_neighbour_ratio(&report.fog_cells);
+    eprintln!(
+        "driver {driver}: fog overlay: {} unseen cells on the map, worst neighbour area ratio \
+         {ratio:.2}",
+        report.fog_cells.len()
+    );
+    assert!(
+        !report.fog_cells.is_empty(),
+        "the overlay shows unseen cells"
+    );
+    assert!(
+        ratio <= 2.0,
+        "the overlay's cells are a ground grid: {ratio}"
     );
     assert!(
         seen > 20 && unseen > 20,

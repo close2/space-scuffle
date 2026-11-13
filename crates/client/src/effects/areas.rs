@@ -54,7 +54,8 @@ const TICK_SECONDS: f32 = 1.0 / sim_types::TICKS_PER_SECOND as f32;
 pub const HELD_SLOTS: usize = 64;
 
 /// Effects an area lays (its flares, its billows) whose clip the area keeps in step with its
-/// own sight: more than live at once for the shipped looks (a lay every 0.11 s living 0.8 s).
+/// own sight: more than live at once for the shipped looks (the storm lays every 0.16 s for
+/// 0.8 s, 5 alive; the cloud every 0.2 s for 1.4 s, 7 alive).
 pub const CHILD_SLOTS: usize = 16;
 
 /// Samples across an area's diameter, for choosing among cuts the one that keeps the most.
@@ -124,8 +125,11 @@ fn disc_cells(
 /// taken, and an area none of whose seen ground any cut keeps is [`AreaSight::Hidden`].
 #[must_use]
 pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) -> AreaSight {
+    // The cells are taken over the disc grown by the cut's margin, so an unseen cell that only
+    // the look's soft lip or the clip's feather could reach is cut too (WP10 review 2, P2-1).
+    let reach = radius + CUT_MARGIN;
     let (mut seen_cells, mut unseen_cells) = (0_u32, 0_u32);
-    for (_, seen) in disc_cells(center, radius, &sees) {
+    for (_, seen) in disc_cells(center, reach, &sees) {
         if seen {
             seen_cells += 1;
         } else {
@@ -146,7 +150,7 @@ pub fn area_sight(center: Vec2, radius: f32, sees: impl Fn(f32, f32) -> bool) ->
         )]
         let axis =
             Vec2::from_angle(direction as f32 * std::f32::consts::TAU / CUT_DIRECTIONS as f32);
-        let threshold = disc_cells(center, radius, &sees)
+        let threshold = disc_cells(center, reach, &sees)
             .filter(|(_, seen)| !*seen)
             .flat_map(|(corner, _)| {
                 [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE].map(|offset| (corner + offset).dot(axis))
@@ -472,13 +476,18 @@ fn keep_link(
     else {
         return;
     };
+    let key = (link.from, link.to, link.source);
     if !shown(from) || !shown(to) {
+        // An end left the viewer's sight: the tether goes at once, with no exit at its last line
+        // (WP10 review 2, P2-4).
+        if let Ok(index) = looks.links.binary_search_by_key(&key, |slot| slot.key) {
+            keep.runtime.retire(looks.links[index].handle);
+        }
         return;
     }
     let (from_end, to_end) = tether_ends(anchors(from).1, from.radius, anchors(to).1, to.radius);
     let line = WorldLine::whole(from_end, to_end);
     let bound = BoundValues::default().with(Binding::LinkLength, from_end.distance(to_end));
-    let key = (link.from, link.to, link.source);
     match looks.links.binary_search_by_key(&key, |slot| slot.key) {
         Ok(index) if looks.links[index].effect == effect => {
             let slot = &mut looks.links[index];
@@ -655,7 +664,7 @@ mod tests {
         sees: &impl Fn(f32, f32) -> bool,
     ) -> bool {
         let axis = Vec2::new(clip[0], clip[1]);
-        disc_cells(center, radius, sees)
+        disc_cells(center, radius + CUT_MARGIN, sees)
             .filter(|(_, seen)| !*seen)
             .flat_map(|(corner, _)| [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE].map(|o| corner + o))
             .any(|corner| corner.dot(axis) >= clip[2])
@@ -714,6 +723,22 @@ mod tests {
             clip,
             &storm
         ));
+    }
+
+    /// P2-1 (WP10 review 2): an unseen cell that only the annulus between the radius and the
+    /// cut's margin reaches is cut too.
+    #[test]
+    fn an_unseen_cell_just_past_the_radius_is_cut() {
+        // The disc of radius 1.5 round (10.5, 10.5) reaches x = 12.0 exactly; the cell from
+        // column 12 on is unseen.
+        let center = Vec2::new(10.5, 10.5);
+        let sees = cells(|column, _| column < 12);
+        let clip = part(area_sight(center, 1.5, &sees));
+        assert!(!unseen_corner_drawn(center, 1.5, clip, &sees));
+        assert!(
+            clip[0] < -0.99,
+            "the cut faces away from the unseen cells: {clip:?}"
+        );
     }
 
     #[test]

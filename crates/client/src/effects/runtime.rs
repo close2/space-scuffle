@@ -446,6 +446,12 @@ impl EffectRuntime {
         }
     }
 
+    /// Ends the live effect `handle` at once: nothing of it is drawn from this frame (a tether
+    /// whose end the viewer stopped seeing, WP10). A stale handle does nothing.
+    pub fn retire(&mut self, handle: EffectHandle) {
+        self.pool.free(handle);
+    }
+
     /// Releases the held effect `handle` at `now`: its held layers erode out over their exit
     /// and the effect ends once they and its one-shot layers are over. A stale or already
     /// released handle does nothing.

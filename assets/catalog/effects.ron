@@ -513,8 +513,7 @@
         // Abduct's tongue (alpha): an opaque dark red-brown muscle with darker edges; its
         // lightest key is the body colour itself, so there is no light core (A1-3).
         "tongue": [
-            (0.00, (0.0262, 0.0037, 0.0037, 0.00)),   // sRGB (45, 12, 12)
-            (0.10, (0.0262, 0.0037, 0.0037, 0.95)),
+            (0.00, (0.0262, 0.0037, 0.0037, 0.95)),   // sRGB (45, 12, 12)
             (0.50, (0.0612, 0.0070, 0.0060, 0.97)),   // sRGB (70, 20, 18)
             (1.00, (0.1144, 0.0130, 0.0116, 0.97)),   // sRGB (95, 30, 28)
         ],
@@ -522,6 +521,9 @@
     // Timing curves: (time 0..1, value, easing to the next key).
     curves: {
         // WP10. A billow of an area's cloud: swelling in, holding, thinning out.
+        // WP10 round 3: comes in and holds at 2.5, so a held soft card is opaque out to its edges
+        // (coverage times intensity, clamped at 1).
+        "hold_dense": [(0.00, 0.00, EaseOutQuad), (1.00, 2.50, Linear)],
         "billow": [(0.00, 0.00, EaseOutQuad), (0.25, 1.00, Linear), (0.65, 0.85, EaseInQuad), (1.00, 0.00, Linear)],
         "billow_grow": [(0.00, 0.70, EaseOutQuad), (1.00, 1.15, Linear)],
         // A storm's discharge: up in a frame, flickering down.
@@ -2037,18 +2039,18 @@
                     // The area's edge: a band inside the radius, darkest and densest at its outer
                     // lip on it.
                     block: Ring(texture: "smoke_puff", ramp: "storm_rim", orient: Ground,
-                        thickness: 0.28, mapping: Front, height: 0.03,
+                        thickness: 0.28, mapping: Front, height: 0.03, edge_noise: 0.05,
                         breakup: (noise: "noise_tile", scale: 4.0, amount: 0.3, softness: 0.25)),
                     radius: (from: (bind: AreaRadius, scale: 1.0), to: (bind: AreaRadius, scale: 1.0)),
-                    duration: 0.12, curve: "come_in", held: true, exit: 0.3, priority: Critical,
+                    duration: 0.12, curve: "hold_dense", held: true, exit: 0.2, priority: Critical,
                 ),
                 (
                     // The floor under the storm, tinted darker violet, ending on the edge.
                     block: Decal(texture: "smoke_puff", ramp: "storm_floor", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.005, fill: 0.5),
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.2, softness: 0.3)),
-                    size: (bind: AreaRadius, scale: 1.0), duration: 0.15, curve: "come_in",
-                    held: true, exit: 0.3, priority: Critical,
+                    size: (bind: AreaRadius, scale: 1.01), duration: 0.15, curve: "come_in",
+                    held: true, exit: 0.2, priority: Critical,
                 ),
                 (
                     // The body of the cloud: flat sheets just above the ground, overlapping so
@@ -2057,11 +2059,11 @@
                         soft_depth: 0.05, rotation: Random, lift: 0.12,
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.3, shade: 0.5)),
                     placements: [
-                        Disc(count: 9, radius: (bind: AreaRadius, scale: 0.5)),
-                        Circle(count: 9, radius: (bind: AreaRadius, scale: 0.6), spread: 0.06),
+                        Disc(count: 8, radius: (bind: AreaRadius, scale: 0.45)),
+                        Circle(count: 15, radius: (bind: AreaRadius, scale: 0.8), spread: 0.02),
                     ],
-                    size: (bind: AreaRadius, scale: 0.34), size_jitter: 0.12,
-                    duration: 0.2, curve: "come_in", held: true, exit: 0.3,
+                    size: (bind: AreaRadius, scale: 0.24), size_jitter: 0.05,
+                    duration: 0.2, curve: "come_in", held: true, exit: 0.35,
                 ),
                 (
                     // A few billows standing in it, low, so the storm has body.
@@ -2070,7 +2072,7 @@
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.5, softness: 0.3, shade: 0.5)),
                     placement: Disc(count: 4, radius: (bind: AreaRadius, scale: 0.45)),
                     size: (bind: AreaRadius, scale: 0.3), size_jitter: 0.2,
-                    duration: 0.2, curve: "come_in", held: true, exit: 0.3,
+                    duration: 0.2, curve: "come_in", held: true, exit: 0.35,
                 ),
             ],
         ),
@@ -2112,17 +2114,17 @@
                     // The area's edge: the murk's front darkening the ground, darkest at its
                     // outer lip on the radius.
                     block: Ring(texture: "smoke_puff", ramp: "murk_edge", orient: Ground,
-                        thickness: 0.22, mapping: Front, height: 0.03, darken: true,
+                        thickness: 0.22, mapping: Front, height: 0.03, darken: true, edge_noise: 0.05,
                         breakup: (noise: "noise_tile", scale: 4.0, amount: 0.3, softness: 0.25)),
                     radius: (from: (bind: AreaRadius, scale: 1.0), to: (bind: AreaRadius, scale: 1.0)),
-                    duration: 0.3, curve: "come_in", held: true, exit: 0.4, priority: Critical,
+                    duration: 0.3, curve: "hold_dense", held: true, exit: 0.25, priority: Critical,
                 ),
                 (
                     block: Decal(texture: "smoke_puff", ramp: "murk_shade", depth: 0.6, darken: true,
                         outline: (edge_noise: 0.005, fill: 0.5),
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.2, softness: 0.3)),
-                    size: (bind: AreaRadius, scale: 1.0), duration: 0.3, curve: "come_in",
-                    held: true, exit: 0.4, priority: Critical,
+                    size: (bind: AreaRadius, scale: 1.01), duration: 0.3, curve: "come_in",
+                    held: true, exit: 0.25, priority: Critical,
                 ),
                 (
                     // The pall: flat sheets just above the ground, evenly over the disc.
@@ -2130,10 +2132,10 @@
                         soft_depth: 0.05, rotation: Random, lift: 0.1,
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.35, softness: 0.3, shade: 0.5)),
                     placements: [
-                        Disc(count: 8, radius: (bind: AreaRadius, scale: 0.5)),
-                        Circle(count: 10, radius: (bind: AreaRadius, scale: 0.6), spread: 0.06),
+                        Disc(count: 8, radius: (bind: AreaRadius, scale: 0.45)),
+                        Circle(count: 15, radius: (bind: AreaRadius, scale: 0.8), spread: 0.02),
                     ],
-                    size: (bind: AreaRadius, scale: 0.31), size_jitter: 0.12,
+                    size: (bind: AreaRadius, scale: 0.24), size_jitter: 0.05,
                     duration: 0.35, curve: "come_in", held: true, exit: 0.45,
                 ),
             ],
@@ -2163,26 +2165,37 @@
             event: Link,
             layers: [
                 (
+                    // The core: a soft rod held at 2.5 times its coverage, so it is opaque out to
+                    // its dark edges (WP10 review 2, A2-2 (b)).
                     block: Ribbon(texture: "droplet", ramp: "tongue", shape: Radial, taper: (0.02, 0.04),
                         soft_depth: 0.1,
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.2, softness: 0.3, shade: 0.6)),
-                    size: (scale: 0.15), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                    size: (scale: 0.15), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                     priority: Critical,
                 ),
                 (
-                    // The bulges: a strip of the puff texture, its blobs wider than the core,
-                    // scrolling towards the caster at about half a unit a second.
+                    // The bulges: two strips of the puff texture with incommensurate repeats and
+                    // speeds, so their sum never repeats evenly (A2-2 (a)), both travelling back
+                    // towards the caster, at about 0.5 and 0.55 units a second.
                     block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.03, 0.06),
                         repeat: 0.32, scroll: -1.6, soft_depth: 0.1,
                         breakup: (noise: "noise_tile", scale: 2.5, amount: 0.2, softness: 0.3, shade: 0.6)),
-                    size: (scale: 0.21), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                    size: (scale: 0.19), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                 ),
                 (
-                    // The grip on the victim and the swelling at the caster: one at each end.
+                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.03, 0.06),
+                        repeat: 0.53, scroll: -1.04, soft_depth: 0.1,
+                        breakup: (noise: "noise_tile", scale: 1.9, amount: 0.25, softness: 0.3, shade: 0.6)),
+                    size: (scale: 0.2), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
+                ),
+                (
+                    // The swelling where it leaves the caster, and the grip on the victim, set back
+                    // from the victim's surface along the tongue by 7 % of its length so the bubble
+                    // does not hide it (A2-2 (c)).
                     block: Sprite(texture: "smoke_puff", ramp: "tongue", soft_depth: 0.1, rotation: Random,
                         breakup: (noise: "noise_tile", scale: 3.0, amount: 0.3, softness: 0.25, shade: 0.6)),
-                    placement: Line(spacing: (bind: LinkLength, scale: 1.0)),
-                    size: (scale: 0.34), duration: 0.1, curve: "come_in", held: true, exit: 0.15,
+                    placement: Line(spacing: (bind: LinkLength, scale: 0.93)),
+                    size: (scale: 0.34), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                 ),
             ],
         ),

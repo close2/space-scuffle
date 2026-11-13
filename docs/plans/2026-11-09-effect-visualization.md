@@ -1480,6 +1480,10 @@ review).**
 | `siege_anchor` | The outer falloff is 0.19 radii against the test's 0.15 floor: a thin margin if the soil is later thickened (A4-2). | WP8 4 |
 | Effect renderer | `queue_distortions` still requests its pipeline only once distortions exist, the first-use gap E2-1 fixed for cards and decals (heat haze and the WP8 shimmer can go undrawn in a session's first second): warm it in the same loop; the warming also starts only once a 3D view with a depth prepass exists, so a warm-up during scene load would close the first frames too (E3-1). In `status_gpu_tests.rs`, document the up-to-two-frame offset between the shell-card samples and the pictures, and assert the ring's pixels in the first frames, not only its card (E3-2). | WP9 3 |
 | `burrow_mound` | A small premultiplied lit crest on a few heaps over the darkening, so the stains read as raised heaps. | WP8 3 |
+| Area looks (`area_sight`) | Collect the seen samples once, and take only dot products per axis (about 9 000 `sees` calls per partly seen area per frame today) (P2-2). | WP10 2 |
+| `psionic_storm` | The storm reads as violet smoke rather than psionic energy: smaller, slightly brighter pockets that flicker in place, with no rays, and staying below white where two storms overlap (P2-3; owner's taste). | WP10 2 |
+| WP10 evidence | Fill or drop the black half of the crowd sheet, and centre one ring of units in each storm (P2-5). | WP10 2 |
+| Area looks | The per-pixel fog mask must come before any area larger than radius 2 ships (P1-1). When it lands, show one partly seen area across a cliff edge on a staged map that has one: the cliff case (decals smearing down a face, cards standing over the lip) belongs to the mask and to the decal system (review 2, V1-3). | WP10 1, 2 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
 
@@ -2253,3 +2257,86 @@ and (90, 42, 41) on lavapipe. The fog case changes 0 of 277 unseen ground sample
 seen ones on both drivers (round 1: 22 and 17). All figures are in `wp10r2_measurements.txt`.
 
 Packet: section "WP10 round 2".
+
+## Amendment 22: WP10 round 3, decided by the orchestrator after WP10 review 2 (2026-11-13)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp10_2.md`](../evidence/effects/review/independent_review_wp10_2.md)).**
+
+Review 2:
+
+- accepted `psionic_storm` and `blinding_cloud` on condition A2-1;
+- rejected `abduct_tether` (A2-2);
+- accepted the engineering except the fog overlay evidence (V2-1) and a stronger E1-2 test (E2-1);
+- accepted the deferral of the cliff picture.
+
+This is round 3 of the owner's five (Q0080), and it is limited to A2-1, A2-2, V2-1 and E2-1. P2-1 and P2-4 were
+taken because they were cheap. P2-2, P2-3 and P2-5 are recorded in the open polish list (Amendment 9's table), and so
+is the cliff case, beside P1-1. No simulation state, golden replay or checksum changes (D-1 holds), and no ramp of an
+already-shipped effect is touched.
+
+1. **A2-1, the areas' rim** (catalog only).
+   - **Body sheets reach about the edge.** The ring of flat sheets stands at 0.8 R (it was 0.6 R), 15 sheets of
+     0.24 R, so they reach about 1.04 R with their soft edges.
+   - **The edge band is dense to its lip.** It is held at 2.5 times its coverage (the new curve `hold_dense`), and
+     its lip is torn a little by its noise (`Front` `edge_noise` 0.05; more pulled the outermost ray inside the
+     ±2 px tolerance).
+   - **The floor tint reaches the edge.** The decal is sized 1.01 R, so the edge stays within ±2 px where the band's
+     lip is torn.
+   - **The edge leaves before the body.** The edge band and the floor tint erode out over 0.2 s (storm) and 0.25 s
+     (cloud), against the body's 0.35 s and 0.45 s, so no `out` frame shows a bare ring.
+   - **New assertion.** The GPU test requires the median luminance over the 32 rays at 0.92 R and at 0.97 R to be
+     no more than 4 levels above that at 0.5 R. E1-5's band (≥ 32) and spill (0) stay.
+2. **A2-2, the tongue.**
+   - **No visible period.** Two bulge strips with incommensurate repeats and speeds (0.32 at −1.6, 0.53 at −1.04),
+     both travelling to the caster.
+   - **An opaque silhouette.** The core, the strips and the grips are held at 2.5 times their coverage
+     (`hold_dense`), and the ramp's edge key is opaque at sRGB (45, 12, 12).
+   - **A visible grip.** The victim's grip is set back along the tongue by 7 % of its length
+     (`Line(spacing: LinkLength × 0.93)`), out of its bubble.
+   - **New assertions.** The GPU test measures the tongue's median width over its middle half, the grip's width at
+     the victim (it must be at least 1.8 times the median), and the colour 1 px inside each edge (within 25 levels
+     per channel of sRGB (45, 12, 12) to (95, 30, 28)).
+3. **V2-1, the fog overlay.**
+   - Only cells on the map are darkened.
+   - The test asserts that neighbouring cells' projected areas are within a factor of 2.
+   - The area's true circle (yellow) and the cut (cyan) are drawn on it.
+   - The fog stage's edge point keeps 6 units from every side of the map, so the whole disc and the overlay's
+     cells lie on it.
+4. **E2-1.** The E1-2 test now holds the area under clip A, then moves it to clip B. It asserts that every live laid
+   effect carries B on B's first frame, and `CLIP_NOTHING` on the frame sight is lost.
+5. **P2-1.** `area_sight` takes the cells over `radius + CUT_MARGIN`, with a unit test of an unseen cell that only
+   that margin reaches. The `CHILD_SLOTS` comment now gives the shipped lay rates.
+6. **P2-4.** A tether one of whose ends leaves the viewer's sight is retired at once (`EffectRuntime::retire`), with
+   no exit at its last line. The grip stays a `Detail` layer: in the `Critical` layer it would change the tether's
+   end test.
+7. **B-120.** The bubble shader's low-health rainbow speckle that the reviewer noted is registered in `DESIGN.md`.
+
+**Measured**
+
+| Measure | radv | lavapipe |
+|---|---|---|
+| Storm worst edge error | 1.72 px | 1.72 px |
+| Cloud worst edge error | 1.51 px | 1.51 px |
+| Storm edge band (min 32) | 89.6 levels | 89.1 levels |
+| Cloud edge band (min 32) | 68.9 levels | 69.1 levels |
+| Spill outside the edge | 0 | 0 |
+| Tongue median width / grip width | 7 / 18 px (2.57) | 7 / 14 px (2.00) |
+| Tongue centre line (sRGB) | (88, 27, 25) | (84, 25, 23) |
+| Tongue 1 px inside each edge (sRGB) | (88, 27, 25), (78, 24, 21) | (83, 25, 23), (91, 29, 26) |
+| Fog overlay, worst neighbour area ratio | 1.08 | 1.08 |
+| Fog case, unseen samples changed | 0 of 194 | 0 of 194 |
+
+The A2-1 median luminance over 32 rays:
+
+| Driver | Area | 0.5 R | 0.8 R | 0.92 R | 0.97 R |
+|---|---|---|---|---|---|
+| radv | `psionic_storm` | 96.8 | 85.9 | 83.5 | 83.5 |
+| radv | `blinding_cloud` | 116.0 | 111.6 | 109.3 | 103.7 |
+| lavapipe | `psionic_storm` | 97.6 | 86.9 | 83.5 | 84.2 |
+| lavapipe | `blinding_cloud` | 116.2 | 113.4 | 109.8 | 104.2 |
+
+The new fog stage puts the enemy storm mostly in sight: 248 seen ground samples, and the whole look changes all
+of them.
+
+Packet: section "WP10 round 3".

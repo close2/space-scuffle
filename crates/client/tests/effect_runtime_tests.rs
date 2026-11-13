@@ -1255,9 +1255,9 @@ fn a_status_look_held_settled_draws_as_one_that_came_in() {
     );
 }
 
-/// WP10 review 1, E1-2: an enemy area the viewer stops seeing is cut to nothing on that frame,
-/// with every effect it laid, and released; while it is seen in part, what it laid follows its
-/// current clip.
+/// WP10 review 1, E1-2 (strengthened by review 2, E2-1): while an enemy area is seen in part,
+/// what it laid follows its current clip, from the first frame the clip changes; on the frame
+/// the viewer stops seeing it, it is cut to nothing with every effect it laid, and released.
 #[test]
 fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid() {
     use client::effects::areas::{
@@ -1339,7 +1339,21 @@ fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid()
         clips.iter().all(|live| *live == clip),
         "what the area laid follows its clip: {clips:?}"
     );
-    frame(&mut looks, &mut runtime, 11, AreaSight::Hidden);
+    // E2-1 (WP10 review 2): the sight changes to clip B; on B's first frame every live effect
+    // of the area, those laid under A included, carries B.
+    let moved = [0.0, 1.0, 9.6, 100.0];
+    assert_ne!(moved, clip);
+    frame(&mut looks, &mut runtime, 11, AreaSight::Part(moved));
+    let laid_under_a = runtime.pool.iter().count();
+    assert!(laid_under_a >= 4, "effects laid under A are still live");
+    assert!(
+        runtime
+            .pool
+            .iter()
+            .all(|(_, instance)| instance.fog_clip == moved),
+        "every live effect of the area follows the new clip on its first frame"
+    );
+    frame(&mut looks, &mut runtime, 12, AreaSight::Hidden);
     assert_eq!(looks.held(), (0, 0), "the unseen area is released");
     assert!(
         runtime
