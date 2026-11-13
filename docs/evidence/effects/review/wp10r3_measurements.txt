@@ -1,0 +1,28 @@
+# WP10 round 3 measurements (area_link_gpu_tests.rs on radv and lavapipe)
+
+driver radv: area 'psionic_storm' of radius 1.5 (43.1 px): edge errors per ray (px, outside positive) [-1.7, -1.3, -1.7, -1.7, -0.8, -1.3, -0.8, -1.3, -1.3, -0.4, 0.0, -0.5, -0.5, -0.5, -0.4, 0.0, 0.0, -0.4, 0.0, 0.8, 0.0, 0.4, 0.0, 0.7, 0.0, 0.0, 0.0, 0.0, -0.4, 0.0, -0.8, -0.9]; worst 1.72
+driver radv: area 'psionic_storm': edge band median luminance change 89.6 levels (least 32); 0 pixels changed beyond 4 px outside on the near half; sRGB (look, bare floor) at the centre (Some([79, 59, 133]), Some([176, 178, 172])), mid radius (Some([87, 73, 128]), Some([179, 180, 175])), 0.95 radius (Some([78, 54, 140]), Some([178, 183, 182]))
+driver radv: area 'psionic_storm': median luminance over 32 rays at 0.5 R 96.8, 0.8 R 85.9, 0.92 R 83.5, 0.97 R 83.5
+driver radv: area 'blinding_cloud' of radius 2 (50.4 px): edge errors per ray (px, outside positive) [-1.0, -1.5, -1.5, -1.0, -1.4, -0.5, -0.4, -1.3, -0.9, -1.4, -0.5, -0.5, 0.0, -1.0, 0.0, 0.5, 0.5, 0.5, 0.5, -0.4, 0.0, 0.0, 0.8, 0.4, 0.8, 0.4, -0.4, 0.0, 0.0, -0.5, -0.5, -1.0]; worst 1.51
+driver radv: area 'blinding_cloud': edge band median luminance change 68.9 levels (least 32); 0 pixels changed beyond 4 px outside on the near half; sRGB (look, bare floor) at the centre (Some([125, 126, 133]), Some([193, 196, 196])), mid radius (Some([111, 114, 120]), Some([176, 182, 179])), 0.95 radius (Some([107, 108, 114]), Some([196, 198, 198]))
+driver radv: area 'blinding_cloud': median luminance over 32 rays at 0.5 R 116.0, 0.8 R 111.6, 0.92 R 109.3, 0.97 R 103.7
+driver radv: tether from [769.1875, 237.17578] to [875.1374, 226.37183]: drawn from [768.6683, 237.2287] to [874.4349, 226.44345]; end errors 0.52 px and 0.71 px; 108 of 127 pixels along it changed
+driver radv: tether widths: median 7 px over its middle half, grip 18 px at the victim (ratio 2.57); sRGB on the centre line Some([88, 27, 25]), 1 px inside each edge [Some([88, 27, 25]), Some([78, 24, 21])]
+driver radv: tether sRGB at its middle: centre line Some([88, 27, 25]), edge (2 px off the line) Some([80, 30, 28]), bare floor Some([147, 151, 151])
+driver radv: enemy area across the fog edge: Critical layers change 248 of 248 seen ground samples and 0 of 194 unseen ones; the whole look changes 248 seen and 0 unseen (cards standing in sight over ground beyond it); looks held (3, 1) with 2 tethers published, 1 of them the viewer's
+driver radv: fog edge along a change of ground level (a cliff): false
+driver radv: fog overlay: 36 unseen cells on the map, worst neighbour area ratio 1.08
+driver lavapipe: area 'psionic_storm' of radius 1.5 (43.1 px): edge errors per ray (px, outside positive) [-1.7, -1.3, -1.7, -1.7, -0.8, -1.3, -0.8, -1.3, -1.3, -0.4, 0.0, -0.5, -0.5, -0.5, -0.4, 0.0, 0.0, -0.4, 0.0, 0.8, 0.0, 0.4, 0.0, 0.7, 0.0, 0.0, 0.0, 0.0, -0.4, 0.0, -0.8, -0.9]; worst 1.72
+driver lavapipe: area 'psionic_storm': edge band median luminance change 89.1 levels (least 32); 0 pixels changed beyond 4 px outside on the near half; sRGB (look, bare floor) at the centre (Some([80, 60, 133]), Some([177, 179, 173])), mid radius (Some([88, 74, 128]), Some([180, 181, 176])), 0.95 radius (Some([79, 54, 140]), Some([179, 183, 183]))
+driver lavapipe: area 'psionic_storm': median luminance over 32 rays at 0.5 R 97.6, 0.8 R 86.9, 0.92 R 83.5, 0.97 R 84.2
+driver lavapipe: area 'blinding_cloud' of radius 2 (50.4 px): edge errors per ray (px, outside positive) [-1.0, -1.5, -1.5, -1.0, -1.4, -0.5, -0.4, -1.3, -0.9, -1.4, -0.5, -0.5, 0.0, -1.0, 0.0, 0.5, 0.5, 0.5, 0.5, -0.4, 0.0, 0.0, 0.8, 0.4, 0.8, 0.4, -0.4, 0.0, 0.0, -0.5, -0.5, -1.0]; worst 1.51
+driver lavapipe: area 'blinding_cloud': edge band median luminance change 69.1 levels (least 32); 0 pixels changed beyond 4 px outside on the near half; sRGB (look, bare floor) at the centre (Some([125, 126, 132]), Some([193, 196, 196])), mid radius (Some([112, 114, 121]), Some([177, 183, 180])), 0.95 radius (Some([103, 105, 110]), Some([189, 192, 192]))
+driver lavapipe: area 'blinding_cloud': median luminance over 32 rays at 0.5 R 116.2, 0.8 R 113.4, 0.92 R 109.8, 0.97 R 104.2
+driver lavapipe: tether from [769.1875, 237.17578] to [875.1374, 226.37183]: drawn from [768.6683, 237.2287] to [874.4349, 226.44345]; end errors 0.52 px and 0.71 px; 108 of 127 pixels along it changed
+driver lavapipe: tether widths: median 7 px over its middle half, grip 14 px at the victim (ratio 2.00); sRGB on the centre line Some([84, 25, 23]), 1 px inside each edge [Some([83, 25, 23]), Some([91, 29, 26])]
+driver lavapipe: tether sRGB at its middle: centre line Some([84, 25, 23]), edge (3 px off the line) Some([112, 109, 108]), bare floor Some([147, 150, 150])
+driver lavapipe: enemy area across the fog edge: Critical layers change 245 of 248 seen ground samples and 0 of 194 unseen ones; the whole look changes 248 seen and 0 unseen (cards standing in sight over ground beyond it); looks held (3, 1) with 2 tethers published, 1 of them the viewer's
+driver lavapipe: fog edge along a change of ground level (a cliff): false
+driver lavapipe: fog overlay: 36 unseen cells on the map, worst neighbour area ratio 1.08
+
+# The valgrind window (E1-4) was not re-run in round 3: see wp10r2_measurements.txt.

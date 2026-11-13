@@ -6,7 +6,8 @@
 //! [`placement`]), the live effect instances and their budget and level of detail, the
 //! instanced renderer of the `Sprite`, `Ring`, `Decal`, `Light` and CPU `Particles` blocks, and
 //! the looks held on units for their concealment and stance, whose `Shell` layers shape the
-//! units' own bubbles ([`stance`], WP8).
+//! units' own bubbles ([`stance`], WP8), and the looks held on published areas and tethers
+//! ([`areas`], WP10).
 //!
 //! # How it fits
 //! The simulation publishes facts (`CombatEventVisual::SplashVisual`, every weapon event's
@@ -23,6 +24,7 @@
 //!   sequence and layer index, never RNG state.
 //! - Pools are sized from the catalog's budget at load and never grow during a battle.
 
+pub mod areas;
 pub mod binding;
 pub mod budget;
 pub mod catalog;
@@ -48,6 +50,7 @@ pub struct EffectsPlugin;
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<render::EffectCatalogVersion>()
+            .init_resource::<areas::AreaLooks>()
             .add_systems(Startup, systems::load_effect_catalog)
             .add_systems(
                 Update,
@@ -56,6 +59,7 @@ impl Plugin for EffectsPlugin {
                         .after(crate::battle_pipeline::driver::publish_combat_events),
                     systems::spawn_mode_trails,
                     stance::present_stances,
+                    areas::present_areas_and_links,
                 )
                     .in_set(crate::battle_pipeline::BattleSet::Present),
             )

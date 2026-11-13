@@ -3,7 +3,8 @@
 //!
 //! # Responsibility
 //! Owns [`UnitEffectTables`]: per [`UnitTypeId`], the effects of each weapon (by
-//! [`WeaponKey`]: slot and mode index), of each status, of each mode and of death, with the
+//! [`WeaponKey`]: slot and mode index), of each status, of each mode, of each ability's area or
+//! tether (by the archetype's ability index, plan D-8, WP10) and of death, with the
 //! vocabulary's defaults filled in where the block names nothing.
 //!
 //! # How it fits
@@ -12,14 +13,15 @@
 //! event's [`EffectSource`] up here: one index and a scan of the unit's few weapons.
 //!
 //! # Invariants
-//! - Every name in every block resolves, every mode name is one of the archetype's modes, and
-//!   every effect is made for the kind of event its slot receives.
+//! - Every name in every block resolves, every mode name is one of the archetype's modes, every
+//!   ability name is one of the archetype's abilities, and every effect is made for the kind of
+//!   event its slot receives.
 
 use super::error::EffectCatalogError;
 use super::schema::EventKind;
 use super::{ConcealmentDefaults, EffectCatalog, EffectId};
 use sim_core::catalog::{ArchetypeEffects, UnitArchetype, UnitCatalog};
-use sim_types::{EffectSource, StatusKind, UnitTypeId, WeaponKey};
+use sim_types::{AbilitySource, EffectSource, StatusKind, UnitTypeId, WeaponKey};
 
 /// Event kinds a splash slot accepts.
 const SPLASH_KINDS: &[EventKind] = &[EventKind::Splash, EventKind::Line];
@@ -31,6 +33,8 @@ const DEATH_KINDS: &[EventKind] = &[EventKind::Death];
 const STATUS_KINDS: &[EventKind] = &[EventKind::Status];
 /// Event kinds a mode slot accepts.
 const MODE_KINDS: &[EventKind] = &[EventKind::Mode];
+/// Event kinds an ability slot accepts: the area or the tether the ability makes.
+const ABILITY_KINDS: &[EventKind] = &[EventKind::Area, EventKind::Link];
 
 /// Every status kind, in the order of [`status_index`].
 pub const STATUS_ORDER: [StatusKind; 8] = [
@@ -102,6 +106,8 @@ struct UnitEntry {
     status: [Option<EffectId>; STATUS_ORDER.len()],
     /// Death effect, default filled in.
     death: Option<EffectId>,
+    /// Area or tether effects, by index in the archetype's `abilities`.
+    abilities: Vec<(u8, EffectId)>,
 }
 
 /// Per-archetype effect choices, indexed by [`UnitTypeId`].
@@ -224,6 +230,18 @@ impl UnitEffectTables {
     #[must_use]
     pub const fn concealment(&self) -> &ConcealmentDefaults {
         &self.concealment
+    }
+
+    /// The effect of the area or tether `source`'s ability makes, if its caster's block names
+    /// one (no default: an ability without a look draws nothing, D-8).
+    #[must_use]
+    pub fn ability(&self, source: AbilitySource) -> Option<EffectId> {
+        self.units
+            .get(usize::from(source.unit_type.0))?
+            .abilities
+            .iter()
+            .find(|(ability, _)| *ability == source.ability)
+            .map(|(_, effect)| *effect)
     }
 
     /// The mode effects of `unit` for mode index `mode`, defaults filled in.
@@ -401,8 +419,19 @@ fn resolve_unit(
     entry.death = check
         .name("death", block.death.as_ref(), DEATH_KINDS)?
         .or(effects.defaults.death);
-    for name in block.abilities.values() {
-        check.name("ability", Some(name), &[EventKind::Area, EventKind::Link])?;
+    for (ability, name) in &block.abilities {
+        let index = archetype
+            .abilities
+            .iter()
+            .position(|spec| spec.name == *ability)
+            .and_then(|index| u8::try_from(index).ok())
+            .ok_or_else(|| EffectCatalogError::UnknownUnitAbility {
+                unit: archetype.slug.clone(),
+                ability: ability.clone(),
+            })?;
+        if let Some(effect) = check.name("ability", Some(name), ABILITY_KINDS)? {
+            entry.abilities.push((index, effect));
+        }
     }
     Ok(entry)
 }

@@ -1852,6 +1852,11 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization WP10): the storm, held while the
+            // simulation publishes its area.
+            effects: (
+                abilities: { "Psionic Storm": "psionic_storm" },
+            ),
             veo_prompts: {
                 Idle: "Mind-Storm Elder: Venerable alien master hovering cross-legged with radiant violet psionic coronal aura.",
                 Walk: "Mind-Storm Elder: Serene levitation drifting across battlefield surrounded by crackling telepathic motes.",
@@ -3642,6 +3647,11 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization WP10): the tongue of Abduct and the
+            // murk of Blinding Cloud, held while the simulation publishes the tether and the area.
+            effects: (
+                abilities: { "Abduct": "abduct_tether", "Blinding Cloud": "blinding_cloud" },
             ),
             veo_prompts: {
                 Idle: "Tongue Chameleon: Winged serpentine flyer with iridescent scales and coiled elastic bio-tongue.",

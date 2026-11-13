@@ -1254,3 +1254,193 @@ fn a_status_look_held_settled_draws_as_one_that_came_in() {
         "settled {settled} against came in {came_in}"
     );
 }
+
+/// WP10 review 1, E1-2 (strengthened by review 2, E2-1): while an enemy area is seen in part,
+/// what it laid follows its current clip, from the first frame the clip changes; on the frame
+/// the viewer stops seeing it, it is cut to nothing with every effect it laid, and released.
+#[test]
+fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid() {
+    use client::effects::areas::{
+        area_sight, keep_views_seen, AreaLooks, AreaSight, Keep, CLIP_NOTHING,
+    };
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let manifest = write_fixture_set(dir.path());
+    let effects = r#"
+        "cloud": (class: Major, event: Area, emit: Some((effect: "puff_area", every: 0.05)), layers: [
+            (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: AreaRadius, scale: 1.0),
+             duration: 0.1, held: true, exit: 0.4, priority: Critical),
+        ]),
+        "puff_area": (class: Minor, event: Area, layers: [
+            (block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: AreaRadius, scale: 0.3),
+             duration: 1.0),
+        ])"#;
+    let text = vocabulary(&manifest, "", effects, "");
+    let catalog = EffectCatalog::from_text(&text, &dir.path().join("effects.ron"), dir.path())
+        .expect("the vocabulary loads");
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<_> = units.archetypes().map(|arch| arch.unit_type_id).collect();
+    for id in &ids {
+        units.get_mut(*id).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
+    let caster = units
+        .archetypes()
+        .find(|arch| !arch.abilities.is_empty())
+        .map(|arch| arch.unit_type_id)
+        .expect("a shipped unit has an ability");
+    let archetype = units.get_mut(caster).expect("the archetype exists");
+    let name = archetype.abilities[0].name.clone();
+    archetype.effects.abilities = [(name, "cloud".to_owned())].into_iter().collect();
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the block resolves");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut looks = AreaLooks::default();
+    let area = sim_types::AreaView {
+        id: 7,
+        owner: PlayerId(1),
+        center: [10.2, 10.4, 0.0],
+        radius: 1.5,
+        remaining_ticks: 60,
+        total_ticks: 61,
+        source: Some(sim_types::AbilitySource {
+            unit_type: caster,
+            ability: 0,
+        }),
+    };
+    let sight = area_sight(bevy::math::Vec2::new(10.2, 10.4), 1.5, |x, _| {
+        x.floor() >= 10.0
+    });
+    let AreaSight::Part(clip) = sight else {
+        panic!("the area straddles the fog's edge: {sight:?}");
+    };
+    let frame = |looks: &mut AreaLooks, runtime: &mut EffectRuntime, index: u32, seen| {
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime,
+            now: f64::from(index) * 0.04,
+            delta: 0.04,
+        };
+        keep_views_seen(looks, (&[area], &[]), &[], |_| seen, |_| true, &mut keep);
+    };
+    for index in 1..=10 {
+        frame(&mut looks, &mut runtime, index, sight);
+    }
+    assert_eq!(looks.held(), (1, 0));
+    let clips: Vec<_> = runtime
+        .pool
+        .iter()
+        .map(|(_, instance)| instance.fog_clip)
+        .collect();
+    assert!(
+        clips.len() >= 4,
+        "the area and what it laid live: {}",
+        clips.len()
+    );
+    assert!(
+        clips.iter().all(|live| *live == clip),
+        "what the area laid follows its clip: {clips:?}"
+    );
+    // E2-1 (WP10 review 2): the sight changes to clip B; on B's first frame every live effect
+    // of the area, those laid under A included, carries B.
+    let moved = [0.0, 1.0, 9.6, 100.0];
+    assert_ne!(moved, clip);
+    frame(&mut looks, &mut runtime, 11, AreaSight::Part(moved));
+    let laid_under_a = runtime.pool.iter().count();
+    assert!(laid_under_a >= 4, "effects laid under A are still live");
+    assert!(
+        runtime
+            .pool
+            .iter()
+            .all(|(_, instance)| instance.fog_clip == moved),
+        "every live effect of the area follows the new clip on its first frame"
+    );
+    frame(&mut looks, &mut runtime, 12, AreaSight::Hidden);
+    assert_eq!(looks.held(), (0, 0), "the unseen area is released");
+    assert!(
+        runtime
+            .pool
+            .iter()
+            .all(|(_, instance)| instance.fog_clip == CLIP_NOTHING),
+        "nothing of it is drawn from the frame the viewer stops seeing it"
+    );
+}
+
+/// WP10 review 3, P3-4: a tether one of whose ends leaves the viewer's sight is removed on that
+/// frame, with no exit: its handle is dead and nothing of it is drawn.
+#[test]
+fn a_tether_whose_end_leaves_sight_is_removed_at_once() {
+    use client::effects::areas::{keep_views_seen, AreaLooks, AreaSight, Keep};
+    use sim_types::EntityId;
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let manifest = write_fixture_set(dir.path());
+    let effects = r#"
+        "rope": (class: Minor, event: Link, layers: [
+            (block: Ribbon(texture: "soft_disc", ramp: "white"), size: (scale: 0.05),
+             duration: 0.1, held: true, exit: 0.5, priority: Critical),
+        ])"#;
+    let text = vocabulary(&manifest, "", effects, "");
+    let catalog = EffectCatalog::from_text(&text, &dir.path().join("effects.ron"), dir.path())
+        .expect("the vocabulary loads");
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<_> = units.archetypes().map(|arch| arch.unit_type_id).collect();
+    for id in &ids {
+        units.get_mut(*id).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
+    let caster = units
+        .archetypes()
+        .find(|arch| !arch.abilities.is_empty())
+        .map(|arch| arch.unit_type_id)
+        .expect("a shipped unit has an ability");
+    let archetype = units.get_mut(caster).expect("the archetype exists");
+    let name = archetype.abilities[0].name.clone();
+    archetype.effects.abilities = [(name, "rope".to_owned())].into_iter().collect();
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the block resolves");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut looks = AreaLooks::default();
+    let body = |id: u32, x: f32| {
+        let mut bubble = burrowed(PlayerId(0), caster, 0, x, 0.0);
+        bubble.entity_id = EntityId(id);
+        bubble.concealment = Concealment::None;
+        bubble.stance = sim_types::StanceView::default();
+        bubble
+    };
+    let bubbles = [body(3, 1.0), body(9, 5.0)];
+    let link = sim_types::LinkView {
+        from: EntityId(3),
+        to: EntityId(9),
+        owner: PlayerId(0),
+        source: sim_types::AbilitySource {
+            unit_type: caster,
+            ability: 0,
+        },
+    };
+    let mut frame = |index: u32, shown: bool| {
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: f64::from(index) * 0.04,
+            delta: 0.04,
+        };
+        keep_views_seen(
+            &mut looks,
+            (&[], &[link]),
+            &bubbles,
+            |_| AreaSight::Whole,
+            |bubble| shown || bubble.entity_id != EntityId(9),
+            &mut keep,
+        );
+        (looks.held(), keep.runtime.pool.iter().count())
+    };
+    for index in 1..=3 {
+        assert_eq!(
+            frame(index, true),
+            ((0, 1), 1),
+            "the tether is held while both ends show"
+        );
+    }
+    assert_eq!(
+        frame(4, false),
+        ((0, 0), 0),
+        "on the frame an end leaves sight the tether is gone, with no exit"
+    );
+}

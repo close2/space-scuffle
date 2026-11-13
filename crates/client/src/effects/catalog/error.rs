@@ -323,6 +323,14 @@ pub enum EffectCatalogError {
         /// The mode name.
         mode: String,
     },
+    /// A unit's presentation block names an ability the archetype does not declare (WP10).
+    #[error("unit '{unit}' presentation block names unknown ability '{ability}'")]
+    UnknownUnitAbility {
+        /// Slug of the unit or structure.
+        unit: String,
+        /// The ability name.
+        ability: String,
+    },
     /// A unit's presentation block uses an effect made for another kind of event.
     #[error(
         "unit '{unit}' {slot} names effect '{name}' made for {found:?} events, not {expected:?}"

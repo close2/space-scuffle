@@ -79,6 +79,9 @@ pub struct EffectInstance {
     pub held_exit: f32,
     /// For a held effect, the time its one-shot layers end (its birth otherwise).
     pub oneshot_end: f64,
+    /// The clip window every layer without a clip of its own is cut to: where the fog begins
+    /// across an area the viewer sees in part (WP10); no clip otherwise.
+    pub fog_clip: super::particles::LineClip,
 }
 
 /// A slot: its generation and its instance, if live.
@@ -270,6 +273,7 @@ mod tests {
             released_at: None,
             held_exit: 0.0,
             oneshot_end: 0.0,
+            fog_clip: [0.0; 4],
         }
     }
 

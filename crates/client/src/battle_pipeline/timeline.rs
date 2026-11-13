@@ -5,7 +5,9 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::Resource;
-use sim_types::{BubbleRenderInstance, CombatEventVisual, RenderSnapshot, Tick};
+use sim_types::{
+    AreaView, BubbleRenderInstance, CombatEventVisual, LinkView, RenderSnapshot, Tick,
+};
 
 use super::commands::SessionGeneration;
 
@@ -223,6 +225,24 @@ impl BattleFrameState {
     #[must_use]
     pub fn presented(&self) -> &RenderSnapshot {
         &self.presented
+    }
+
+    /// The persistent areas and tethers of the presented tick (plan
+    /// `2026-11-09-effect-visualization` WP10): those of the previous snapshot while the pose
+    /// is interpolated from it, else those of the current one. Like the bubbles' membership,
+    /// they change only at the displayed tick; read in place, never copied.
+    #[must_use]
+    pub fn presented_effect_views(&self) -> (&[AreaView], &[LinkView]) {
+        let source = if self.presented_valid
+            && self.previous_valid
+            && self.presented.tick == self.previous.tick
+            && self.presented.tick != self.current.tick
+        {
+            &self.previous
+        } else {
+            &self.current
+        };
+        (&source.areas, &source.links)
     }
 
     /// Computes a frame's pose into reusable storage; alpha is a finite fraction from zero through one.
