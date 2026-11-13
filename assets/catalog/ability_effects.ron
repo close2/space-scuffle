@@ -199,5 +199,19 @@
                 ])),
             )),
         ),
+        // ---- Concussive Shells: liberty EffectData:1641-1660, ValidatorData:654-658, :1084-1086, :1424-1426 ----
+        (
+            // PunisherGrenadesSlow, :1653-1660: the slow of the Marauder analogue's impact set
+            // (PunisherGrenadesSet, :1641-1645), run on each direct hit once the owner has the
+            // research (validator PunisherGrenadesResearched, ValidatorData:654-658; the
+            // upgrade's WeaponHitEffect in upgrades.ron). Validators PunisherGrenadesSlowTargetFilters
+            // ("-;Massive", :1424-1426) and NotStructure (:1084-1086); NotFrenzied counts the
+            // Ultralisk's Frenzy, which is massive anyway (liberty UnitData:8079).
+            name: "concussive_shells_slow",
+            node: ApplyStatus((
+                status: "concussive_shells_slow",               // Behavior Slow, :1659
+                require: Some((structures: Exclude, without_attributes: [Massive])),
+            )),
+        ),
     ],
 )

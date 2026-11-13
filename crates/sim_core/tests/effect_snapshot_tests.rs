@@ -665,11 +665,31 @@ fn status_flags_follow_buffs() {
     let status = bubble(&step(&mut world), unit).status;
     assert!(status.dash && !status.overclock && !status.slowed);
 
-    {
-        let entity = world.entities.get_mut(&unit).expect("the unit");
-        entity.active_buffs.clear();
-        entity.apply_concussive_slow().expect("a valid slow");
-    }
+    // A slowing status of the effect engine (Concussive Shells' hit, plan
+    // `2026-11-05-sc2-deviation-fixes` WP13d) raises the slow flag.
+    world
+        .entities
+        .get_mut(&unit)
+        .expect("the unit")
+        .active_buffs
+        .clear();
+    let slow = world
+        .catalog
+        .spells()
+        .effect_id("concussive_shells_slow")
+        .expect("the shipped concussive slow");
+    let position = world.entities[&unit].position;
+    world.run_effect(
+        slow,
+        sim_types::EffectContext {
+            owner: ATTACKER,
+            caster: None,
+            ability: AbilitySource::default(),
+            origin: position,
+            source_point: position,
+            target: sim_types::EffectTarget::Unit(unit),
+        },
+    );
     let status = bubble(&step(&mut world), unit).status;
     assert!(status.slowed && !status.dash && !status.overclock);
 }

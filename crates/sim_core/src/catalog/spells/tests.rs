@@ -71,9 +71,9 @@ fn the_shipped_files_load_with_the_four_spells() {
     assert!(!cloud.needs_origin);
     assert_eq!(
         spells.status_count(),
-        7,
+        8,
         "psionic_storm, abducted, abduct_mark, fungal_growth, fungal_growth_slow, \
-         blinding_cloud and blinding_cloud_structure"
+         blinding_cloud, blinding_cloud_structure and concussive_shells_slow"
     );
 }
 

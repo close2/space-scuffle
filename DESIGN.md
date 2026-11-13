@@ -170,7 +170,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 === end
 
-| B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
 | B-49 | Which radius spaces units (`separation_radius` is unread) | WP16 |
@@ -189,10 +188,9 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-65 | Unload sets every passenger down at once and stops the carrier | WP17 |
 | B-66 | A blocked exit stalls production | WP17 |
 | B-67 | Next-patch search radius 12 is unsourced | WP17 |
-| B-68 | 13 researchable upgrades have no effect | WP13d, WP18 |
+| B-68 | 12 researchable upgrades have no effect | WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
-| B-77 | Hard-coded Concussive slow | WP13d |
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |

@@ -1688,3 +1688,90 @@ fn shipped_statuses_have_held_looks_and_named_deaths_replace_the_shatter() {
         sim_types::UnitTypeId(0)
     ));
 }
+
+/// Plan `2026-11-05-sc2-deviation-fixes` `WP13d`: a researched Concussive Shells hit of the
+/// shipped Marauder analogue publishes the slow on the struck unit's bubble, which the client
+/// shows with the shipped default `Slowed` look, `concussive_daze`; without the research the hit
+/// publishes nothing.
+#[test]
+fn a_researched_concussive_hit_publishes_the_slow_the_daze_look_shows() {
+    use client::effects::stance::status_shown;
+    use sim_types::{PlayerId, SimScalar, SimVec2, StatusKind, Tick, TickBundle, UnitOrder};
+    let root = ResolvedAssetsRoot::resolve().expect("assets root");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let look = catalog
+        .defaults
+        .status
+        .get(&StatusKind::Slowed)
+        .copied()
+        .expect("a default slowed look");
+    assert_eq!(
+        catalog.effect(look).expect("loaded").name,
+        "concussive_daze"
+    );
+
+    for researched in [false, true] {
+        let map = sim_map::GameMap::new(
+            48,
+            48,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )
+        .expect("a flat map");
+        let mut world = sim_fixtures::world(map, 0x0D_A2E);
+        if researched {
+            world
+                .research_upgrade(PlayerId(0), "concussive_shells")
+                .expect("research admitted");
+        }
+        let spawn = |world: &mut sim_core::SimWorld, slug: &str, owner: u8, x: i32| {
+            let kind = world.catalog.id_by_slug(slug).expect("a shipped unit");
+            let at = SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(20));
+            let id = world
+                .spawn_unit(kind, PlayerId(owner), at)
+                .expect("open ground");
+            world
+                .entities
+                .get_mut(&id)
+                .expect("spawned")
+                .issue_order(UnitOrder::HoldPosition, false)
+                .expect("hold admitted");
+            id
+        };
+        let golem = spawn(&mut world, "shock_golem", 0, 20);
+        let target = spawn(&mut world, "pulse_bot", 1, 24);
+        world
+            .entities
+            .get_mut(&golem)
+            .expect("spawned")
+            .issue_order(
+                UnitOrder::AttackTarget {
+                    target,
+                    origin: sim_types::AttackOrigin::default(),
+                },
+                false,
+            )
+            .expect("attack admitted");
+        let life = world.entities[&target].hp;
+        let snapshot = (0..120)
+            .find_map(|_| {
+                let snapshot = world.step(&TickBundle {
+                    tick: Tick(world.current_tick),
+                    commands: Vec::new(),
+                    state_checksum: None,
+                });
+                (world.entities[&target].hp < life).then_some(snapshot)
+            })
+            .expect("the golem hits within 120 ticks");
+        let bubble = snapshot
+            .bubbles
+            .iter()
+            .find(|bubble| bubble.entity_id == target)
+            .expect("the target is drawn");
+        assert_eq!(
+            status_shown(bubble, StatusKind::Slowed),
+            researched,
+            "researched: {researched}"
+        );
+    }
+}

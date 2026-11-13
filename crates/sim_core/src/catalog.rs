@@ -763,8 +763,47 @@ impl UnitCatalog {
                     ))
                 }
             }
+            UpgradeEffect::WeaponHitEffect { target_slug, .. } => {
+                let target = self.get_by_slug(target_slug).ok_or_else(|| {
+                    unresolved(
+                        "WeaponHitEffect.target_slug",
+                        "must reference an archetype in the unit catalog",
+                    )
+                })?;
+                if target.weapon.is_none() && target.air_weapon.is_none() {
+                    return Err(unresolved(
+                        "WeaponHitEffect.target_slug",
+                        "must reference an archetype with a weapon",
+                    ));
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
+    }
+
+    /// Checks that every weapon hit effect of `upgrades` ([`UpgradeEffect::WeaponHitEffect`])
+    /// names an effect of the installed spell catalog. Run after
+    /// [`Self::set_spell_catalog`]; [`Self::validate_upgrade_references`] checks the targets.
+    ///
+    /// # Errors
+    /// Returns [`SimCoreError::CatalogInvalidValue`] naming the first upgrade whose effect key
+    /// the spell catalog lacks.
+    pub fn validate_weapon_hit_effects(&self, upgrades: &UpgradeCatalog) -> SimResult<()> {
+        for upgrade in upgrades.upgrades() {
+            for effect in &upgrade.effects {
+                if let UpgradeEffect::WeaponHitEffect { effect, .. } = effect {
+                    if self.spells().effect_id(effect).is_none() {
+                        return Err(SimCoreError::CatalogInvalidValue {
+                            definition: upgrade.slug.clone(),
+                            field: "WeaponHitEffect.effect".to_owned(),
+                            reason: "must name an effect of ability_effects.ron",
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Rejects research that would carry a unit past the sight radius vision supports.

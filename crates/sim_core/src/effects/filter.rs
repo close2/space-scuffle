@@ -3,7 +3,7 @@
 //!
 //! A unit is a valid target while it exists, lives (`hp > 0`) and is not hidden in a
 //! transport, the editor's default `Dead` and `Hidden` exclusions. Filters additionally
-//! exclude invulnerable units and narrow by owner, plane, structure and status.
+//! exclude invulnerable units and narrow by owner, plane, structure, attribute and status.
 
 use super::state::EffectWorld;
 use crate::catalog::{ResolvedFilter, UnitCatalog};
@@ -73,7 +73,12 @@ pub(crate) fn passes_filter(
         StructureRule::Exclude => !structure,
         StructureRule::Only => structure,
     };
+    let attributes = filter.without_attributes.is_empty()
+        || catalog
+            .get(entity.unit_type_id)
+            .is_ok_and(|arch| !arch.attributes.intersects(filter.without_attributes));
     structures
+        && attributes
         && filter
             .without_status
             .is_none_or(|status| !effects.has_status(entity.id, status))

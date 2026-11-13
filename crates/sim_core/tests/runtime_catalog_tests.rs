@@ -717,8 +717,8 @@ fn an_edited_status_changes_a_fungal_slow_without_recompiling() -> TestResult {
     let statuses = std::fs::read_to_string(bundle.directory.join(FILES[4]))?;
     assert_eq!(
         statuses.matches("move_speed_factor:").count(),
-        1,
-        "the slow is the one status that changes speed"
+        2,
+        "Fungal Growth's slow, first in the file, and the concussive slow change speed"
     );
     std::fs::write(
         bundle.directory.join(FILES[4]),

@@ -361,7 +361,14 @@
             research_ticks: 1071,
             researched_at: "assembly_bay_dome",
             requires_structures: ["tech_module_pod"],
-            effects: [],
+            // PunisherGrenades: the slow of the Marauder's impact set runs behind
+            // PunisherGrenadesResearched (liberty EffectData:1653-1660, ValidatorData:654-658).
+            effects: [
+                WeaponHitEffect(
+                    target_slug: "shock_golem",
+                    effect: "concussive_shells_slow",
+                ),
+            ],
         ),
         (
             upgrade_id: 19,

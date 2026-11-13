@@ -577,8 +577,6 @@ fn typed_overclock_and_refresh_preserve_order_and_existing_buff_position() -> Te
         ))
     );
     assert_eq!(*actor, before);
-    assert!(actor.apply_concussive_slow().is_err());
-    assert_eq!(*actor, before);
     Ok(())
 }
 

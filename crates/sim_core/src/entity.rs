@@ -179,7 +179,8 @@ pub struct PendingStrikes {
 /// An active timed buff or debuff affecting unit stats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveBuff {
-    /// Distinct buff identifier (1 = Stimpack, 2 = Concussive Shells, 3 = attack dash).
+    /// Distinct buff identifier (1 = Stimpack, 3 = attack dash; slowing debuffs
+    /// are statuses of the effect engine).
     pub buff_id: u8,
     /// Remaining duration in ticks.
     pub remaining_ticks: u16,
@@ -1018,26 +1019,6 @@ impl Entity {
         self.active_buffs
             .iter()
             .any(|buff| buff.buff_id == ATTACK_DASH_BUFF_ID)
-    }
-
-    /// Applies the existing half-speed75-tick debuff after checked fold preparation.
-    ///
-    /// # Errors
-    /// Rejects malformed or unrepresentable buff state without changing duration.
-    pub fn apply_concussive_slow(&mut self) -> Result<(), EntityAdmissionError> {
-        self.speed_multiplier()?;
-        if let Some(buff) = self.active_buffs.iter_mut().find(|b| b.buff_id == 2) {
-            buff.remaining_ticks = 75;
-        } else {
-            self.prospective_speed_multiplier(2, SimScalar::HALF)?;
-            self.active_buffs.push(ActiveBuff {
-                buff_id: 2,
-                remaining_ticks: 75,
-                speed_multiplier: SimScalar::HALF,
-                attack_rate_multiplier: SimScalar::ONE,
-            });
-        }
-        Ok(())
     }
 
     fn prospective_speed_multiplier(

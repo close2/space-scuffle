@@ -32,9 +32,9 @@ fn tier_locked(def: &UpgradeDef, state: &PlayerUpgradeState) -> bool {
                 (state.armor_levels.get(armor_class).copied(), *level)
             }
             UpgradeEffect::ShieldLevel { level } => (Some(state.shield_level), *level),
-            UpgradeEffect::ModifyUnitStat { .. } | UpgradeEffect::UnlockAbility { .. } => {
-                return false
-            }
+            UpgradeEffect::ModifyUnitStat { .. }
+            | UpgradeEffect::UnlockAbility { .. }
+            | UpgradeEffect::WeaponHitEffect { .. } => return false,
         };
         held.unwrap_or(0).saturating_add(1) < level
     })

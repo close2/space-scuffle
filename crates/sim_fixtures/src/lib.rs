@@ -91,6 +91,9 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
                 .expect("invariant: the shipped statuses.ron and ability_effects.ron are valid"),
         )
         .expect("invariant: the shipped abilities name only shipped effects and statuses");
+    units
+        .validate_weapon_hit_effects(&upgrades)
+        .expect("invariant: the shipped upgrades name only shipped weapon hit effects");
     RuntimeCatalogs { units, upgrades }
 }
 
