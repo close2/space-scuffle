@@ -1363,3 +1363,84 @@ fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid()
         "nothing of it is drawn from the frame the viewer stops seeing it"
     );
 }
+
+/// WP10 review 3, P3-4: a tether one of whose ends leaves the viewer's sight is removed on that
+/// frame, with no exit: its handle is dead and nothing of it is drawn.
+#[test]
+fn a_tether_whose_end_leaves_sight_is_removed_at_once() {
+    use client::effects::areas::{keep_views_seen, AreaLooks, AreaSight, Keep};
+    use sim_types::EntityId;
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let manifest = write_fixture_set(dir.path());
+    let effects = r#"
+        "rope": (class: Minor, event: Link, layers: [
+            (block: Ribbon(texture: "soft_disc", ramp: "white"), size: (scale: 0.05),
+             duration: 0.1, held: true, exit: 0.5, priority: Critical),
+        ])"#;
+    let text = vocabulary(&manifest, "", effects, "");
+    let catalog = EffectCatalog::from_text(&text, &dir.path().join("effects.ron"), dir.path())
+        .expect("the vocabulary loads");
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<_> = units.archetypes().map(|arch| arch.unit_type_id).collect();
+    for id in &ids {
+        units.get_mut(*id).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
+    let caster = units
+        .archetypes()
+        .find(|arch| !arch.abilities.is_empty())
+        .map(|arch| arch.unit_type_id)
+        .expect("a shipped unit has an ability");
+    let archetype = units.get_mut(caster).expect("the archetype exists");
+    let name = archetype.abilities[0].name.clone();
+    archetype.effects.abilities = [(name, "rope".to_owned())].into_iter().collect();
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the block resolves");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut looks = AreaLooks::default();
+    let body = |id: u32, x: f32| {
+        let mut bubble = burrowed(PlayerId(0), caster, 0, x, 0.0);
+        bubble.entity_id = EntityId(id);
+        bubble.concealment = Concealment::None;
+        bubble.stance = sim_types::StanceView::default();
+        bubble
+    };
+    let bubbles = [body(3, 1.0), body(9, 5.0)];
+    let link = sim_types::LinkView {
+        from: EntityId(3),
+        to: EntityId(9),
+        owner: PlayerId(0),
+        source: sim_types::AbilitySource {
+            unit_type: caster,
+            ability: 0,
+        },
+    };
+    let mut frame = |index: u32, shown: bool| {
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: f64::from(index) * 0.04,
+            delta: 0.04,
+        };
+        keep_views_seen(
+            &mut looks,
+            (&[], &[link]),
+            &bubbles,
+            |_| AreaSight::Whole,
+            |bubble| shown || bubble.entity_id != EntityId(9),
+            &mut keep,
+        );
+        (looks.held(), keep.runtime.pool.iter().count())
+    };
+    for index in 1..=3 {
+        assert_eq!(
+            frame(index, true),
+            ((0, 1), 1),
+            "the tether is held while both ends show"
+        );
+    }
+    assert_eq!(
+        frame(4, false),
+        ((0, 0), 0),
+        "on the frame an end leaves sight the tether is gone, with no exit"
+    );
+}

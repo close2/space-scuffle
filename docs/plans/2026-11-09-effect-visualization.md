@@ -1483,6 +1483,9 @@ review).**
 | Area looks (`area_sight`) | Collect the seen samples once, and take only dot products per axis (about 9 000 `sees` calls per partly seen area per frame today) (P2-2). | WP10 2 |
 | `psionic_storm` | The storm reads as violet smoke rather than psionic energy: smaller, slightly brighter pockets that flicker in place, with no rays, and staying below white where two storms overlap (P2-3; owner's taste). | WP10 2 |
 | WP10 evidence | Fill or drop the black half of the crowd sheet, and centre one ring of units in each storm (P2-5). | WP10 2 |
+| `psionic_storm` | The rim is the darkest, most saturated element and the body has floor-bright holes, so the storm reads a little like an inked outline round a mottled disc: soften the band's inner side into the body, or fill the body a little more (P3-1; owner's taste). | WP10 3 |
+| `psionic_storm`, `blinding_cloud` | The outline is still nearly a perfect circle at 1:1 (`edge_noise` 0.05): breakup on the band's outer lip, within the ±2 px edge test (P3-2). | WP10 3 |
+| `abduct_tether` | The edges are hard and aliased at 3x: a 1 px soft rim in the dark edge colour would keep the opaque-edge rule and lose the stair-steps (P3-3). | WP10 3 |
 | Area looks | The per-pixel fog mask must come before any area larger than radius 2 ships (P1-1). When it lands, show one partly seen area across a cliff edge on a staged map that has one: the cliff case (decals smearing down a face, cards standing over the lip) belongs to the mask and to the decal system (review 2, V1-3). | WP10 1, 2 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
@@ -2340,3 +2343,54 @@ The new fog stage puts the enemy storm mostly in sight: 248 seen ground samples,
 of them.
 
 Packet: section "WP10 round 3".
+
+## Amendment 23: WP10 round 4 (the tether only), decided by the orchestrator after WP10 review 3 (2026-11-13)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp10_3.md`](../evidence/effects/review/independent_review_wp10_3.md)).** Review 3 accepted
+`psionic_storm`, `blinding_cloud`, the fog overlay (V2-1), E2-1, P2-1 and P2-4, and closed them. It rejected
+`abduct_tether` on A3-1. This is round 4 of the owner's five (Q0080), and it changes the tether only. P3-1 to P3-3 are
+recorded in the open polish list (Amendment 9's table), and the P3-4 test is added. No simulation state, golden
+replay or checksum changes (D-1 holds). The accepted areas are untouched.
+
+1. **A3-1 (a), a blunt grip with no narrowing into the victim.**
+   - The grip is a round `droplet` card in its `Radial` shape, with fixed rotation and no noise breakup, held at 1.6
+     times its coverage (the new curve `hold_firm`) rather than at 2.5.
+   - The tongue's strips have no taper at the victim's end.
+   - The GPU test asserts:
+     - the tongue's width 1 px outside the victim's bubble is at least its middle-half median;
+     - the grip's width is at least 1.8 times that median.
+   - Both drivers' figures are recorded here, and they are within 20 % of each other.
+2. **A3-1 (b), the grip's offset in its own unit.**
+   - A new placement, `LineEnd { back }`, puts one instance at the far end of the event's line, moved back along it
+     by a fixed distance and never past its start (`client::effects::placement`, with a unit test at three
+     lengths).
+   - The grip is set back 0.2 units, 0.6 of its 0.34 radius, at any range; the caster's swelling sits at the
+     tether's anchor.
+   - The evidence child stages a second tether at Abduct's full range of 9 (from the second caster to an enemy on
+     open, seen ground). The test requires that shot.
+3. **A3-1 (c), visible bulges that travel.**
+   - The core is narrower (0.18 units).
+   - Two puff strips of 0.48 and 0.4 units are held at 2.5 times their coverage, with repeats of 0.8 and 0.53 and
+     speeds of about 1.3 and 0.48 units a second towards the caster, so one overtakes the other. The fast strip's
+     spacing is long so that two shots up to 0.3 s apart still show the direction.
+   - The GPU test asserts:
+     - the widest column over the middle half is at least 1.6 times the narrowest;
+     - the bulges travel towards the caster by at least 2 px per 80 ms, by matching a second shot to the first.
+   - The second shot is taken two frames after the first, but the capture pipeline delays it, so 200 ms (radv) or
+     240 ms (lavapipe) separate them. The travel is scaled to 80 ms.
+   - The opaque-edge rule (A2-2 (b)) is kept.
+4. **P3-4.** `effect_runtime_tests.rs` adds a test that a tether one of whose ends leaves sight is gone on that frame:
+   no slot, and no live instance.
+
+**Measured (3x tether shot)**
+
+| Driver | Median width | Width 1 px outside the victim | Grip | Grip ratio | Narrowest to widest | Travel | Centre line sRGB | 1 px inside each edge, sRGB |
+|---|---|---|---|---|---|---|---|---|
+| radv | 7 px | 13 px | 16 px | 2.29 | 4 to 9 px (2.25) | 6 px over 200 ms (2.4 px per 80 ms); widest bulge from 72 to 66 px from the caster's end | (84, 26, 23) | (82, 25, 23), (90, 28, 26) |
+| lavapipe | 7 px | 13 px | 16 px | 2.29 | 4 to 9 px (2.25) | 7 px over 240 ms (2.3 px per 80 ms); widest bulge from 72 to 66 px | (84, 26, 23) | (82, 25, 23), (90, 29, 26) |
+
+The full-range tether spans 250 px on both drivers, and its ends stay 0.52 and 0.29 px from the bubbles' surfaces.
+The figures are in `wp10r4_measurements.txt`.
+
+Packet: section "WP10 round 4".

@@ -139,7 +139,7 @@ pub fn instance_count(
     line: Option<WorldLine>,
 ) -> u32 {
     match placement {
-        PlacementDef::Point => 1,
+        PlacementDef::Point | PlacementDef::LineEnd { .. } => 1,
         PlacementDef::Disc { count, .. } | PlacementDef::Circle { count, .. } => {
             (*count).min(MAX_INSTANCES_PER_PLACEMENT)
         }
@@ -183,6 +183,21 @@ pub fn place(
     line: Option<WorldLine>,
 ) -> Placed {
     match placement {
+        PlacementDef::LineEnd { back } => {
+            let Some(line) = line else {
+                return Placed {
+                    offset: Vec3::ZERO,
+                    delay: 0.0,
+                };
+            };
+            let span = line.to - line.from;
+            let length = span.length();
+            let back = resolve_value(back, bound).clamp(0.0, length);
+            Placed {
+                offset: span.normalize_or_zero() * (length - back),
+                delay: 0.0,
+            }
+        }
         PlacementDef::Point => Placed {
             offset: Vec3::ZERO,
             delay: 0.0,
@@ -510,5 +525,31 @@ mod tests {
         let mut far = WorldLine::whole(Vec3::ZERO, Vec3::X);
         far.seen = 1 << 63;
         assert!(far.sees_point(63) && far.sees_point(200) && !far.sees_point(62));
+    }
+
+    /// WP10 review 3, A3-1 (b): a grip set back from the line's far end by a fixed distance,
+    /// whatever the line's length, and never past its start.
+    #[test]
+    fn a_line_end_placement_stands_a_fixed_distance_back_from_the_far_end() {
+        let placement = PlacementDef::LineEnd {
+            back: constant(0.12),
+        };
+        let bound = BoundValues::default();
+        for length in [1.0_f32, 3.6, 9.4] {
+            let line = WorldLine::whole(Vec3::ZERO, Vec3::new(length, 0.0, 0.0));
+            assert_eq!(instance_count(&placement, &bound, Some(line)), 1);
+            let placed = place(&placement, 0, 7, &bound, Some(line));
+            assert!(
+                (placed.offset.x - (length - 0.12)).abs() < 1e-5,
+                "{length}: {placed:?}"
+            );
+            assert!(placed_seen(&placement, 0, Some(line), &bound));
+        }
+        let short = WorldLine::whole(Vec3::ZERO, Vec3::new(0.05, 0.0, 0.0));
+        assert_eq!(
+            place(&placement, 0, 7, &bound, Some(short)).offset,
+            Vec3::ZERO
+        );
+        assert_eq!(place(&placement, 0, 7, &bound, None).offset, Vec3::ZERO);
     }
 }

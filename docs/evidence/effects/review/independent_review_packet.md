@@ -7,6 +7,54 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP10 round 4 (the tether only)
+
+Round 3's review ([`independent_review_wp10_3.md`](independent_review_wp10_3.md), kept as written) accepted both areas
+and all the engineering. Only `abduct_tether` remains (A3-1). The orchestrator's decisions are plan Amendment 23.
+This is round 4 of at most five (Q0080).
+
+Please write the review to a new file next to this one, `independent_review_wp10_4.md`, and judge the tether only, on
+A3-1 and the seven checklist items. Nothing was spent and no texture was made. Only the tether's evidence was
+re-taken, on both drivers. Files start with `wp10r4_`.
+
+### What changed
+
+| A3-1 part | Change |
+|---|---|
+| (a) grip and tip | The grip is a round `droplet` card in its `Radial` shape, with fixed rotation and no noise, held at 1.6 (not 2.5) times its coverage. The strips no longer taper at the victim's end. |
+| (b) offset | A new placement `LineEnd { back }` sets the grip 0.2 units (0.6 of its 0.34 radius) back from the victim's surface at any range. The evidence child shows a second tether at Abduct's full range of 9. |
+| (c) bulges | A narrower core (0.18 units). Two puff strips of 0.48 and 0.4 units, at repeats of 0.8 and 0.53 and speeds of about 1.3 and 0.48 units a second towards the caster. The opaque edge is kept. |
+| P3-4 | A runtime test: a tether is gone on the frame one of its ends leaves sight. |
+| P3-1 to P3-3 | Recorded in the plan's open polish list. |
+
+### Measured (3x shot; both drivers)
+
+| Driver | Median width | Width 1 px outside the victim | Grip (ratio) | Narrowest to widest | Travel towards the caster | Centre line sRGB | 1 px inside each edge, sRGB |
+|---|---|---|---|---|---|---|---|
+| radv | 7 px | 13 px | 16 px (2.29) | 4 to 9 px (2.25) | 6 px over 200 ms (2.4 px per 80 ms); widest bulge 72 → 66 px from the caster's end | (84, 26, 23) | (82, 25, 23), (90, 28, 26) |
+| lavapipe | 7 px | 13 px | 16 px (2.29) | 4 to 9 px (2.25) | 7 px over 240 ms (2.3 px per 80 ms); 72 → 66 px | (84, 26, 23) | (82, 25, 23), (90, 29, 26) |
+
+The second shot is taken two frames after the first, but the capture pipeline delays it, so 200 or 240 ms separate
+the two pictures. The travel is matched over that interval and scaled to 80 ms. Neither strip's spacing aliases at
+that interval. The tether's ends lie 0.52 and 0.29 px from the bubbles' surfaces. The full-range tether spans 250 px.
+
+### Material
+
+| What | Files (radv; lavapipe: same names ending `_lavapipe`) |
+|---|---|
+| 3x, top to bottom: whole look, the same 200 to 240 ms later, `Critical` only, none | [tether](wp10r4_tether_radv.jpg) |
+| Every 40 ms frame from the cast to 0.5 s after the tether ends | [sequence](wp10r4_tether_sequence_radv.jpg) |
+| The tether at Abduct's full range, 3x | [full range](wp10r4_tether_far_radv.jpg) |
+| Measurements | [wp10r4_measurements.txt](wp10r4_measurements.txt) |
+
+### Points to look at
+
+- Whether the grip reads as a blunt, round end pressed against the victim, with no point or barbs, and whether the
+  tongue keeps its width into it.
+- Whether the bulges can be seen at 1:1, and whether they read as travelling towards the caster in the sequence.
+- Whether the tongue reads as a tongue, not a beam, a bead chain, a rod or a harpoon, at 1:1, at 3x and at full range.
+- The edges at 3x: they are still hard (P3-3, recorded).
+
 ## WP10 round 3 (areas and tethers)
 
 Round 2's review ([`independent_review_wp10_2.md`](independent_review_wp10_2.md), kept as written) accepted

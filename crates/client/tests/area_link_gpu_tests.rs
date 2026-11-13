@@ -180,6 +180,18 @@ const GRIP_WIDTH_RATIO: f32 = 1.8;
 /// Levels per channel by which the tongue's colour 1 px inside its edge may lie outside the
 /// brief's range from sRGB (45, 12, 12) to (95, 30, 28) (A2-2 (b)).
 const TONGUE_EDGE_TOLERANCE: u8 = 25;
+/// World units from the second caster's centre to the far victim's: Abduct's range of 9 from
+/// edge to edge, less a margin (A3-1 (b)).
+const FAR_RANGE: f32 = 9.2;
+/// Frames after its publication at which the full-range tether is pictured (it comes in over
+/// 0.1 s).
+const FAR_SETTLE_FRAMES: u32 = 4;
+/// Frames between the tether shot and the later one: 80 ms at the 40 ms step (A3-1 (c)).
+const LATER_FRAMES: u32 = 2;
+/// Least ratio of the widest to the narrowest tongue over its middle half (A3-1 (c)).
+const BULGE_RATIO: f32 = 1.6;
+/// Least travel of the bulges towards the caster over 80 ms, window pixels (A3-1 (c)).
+const BULGE_TRAVEL_PX: f32 = 2.0;
 /// Band, in window pixels, just inside the projected radius for E1-5 (a).
 const EDGE_BAND_PX: f32 = 3.0;
 /// Unchanged ray samples (0.01 radii each) bridged inside an area's footprint.
@@ -194,6 +206,8 @@ enum Shot {
     AreasCritical,
     AreasBare,
     Tether,
+    /// The tether two frames (80 ms) after [`Shot::Tether`], for its bulges' travel (A3-1 (c)).
+    TetherLater,
     TetherCritical,
     TetherBare,
     Fog,
@@ -263,6 +277,12 @@ struct Report {
     fog_cliff: bool,
     /// Window pixels of the areas' centres in the crowd picture (V1-2).
     crowd: Vec<[f32; 2]>,
+    /// Seconds of `Time<Virtual>` at the tether shot and at the later one (A3-1 (c)).
+    tether_times: [f64; 2],
+    /// The full-range tether's window-pixel ends, if the evidence child staged it (A3-1 (b)).
+    tether_far: Option<[[f32; 2]; 2]>,
+    /// Where the evidence child put the full-range victim, map `x, y`, if it found a place.
+    far_place: Option<[f32; 2]>,
 }
 
 /// How the effect layers are drawn for a shot.
@@ -319,7 +339,12 @@ enum Phase {
 /// The stages: what is cast, and which shots are then taken.
 const STAGES: [&[Shot]; 3] = [
     &[Shot::Areas, Shot::AreasCritical, Shot::AreasBare],
-    &[Shot::Tether, Shot::TetherCritical, Shot::TetherBare],
+    &[
+        Shot::Tether,
+        Shot::TetherLater,
+        Shot::TetherCritical,
+        Shot::TetherBare,
+    ],
     &[Shot::Fog, Shot::FogCritical, Shot::FogBare],
 ];
 
@@ -343,6 +368,10 @@ struct Staging {
     sequence_only: bool,
     /// A second caster of the evidence child, for a storm overlapping the first (V1-2).
     second_caster: Option<EntityId>,
+    /// An enemy at Abduct's full range from the second caster, which it pulls (A3-1 (b)).
+    far_victim: Option<EntityId>,
+    /// The sequence frame the full-range tether was first published on.
+    far_first: Option<u32>,
     /// What the evidence child pictures, by published area or tether.
     watches: Vec<Watch>,
 }
@@ -857,6 +886,7 @@ fn record(
     fog: &BattleFog,
     looks: &AreaLooks,
     camera: (&Camera, &GlobalTransform),
+    now: f64,
 ) {
     let world = session.world().expect("a ready session has a world");
     let snapshot = session.frames.current();
@@ -869,7 +899,11 @@ fn record(
                 .map(|area| area_shot(world, camera, fog, area, look_of(world, area.source)))
                 .collect();
         }
+        Shot::TetherLater => {
+            staging.report.tether_times[1] = now;
+        }
         Shot::Tether => {
+            staging.report.tether_times[0] = now;
             let link = snapshot
                 .links
                 .iter()
@@ -1135,6 +1169,23 @@ fn begin_sequence(staging: &Staging, sim: &mut SimWorld) {
             false,
         )
         .expect("the second storm is admitted");
+        if let Some(far) = staging.far_victim {
+            let (_, tether, _) = staging
+                .abilities
+                .iter()
+                .find(|(_, _, kind)| *kind == AbilityTargetKind::TargetEntity)
+                .cloned()
+                .expect("a tether look");
+            unit.issue_order(
+                UnitOrder::CastAbility {
+                    ability_index: tether,
+                    target_pos: None,
+                    target_entity: Some(far),
+                },
+                true,
+            )
+            .expect("the full-range tether is admitted");
+        }
     }
 }
 
@@ -1180,6 +1231,14 @@ fn set_up(
     staging.abilities = abilities;
     let visible = on_screen(sim, camera);
     let spots = find_spots(sim, fog, target, 4, 5.0, &visible);
+    // A3-1 (b): a place for a victim at Abduct's full range from the evidence child's second
+    // caster, on open ground on screen.
+    let beside = spots[2] + (spots[3] - spots[2]).normalize_or_zero().perp() * 1.6;
+    let far_at = (0..24).find_map(|step| {
+        let place =
+            beside + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * FAR_RANGE;
+        (open_cells(sim, place) && visible(place) && fog.sees(place.x, place.y)).then_some(place)
+    });
     drop(visible);
     staging.caster = Some(spawn_still(sim, kind, VIEWER, spots[2]));
     // The victim, of the same unarmed type, stands within the tether's range of the caster.
@@ -1201,8 +1260,9 @@ fn set_up(
                 }
             }
         }
-        let beside = spots[2] + (spots[3] - spots[2]).normalize_or_zero().perp() * 1.6;
         staging.second_caster = Some(spawn_still(sim, kind, VIEWER, beside));
+        staging.far_victim = far_at.map(|place| spawn_still(sim, kind, ENEMY, place));
+        staging.report.far_place = far_at.map(|place| place.to_array());
     }
     staging.spots = spots;
 }
@@ -1288,10 +1348,21 @@ fn stage(
                 at: now,
             }
         }
+        // The later tether shot follows the tether shot by two frames, nothing else.
         Phase::Settling { shot, frames, at }
-            if frames < SETTLE_FRAMES
-                || now - at < SETTLE_SECONDS
-                || idle.0.load(Ordering::Acquire) < IDLE_FRAMES =>
+            if shot_at(shot).1 == Shot::TetherLater && frames < LATER_FRAMES =>
+        {
+            Phase::Settling {
+                shot,
+                frames: frames + 1,
+                at,
+            }
+        }
+        Phase::Settling { shot, frames, at }
+            if shot_at(shot).1 != Shot::TetherLater
+                && (frames < SETTLE_FRAMES
+                    || now - at < SETTLE_SECONDS
+                    || idle.0.load(Ordering::Acquire) < IDLE_FRAMES) =>
         {
             Phase::Settling {
                 shot,
@@ -1308,6 +1379,7 @@ fn stage(
                 &fog,
                 &looks,
                 (camera, transform),
+                now,
             );
             let path = staging.directory.join(which.file());
             capture(&mut commands, path, move |world: &mut World| {
@@ -1401,7 +1473,43 @@ fn sequence_frame(
             wanted.push((format!("{}_out", watch.key), watch.at));
         }
     }
-    let tether = snapshot.links.iter().any(|link| link.owner == VIEWER);
+    let far = staging.far_victim;
+    let mut far_crop = None;
+    let tether = snapshot
+        .links
+        .iter()
+        .any(|link| link.owner == VIEWER && Some(link.to) != far);
+    // Pictured a few frames after it is first published, once it has come in.
+    let far_link = snapshot.links.iter().find(|link| Some(link.to) == far);
+    if far_link.is_some() && staging.far_first.is_none() {
+        staging.far_first = Some(frame);
+    }
+    let due = staging
+        .far_first
+        .is_some_and(|first| frame == first + FAR_SETTLE_FRAMES);
+    if let Some(link) = far_link.filter(|_| due && staging.report.tether_far.is_none()) {
+        let body = |id: EntityId| {
+            snapshot
+                .bubbles
+                .iter()
+                .find(|bubble| bubble.entity_id == id)
+                .map(|bubble| {
+                    let [x, y, altitude] = bubble.world_pos;
+                    (Vec3::new(x, altitude + bubble.radius, y), bubble.radius)
+                })
+        };
+        if let (Some((from, from_radius)), Some((to, to_radius))) = (body(link.from), body(link.to))
+        {
+            let (from_end, to_end) =
+                client::effects::areas::tether_ends(from, from_radius, to, to_radius);
+            staging.report.tether_far =
+                Some([project3(camera, from_end), project3(camera, to_end)]);
+            let file = format!("seq_tetherfar_{frame:03}.png");
+            let whole = [0, 0, u32::MAX / 4, u32::MAX / 4];
+            far_crop = Some((staging.directory.join(&file), whole));
+            note(&mut staging.report, "tetherfar", file);
+        }
+    }
     if tether && !staging.watches.iter().any(|watch| watch.key == "tether") {
         staging.watches.push(Watch {
             key: "tether".to_owned(),
@@ -1440,6 +1548,7 @@ fn sequence_frame(
         crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
         note(&mut staging.report, &key, file);
     }
+    crops.extend(far_crop);
     let whole = [0, 0, u32::MAX / 4, u32::MAX / 4];
     if frame.is_multiple_of(BATTLE_EVERY) {
         let file = format!("seq_battle_{frame:03}.png");
@@ -1846,6 +1955,19 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
     let sequences = tempfile::tempdir()?;
     let sequence_report = run_gpu_child("area_link_sequence_child", sequences.path())?;
     keep_evidence(sequences.path(), &sequence_report, &driver.to_string())?;
+    // A3-1 (b): the evidence child shows one tether at Abduct's full range.
+    let far = sequence_report.tether_far.unwrap_or_else(|| {
+        panic!(
+            "the evidence child staged a tether at Abduct's full range (victim placed at {:?})",
+            sequence_report.far_place
+        )
+    });
+    eprintln!(
+        "driver {driver}: full-range tether drawn from {:?} to {:?} ({:.0} px)",
+        far[0],
+        far[1],
+        distance(far[0], far[1])
+    );
     let directory = tempfile::tempdir()?;
     let report = run_gpu_child("area_link_child", directory.path())?;
     keep_evidence(directory.path(), &report, &driver.to_string())?;
@@ -1987,6 +2109,74 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
         };
         let edges = [inside(left, 1.0), inside(right, -1.0)];
         let centre = pixel_at(&whole, middle.to_array());
+        // A3-1 (WP10 review 3): no narrowing into the victim, visible bulges, and their travel.
+        let width_at = |picture: &image::RgbImage, at: Vec2| {
+            let (left, right) = across(picture, &without, at, direction);
+            left + right + 1
+        };
+        let at_victim = width_at(&whole, end - direction);
+        let profile = |picture: &image::RgbImage| -> Vec<u32> {
+            let from = (length * 0.25) as u32;
+            let to = (length * 0.75) as u32;
+            (from..=to)
+                .map(|px| width_at(picture, start + direction * px as f32))
+                .collect()
+        };
+        let first = profile(&whole);
+        let later = profile(&shot(Shot::TetherLater)?);
+        let (narrowest, widest) = (
+            first.iter().copied().min().unwrap_or(0),
+            first.iter().copied().max().unwrap_or(0),
+        );
+        // The travel towards the caster: the shift `d` (pixels, towards the line's start) that
+        // best matches the later profile to the first, `later[i] ~ first[i + d]`.
+        let mismatch = |shift: usize| {
+            let pairs = first.len().saturating_sub(shift);
+            (0..pairs)
+                .map(|index| later[index].abs_diff(first[index + shift]))
+                .sum::<u32>() as f32
+                / pairs.max(1) as f32
+        };
+        let travel = (0..=16)
+            .min_by(|a, b| mismatch(*a).total_cmp(&mismatch(*b)))
+            .unwrap_or(0);
+        let elapsed = report.tether_times[1] - report.tether_times[0];
+        let per_80ms = travel as f32 * 0.08 / elapsed.max(1e-3) as f32;
+        // The widest bulge of the first shot, and the same bulge in the later one: the widest
+        // within 12 px towards the caster of its first place.
+        let offset = (length * 0.25) as usize;
+        let first_peak = first
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, width)| **width)
+            .map_or(0, |(index, _)| index);
+        let later_peak = (first_peak.saturating_sub(12)..=first_peak)
+            .filter(|index| *index < later.len())
+            .max_by_key(|index| later[*index])
+            .unwrap_or(first_peak);
+        eprintln!(
+            "driver {driver}: tether bulges: widths over the middle half from {narrowest} to \
+             {widest} px (ratio {:.2}); width 1 px outside the victim's bubble {at_victim} px; \
+             travel towards the caster {travel} px over {:.0} ms ({per_80ms:.1} px per 80 ms); \
+             the widest bulge at {} px from the caster's end, the same bulge {:.0} ms later at {} px",
+            widest as f32 / narrowest.max(1) as f32,
+            elapsed * 1000.0,
+            first_peak + offset,
+            elapsed * 1000.0,
+            later_peak + offset
+        );
+        assert!(
+            widest as f32 >= BULGE_RATIO * narrowest.max(1) as f32,
+            "the bulges can be seen: {narrowest} to {widest} px"
+        );
+        assert!(
+            at_victim >= median,
+            "the tongue does not narrow into the victim: {at_victim} against {median}"
+        );
+        assert!(
+            per_80ms >= BULGE_TRAVEL_PX,
+            "the bulges travel towards the caster: {per_80ms} px per 80 ms"
+        );
         eprintln!(
             "driver {driver}: tether widths: median {median} px over its middle half, grip {grip} px \
              at the victim (ratio {:.2}); sRGB on the centre line {centre:?}, 1 px inside each edge \
@@ -2128,8 +2318,9 @@ fn areas_and_tethers_are_drawn_to_their_published_extent_and_only_where_seen() -
 /// Unit check of the shot list.
 #[test]
 fn every_shot_belongs_to_one_stage() {
-    assert_eq!(shot_count(), 9);
+    assert_eq!(shot_count(), 10);
     assert_eq!(shot_at(0), (0, Shot::Areas));
     assert_eq!(shot_at(3), (1, Shot::Tether));
-    assert_eq!(shot_at(8), (2, Shot::FogBare));
+    assert_eq!(shot_at(9), (2, Shot::FogBare));
+    assert_eq!(shot_at(4), (1, Shot::TetherLater));
 }

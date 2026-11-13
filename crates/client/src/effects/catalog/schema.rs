@@ -751,6 +751,14 @@ pub enum Priority {
 pub enum PlacementDef {
     /// One instance at the anchor.
     Point,
+    /// One instance at the far end of the event's line, moved back along the line towards its
+    /// start by `back` world units (never past the start): a tether's grip set against its
+    /// target's bubble at any range (WP10 review 3, A3-1 (b)). The effect's anchor is the
+    /// line's start.
+    LineEnd {
+        /// Distance back from the line's far end.
+        back: ValueDef,
+    },
     /// `count` instances scattered in a disc of `radius`.
     Disc {
         /// Instances.

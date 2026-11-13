@@ -1,0 +1,14 @@
+# WP10 round 4 measurements: the tether only (area_link_gpu_tests.rs on radv and lavapipe)
+
+driver radv: full-range tether drawn from [804.2175, 257.33707] to [1033.0588, 358.1654] (250 px)
+driver radv: tether from [769.1875, 237.17578] to [875.1374, 226.37183]: drawn from [768.6683, 237.2287] to [875.42334, 226.34265]; end errors 0.52 px and 0.29 px; 109 of 127 pixels along it changed
+driver radv: tether bulges: widths over the middle half from 4 to 9 px (ratio 2.25); width 1 px outside the victim's bubble 13 px; travel towards the caster 6 px over 200 ms (2.4 px per 80 ms); the widest bulge at 72 px from the caster's end, the same bulge 200 ms later at 66 px
+driver radv: tether widths: median 7 px over its middle half, grip 16 px at the victim (ratio 2.29); sRGB on the centre line Some([84, 26, 23]), 1 px inside each edge [Some([82, 25, 23]), Some([90, 28, 26])]
+driver radv: tether sRGB at its middle: centre line Some([84, 26, 23]), edge (3 px off the line) Some([83, 31, 30]), bare floor Some([147, 151, 151])
+driver radv: enemy area across the fog edge: Critical layers change 248 of 248 seen ground samples and 0 of 194 unseen ones; the whole look changes 248 seen and 0 unseen (cards standing in sight over ground beyond it); looks held (3, 1) with 2 tethers published, 1 of them the viewer's
+driver lavapipe: full-range tether drawn from [804.2175, 257.33707] to [1033.0588, 358.1654] (250 px)
+driver lavapipe: tether from [769.1875, 237.17578] to [875.1374, 226.37183]: drawn from [768.6683, 237.2287] to [875.42334, 226.34265]; end errors 0.52 px and 0.29 px; 109 of 127 pixels along it changed
+driver lavapipe: tether bulges: widths over the middle half from 4 to 9 px (ratio 2.25); width 1 px outside the victim's bubble 13 px; travel towards the caster 7 px over 240 ms (2.3 px per 80 ms); the widest bulge at 72 px from the caster's end, the same bulge 240 ms later at 66 px
+driver lavapipe: tether widths: median 7 px over its middle half, grip 16 px at the victim (ratio 2.29); sRGB on the centre line Some([84, 26, 23]), 1 px inside each edge [Some([82, 25, 23]), Some([90, 29, 26])]
+driver lavapipe: tether sRGB at its middle: centre line Some([84, 26, 23]), edge (3 px off the line) Some([83, 32, 30]), bare floor Some([147, 150, 150])
+driver lavapipe: enemy area across the fog edge: Critical layers change 247 of 248 seen ground samples and 0 of 194 unseen ones; the whole look changes 248 seen and 0 unseen (cards standing in sight over ground beyond it); looks held (3, 1) with 2 tethers published, 1 of them the viewer's

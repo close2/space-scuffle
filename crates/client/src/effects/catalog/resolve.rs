@@ -727,32 +727,7 @@ impl Resolver<'_> {
             self.require(at, event, strength.bind)?;
         }
         for placement in &placements {
-            match placement {
-                PlacementDef::Point => {}
-                PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
-                    values.push(*radius);
-                }
-                PlacementDef::Line {
-                    spacing,
-                    per_point,
-                    scatter,
-                    delay_jitter,
-                    ..
-                } => {
-                    values.push(*spacing);
-                    self.require_line(at, event, super::schema::Binding::LineSpacing)?;
-                    if *per_point == 0 || *per_point > MAX_INSTANCES_PER_PLACEMENT {
-                        return Err(EffectCatalogError::TooManyInstances {
-                            path: self.path.to_path_buf(),
-                            site: at.clone(),
-                            count: *per_point,
-                            limit: MAX_INSTANCES_PER_PLACEMENT,
-                        });
-                    }
-                    self.at_least(at, "scatter", *scatter, 0.0)?;
-                    self.at_least(at, "delay_jitter", *delay_jitter, 0.0)?;
-                }
-            }
+            self.placement_values(at, event, placement, &mut values)?;
         }
         for value in &values {
             self.require(at, event, value.bind)?;
@@ -798,6 +773,48 @@ impl Resolver<'_> {
             exit: layer.exit,
             strength: layer.strength,
         })
+    }
+
+    /// Checks one placement of a layer of an effect of kind `event`, adding the values it binds
+    /// to `values`.
+    fn placement_values(
+        &self,
+        at: &Site,
+        event: EventKind,
+        placement: &PlacementDef,
+        values: &mut Vec<ValueDef>,
+    ) -> Result<(), EffectCatalogError> {
+        match placement {
+            PlacementDef::Point => {}
+            PlacementDef::LineEnd { back } => {
+                values.push(*back);
+                self.require_line(at, event, super::schema::Binding::LineLength)?;
+            }
+            PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                values.push(*radius);
+            }
+            PlacementDef::Line {
+                spacing,
+                per_point,
+                scatter,
+                delay_jitter,
+                ..
+            } => {
+                values.push(*spacing);
+                self.require_line(at, event, super::schema::Binding::LineSpacing)?;
+                if *per_point == 0 || *per_point > MAX_INSTANCES_PER_PLACEMENT {
+                    return Err(EffectCatalogError::TooManyInstances {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        count: *per_point,
+                        limit: MAX_INSTANCES_PER_PLACEMENT,
+                    });
+                }
+                self.at_least(at, "scatter", *scatter, 0.0)?;
+                self.at_least(at, "delay_jitter", *delay_jitter, 0.0)?;
+            }
+        }
+        Ok(())
     }
 
     /// Checks that an effect of kind `event` has a line: an event line providing `binding`, or a

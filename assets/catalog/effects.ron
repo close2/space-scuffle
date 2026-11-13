@@ -524,6 +524,9 @@
         // WP10 round 3: comes in and holds at 2.5, so a held soft card is opaque out to its edges
         // (coverage times intensity, clamped at 1).
         "hold_dense": [(0.00, 0.00, EaseOutQuad), (1.00, 2.50, Linear)],
+        // WP10 round 4: comes in and holds at 1.6, firm enough for an opaque body, soft enough to
+        // keep a soft card's round outline.
+        "hold_firm": [(0.00, 0.00, EaseOutQuad), (1.00, 1.60, Linear)],
         "billow": [(0.00, 0.00, EaseOutQuad), (0.25, 1.00, Linear), (0.65, 0.85, EaseInQuad), (1.00, 0.00, Linear)],
         "billow_grow": [(0.00, 0.70, EaseOutQuad), (1.00, 1.15, Linear)],
         // A storm's discharge: up in a frame, flickering down.
@@ -2156,46 +2159,55 @@
             ],
         ),
         // Abduct (Viper analogue): the tongue from the caster's body to its victim's, an opaque
-        // dark red-brown muscle with darker edges (no light core, no glow, never a beam): a core
-        // 0.3 units wide, and over it soft bulges up to 0.42 units wide that travel back towards
-        // the caster; a grip clamped on the victim and a swelling where it leaves the caster,
-        // each 0.68 units across. Its ends follow the two bubbles.
+        // dark red-brown muscle with darker edges (no light core, no glow, never a beam): a
+        // narrow core, and over it two strips of bulges, widening it by more than half where
+        // they swell, that travel back towards the caster at clearly different speeds (round 4,
+        // WP10 review 3, A3-1 (c)); a blunt, round grip pressed against the victim, set back from
+        // its surface by 0.6 of its own radius at any range (A3-1 (a), (b)), and a smaller
+        // swelling where it leaves the caster. Its ends follow the two bubbles; it does not
+        // narrow into the victim.
         "abduct_tether": (
             class: Minor,
             event: Link,
             layers: [
                 (
                     // The core: a soft rod held at 2.5 times its coverage, so it is opaque out to
-                    // its dark edges (WP10 review 2, A2-2 (b)).
-                    block: Ribbon(texture: "droplet", ramp: "tongue", shape: Radial, taper: (0.02, 0.04),
+                    // its dark edges (A2-2 (b)); no taper at the victim.
+                    block: Ribbon(texture: "droplet", ramp: "tongue", shape: Radial, taper: (0.04, 0.0),
                         soft_depth: 0.1,
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.2, softness: 0.3, shade: 0.6)),
-                    size: (scale: 0.15), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
+                    size: (scale: 0.09), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                     priority: Critical,
                 ),
                 (
-                    // The bulges: two strips of the puff texture with incommensurate repeats and
-                    // speeds, so their sum never repeats evenly (A2-2 (a)), both travelling back
-                    // towards the caster, at about 0.5 and 0.55 units a second.
-                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.03, 0.06),
-                        repeat: 0.32, scroll: -1.6, soft_depth: 0.1,
-                        breakup: (noise: "noise_tile", scale: 2.5, amount: 0.2, softness: 0.3, shade: 0.6)),
-                    size: (scale: 0.19), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
+                    // The fast bulges: a strip of the puff texture repeating every 0.8 units,
+                    // about 1.3 units a second towards the caster (a spacing long enough that two
+                    // shots up to 0.3 s apart still show which way it went).
+                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.04, 0.0),
+                        repeat: 0.8, scroll: -1.6, soft_depth: 0.1,
+                        breakup: (noise: "noise_tile", scale: 2.5, amount: 0.15, softness: 0.3, shade: 0.6)),
+                    size: (scale: 0.24), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                 ),
                 (
-                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.03, 0.06),
-                        repeat: 0.53, scroll: -1.04, soft_depth: 0.1,
-                        breakup: (noise: "noise_tile", scale: 1.9, amount: 0.25, softness: 0.3, shade: 0.6)),
+                    // The slow bulges: every 0.53 units, about 0.48 units a second, so the fast
+                    // ones overtake them and the sum never repeats evenly.
+                    block: Ribbon(texture: "smoke_puff", ramp: "tongue", taper: (0.04, 0.0),
+                        repeat: 0.53, scroll: -0.9, soft_depth: 0.1,
+                        breakup: (noise: "noise_tile", scale: 1.9, amount: 0.15, softness: 0.3, shade: 0.6)),
                     size: (scale: 0.2), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
                 ),
                 (
-                    // The swelling where it leaves the caster, and the grip on the victim, set back
-                    // from the victim's surface along the tongue by 7 % of its length so the bubble
-                    // does not hide it (A2-2 (c)).
-                    block: Sprite(texture: "smoke_puff", ramp: "tongue", soft_depth: 0.1, rotation: Random,
-                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.3, softness: 0.25, shade: 0.6)),
-                    placement: Line(spacing: (bind: LinkLength, scale: 0.93)),
-                    size: (scale: 0.34), duration: 0.1, curve: "hold_dense", held: true, exit: 0.15,
+                    // The grip: a blunt, round swelling, set back from the victim's surface by
+                    // 0.6 of its radius, fixed in rotation and without noise, so its outline is
+                    // a soft round end on every driver.
+                    block: Sprite(texture: "droplet", ramp: "tongue", shape: Radial, soft_depth: 0.1),
+                    placement: LineEnd(back: (scale: 0.2)),
+                    size: (scale: 0.34), duration: 0.1, curve: "hold_firm", held: true, exit: 0.15,
+                ),
+                (
+                    // The swelling where the tongue leaves the caster.
+                    block: Sprite(texture: "droplet", ramp: "tongue", shape: Radial, soft_depth: 0.1),
+                    size: (scale: 0.17), duration: 0.1, curve: "hold_firm", held: true, exit: 0.15,
                 ),
             ],
         ),
