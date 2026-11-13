@@ -262,6 +262,7 @@ impl Builder {
                 .as_deref()
                 .map(|name| self.status(name, label))
                 .transpose()?,
+            without_attributes: super::attribute_flags(&filter.without_attributes),
         })
     }
 

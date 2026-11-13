@@ -1549,12 +1549,7 @@ fn stage_battle(
                 let id = world
                     .spawn_unit(unit_type, VIEWER, sim_position(*spot))
                     .expect("open ground");
-                world
-                    .entities
-                    .get_mut(&id)
-                    .expect("spawned")
-                    .apply_concussive_slow()
-                    .expect("the sim slows the unit");
+                concussive_slow(world, id);
                 moving.push((id, *spot));
                 vec![id]
             }
@@ -2388,6 +2383,32 @@ fn stage_pairs(
     staged
 }
 
+/// Lands a concussive slow on `id`: the shipped effect a researched Concussive Shells hit runs
+/// (plan `2026-11-05-sc2-deviation-fixes` `WP13d`), so the slow is the simulation's own status.
+fn concussive_slow(world: &mut SimWorld, id: EntityId) {
+    let effect = world
+        .catalog
+        .spells()
+        .effect_id("concussive_shells_slow")
+        .expect("the shipped concussive slow");
+    let position = world.entities.get(&id).expect("it stands").position;
+    world.run_effect(
+        effect,
+        sim_types::EffectContext {
+            owner: ENEMY,
+            caster: None,
+            ability: sim_types::AbilitySource::default(),
+            origin: position,
+            source_point: position,
+            target: sim_types::EffectTarget::Unit(id),
+        },
+    );
+    assert!(
+        !world.effects().statuses_of(id).is_empty(),
+        "the slow takes on the unit"
+    );
+}
+
 /// Sets the pairs' statuses in, as the simulation would: the stim's overclock, a concussive
 /// slow, and the attackers' orders on the shielded units (their barriers rise on the first hit).
 fn set_statuses_in(
@@ -2412,12 +2433,7 @@ fn set_statuses_in(
                     .expect("the sim stims the unit");
             }
             Pair::Daze => {
-                world
-                    .entities
-                    .get_mut(acting)
-                    .expect("it stands")
-                    .apply_concussive_slow()
-                    .expect("the sim slows the unit");
+                concussive_slow(world, *acting);
             }
             Pair::BarrierRanged | Pair::BarrierMelee => {
                 let Some((attacker_type, place)) = attacker else {

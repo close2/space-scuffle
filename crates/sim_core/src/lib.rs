@@ -60,7 +60,7 @@ pub use steering::{
     SteeringObstacle, GRID_HEIGHT, GRID_WIDTH, SPATIAL_CELL_SIZE,
 };
 pub use tech_tree::TechTreeValidator;
-pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId};
+pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId, WeaponHitUnlock};
 pub use weapon_timing::{
     AttackRate, InvalidAttackRate, InvalidBuffAttackRate, SimulationDiagnostic,
 };
@@ -113,6 +113,9 @@ pub(crate) mod test_support {
                 .expect("invariant: the shipped spell tables are valid"),
             )
             .expect("invariant: the shipped abilities name only shipped effects");
+        units
+            .validate_weapon_hit_effects(&upgrades)
+            .expect("invariant: the shipped upgrades name only shipped weapon hit effects");
         RuntimeCatalogs { units, upgrades }
     }
 

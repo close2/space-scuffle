@@ -31,9 +31,9 @@ use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EffectSource, EntityId, LineView, MoverType, PerPlayer, PlayerId,
-    PlayerUpgradeState, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashShape,
-    Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
+    AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
+    LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
+    SimAngle, SimScalar, SimVec2, SplashShape, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -846,7 +846,63 @@ impl SimWorld {
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
+        self.run_weapon_hit_effects(source, target_id, hit.position);
         Some(hit)
+    }
+
+    /// Runs on `target_id` every weapon hit effect an upgrade the attacker's owner completed
+    /// unlocks for the attacker's archetype ([`sim_types::UpgradeEffect::WeaponHitEffect`]),
+    /// in upgrade order, as `StarCraft` II runs a weapon's impact set behind a
+    /// `CValidatorPlayerRequirement` (plan `2026-11-05-sc2-deviation-fixes` Amendment 26 cites
+    /// the shipped case). The effect's own validators decide whether it takes; a dead target
+    /// passes none.
+    ///
+    /// Only direct hits run them: splash strikes do not, as the game's impact set runs on the
+    /// missile's target alone.
+    fn run_weapon_hit_effects(&mut self, source: HitSource<'_>, target_id: EntityId, at: SimVec2) {
+        let Some(slug) = source.slug else {
+            return;
+        };
+        let count = self.upgrade_catalog.weapon_hit_effects(slug).len();
+        for index in 0..count {
+            // PERFORMANCE RATIONALE:
+            // Why: the walk below needs `&mut self`, so the unlock cannot stay borrowed from
+            // the upgrade catalog across it, and a hit must not allocate to copy it out.
+            // What: the unlock is looked up again by index and only its resolved id is kept.
+            // Trade-off: one more map lookup per unlock (one today) instead of a clone per hit.
+            let Some(unlock) = self.upgrade_catalog.weapon_hit_effects(slug).get(index) else {
+                break;
+            };
+            if !Self::upgrades_of(&self.player_upgrades, source.owner)
+                .completed_upgrade_slugs
+                .contains(&unlock.upgrade_slug)
+            {
+                continue;
+            }
+            let Some(root) = self.catalog.spells().effect_id(&unlock.effect) else {
+                let diagnostic = SimulationDiagnostic::UnknownWeaponHitEffect {
+                    tick: Tick(self.current_tick),
+                    upgrade: unlock.upgrade_slug.clone(),
+                    effect: unlock.effect.clone(),
+                };
+                self.tick_diagnostics.push(diagnostic);
+                continue;
+            };
+            let context = EffectContext {
+                owner: source.owner,
+                caster: source.attacker,
+                // A weapon hit opens no area or tether, the only readers of the ability index,
+                // so the attacker's type is recorded with index 0.
+                ability: AbilitySource {
+                    unit_type: source.effect.unit_type,
+                    ability: 0,
+                },
+                origin: source.origin,
+                source_point: at,
+                target: EffectTarget::Unit(target_id),
+            };
+            self.run_effect_walk(root, context);
+        }
     }
 
     /// Applies `splash` around its search points (the impact point for a circle, each point of

@@ -99,6 +99,10 @@ pub struct TargetFilter {
     /// validators).
     #[serde(default)]
     pub without_status: Option<String>,
+    /// Attributes none of which the unit may have (the game's `-;Massive`-style filter
+    /// exclusions); empty admits every unit.
+    #[serde(default)]
+    pub without_attributes: Vec<Attribute>,
 }
 
 impl Default for TargetFilter {
@@ -108,6 +112,7 @@ impl Default for TargetFilter {
             planes: both_planes(),
             structures: StructureRule::Include,
             without_status: None,
+            without_attributes: Vec::new(),
         }
     }
 }

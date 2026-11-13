@@ -99,7 +99,7 @@ impl RuntimeCatalogs {
         units
             .validate_upgrade_references(&upgrades)
             .map_err(|source| CatalogLoadError::Invalid {
-                path: upgrades_path,
+                path: upgrades_path.clone(),
                 source,
             })?;
         let rules_path = directory.join("movement_rules.ron");
@@ -111,6 +111,12 @@ impl RuntimeCatalogs {
         })?;
         units.set_movement_rules(rules);
         load_spells(directory, &mut units)?;
+        units
+            .validate_weapon_hit_effects(&upgrades)
+            .map_err(|source| CatalogLoadError::Invalid {
+                path: upgrades_path,
+                source,
+            })?;
         Ok(Self { units, upgrades })
     }
 }

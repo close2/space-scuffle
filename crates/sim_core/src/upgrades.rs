@@ -9,6 +9,9 @@
 //! 4. Authored upgrades name their faction and weapon or armor classes by slug; loading resolves
 //!    them against a [`FactionCatalog`] into [`UpgradeDef`] and [`UpgradeEffect`], which carry
 //!    only the numeric IDs, and fails with a typed error naming the upgrade for an unknown slug.
+//! 5. The weapon hit effects ([`UpgradeEffect::WeaponHitEffect`]) are also indexed by target
+//!    archetype slug in catalog order, so a hit finds its archetype's effects without scanning
+//!    every upgrade.
 
 use crate::catalog::FactionCatalog;
 use crate::error::{SimCoreError, SimResult};
@@ -86,6 +89,10 @@ enum UpgradeEffectDef {
         target_slug: String,
         ability_slug: String,
     },
+    WeaponHitEffect {
+        target_slug: String,
+        effect: String,
+    },
 }
 
 impl UpgradeEffectDef {
@@ -129,6 +136,13 @@ impl UpgradeEffectDef {
             } => UpgradeEffect::UnlockAbility {
                 target_slug,
                 ability_slug,
+            },
+            Self::WeaponHitEffect {
+                target_slug,
+                effect,
+            } => UpgradeEffect::WeaponHitEffect {
+                target_slug,
+                effect,
             },
         })
     }
@@ -189,11 +203,22 @@ pub struct UpgradeDef {
     pub effects: Vec<UpgradeEffect>,
 }
 
+/// One weapon hit effect an upgrade unlocks for an archetype ([`UpgradeEffect::WeaponHitEffect`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeaponHitUnlock {
+    /// Slug of the upgrade whose completion unlocks the effect.
+    pub upgrade_slug: String,
+    /// Effect key of `ability_effects.ron` run on the struck unit.
+    pub effect: String,
+}
+
 /// Read-only indexed catalog of all registered game upgrades.
 #[derive(Debug, Clone, Default)]
 pub struct UpgradeCatalog {
     upgrades_by_id: BTreeMap<UpgradeId, UpgradeDef>,
     upgrades_by_slug: BTreeMap<String, UpgradeId>,
+    /// Weapon hit effects by target archetype slug, in upgrade-id then effect order.
+    hit_effects_by_target: BTreeMap<String, Vec<WeaponHitUnlock>>,
 }
 
 impl UpgradeCatalog {
@@ -248,6 +273,24 @@ impl UpgradeCatalog {
             // their numeric value. Ordered storage also preserves ID-order iteration.
             catalog.upgrades_by_id.insert(id, def);
         }
+        for def in catalog.upgrades_by_id.values() {
+            for effect in &def.effects {
+                if let UpgradeEffect::WeaponHitEffect {
+                    target_slug,
+                    effect,
+                } = effect
+                {
+                    catalog
+                        .hit_effects_by_target
+                        .entry(target_slug.clone())
+                        .or_default()
+                        .push(WeaponHitUnlock {
+                            upgrade_slug: def.slug.clone(),
+                            effect: effect.clone(),
+                        });
+                }
+            }
+        }
 
         Ok(catalog)
     }
@@ -291,8 +334,74 @@ impl UpgradeCatalog {
         })
     }
 
+    /// The weapon hit effects upgrades unlock for the archetype `target_slug`, in upgrade-id
+    /// order; empty when none does.
+    #[must_use]
+    pub fn weapon_hit_effects(&self, target_slug: &str) -> &[WeaponHitUnlock] {
+        self.hit_effects_by_target
+            .get(target_slug)
+            .map_or(&[], Vec::as_slice)
+    }
+
     /// Iterates over all registered upgrade definitions.
     pub fn upgrades(&self) -> impl Iterator<Item = &UpgradeDef> {
         self.upgrades_by_id.values()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn upgrade(upgrade_id: UpgradeId, slug: &str, effects: Vec<UpgradeEffect>) -> UpgradeDef {
+        UpgradeDef {
+            upgrade_id,
+            slug: slug.to_owned(),
+            name: slug.to_owned(),
+            display_name: slug.to_owned(),
+            faction: FactionId(0),
+            level: 1,
+            mineral_cost: 0,
+            gas_cost: 0,
+            research_ticks: 1,
+            researched_at: "lab".to_owned(),
+            requires_structures: Vec::new(),
+            effects,
+        }
+    }
+
+    fn hit(target: &str, effect: &str) -> UpgradeEffect {
+        UpgradeEffect::WeaponHitEffect {
+            target_slug: target.to_owned(),
+            effect: effect.to_owned(),
+        }
+    }
+
+    #[test]
+    fn weapon_hit_effects_are_indexed_by_target_in_upgrade_id_order() -> SimResult<()> {
+        let catalog = UpgradeCatalog::from_definitions([
+            upgrade(7, "late", vec![hit("a", "second")]),
+            upgrade(3, "early", vec![hit("a", "first"), hit("b", "other")]),
+            upgrade(5, "plain", Vec::new()),
+        ])?;
+        let effects: Vec<_> = catalog
+            .weapon_hit_effects("a")
+            .iter()
+            .map(|unlock| (unlock.upgrade_slug.as_str(), unlock.effect.as_str()))
+            .collect();
+        assert_eq!(effects, [("early", "first"), ("late", "second")]);
+        assert_eq!(catalog.weapon_hit_effects("b").len(), 1);
+        assert_eq!(catalog.weapon_hit_effects("none"), []);
+        Ok(())
+    }
+
+    #[test]
+    fn a_weapon_hit_effect_is_parsed_from_ron() -> SimResult<()> {
+        let effect: UpgradeEffectDef =
+            ron::from_str(r#"WeaponHitEffect(target_slug: "a", effect: "e")"#)
+                .map_err(|error| SimCoreError::RonDeserializationError(error.to_string()))?;
+        let resolved = effect.resolve(&FactionCatalog::default(), "u")?;
+        assert_eq!(resolved, hit("a", "e"));
+        Ok(())
     }
 }

@@ -96,6 +96,18 @@ pub enum SimulationDiagnostic {
         /// The node that was not run.
         node: sim_types::EffectId,
     },
+    /// A weapon hit effect an upgrade unlocks named an effect the spell catalog lacks; the
+    /// effect did not run. [`crate::UnitCatalog::validate_weapon_hit_effects`] makes this
+    /// unreachable for a catalog loaded from disk.
+    #[error("simulation tick {tick:?}: upgrade '{upgrade}' names unknown hit effect '{effect}'")]
+    UnknownWeaponHitEffect {
+        /// Tick of the hit.
+        tick: Tick,
+        /// The upgrade that unlocks the effect.
+        upgrade: String,
+        /// The effect key the spell catalog lacks.
+        effect: String,
+    },
     /// An invalid buff prevented this entity's weapon update during the tick.
     #[error("simulation tick {tick:?}, entity {entity:?}: {source}")]
     InvalidBuffAttackRate {

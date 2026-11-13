@@ -644,7 +644,7 @@ One sub-package each, ordered by battles reached. Each has a latent capability f
 - **13b** Lurker burrow-to-attack (21);
 - **13c** Charge (23b);
 - **13d** Concussive Shells: an on-hit behaviour in weapon data, unlocked by the research; the hard-coded
-  `apply_concussive_slow` goes;
+  `apply_concussive_slow` goes (done, Amendment 26);
 - **13e** firing while moving (`AllowedMovement`).
 
 Each is cited from the data. Each sub-package may be split into its own plan if its research shows a larger rule
@@ -794,7 +794,7 @@ requires.
 | B-41 | No Immortal Barrier | Fixed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14); the order within a hit kept as landed by the owner ([Q0068](../questions/closed/0068-barrier-damage-order.md), Amendment 22) |
 | B-42 | The Lurker attacks unburrowed | Fixed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15); weapon and cloak at the `Stats` section end, Amendment 22 package E ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.5, [Q0069](../questions/closed/0069-lurker-burrow-sections.md)) |
 | B-43 | Charge without the dash | Fixed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); the end on non-attack orders and the ground path distance, Amendment 24 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.1, [Q0071](../questions/closed/0071-charge-trigger-details.md)) |
-| B-44 | Concussive Shells do nothing | (i) | WP13d |
+| B-44 | Concussive Shells do nothing | Fixed | WP13d (Amendment 26) |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
 | B-47 | Non-time catalog values unaudited | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10; the Thor's armour by Amendment 15) |
@@ -818,7 +818,7 @@ requires.
 | B-65 | Unload sets everyone down at once and stops the carrier | (i) | WP17 |
 | B-66 | A blocked exit stalls production | (i) | WP17 |
 | B-67 | Next-patch radius 12, task reach 0.75, site patience 50 ticks, boarding reach 1.0 | (i), narrowed | WP17 for the next-patch radius, which decides where workers go when a patch mines out. Task reach, site patience and boarding reach are (ii): tolerances of our own movers that decide when an order counts as arrived, with no observable game counterpart (as U-23) |
-| B-68 | 14 upgrades with no effect | (i) | WP13d, WP18; Psionic Storm unlocks the storm since plan `2026-11-10-spellcaster-mechanics` WP2b |
+| B-68 | 14 upgrades with no effect | (i), narrowed | WP18; Psionic Storm unlocks the storm since plan `2026-11-10-spellcaster-mechanics` WP2b; Concussive Shells unlocks the slow since WP13d (Amendment 26) |
 | B-69 | Missing abilities | (i) | WP18; Psionic Storm, Abduct, Fungal Growth and Blinding Cloud shipped by plan `2026-11-10-spellcaster-mechanics` WP2b, WP3b, WP4b and WP5b; the rest of the list stays |
 | B-70 | No Graviton Beam | (i) | WP18 |
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
@@ -827,7 +827,7 @@ requires.
 | B-74 | Code comments claim exact parity | Fixed | `combat.rs` part in WP7 (evidence §7.2), `SplashSpec` part in WP8a (evidence §8.2) |
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
-| B-77 | Hard-coded Concussive slow | (i) | WP13d |
+| B-77 | Hard-coded Concussive slow | Fixed | WP13d (Amendment 26): the slow is the status `concussive_shells_slow`, 26.785714 ticks (1.5 Normal s), sourced |
 | B-78 | Storm evacuation margin | Fixed | Plan `2026-11-10-spellcaster-mechanics` WP2b: the "radius + 2" evacuation is gone with the hazard zones; a fleeing victim uses the helpless-flee rule from the storm's centre ([evidence](../evidence/2026-11-10-spellcaster-mechanics.md)) |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.4). Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick) lands on the release tick | (i), narrowed | WP5 follow-up. The Colossus part is closed: its strikes land on the release tick by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) (Amendment 22) |
@@ -1342,3 +1342,43 @@ adds one row; no rule of this plan changes.
 
 Implemented by plan [`2026-11-10-group-routing`](2026-11-10-group-routing.md) WP1 to WP5; evidence
 [`2026-11-10-group-routing.md`](../evidence/2026-11-10-group-routing.md). `DESIGN.md` now names S-1 to S-7.
+
+## Amendment 26 (WP13d, 2026-11-13): Concussive Shells slow on hit
+
+Short note under charter §6 (single-cause bug fix with obvious tests; the effect engine of plan
+[`2026-11-10-spellcaster-mechanics`](2026-11-10-spellcaster-mechanics.md) is reused, no new mechanic).
+
+- **Research (SC2GameData 5.0.14, chain `core → liberty → swarm → void → voidmulti`):** the Marauder's missile
+  impact runs `PunisherGrenadesSet` (`liberty` EffectData:1641-1645), whose first child `PunisherGrenadesSlow`
+  (:1653-1660) applies the buff `Slow` behind the validators `PunisherGrenadesResearched` (a player requirement on the
+  upgrade, ValidatorData:654-658), `PunisherGrenadesSlowTargetFilters` (`-;Massive`, :1424-1426), `NotStructure`
+  (:1084-1086) and `NotFrenzied` (the Ultralisk's `Frenzy`, liberty UnitData:8079, a massive unit anyway). `Slow`
+  (`liberty` BehaviorData:1256-1262): `MoveSpeedMultiplier` 0.5, `Duration` 1.5 Normal s (1.07 Faster s), one per
+  unit (`MaxStackCount` 1, core BehaviorData:43), so a later hit refreshes it. `void` BehaviorData:547-549 only adds
+  the removal validator `NoPurificationNova`; no later layer changes the rest. In ticks: 1.5 × 25 ÷ 1.4 =
+  26.785714, so a unit slowed on tick `t` is free on `t + 27`. The code's 75 ticks (3 s) had no source.
+- **Rule:** a new upgrade effect `WeaponHitEffect { target_slug, effect }` names an effect of
+  `ability_effects.ron` that runs on each unit the target archetype's weapons strike directly once the owner has
+  completed the upgrade (the counterpart of the player-requirement validator). It adds no per-player state (the
+  completed slug is the unlock), so the checksum schema is unchanged. Target filters gain `without_attributes`
+  (the editor's `-;Massive`). Splash strikes do not run it, as the game's impact set runs on the missile's target.
+  `Entity::apply_concussive_slow` and buff id 2 are gone; the slow is the status `concussive_shells_slow`
+  (`statuses.ron`, presentation `Slowed`), applied by the effect `concussive_shells_slow`, which the client shows
+  with the existing `concussive_daze` look (`defaults.status.Slowed`).
+- **Data:** `upgrades.ron` `concussive_shells`: `WeaponHitEffect(target_slug: "shock_golem", effect:
+  "concussive_shells_slow")`; the status and effect cite the lines above.
+- **Decisions:** (D-13d-1) the unlock lives in the upgrade's effects rather than a field of the weapon, so
+  `WeaponSpec` (hashed with every projectile) is unchanged; it applies to every weapon of the archetype, which for
+  the Marauder analogue is its one weapon. (D-13d-2) The weapon hit's effect context records the attacker's type
+  with ability index 0: a weapon hit opens no area or tether, the only readers of that index. (D-13d-3) Out of
+  scope, recorded: `NoPurificationNova` (no Purification Nova status exists; it returns with the Disruptor's
+  nova).
+- **Tests:** `crates/sim_core/tests/concussive_shells_tests.rs` (catalog data and sourced values; no slow without
+  the research or with another player's; × 0.5 on the first researched hit; massive unit and structure immune;
+  27 ticks; a refresh does not stack), `upgrades.rs` unit tests (index order, RON form), the client's
+  `effect_catalog_tests.rs` (a researched hit publishes `Slowed` and the client shows it with `concussive_daze`;
+  none without the research), and the snapshot and GPU status tests now land the shipped status instead of the
+  removed buff.
+- **Determinism:** no golden replay, matrix battle or showcase researches Concussive Shells, so no hashed state
+  changes (golden replays pass unchanged in debug).
+- **B-44 and B-77 fixed; B-68 narrowed** (Concussive Shells now has its effect; 12 remain for WP18).

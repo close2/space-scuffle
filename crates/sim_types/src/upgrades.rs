@@ -100,6 +100,17 @@ pub enum UpgradeEffect {
         /// Unlocked ability slug.
         ability_slug: String,
     },
+    /// Runs an effect of `ability_effects.ron` on each unit the weapons of a specific unit
+    /// archetype strike directly, once the owner has completed the upgrade (the game's
+    /// `CValidatorPlayerRequirement` on a weapon's impact effect).
+    ///
+    /// Adds no per-player state: the completed upgrade slug is the unlock, read at each hit.
+    WeaponHitEffect {
+        /// Target unit archetype slug whose weapons gain the effect.
+        target_slug: String,
+        /// Effect key of `ability_effects.ron`, run with the struck unit as its target.
+        effect: String,
+    },
 }
 
 /// Cumulative stat modifications applied to a specific unit type for a player.
@@ -240,6 +251,8 @@ impl PlayerUpgradeState {
                         .or_default()
                         .insert(ability_slug.clone());
                 }
+                // The completed slug inserted above is the whole unlock; the hit reads it.
+                UpgradeEffect::WeaponHitEffect { .. } => {}
             }
         }
         *self = staged;

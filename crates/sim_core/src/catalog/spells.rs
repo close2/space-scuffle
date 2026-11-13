@@ -30,9 +30,9 @@ mod tests;
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeBonuses, DamageResponses,
-    EffectAnchor, EffectDef, EffectId, FilterAlliance, MissileView, SimScalar, StatusId,
-    StatusSpec, StructureRule, VitalChange,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeBonuses, AttributeFlags,
+    DamageResponses, EffectAnchor, EffectDef, EffectId, FilterAlliance, MissileView, SimScalar,
+    StatusId, StatusSpec, StructureRule, VitalChange,
 };
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -238,6 +238,8 @@ pub struct ResolvedFilter {
     pub structures: StructureRule,
     /// A status the unit must not carry.
     pub without_status: Option<StatusId>,
+    /// Attributes none of which the unit's archetype may have.
+    pub without_attributes: AttributeFlags,
 }
 
 /// One flattened node kind (D-1, D-18). Children are ids into the same arena.
@@ -508,6 +510,7 @@ impl SpellCatalog {
             air: filter.planes.contains(&sim_types::TargetPlane::Air),
             structures: filter.structures,
             without_status,
+            without_attributes: attribute_flags(&filter.without_attributes),
         })
     }
 
@@ -585,4 +588,13 @@ pub(super) fn check_ability(
             referenced_by: label(),
         })?;
     spells.check_ability_root(root, unit_target, ability.origin.is_some(), &label())
+}
+
+/// The union of `attributes`' flags.
+pub(crate) fn attribute_flags(attributes: &[sim_types::Attribute]) -> AttributeFlags {
+    attributes
+        .iter()
+        .fold(AttributeFlags::empty(), |flags, attribute| {
+            flags | attribute.flag()
+        })
 }

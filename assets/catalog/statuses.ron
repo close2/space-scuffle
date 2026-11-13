@@ -84,5 +84,16 @@
             suppress_detection: true,                           // DetectArc 0, :25
             presentation: [RangeReduced],
         ),
+        (
+            // Slow buff, liberty BehaviorData:1256-1262 (void :547-549 adds only the removal
+            // validator NoPurificationNova; no Purification Nova status exists, plan
+            // 2026-11-05-sc2-deviation-fixes WP13d): applied by Concussive Shells' hit
+            // (PunisherGrenadesSlow, liberty EffectData:1653-1660). One per unit (MaxStackCount
+            // 1, core BehaviorData:43): a later hit refreshes it.
+            name: "concussive_shells_slow",
+            duration_ticks: 26.785714,                          // Duration 1.5 Normal s, :1260
+            move_speed_factor: 0.5,                             // MoveSpeedMultiplier, :1261
+            presentation: [Slowed],
+        ),
     ],
 )
