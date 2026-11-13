@@ -1775,3 +1775,214 @@ fn a_researched_concussive_hit_publishes_the_slow_the_daze_look_shows() {
         );
     }
 }
+
+/// Plan WP10: `Area` and `Link` effects may hold layers (no `Shell`), an area may lay another
+/// `Area` effect (never "while moving"), a ribbon spans a tether's line, and a block's
+/// `abilities` resolve by the archetype's ability name into a table keyed by ability index.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one fixture per new rule, read top to bottom"
+)]
+fn area_and_link_looks_hold_and_are_named_by_their_abilities() {
+    let (dir, manifest) = fixture();
+    let disc = r#"(block: Decal(texture: "soft_disc", ramp: "white"),
+        size: (bind: AreaRadius, scale: 1.0), duration: 0.2, held: true, priority: Critical)"#;
+    let puff = r#"(block: Sprite(texture: "soft_disc", ramp: "white"),
+        size: (bind: AreaRadius, scale: 0.3), duration: 0.4)"#;
+    let rope = r#"(block: Ribbon(texture: "soft_disc", ramp: "white"), size: (scale: 0.05),
+        duration: 0.1, held: true, priority: Critical)"#;
+    let effects = |area_extra: &str, link_layers: &str| {
+        format!(
+            r#""cloud": (class: Major, event: Area{area_extra}, layers: [ {disc} ]),
+               "flare": (class: Minor, event: Area, layers: [ {puff} ]),
+               "rope": (class: Minor, event: Link, layers: [ {link_layers} ])"#
+        )
+    };
+    let catalog = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &effects(r#", emit: Some((effect: "flare", every: 0.1))"#, rope),
+            "",
+        ),
+    )
+    .expect("held areas and tethers load");
+    let cloud = catalog.effect_id("cloud").expect("defined");
+    let emit = catalog
+        .effect(cloud)
+        .and_then(|effect| effect.emit)
+        .expect("it lays");
+    assert_eq!(Some(emit.effect), catalog.effect_id("flare"));
+
+    let refused = [
+        (
+            effects(
+                r#", emit: Some((effect: "flare", every: 0.1, moving: true))"#,
+                rope,
+            ),
+            "emit.moving",
+        ),
+        (
+            effects(r#", emit: Some((effect: "rope", every: 0.1))"#, rope),
+            "emit",
+        ),
+        (
+            effects(r#", hit: Some((effect: "flare", every: 0.1))"#, rope),
+            "hit",
+        ),
+        (
+            effects(
+                "",
+                r"(block: Shell(rim: (1.0, 0.3, 0.2, 0.6)), duration: 0.3, held: true)",
+            ),
+            "held",
+        ),
+    ];
+    for (text, field) in refused {
+        let error = load(dir.path(), &vocabulary(&manifest, "", &text, "")).expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+    }
+    let held_splash = splash_effect(&SPRITE.replace("priority: Critical", "held: true"));
+    let error = load(dir.path(), &vocabulary(&manifest, "", &held_splash, ""))
+        .expect_err("a splash holds nothing");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue { field: "held", .. }
+        ),
+        "{error}"
+    );
+
+    // The block's abilities, by name, against the first archetype with two abilities.
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<_> = units.archetypes().map(|arch| arch.unit_type_id).collect();
+    for id in &ids {
+        units.get_mut(*id).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
+    let caster = units
+        .archetypes()
+        .find(|arch| arch.abilities.len() >= 2)
+        .map(|arch| arch.unit_type_id)
+        .expect("a shipped unit has two abilities");
+    let names: Vec<String> = units
+        .get(caster)
+        .expect("the archetype exists")
+        .abilities
+        .iter()
+        .map(|ability| ability.name.clone())
+        .collect();
+    let block = |pairs: &[(&str, &str)]| ArchetypeEffects {
+        abilities: pairs
+            .iter()
+            .map(|(ability, look)| ((*ability).to_owned(), (*look).to_owned()))
+            .collect(),
+        ..ArchetypeEffects::default()
+    };
+    units.get_mut(caster).expect("the archetype exists").effects =
+        block(&[(&names[1], "cloud"), (&names[0], "rope")]);
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the abilities resolve");
+    let source = |ability: u8| sim_types::AbilitySource {
+        unit_type: caster,
+        ability,
+    };
+    assert_eq!(tables.ability(source(1)), Some(cloud));
+    assert_eq!(tables.ability(source(0)), catalog.effect_id("rope"));
+    assert_eq!(tables.ability(source(5)), None, "no look, no default");
+
+    units.get_mut(caster).expect("the archetype exists").effects =
+        block(&[("No Such Ability", "cloud")]);
+    let error = UnitEffectTables::build(&units, &catalog).expect_err("unknown ability");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::UnknownUnitAbility { ability, .. } if ability == "No Such Ability"
+        ),
+        "{error}"
+    );
+    let point = format!(
+        r#"{}, "hit": (class: Minor, event: Point, layers: [ {} ])"#,
+        effects("", rope),
+        SPRITE.replace("bind: SplashReach, ", "")
+    );
+    let with_point = load(dir.path(), &vocabulary(&manifest, "", &point, "")).expect("loads");
+    units.get_mut(caster).expect("the archetype exists").effects = block(&[(&names[0], "hit")]);
+    let error = UnitEffectTables::build(&units, &with_point)
+        .expect_err("an ability's look is an area or a tether");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::WrongEventKind {
+                found: EventKind::Point,
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+/// Plan WP10: every shipped ability look is an `Area` or `Link` effect holding a `Critical`
+/// layer and no light, and every area look's `Critical` layers are bound to `AreaRadius`.
+#[test]
+fn shipped_ability_looks_hold_their_critical_extent() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let units = sim_fixtures::shipped_catalogs().units;
+    let mut named = 0;
+    for arch in units.archetypes() {
+        for (ability, look) in &arch.effects.abilities {
+            assert!(
+                arch.abilities.iter().any(|spec| spec.name == *ability),
+                "{} names its own ability {ability}",
+                arch.slug
+            );
+            let effect = catalog
+                .effect_id(look)
+                .and_then(|id| catalog.effect(id))
+                .expect("the look is defined");
+            assert!(
+                matches!(effect.event, EventKind::Area | EventKind::Link),
+                "{look}"
+            );
+            let critical: Vec<_> = effect
+                .layers
+                .iter()
+                .filter(|layer| {
+                    layer.held
+                        && layer.priority == client::effects::catalog::schema::Priority::Critical
+                })
+                .collect();
+            assert!(!critical.is_empty(), "{look} holds a Critical layer");
+            // A point light is not cut where the fog begins, so it would show an enemy's area
+            // to a viewer who does not see it (D-5).
+            assert!(
+                effect
+                    .layers
+                    .iter()
+                    .all(|layer| !matches!(layer.block, Block::Light { .. })),
+                "{look} lights nothing"
+            );
+            if effect.event == EventKind::Area {
+                assert!(
+                    critical.iter().all(|layer| {
+                        layer.size.bind == Binding::AreaRadius
+                            || layer
+                                .radius
+                                .is_some_and(|radius| radius.to.bind == Binding::AreaRadius)
+                    }),
+                    "{look}'s Critical layers bind AreaRadius"
+                );
+            }
+            named += 1;
+        }
+    }
+    assert!(
+        named >= 3,
+        "the storm, the cloud and the tether are named: {named}"
+    );
+}

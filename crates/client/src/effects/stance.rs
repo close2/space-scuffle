@@ -361,7 +361,7 @@ impl LookContext<'_> {
 }
 
 /// Where a unit's ground looks stand and where its body is, in Bevy world space.
-fn anchors(bubble: &BubbleRenderInstance) -> (Vec3, Vec3) {
+pub(crate) fn anchors(bubble: &BubbleRenderInstance) -> (Vec3, Vec3) {
     let [x, y, altitude] = bubble.world_pos;
     let ground = Vec3::new(x, bubble.ground_z, y);
     let lift = match bubble.shape {

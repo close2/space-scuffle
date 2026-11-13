@@ -97,7 +97,8 @@ pub(super) fn resolve(
 }
 
 /// Checks that every effect a `Status` effect lays or spawns on a hit is itself a `Status`
-/// effect, so it binds what the held look binds (the unit's radius, the barrier's fraction).
+/// effect, so it binds what the held look binds (the unit's radius, the barrier's fraction), and
+/// that every effect an `Area` effect lays is an `Area` effect (it binds the area's radius).
 fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatalogError> {
     for effect in effects {
         let links = [
@@ -108,13 +109,13 @@ fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatal
             let Some(linked) = linked.and_then(|id| effects.get(usize::from(id.0))) else {
                 continue;
             };
-            if linked.event != EventKind::Status {
+            if linked.event != effect.event {
                 return Err(EffectCatalogError::InvalidValue {
                     path: path.to_path_buf(),
                     site: site(&effect.name, None),
                     field,
                     value: 0.0,
-                    rule: "the effect it names must be a `Status` effect",
+                    rule: "the effect it names must be of its own kind (`Status` or `Area`)",
                 });
             }
         }
@@ -561,23 +562,43 @@ impl Resolver<'_> {
         effect: &EffectDefRaw,
     ) -> Result<(Option<super::Emit>, Option<super::Hit>), EffectCatalogError> {
         let at = site(name, None);
-        for (field, present) in [
-            ("emit", effect.emit.is_some()),
-            ("hit", effect.hit.is_some()),
+        // An area lays its own again and again too (a storm's flares, WP10); only a unit's
+        // status is hit.
+        for (field, present, allowed) in [
+            (
+                "emit",
+                effect.emit.is_some(),
+                matches!(effect.event, EventKind::Status | EventKind::Area),
+            ),
+            (
+                "hit",
+                effect.hit.is_some(),
+                effect.event == EventKind::Status,
+            ),
         ] {
-            if present && effect.event != EventKind::Status {
+            if present && !allowed {
                 return Err(EffectCatalogError::InvalidValue {
                     path: self.path.to_path_buf(),
                     site: at,
                     field,
                     value: 0.0,
-                    rule: "only a `Status` effect is held on a unit to lay or spawn another",
+                    rule: "only a `Status` effect may lay or spawn another, and an `Area` \
+                           effect lay one",
                 });
             }
         }
         let emit = match &effect.emit {
             Some(emit) => {
                 self.positive_seconds(&at, "emit.every", emit.every)?;
+                if emit.moving && effect.event == EventKind::Area {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at,
+                        field: "emit.moving",
+                        value: 1.0,
+                        rule: "an area does not move",
+                    });
+                }
                 Some(super::Emit {
                     effect: EffectId(self.id(NameKind::Effect, &emit.effect, &at)?),
                     every: emit.every,
@@ -619,8 +640,9 @@ impl Resolver<'_> {
         })
     }
 
-    /// Checks that a layer of an effect of kind `event` may hold or modulate the bubble: both
-    /// belong to an effect held on a unit, which only `Mode` and `Status` effects are.
+    /// Checks that a layer of an effect of kind `event` may hold or modulate the bubble: a held
+    /// layer belongs to an effect held while a fact is published (a unit's `Mode` or `Status`,
+    /// an `Area` or a `Link`, WP10), and a `Shell` to one held on a unit.
     fn unit_bound(
         &self,
         at: &Site,
@@ -628,21 +650,32 @@ impl Resolver<'_> {
         layer: &LayerDef,
         block: &Block,
     ) -> Result<(), EffectCatalogError> {
+        let shell = matches!(block, Block::Shell(_));
         let field = if layer.held {
             "held"
-        } else if matches!(block, Block::Shell(_)) {
+        } else if shell {
             "block"
         } else {
             return Ok(());
         };
-        if !matches!(event, EventKind::Mode | EventKind::Status) {
+        // A unit's stance and status shape its bubble; an area or a tether is held while the
+        // simulation publishes it (WP10) but has no bubble to shape.
+        let allowed = if shell {
+            matches!(event, EventKind::Mode | EventKind::Status)
+        } else {
+            matches!(
+                event,
+                EventKind::Mode | EventKind::Status | EventKind::Area | EventKind::Link
+            )
+        };
+        if !allowed {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
                 site: at.clone(),
                 field,
                 value: 0.0,
-                rule: "only a `Mode` or `Status` effect is held on a unit and may hold a layer or \
-                       shape its bubble",
+                rule: "only a `Mode`, `Status`, `Area` or `Link` effect is held and may hold a \
+                       layer, and only a `Mode` or `Status` effect may shape a bubble",
             });
         }
         if matches!(block, Block::Particles(_)) && layer.held {
@@ -766,8 +799,8 @@ impl Resolver<'_> {
         })
     }
 
-    /// Checks that a ribbon layer spans its event's line once: a `Line` event and only the
-    /// `Point` placement. Other blocks pass.
+    /// Checks that a ribbon layer spans its event's line once: a `Line` or `Link` event and
+    /// only the `Point` placement. Other blocks pass.
     fn ribbon_spans_line(
         &self,
         at: &Site,
@@ -778,7 +811,10 @@ impl Resolver<'_> {
         if !matches!(block, Block::Ribbon(_)) {
             return Ok(());
         }
-        self.require(at, event, super::schema::Binding::LineLength)?;
+        // A tether's line runs from its caster's bubble to its target's (WP10).
+        if event != EventKind::Link {
+            self.require(at, event, super::schema::Binding::LineLength)?;
+        }
         if placements
             .iter()
             .any(|placement| *placement != PlacementDef::Point)

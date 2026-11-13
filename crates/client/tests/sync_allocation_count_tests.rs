@@ -93,7 +93,8 @@ enum Variant {
     /// The battle driver alone on the resumed, idle skirmish.
     RunningBaseline,
     /// The live synchroniser, a splash event every frame and the effect systems (plan
-    /// `2026-11-09-effect-visualization` WP4, D-7).
+    /// `2026-11-09-effect-visualization` WP4, D-7), with a live area and a live tether held
+    /// every frame (WP10).
     EffectStream,
     /// The same splash stream and live synchroniser without the effect systems.
     EffectBaseline,
@@ -256,6 +257,22 @@ const STREAM_EFFECTS: &str = r#"
         (block: Light(color: (1.0, 0.6, 0.3), intensity: 400.0), size: (scale: 2.0),
          duration: 0.2, curve: "fade"),
         (block: Particles(emitter: "chips"), size: (bind: SplashReach, scale: 1.0)),
+    ]),
+    "cloud": (class: Major, event: Area, emit: Some((effect: "cloud_puff", every: 0.1)), layers: [
+        (block: Decal(texture: "soft_disc", ramp: "blue", outline: (edge_noise: 0.01, fill: 0.7)),
+         size: (bind: AreaRadius, scale: 1.0), duration: 0.1, held: true, priority: Critical),
+        (block: Sprite(texture: "flip", ramp: "red_add"), placement: Disc(count: 4,
+         radius: (bind: AreaRadius, scale: 0.5)), size: (bind: AreaRadius, scale: 0.4),
+         duration: 0.1, held: true),
+    ]),
+    "cloud_puff": (class: Minor, event: Area, layers: [
+        (block: Sprite(texture: "flip", ramp: "red_add"), placement: Disc(count: 1,
+         radius: (bind: AreaRadius, scale: 0.6)), size: (bind: AreaRadius, scale: 0.3),
+         duration: 0.5),
+    ]),
+    "tongue": (class: Minor, event: Link, layers: [
+        (block: Ribbon(texture: "soft_disc", ramp: "red_add", scroll: 1.0), size: (scale: 0.05),
+         duration: 0.1, held: true, priority: Critical),
     ])
 "#;
 
@@ -295,16 +312,122 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
             archetype.effects = sim_core::catalog::ArchetypeEffects::default();
         }
     }
+    let views = held_views(app, &mut units)?;
     let tables = UnitEffectTables::build(&units, &catalog)?;
     app.insert_resource(EffectRuntime::new(&catalog))
         .insert_resource(tables)
         .insert_resource(catalog)
+        .insert_resource(views)
+        .init_resource::<client::effects::areas::AreaLooks>()
         .add_systems(
             Update,
-            spawn_effects_from_events.after(publish_combat_events),
+            (
+                spawn_effects_from_events.after(publish_combat_events),
+                hold_area_and_link.after(publish_combat_events),
+            ),
         )
         .add_systems(PostUpdate, build_effect_frame);
     Ok(())
+}
+
+/// One published area and one published tether, held every frame of the stream (WP10).
+#[derive(Resource)]
+struct HeldViews {
+    /// The area.
+    area: [sim_types::AreaView; 1],
+    /// The tether.
+    link: [sim_types::LinkView; 1],
+}
+
+/// Gives the first archetype with two abilities the stream vocabulary's area and tether for
+/// them, and builds an area of the first and a tether of the second between the battle's first
+/// two presented units.
+fn held_views(
+    app: &App,
+    units: &mut sim_core::catalog::UnitCatalog,
+) -> Result<HeldViews, Box<dyn std::error::Error>> {
+    let caster = units
+        .archetypes()
+        .find(|archetype| archetype.abilities.len() >= 2)
+        .map(|archetype| archetype.unit_type_id)
+        .ok_or("the shipped catalog has a unit with two abilities")?;
+    let archetype = units.get_mut(caster)?;
+    let names: Vec<String> = archetype
+        .abilities
+        .iter()
+        .take(2)
+        .map(|ability| ability.name.clone())
+        .collect();
+    archetype.effects.abilities = [
+        (names[0].clone(), "cloud".to_owned()),
+        (names[1].clone(), "tongue".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+    let bubbles = &app
+        .world()
+        .resource::<BattleSession>()
+        .frames
+        .current()
+        .bubbles;
+    let (Some(first), Some(second)) = (bubbles.first(), bubbles.get(1)) else {
+        return Err("the default battle presents two units".into());
+    };
+    let owner = first.owner;
+    Ok(HeldViews {
+        area: [sim_types::AreaView {
+            id: 1,
+            owner,
+            center: [first.world_pos[0] + 2.0, first.world_pos[1], first.ground_z],
+            radius: 1.5,
+            remaining_ticks: 60,
+            total_ticks: 61,
+            source: Some(sim_types::AbilitySource {
+                unit_type: caster,
+                ability: 0,
+            }),
+        }],
+        link: [sim_types::LinkView {
+            from: first.entity_id,
+            to: second.entity_id,
+            owner,
+            source: sim_types::AbilitySource {
+                unit_type: caster,
+                ability: 1,
+            },
+        }],
+    })
+}
+
+/// Keeps the held area and tether in step every frame through the production code that the
+/// battle's `present_areas_and_links` runs on the presented snapshot.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn hold_area_and_link(
+    views: Res<'_, HeldViews>,
+    session: Res<'_, BattleSession>,
+    catalog: Res<'_, client::effects::catalog::EffectCatalog>,
+    tables: Res<'_, client::effects::catalog::UnitEffectTables>,
+    mut runtime: ResMut<'_, client::effects::runtime::EffectRuntime>,
+    mut looks: ResMut<'_, client::effects::areas::AreaLooks>,
+    time: Res<'_, Time<Virtual>>,
+) {
+    let mut keep = client::effects::areas::Keep {
+        catalog: &catalog,
+        tables: &tables,
+        runtime: &mut runtime,
+        now: time.elapsed_secs_f64(),
+        delta: time.delta_secs_f64(),
+    };
+    client::effects::areas::keep_views(
+        &mut looks,
+        (&views.area, &views.link),
+        session.frames.presented().bubbles.as_slice(),
+        None,
+        &mut keep,
+    );
 }
 
 // PERFORMANCE RATIONALE:
@@ -362,6 +485,15 @@ fn run_child(variant: Variant) -> TestResult {
     let spawned_before = effects_spawned(&app);
     measured_steady_frames(&mut app, frames);
     if variant == Variant::EffectStream {
+        let held = app
+            .world()
+            .resource::<client::effects::areas::AreaLooks>()
+            .held();
+        if held != (1, 1) {
+            return Err(
+                format!("the stream must hold one area and one tether, held {held:?}").into(),
+            );
+        }
         let spawned = effects_spawned(&app) - spawned_before;
         if spawned < u64::from(frames) {
             return Err(

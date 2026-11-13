@@ -7,6 +7,85 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP10 round 1 (areas and tethers)
+
+WP10 adds looks for the persistent areas and the tethers the simulation publishes (`RenderSnapshot::areas` and
+`links`, filled by the spellcaster plan). The caster's presentation block names the look per ability. The decisions
+are plan Amendment 20. This is round 1 of at most five (Q0080). Please write your review to a new file next to this
+one, `independent_review_wp10_1.md`, in the same form as the WP9 reviews. Judge `psionic_storm`, `blinding_cloud`
+and `abduct_tether` against each of the seven checklist items, and check the fog rules and the engineering items
+below. Nothing was spent and no texture was made. Every look is built from the existing sets (`smoke_puff`,
+`droplet`, `noise_tile`).
+
+The pictures come from `crates/client/tests/area_link_gpu_tests.rs` on the production skirmish. It ran as a debug
+build under Xvfb at 1280×720, at the battle camera's default distance, on radv and on lavapipe. The files start
+with `wp10r1_`.
+
+### What the looks are meant to be (plan §5.5; art rules: no rays, stripes, sunbursts, beams or speed lines)
+
+| Look | Ability (caster) | Meant to read as |
+|---|---|---|
+| `psionic_storm` | Psionic Storm (High Templar analogue) | A churning indigo-violet cloud over the area, lit from within by pockets of discharge that swell and fade all over it (laid every 0.11 s, `storm_flare`), a violet glow on the ground under it, and a dark violet band whose outer lip is the area's true edge (`Critical`). The discharge is light inside the cloud, never a stroke of lightning. |
+| `blinding_cloud` | Blinding Cloud (Viper analogue) | A low pall of dark grey murk with a cold cast, rolling as billows swell and thin in it (every 0.2 s, `murk_billow`), over ground darkened in its shade; the darkened front's outer lip is the area's true edge (`Critical`). |
+| `abduct_tether` | Abduct (Viper analogue) | A dark red-brown tongue (opaque, no glow, no bright core) from the caster's body to the victim's, its surface rippling back towards the caster, with a grip clamped on the victim. Its ends follow the two bubbles every frame. |
+
+### How a look is held, and the fog (Amendment 20)
+
+- A look is held while its area or tether is published. It erodes out over its `exit` when the area or tether
+  ends. An area seen on the tick it opens comes in; one first seen later is shown already settled.
+- An area of the viewer's own is drawn whole. An enemy's area is drawn only where the viewer sees it:
+  - wholly in fog, it holds no look;
+  - seen in part, it is cut by a straight line across the disc, and the cut fails closed (no unseen ground is
+    drawn). Over the fog's staircase of 1-unit cells the straight cut gives up some seen ground next to the edge.
+- A tether is drawn only while both of its bubbles are drawn as they are. A tether from a caster in fog is never
+  drawn.
+- The storm had a point light in an earlier draft. The light lit unseen ground across the fog edge, and the fog test
+  caught it. Area and tether looks now carry no light, and a catalog test enforces this.
+
+### Not presented in a battle, and not covered
+
+- The three shipped casters (`cerebral_elder`, `mycelium_shaman`, `tongue_chameleon`) have no unit media, so the
+  client does not present them in a battle yet. Every picture here comes from a presentable stand-in unit that was
+  given copies of the shipped abilities and blocks in the test world's catalog only. The stand-in casts through the
+  simulation's own cast order.
+- Fungal Growth has no area look. The simulation publishes no area for it: its impact is one search. A player sees
+  it today only through the rooted units' slow look (`concussive_daze`). The battle sheet therefore shows the storm,
+  the cloud and the tether, but no fungal.
+
+### Material
+
+| What | Files |
+|---|---|
+| Each look's sequence at the default zoom, from the cast, every sixth 40 ms frame (0.24 s apart), cropped round it: the storm, the cloud, the tether (cast after the two areas, so its frames come later) | [storm](wp10r1_storm_sequence_radv.jpg), [cloud](wp10r1_cloud_sequence_radv.jpg), [tether](wp10r1_tether_sequence_radv.jpg); lavapipe: the same names ending `_lavapipe` |
+| Whole battle window with all three at 0, 0.8, 1.6 and 2.4 s after the casts | [radv](wp10r1_battle_sequence_radv.jpg), [lavapipe](wp10r1_battle_sequence_lavapipe.jpg) |
+| The measured area shots, 2x: whole look, `Critical` layers only, no effect layer (the cloud is at the top left, the storm below it) | [radv](wp10r1_areas_radv.jpg), [lavapipe](wp10r1_areas_lavapipe.jpg) |
+| The measured tether shots, 3x, top to bottom: whole look, `Critical` layer only, no effect layer | [radv](wp10r1_tether_radv.jpg), [lavapipe](wp10r1_tether_lavapipe.jpg) |
+| The fog case, 2x: an enemy storm across the edge of the viewer's sight, shown whole, with its `Critical` layers only, and with no effect layer. The cut sliver at the right is what the viewer sees of it. The enemy's tether, both of whose ends stand in the fog, is not drawn. The pulled unit at the top is the viewer's own earlier tether target. | [radv](wp10r1_fog_radv.jpg), [lavapipe](wp10r1_fog_lavapipe.jpg) |
+| Measurements on both drivers: edge error per ray, tether end errors, fog sample counts | [wp10r1_measurements.txt](wp10r1_measurements.txt) |
+
+The test checks, on each driver:
+
+- **Area edge.** Along 32 rays per area, the outermost pixel that the `Critical` layers change must lie within
+  ±2 px of the projected `AreaRadius`.
+- **Tether ends.** The `Critical` tongue must run from each bubble's surface point to within ±2 px.
+- **Fog.** The enemy storm's `Critical` layers may change no unseen ground sample. The whole look must change at
+  least a quarter of the seen samples. The enemy's tether must hold no look.
+
+A valgrind window (`sync_allocation_count_tests.rs`, the effect stream) also holds a live area, which lays its own
+every 0.1 s, and a live tether every frame.
+
+### Points to look at
+
+- Whether the storm reads as a storm at gameplay zoom: a roiling energy cloud with its true edge clear, rather than
+  a flat glowing disc. Check for any line- or ray-like element.
+- Whether the blinding cloud reads as a low murk whose edge is clear on a light floor, or only as a grey stain.
+- Whether the tongue reads as a fleshy tongue and not as a laser beam or a plain rod, at the default zoom and in the
+  3x crop.
+- Whether the partly seen enemy storm in the fog case reads acceptably: how much of its seen part the fail-closed
+  cut gives up.
+- Whether anything pops at the start or the end of the sequences: the areas come in over 0.12 to 0.3 s and erode out
+  over 0.3 to 0.45 s.
+
 ## WP9 round 3 (status and death looks)
 
 Round 2's review ([`independent_review_wp9_2.md`](independent_review_wp9_2.md), kept as written) accepted

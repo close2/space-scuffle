@@ -316,6 +316,7 @@ impl EffectRuntime {
             released_at: None,
             held_exit: 0.0,
             oneshot_end: birth,
+            fog_clip: NO_CLIP,
         };
         self.place(&instance)
     }
@@ -381,7 +382,7 @@ impl EffectRuntime {
             end: f64::INFINITY,
             anchor: request.anchor,
             bound: request.bound,
-            line: None,
+            line: request.line,
             seed: instance_seed(self.sequence, effect.salt),
             detail_retired_at: None,
             has_detail: false,
@@ -398,6 +399,7 @@ impl EffectRuntime {
             released_at: None,
             held_exit: effect.held_exit,
             oneshot_end: birth + f64::from(effect.lifetime),
+            fog_clip: NO_CLIP,
         };
         self.place(&instance)
     }
@@ -412,6 +414,35 @@ impl EffectRuntime {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Moves the held tether `handle` to `line` (world space; its anchor is the line's far end)
+    /// with the values `bound`; a released or stale handle does nothing. Returns whether the
+    /// effect is still held (WP10: a tether's ends follow its two bubbles every frame).
+    pub fn update_held_line(
+        &mut self,
+        handle: EffectHandle,
+        line: WorldLine,
+        bound: BoundValues,
+    ) -> bool {
+        match self.pool.get_mut(handle) {
+            Some(instance) if instance.held && instance.released_at.is_none() => {
+                instance.anchor = line.to;
+                instance.line = Some(line);
+                instance.bound = bound;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Cuts every layer of the live effect `handle` that has no clip of its own to `clip` (an
+    /// area the viewer sees in part, WP10); [`NO_CLIP`] draws it whole. A stale handle does
+    /// nothing.
+    pub fn set_fog_clip(&mut self, handle: EffectHandle, clip: LineClip) {
+        if let Some(instance) = self.pool.get_mut(handle) {
+            instance.fog_clip = clip;
         }
     }
 
@@ -775,11 +806,14 @@ impl EffectRuntime {
                 if due <= window.0 || due > window.1 {
                     continue;
                 }
-                let clip = clip_window(
-                    instance.line,
-                    layer.clip_to_line,
-                    &instance.bound,
-                    instance.anchor + placed.offset,
+                let clip = with_fog(
+                    clip_window(
+                        instance.line,
+                        layer.clip_to_line,
+                        &instance.bound,
+                        instance.anchor + placed.offset,
+                    ),
+                    instance.fog_clip,
                 );
                 let burst = Burst {
                     emitter: emitter_id,
@@ -1063,10 +1097,13 @@ impl EffectRuntime {
         // A standing card (a clump of spikes) is drawn only at a seen point and kept whole: cut
         // at the fog's edge it would read as half a clump (review round 4, fog capture). Only
         // the line's own ends cut it; ground-hugging cards end where the fog begins.
-        let clip = match line {
-            Some(line) if standing && look.clip_to_line => line_clip_window(line),
-            _ => clip_window(line, look.clip_to_line, &context.instance.bound, position),
-        };
+        let clip = with_fog(
+            match line {
+                Some(line) if standing && look.clip_to_line => line_clip_window(line),
+                _ => clip_window(line, look.clip_to_line, &context.instance.bound, position),
+            },
+            context.instance.fog_clip,
+        );
         let surface = Surface::of(look.breakup.as_ref(), seed);
         let card = SpriteInstance {
             center: center.to_array(),
@@ -1180,7 +1217,7 @@ impl EffectRuntime {
         // The strip itself ends at the line's ends (its tapers round them); only a line the
         // viewer sees in part is cut, where the fog begins.
         let clip = if line.seen == u64::MAX {
-            NO_CLIP
+            context.instance.fog_clip
         } else {
             seen_clip_window(line, spacing, Vec2::new(seen_at.x, seen_at.z))
         };
@@ -1267,7 +1304,10 @@ impl EffectRuntime {
             .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
         let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
         let line = context.instance.line;
-        let clip = clip_window(line, look.clip_to_line, &context.instance.bound, position);
+        let clip = with_fog(
+            clip_window(line, look.clip_to_line, &context.instance.bound, position),
+            context.instance.fog_clip,
+        );
         let yaw = match (look.yaw, line) {
             (DecalYaw::AlongLine, Some(line)) => {
                 let direction = line.to - line.from;
@@ -1669,7 +1709,17 @@ pub fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
 }
 
 /// No clip window.
-const NO_CLIP: LineClip = [0.0; 4];
+pub const NO_CLIP: LineClip = [0.0; 4];
+
+/// `clip`, or the effect's fog clip when the layer has none of its own: a line's own clip
+/// already ends where the fog begins (WP10: an area seen in part is cut where the fog begins).
+const fn with_fog(clip: LineClip, fog: LineClip) -> LineClip {
+    if clip[0] == 0.0 && clip[1] == 0.0 {
+        fog
+    } else {
+        clip
+    }
+}
 
 /// How far, in world units, the far ends of two requests for one line may lie apart: every
 /// search point of a line publishes the same far end.

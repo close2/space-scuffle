@@ -645,15 +645,16 @@ pub struct StrengthDef {
 
 /// An effect a `Status` effect lays again and again while it is held (plan WP9): the dust a
 /// charging unit kicks up, the fumes of a stimmed one. Each is a separate one-shot spawn at the
-/// unit's foot, so it stays where it was laid while the unit moves on.
+/// unit's foot, so it stays where it was laid while the unit moves on. An `Area` effect lays
+/// another `Area` effect at the area's centre with the area's values (a storm's flares, WP10).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmitDef {
-    /// The effect laid; a `Status` effect.
+    /// The effect laid; of its layer's own kind (`Status` or `Area`).
     pub effect: String,
     /// Seconds between two, positive.
     pub every: f32,
-    /// Laid only while the unit moves.
+    /// Laid only while the unit moves (a `Status` effect only).
     #[serde(default)]
     pub moving: bool,
 }
@@ -839,8 +840,9 @@ pub struct LayerDef {
     pub placements: Vec<PlacementDef>,
     /// The layer lives while the fact its effect shows holds (a unit's stance, its cloak, its
     /// status): it comes in over `duration` along its curves, then stays at their end until the
-    /// effect is released, and erodes out over `exit` seconds (plan §5.4, WP8, WP9). Only `Mode`
-    /// and `Status` effects may hold layers.
+    /// effect is released, and erodes out over `exit` seconds (plan §5.4, WP8, WP9). Only `Mode`,
+    /// `Status`, `Area` and `Link` effects may hold layers (an area or a tether is held while the
+    /// simulation publishes it, WP10).
     #[serde(default)]
     pub held: bool,
     /// Seconds a held layer takes to erode out once its effect is released; positive.
@@ -883,7 +885,8 @@ pub struct EffectDefRaw {
     /// is shorter, the morph follows the channel. Positive.
     #[serde(default)]
     pub span: Option<f32>,
-    /// For a `Status` effect: what it lays again and again while it is held (see [`EmitDef`]).
+    /// For a `Status` or `Area` effect: what it lays again and again while it is held (see
+    /// [`EmitDef`]).
     #[serde(default)]
     pub emit: Option<EmitDef>,
     /// For a `Status` effect: what it spawns when the simulation publishes a hit on its status

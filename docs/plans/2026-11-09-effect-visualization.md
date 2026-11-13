@@ -2045,3 +2045,105 @@ replay or checksum changes (D-1 holds).
 
 Packet: section "WP9 round 3".
 
+
+## Amendment 20: WP10 areas and links, round 1 (2026-11-13, short note, charter §6)
+
+**Decision note (charter §6, short note: a client presentation change, catalog presentation data and their tests).**
+WP10 of §9 in the client and the catalog's presentation data. No simulation state, golden replay or checksum changes
+(D-1 holds): the client reads `RenderSnapshot::areas` and `RenderSnapshot::links`, which the spellcaster plan
+(`2026-11-10-spellcaster-mechanics`, D-19) already fills from the effect engine's persistents, missiles and tethered
+displacements; no simulation crate is touched.
+
+**What changes.**
+
+- **Areas and tethers are held looks** (`client::effects::areas`, new). Every frame `present_areas_and_links` reads
+  the areas and links of the presented tick (`BattleFrameState::presented_effect_views`, the previous snapshot's
+  while the pose is interpolated from it, as for the bubbles' membership) and keeps one held effect per published
+  area and per published tether in the `EffectRuntime`, through the same `hold`, `update_held` and `release` the
+  stance looks use (Amendment 11). The effect is the one the caster's presentation block names for the ability
+  (`abilities: { "<ability name>": "<effect>" }`, D-8), looked up by `AbilitySource` in
+  `UnitEffectTables::ability`; an ability whose caster names nothing draws nothing (no default).
+  - An area's look is anchored at its centre and bound to `AreaRadius`, `AreaRemaining` and `AreaTotal`. An area
+    seen on the tick it opened comes in; one first seen later (out of the fog) is shown settled. When the area is no
+    longer published, its held layers erode out over their `exit`.
+  - A tether's look holds a line from the caster's body to the victim's, each end on its bubble's surface facing the
+    other (`tether_ends`), moved with both bubbles every frame (`EffectRuntime::update_held_line`); `hold` now keeps
+    its request's line.
+- **Vocabulary.** `Area` and `Link` effects may hold layers (a `Shell` stays `Mode` and `Status` only); an `Area`
+  effect may `emit` another `Area` effect at its beat (laid at the area's centre with the area's values, its own
+  placements scattering it: the life of a storm or a cloud; `moving` is refused); a ribbon may span a `Link`'s line.
+  A presentation block's `abilities` are resolved by the archetype's ability name (`UnknownUnitAbility` otherwise)
+  into a table keyed by ability index.
+- **Fog (D-5), per frame.**
+  - An area of the viewer's own, or under no fog, is drawn whole.
+  - An enemy's area is sampled on a 17 × 17 grid against the viewer's visible cells (`area_sight`): wholly unseen,
+    it holds nothing; wholly seen, it is drawn whole; seen in part, every layer without a clip of its own is cut by
+    a half plane (`EffectInstance::fog_clip`, the clip window the line effects already use). The cut fails closed:
+    along each of 32 axes it lies half a sample step beyond the farthest unseen sample, and the axis that keeps the
+    most seen samples is taken. The cut is in world space, so cards that rise over it are cut where they stand.
+  - **Known limitation, recorded for review.** A straight cut across the fog's staircase of 1-unit cells gives up
+    the seen ground nearest the edge: in the fog test the whole look covers 22 of 57 seen ground samples on radv
+    and 17 of 57 on lavapipe, and none of 277 unseen ones. A per-pixel fog mask in the effect shaders (the terrain's
+    visibility texture bound to the decal and card pipelines) would draw exactly the seen part; it is a renderer
+    change left for a later round.
+  - **No light on an area or tether look.** A point light is not cut by the fog clip: the storm's first light lit
+    unseen ground beyond the edge (the fog test caught it), so it was removed, and a catalog test refuses a `Light`
+    layer in a shipped ability look.
+  - A tether is drawn only while both its bubbles are drawn as they are (`Presence::Shown`): a tether from a caster
+    the viewer does not see would point at it.
+- **Looks** (`effects.ron`; no new texture, nothing spent; no rays, stripes, sunbursts or beams):
+  - `psionic_storm` (Psionic Storm): a churning indigo-violet cloud over the area (standing billows, and
+    `storm_flare` laid every 0.11 s: a billow swelling and thinning at a random place in the area with a short pocket
+    of violet-white light inside it), a violet glow cast on the ground under it, and a `Front` ring whose leading
+    edge is the area's true edge (`Critical`). The discharge is light inside the cloud, never a stroke.
+  - `blinding_cloud` (Blinding Cloud): a low pall of dark grey murk with a cold cast, rolling as `murk_billow` billows
+    swell and thin in it every 0.2 s, over ground darkened in its shade; a darkening `Front` ring and the shade
+    end on the area's true edge (`Critical`).
+  - `abduct_tether` (Abduct): a dark red-brown tongue (a soft rod 0.48 world units wide, no glow, no bright core)
+    from the caster's body to the victim's, its surface rippling back towards the caster, with a grip clamped on the
+    victim (`Critical` for the tongue). Two earlier drafts were replaced before review: a pale
+    pink core read as a laser beam, and a tiled puff texture as a dotted line.
+  - Named by `cerebral_elder` (`"Psionic Storm"`) and `tongue_chameleon` (`"Abduct"`, `"Blinding Cloud"`) in
+    `units.ron`.
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **Fungal Growth has no area look.** The simulation publishes no `AreaView` for it: its missile's impact runs one
+  search and opens no persistent area (`ability_effects.ron`, `fungal_growth`), so there is no area to hold a look
+  on. What a player sees today is its spell missile (`spell_missiles`, not presented by this plan) and the rooted
+  units' `Slowed` status (`concussive_daze`, WP9). A look for it needs either a published impact (a presentation-only
+  event for an instant search, a simulation change) or per-status looks (the status table is per kind, and its
+  damage-over-time and reveal kinds have no default look yet, Amendment 17). Recorded for a later round.
+- **Distortion is not used** by these looks, so E3-1 (the distortion pipeline's warm-up) stays on the open polish
+  list.
+- **The tongue is straight.** The `Ribbon` block has no sag; the plan's catenary for `abduct_tether` (§5.5) is not
+  built. The pull is the victim's published motion.
+- **Shown only in the lab, or by a stand-in in the tests:** the three casters (`cerebral_elder`, `mycelium_shaman`,
+  `tongue_chameleon`) have no unit media, so the client does not present them in a battle, and a battle player
+  cannot cast these spells yet. The looks draw for any caster type whose block names them once it has media. The
+  GPU test gives a presentable unit copies of the shipped abilities and of their casters' blocks in the test world's
+  catalog only, and casts them through the simulation's own cast order.
+
+**Tests.**
+
+- `effects::areas` unit tests: `area_sight` (whole, hidden, a fail-closed half plane at the fog's edge in either axis), tether
+  ends on both surfaces, the retained record.
+- `effect_catalog_tests.rs`: held `Area` and `Link` effects load; an area's `emit` names an `Area` effect and never
+  `moving`; neither may `hit` or hold a `Shell`; a splash still holds nothing; abilities resolve by name into the
+  table by index, an unknown ability and a look of another kind are refused; every shipped ability look holds a
+  `Critical` layer and no light, and every area look binds it to `AreaRadius`.
+- `sync_allocation_count_tests.rs`: the effect-stream window (valgrind-counted) also holds a live area, whose look
+  lays its own every 0.1 s, and a live tether between two presented units every frame, through the production
+  `keep_views`; the window must still allocate nothing beyond its baseline.
+- New `area_link_gpu_tests.rs` on the production skirmish (radv and lavapipe): the plan's "area edge at
+  `AreaRadius` ±2 px" (32 rays per area, the outermost pixel the `Critical` layers change against the projected
+  radius; worst 1.72 px for the storm and 1.94 px for the cloud on both drivers), "tether ends on both bubbles
+  ±2 px" (the run of pixels the `Critical` tongue changes along the line between the two bodies against the
+  projected surface points; 0.52 and 0.71 px), and "fog per frame" (an enemy's storm across the viewer's sight edge:
+  its `Critical` layers change none of 277 unseen ground samples, and its whole look at least a quarter of the seen
+  ones; the enemy's tether, both ends in the fog, holds no look while the viewer's own still published one does).
+  A second child casts the looks at once and writes the evidence sequences. Measurements:
+  `docs/evidence/effects/review/wp10r1_measurements.txt`.
+
+**Gate.** The packet's section "WP10 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).
