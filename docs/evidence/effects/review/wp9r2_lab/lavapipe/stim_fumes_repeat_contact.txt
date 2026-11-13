@@ -1,0 +1,12 @@
+Effect contact sheet of 'stim_fumes' (plan 2026-11-09-effect-visualization §6.5), made by
+`battle_capture --effect-lab stim_fumes` on the production effect plugin and shaders.
+Bindings: . Lifetime: 2.350 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: shipped camera; the effect spawned on the same spot several times as an attacker's consecutive hits (`--repeat`), each with its own instance seed as consecutive events in a battle have; the lifetime runs from the first to the end of the last.
+stim_fumes_repeat_contact.jpg columns: ages 0 (0.000 s), 0.03 (0.070 s), 0.08 (0.188 s), 0.15 (0.352 s), 0.3 (0.705 s), 0.5 (1.175 s), 0.75 (1.762 s), 1 (2.350 s).
+Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
+damage, yellow reach; for a line, the line and the full radius at each search point), bright
+close zoom, its reference, dark default, its reference, dark close, its reference.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
+stim_fumes_repeat_sequence.jpg: the first 3 s on the bright ground at the default zoom, one frame every
+40 ms, read left to right, top to bottom.

@@ -505,6 +505,7 @@
             effects: (
                 weapons: [(weapon: Primary, mode: Some("siege_mode"), splash: Some("shell_impact"))],
                 modes: [(mode: "siege_mode", transition: Some("mode_seal_sweep"), stance: Some("siege_anchor"))],
+                death: Some("vehicle_wreck"),
             ),
             veo_prompts: {
                 Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with a twin-railgun turret on top, both long rail barrels pointing forward, four exposed chunky tracks, smooth armored hull sides without side vents, two exhaust stacks at the rear.",
@@ -918,6 +919,7 @@
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the napalm jet's line splash (accepted by the scale-out review in round 2, Amendment 8).
             effects: (
                 weapons: [(weapon: Primary, splash: Some("flame_line"))],
+                death: Some("vehicle_wreck"),
             ),
             veo_prompts: {
                 Idle: "Pyre Outrider: Unmanned trike of bold clean armor plates, no outline glow, three wheels only: one large front wheel and two large rear wheels, with cyan-lit spoked hubs, a long barrel at the front and two fuel tanks on its back, seen from above at a three-quarter angle, front toward the lower right, whole, floating in evenly lit empty space, no floor, no shadow.",
@@ -2959,6 +2961,7 @@
             // ground marks (accepted by the review gate in round 5, Amendment 3).
             effects: (
                 weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))],
+                death: Some("bio_burst"),
             ),
             veo_prompts: {
                 Idle: "Subterranean Ambush Scorpion: one broad, flat organic scorpion of thick brown chitin, crouched low and compact: six short legs tucked close under its body, two broad pincer claws folded shut in front of its head, a spined tail curled over its back, amber glow along its back seams, seen from high above at a three-quarter angle, head toward the lower right, whole, centred, floating in evenly lit empty space, no floor, no shadow.",

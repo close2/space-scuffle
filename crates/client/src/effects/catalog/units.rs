@@ -33,7 +33,7 @@ const STATUS_KINDS: &[EventKind] = &[EventKind::Status];
 const MODE_KINDS: &[EventKind] = &[EventKind::Mode];
 
 /// Every status kind, in the order of [`status_index`].
-const STATUS_ORDER: [StatusKind; 8] = [
+pub const STATUS_ORDER: [StatusKind; 8] = [
     StatusKind::Overclock,
     StatusKind::Dash,
     StatusKind::Slowed,
@@ -45,7 +45,8 @@ const STATUS_ORDER: [StatusKind; 8] = [
 ];
 
 /// Dense index of a status kind.
-const fn status_index(kind: StatusKind) -> usize {
+#[must_use]
+pub const fn status_index(kind: StatusKind) -> usize {
     match kind {
         StatusKind::Overclock => 0,
         StatusKind::Dash => 1,

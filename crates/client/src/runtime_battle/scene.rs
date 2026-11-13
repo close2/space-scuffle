@@ -65,6 +65,9 @@ pub struct MapObjectSnapshot {
     pub owner: Option<PlayerId>,
     /// True for ownership-bearing towers; natural resource artwork stays untinted.
     pub ownership_tint: bool,
+    /// Width and height of its billboard, world units (ground effects leave its disc
+    /// unpainted).
+    pub size: f32,
 }
 
 /// Reused map-entity render snapshot, refreshed only when the simulation tick changes.
@@ -188,6 +191,7 @@ fn spawn_map_objects(
             visible: node.remaining > 0,
             owner: None,
             ownership_tint: false,
+            size: visual.size,
         });
     }
     for tower in map.watchtowers() {
@@ -214,6 +218,7 @@ fn spawn_map_objects(
             visible: true,
             owner: tower.controlling_player,
             ownership_tint: true,
+            size: visual.size,
         });
     }
     presentation

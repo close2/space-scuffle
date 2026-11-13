@@ -91,6 +91,7 @@ const ORIENT_RIBBON_GROUND: u32 = 6u;
 const SHAPE_TEXTURE: u32 = 0u;
 const SHAPE_RADIAL: u32 = 1u;
 const SHAPE_FRONT: u32 = 2u;
+const SHAPE_MEMBRANE: u32 = 3u;
 
 // SpriteInstance::flags bits.
 const FLAG_MIRROR: u32 = 1u;

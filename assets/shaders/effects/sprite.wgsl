@@ -6,7 +6,7 @@
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
-    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, SHAPE_RADIAL, SHAPE_FRONT, ramp_lookup,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, SHAPE_RADIAL, SHAPE_FRONT, SHAPE_MEMBRANE, ramp_lookup,
     erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
     flipbook_sample, premultiply, card_mip_level, derivative_mip_level, darkening_factor, NOWHERE,
 }
@@ -55,6 +55,12 @@ const WAVER_ACROSS: f32 = 0.6;
 // cut within one pixel read as a drawn outline). Its mask is applied after the intensity, so a
 // thickened band keeps the whole fade.
 const WAVER_SOFT: f32 = 0.5;
+// A membrane's look: its face keeps this share of the rim's shading and coverage, the rim
+// rises with this power of how obliquely the shell is seen, and the outline fades over this
+// share of the radius.
+const MEMBRANE_FACE: f32 = 0.12;
+const MEMBRANE_FALLOFF: f32 = 2.0;
+const MEMBRANE_EDGE: f32 = 0.08;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -231,6 +237,20 @@ fn radial_texel(radius: f32) -> vec4<f32> {
     return vec4<f32>(exp(-r2 * 3.0), exp(-r2 * 2.5), 1.0 - radius, mask);
 }
 
+// A thin membrane round a body (`SHAPE_MEMBRANE`, plan WP9): (shading, coverage, erosion order,
+// mask). The card is the outline of a sphere seen from the camera. Light crosses more of a thin
+// shell the more obliquely it is seen, so the membrane is faint where it faces the camera and
+// densest just inside its outline; the outline itself fades over `MEMBRANE_EDGE` of the radius
+// rather than ending on a drawn circle. The order rises towards the outline, so the layer's
+// erosion opens the face first and the rim last.
+fn membrane_texel(radius: f32, edge: f32) -> vec4<f32> {
+    let r = min(radius, 1.0);
+    let facing = sqrt(max(1.0 - r * r, 0.0));
+    let rim = pow(1.0 - facing, MEMBRANE_FALLOFF);
+    let mask = 1.0 - smoothstep(1.0 - max(MEMBRANE_EDGE, edge * 1.5), 1.0, radius);
+    return vec4<f32>(MEMBRANE_FACE + (1.0 - MEMBRANE_FACE) * rim, MEMBRANE_FACE + (1.0 - MEMBRANE_FACE) * rim, rim, mask);
+}
+
 // Whether `card` is a ribbon.
 fn is_ribbon(card: SpriteInstance) -> bool {
     return card.orient == ORIENT_RIBBON || card.orient == ORIENT_RIBBON_GROUND;
@@ -359,6 +379,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         texel = front_texel(card, centred, radius, edge, noise_level);
     } else if (card.shape == SHAPE_RADIAL) {
         texel = radial_texel(radius);
+    } else if (card.shape == SHAPE_MEMBRANE) {
+        texel = membrane_texel(radius, edge);
     } else {
         texel = texture_texel(card, in.uv, centred, radius, edge, in.mip);
     }

@@ -123,6 +123,9 @@ SuiteCatalog(
         // Concealment and stance looks (plan 2026-11-09-effect-visualization WP8): two parents,
         // each a whole skirmish client in its child. One thread, as for the slice's effects.
         "client/stance_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        // Status and death looks (plan 2026-11-09-effect-visualization WP9): two parents, each
+        // a whole skirmish client in its child. One thread, as for the stance looks.
+        "client/status_gpu_tests": (class: Gpu, test_threads: Some(1)),
         "client/terrain_tests": (class: Gpu),
         // The frame-budget smoke run renders the 400-unit scenario through the real renderer.
         "client_diagnostics/frame_budget_tests": (class: Gpu, triggers: [
@@ -179,6 +182,7 @@ SuiteCatalog(
                 // The fog's detection rule is applied to the bubbles in `battle_hud/fog.rs`.
                 "client/concealment_gpu_tests",
                 "client/stance_gpu_tests",
+                "client/status_gpu_tests",
                 "client/battle_fog_tests",
             ],
         ),
@@ -191,6 +195,7 @@ SuiteCatalog(
                 "client/runtime_battle_tests",
                 "client/concealment_gpu_tests",
                 "client/stance_gpu_tests",
+                "client/status_gpu_tests",
                 "client/mode_atlas_gpu_tests",
             ],
         ),
@@ -231,6 +236,7 @@ SuiteCatalog(
                 "client/effect_gpu_tests",
                 "client/effect_slice_gpu_tests",
                 "client/stance_gpu_tests",
+                "client/status_gpu_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),

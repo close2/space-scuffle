@@ -24,7 +24,7 @@ mod units;
 
 pub use error::{EffectCatalogError, NameKind, Site};
 pub use textures::{AtlasElement, TextureAtlas};
-pub use units::{UnitEffectTables, WeaponEffectIds};
+pub use units::{status_index, UnitEffectTables, WeaponEffectIds, STATUS_ORDER};
 
 use super::curve::{Curve, Ramp};
 use bevy::prelude::*;
@@ -245,6 +245,21 @@ pub struct ShellLook {
     pub matte: f32,
     /// Share of the unit's shadow taken away.
     pub shadow: f32,
+    /// A beat of the tint and rim, if any.
+    pub pulse: Option<schema::PulseDef>,
+}
+
+impl ShellLook {
+    /// The share of the tint's and rim's strength the look's pulse leaves `age` seconds into
+    /// its layer: 1 at each beat's peak (and always without a pulse), `1 - depth` between
+    /// beats, a smooth cosine swell between the two.
+    #[must_use]
+    pub fn beat(&self, age: f32) -> f32 {
+        self.pulse.map_or(1.0, |pulse| {
+            let phase = std::f32::consts::TAU * age / pulse.period.max(1e-3);
+            1.0 - pulse.depth * (0.5 - 0.5 * phase.cos())
+        })
+    }
 }
 
 /// A layer's block, resolved.
@@ -354,6 +369,8 @@ pub struct Layer {
     pub held: bool,
     /// Seconds a held layer takes to erode out once its effect is released.
     pub exit: f32,
+    /// A factor on the intensity from a bound value, if any.
+    pub strength: Option<schema::StrengthDef>,
 }
 
 /// A ring's radius over its layer's life, resolved.
@@ -390,6 +407,30 @@ pub struct Effect {
     /// review accepted), else the FNV-1a hash of its name. Either way it stays the same when
     /// other effects are added to or removed from the vocabulary (its dense id does not).
     pub salt: u32,
+    /// What a `Status` effect lays again and again while it is held.
+    pub emit: Option<Emit>,
+    /// What a `Status` effect spawns on a published hit on its status.
+    pub hit: Option<Hit>,
+}
+
+/// An effect laid again and again while a `Status` effect is held (see [`schema::EmitDef`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Emit {
+    /// The effect laid.
+    pub effect: EffectId,
+    /// Seconds between two.
+    pub every: f32,
+    /// Laid only while the unit moves.
+    pub moving: bool,
+}
+
+/// The effect a `Status` effect spawns on a published hit (see [`schema::HitDef`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hit {
+    /// The effect spawned.
+    pub effect: EffectId,
+    /// Least seconds between two.
+    pub every: f32,
 }
 
 /// A resolved emitter.

@@ -1478,6 +1478,7 @@ review).**
 | `mode_seal_sweep` | The softened band lost its trench-and-berm structure and reads as a soft stroke, a thin ellipse when closed: lower `WAVER_SOFT` to about 0.35 or raise the band's core intensity so a darker core of about two pixels survives, with the `WAVER_ACROSS` shading across it (P4-1). | WP8 4 |
 | `siege_anchor` | The 3 o'clock patch falls in the hull's shadow and the fourth hides under the bubble: raise `size_jitter` (to about 0.35) and `spread`, stretch the patches tangentially (pads, not dots; never radially) (P4-2). | WP8 4 |
 | `siege_anchor` | The outer falloff is 0.19 radii against the test's 0.15 floor: a thin margin if the soil is later thickened (A4-2). | WP8 4 |
+| Effect renderer | `queue_distortions` still requests its pipeline only once distortions exist, the first-use gap E2-1 fixed for cards and decals (heat haze and the WP8 shimmer can go undrawn in a session's first second): warm it in the same loop; the warming also starts only once a 3D view with a depth prepass exists, so a warm-up during scene load would close the first frames too (E3-1). In `status_gpu_tests.rs`, document the up-to-two-frame offset between the shell-card samples and the pictures, and assert the ring's pixels in the first frames, not only its card (E3-2). | WP9 3 |
 | `burrow_mound` | A small premultiplied lit crest on a few heaps over the darkening, so the stains read as raised heaps. | WP8 3 |
 
 **Next.** WP8 to WP15 (§9), with B-107 to B-111 open behind them.
@@ -1856,3 +1857,191 @@ keep their framing policy. No simulation state, golden replay or checksum change
 standing rejection; a fixture mode atlas fails verification with a standing rejection and passes after
 withdrawal; every shipped mode atlas records its reframe and framing. `provenance_tests`: the shipped audit
 verifies every mode atlas, and a strict audit fails on an unverified one.
+
+## Amendment 17: WP9 status and death looks, round 1 (2026-11-12, short note, charter §6)
+
+*Numbering:* WP9's three amendments were written on their branch as 16, 17 and 18, while the WP13 reframe took 16
+on `main`; they were renumbered 17, 18 and 19 at the merge. The WP9 review packet and reviews cite the branch numbers
+(16 → 17, 17 → 18, 18 → 19).
+
+**What changes.** WP9 of §9 in the client, its effect shaders and the catalog's presentation data. No simulation
+state, golden replay or checksum changes (D-1 holds: the client reads `status`, `barrier_ratio` and the
+`BubbleShatter` event's `unit_type`, which WP1 and WP2 already publish; `sim_core` is not touched).
+
+- **Status looks are held looks.** `client::effects::stance` holds one look per status kind on a unit
+  (`StanceTrack::status`), the unit's own or the vocabulary's `defaults.status`, while the status is shown
+  (`status_shown`: published, and for a barrier only while `barrier_ratio > 0`), anchored at the body's centre and
+  bound to `UnitRadius`, `UnitHeight` and `BarrierRatio`. Released, its held layers erode out over their `exit` as
+  WP8's looks do, and a unit first seen in a status is shown settled in it. Nothing is held on a unit the viewer
+  does not see as it is (`Presence::Shown` only, D-5).
+- **Vocabulary.** `Status` effects, like `Mode` effects, may hold layers and have a `Shell`. New, each with typed
+  load errors and range checks:
+  - `Shell.pulse: Some((period, depth))`: the tint and rim beat (a stim's racing pulse, §5.5);
+  - a layer's `strength: Some((bind, floor))`: its intensity times `floor + (1 - floor) · clamp(value, 0, 1)` (a
+    barrier's shell thins as it absorbs, never below its floor while it stands);
+  - a `Status` effect's `emit: Some((effect, every, moving))`: another `Status` effect laid at the unit's foot every
+    `every` seconds at a phase of the unit's own, only while it moves when `moving` (a charge's dust, a stim's
+    fumes); and `hit: Some((effect, every))`: one spawned at the body when the simulation publishes a hit on the
+    status (only a barrier has one, `barrier_hit`), at most once per `every` while hits go on;
+  - the card shape `Membrane` (sprites only): a thin shell round a body seen from the camera, faint where it faces
+    the camera and densest just inside its softened outline.
+- **Deaths.** A `BubbleShatter` spawns the dead unit's `death` effect where it stood, sized by its radius
+  (`effects::systems::spawn_request`), and the legacy glass shatter is then left out for that unit
+  (`replaces_shatter`, as `ArchetypeEffects::death` documents: "replacing the default shatter"). The vocabulary
+  names no `defaults.death`, so the glass shatter stays the default death.
+- **Looks** (`effects.ron`; no new texture, nothing spent):
+  - `stim_surge` (`defaults.status.Overclock`): a deep red rim beating at 0.6 s over a warmed picture, one flare of
+    the rim and a breath of red vapour as the stim goes in, thin warm vapour off the crown every 0.45 s
+    (`stim_fumes`);
+  - `concussive_daze` (`Slowed`): a cooled, greyed picture with its glass highlight dimmed and a dull cold rim, one
+    pale flare as the blow lands, a little dust at the feet while it walks (`daze_drag`);
+  - `charge_streak` (`Dash`): a cold violet-white rim while it lunges, and the ground torn up behind it every
+    0.08 s: warm dust and dark scuffs that darken the floor (`charge_dust`). No streak, ray or speed line: the
+    trail is the disturbed ground;
+  - `barrier_shell` (`Barrier`): a pale gold `Membrane` at 1.25 radii round the body with a fine crackle open in
+    its face, snapping up with one bright pass; every absorbed hit flares it (`barrier_absorb`: a brighter membrane
+    that crackles away, and a short warm light);
+  - `vehicle_wreck` and `bio_burst` (`Death`): each with the bubble's glass breaking into pale shards
+    (`glass_shards`); a vehicle's hot flash, fireball, sparks, wreckage, black smoke and a charred scorch; a
+    creature's dark ichor splash, globs on arcs (`ichor_globs`), foul vapour and a dark stain. Named by
+    `railgun_crawler` and `napalm_wheeler` (vehicle) and `burrow_scorpion` (creature) in `units.ron`.
+- **The legacy stim arc.** `bubble_dome.wgsl`'s warm arc behind a boosted unit stays only for the Visual Lab's
+  checkbox; on a bubble the effects drive (`ShellUniformGpu::driven`) the stim look replaces it.
+
+**Decisions (Q0002, reversible).**
+
+- A named death replaces the shatter rather than playing beside it, as the archetype schema already says; every
+  death effect therefore breaks the glass itself (`glass_shards`), so a unit's death still reads as its bubble
+  bursting.
+- The absorb flash has no direction: the simulation publishes that the barrier was hit, not from where. The whole
+  membrane flares; a directional flash would need a presentation-only hit angle in the snapshot (recorded for a
+  later round).
+- Statuses other than the four (damage over time, stun, range reduced, revealed, from Q0077's spells) get no default
+  look in this WP; the tables carry them, so a later look is data only.
+- **Shown only in the lab, or by a stand-in in the tests:** the only shipped unit with a barrier, `void_goliath`
+  (Immortal analogue), has no unit media, so the client does not present it in a battle; `barrier_shell` and
+  `barrier_absorb` show on it once it has media. The GPU tests give a presentable unit a copy of the shipped barrier
+  in the test world's catalog. `stim_surge` shows on `pulse_bot` and `shock_golem`, `charge_streak` on `psi_grey`,
+  `concussive_daze` on any presented unit a concussive shell slows, and the deaths on their three units, all of
+  which have media.
+
+**Tests.** `effects::stance` unit tests (a status is shown while published and a barrier only while
+`barrier_ratio > 0`; only a barrier is hit and its flashes keep their beat; an emitted effect is laid once per beat
+at the unit's own phase; a pulse beats the tint and rim only); `effects::runtime` (a bound strength scales the
+intensity down to its floor); `effect_catalog_tests.rs` (status effects hold, lay and spawn, every new value is
+range-checked and a splash effect may do none of it; the shipped statuses' looks are held and `Critical`, there is
+no default death, and a named death replaces the shatter for its unit only); new `status_gpu_tests.rs` on the
+production skirmish (radv and lavapipe): the plan's pose "barrier" (the outer shell changes a ring just outside the
+bubble's outline while the barrier holds half and still with a twentieth left, and at most 2 pixels once it is down
+or without its layers), and a battle with a stimmed, a slowed, a charging and a shielded unit under fire and three
+deaths (each look held exactly while its status is shown, the stim's rim beats, every flash keeps its beat, no
+legacy shard is drawn for a unit whose block names its death).
+
+**Gate.** The packet's section "WP9 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).
+
+## Amendment 18: WP9 round 2, decided by the orchestrator after WP9 review 1 (2026-11-12)
+
+Numbering note: the tank-reframe branch also adds an "Amendment 17"; this amendment and WP9's own Amendment 17 are
+renumbered to the next free numbers when the branches are merged.
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp9_1.md`](../evidence/effects/review/independent_review_wp9_1.md)).** Review 1 accepted
+`vehicle_wreck` (with advisories P1-1 and P1-2) and every engineering and fog item. It rejected `stim_surge`,
+`concussive_daze`, `charge_streak`, `barrier_shell` and `bio_burst`, and asked for evidence on `barrier_absorb`.
+This is round 2 of the owner's five (Q0080). No simulation state, golden replay or checksum changes (D-1 holds).
+
+1. **D-5 exception, recorded as deliberate.** The death of an undetected enemy inside a cell the viewer sees is shown,
+   as the glass shatter always was and as StarCraft II shows it. The death effect comes from the same `BubbleShatter`
+   event the fog admits by where it lands; a death in fog draws nothing.
+2. **A1-6, ground marks leave obstacles unpainted.** Every decal carries up to four exclusion discs
+   (`DecalInstance::exclude`; the record grows from 144 to 208 bytes). They are the resource nodes and structures
+   nearest the effect's anchor or line within 4 world units, chosen at the effect's birth
+   (`effects::runtime::nearest_obstacles`) from the list `effects::systems::collect_ground_obstacles` refreshes every
+   frame: each shown node as the disc of its billboard (`MapObjectSnapshot::size`, half of it, times 1.05) and each
+   structure as the disc of its dome (radius times 1.05). Units are not obstacles. The decal shader fades a mark out
+   over 0.15 world units at each disc's edge. Decals still spawn next to nodes and structures. Diagnostics can turn
+   the mask off (`EffectRuntime::mask_obstacles`).
+3. **Looks** (data only, no new texture):
+   - `stim_surge` (A1-1): the warmed picture is stronger (tint share 0.14 → 0.34); the fumes are 0.6 radii (was
+     0.3), denser (`stim_vapour` opacity 0.30 to 0.58), lifted over the crown and laid every 0.35 s.
+   - `concussive_daze` (A1-2): no rim (every bubble already has a pale cold rim); the picture greyed and darkened
+     (tint share 0.62) and the glass dulled (matte 0.75); the drag dust is 0.55 radii in a denser grey-brown
+     `drag_dust`, every 0.25 s.
+   - `charge_streak` (A1-3): a hot white outline (rim strength 0.88); a lay every 0.06 s of a darker scuff of one
+     radius with a broken outline (more breakup) and two dense light-tan dust puffs (`charge_kick`) of 0.75 radii
+     lasting 0.55 s. Nothing line-like.
+   - `barrier_shell` (A1-4): the membrane stands at 1.32 radii (was 1.25), its ramp is denser (opacity up to 0.82),
+     its floor is 0.75 of itself (was 0.45), and its face is crackled less (erosion 0.08). The "missing upper half"
+     was a faint upper arc against bright ground, not a missing one; the stronger ramp shows it.
+   - `bio_burst` (A1-5): an opaque dark splash crown (intensity 2), larger and more ichor globs and a fine dark spray;
+     the stain has a lobed disc outline (edge noise 0.22, soft 0.2) and six satellite drops round it.
+   - `vehicle_wreck` (advisories): black smoke (`wreck_smoke`), its own heavier dark wreckage (`wreck_chunks`), and
+     embers glowing on in its scorch for 2 s, cooling from orange to dull red (a shell's die within a second), so it
+     reads apart from a shell's detonation.
+4. **Tests** (`status_gpu_tests.rs`):
+   - E1-1: each named death's effect is counted by effect id (`EffectRuntime::spawned_of`), once per dying unit, and
+     a control unit whose block names no death must draw legacy shards near it while the named deaths draw none.
+   - E1-2: the charge lays its dust only while it moves under its status; the stim's fumes keep their beat.
+   - A1-6: a creature whose block names a death dies beside a resource node; with the mask off its marks paint the
+     node's billboard, with it on at most 1 % of its pixels change.
+   - E1-4: the parent prints the pixels the "barrier down" shot changes.
+   - V1-1, V1-3, V1-4: a third child stages pairs of one type side by side, one of each taking its status while the
+     camera watches: the stim (the simulation's `apply_overclock`), a concussive slow (`apply_concussive_slow`), and a
+     barrier raised by the first hit of a ranged attacker and of a melee one. The shipped simulation does not yet
+     apply the concussive slow from the shells' hits, so the slow is set in through its own function.
+   - V1-2: the charge crosses clear ground (a direction no unit stands near) and its pictures follow it.
+   - `nearest_obstacles` unit test.
+   - A1-4: the barrier ring is also reported at 24 levels.
+5. **E1-6, the pink haze.** It is the smog's wake behind a moving bubble (`smog_volume.wgsl`, the bubbles' velocity
+   and speed boost stir the smog), not an effect layer: the battle child pictures the same frame with and without
+   effect layers, and the haze is in both. Smog is untouched by this plan (D-9).
+
+Packet: section "WP9 round 2".
+
+## Amendment 19: WP9 round 3, decided by the orchestrator after WP9 review 2 (2026-11-12)
+
+**Decision note (charter §6, short note; the decisions are the orchestrator's, after
+[`independent_review_wp9_2.md`](../evidence/effects/review/independent_review_wp9_2.md)).** Review 2 accepted
+`stim_surge`, the art of `barrier_shell`, `barrier_absorb`, E1-1, E1-2, E1-4, E1-6 and the fog rules. It rejected
+`concussive_daze` (narrowly), `charge_streak`, `bio_burst`, `vehicle_wreck` (its round-2 embers) and the A1-6
+obstacle mask. This is round 3 of the owner's five (Q0080), kept to what the review asks. No simulation state, golden
+replay or checksum changes (D-1 holds).
+
+1. **A2-5, the obstacle mask is removed.** Nodes and structures are already drawn after the ground marks: the marks
+   are the first transparent items (`queue_effects`), and node billboards (additive) and structure domes (blended)
+   are transparent items after them. The decal exclusion discs of Amendment 18 are removed (the decal record is 144
+   bytes again), so no stain has a hole. What a node shows over a stain is the floor seen through its additive
+   billboard; its own light is unchanged. Making node art cover the floor would need an alpha-blended node material
+   (new node art), which is outside this plan. The test measures the node's own drawn pixels (its light: the scene
+   with its billboard against the same scene without it) over the stained and the bare floor, and the floor round
+   it, which must stay stained; it no longer measures inside a disc the mask excluded.
+2. **E2-1, a defect, fixed.** The effect renderer asked for its card and decal pipelines only once cards existed, and
+   a pipeline compiles on first use, so the first effects of a session went undrawn while it compiled (about 0.9 s in
+   a debug build): the battle take's barrier, staged up before anything else drew, showed its shell only from then.
+   The four card and decal pipelines are now asked for every frame (`queue_effects`), so they are compiled before the
+   first effect. Diagnosis: the shell's card was built from the unit's third frame on in round 2 as well (counted
+   at the unit's body), so the hold was sound and the gap was in drawing. The battle test now asserts the card from
+   the first frames, which is necessary but not sufficient; the drawn shell is shown by the re-taken barrier
+   sequence (every frame of the first 1.2 s), and a runtime test checks that a look first seen settled draws as
+   fully as one that came in.
+3. **A2-1, the slow's drag dust is dropped.** Dust that reads on this light floor read as a trail; the greyed, dulled
+   body carries the slow (`concussive_daze` keeps its held body look and its onset flare; `daze_drag` and its ramp
+   are removed).
+4. **A2-2, `charge_streak`.** A scuff is whole from its first frame (curve `scuff_hold`, erosion only at its end),
+   three quarters of a radius long and narrower (width 0.45), with less breakup, laid every 0.1 s so that
+   consecutive lays are separate marks; the dust is darker (`charge_kick`) and larger (0.95 radius) for value
+   contrast on light floors.
+5. **A2-3, `bio_burst`.** The stain's body is a smaller core with three large lobes round it, each a soft-edged disc
+   whose edge wavers only gently (no hair fringe); drops thrown further out vary in size, and elongated drips are
+   added.
+6. **A2-4, `vehicle_wreck`.** The round-2 ember decal is replaced: the brief ember glow of round 1 is back, and
+   burning coals (`wreck_coals`, 12 to 20 small additive points with their own ramp `coal`) lie in the wreck,
+   seen through its smoke, cooling from yellow-white through orange to dull red as they age and flickering out
+   over 1.2 to 2.2 s (`coal_flicker`).
+7. **Advisories.** P2-2 taken: a whiter, hotter peak in `barrier_flash`. P2-1 (the stim next to a red team) and a
+   ranged take with a continuing attacker are not taken this round. P2-3 (the smog's pink wake behind moving bubbles)
+   is outside this plan (D-9, smog untouched) and is recorded for the owner.
+
+Packet: section "WP9 round 3".
+

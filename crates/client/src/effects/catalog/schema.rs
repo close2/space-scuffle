@@ -216,6 +216,11 @@ pub enum CardShape {
     /// Gaussian from the centre; the erosion order rises towards the centre), broken by the
     /// layer's `breakup` noise: flashes and glows, which are light rather than matter.
     Radial,
+    /// A thin glassy membrane round a body, computed in the shader (plan WP9, `barrier_shell`):
+    /// the card is the sphere's outline seen from the camera, faint where the view meets the
+    /// membrane square on and thickest towards its edge, as light through a thin shell is, with
+    /// a soft outer edge; the layer's `breakup` noise breaks it up. Only a `Sprite` may draw it.
+    Membrane,
 }
 
 /// Noise breakup of an element's erosion and edges, with a phase of its own per instance, so
@@ -550,7 +555,7 @@ pub enum BlockDef {
     /// does not draw it: it is evaluated each frame for the unit its effect is held on and
     /// written into that bubble's material. Every value is its strength at the layer's
     /// intensity 1; the intensity (the layer's `curve` over its life) scales it towards no
-    /// change. Only `Mode` effects may have one.
+    /// change. Only `Mode` and `Status` effects may have one.
     Shell {
         /// Share of the bubble's diameter sunk below where it rests, in [0, 1]; the ground
         /// hides what is below it (a burrowing unit).
@@ -587,6 +592,10 @@ pub enum BlockDef {
         /// the body as this rises, so the shadow fades with the look instead of popping.
         #[serde(default)]
         shadow: f32,
+        /// A slow beat of the look's tint and rim (a stimmed body's racing pulse, plan §5.5
+        /// `stim_surge`): see [`PulseDef`]. `None` holds them steady.
+        #[serde(default)]
+        pulse: Option<PulseDef>,
     },
     /// A short point light.
     Light {
@@ -607,6 +616,58 @@ pub enum BlockDef {
         #[serde(default)]
         clip_to_line: bool,
     },
+}
+
+/// A beat of a `Shell` look's tint and rim: their strength is scaled by
+/// `1 - depth * (0.5 - 0.5 * cos(2π · age / period))`, full at the beat's peak, `1 - depth`
+/// between beats, a smooth swell with no hard step.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PulseDef {
+    /// Seconds of one beat, positive.
+    pub period: f32,
+    /// Share of the strength the beat takes away between peaks, in [0, 1].
+    pub depth: f32,
+}
+
+/// A factor on a layer's intensity from a bound value (plan WP9: a barrier's shell thins as it
+/// absorbs): `floor + (1 - floor) · clamp(value, 0, 1)`, so the layer never vanishes while its
+/// effect is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrengthDef {
+    /// The bound value, read as a fraction in [0, 1].
+    pub bind: Binding,
+    /// The factor at a bound value of 0, in [0, 1].
+    #[serde(default)]
+    pub floor: f32,
+}
+
+/// An effect a `Status` effect lays again and again while it is held (plan WP9): the dust a
+/// charging unit kicks up, the fumes of a stimmed one. Each is a separate one-shot spawn at the
+/// unit's foot, so it stays where it was laid while the unit moves on.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmitDef {
+    /// The effect laid; a `Status` effect.
+    pub effect: String,
+    /// Seconds between two, positive.
+    pub every: f32,
+    /// Laid only while the unit moves.
+    #[serde(default)]
+    pub moving: bool,
+}
+
+/// The effect a `Status` effect spawns on the unit when the simulation publishes a hit on its
+/// status (a barrier absorbing damage, `StatusFlags::barrier_hit`; plan WP9 "absorb flash").
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HitDef {
+    /// The effect spawned; a `Status` effect.
+    pub effect: String,
+    /// Least seconds between two while hits go on, positive: a barrier under steady fire
+    /// flashes at this beat rather than once per frame.
+    pub every: f32,
 }
 
 /// Serde default of a ribbon's taper: a tenth of its length at each end.
@@ -776,15 +837,18 @@ pub struct LayerDef {
     /// Placements; empty means one `Point`.
     #[serde(default)]
     pub placements: Vec<PlacementDef>,
-    /// The layer lives while the fact its effect shows holds (a unit's stance, its cloak):
-    /// it comes in over `duration` along its curves, then stays at their end until the effect
-    /// is released, and erodes out over `exit` seconds (plan §5.4, WP8). Only `Mode` effects
-    /// may hold layers.
+    /// The layer lives while the fact its effect shows holds (a unit's stance, its cloak, its
+    /// status): it comes in over `duration` along its curves, then stays at their end until the
+    /// effect is released, and erodes out over `exit` seconds (plan §5.4, WP8, WP9). Only `Mode`
+    /// and `Status` effects may hold layers.
     #[serde(default)]
     pub held: bool,
     /// Seconds a held layer takes to erode out once its effect is released; positive.
     #[serde(default = "default_exit")]
     pub exit: f32,
+    /// A factor on the layer's intensity from a bound value (see [`StrengthDef`]); `None` is 1.
+    #[serde(default)]
+    pub strength: Option<StrengthDef>,
 }
 
 /// Default seconds a held layer takes to erode out once released.
@@ -819,6 +883,13 @@ pub struct EffectDefRaw {
     /// is shorter, the morph follows the channel. Positive.
     #[serde(default)]
     pub span: Option<f32>,
+    /// For a `Status` effect: what it lays again and again while it is held (see [`EmitDef`]).
+    #[serde(default)]
+    pub emit: Option<EmitDef>,
+    /// For a `Status` effect: what it spawns when the simulation publishes a hit on its status
+    /// (see [`HitDef`]).
+    #[serde(default)]
+    pub hit: Option<HitDef>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.

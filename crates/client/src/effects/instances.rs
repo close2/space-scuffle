@@ -49,6 +49,8 @@ pub const SHAPE_TEXTURE: u32 = 0;
 pub const SHAPE_RADIAL: u32 = 1;
 /// [`SpriteInstance::shape`]: a ring computed as a pressure front from the breakup noise.
 pub const SHAPE_FRONT: u32 = 2;
+/// [`SpriteInstance::shape`]: a thin membrane round a body, computed in the shader.
+pub const SHAPE_MEMBRANE: u32 = 3;
 /// `noise_layer` of an instance without breakup noise.
 pub const NO_NOISE: u32 = u32::MAX;
 

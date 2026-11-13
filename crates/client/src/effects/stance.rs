@@ -1,5 +1,6 @@
-//! Concealment and stance looks held on units: burrowing, burrowed, cloaked, detected, mode
-//! switches and anchored stances (plan `2026-11-09-effect-visualization` WP8, §5.5, D-5, D-6).
+//! Concealment, stance and status looks held on units: burrowing, burrowed, cloaked, detected,
+//! mode switches and anchored stances (plan `2026-11-09-effect-visualization` WP8, §5.5, D-5,
+//! D-6), and stimmed, slowed, charging and barrier-shielded units (WP9).
 //!
 //! # Responsibility
 //! Owns [`StanceTrack`], the client-local presentation state of one live bubble, and
@@ -12,7 +13,11 @@
 //! - while a unit stands in a mode, its `stance` effect (burrowed: `burrow_mound`, anchored:
 //!   the unit's own);
 //! - while a unit is concealed, its *cover*: the cloak of a unit its viewer owns, the shimmer of
-//!   a cloaked enemy the viewer does not detect, or the mark of a concealed enemy it detects.
+//!   a cloaked enemy the viewer does not detect, or the mark of a concealed enemy it detects;
+//! - while a status is published on a unit ([`status_shown`]), that status's look
+//!   ([`UnitEffectTables::status`]), which may lay another effect at the unit's foot at a beat of
+//!   its own (a charge's dust, [`emit_due`]) and spawn one on a published hit (a barrier's absorb
+//!   flash, [`hit_due`]).
 //!
 //! # How it fits
 //! The simulation publishes facts only (`concealment`, `stance` with the channel's remaining
@@ -26,7 +31,8 @@
 //! anchored on an undetected burrowed enemy. An undetected cloaked enemy
 //! ([`Presence::Shimmer`]) holds only its shimmer, whose layers draw no colour (a distortion of
 //! what lies behind), and its bubble is not drawn ([`crate::battle_hud::fog`]). Stances, morphs
-//! and marks are held only on a unit drawn as it is ([`Presence::Shown`]).
+//! and marks are held only on a unit drawn as it is ([`Presence::Shown`]), and so are status
+//! looks and what they lay or spawn: a status shows nothing of a unit the viewer does not see.
 //!
 //! # Invariants
 //! - The simulation keeps no presentation state: every value here is derived from the
@@ -37,9 +43,11 @@
 
 use super::binding::BoundValues;
 use super::catalog::schema::Binding;
-use super::catalog::{Block, EffectCatalog, EffectId, ShellLook, UnitEffectTables};
+use super::catalog::{
+    status_index, Block, EffectCatalog, EffectId, ShellLook, UnitEffectTables, STATUS_ORDER,
+};
 use super::pool::{EffectHandle, EffectInstance};
-use super::runtime::{layer_clock, EffectRuntime, SpawnRequest};
+use super::runtime::{layer_clock, layer_strength, EffectRuntime, SpawnRequest};
 use crate::battle_pipeline::fog::{presence_of, BattleFog, Presence};
 use crate::bubble_shader::FlipbookRegistry;
 use crate::bubble_shader::{
@@ -50,7 +58,9 @@ use bevy::ecs::component::ComponentId;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use bevy::render::batching::NoAutomaticBatching;
-use sim_types::{BubbleRenderInstance, Concealment, ModeTransitionView, ShapeKind};
+use sim_types::{
+    BubbleRenderInstance, Concealment, ModeTransitionView, ShapeKind, StatusFlags, StatusKind,
+};
 
 /// Seconds of one simulation tick.
 const TICK_SECONDS: f32 = 1.0 / sim_types::TICKS_PER_SECOND as f32;
@@ -145,6 +155,44 @@ pub fn stance_effect(tables: &UnitEffectTables, bubble: &BubbleRenderInstance) -
     })
 }
 
+/// Whether `bubble` shows status `kind`: the simulation publishes it, and a barrier still has
+/// absorption left (its shell is drawn only while `barrier_ratio > 0`, plan WP9).
+#[must_use]
+pub fn status_shown(bubble: &BubbleRenderInstance, kind: StatusKind) -> bool {
+    bubble.status.has(kind) && (kind != StatusKind::Barrier || bubble.barrier_ratio > 0.0)
+}
+
+/// Whether the simulation published a hit on status `kind` this tick: only a barrier is hit
+/// (`StatusFlags::barrier_hit`, damage it absorbed).
+#[must_use]
+pub const fn status_hit(flags: StatusFlags, kind: StatusKind) -> bool {
+    matches!(kind, StatusKind::Barrier) && flags.barrier_hit
+}
+
+/// Whether a hit seen now (`hit`, with `was_hit` on the previous frame) spawns its effect: on
+/// the frame a hit is first seen, and while hits go on at most once every `every` seconds
+/// since the last one spawned at `last` (seconds of `Time<Virtual>`).
+#[must_use]
+pub fn hit_due(hit: bool, was_hit: bool, now: f64, last: Option<f64>, every: f32) -> bool {
+    if !hit {
+        return false;
+    }
+    !was_hit || last.is_none_or(|last| now - last >= f64::from(every))
+}
+
+/// Whether an effect laid every `every` seconds at a unit's own `phase` (a share of `every`, so
+/// a group's dust does not puff in step) is due in the frame from `now - delta` to `now`.
+#[must_use]
+pub fn emit_due(now: f64, delta: f64, every: f32, phase: f32) -> bool {
+    let every = f64::from(every.max(1e-3));
+    let offset = f64::from(phase) * every;
+    let beat = |time: f64| ((time + offset) / every).floor();
+    beat(now) > beat(now - delta.max(0.0))
+}
+
+/// Speed in world units per second below which a published velocity counts as standing still.
+const MOVING_SPEED: f32 = 1e-3;
+
 /// A look held on a unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldLook {
@@ -195,16 +243,30 @@ pub struct StanceTrack {
     /// mode or switch, and holds while a morph settles after the switch left its mode, so an
     /// emerge that ends its channel does not drop to the deep sink of a unit without a clip.
     pub clip: bool,
+    /// The status looks, by [`status_index`].
+    pub status: [Option<HeldLook>; STATUS_ORDER.len()],
+    /// Whether a hit on a status was published on the previous frame, by [`status_index`].
+    pub hit_seen: [bool; STATUS_ORDER.len()],
+    /// When the last hit effect spawned, seconds of `Time<Virtual>`, by [`status_index`].
+    pub last_hit: [Option<f64>; STATUS_ORDER.len()],
 }
 
-/// Looks a track remembers while they erode out: a unit can drop its stance, its morph and
-/// its cover on one frame.
-pub const RELEASING_SLOTS: usize = 3;
+/// Looks a track remembers while they erode out: a unit can drop its stance, its morph, its
+/// cover and a few statuses on one frame (a stim and a slow running out together).
+pub const RELEASING_SLOTS: usize = 6;
+
+/// Looks a track holds at once: stance, morph, cover and one per status kind.
+const HELD_SLOTS: usize = 3 + STATUS_ORDER.len();
 
 impl StanceTrack {
-    /// The looks held now: stance, morph and cover.
-    fn looks(&self) -> [Option<HeldLook>; 3] {
-        [self.stance, self.morph.map(|morph| morph.look), self.cover]
+    /// The looks held now: stance, morph, cover and the statuses.
+    fn looks(&self) -> [Option<HeldLook>; HELD_SLOTS] {
+        let mut looks = [None; HELD_SLOTS];
+        looks[0] = self.stance;
+        looks[1] = self.morph.map(|morph| morph.look);
+        looks[2] = self.cover;
+        looks[3..].copy_from_slice(&self.status);
+        looks
     }
 
     /// Remembers `look`, just released, while it erodes out (the oldest remembered one is
@@ -224,14 +286,7 @@ fn release_held_looks(mut world: DeferredWorld<'_>, entity: Entity, _: Component
         .get_resource::<Time<Virtual>>()
         .map_or(0.0, Time::elapsed_secs_f64);
     if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
-        for look in [
-            track.stance,
-            track.morph.map(|morph| morph.look),
-            track.cover,
-        ]
-        .into_iter()
-        .flatten()
-        {
+        for look in track.looks().into_iter().flatten() {
             runtime.release(look.handle, now);
         }
     }
@@ -247,9 +302,23 @@ pub struct LookContext<'a> {
     pub runtime: &'a mut EffectRuntime,
     /// Seconds of `Time<Virtual>`.
     pub now: f64,
+    /// Seconds of `Time<Virtual>` since the previous frame.
+    pub delta: f64,
 }
 
 impl LookContext<'_> {
+    /// Spawns `effect` once at `anchor` with `bound` (what a held status lays or spawns).
+    fn spawn(&mut self, effect: EffectId, anchor: Vec3, bound: BoundValues) {
+        let request = SpawnRequest {
+            effect,
+            anchor,
+            bound,
+            line: None,
+            delay: 0.0,
+        };
+        self.runtime.spawn(self.catalog, &request, self.now);
+    }
+
     /// Releases `look`, if any.
     fn release(&mut self, look: Option<HeldLook>) {
         if let Some(look) = look {
@@ -321,6 +390,10 @@ pub fn present_looks(
     if presence != Presence::Shown {
         context.release(track.stance.take());
         context.release(track.morph.take().map(|morph| morph.look));
+        for slot in &mut track.status {
+            context.release(slot.take());
+        }
+        track.hit_seen = [false; STATUS_ORDER.len()];
         context.keep(&mut track.cover, cover, body, unit, !track.seen);
         track.seen = false;
         return ShellUniformGpu::default();
@@ -340,6 +413,7 @@ pub fn present_looks(
         context.keep(&mut track.stance, wanted, ground, bound, stance_settled);
     }
     context.keep(&mut track.cover, cover, body, unit, settled);
+    keep_statuses(track, bubble, (ground, body), unit, settled, context);
     track.seen = true;
     let now_held = track.looks();
     for look in before.into_iter().flatten() {
@@ -350,12 +424,14 @@ pub fn present_looks(
     let mut shell = ShellSum::default();
     let morph_progress = track.morph.map_or(0.0, |morph| morph.progress);
     let released = track.releasing.iter().map(|look| (*look, 1.0));
+    let statuses = track.status.iter().map(|look| (*look, 1.0));
     for (look, progress) in [
         (track.stance, 1.0),
         (track.morph.map(|morph| morph.look), morph_progress),
         (track.cover, 1.0),
     ]
     .into_iter()
+    .chain(statuses)
     .chain(released)
     {
         let instance = look.and_then(|look| context.runtime.held(look.handle));
@@ -364,6 +440,56 @@ pub fn present_looks(
         }
     }
     shell.uniform(bubble.radius, bubble.ground_z)
+}
+
+/// Keeps `bubble`'s status looks held at its body (the `anchors` pair is ground and body), each
+/// while [`status_shown`] holds, bound to the unit's size and its barrier's fraction; lays what
+/// each lays at the unit's foot when [`emit_due`], and spawns its hit effect at the body when
+/// [`hit_due`]. A look first seen on a unit already in its status is held `settled`.
+fn keep_statuses(
+    track: &mut StanceTrack,
+    bubble: &BubbleRenderInstance,
+    anchors: (Vec3, Vec3),
+    unit: BoundValues,
+    settled: bool,
+    context: &mut LookContext<'_>,
+) {
+    let (ground, body) = anchors;
+    let bound = unit.with(Binding::BarrierRatio, bubble.barrier_ratio);
+    let moving = bubble.velocity[0].hypot(bubble.velocity[1]) >= MOVING_SPEED;
+    let phase =
+        super::placement::unit_float(super::placement::hash3(bubble.entity_id.0, 0x57A7, 0));
+    for kind in STATUS_ORDER {
+        let index = status_index(kind);
+        let wanted = status_shown(bubble, kind)
+            .then(|| context.tables.status(bubble.unit_type, kind))
+            .flatten();
+        context.keep(&mut track.status[index], wanted, body, bound, settled);
+        let hit = status_hit(bubble.status, kind);
+        let was_hit = std::mem::replace(&mut track.hit_seen[index], hit);
+        let Some(effect) = track.status[index].and_then(|look| context.catalog.effect(look.effect))
+        else {
+            continue;
+        };
+        let (emit, on_hit) = (effect.emit, effect.hit);
+        if let Some(emit) = emit {
+            if (moving || !emit.moving) && emit_due(context.now, context.delta, emit.every, phase) {
+                context.spawn(emit.effect, ground, bound);
+            }
+        }
+        if let Some(on_hit) = on_hit {
+            if hit_due(
+                hit,
+                was_hit,
+                context.now,
+                track.last_hit[index],
+                on_hit.every,
+            ) {
+                context.spawn(on_hit.effect, body, bound);
+                track.last_hit[index] = Some(context.now);
+            }
+        }
+    }
 }
 
 /// Whether the looks sink the unit as one with its own mode clip: `previous` while
@@ -507,8 +633,14 @@ impl ShellSum {
                 (false, Some(clock)) => clock.life,
                 (false, None) => continue,
             };
-            let mut strength = catalog.sample(layer.curve, life, 1.0);
+            let mut strength =
+                catalog.sample(layer.curve, life, 1.0) * layer_strength(layer, &instance.bound);
             let mut look = *look;
+            if let Some(clock) = clock {
+                let beat = look.beat(clock.age);
+                look.tint.w *= beat;
+                look.rim.w *= beat;
+            }
             if clip {
                 look.sink = look.clip_sink.unwrap_or(look.sink);
             }
@@ -640,6 +772,7 @@ pub fn present_stances(
         tables: &tables,
         runtime: &mut runtime,
         now: time.elapsed_secs_f64(),
+        delta: time.delta_secs_f64(),
     };
     // PERFORMANCE RATIONALE:
     // Why: An unbatched bubble costs one shadow draw per cascade; marking all 400 units of a
@@ -683,6 +816,145 @@ mod tests {
             remaining_ticks: remaining,
             nominal_ticks: nominal,
         }
+    }
+
+    fn bubble(status: StatusFlags, barrier_ratio: f32) -> BubbleRenderInstance {
+        use sim_types::{
+            AnimState, EntityId, PlayerId, SilhouetteClass, StanceView, UnitTypeId,
+            WeaponVisualKind,
+        };
+        BubbleRenderInstance {
+            entity_id: EntityId(1),
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::HeavyHex,
+            unit_type: UnitTypeId::default(),
+            owner: PlayerId(0),
+            world_pos: [0.0, 0.0, 0.0],
+            ground_z: 0.0,
+            radius: 0.45,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: Concealment::None,
+            speed_boosted: false,
+            stance: StanceView::default(),
+            status,
+            barrier_ratio,
+        }
+    }
+
+    #[test]
+    fn a_status_is_shown_while_published_and_a_barrier_only_while_it_absorbs() {
+        let none = bubble(StatusFlags::default(), 0.0);
+        for kind in STATUS_ORDER {
+            assert!(!status_shown(&none, kind), "{kind:?}");
+        }
+        let stimmed = bubble(
+            StatusFlags {
+                overclock: true,
+                slowed: true,
+                dash: true,
+                ..StatusFlags::default()
+            },
+            0.0,
+        );
+        assert!(status_shown(&stimmed, StatusKind::Overclock));
+        assert!(status_shown(&stimmed, StatusKind::Slowed));
+        assert!(status_shown(&stimmed, StatusKind::Dash));
+        assert!(!status_shown(&stimmed, StatusKind::Barrier));
+        let barrier = StatusFlags {
+            barrier_up: true,
+            ..StatusFlags::default()
+        };
+        assert!(status_shown(&bubble(barrier, 0.4), StatusKind::Barrier));
+        assert!(
+            !status_shown(&bubble(barrier, 0.0), StatusKind::Barrier),
+            "the outer shell only while barrier_ratio > 0"
+        );
+        assert!(
+            !status_shown(&bubble(StatusFlags::default(), 0.4), StatusKind::Barrier),
+            "nor once the barrier is down"
+        );
+    }
+
+    #[test]
+    fn only_a_barrier_is_hit_and_hits_flash_at_their_beat() {
+        let hit = StatusFlags {
+            barrier_up: true,
+            barrier_hit: true,
+            ..StatusFlags::default()
+        };
+        assert!(status_hit(hit, StatusKind::Barrier));
+        for kind in STATUS_ORDER {
+            if kind != StatusKind::Barrier {
+                assert!(!status_hit(hit, kind), "{kind:?}");
+            }
+        }
+        assert!(!status_hit(StatusFlags::default(), StatusKind::Barrier));
+        // The first frame of a hit flashes; while hits go on, at most once per beat.
+        assert!(hit_due(true, false, 10.0, Some(9.99), 0.2));
+        assert!(!hit_due(true, true, 10.0, Some(9.9), 0.2));
+        assert!(hit_due(true, true, 10.0, Some(9.75), 0.2));
+        assert!(hit_due(true, true, 10.0, None, 0.2));
+        assert!(!hit_due(false, true, 10.0, None, 0.2), "no hit, no flash");
+    }
+
+    #[test]
+    fn an_emitted_effect_is_laid_once_per_beat_at_the_units_own_phase() {
+        let step = 0.04;
+        let frames = |phase: f32, last: u32| {
+            (1..=last)
+                .filter(|frame| emit_due(f64::from(*frame) * step, step, 0.5, phase))
+                .collect::<Vec<_>>()
+        };
+        // 10 seconds at a 0.5 s beat: 20 spawns whatever the phase.
+        assert_eq!(frames(0.0, 250).len(), 20);
+        assert_eq!(frames(0.37, 250).len(), 20);
+        // Two phases do not lay on the same frames.
+        assert_ne!(frames(0.0, 50), frames(0.5, 50));
+        // A frame longer than the beat lays one, not several.
+        assert!(emit_due(1.0, 2.0, 0.1, 0.0));
+        assert!(!emit_due(1.0, 0.0, 0.1, 0.0), "no time, no spawn");
+    }
+
+    #[test]
+    fn a_pulsing_shell_beats_its_tint_and_rim_only() {
+        let look = ShellLook {
+            sink: 0.0,
+            tint: Vec4::new(0.9, 0.3, 0.2, 0.2),
+            rim: Vec4::new(1.0, 0.3, 0.2, 0.6),
+            veil: 0.0,
+            soil: 0.0,
+            progress: false,
+            clip_sink: None,
+            matte: 0.3,
+            shadow: 0.0,
+            pulse: Some(crate::effects::catalog::schema::PulseDef {
+                period: 0.6,
+                depth: 0.6,
+            }),
+        };
+        assert!((look.beat(0.0) - 1.0).abs() < 1e-6);
+        assert!((look.beat(0.3) - 0.4).abs() < 1e-5);
+        assert!((look.beat(0.6) - 1.0).abs() < 1e-5);
+        assert!((look.beat(0.15) - 0.7).abs() < 1e-5);
+        let steady = ShellLook {
+            pulse: None,
+            ..look
+        };
+        assert_eq!(steady.beat(0.3), 1.0);
     }
 
     #[test]
@@ -792,6 +1064,7 @@ mod tests {
             clip_sink: Some(0.1),
             matte: 1.0,
             shadow: 1.0,
+            pulse: None,
         };
         let cloak = ShellLook {
             sink: 0.0,
@@ -803,6 +1076,7 @@ mod tests {
             clip_sink: None,
             matte: 0.0,
             shadow: 0.6,
+            pulse: None,
         };
         sum.add_look(&deep, 0.5);
         sum.add_look(&cloak, 1.0);

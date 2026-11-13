@@ -707,6 +707,20 @@ fn queue_effects(
         hdr: view.hdr,
         darken,
     };
+    // PERFORMANCE RATIONALE:
+    // Why: A render pipeline is compiled when it is first asked for, and an item whose pipeline
+    // is still compiling is not drawn. Asked for only once cards exist, the card and decal
+    // pipelines compiled while the first effects of a session played, which then went undrawn
+    // for most of a second (WP9 review 2, E2-1: a barrier staged up with its unit showed no
+    // shell until about 0.9 s).
+    // What: Every frame the four card and decal pipelines of the view are asked for, whether
+    // or not anything is drawn, so they are compiled before the first effect.
+    // Trade-off: Four lookups in the specialization cache per frame (hashes of a small key).
+    for kind in [RunKind::Cards, RunKind::Decals] {
+        for darken in [false, true] {
+            pipelines.specialize(&cache, &pipeline, key(kind, darken));
+        }
+    }
     let placeholder = MainEntity::from(Entity::PLACEHOLDER);
     let mut ground = |pipeline, entity| {
         phase.add(Transparent3d {

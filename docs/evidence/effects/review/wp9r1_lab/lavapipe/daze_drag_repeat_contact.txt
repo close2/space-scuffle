@@ -1,0 +1,12 @@
+Effect contact sheet of 'daze_drag' (plan 2026-11-09-effect-visualization §6.5), made by
+`battle_capture --effect-lab daze_drag` on the production effect plugin and shaders.
+Bindings: . Lifetime: 1.500 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: shipped camera; the effect spawned on the same spot several times as an attacker's consecutive hits (`--repeat`), each with its own instance seed as consecutive events in a battle have; the lifetime runs from the first to the end of the last.
+daze_drag_repeat_contact.jpg columns: ages 0 (0.000 s), 0.03 (0.045 s), 0.08 (0.120 s), 0.15 (0.225 s), 0.3 (0.450 s), 0.5 (0.750 s), 0.75 (1.125 s), 1 (1.500 s).
+Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
+damage, yellow reach; for a line, the line and the full radius at each search point), bright
+close zoom, its reference, dark default, its reference, dark close, its reference.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
+daze_drag_repeat_sequence.jpg: the first 3 s on the bright ground at the default zoom, one frame every
+40 ms, read left to right, top to bottom.
