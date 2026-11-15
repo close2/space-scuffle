@@ -1567,7 +1567,7 @@ fn stage_battle(
                 // An attacker whose shots draw no splash of their own; raised from the start,
                 // so the shell is pictured whole before the hits wear it down.
                 let attacker = presentable_ground(world, &taken, |arch| {
-                    arch.weapon.is_some() && arch.effects.weapons.is_empty()
+                    arch.weapon.is_some() && no_splash(arch)
                 })
                 .expect("a presentable armed unit");
                 let enemy = spawn_still(world, attacker, ENEMY, *spot + Vec2::new(0.0, 2.2));
@@ -2225,7 +2225,16 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
             "driver {driver}: {name} spawned {} times at the deaths (expected {expected})",
             after - before
         );
-        assert_eq!(after - before, expected, "{name} spawns once per death");
+        if report.default_death.as_deref() == Some(name.as_str()) {
+            // Every other unit that dies in the battle (a struck enemy, an attacker) dies with
+            // the default death too (WP11), so the staged control is a lower bound.
+            assert!(
+                after - before >= expected,
+                "{name} spawns at least once per staged default death"
+            );
+        } else {
+            assert_eq!(after - before, expected, "{name} spawns once per death");
+        }
     }
     Ok(())
 }
@@ -2384,7 +2393,7 @@ fn stage_pairs(
                     arch.weapon.as_ref().is_some_and(|weapon| {
                         weapon.visual_kind == wanted
                             && (melee || weapon.max_range.to_f32() >= RANGED_DISTANCE)
-                    }) && arch.effects.weapons.is_empty()
+                    }) && no_splash(arch)
                 })
                 .expect("a presentable attacker of the kind");
                 let distance = if melee {
@@ -2719,4 +2728,13 @@ fn status_onsets_play_on_units_already_seen() -> TestResult {
     eprintln!("driver {driver}: absorb flashes spawned: {flashes}");
     assert!(flashes > 0, "the shielded units flashed");
     Ok(())
+}
+
+/// Whether `arch`'s block names no splash for any weapon, so its shots draw no area of their own
+/// (plan WP11: every weapon names its travel and impact, so an empty block no longer marks it).
+fn no_splash(arch: &sim_core::UnitArchetype) -> bool {
+    arch.effects
+        .weapons
+        .iter()
+        .all(|entry| entry.splash.is_none())
 }

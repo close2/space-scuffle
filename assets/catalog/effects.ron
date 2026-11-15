@@ -769,6 +769,15 @@
         "slash_erode": [(0.00, 0.00, Linear), (0.35, 0.10, EaseInQuad), (1.00, 1.00, Linear)],
         // A crescent's sweep: thrown out a little as it fades.
         "slash_grow": [(0.00, 0.80, EaseOutCubic), (1.00, 1.15, Linear)],
+        // A beam's body: thickened above 1 so its soft column reads as a body of light and not
+        // as a halo, on within two frames, out at the end.
+        "beam_body": [(0.00, 0.50, EaseOutCubic), (0.08, 1.80, Linear), (0.70, 1.50, EaseInQuad), (1.00, 0.00, Linear)],
+        // A beam's colour held below its ramp's white end, so its core stays coloured.
+        "beam_tint": [(0.00, 0.68, Linear), (1.00, 0.68, Linear)],
+        // A beam body's breakup: the flowing noise tears it into travelling pulses of light.
+        "beam_pulse": [(0.00, 0.45, Linear), (0.70, 0.50, EaseInQuad), (1.00, 1.00, Linear)],
+        // A beam core's breakup: the flowing noise eats about a third of it while it burns.
+        "beam_flow": [(0.00, 0.35, Linear), (0.70, 0.45, EaseInQuad), (1.00, 1.00, Linear)],
     },
     emitters: {
         // Dark rock chunks thrown out of the crater on ballistic arcs, tumbling.
@@ -2577,15 +2586,16 @@
             layers: [
                 (
                     block: Ribbon(texture: "droplet", ramp: "prism", shape: Radial, taper: (0.15, 0.05),
-                        repeat: 1.2, scroll: 2.5,
-                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.5, softness: 0.4)),
-                    size: (scale: 0.14), duration: 0.3, curve: "beam_hold",
+                        repeat: 1.0, scroll: 3.0, erosion: "beam_pulse",
+                        breakup: (noise: "fire_noise", scale: 2.0, amount: 0.85, softness: 0.35)),
+                    size: (scale: 0.3), duration: 0.3, curve: "beam_body", ramp_curve: "beam_tint",
                 ),
                 (
                     block: Ribbon(texture: "droplet", ramp: "prism", shape: Radial, taper: (0.1, 0.02),
-                        repeat: 0.6, scroll: 4.0, erosion: "beam_erode",
-                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.25)),
-                    size: (scale: 0.05), duration: 0.3, curve: "beam_hold", priority: Critical,
+                        repeat: 0.6, scroll: 4.0, erosion: "beam_flow",
+                        breakup: (noise: "fire_noise", scale: 1.5, amount: 0.75, softness: 0.25)),
+                    size: (scale: 0.06), duration: 0.3, curve: "beam_hold", ramp_curve: "beam_tint",
+                    priority: Critical,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.1,
@@ -2602,15 +2612,16 @@
             layers: [
                 (
                     block: Ribbon(texture: "droplet", ramp: "lance_hot", shape: Radial, taper: (0.15, 0.05),
-                        repeat: 1.2, scroll: 2.5,
-                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.5, softness: 0.4)),
-                    size: (scale: 0.13), duration: 0.3, curve: "beam_hold",
+                        repeat: 1.0, scroll: 3.0, erosion: "beam_pulse",
+                        breakup: (noise: "fire_noise", scale: 2.0, amount: 0.85, softness: 0.35)),
+                    size: (scale: 0.28), duration: 0.3, curve: "beam_body", ramp_curve: "beam_tint",
                 ),
                 (
                     block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, taper: (0.1, 0.02),
-                        repeat: 0.6, scroll: 4.0, erosion: "beam_erode",
-                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.25)),
-                    size: (scale: 0.05), duration: 0.3, curve: "beam_hold", priority: Critical,
+                        repeat: 0.6, scroll: 4.0, erosion: "beam_flow",
+                        breakup: (noise: "fire_noise", scale: 1.5, amount: 0.75, softness: 0.25)),
+                    size: (scale: 0.06), duration: 0.3, curve: "beam_hold", ramp_curve: "beam_tint",
+                    priority: Critical,
                 ),
             ],
         ),
@@ -2866,13 +2877,13 @@
             impact: Some("fungal_impact"),
             layers: [
                 (
-                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 2.6,
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 1.8,
                         soft_depth: 0.1, breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.3)),
-                    size: (scale: 0.3), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
+                    size: (scale: 0.45), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
                 ),
                 (
-                    block: Sprite(texture: "acid_glob", ramp: "acid_glob", rotation: Random, lift: 6.5),
-                    size: (scale: 0.12), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
+                    block: Sprite(texture: "acid_glob", ramp: "acid_glob", rotation: Random, lift: 4.5),
+                    size: (scale: 0.18), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
                     priority: Critical,
                 ),
             ],

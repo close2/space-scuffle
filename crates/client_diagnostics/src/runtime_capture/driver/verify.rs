@@ -57,7 +57,7 @@ struct FrameFacts {
     roots: usize,
     bubbles: VisibleBubbles,
     required_mask: u8,
-    counts: [usize; 3],
+    counts: [usize; 4],
     transport: Option<super::super::transport::TransportProof>,
     ownership: Option<super::super::ownership::OwnershipProof>,
 }
@@ -507,7 +507,9 @@ fn verify_subjects(
 }
 
 /// The production shader pipelines the goal draws, as a mask over the shader order of
-/// [`PipelineEvidence`]: bit 0 terrain, bit 1 bubble domes, bit 2 combat effects.
+/// [`PipelineEvidence`]: bit 0 terrain, bit 1 bubble domes, bit 2 the legacy combat cards, bit 3
+/// the effect system's cards. A battle's combat is drawn by the effect system (plan WP11); the
+/// Visual Lab's staged effects (synthetic events no unit names) by the legacy cards.
 fn required_shader_mask(goal: Goal, lab_goal: bool) -> u8 {
     if matches!(
         goal.ownership_view(),
@@ -517,7 +519,7 @@ fn required_shader_mask(goal: Goal, lab_goal: bool) -> u8 {
     } else if lab_goal {
         2
     } else if goal == Goal::Combat {
-        1 | 2 | 4
+        1 | 2 | 8
     } else {
         1 | 2
     }

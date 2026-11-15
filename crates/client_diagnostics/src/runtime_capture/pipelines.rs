@@ -12,16 +12,20 @@ use std::sync::{
     Arc,
 };
 
-pub(crate) const SHADERS: [&str; 3] = [
+/// Production shaders whose pipelines a checkpoint may require: terrain, bubble domes, the
+/// legacy combat cards and the effect system's cards (plan `2026-11-09-effect-visualization`
+/// WP11: the shipped units' shots, impacts and deaths).
+pub(crate) const SHADERS: [&str; 4] = [
     "shaders/terrain.wgsl",
     "shaders/bubble_dome.wgsl",
     "shaders/combat_fx.wgsl",
+    "shaders/effects/sprite.wgsl",
 ];
 
 #[derive(Resource, Clone)]
 pub(crate) struct PipelineEvidence {
-    handles: [Handle<Shader>; 3],
-    counts: Arc<[AtomicUsize; 3]>,
+    handles: [Handle<Shader>; 4],
+    counts: Arc<[AtomicUsize; 4]>,
     failed: Arc<AtomicBool>,
     pending: Arc<AtomicBool>,
 }
@@ -35,7 +39,7 @@ impl PipelineEvidence {
             pending: Arc::default(),
         }
     }
-    pub(crate) fn counts(&self) -> [usize; 3] {
+    pub(crate) fn counts(&self) -> [usize; 4] {
         std::array::from_fn(|index| self.counts[index].load(Ordering::Acquire))
     }
     pub(crate) fn report_failure(&self, message: &str) {
@@ -62,7 +66,7 @@ impl PipelineEvidence {
     reason = "Bevy passes system parameters by value"
 )]
 pub(crate) fn inspect(cache: Res<'_, PipelineCache>, evidence: Res<'_, PipelineEvidence>) {
-    let mut counts = [0; 3];
+    let mut counts = [0; 4];
     let mut pending = cache.waiting_pipelines().next().is_some();
     for pipeline in cache.pipelines() {
         match &pipeline.state {
