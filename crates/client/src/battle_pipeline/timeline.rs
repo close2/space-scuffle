@@ -6,7 +6,8 @@ use std::collections::VecDeque;
 
 use bevy::prelude::Resource;
 use sim_types::{
-    AreaView, BubbleRenderInstance, CombatEventVisual, LinkView, RenderSnapshot, Tick,
+    AreaView, BubbleRenderInstance, CombatEventVisual, LinkView, RenderSnapshot, SpellMissileView,
+    Tick,
 };
 
 use super::commands::SessionGeneration;
@@ -243,6 +244,33 @@ impl BattleFrameState {
             &self.current
         };
         (&source.areas, &source.links)
+    }
+
+    /// The spell missiles of the presented instant (plan `2026-11-09-effect-visualization`
+    /// WP11, F1): those of the tick the pose is interpolated from, those of the tick it is
+    /// interpolated towards, and the fraction between them. When the current tick is shown
+    /// exactly both slices are the current snapshot's and the fraction is 0. Each slice is in
+    /// missile id order (the simulation launches them with rising ids and keeps their order);
+    /// read in place, never copied.
+    #[must_use]
+    pub fn presented_missiles(&self) -> (&[SpellMissileView], &[SpellMissileView], f32) {
+        if self.presented_valid
+            && self.previous_valid
+            && self.presented.tick == self.previous.tick
+            && self.presented.tick != self.current.tick
+        {
+            (
+                &self.previous.spell_missiles,
+                &self.current.spell_missiles,
+                self.presented_fraction,
+            )
+        } else {
+            (
+                &self.current.spell_missiles,
+                &self.current.spell_missiles,
+                0.0,
+            )
+        }
     }
 
     /// Computes a frame's pose into reusable storage; alpha is a finite fraction from zero through one.

@@ -101,6 +101,16 @@ pub enum EventKind {
     Line,
     /// A weapon's impact point (tracer end, beam end, projectile arrival, melee contact).
     Point,
+    /// A weapon's shot from its muzzle to where it lands (plan WP11): a tracer's or a beam's
+    /// path, or a projectile's flight. The event's line runs from the muzzle on the source's
+    /// bubble to the landing point; it binds `LineLength` and `FlightTime` (0 for an instant
+    /// shot).
+    Shot,
+    /// A spell missile in flight (`RenderSnapshot::spell_missiles`, plan WP11, F1): held while
+    /// the simulation publishes it, anchored where it flies. It binds nothing; where it ends it
+    /// lays its `impact` (an `Area` effect bound to the radius of the search its impact runs
+    /// and the duration of the status it applies, read from the spell catalog).
+    Missile,
     /// A persistent area (`RenderSnapshot::areas`).
     Area,
     /// A tether between two units.
@@ -357,6 +367,16 @@ pub enum BlockDef {
         /// Noise breakup of the erosion and edges.
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// The card rides the event's line (plan WP11): its placed point moves from the line's
+        /// start at the beginning of the layer's life to its end at the end of it (a projectile
+        /// in flight, with the layer's `flight`). Needs an event with a line.
+        #[serde(default)]
+        ride: bool,
+        /// With an event line and `orient: Camera`, the card is drawn this many times longer
+        /// along the line than across it, still facing the camera (a bolt's glow drawn out by
+        /// its speed); at least 1, and 1 draws it round.
+        #[serde(default = "one")]
+        stretch: f32,
     },
     /// A card masked to a ring, its radius animated from `radius.from` to `radius.to`.
     Ring {
@@ -413,6 +433,11 @@ pub enum BlockDef {
         /// ground is multiplied by.
         #[serde(default)]
         darken: bool,
+        /// How the ring is rolled about its centre: `Fixed` starts an arc at the same angle
+        /// every time, `Random` at a hashed one with a hashed mirror (a blade's crescent swung
+        /// at any angle, plan WP11).
+        #[serde(default)]
+        rotation: RotationDef,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -518,6 +543,13 @@ pub enum BlockDef {
         /// and scrolls with the texture).
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// The strip rides the line with the layer's life instead of racing out at `travel`
+        /// (plan WP11): its head lies at the share of the line the layer's life has reached
+        /// and its tail this many world units behind it, never before the line's start (a
+        /// tracer round's short glowing slug, a projectile's trail). Positive; `travel` must
+        /// then be 0 and `tail_delay` unset.
+        #[serde(default)]
+        trail: Option<f32>,
     },
     /// A screen-space refraction (plan §5.1 "Distortion", WP7): heat haze over a burn, air
     /// rippling around a blast, a cloaked body's shimmer. It bends what is already drawn opaque
@@ -859,6 +891,14 @@ pub struct LayerDef {
     /// A factor on the layer's intensity from a bound value (see [`StrengthDef`]); `None` is 1.
     #[serde(default)]
     pub strength: Option<StrengthDef>,
+    /// The layer lasts a bound span of time (plan WP11): its duration is the bound value in
+    /// seconds when it is positive, and `duration` otherwise. `FlightTime` makes a shot's
+    /// layer last the projectile's flight (a card that rides the line arrives when the
+    /// projectile does; an instant shot keeps `duration`); `AreaTotal` makes an area's mark
+    /// last as long as the status its spell applies. The event must provide the binding, and
+    /// a held layer cannot last a span.
+    #[serde(default)]
+    pub lasts: Option<Binding>,
 }
 
 /// Default seconds a held layer takes to erode out once released.
@@ -901,6 +941,11 @@ pub struct EffectDefRaw {
     /// (see [`HitDef`]).
     #[serde(default)]
     pub hit: Option<HitDef>,
+    /// For a `Missile` effect: the `Area` effect laid where the missile ends (plan WP11, F1),
+    /// bound to `AreaRadius` (the radius of the search its impact runs), `AreaTotal` and
+    /// `AreaRemaining` (both the duration of the longest status that search applies).
+    #[serde(default)]
+    pub impact: Option<String>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.

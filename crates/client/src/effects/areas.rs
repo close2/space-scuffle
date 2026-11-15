@@ -44,7 +44,9 @@ use super::stance::{anchors, emit_due};
 use crate::battle_pipeline::fog::{presence_of, BattleFog, Presence};
 use crate::battle_pipeline::session::BattleSession;
 use bevy::prelude::*;
-use sim_types::{AbilitySource, AreaView, BubbleRenderInstance, EntityId, LinkView};
+use sim_types::{
+    AbilitySource, AreaView, BubbleRenderInstance, EntityId, LinkView, PlayerId, SpellMissileView,
+};
 
 /// Seconds of one simulation tick.
 const TICK_SECONDS: f32 = 1.0 / sim_types::TICKS_PER_SECOND as f32;
@@ -247,6 +249,25 @@ struct LinkSlot {
     kept: bool,
 }
 
+/// One held spell missile (plan WP11, F1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MissileSlot {
+    /// The published missile's id: the slots are kept sorted by it.
+    id: u32,
+    /// The effect held.
+    effect: EffectId,
+    /// Its live instance.
+    handle: EffectHandle,
+    /// The caster type and ability that launched it.
+    source: AbilitySource,
+    /// The player whose cast launched it.
+    owner: PlayerId,
+    /// Where it was drawn last (world space): where it lands its impact once it is gone.
+    position: Vec3,
+    /// Whether it was kept this frame.
+    kept: bool,
+}
+
 /// The looks held on the published areas and tethers.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct AreaLooks {
@@ -254,6 +275,8 @@ pub struct AreaLooks {
     areas: Vec<AreaSlot>,
     /// Held tethers, sorted by [`LinkKey`].
     links: Vec<LinkSlot>,
+    /// Held spell missiles, sorted by missile id.
+    missiles: Vec<MissileSlot>,
     /// Areas and tethers not drawn because [`HELD_SLOTS`] were held.
     pub refused: u64,
 }
@@ -263,6 +286,7 @@ impl Default for AreaLooks {
         Self {
             areas: Vec::with_capacity(HELD_SLOTS),
             links: Vec::with_capacity(HELD_SLOTS),
+            missiles: Vec::with_capacity(HELD_SLOTS),
             refused: 0,
         }
     }
@@ -279,6 +303,12 @@ impl AreaLooks {
     #[must_use]
     pub fn capacities(&self) -> (usize, usize) {
         (self.areas.capacity(), self.links.capacity())
+    }
+
+    /// How many spell missiles hold a look now, and the retained capacity of their record.
+    #[must_use]
+    pub fn missiles(&self) -> (usize, usize) {
+        (self.missiles.len(), self.missiles.capacity())
     }
 }
 
@@ -557,6 +587,12 @@ pub fn present_areas_and_links(
             )
         });
     keep_views(&mut looks, views, bubbles, fog.as_deref(), &mut keep);
+    let missiles = session
+        .as_deref()
+        .map_or((&[][..], &[][..], 0.0), |session| {
+            session.frames.presented_missiles()
+        });
+    keep_missiles(&mut looks, missiles, fog.as_deref(), &mut keep);
 }
 
 /// How the viewer under `fog` (`None`: no fog kept) sees `area`: its own whole, another's by
@@ -628,6 +664,219 @@ pub fn keep_views_seen(
         }
         slot.kept
     });
+}
+
+/// Radius in world units round a flying missile that the viewer must see for its look to be
+/// drawn: about the size of the shipped missile looks.
+const MISSILE_SIGHT_RADIUS: f32 = 0.35;
+
+/// The spell missiles of a presented instant: those of the tick the pose is interpolated
+/// from, those of the tick it is interpolated towards (each in missile id order), and the
+/// fraction between them (`BattleFrameState::presented_missiles`).
+pub type MissileFrame<'a> = (&'a [SpellMissileView], &'a [SpellMissileView], f32);
+
+/// How the viewer under `fog` (`None`: no fog kept) sees a disc of `radius` round `center`
+/// (map `x, y`) of `owner`'s: whole when it is the viewer's own, else by [`area_sight`].
+fn disc_sight_under(
+    fog: Option<&BattleFog>,
+    owner: PlayerId,
+    center: Vec2,
+    radius: f32,
+) -> AreaSight {
+    match fog {
+        Some(fog) if fog.viewer() != Some(owner) => {
+            area_sight(center, radius, |x, y| fog.sees(x, y))
+        }
+        _ => AreaSight::Whole,
+    }
+}
+
+/// Keeps a look held on every published spell missile and lays its impact where it ends (plan
+/// WP11, F1), under `fog` (`None`: no fog kept): the missile part of [`present_areas_and_links`].
+pub fn keep_missiles(
+    looks: &mut AreaLooks,
+    missiles: MissileFrame<'_>,
+    fog: Option<&BattleFog>,
+    keep: &mut Keep<'_>,
+) {
+    keep_missiles_seen(
+        looks,
+        missiles,
+        |owner, center, radius| disc_sight_under(fog, owner, center, radius),
+        keep,
+    );
+}
+
+// PERFORMANCE RATIONALE:
+// Why: Every frame each published missile must find its held slot and its position on the
+// next tick; scans would be quadratic in the live missiles (charter §3.3).
+// What: The slots stay sorted by missile id and the snapshots publish missiles in id order, so
+// each lookup is a binary search, and a new slot is inserted within the retained capacity.
+// Trade-off: An insertion moves the later slots (at most HELD_SLOTS small records), once per
+// new missile, in exchange for O(log N) per missile and frame and no allocation.
+/// [`keep_missiles`] with the fog's question given: how the viewer sees a disc of a player's
+/// round a map point (`sight(owner, center, radius)`); tests ask it directly.
+///
+/// A missile's look is held at its position, interpolated between the two ticks of the
+/// presented instant, and drawn only while the viewer sees the ground round it. A missile no
+/// longer published has landed: its look is released and its effect's `impact` is laid where
+/// it was drawn last, bound to the extent the spell catalog gives its ability
+/// ([`UnitEffectTables::missile_extent`]) and cut by the fog as an area of that radius is
+/// (D-5): not at all when the viewer sees none of it.
+pub fn keep_missiles_seen(
+    looks: &mut AreaLooks,
+    (from, to, fraction): MissileFrame<'_>,
+    sight: impl Fn(PlayerId, Vec2, f32) -> AreaSight,
+    keep: &mut Keep<'_>,
+) {
+    for slot in &mut looks.missiles {
+        slot.kept = false;
+    }
+    for missile in from {
+        let Some(effect) = ability_effect(
+            keep.catalog,
+            keep.tables,
+            Some(missile.source),
+            EventKind::Missile,
+        ) else {
+            continue;
+        };
+        let next = to
+            .binary_search_by_key(&missile.id, |next| next.id)
+            .ok()
+            .and_then(|index| to.get(index))
+            .map_or(missile.position, |next| next.position);
+        let start = Vec3::from_array(missile.position);
+        let position = start + (Vec3::from_array(next) - start) * fraction.clamp(0.0, 1.0);
+        let anchor = world(position.to_array());
+        let clip = match sight(
+            missile.owner,
+            Vec2::new(position.x, position.y),
+            MISSILE_SIGHT_RADIUS,
+        ) {
+            AreaSight::Whole => NO_CLIP,
+            AreaSight::Part(clip) => clip,
+            AreaSight::Hidden => CLIP_NOTHING,
+        };
+        let handle = match looks
+            .missiles
+            .binary_search_by_key(&missile.id, |slot| slot.id)
+        {
+            Ok(index) => {
+                let slot = &mut looks.missiles[index];
+                slot.kept = keep
+                    .runtime
+                    .update_held(slot.handle, anchor, BoundValues::default());
+                slot.position = anchor;
+                slot.handle
+            }
+            Err(index) => {
+                if looks.missiles.len() == looks.missiles.capacity() {
+                    looks.refused += 1;
+                    continue;
+                }
+                let request = SpawnRequest {
+                    effect,
+                    anchor,
+                    bound: BoundValues::default(),
+                    line: None,
+                    delay: 0.0,
+                };
+                let Some(handle) = keep.runtime.hold(keep.catalog, &request, keep.now, false)
+                else {
+                    continue;
+                };
+                looks.missiles.insert(
+                    index,
+                    MissileSlot {
+                        id: missile.id,
+                        effect,
+                        handle,
+                        source: missile.source,
+                        owner: missile.owner,
+                        position: anchor,
+                        kept: true,
+                    },
+                );
+                handle
+            }
+        };
+        keep.runtime.set_fog_clip(handle, clip);
+        shed(missile.id, effect, anchor, clip, keep);
+    }
+    let now = keep.now;
+    let mut index = 0;
+    while index < looks.missiles.len() {
+        let slot = looks.missiles[index];
+        if slot.kept {
+            index += 1;
+            continue;
+        }
+        keep.runtime.release(slot.handle, now);
+        land(&slot, &sight, keep);
+        looks.missiles.remove(index);
+    }
+}
+
+/// Lays the `emit` effect of missile `id`'s look `effect` at `anchor` when its beat is due (a
+/// trail of motes it sheds), cut to the missile's own `clip`.
+fn shed(id: u32, effect: EffectId, anchor: Vec3, clip: LineClip, keep: &mut Keep<'_>) {
+    let Some(emit) = keep.catalog.effect(effect).and_then(|effect| effect.emit) else {
+        return;
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the phase needs only the low bits of the id"
+    )]
+    let phase = (id % 89) as f32 / 89.0;
+    if !emit_due(keep.now, keep.delta, emit.every, phase) {
+        return;
+    }
+    let request = SpawnRequest {
+        effect: emit.effect,
+        anchor,
+        bound: BoundValues::default(),
+        line: None,
+        delay: 0.0,
+    };
+    if let Some(laid) = keep.runtime.spawn(keep.catalog, &request, keep.now) {
+        keep.runtime.set_fog_clip(laid, clip);
+    }
+}
+
+/// Lays the impact of the landed missile `slot` where it was drawn last (plan WP11, F1).
+fn land(
+    slot: &MissileSlot,
+    sight: &impl Fn(PlayerId, Vec2, f32) -> AreaSight,
+    keep: &mut Keep<'_>,
+) {
+    let Some(impact) = keep
+        .catalog
+        .effect(slot.effect)
+        .and_then(|effect| effect.impact)
+    else {
+        return;
+    };
+    let extent = keep.tables.missile_extent(slot.source);
+    let center = Vec2::new(slot.position.x, slot.position.z);
+    let clip = match sight(slot.owner, center, extent.radius.max(MISSILE_SIGHT_RADIUS)) {
+        AreaSight::Whole => NO_CLIP,
+        AreaSight::Part(clip) => clip,
+        AreaSight::Hidden => return,
+    };
+    let request = SpawnRequest {
+        effect: impact,
+        anchor: slot.position,
+        bound: BoundValues::default()
+            .with(Binding::AreaRadius, extent.radius)
+            .with(Binding::AreaTotal, extent.seconds)
+            .with(Binding::AreaRemaining, extent.seconds),
+        line: None,
+        delay: 0.0,
+    };
+    if let Some(handle) = keep.runtime.spawn(keep.catalog, &request, keep.now) {
+        keep.runtime.set_fog_clip(handle, clip);
+    }
 }
 
 #[cfg(test)]

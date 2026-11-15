@@ -36,7 +36,12 @@
 //! - Every window is preceded by a warm-up, and every test checks that its window was real: the
 //!   battle was ready, and on moving windows the simulation ticked.
 
-#![allow(clippy::expect_used, clippy::panic, clippy::cast_precision_loss)]
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_precision_loss,
+    clippy::too_many_lines
+)]
 
 use std::any::type_name;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1081,8 +1086,11 @@ fn combat_frames_reuse_effect_materials() {
             "{added} effect materials added while the pool created {grown}"
         );
         if tally.combat_events >= MIN_COMBAT_EVENTS {
+            // Plan WP11 (Amendment 24), re-baselined with that cause only: every shipped unit
+            // names its weapons' looks, so the effect system draws the battle's shots and deaths
+            // and the legacy cards spawn none; the pool then adds no material at all.
             assert!(
-                added < tally.effects_spawned,
+                added == 0 || added < tally.effects_spawned,
                 "{added} effect materials added for {} effects spawned: slots are not reused",
                 tally.effects_spawned
             );
@@ -1111,6 +1119,12 @@ const STREAM_EFFECTS: &str = r#"
     "burst": (class: Major, event: Splash, layers: [
         (block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: SplashReach, scale: 1.0),
          duration: 0.5, priority: Critical),
+    ]),
+    "bolt": (class: Minor, event: Shot, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "white", ride: true, stretch: 2.0),
+         size: (scale: 0.1), duration: 0.2, lasts: FlightTime, priority: Critical),
+        (block: Ribbon(texture: "solid", ramp: "red_add", shape: Radial, trail: Some(0.5)),
+         size: (scale: 0.03), duration: 0.2, lasts: FlightTime),
     ])
 "#;
 
@@ -1144,7 +1158,8 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
         |app| {
             app.insert_resource(EffectCatalogSource(vocabulary.clone()));
             // The shipped presentation blocks name shipped effects this test vocabulary does
-            // not define; the stream comes from its defaults instead.
+            // not define; the stream comes from its defaults instead, and every weapon shoots
+            // the test's `bolt` along its path (plan WP11: a shot's travel in steady combat).
             if let Some(mut units) = app
                 .world_mut()
                 .get_resource_mut::<client::CatalogResource>()
@@ -1154,9 +1169,24 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
                     .archetypes()
                     .map(|archetype| archetype.unit_type_id)
                     .collect();
+                let shot = |weapon| sim_core::catalog::WeaponEffects {
+                    weapon,
+                    mode: None,
+                    launch: None,
+                    travel: Some("bolt".to_owned()),
+                    impact: Some("spark".to_owned()),
+                    splash: Some("burst".to_owned()),
+                };
                 for id in ids {
                     if let Ok(archetype) = units.0.get_mut(id) {
-                        archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+                        archetype.effects = sim_core::catalog::ArchetypeEffects {
+                            weapons: vec![
+                                shot(sim_types::WeaponSlot::Primary),
+                                shot(sim_types::WeaponSlot::Ground),
+                                shot(sim_types::WeaponSlot::Air),
+                            ],
+                            ..sim_core::catalog::ArchetypeEffects::default()
+                        };
                     }
                 }
             }

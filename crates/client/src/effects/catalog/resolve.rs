@@ -101,6 +101,16 @@ pub(super) fn resolve(
 /// that every effect an `Area` effect lays is an `Area` effect (it binds the area's radius).
 fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatalogError> {
     for effect in effects {
+        let landed = effect.impact.and_then(|id| effects.get(usize::from(id.0)));
+        if landed.is_some_and(|landed| landed.event != EventKind::Area) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: path.to_path_buf(),
+                site: site(&effect.name, None),
+                field: "impact",
+                value: 0.0,
+                rule: "a missile lays an `Area` effect where it ends",
+            });
+        }
         let links = [
             ("emit", effect.emit.map(|emit| emit.effect)),
             ("hit", effect.hit.map(|hit| hit.effect)),
@@ -115,7 +125,7 @@ fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatal
                     site: site(&effect.name, None),
                     field,
                     value: 0.0,
-                    rule: "the effect it names must be of its own kind (`Status` or `Area`)",
+                    rule: "the effect it names must be of its own kind (`Status`, `Area` or `Missile`)",
                 });
             }
         }
@@ -538,6 +548,23 @@ impl Resolver<'_> {
             }
         }
         let (emit, hit) = self.status_links(name, effect)?;
+        let impact = match &effect.impact {
+            Some(impact) if effect.event == EventKind::Missile => Some(EffectId(self.id(
+                NameKind::Effect,
+                impact,
+                &site(name, None),
+            )?)),
+            Some(_) => {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: site(name, None),
+                    field: "impact",
+                    value: 0.0,
+                    rule: "only a `Missile` effect lays an impact where it ends",
+                });
+            }
+            None => None,
+        };
         Ok(Effect {
             name: name.to_owned(),
             class: effect.class,
@@ -550,6 +577,7 @@ impl Resolver<'_> {
             salt: effect.seed.unwrap_or_else(|| name_hash(name)),
             emit,
             hit,
+            impact,
         })
     }
 
@@ -568,7 +596,10 @@ impl Resolver<'_> {
             (
                 "emit",
                 effect.emit.is_some(),
-                matches!(effect.event, EventKind::Status | EventKind::Area),
+                matches!(
+                    effect.event,
+                    EventKind::Status | EventKind::Area | EventKind::Missile
+                ),
             ),
             (
                 "hit",
@@ -583,20 +614,20 @@ impl Resolver<'_> {
                     field,
                     value: 0.0,
                     rule: "only a `Status` effect may lay or spawn another, and an `Area` \
-                           effect lay one",
+                           or a `Missile` effect lay one",
                 });
             }
         }
         let emit = match &effect.emit {
             Some(emit) => {
                 self.positive_seconds(&at, "emit.every", emit.every)?;
-                if emit.moving && effect.event == EventKind::Area {
+                if emit.moving && effect.event != EventKind::Status {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),
                         site: at,
                         field: "emit.moving",
                         value: 1.0,
-                        rule: "an area does not move",
+                        rule: "only a unit's status lays while its unit moves",
                     });
                 }
                 Some(super::Emit {
@@ -665,7 +696,11 @@ impl Resolver<'_> {
         } else {
             matches!(
                 event,
-                EventKind::Mode | EventKind::Status | EventKind::Area | EventKind::Link
+                EventKind::Mode
+                    | EventKind::Status
+                    | EventKind::Area
+                    | EventKind::Link
+                    | EventKind::Missile
             )
         };
         if !allowed {
@@ -674,8 +709,8 @@ impl Resolver<'_> {
                 site: at.clone(),
                 field,
                 value: 0.0,
-                rule: "only a `Mode`, `Status`, `Area` or `Link` effect is held and may hold a \
-                       layer, and only a `Mode` or `Status` effect may shape a bubble",
+                rule: "only a `Mode`, `Status`, `Area`, `Link` or `Missile` effect is held and \
+                       may hold a layer, and only a `Mode` or `Status` effect may shape a bubble",
             });
         }
         if matches!(block, Block::Particles(_)) && layer.held {
@@ -733,6 +768,7 @@ impl Resolver<'_> {
             self.require(at, event, value.bind)?;
         }
         self.ribbon_spans_line(at, event, &block, &placements)?;
+        self.rides_line(at, event, layer, &block)?;
         if matches!(block, Block::Ring { .. }) && layer.radius.is_none() {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -772,7 +808,48 @@ impl Resolver<'_> {
             held: layer.held,
             exit: layer.exit,
             strength: layer.strength,
+            lasts: layer.lasts,
         })
+    }
+
+    /// Checks the shot fields of a layer (plan WP11): a layer that lasts a bound span lasts a
+    /// span of time its event provides and is not held; a card that rides its line, or is
+    /// drawn out along it, needs the event's line.
+    fn rides_line(
+        &self,
+        at: &Site,
+        event: EventKind,
+        layer: &LayerDef,
+        block: &Block,
+    ) -> Result<(), EffectCatalogError> {
+        if let Some(binding) = layer.lasts {
+            let span = matches!(
+                binding,
+                super::schema::Binding::FlightTime
+                    | super::schema::Binding::AreaTotal
+                    | super::schema::Binding::AreaRemaining
+            );
+            if !span || layer.held {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "lasts",
+                    value: 0.0,
+                    rule: "a layer that is not held lasts a span of time: `FlightTime`, \
+                           `AreaTotal` or `AreaRemaining`",
+                });
+            }
+            self.require(at, event, binding)?;
+        }
+        let along_line = match block {
+            Block::Sprite(look) => look.ride || look.stretch > 1.0,
+            Block::Ribbon(look) => look.trail.is_some(),
+            _ => false,
+        };
+        if along_line {
+            self.require_line(at, event, super::schema::Binding::LineLength)?;
+        }
+        Ok(())
     }
 
     /// Checks one placement of a layer of an effect of kind `event`, adding the values it binds
@@ -964,8 +1041,21 @@ impl Resolver<'_> {
                 clip_to_line,
                 shape,
                 breakup,
+                ride,
+                stretch,
             } => {
                 self.at_least(at, "soft_depth", *soft_depth, 0.0)?;
+                self.at_least(at, "stretch", *stretch, 1.0)?;
+                if *stretch > 1.0 && *orient != super::schema::Orient::Camera {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        field: "stretch",
+                        value: *stretch,
+                        rule: "only a card facing the camera (`orient: Camera`) is drawn out \
+                               along its line",
+                    });
+                }
                 self.at_least(at, "lean_deg", *lean_deg, 0.0)?;
                 self.at_least(at, "spread", *spread, 0.0)?;
                 if let Some(fps) = fps {
@@ -994,6 +1084,8 @@ impl Resolver<'_> {
                     clip_to_line: *clip_to_line,
                     shape: *shape,
                     breakup: self.breakup(breakup.as_ref(), at)?,
+                    ride: *ride,
+                    stretch: *stretch,
                 })
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
@@ -1082,6 +1174,8 @@ impl Resolver<'_> {
                 clip_to_line: false,
                 shape: super::schema::CardShape::Texture,
                 breakup,
+                ride: false,
+                stretch: 1.0,
             },
             thickness: *thickness,
             height: *height,
@@ -1142,6 +1236,7 @@ impl Resolver<'_> {
             arc,
             waver,
             darken,
+            rotation,
         } = block
         else {
             return self.block(at, block);
@@ -1192,13 +1287,16 @@ impl Resolver<'_> {
         }
         Ok(match block {
             Block::Ring {
-                look,
+                mut look,
                 thickness,
                 height,
                 edge_noise,
                 ..
             } => Block::Ring {
-                look,
+                look: {
+                    look.rotation = *rotation;
+                    look
+                },
                 thickness,
                 height,
                 edge_noise,
@@ -1427,10 +1525,24 @@ impl Resolver<'_> {
             sort_bias,
             shape,
             breakup,
+            trail,
         } = block
         else {
             return self.block(at, block);
         };
+        if let Some(trail) = trail {
+            self.at_least(at, "trail", *trail, 0.001)?;
+            if *travel > 0.0 || tail_delay.is_some() {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "trail",
+                    value: *trail,
+                    rule: "a strip that rides its line with the layer's life neither travels \
+                           nor delays its tail",
+                });
+            }
+        }
         if *shape == super::schema::CardShape::Membrane {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -1495,6 +1607,7 @@ impl Resolver<'_> {
             sort_bias: *sort_bias,
             shape: *shape,
             breakup: self.breakup(breakup.as_ref(), at)?,
+            trail: *trail,
         }))
     }
 

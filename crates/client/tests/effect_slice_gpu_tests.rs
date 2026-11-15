@@ -30,6 +30,12 @@
 //! - **a line out of the fog** (plan Amendment 2, R6): the line subject seen only from its
 //!   fifth search point on draws no pixel at the points before it and its look after it.
 //!
+//! Plan WP11 (Amendment 24) adds the weapons' own shots: every `Shot` look a shipped unit names
+//! as a weapon's travel, on a line half a unit above the ground, its `Critical` layers drawn
+//! along the projected path (a beam from muzzle to impact, a slug's head or a projectile's body
+//! where the shot has reached), nothing after its end, and nothing over the unseen half of its
+//! path under the lab's fog ([`shipped_shots_draw_along_their_paths`]).
+//!
 //! # Invariants verified
 //! As listed; every statistic is printed for the driver comparison.
 
@@ -1198,5 +1204,361 @@ fn check_masked_line(index: usize) -> TestResult {
         "{}: the seen part of the line is drawn: {seen_lit} lit pixels",
         subject.effect
     );
+    Ok(())
+}
+
+// --- WP11: the weapons' own shots ---------------------------------------------------------------
+//
+// Plan WP11 (Amendment 24): every `Shot` effect a shipped unit names for a weapon's `travel`,
+// in the production lab on a line of `SHOT_LENGTH` along +x half a unit above the bright ground
+// (where the simulation publishes shots), with the flight a projectile's weapon binds. The
+// parent checks, on the `Critical` layers alone, that the shot draws along its path:
+// - every changed pixel lies within its projected half width (plus [`TOLERANCE_PX`]) of the
+//   projected path;
+// - a strip spanning the whole line (a beam) ends within [`SHOT_END_TOLERANCE_PX`] of the
+//   projected muzzle and impact;
+// - a strip riding the line (a tracer's slug, a projectile's trail) has its head within
+//   [`SHOT_END_TOLERANCE_PX`] of the point the shot's life has reached, and a riding card (a
+//   projectile's body) is centred on that point within [`SHOT_END_TOLERANCE_PX`];
+// - nothing of the shot is drawn once its layers have ended;
+// - under the lab's fog over x < 0 (the muzzle in the fog, the impact seen), no pixel over the
+//   unseen half changes, at an age when its body is still in the fog and at one when it is
+//   seen.
+
+/// Environment variable carrying the shot child's part: 0 the clear stills, 1 the fog stills.
+const SHOT_PART_VAR: &str = "SPACE_SCUFFLE_EFFECT_SHOT_PART";
+/// Length of the shot subjects' line, world units.
+const SHOT_LENGTH: f32 = 6.0;
+/// Flight a projectile subject binds, seconds.
+const SHOT_FLIGHT: f32 = 0.6;
+/// Share of a shot's life at which its path is measured.
+const SHOT_LIFE: f32 = 0.5;
+/// Tolerance of a shot's ends and of its riding body's place, pixels: [`TOLERANCE_PX`] plus
+/// one pixel for the soft rounded tips of the Gaussian strips, whose last pixel fades below the
+/// lit threshold.
+const SHOT_END_TOLERANCE_PX: f32 = 3.0;
+/// Height of the shot subjects' line above the ground (`client::effects::lab::driver`).
+const SHOT_LIFT: f32 = client::effects::lab::driver::SHOT_HEIGHT;
+
+/// A shipped shot effect and the flight its weapons bind.
+#[derive(Debug, Clone)]
+struct ShotSubject {
+    effect: String,
+    flight: f32,
+}
+
+/// Every `Shot` effect a shipped unit's block names as a weapon's travel, sorted by name.
+fn shot_subjects() -> Vec<ShotSubject> {
+    let catalog = catalog();
+    let mut names: Vec<String> = sim_fixtures::shipped_catalogs()
+        .units
+        .archetypes()
+        .flat_map(|archetype| archetype.effects.weapons.clone())
+        .filter_map(|entry| entry.travel)
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .map(|effect| {
+            let resolved = catalog
+                .effect(catalog.effect_id(&effect).expect("defined"))
+                .expect("resolves");
+            let flies = resolved
+                .layers
+                .iter()
+                .any(|layer| layer.lasts == Some(Binding::FlightTime));
+            ShotSubject {
+                effect,
+                flight: if flies { SHOT_FLIGHT } else { 0.0 },
+            }
+        })
+        .collect()
+}
+
+/// The lab subject of `shot`: its line along +x centred on the origin, under the lab's fog over
+/// x < 0 when `fog`.
+fn shot_lab(shot: &ShotSubject, fog: bool) -> LabSubject {
+    let bound = client::effects::binding::BoundValues::default()
+        .with(Binding::LineLength, SHOT_LENGTH)
+        .with(Binding::FlightTime, shot.flight);
+    LabSubject {
+        effect: shot.effect.clone(),
+        bound,
+        anchor: Vec3::new(-SHOT_LENGTH * 0.5, 0.0, 0.0),
+        line_to: Some(Vec3::new(SHOT_LENGTH * 0.5, 0.0, 0.0)),
+        line_seen: u64::MAX,
+        fog_below_x: fog.then_some(0.0),
+        repeat: None,
+    }
+}
+
+/// The shot's life in seconds: its longest non-held layer's span for its flight.
+fn shot_lifetime(effect: &Effect, shot: &ShotSubject) -> f32 {
+    let bound =
+        client::effects::binding::BoundValues::default().with(Binding::FlightTime, shot.flight);
+    client::effects::runtime::one_shot_lifetime(effect, &bound)
+}
+
+/// The age at which `shot`'s path is measured: [`SHOT_LIFE`] of its `Critical` layers' life.
+fn shot_age(effect: &Effect, shot: &ShotSubject) -> f32 {
+    let bound =
+        client::effects::binding::BoundValues::default().with(Binding::FlightTime, shot.flight);
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.priority == Priority::Critical)
+        .map(|layer| layer.start + layer.span(&bound) * SHOT_LIFE)
+        .fold(0.0, f32::max)
+}
+
+/// The shot child: part 0 the background, the `Critical` layers at the measured age and the
+/// whole look after its end; part 1 the background under the fog and the whole look in it at a
+/// quarter and at three quarters of its `Critical` layers' life (the body in the fog, then
+/// seen).
+#[test]
+#[ignore = "launched by the shot effect test on a virtual display"]
+fn effect_shot_child() {
+    let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let index: usize = std::env::var(INDEX_VAR)
+        .expect("the parent names the subject")
+        .parse()
+        .expect("the index is a number");
+    let fog = std::env::var(SHOT_PART_VAR).is_ok_and(|part| part == "1");
+    let subjects = shot_subjects();
+    let shot = &subjects[index];
+    let catalog = catalog();
+    let effect = catalog
+        .effect(catalog.effect_id(&shot.effect).expect("defined"))
+        .expect("resolves");
+    let age = shot_age(effect, shot);
+    let lifetime = shot_lifetime(effect, shot);
+    let takes = if fog {
+        vec![
+            take(false, None, 0.25, &[("fog_bg", 0.0)]),
+            take(
+                true,
+                None,
+                0.02,
+                &[
+                    ("fog_early", age / SHOT_LIFE * 0.25),
+                    ("fog_late", age / SHOT_LIFE * 0.75),
+                ],
+            ),
+        ]
+    } else {
+        vec![
+            take(false, None, 0.25, &[("bg", 0.0)]),
+            take(true, Some(Priority::Critical), 0.02, &[("critical", age)]),
+            take(true, None, 0.05, &[("after", lifetime + AFTER_MARGIN)]),
+        ]
+    };
+    let program = LabProgram {
+        subject: shot_lab(shot, fog),
+        takes,
+        out,
+    };
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+/// Where along the projected path from `from` to `to` (pixels) pixel `pixel` lies, as a
+/// distance from `from` in pixels, and how far it lies off the path.
+fn along_and_across(from: Vec2, to: Vec2, pixel: Vec2) -> (f32, f32) {
+    let axis = (to - from).normalize_or_zero();
+    let offset = pixel - from;
+    let along = offset.dot(axis);
+    (along, (offset - axis * along).length())
+}
+
+/// The widest projected half width, pixels, of `effect`'s `Critical` layers on the path.
+fn critical_half_width(effect: &Effect, view: &View, from: Vec3, to: Vec3) -> f32 {
+    let mid = (from + to) * 0.5;
+    effect
+        .layers
+        .iter()
+        .filter(|layer| layer.priority == Priority::Critical)
+        .map(|layer| {
+            // A card drawn out along the path keeps its half size across it; a disc placement
+            // moves it off the path by up to its radius.
+            let scattered = layer
+                .placements
+                .iter()
+                .map(|placement| match placement {
+                    PlacementDef::Disc { radius, .. } => radius.scale,
+                    _ => 0.0,
+                })
+                .fold(0.0, f32::max);
+            let across = layer.size.scale + scattered;
+            let offset = view.project(mid + Vec3::Z * across);
+            offset.distance(view.project(mid))
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Checks the `Critical` layers of shot subject `index` along its path and under the fog.
+fn check_shot(index: usize) -> TestResult<String> {
+    let subjects = shot_subjects();
+    let shot = &subjects[index];
+    let directory = tempfile::tempdir()?;
+    for (part, label) in [("0", "shot stills"), ("1", "shot under fog")] {
+        let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+        command.args(["--ignored", "--exact", "--nocapture", "effect_shot_child"]);
+        command.env(OUT_VAR, directory.path());
+        command.env(INDEX_VAR, index.to_string());
+        command.env(SHOT_PART_VAR, part);
+        command.assert_passes_validation(label);
+    }
+    let catalog = catalog();
+    let effect = catalog
+        .effect(catalog.effect_id(&shot.effect).expect("defined"))
+        .expect("resolves");
+    let lab = shot_lab(shot, false);
+    let view = View::new(lab.focus());
+    let from = Vec3::new(-SHOT_LENGTH * 0.5, SHOT_LIFT, 0.0);
+    let to = Vec3::new(SHOT_LENGTH * 0.5, SHOT_LIFT, 0.0);
+    let (from_px, to_px) = (view.project(from), view.project(to));
+    let length_px = from_px.distance(to_px);
+    let half_width = critical_half_width(effect, &view, from, to);
+    let bg = capture(directory.path(), "bg");
+    let critical = capture(directory.path(), "critical");
+    let (mut first, mut last, mut widest) = (f32::MAX, f32::MIN, 0.0_f32);
+    let (mut sum, mut count) = (0.0_f32, 0_u32);
+    for y in 0..SIZE.y {
+        for x in 0..SIZE.x {
+            if !lit(&critical, &bg, x, y) {
+                continue;
+            }
+            let (along, across) =
+                along_and_across(from_px, to_px, Vec2::new(x as f32 + 0.5, y as f32 + 0.5));
+            first = first.min(along);
+            last = last.max(along);
+            widest = widest.max(across);
+            sum += along;
+            count += 1;
+        }
+    }
+    assert!(
+        count > 0,
+        "{}: the Critical layers draw nothing",
+        shot.effect
+    );
+    assert!(
+        widest <= half_width + TOLERANCE_PX,
+        "{}: a pixel {widest:.1} px off the path (half width {half_width:.1} px)",
+        shot.effect
+    );
+    let rides = effect.layers.iter().any(|layer| {
+        layer.priority == Priority::Critical
+            && match &layer.block {
+                Block::Sprite(look) => look.ride,
+                _ => false,
+            }
+    });
+    let trails = effect.layers.iter().any(|layer| {
+        layer.priority == Priority::Critical
+            && matches!(&layer.block, Block::Ribbon(look) if look.trail.is_some())
+    });
+    let reached = length_px * SHOT_LIFE;
+    let path = if rides {
+        let centre = sum / count as f32;
+        assert!(
+            (centre - reached).abs() <= SHOT_END_TOLERANCE_PX,
+            "{}: the body is centred {centre:.1} px along, the shot reached {reached:.1} px",
+            shot.effect
+        );
+        format!(
+            "body centred {:+.2} px from where the flight reached",
+            centre - reached
+        )
+    } else if trails {
+        assert!(
+            (last - reached).abs() <= SHOT_END_TOLERANCE_PX,
+            "{}: the slug's head is {last:.1} px along, the shot reached {reached:.1} px",
+            shot.effect
+        );
+        format!(
+            "slug head {:+.2} px from where the shot reached",
+            last - reached
+        )
+    } else {
+        assert!(
+            first.abs() <= SHOT_END_TOLERANCE_PX
+                && (last - length_px).abs() <= SHOT_END_TOLERANCE_PX,
+            "{}: the beam runs {first:.1} to {last:.1} px of a {length_px:.1} px path",
+            shot.effect
+        );
+        format!(
+            "beam ends {:+.2} px and {:+.2} px from the muzzle and the impact",
+            first,
+            last - length_px
+        )
+    };
+    let after = capture(directory.path(), "after");
+    let lingering = (0..SIZE.y)
+        .flat_map(|y| (0..SIZE.x).map(move |x| (x, y)))
+        .filter(|(x, y)| difference(&after, &bg, *x, *y) > MAX_AFTER_LEVELS)
+        .count();
+    assert_eq!(
+        lingering, 0,
+        "{}: nothing is drawn once it has ended",
+        shot.effect
+    );
+    let fog_bg = capture(directory.path(), "fog_bg");
+    // The fog's edge (x = 0) on the projected path: everything drawn lies on the path, so a
+    // pixel short of this point along it is drawn over the unseen half.
+    let (edge_px, _) =
+        along_and_across(from_px, to_px, view.project(Vec3::new(0.0, SHOT_LIFT, 0.0)));
+    let mut seen_lit = 0;
+    for name in ["fog_early", "fog_late"] {
+        let fogged = capture(directory.path(), name);
+        let mut unseen_lit = 0;
+        for y in 0..SIZE.y {
+            for x in 0..SIZE.x {
+                if !lit(&fogged, &fog_bg, x, y) {
+                    continue;
+                }
+                let (along, _) =
+                    along_and_across(from_px, to_px, Vec2::new(x as f32 + 0.5, y as f32 + 0.5));
+                if along < edge_px - TOLERANCE_PX {
+                    unseen_lit += 1;
+                } else {
+                    seen_lit += 1;
+                }
+            }
+        }
+        assert_eq!(
+            unseen_lit, 0,
+            "{} {name}: nothing over the unseen half of the path",
+            shot.effect
+        );
+    }
+    assert!(
+        seen_lit > 0,
+        "{}: the seen half of the shot is drawn",
+        shot.effect
+    );
+    Ok(format!(
+        "shot {} (flight {:.2} s): {count} Critical pixels, at most {widest:.1} px off the path (half width {half_width:.1}); {path}; nothing after its end; under the fog {seen_lit} pixels on the seen half and none on the unseen one",
+        shot.effect, shot.flight
+    ))
+}
+
+/// Plan WP11: every shipped shot draws along its path and is cut where the fog begins.
+#[test]
+fn shipped_shots_draw_along_their_paths() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let subjects = shot_subjects();
+    assert!(
+        subjects.len() >= 8,
+        "the shipped units name their shots: {subjects:?}"
+    );
+    for index in 0..subjects.len() {
+        let report = check_shot(index)?;
+        eprintln!("{report}");
+    }
     Ok(())
 }

@@ -103,7 +103,7 @@ pub fn parse_bindings(pairs: &[String]) -> Result<BoundValues, CaptureError> {
 #[must_use]
 pub fn subject(effect: &str, kind: EventKind, bound: BoundValues) -> LabSubject {
     let length = bound.get(Binding::LineLength);
-    let (anchor, line_to) = if kind == EventKind::Line && length > 0.0 {
+    let (anchor, line_to) = if matches!(kind, EventKind::Line | EventKind::Shot) && length > 0.0 {
         (
             Vec3::new(-length * 0.5, 0.0, 0.0),
             Some(Vec3::new(length * 0.5, 0.0, 0.0)),
@@ -161,13 +161,14 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
             CaptureError::InvalidScript(format!("no effect named {:?}", options.effect))
         })?;
     let bound = parse_bindings(&options.bindings)?;
+    // A shot's layers that last its flight last the bound `FlightTime` (plan WP11).
+    let one_shot = client::effects::runtime::one_shot_lifetime(effect, &bound);
     let mut subject = subject(&options.effect, effect.event, bound);
     // The sheet's last column is the true end: a line's far points erupt later by its travel.
     let line = subject
         .line_to
         .map(|to| client::effects::placement::WorldLine::whole(subject.anchor, to));
-    let mut lifetime =
-        effect.lifetime + client::effects::runtime::max_line_delay(&effect.layers, line);
+    let mut lifetime = one_shot + client::effects::runtime::max_line_delay(&effect.layers, line);
     if let Some(seen_from) = options.fog_seen_from {
         subject = fog_subject(subject, seen_from);
     }

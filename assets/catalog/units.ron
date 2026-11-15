@@ -81,6 +81,10 @@
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("weld_sparks"))],
+            ),
             veo_prompts: {
                 Idle: "Welder Drone: a single compact hovering utility robot with chunky yellow and blue armor plates, one round glowing cyan optic eye, a plasma welding torch arm on one side and a mineral collector claw on the other, small thrusters on its back, hovering steady in mid-air, one robot in the middle of the frame and fully visible with empty space around it, no characters, no other vehicles.",
                 Walk: "Welder Drone: the same compact hovering utility robot with yellow and blue armor plates, a cyan optic eye, a welding torch arm and a collector claw, cruising forward on blue thruster exhaust, flying in place in the middle of the frame and fully visible, no characters, no other vehicles.",
@@ -190,6 +194,13 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("gauss_tracer"), impact: Some("bullet_hit")),
+                    (weapon: Air, travel: Some("gauss_tracer"), impact: Some("bullet_hit")),
+                ],
+            ),
             veo_prompts: {
                 Idle: "Aegis Pulse Bot: Agile bipedal combat android in heavy cobalt carapace. Idle weapon ready stance.",
                 Walk: "Aegis Pulse Bot: Forward running stride leaning into motion with rhythmic mechanical bobbing.",
@@ -267,6 +278,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
                 Idle: "Bombardier Rhino-Beetle: Massive armored six-legged bio-mech insect with glowing bioluminescent abdomen.",
@@ -362,6 +377,10 @@
                     max_distance: 4.0,
                 )),
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("psi_slash"))],
             ),
             veo_prompts: {
                 Idle: "Psi-Blade Grey: Retro-futuristic extraterrestrial Grey warrior in chrome exo-armor with glowing violet plasma blades.",
@@ -503,7 +522,10 @@
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the sieged cannon's splash,
             // the furrow ploughed as it sieges and unsieges, and the anchored stance (WP8).
             effects: (
-                weapons: [(weapon: Primary, mode: Some("siege_mode"), splash: Some("shell_impact"))],
+                weapons: [
+                    (weapon: Primary, travel: Some("cannon_tracer"), impact: Some("cannon_hit")),
+                    (weapon: Primary, mode: Some("siege_mode"), travel: Some("cannon_tracer"), splash: Some("shell_impact")),
+                ],
                 modes: [(mode: "siege_mode", transition: Some("mode_seal_sweep"), stance: Some("siege_anchor"))],
                 death: Some("vehicle_wreck"),
             ),
@@ -587,6 +609,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Air, travel: Some("prism_beam"), impact: Some("beam_burn"))],
+            ),
             veo_prompts: {
                 Idle: "Roswell Flying Saucer: Spinning metallic disc with rotating perimeter lights and ventral purple anti-grav glow.",
                 Walk: "Roswell Flying Saucer: Smooth high-speed aerial flight banking into turns with iridescent energy trails.",
@@ -669,6 +695,10 @@
                 )),
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("grenade_lob"), impact: Some("rocket_hit"))],
             ),
             veo_prompts: {
                 Idle: "Shock Golem: Heavy bipedal combat exoskeleton in gunmetal armor with dual arm-mounted grenade cannons.",
@@ -828,6 +858,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("sniper_tracer"), impact: Some("bullet_hit"))],
             ),
             veo_prompts: {
                 Idle: "Null-Wave Android: Sleek graphite sniper android with glowing crimson optical sensors, a compact cloaking emitter pack on its back and a long null rifle, seen whole from head to feet with empty space around it.",
@@ -1053,6 +1087,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("cannon_tracer"), impact: Some("cannon_hit"))],
+            ),
             veo_prompts: {
                 Idle: "Titan AA-Walker: Giant bipedal battle mech of bold clean armor plates, its two massive arm-cannons hanging low at its sides, muzzles pointing forward and down, two fixed missile pods on its shoulders, seen from slightly above at a three-quarter angle, whole from head to feet, centred with empty space all around it, no floor, no shadow.",
                 Walk: "Titan AA-Walker: Heavy lumbering marching steps of its massive mechanical legs.",
@@ -1132,6 +1170,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Air, travel: Some("rocket_trail"), impact: Some("rocket_hit"))],
             ),
             veo_prompts: {
                 Idle: "Vector Interceptor: a single sleek swept-wing aerospace fighter drone with twin rear engines and a torpedo pod under each wing, hovering steady in mid-air, seen from above at a three-quarter angle, nose toward the lower right, whole in the middle of the frame with wide empty space around it, no other aircraft.",
@@ -1274,7 +1316,7 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the anti-air rockets' burst among air units (accepted by the scale-out review in round 1).
             effects: (
-                weapons: [(weapon: Air, splash: Some("flak_burst"))],
+                weapons: [(weapon: Air, travel: Some("rocket_trail"), splash: Some("flak_burst"))],
             ),
             veo_prompts: {
                 Idle: "Sky Bastion: a single heavy armored gunship with two large fixed ring-shaped lift nacelles glowing steady blue at its sides and a rocket launcher under its nose, hovering steady in mid-air, seen from above at a three-quarter angle, nose toward the lower right, whole in the middle of the frame with wide empty space around it, no other aircraft.",
@@ -1354,6 +1396,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("rocket_trail"), impact: Some("rocket_hit"))],
             ),
             veo_prompts: {
                 Idle: "Cloak Gunship: a single sleek stealth attack aircraft with a dark matte angular hull, two enclosed engine nacelles with glowing vents and a rocket pod under each stub wing, hovering steady in mid-air, seen from above at a three-quarter angle, nose toward the lower right, whole in the middle of the frame with wide empty space around it, no other aircraft.",
@@ -1496,6 +1542,10 @@
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("weld_sparks"))],
+            ),
             veo_prompts: {
                 Idle: "Levitation Drone: Small gleaming alien probe with floating crystalline eye and humming repulsor field.",
                 Walk: "Levitation Drone: Smooth frictionless gliding tilting into forward velocity.",
@@ -1600,6 +1650,13 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("plasma_bolt"), impact: Some("plasma_hit")),
+                    (weapon: Air, travel: Some("plasma_bolt"), impact: Some("plasma_hit")),
+                ],
+            ),
             veo_prompts: {
                 Idle: "Phase Tripod: Sleek extraterrestrial tripedal combat strider in purple metallic exo-plating.",
                 Walk: "Phase Tripod: Rapid fluid three-legged predatory gallop bounding over uneven ground.",
@@ -1679,6 +1736,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("prism_beam"), impact: Some("beam_burn"))],
+            ),
             veo_prompts: {
                 Idle: "Force-Matrix Grey: Levitating robotic ocular sphere enclosed in rotating crystalline psionic rings.",
                 Walk: "Force-Matrix Grey: Gentle floating hover with gyroscopic ring rotation.",
@@ -1757,6 +1818,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("plasma_bolt"), impact: Some("plasma_hit"))],
             ),
             veo_prompts: {
                 Idle: "Astral Projecting Grey: Graceful alien skirmisher with glowing psi-glaive and floating psionic mantle.",
@@ -1855,6 +1920,7 @@
             // Presentation (plan 2026-11-09-effect-visualization WP10): the storm, held while the
             // simulation publishes its area.
             effects: (
+                weapons: [(weapon: Primary, travel: Some("plasma_bolt"), impact: Some("plasma_hit"))],
                 abilities: { "Psionic Storm": "psionic_storm" },
             ),
             veo_prompts: {
@@ -1937,6 +2003,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("psi_slash"))],
             ),
             veo_prompts: {
                 Idle: "Cloaked Abductor: Shimmering translucent alien assassin wielding a curved crystalline warp blade.",
@@ -2112,7 +2182,7 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the thermal lance's swept line splash (accepted by the scale-out review in round 2).
             effects: (
-                weapons: [(weapon: Primary, splash: Some("lance_sweep"))],
+                weapons: [(weapon: Primary, travel: Some("lance_beam"), impact: Some("lance_burn"), splash: Some("lance_sweep"))],
             ),
             veo_prompts: {
                 Idle: "Thermal Tripod: Towering slender tripod walker standing high above the battlefield with dual thermal emitters.",
@@ -2329,6 +2399,13 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("prism_beam"), impact: Some("beam_burn")),
+                    (weapon: Air, travel: Some("prism_beam"), impact: Some("beam_burn")),
+                ],
+            ),
             veo_prompts: {
                 Idle: "Prismatic Saucer: Aerodynamic alien war vessel with rotating prongs surrounding a burning prismatic core.",
                 Walk: "Prismatic Saucer: Steady linear cruising with intense cyan ionic drive wash.",
@@ -2407,6 +2484,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("plasma_bolt"), impact: Some("plasma_hit"))],
             ),
             veo_prompts: {
                 Idle: "Mothership Carrier: Immense saucer mothership casting massive shadow with internal docking bay lights.",
@@ -2493,6 +2574,10 @@
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("claw_rake"))],
+            ),
             veo_prompts: {
                 Idle: "Forager Ant: Iridescent forest insect worker with large grasping mandibles and bioluminescent antennae.",
                 Walk: "Forager Ant: Rapid hexapod scuttling over terrain with twitching antennae.",
@@ -2572,6 +2657,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, impact: Some("claw_rake"))],
             ),
             veo_prompts: {
                 Idle: "Razor Mantis: Sleek predatory green praying mantis with serrated foreleg scythes poised to strike.",
@@ -2742,6 +2831,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
+            ),
             veo_prompts: {
                 Idle: "Bile-Artillery Beetle: Long-legged horned stag beetle with upward-curving dorsal bio-cannon.",
                 Walk: "Bile-Artillery Beetle: Nimble scuttling stride keeping artillery horn raised.",
@@ -2844,6 +2937,13 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("needle_volley"), impact: Some("needle_hit")),
+                    (weapon: Air, travel: Some("needle_volley"), impact: Some("needle_hit")),
+                ],
             ),
             veo_prompts: {
                 Idle: "Spine-Spitter Cobra: Rearing serpent warrior with wide cobra hood packed with needle-sharp spines.",
@@ -3071,6 +3171,13 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("spore_bolt"), impact: Some("acid_hit")),
+                    (weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit")),
+                ],
+            ),
             veo_prompts: {
                 Idle: "Glaive Wasp: Winged predatory insectoid flyer with undulating tail and translucent fluttering wings.",
                 Walk: "Glaive Wasp: Agile aerial banking weaving through airspace at extreme speed.",
@@ -3149,6 +3256,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit"))],
             ),
             veo_prompts: {
                 Idle: "Sky Leviathan: Heavily plated bio-mechanical squid beast hovering with undulating tentacles.",
@@ -3253,6 +3364,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("acid_spit"), impact: Some("acid_hit"))],
+            ),
             veo_prompts: {
                 Idle: "Spore Matriarch: Massive manta-ray bio-beast drifting slowly high above ground with pulsating spore pods.",
                 Walk: "Spore Matriarch: Majestic undulating wing sweeps slowly displacing air.",
@@ -3347,7 +3462,7 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the cleave's dust front (accepted by the scale-out review in round 5).
             effects: (
-                weapons: [(weapon: Primary, splash: Some("cleave_impact"))],
+                weapons: [(weapon: Primary, impact: Some("claw_rake"), splash: Some("cleave_impact"))],
             ),
             veo_prompts: {
                 Idle: "Armored Stag Behemoth: Enormous quadrupedal juggernaut with towering multi-tined kaiser scythe horns.",
@@ -3481,6 +3596,13 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Primary, travel: Some("needle_volley"), impact: Some("needle_hit")),
+                    (weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit")),
+                ],
+            ),
             veo_prompts: {
                 Idle: "Hive Matron: Regal multi-legged bio-matron standing vigilant with defensive talons.",
                 Walk: "Hive Matron: Measured scuttling gait maintaining balance across uneven terrain.",
@@ -3549,6 +3671,10 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-09-effect-visualization WP11, F1): the Fungal Growth missile and its impact.
+            effects: (
+                abilities: { "Fungal Growth": "fungal_missile" },
             ),
             veo_prompts: {
                 Idle: "Mycelium Shaman: Bulbous multi-eyed fungal insect with pulsating bioluminescent spore sacs.",

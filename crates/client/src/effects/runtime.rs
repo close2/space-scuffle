@@ -285,6 +285,7 @@ impl EffectRuntime {
         let effect = catalog.effect(request.effect)?;
         let birth = now + f64::from(request.delay);
         let line_delay = max_line_delay(&effect.layers, request.line);
+        let lifetime = one_shot_lifetime(effect, &request.bound);
         let spans = effect_spans(effect, request);
         // A newborn effect is never the one stripped: over its class cap, the oldest burning
         // effect of its class gives its detail up (Amendment 7).
@@ -297,7 +298,7 @@ impl EffectRuntime {
             effect: request.effect,
             class: effect.class,
             birth,
-            end: birth + f64::from(effect.lifetime + line_delay),
+            end: birth + f64::from(lifetime + line_delay),
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
@@ -488,7 +489,13 @@ impl EffectRuntime {
         line: WorldLine,
         now: f64,
     ) -> bool {
-        let Some(layers) = catalog.effect(effect).map(|effect| &effect.layers) else {
+        // Only a splash line's searches join one effect: two shots along one path (a unit
+        // firing twice at a target that stands still) are two shots (plan WP11).
+        let Some(layers) = catalog
+            .effect(effect)
+            .filter(|effect| effect.event == super::catalog::schema::EventKind::Line)
+            .map(|effect| &effect.layers)
+        else {
             return false;
         };
         for slot in 0..self.pool.capacity() as usize {
@@ -961,9 +968,11 @@ impl EffectRuntime {
             }),
             _ => size,
         };
-        // A ribbon is as large on screen as its line is long, however thin it is.
+        // A ribbon is as large on screen as its line is long, however thin it is; a card drawn
+        // out along its line (a needle in flight) as large as its length.
         let lod_extent = match (&layer.block, context.instance.line) {
             (Block::Ribbon(_), Some(line)) => extent.max(0.5 * line.from.distance(line.to)),
+            (Block::Sprite(look), Some(_)) => extent * look.stretch,
             _ => extent,
         };
         if let Some(camera) = context.camera {
@@ -1075,6 +1084,12 @@ impl EffectRuntime {
         }
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
+        // A riding card is carried along its line with its life (a projectile, plan WP11).
+        let position = match line {
+            Some(line) if look.ride => position + (line.to - line.from) * life,
+            _ => position,
+        };
+        let stretched = look.stretch > 1.0 && line_axis != Vec3::ZERO;
         let standing = matches!(look.orient, Orient::VerticalAlongLine | Orient::Upright);
         // A standing card clipped to its line stands whole inside it (review round 5).
         let (position, extent) = match line {
@@ -1089,6 +1104,7 @@ impl EffectRuntime {
         let outward = spread_offset(look.spread, position - context.instance.anchor, life, seed);
         let center = position + Vec3::Y * extent * lift + outward + look.drift * age;
         let (orient, axis) = match look.orient {
+            Orient::Camera if stretched => (ORIENT_STRETCHED, line_axis),
             Orient::Ground => (ORIENT_GROUND, Vec3::ZERO),
             Orient::Upright => (ORIENT_UPRIGHT, Vec3::ZERO),
             Orient::VerticalAlongLine if line_axis != Vec3::ZERO => (ORIENT_VERTICAL, line_axis),
@@ -1115,7 +1131,13 @@ impl EffectRuntime {
             center: center.to_array(),
             half_size: extent,
             axis: axis.to_array(),
-            stretch: if standing { lift } else { 1.0 },
+            stretch: if standing {
+                lift
+            } else if stretched {
+                look.stretch
+            } else {
+                1.0
+            },
             layer_a,
             layer_b,
             frame_mix,
@@ -1207,7 +1229,7 @@ impl EffectRuntime {
         }
         let length = line.from.distance(line.to);
         let direction = (line.to - line.from).normalize_or_zero();
-        let (tail, head) = ribbon_span(look, length, age);
+        let (tail, head) = ribbon_span(look, length, age, life);
         if head - tail <= RIBBON_MIN_LENGTH || direction == Vec3::ZERO || extent <= 0.0 {
             return Written::Skipped;
         }
@@ -1529,7 +1551,7 @@ fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f
                     .is_none_or(|released| now - released <= f64::from(layer.exit));
             }
             age <= layer.start
-                + layer.duration
+                + layer.span(&instance.bound)
                 + max_line_delay(std::slice::from_ref(*layer), instance.line)
         })
         .map(|layer| {
@@ -1567,7 +1589,7 @@ fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Span
     };
     for layer in &effect.layers {
         let end = layer.start
-            + layer.duration
+            + layer.span(&request.bound)
             + max_line_delay(std::slice::from_ref(layer), request.line);
         match layer.block.pool() {
             Pool::Decals => {
@@ -1625,13 +1647,14 @@ pub fn layer_clock(
         return None;
     }
     let held = layer.held && instance.held;
+    let duration = layer.span(&instance.bound);
     if !held {
-        if age > layer.duration {
+        if age > duration {
             return None;
         }
         return Some(LayerClock {
             age,
-            life: (age / layer.duration).clamp(0.0, 1.0),
+            life: (age / duration).clamp(0.0, 1.0),
             exit: 0.0,
         });
     }
@@ -1648,9 +1671,25 @@ pub fn layer_clock(
     }
     Some(LayerClock {
         age,
-        life: (age / layer.duration).clamp(0.0, 1.0),
+        life: (age / duration).clamp(0.0, 1.0),
         exit,
     })
+}
+
+/// Seconds from the event until the last layer of `effect` that is not held ends, for an
+/// effect bound to `bound`: [`super::catalog::Effect::lifetime`], except that a layer lasting
+/// a bound span lasts it (plan WP11), so a projectile's effect lives as long as it flies.
+#[must_use]
+pub fn one_shot_lifetime(effect: &super::catalog::Effect, bound: &BoundValues) -> f32 {
+    if !effect.layers.iter().any(|layer| layer.lasts.is_some()) {
+        return effect.lifetime;
+    }
+    effect
+        .layers
+        .iter()
+        .filter(|layer| !layer.held)
+        .map(|layer| layer.start + layer.span(bound))
+        .fold(0.0_f32, f32::max)
 }
 
 /// The factor `layer`'s `strength` puts on its intensity for the values `bound`:
@@ -1740,13 +1779,19 @@ const LINE_MERGE_SLACK: f32 = 0.1;
 /// tail (or the tail catching the head), not yet or no longer a strip.
 const RIBBON_MIN_LENGTH: f32 = 1e-3;
 
-/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer,
-/// as distances from the line's start: `(tail, head)`. The head races out at the look's
-/// `travel` (the whole line at once without one); after `tail_delay` the tail follows at the
-/// same speed, so the strip becomes a segment sweeping along the line and then shrinks into
-/// its end. Without travel the tail stays at the start.
+/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer
+/// (`life` of its duration, 0..1), as distances from the line's start: `(tail, head)`. The
+/// head races out at the look's `travel` (the whole line at once without one); after
+/// `tail_delay` the tail follows at the same speed, so the strip becomes a segment sweeping
+/// along the line and then shrinks into its end. Without travel the tail stays at the start.
+/// A strip with a `trail` rides the line instead: its head at `life` of the line and its tail
+/// `trail` behind it, never before the start (plan WP11).
 #[must_use]
-pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32) -> (f32, f32) {
+pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32, life: f32) -> (f32, f32) {
+    if let Some(trail) = look.trail {
+        let head = length * life.clamp(0.0, 1.0);
+        return ((head - trail).max(0.0), head);
+    }
     if look.travel <= 0.0 {
         return (0.0, length);
     }
@@ -2123,6 +2168,7 @@ mod tests {
             held: true,
             exit: 0.3,
             strength,
+            lasts: None,
         };
         let bound = |ratio: f32| BoundValues::default().with(Binding::BarrierRatio, ratio);
         assert_eq!(layer_strength(&layer(None), &bound(0.2)), 1.0);
@@ -2180,43 +2226,72 @@ mod tests {
             sort_bias: 0.0,
             shape: CardShape::Radial,
             breakup: None,
+            trail: None,
         }
+    }
+
+    #[test]
+    fn a_trailing_ribbon_rides_its_line_with_its_life() {
+        let slug = RibbonLook {
+            trail: Some(0.5),
+            ..ribbon(0.0, None)
+        };
+        assert_eq!(
+            ribbon_span(&slug, 6.0, 0.0, 0.0),
+            (0.0, 0.0),
+            "at the muzzle"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 0.05);
+        assert!(
+            tail.abs() < 1e-6 && (head - 0.3).abs() < 1e-5,
+            "never behind the start"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 0.5);
+        assert!(
+            (tail - 2.5).abs() < 1e-5 && (head - 3.0).abs() < 1e-5,
+            "half way, half a unit long: {tail}..{head}"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 1.5);
+        assert!(
+            (tail - 5.5).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
+            "held at the end"
+        );
     }
 
     #[test]
     fn a_ribbon_races_out_then_sweeps_and_shrinks_into_its_end() {
         assert_eq!(
-            ribbon_span(&ribbon(0.0, None), 6.0, 0.3),
+            ribbon_span(&ribbon(0.0, None), 6.0, 0.3, 0.0),
             (0.0, 6.0),
             "no travel"
         );
         assert_eq!(
-            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3),
+            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3, 0.0),
             (0.0, 6.0),
             "without travel the tail stays"
         );
         let racing = ribbon(10.0, Some(0.2));
         assert_eq!(
-            ribbon_span(&racing, 6.0, 0.0),
+            ribbon_span(&racing, 6.0, 0.0, 0.0),
             (0.0, 0.0),
             "nothing at once"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 0.1);
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.1, 0.0);
         assert!(
             tail.abs() < 1e-6 && (head - 1.0).abs() < 1e-5,
             "head out 1 unit"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 0.5);
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.5, 0.0);
         assert!(
             (tail - 3.0).abs() < 1e-5 && (head - 5.0).abs() < 1e-5,
             "a segment sweeping: {tail}..{head}"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 1.0);
+        let (tail, head) = ribbon_span(&racing, 6.0, 1.0, 0.0);
         assert!(
             (tail - 6.0).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
             "shrunk into the end"
         );
-        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0);
+        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0, 0.0);
         assert!(tail.abs() < 1e-6 && (head - 6.0).abs() < 1e-5, "held whole");
     }
 

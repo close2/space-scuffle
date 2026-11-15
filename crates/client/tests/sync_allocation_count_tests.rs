@@ -274,6 +274,24 @@ const STREAM_EFFECTS: &str = r#"
     "tongue": (class: Minor, event: Link, layers: [
         (block: Ribbon(texture: "soft_disc", ramp: "red_add", scroll: 1.0), size: (scale: 0.05),
          duration: 0.1, held: true, priority: Critical),
+    ]),
+    "bolt": (class: Minor, event: Shot, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add", ride: true, stretch: 2.0),
+         size: (scale: 0.1), duration: 0.2, lasts: FlightTime, priority: Critical),
+        (block: Ribbon(texture: "solid", ramp: "red_add", shape: Radial, trail: Some(0.5)),
+         size: (scale: 0.03), duration: 0.2, lasts: FlightTime),
+    ]),
+    "spore": (class: Minor, event: Missile, impact: Some("splat"),
+        emit: Some((effect: "spore_mote", every: 0.05)), layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.2),
+         duration: 0.05, held: true, exit: 0.05, priority: Critical),
+    ]),
+    "spore_mote": (class: Ambient, event: Missile, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.05), duration: 0.3),
+    ]),
+    "splat": (class: Minor, event: Area, layers: [
+        (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: AreaRadius, scale: 1.0),
+         duration: 0.5, lasts: AreaTotal, priority: Critical),
     ])
 "#;
 
@@ -308,9 +326,25 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         .archetypes()
         .map(|archetype| archetype.unit_type_id)
         .collect();
+    // Every weapon shoots the test's `bolt` along its path (plan WP11: a shot's travel).
+    let shot = |weapon| sim_core::catalog::WeaponEffects {
+        weapon,
+        mode: None,
+        launch: None,
+        travel: Some("bolt".to_owned()),
+        impact: None,
+        splash: Some("burst".to_owned()),
+    };
     for id in ids {
         if let Ok(archetype) = units.get_mut(id) {
-            archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+            archetype.effects = sim_core::catalog::ArchetypeEffects {
+                weapons: vec![
+                    shot(sim_types::WeaponSlot::Primary),
+                    shot(sim_types::WeaponSlot::Ground),
+                    shot(sim_types::WeaponSlot::Air),
+                ],
+                ..sim_core::catalog::ArchetypeEffects::default()
+            };
         }
     }
     let views = held_views(app, &mut units)?;
@@ -341,11 +375,18 @@ struct HeldViews {
     fog: client::battle_pipeline::fog::BattleFog,
     /// The tether.
     link: [sim_types::LinkView; 1],
+    /// A spell missile's ability and where it flies (plan WP11, F1): a new missile every few
+    /// frames, the previous one landing its impact.
+    missile: (sim_types::AbilitySource, sim_types::PlayerId, [f32; 3]),
 }
 
 /// Gives the first archetype with two abilities the stream vocabulary's area and tether for
 /// them, and builds an area of the first and a tether of the second between the battle's first
 /// two presented units.
+#[allow(
+    clippy::too_many_lines,
+    reason = "test setup: one area, tether and missile staged in place"
+)]
 fn held_views(
     app: &App,
     units: &mut sim_core::catalog::UnitCatalog,
@@ -355,6 +396,15 @@ fn held_views(
         .find(|archetype| archetype.abilities.len() >= 2)
         .map(|archetype| archetype.unit_type_id)
         .ok_or("the shipped catalog has a unit with two abilities")?;
+    // A second caster's first ability launches the stream vocabulary's missile.
+    let launcher = units
+        .archetypes()
+        .find(|archetype| archetype.unit_type_id != caster && !archetype.abilities.is_empty())
+        .map(|archetype| archetype.unit_type_id)
+        .ok_or("the shipped catalog has a second unit with an ability")?;
+    let missile_name = units.get(launcher)?.abilities[0].name.clone();
+    units.get_mut(launcher)?.effects.abilities =
+        std::iter::once((missile_name, "spore".to_owned())).collect();
     let archetype = units.get_mut(caster)?;
     let names: Vec<String> = archetype
         .abilities
@@ -444,6 +494,18 @@ fn held_views(
                 ability: 1,
             },
         }],
+        missile: (
+            sim_types::AbilitySource {
+                unit_type: launcher,
+                ability: 0,
+            },
+            enemy,
+            [
+                first.world_pos[0] + 3.0,
+                first.world_pos[1] + 1.0,
+                first.ground_z,
+            ],
+        ),
     })
 }
 
@@ -451,7 +513,8 @@ fn held_views(
 /// battle's `present_areas_and_links` runs on the presented snapshot.
 #[expect(
     clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
+    clippy::too_many_arguments,
+    reason = "Bevy passes system parameters by value, each a separate declared dependency"
 )]
 fn hold_area_and_link(
     views: Res<'_, HeldViews>,
@@ -461,7 +524,9 @@ fn hold_area_and_link(
     mut runtime: ResMut<'_, client::effects::runtime::EffectRuntime>,
     mut looks: ResMut<'_, client::effects::areas::AreaLooks>,
     time: Res<'_, Time<Virtual>>,
+    mut frame: Local<'_, u32>,
 ) {
+    *frame = frame.wrapping_add(1);
     let mut keep = client::effects::areas::Keep {
         catalog: &catalog,
         tables: &tables,
@@ -473,6 +538,21 @@ fn hold_area_and_link(
         &mut looks,
         (&views.area, &views.link),
         session.frames.presented().bubbles.as_slice(),
+        Some(&views.fog),
+        &mut keep,
+    );
+    // A new missile every eight frames, flying a little each frame; the previous one lands.
+    let (source, owner, [x, y, z]) = views.missile;
+    let flown = 0.1 * f32::from(u8::try_from(*frame % 8).unwrap_or(0));
+    let missile = [sim_types::SpellMissileView {
+        id: *frame / 8,
+        owner,
+        position: [x + flown, y, z],
+        source,
+    }];
+    client::effects::areas::keep_missiles(
+        &mut looks,
+        (&missile, &missile, 0.0),
         Some(&views.fog),
         &mut keep,
     );

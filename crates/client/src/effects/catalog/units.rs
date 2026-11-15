@@ -20,21 +20,24 @@
 use super::error::EffectCatalogError;
 use super::schema::EventKind;
 use super::{ConcealmentDefaults, EffectCatalog, EffectId};
-use sim_core::catalog::{ArchetypeEffects, UnitArchetype, UnitCatalog};
+use sim_core::catalog::{ArchetypeEffects, EffectNode, SpellCatalog, UnitArchetype, UnitCatalog};
+use sim_types::EffectId as SpellEffectId;
 use sim_types::{AbilitySource, EffectSource, StatusKind, UnitTypeId, WeaponKey};
 
 /// Event kinds a splash slot accepts.
 const SPLASH_KINDS: &[EventKind] = &[EventKind::Splash, EventKind::Line];
-/// Event kinds an impact, launch or travel slot accepts.
+/// Event kinds an impact or launch slot accepts.
 const POINT_KINDS: &[EventKind] = &[EventKind::Point];
+/// Event kinds a travel slot accepts: the shot from the muzzle to where it lands (plan WP11).
+const SHOT_KINDS: &[EventKind] = &[EventKind::Shot];
 /// Event kinds a death slot accepts.
 const DEATH_KINDS: &[EventKind] = &[EventKind::Death];
 /// Event kinds a status slot accepts.
 const STATUS_KINDS: &[EventKind] = &[EventKind::Status];
 /// Event kinds a mode slot accepts.
 const MODE_KINDS: &[EventKind] = &[EventKind::Mode];
-/// Event kinds an ability slot accepts: the area or the tether the ability makes.
-const ABILITY_KINDS: &[EventKind] = &[EventKind::Area, EventKind::Link];
+/// Event kinds an ability slot accepts: the area, the tether or the missile the ability makes.
+const ABILITY_KINDS: &[EventKind] = &[EventKind::Area, EventKind::Link, EventKind::Missile];
 
 /// Every status kind, in the order of [`status_index`].
 pub const STATUS_ORDER: [StatusKind; 8] = [
@@ -70,7 +73,8 @@ pub struct WeaponEffectIds {
     pub key: WeaponKey,
     /// At the muzzle.
     pub launch: Option<EffectId>,
-    /// In flight.
+    /// The shot from the muzzle to where it lands: a tracer's or a beam's path, a
+    /// projectile's flight (a `Shot` effect).
     pub travel: Option<EffectId>,
     /// Where the shot lands.
     pub impact: Option<EffectId>,
@@ -96,7 +100,7 @@ pub struct ModeEffectIds {
 }
 
 /// One archetype's resolved block.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct UnitEntry {
     /// Weapons named by the block.
     weapons: Vec<WeaponEffectIds>,
@@ -106,12 +110,37 @@ struct UnitEntry {
     status: [Option<EffectId>; STATUS_ORDER.len()],
     /// Death effect, default filled in.
     death: Option<EffectId>,
-    /// Area or tether effects, by index in the archetype's `abilities`.
-    abilities: Vec<(u8, EffectId)>,
+    /// Area, tether or missile effects, by index in the archetype's `abilities`.
+    abilities: Vec<AbilityLook>,
+    /// The archetype's bubble radius in world units (its collision radius, which the
+    /// simulation's snapshot draws the bubble with): where its shots leave its bubble.
+    muzzle: f32,
+}
+
+/// The look one ability names, with what a missile's impact binds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AbilityLook {
+    /// Index in the archetype's `abilities`.
+    ability: u8,
+    /// The effect.
+    effect: EffectId,
+    /// For a missile: its impact's extent ([`MissileExtent`]).
+    extent: MissileExtent,
+}
+
+/// What a spell missile's impact covers, read from the spell catalog (plan WP11, F1): the
+/// radius of the first search its ability's effect tree runs (`EffectFacts::targeting_radius`)
+/// and the duration of the longest status that tree applies.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MissileExtent {
+    /// Radius in world units; 0 without a search.
+    pub radius: f32,
+    /// Seconds; 0 without a status.
+    pub seconds: f32,
 }
 
 /// Per-archetype effect choices, indexed by [`UnitTypeId`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, bevy::prelude::Resource)]
+#[derive(Debug, Clone, Default, PartialEq, bevy::prelude::Resource)]
 pub struct UnitEffectTables {
     /// Entries by unit type id; ids absent from the catalog have an empty entry.
     units: Vec<UnitEntry>,
@@ -167,7 +196,7 @@ impl UnitEffectTables {
             check.kind(slot, id, MODE_KINDS)?;
         }
         for archetype in units.archetypes() {
-            let entry = resolve_unit(archetype, effects)?;
+            let entry = resolve_unit(archetype, effects, units.spells())?;
             let index = usize::from(archetype.unit_type_id.0);
             if tables.units.len() <= index {
                 tables.units.resize(index + 1, UnitEntry::default());
@@ -192,6 +221,31 @@ impl UnitEffectTables {
         self.weapon(source)
             .and_then(|weapon| weapon.splash)
             .or(self.default_splash)
+    }
+
+    /// The travel effect of `source`'s shot (a `Shot` effect), if its unit's block names one;
+    /// there is no default.
+    #[must_use]
+    pub fn travel(&self, source: EffectSource) -> Option<EffectId> {
+        self.weapon(source).and_then(|weapon| weapon.travel)
+    }
+
+    /// Whether `source`'s unit names the looks of `source`'s weapon in its block (plan WP11):
+    /// then the effect system draws that weapon's shots, and the legacy combat card of its
+    /// event kind is not drawn, even for a slot the entry leaves empty (a weapon whose whole
+    /// look is its splash, such as a flame jet, draws no tracer).
+    #[must_use]
+    pub fn names_weapon(&self, source: EffectSource) -> bool {
+        self.weapon(source).is_some()
+    }
+
+    /// Where a shot of a unit of type `unit` leaves its bubble: the bubble's radius in world
+    /// units (0 for a type the catalog does not have).
+    #[must_use]
+    pub fn muzzle(&self, unit: UnitTypeId) -> f32 {
+        self.units
+            .get(usize::from(unit.0))
+            .map_or(0.0, |entry| entry.muzzle)
     }
 
     /// The impact effect of `source`, or the default.
@@ -236,12 +290,25 @@ impl UnitEffectTables {
     /// one (no default: an ability without a look draws nothing, D-8).
     #[must_use]
     pub fn ability(&self, source: AbilitySource) -> Option<EffectId> {
+        self.ability_look(source).map(|look| look.effect)
+    }
+
+    /// What the missile `source`'s ability launches covers where it lands (plan WP11, F1): the
+    /// default extent for an ability without a look or without a search.
+    #[must_use]
+    pub fn missile_extent(&self, source: AbilitySource) -> MissileExtent {
+        self.ability_look(source)
+            .map(|look| look.extent)
+            .unwrap_or_default()
+    }
+
+    /// The look `source`'s ability names, if any.
+    fn ability_look(&self, source: AbilitySource) -> Option<&AbilityLook> {
         self.units
             .get(usize::from(source.unit_type.0))?
             .abilities
             .iter()
-            .find(|(ability, _)| *ability == source.ability)
-            .map(|(_, effect)| *effect)
+            .find(|look| look.ability == source.ability)
     }
 
     /// The mode effects of `unit` for mode index `mode`, defaults filled in.
@@ -342,13 +409,17 @@ fn mode_index(archetype: &UnitArchetype, name: &str) -> Result<u8, EffectCatalog
 fn resolve_unit(
     archetype: &UnitArchetype,
     effects: &EffectCatalog,
+    spells: &SpellCatalog,
 ) -> Result<UnitEntry, EffectCatalogError> {
     let block: &ArchetypeEffects = &archetype.effects;
     let check = Checker {
         effects,
         unit: &archetype.slug,
     };
-    let mut entry = UnitEntry::default();
+    let mut entry = UnitEntry {
+        muzzle: archetype.collision_radius.to_f32(),
+        ..UnitEntry::default()
+    };
     for weapon in &block.weapons {
         let mode = weapon
             .mode
@@ -361,7 +432,7 @@ fn resolve_unit(
                 mode,
             },
             launch: check.name("weapon launch", weapon.launch.as_ref(), POINT_KINDS)?,
-            travel: check.name("weapon travel", weapon.travel.as_ref(), POINT_KINDS)?,
+            travel: check.name("weapon travel", weapon.travel.as_ref(), SHOT_KINDS)?,
             impact: check.name("weapon impact", weapon.impact.as_ref(), POINT_KINDS)?,
             splash: check.name("weapon splash", weapon.splash.as_ref(), SPLASH_KINDS)?,
         });
@@ -419,7 +490,19 @@ fn resolve_unit(
     entry.death = check
         .name("death", block.death.as_ref(), DEATH_KINDS)?
         .or(effects.defaults.death);
-    for (ability, name) in &block.abilities {
+    resolve_abilities(archetype, &check, spells, &mut entry)?;
+    Ok(entry)
+}
+
+/// Resolves the abilities of `archetype`'s block into `entry`, with each missile's extent read
+/// from `spells`.
+fn resolve_abilities(
+    archetype: &UnitArchetype,
+    check: &Checker<'_>,
+    spells: &SpellCatalog,
+    entry: &mut UnitEntry,
+) -> Result<(), EffectCatalogError> {
+    for (ability, name) in &archetype.effects.abilities {
         let index = archetype
             .abilities
             .iter()
@@ -430,8 +513,81 @@ fn resolve_unit(
                 ability: ability.clone(),
             })?;
         if let Some(effect) = check.name("ability", Some(name), ABILITY_KINDS)? {
-            entry.abilities.push((index, effect));
+            let extent = archetype
+                .abilities
+                .get(usize::from(index))
+                .map_or_else(MissileExtent::default, |spec| {
+                    missile_extent(spells, &spec.effect)
+                });
+            entry.abilities.push(AbilityLook {
+                ability: index,
+                effect,
+                extent,
+            });
         }
     }
-    Ok(entry)
+    Ok(())
+}
+
+/// Nodes a walk of an ability's effect tree visits at most: the catalog's trees are a few
+/// dozen nodes, and a bound keeps a malformed tree from walking forever.
+const MAX_WALKED_NODES: usize = 256;
+
+/// What the ability effect `spec` covers where its missile lands (plan WP11, F1): the radius
+/// of the first search its tree runs and the longest duration, in seconds, of the statuses its
+/// tree applies, walking sets, searches, persistents, missiles and displacements. The default
+/// for an ability that is not an effect tree.
+fn missile_extent(spells: &SpellCatalog, spec: &sim_types::AbilityEffectSpec) -> MissileExtent {
+    let sim_types::AbilityEffectSpec::Effect(name) = spec else {
+        return MissileExtent::default();
+    };
+    let Some(root) = spells.effect_id(name) else {
+        return MissileExtent::default();
+    };
+    let radius = spells
+        .facts(root)
+        .and_then(|facts| facts.targeting_radius)
+        .map_or(0.0, sim_types::SimScalar::to_f32);
+    let mut ticks = 0.0_f32;
+    let mut stack = vec![root];
+    let mut visited = 0;
+    while let Some(id) = stack.pop() {
+        visited += 1;
+        if visited > MAX_WALKED_NODES {
+            break;
+        }
+        let Some(node) = spells.node(id) else {
+            continue;
+        };
+        push_children(spells, node.kind, &mut stack);
+        if let EffectNode::ApplyStatus { status } = node.kind {
+            if let Some(status) = spells.status(status) {
+                ticks = ticks.max(status.spec.duration_ticks.to_f32());
+            }
+        }
+    }
+    MissileExtent {
+        radius,
+        seconds: ticks / f32::from(sim_types::TICKS_PER_SECOND),
+    }
+}
+
+/// Pushes the children of a node of kind `kind` onto `stack`.
+fn push_children(spells: &SpellCatalog, kind: EffectNode, stack: &mut Vec<SpellEffectId>) {
+    match kind {
+        EffectNode::Set { first, len } => {
+            stack.extend((0..len).filter_map(|index| spells.set_child(first, index)));
+        }
+        EffectNode::Search { child, .. } => stack.push(child),
+        EffectNode::Persistent {
+            initial, periodic, ..
+        } => stack.extend(initial.into_iter().chain(periodic)),
+        EffectNode::LaunchMissile { impact, .. } => stack.push(impact),
+        EffectNode::Displace { on_land, .. } => stack.extend(on_land),
+        EffectNode::Damage { .. }
+        | EffectNode::ApplyStatus { .. }
+        | EffectNode::RemoveStatus { .. }
+        | EffectNode::ModifyVitals { .. }
+        | EffectNode::CancelOrders { .. } => {}
+    }
 }

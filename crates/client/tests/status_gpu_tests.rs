@@ -23,7 +23,8 @@
 //!   while its status is published, that the stim's rim beats and its fumes keep their beat,
 //!   that the charge lays its dust while it moves and never otherwise, that every absorbed hit
 //!   is answered by at most one flash per beat, that each named death spawned its effect once
-//!   per unit and drew no legacy shards, and that the control unit shattered.
+//!   per unit and drew no legacy shards, and that the control unit died with the vocabulary's
+//!   default death (WP11: an effect of its own, no legacy shards either).
 //! - **Onsets** ([`status_onset_child`]): pairs of one type side by side, one of each taking its
 //!   status while the camera watches (the stim, a concussive slow, a barrier raised by a ranged
 //!   and by a melee attacker's first hit), so each look comes in instead of starting settled.
@@ -1328,9 +1329,12 @@ struct BattleReport {
     samples: Vec<BattleSample>,
     /// Where each subject's units stood on screen on the first frame, window pixels.
     placed: Vec<(Subject, Vec<[f32; 2]>)>,
-    /// Each dying unit: the effect its block names for its death (`None`: the default
-    /// shatter), and where it stood (Bevy world XZ).
+    /// Each dying unit: the effect its block names for its death (`None`: the vocabulary's
+    /// default death), and where it stood (Bevy world XZ).
     dying: Vec<(Option<String>, [f32; 2])>,
+    /// The vocabulary's default death effect (plan WP11: `glass_shatter`, which replaced the
+    /// legacy glass shatter), if it names one.
+    default_death: Option<String>,
     /// Spawns of each named death effect `(name, before the deaths, at the end)`.
     deaths_spawned: Vec<(String, u32, u32)>,
     /// The stim's emitted effect's beat, seconds.
@@ -1822,11 +1826,17 @@ fn resolve_counted(
     let (fumes, every) = laid(StatusKind::Overclock);
     staging.counted = Some((dust, fumes));
     staging.report.fumes_every = every;
+    staging.report.default_death = catalog
+        .defaults
+        .death
+        .and_then(|id| catalog.effect(id))
+        .map(|effect| effect.name.clone());
+    let default_death = staging.report.default_death.clone();
     let mut names: Vec<String> = staging
         .report
         .dying
         .iter()
-        .filter_map(|(death, _)| death.clone())
+        .filter_map(|(death, _)| death.clone().or_else(|| default_death.clone()))
         .collect();
     names.sort();
     names.dedup();
@@ -2166,8 +2176,11 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
         "flashes keep their beat: {flashes:?}"
     );
 
-    // Review 1, E1-1: each named death spawned its effect once per unit, those units drew no
-    // legacy shards, and the control unit with the default death did.
+    // Review 1, E1-1: each named death spawned its effect once per unit and drew no legacy
+    // shards. Re-baselined in WP11 (Amendment 24), with that cause only: the control unit,
+    // whose block names no death, now dies with the vocabulary's default death
+    // (`glass_shatter`, an effect of its own), so it draws no legacy shards either and its
+    // default death is counted like the named ones.
     let died = samples
         .iter()
         .any(|sample| f64::from(sample.at) > DEATH_SECONDS && sample.standing_deaths == 0);
@@ -2188,19 +2201,25 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
     for (index, (death, _)) in report.dying.iter().enumerate() {
         eprintln!(
             "driver {driver}: dying unit {index} ({}) had at most {} legacy shards near it",
-            death.as_deref().unwrap_or("default shatter"),
+            death
+                .as_deref()
+                .or(report.default_death.as_deref())
+                .unwrap_or("legacy shatter"),
             peak(index)
         );
-        match death {
-            Some(_) => assert_eq!(peak(index), 0, "a named death draws no legacy shards"),
-            None => assert!(peak(index) > 0, "the default death still shatters"),
-        }
+        assert!(
+            report.default_death.is_some(),
+            "the vocabulary names a default death (WP11)"
+        );
+        assert_eq!(peak(index), 0, "no death draws legacy shards");
     }
     for (name, before, after) in &report.deaths_spawned {
         let expected = report
             .dying
             .iter()
-            .filter(|(death, _)| death.as_deref() == Some(name.as_str()))
+            .filter(|(death, _)| {
+                death.as_deref().or(report.default_death.as_deref()) == Some(name.as_str())
+            })
             .count() as u32;
         eprintln!(
             "driver {driver}: {name} spawned {} times at the deaths (expected {expected})",

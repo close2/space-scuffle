@@ -523,13 +523,20 @@ fn required_shader_mask(goal: Goal, lab_goal: bool) -> u8 {
     }
 }
 
-/// After damage, at least one produced combat effect must be visible.
+/// After damage, at least one produced combat effect must be visible: a legacy combat card, or
+/// (plan `2026-11-09-effect-visualization` WP11: the shipped units' shots, impacts and deaths are
+/// the effect system's) a card or a mark the effect runtime draws this frame.
 fn verify_combat_effect_visible(world: &mut World) -> Result<(), CaptureError> {
-    let effect_visible = world
+    let legacy_visible = world
         .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>()
         .iter(world)
         .any(|visibility| visibility.get());
-    if !effect_visible {
+    let effect_drawn = world
+        .get_resource::<client::effects::runtime::EffectRuntime>()
+        .is_some_and(|runtime| {
+            !runtime.frame.sorted.is_empty() || !runtime.frame.decals.is_empty()
+        });
+    if !legacy_visible && !effect_drawn {
         return Err(failure(
             "damage occurred but produced combat effect is not visible",
         ));

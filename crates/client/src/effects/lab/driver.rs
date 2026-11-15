@@ -20,6 +20,7 @@
 
 use super::program::{next_step, LabProgram, LabTake};
 use super::scene::{material_of, LabScene};
+use crate::effects::catalog::schema::EventKind;
 use crate::effects::catalog::EffectCatalog;
 use crate::effects::placement::WorldLine;
 use crate::effects::runtime::{EffectRuntime, SpawnRequest};
@@ -353,6 +354,10 @@ fn pose(
     }
 }
 
+/// Height above the ground, world units, at which the simulation publishes a shot's ends and
+/// its impact (`sim_core`'s combat writes them half a unit up), and so the lab spawns them.
+pub const SHOT_HEIGHT: f32 = 0.5;
+
 /// Spawns the subject `delay` seconds from `now` (negative: born in the past).
 fn spawn_subject(
     program: &LabProgram,
@@ -369,10 +374,17 @@ fn spawn_subject(
             catalog.path.display()
         )
     })?;
-    let anchor = Vec3::new(subject.anchor.x, 0.0, subject.anchor.z);
+    let kind = catalog.effect(effect).map(|effect| effect.event);
+    // A shot and its impact are published where the simulation fires them, half a unit above
+    // the ground (plan WP11); every other event lies on the ground.
+    let height = match kind {
+        Some(EventKind::Shot | EventKind::Point) => SHOT_HEIGHT,
+        _ => 0.0,
+    };
+    let anchor = Vec3::new(subject.anchor.x, height, subject.anchor.z);
     let line = subject.line_to.map(|to| WorldLine {
         seen: subject.line_seen,
-        ..WorldLine::whole(anchor, Vec3::new(to.x, 0.0, to.z))
+        ..WorldLine::whole(anchor, Vec3::new(to.x, height, to.z))
     });
     let request = SpawnRequest {
         effect,
@@ -381,10 +393,18 @@ fn spawn_subject(
         line,
         delay,
     };
-    runtime
+    let handle = runtime
         .spawn(catalog, &request, now)
-        .map(|_| ())
-        .ok_or_else(|| "the effect pool refused the subject".into())
+        .ok_or_else(|| "the effect pool refused the subject".to_owned())?;
+    // A shot under the lab's fog is cut where its path leaves the seen ground, as the event
+    // wiring cuts it in a battle (plan WP11).
+    if let (Some(EventKind::Shot), Some(below_x), Some(line)) = (kind, subject.fog_below_x, line) {
+        runtime.set_fog_clip(
+            handle,
+            crate::effects::systems::shot_clip(line, |x, _| x >= below_x),
+        );
+    }
+    Ok(())
 }
 
 /// Writes `image` as a PNG with fast compression: a lab run writes hundreds of frames and the

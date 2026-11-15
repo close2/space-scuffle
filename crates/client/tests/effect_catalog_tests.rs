@@ -11,13 +11,16 @@
 //! block, which fall back to the defaults, are reported), checked over the shipped blocks and
 //! the lab-only entries; the slice's effects the review gate accepted (plan Amendment 3) are
 //! named by their shipped units, and the effects only the lab-only entries name stay defined but
-//! are named by no shipped unit.
+//! are named by no shipped unit; and plan WP11's coverage over the whole catalog: every weapon
+//! that publishes a delivery event names the looks of that event, no weapon falls back to a
+//! default, and every death has a look; the shot, ride, span and missile fields resolve and
+//! refuse their misuse.
 //!
 //! # Invariants verified
 //! - Every failure is typed and names where it is.
 //! - Names resolve to dense ids in file order; effect lifetimes cover every layer.
 
-#![allow(clippy::expect_used, clippy::panic)]
+#![allow(clippy::expect_used, clippy::panic, clippy::too_many_lines)]
 
 #[path = "support/effect_fixtures.rs"]
 mod effect_fixtures;
@@ -1656,19 +1659,27 @@ fn shipped_statuses_have_held_looks_and_named_deaths_replace_the_shatter() {
             effect.name
         );
     }
-    assert_eq!(
-        catalog.defaults.death, None,
-        "the glass shatter stays the default"
-    );
+    // Plan WP11 (Amendment 24), re-baselined with that cause only: the vocabulary's default
+    // death, `glass_shatter`, replaced the legacy glass shatter, so every unit has a death look:
+    // its block's own, or the default.
+    let default_death = catalog
+        .defaults
+        .death
+        .expect("a default death replaces the legacy shatter");
     let units = sim_fixtures::shipped_catalogs().units;
     let tables = UnitEffectTables::build(&units, &catalog).expect("the shipped blocks resolve");
     let mut named = 0;
     for arch in units.archetypes() {
         let death = tables.death(arch.unit_type_id);
+        let own = arch
+            .effects
+            .death
+            .as_ref()
+            .and_then(|name| catalog.effect_id(name));
         assert_eq!(
-            death.is_some(),
-            arch.effects.death.is_some(),
-            "{}: a death effect exactly where the block names one",
+            death,
+            Some(own.unwrap_or(default_death)),
+            "{}: its block's death effect, or the default",
             arch.slug
         );
         assert_eq!(
@@ -1926,7 +1937,9 @@ fn area_and_link_looks_hold_and_are_named_by_their_abilities() {
 }
 
 /// Plan WP10: every shipped ability look is an `Area` or `Link` effect holding a `Critical`
-/// layer and no light, and every area look's `Critical` layers are bound to `AreaRadius`.
+/// layer and no light, and every area look's `Critical` layers are bound to `AreaRadius`. Plan
+/// WP11 (F1): a look may also be a `Missile` effect, which holds a `Critical` layer and lays an
+/// `Area` impact whose `Critical` layers bind `AreaRadius`, neither with a light.
 #[test]
 fn shipped_ability_looks_hold_their_critical_extent() {
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
@@ -1946,9 +1959,43 @@ fn shipped_ability_looks_hold_their_critical_extent() {
                 .and_then(|id| catalog.effect(id))
                 .expect("the look is defined");
             assert!(
-                matches!(effect.event, EventKind::Area | EventKind::Link),
+                matches!(
+                    effect.event,
+                    EventKind::Area | EventKind::Link | EventKind::Missile
+                ),
                 "{look}"
             );
+            if effect.event == EventKind::Missile {
+                let impact = effect
+                    .impact
+                    .and_then(|id| catalog.effect(id))
+                    .unwrap_or_else(|| panic!("{look} lays an impact"));
+                assert_eq!(impact.event, EventKind::Area, "{look}'s impact");
+                let critical: Vec<_> = impact
+                    .layers
+                    .iter()
+                    .filter(|layer| {
+                        layer.priority == client::effects::catalog::schema::Priority::Critical
+                    })
+                    .collect();
+                assert!(!critical.is_empty(), "{look}'s impact marks its extent");
+                assert!(
+                    critical.iter().all(|layer| {
+                        layer.size.bind == Binding::AreaRadius
+                            || layer
+                                .radius
+                                .is_some_and(|radius| radius.to.bind == Binding::AreaRadius)
+                    }),
+                    "{look}'s impact's Critical layers bind AreaRadius"
+                );
+                assert!(
+                    impact
+                        .layers
+                        .iter()
+                        .all(|layer| !matches!(layer.block, Block::Light { .. })),
+                    "{look}'s impact lights nothing"
+                );
+            }
             let critical: Vec<_> = effect
                 .layers
                 .iter()
@@ -1984,5 +2031,407 @@ fn shipped_ability_looks_hold_their_critical_extent() {
     assert!(
         named >= 3,
         "the storm, the cloud and the tether are named: {named}"
+    );
+}
+
+/// What a weapon's attack publishes for the client to draw (plan WP11), as `sim_core`'s
+/// combat decides it: a weapon with a projectile speed launches a projectile; an instant weapon
+/// publishes the event of its visual kind; an instant weapon whose visual kind is `Projectile`
+/// or `None` publishes no delivery event at all (its splash, if any, is all it shows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// A `ProjectileVisual`: a flight from the muzzle to the target.
+    Projectile,
+    /// A `HitscanTracer` or a `BeamVisual`: an instant line from the source to the impact.
+    Line,
+    /// A `MeleeSlashVisual` at the contact point.
+    Melee,
+    /// Nothing but its splash.
+    Nothing,
+}
+
+/// The delivery of `weapon`.
+fn delivery(weapon: &sim_types::WeaponSpec) -> Delivery {
+    use sim_types::WeaponVisualKind as Kind;
+    if weapon.projectile_speed.is_some() {
+        return Delivery::Projectile;
+    }
+    match weapon.visual_kind {
+        Kind::Hitscan | Kind::LaserBeam | Kind::LightningArc => Delivery::Line,
+        Kind::MeleeSlash => Delivery::Melee,
+        Kind::Projectile | Kind::None => Delivery::Nothing,
+    }
+}
+
+/// Every weapon of `archetype` with the key the simulation tags its events with
+/// (`sim_core::world::presentation::weapon_source`): the air weapon is `Air`; the ground weapon
+/// and every mode's override take `Ground` on a structure or on a unit whose ground weapon
+/// differs from its weapon, and `Primary` otherwise; an override names its mode.
+fn tagged_weapons(
+    archetype: &sim_core::catalog::UnitArchetype,
+) -> Vec<(WeaponSlot, Option<String>, &sim_types::WeaponSpec)> {
+    let structure = matches!(archetype.shape, sim_types::ShapeKind::BuildingDome { .. });
+    let ground_slot = if structure || archetype.ground_weapon != archetype.weapon {
+        WeaponSlot::Ground
+    } else {
+        WeaponSlot::Primary
+    };
+    let mut weapons = Vec::new();
+    if let Some(ground) = archetype
+        .ground_weapon
+        .as_ref()
+        .or(archetype.weapon.as_ref())
+    {
+        weapons.push((ground_slot, None, ground));
+    }
+    if let Some(air) = archetype.air_weapon.as_ref() {
+        weapons.push((WeaponSlot::Air, None, air));
+    }
+    for mode in &archetype.modes {
+        if let Some(Some(spec)) = mode.ground_weapon_override.as_ref() {
+            weapons.push((ground_slot, Some(mode.mode_name.clone()), spec));
+        }
+    }
+    weapons
+}
+
+/// Whether `effect` flies a projectile's path: a `Critical` card riding its line or a
+/// `Critical` strip riding it, lasting the flight.
+fn flies(effect: &client::effects::catalog::Effect) -> bool {
+    effect.layers.iter().any(|layer| {
+        let rides = match &layer.block {
+            Block::Sprite(look) => look.ride,
+            Block::Ribbon(look) => look.trail.is_some(),
+            _ => false,
+        };
+        layer.priority == client::effects::catalog::schema::Priority::Critical
+            && rides
+            && layer.lasts == Some(Binding::FlightTime)
+    })
+}
+
+/// Plan WP11's coverage rule over the whole catalog: every weapon of every shipped unit and
+/// structure that publishes a delivery event is named in its block, so the effect system draws
+/// it and no legacy card does; the names are of the right kind for the event (a projectile's
+/// travel flies its path for the flight, an instant line's travel spans it at once, a melee
+/// strike has an impact); no weapon falls back to a default (the vocabulary has no weapon
+/// default at all), and every death has a look (the default one is the glass breaking).
+#[test]
+fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    assert_eq!(catalog.defaults.splash, None, "no default splash effect");
+    assert_eq!(catalog.defaults.impact, None, "no default impact effect");
+    let death = catalog
+        .defaults
+        .death
+        .and_then(|id| catalog.effect(id))
+        .expect("a default death replaces the legacy shatter");
+    assert_eq!(death.event, EventKind::Death);
+    let units = sim_fixtures::shipped_catalogs().units;
+    let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
+    let effect = |name: &Option<String>| {
+        name.as_ref().map(|name| {
+            catalog
+                .effect_id(name)
+                .and_then(|id| catalog.effect(id))
+                .unwrap_or_else(|| panic!("{name} resolves"))
+        })
+    };
+    let mut report = Vec::new();
+    let mut silent = Vec::new();
+    for archetype in units.archetypes() {
+        assert!(
+            tables.death(archetype.unit_type_id).is_some(),
+            "{} has a death look",
+            archetype.slug
+        );
+        for (slot, mode, spec) in tagged_weapons(archetype) {
+            let label = format!(
+                "{} {slot:?} {mode:?} {:?}",
+                archetype.slug, spec.visual_kind
+            );
+            let delivery = delivery(spec);
+            let entry = archetype
+                .effects
+                .weapons
+                .iter()
+                .find(|entry| entry.weapon == slot && entry.mode == mode);
+            if delivery == Delivery::Nothing && spec.splash.is_none() {
+                assert!(
+                    entry.is_none_or(|entry| entry.travel.is_none() && entry.impact.is_none()),
+                    "{label}: publishes no delivery event, so it names no travel or impact"
+                );
+                silent.push(label);
+                continue;
+            }
+            let entry = entry.unwrap_or_else(|| panic!("{label}: the block names no looks"));
+            let travel = effect(&entry.travel);
+            let impact = effect(&entry.impact);
+            let splash = effect(&entry.splash);
+            assert_eq!(
+                spec.splash.is_some(),
+                splash.is_some(),
+                "{label}: a splash weapon, and only one, names its splash"
+            );
+            match delivery {
+                Delivery::Projectile => {
+                    let travel = travel.unwrap_or_else(|| panic!("{label}: no travel"));
+                    assert!(
+                        flies(travel),
+                        "{label}: {} does not fly the path",
+                        travel.name
+                    );
+                    assert!(impact.is_some() || splash.is_some(), "{label}: no impact");
+                }
+                Delivery::Line => {
+                    if let Some(travel) = travel {
+                        assert!(
+                            !travel.layers.iter().any(|layer| layer.lasts.is_some()),
+                            "{label}: {} waits for a flight an instant shot has not",
+                            travel.name
+                        );
+                    } else {
+                        assert!(
+                            splash.is_some(),
+                            "{label}: an instant line without a travel must show its splash"
+                        );
+                    }
+                    assert!(impact.is_some() || splash.is_some(), "{label}: no impact");
+                }
+                Delivery::Melee => {
+                    assert!(travel.is_none(), "{label}: a melee strike has no travel");
+                    assert!(impact.is_some() || splash.is_some(), "{label}: no impact");
+                }
+                Delivery::Nothing => {
+                    assert!(travel.is_none() && impact.is_none(), "{label}: no event");
+                }
+            }
+            if let Some(travel) = travel {
+                assert_eq!(travel.event, EventKind::Shot, "{label}: travel kind");
+            }
+            if let Some(impact) = impact {
+                assert_eq!(impact.event, EventKind::Point, "{label}: impact kind");
+            }
+            let source = EffectSource {
+                unit_type: archetype.unit_type_id,
+                weapon: WeaponKey {
+                    slot,
+                    mode: mode.as_deref().and_then(|name| {
+                        archetype
+                            .modes
+                            .iter()
+                            .position(|candidate| candidate.mode_name == name)
+                            .and_then(|index| u8::try_from(index).ok())
+                    }),
+                },
+            };
+            assert!(
+                tables.names_weapon(source),
+                "{label}: the tables find its entry by the key the simulation tags it with"
+            );
+            report.push(format!(
+                "{label} -> travel {:?}, impact {:?}, splash {:?}",
+                entry.travel, entry.impact, entry.splash
+            ));
+        }
+    }
+    eprintln!(
+        "weapon coverage: {} weapons named\n  {}\nweapons that publish no delivery event: {}\n  {}",
+        report.len(),
+        report.join("\n  "),
+        silent.len(),
+        silent.join("\n  ")
+    );
+}
+
+/// Plan WP11: a `Shot` effect binds its line and flight; a card may ride the line and be drawn
+/// out along it, a strip may ride it with a trail, a layer may last a bound span; and each of
+/// these is refused where it cannot apply.
+#[test]
+fn shot_layers_ride_their_line_and_last_their_flight() {
+    let (dir, manifest) = fixture();
+    let shot = |layer: &str| format!(r#""bolt": (class: Minor, event: Shot, layers: [ {layer} ])"#);
+    let body = r#"(block: Sprite(texture: "soft_disc", ramp: "white", ride: true, stretch: 2.0),
+        size: (scale: 0.1), duration: 0.6, lasts: FlightTime, priority: Critical)"#;
+    let trail = r#"(block: Ribbon(texture: "solid", ramp: "white", trail: Some(0.5), shape: Radial),
+        size: (bind: LineLength, scale: 0.01), duration: 0.6, lasts: FlightTime)"#;
+    let catalog = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &shot(&format!("{body}, {trail}")), ""),
+    )
+    .expect("a valid shot resolves");
+    let effect = catalog
+        .effect(catalog.effect_id("bolt").expect("defined"))
+        .expect("resolves");
+    assert_eq!(effect.event, EventKind::Shot);
+    match &effect.layers[0].block {
+        Block::Sprite(look) => assert!(look.ride && (look.stretch - 2.0).abs() < 1e-6),
+        other => panic!("expected a sprite, got {other:?}"),
+    }
+    match &effect.layers[1].block {
+        Block::Ribbon(look) => assert_eq!(look.trail, Some(0.5)),
+        other => panic!("expected a ribbon, got {other:?}"),
+    }
+    assert_eq!(effect.layers[0].lasts, Some(Binding::FlightTime));
+    let flight = client::effects::binding::BoundValues::default().with(Binding::FlightTime, 1.4);
+    assert!(
+        (effect.layers[0].span(&flight) - 1.4).abs() < 1e-6,
+        "lasts the flight"
+    );
+    assert!(
+        (effect.layers[0].span(&client::effects::binding::BoundValues::default()) - 0.6).abs()
+            < 1e-6,
+        "an instant shot keeps the duration"
+    );
+    assert!(
+        (client::effects::runtime::one_shot_lifetime(effect, &flight) - 1.4).abs() < 1e-6,
+        "the effect lives as long as it flies"
+    );
+
+    // Refusals: each names its field.
+    let refused = [
+        (
+            r#"(block: Sprite(texture: "soft_disc", ramp: "white", orient: Ground, stretch: 2.0),
+                size: (scale: 0.1), duration: 0.5)"#,
+            "stretch",
+        ),
+        (
+            r#"(block: Sprite(texture: "soft_disc", ramp: "white", stretch: 0.5),
+                size: (scale: 0.1), duration: 0.5)"#,
+            "stretch",
+        ),
+        (
+            r#"(block: Ribbon(texture: "solid", ramp: "white", trail: Some(0.5), travel: 9.0),
+                size: (scale: 0.1), duration: 0.5)"#,
+            "trail",
+        ),
+        (
+            r#"(block: Ribbon(texture: "solid", ramp: "white", trail: Some(0.0)),
+                size: (scale: 0.1), duration: 0.5)"#,
+            "trail",
+        ),
+        (
+            r#"(block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 0.1),
+                duration: 0.5, lasts: LineLength)"#,
+            "lasts",
+        ),
+    ];
+    for (layer, field) in refused {
+        let error =
+            load(dir.path(), &vocabulary(&manifest, "", &shot(layer), "")).expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: named, .. } if *named == field),
+            "{field}: {error}"
+        );
+    }
+    // A splash has neither a flight to last nor a line to ride.
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(
+                r#"(block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 0.1),
+                    duration: 0.5, lasts: FlightTime)"#,
+            ),
+            "",
+        ),
+    )
+    .expect_err("a splash has no flight");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::UnboundBinding {
+                binding: Binding::FlightTime,
+                event: EventKind::Splash,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &splash_effect(
+                r#"(block: Sprite(texture: "soft_disc", ramp: "white", ride: true),
+                    size: (scale: 0.1), duration: 0.5)"#,
+            ),
+            "",
+        ),
+    )
+    .expect_err("a splash has no line to ride");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::UnboundBinding {
+                binding: Binding::LineLength,
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+/// Plan WP11 (F1): a `Missile` effect holds its look and lays an `Area` impact; only a missile
+/// lays an impact, and only an `Area` one.
+#[test]
+fn a_missile_holds_its_look_and_lays_an_area_impact() {
+    let (dir, manifest) = fixture();
+    let missile = |impact: &str, landed_kind: &str| {
+        format!(
+            r#""spore": (class: Minor, event: Missile, impact: Some("{impact}"),
+                emit: Some((effect: "mote", every: 0.05)), layers: [
+                (block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 0.2),
+                 duration: 0.1, held: true, exit: 0.05, priority: Critical) ]),
+            "mote": (class: Ambient, event: Missile, layers: [
+                (block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 0.05),
+                 duration: 0.3) ]),
+            "landed": (class: Major, event: {landed_kind}, layers: [
+                (block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 1.0),
+                 duration: 0.5) ])"#
+        )
+    };
+    let catalog = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &missile("landed", "Area"), ""),
+    )
+    .expect("a valid missile resolves");
+    let spore = catalog
+        .effect(catalog.effect_id("spore").expect("defined"))
+        .expect("resolves");
+    assert_eq!(spore.impact, catalog.effect_id("landed"));
+    assert!(spore.layers[0].held);
+    let error = load(
+        dir.path(),
+        &vocabulary(&manifest, "", &missile("landed", "Point"), ""),
+    )
+    .expect_err("a missile lays an area");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "impact",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let not_a_missile = r#""boom": (class: Major, event: Splash, impact: Some("boom"), layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "white"), size: (scale: 1.0), duration: 0.5) ])"#;
+    let error = load(dir.path(), &vocabulary(&manifest, "", not_a_missile, ""))
+        .expect_err("only a missile lays an impact");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "impact",
+                ..
+            }
+        ),
+        "{error}"
     );
 }

@@ -9,7 +9,10 @@
 //!   sized by its zones; a tracer, beam, projectile or melee event spawns its weapon's `impact`
 //!   effect where it lands; a `BubbleShatter` spawns the dead unit's `death` effect, sized by
 //!   its radius, where it stood (plan WP9), and the legacy glass shatter is then left out
-//!   ([`replaces_shatter`]).
+//!   ([`replaces_shatter`]). A tracer, beam or projectile also spawns its weapon's `travel`
+//!   effect along the shot's line from the muzzle to where it lands ([`travel_request`], plan
+//!   WP11), and the legacy combat card of an event whose unit names its weapon's looks is left
+//!   out ([`replaces_legacy`]).
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -25,8 +28,11 @@
 //! by point: it spawns once from any admitted search point and draws only at the points the
 //! viewer sees ([`LineAssembly`], plan Amendment 2, R6), so an undetected burrowed attacker's
 //! line shows wherever it is seen, from its first point on. A death is anchored where the unit
-//! stood, which is where the fog judged it. Launch and travel effects (anchored at the source)
-//! are wired by later work packages.
+//! stood, which is where the fog judged it. A shot's travel starts at its muzzle, but it is
+//! admitted with its event where it lands and cut where the viewer stops seeing its path
+//! ([`shot_clip`], plan WP11): a shot out of the fog is drawn from the fog's edge on. Its
+//! source is not drawn, only the light of its round; as in `StarCraft II`, a cloaked attacker's
+//! shots are seen (the legacy cards drew them from the source too).
 //!
 //! # Invariants
 //! - Without effects named in data, nothing is spawned and nothing new is drawn.
@@ -36,9 +42,10 @@
 use super::binding::BoundValues;
 use super::catalog::schema::{Binding, EventKind};
 use super::catalog::{EffectCatalog, UnitEffectTables, EFFECTS_CATALOG_PATH};
+use super::particles::LineClip;
 use super::placement::WorldLine;
 use super::render::EffectCatalogVersion;
-use super::runtime::{CameraView, EffectRuntime, SpawnRequest};
+use super::runtime::{CameraView, EffectRuntime, SpawnRequest, NO_CLIP};
 use crate::vfx::{CombatLightEffect, CombatVisualEvent};
 use crate::{CatalogResource, ResolvedAssetsRoot};
 use bevy::prelude::*;
@@ -275,6 +282,136 @@ pub fn spawn_request(
     }
 }
 
+/// Distance in world units between the fog samples [`shot_clip`] takes along a shot.
+const SHOT_FOG_STEP: f32 = 0.05;
+
+/// Distance in world units either side of a shot's path at which [`shot_clip`] also asks the
+/// fog: a shot's widest layers (a muzzle flash, a bolt's glow) reach about this far from it.
+const SHOT_FOG_HALF_WIDTH: f32 = 0.35;
+
+/// World units a shot's fog cut keeps beyond the last unseen sample: the clip's anti-aliased
+/// edge reaches a little past its end (as `areas::CUT_MARGIN`).
+const SHOT_FOG_MARGIN: f32 = 0.05;
+
+/// The travel spawn of an admitted weapon `event`, if its source unit's block names a `travel`
+/// effect for the weapon (plan WP11): the shot along a line from the muzzle to where it lands.
+///
+/// A tracer's or a beam's line starts where the shot leaves its source's bubble (the event
+/// publishes the source's centre; the bubble's radius comes from the catalog, at most
+/// 0.8 of the shot's length) and ends at the impact; a projectile's runs from where it was
+/// launched (the simulation already publishes it on the source's bubble) to where it arrives,
+/// and binds its flight time. A melee strike, a splash and a death have no travel.
+#[must_use]
+pub fn travel_request(
+    event: &CombatEventVisual,
+    tables: &UnitEffectTables,
+    catalog: &EffectCatalog,
+) -> Option<SpawnRequest> {
+    let (from, to, flight, source) = match event {
+        CombatEventVisual::HitscanTracer {
+            from, to, source, ..
+        }
+        | CombatEventVisual::BeamVisual {
+            from, to, source, ..
+        } => {
+            let (from, to) = (world(*from), world(*to));
+            let length = from.distance(to);
+            let muzzle = tables.muzzle(source.unit_type).min(0.8 * length);
+            let from = from + (to - from).normalize_or_zero() * muzzle;
+            (from, to, 0.0, source)
+        }
+        CombatEventVisual::ProjectileVisual {
+            pos,
+            vel,
+            duration_secs,
+            source,
+            ..
+        } => {
+            let flight = duration_secs.unwrap_or(0.0).max(0.0);
+            let from = world(*pos);
+            (from, from + world(*vel) * flight, flight, source)
+        }
+        CombatEventVisual::MeleeSlashVisual { .. }
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::BubbleShatter { .. } => return None,
+    };
+    let effect = tables.travel(*source)?;
+    catalog.effect(effect)?;
+    Some(SpawnRequest {
+        effect,
+        anchor: from,
+        bound: BoundValues::default()
+            .with(Binding::LineLength, from.distance(to))
+            .with(Binding::FlightTime, flight),
+        line: Some(WorldLine::whole(from, to)),
+        delay: 0.0,
+    })
+}
+
+/// The fog clip of a shot along `line` (Bevy world space) for a viewer who sees map point
+/// `(x, y)` when `sees(x, y)` (plan WP11, D-5): the shot is admitted where it lands, so it is
+/// drawn from its landing point back to where it leaves the viewer's sight, and no further.
+///
+/// The fog is asked every [`SHOT_FOG_STEP`] from the landing point back towards the muzzle,
+/// on the path and [`SHOT_FOG_HALF_WIDTH`] either side of it. Returns [`NO_CLIP`] when every
+/// sample is seen, and otherwise a clip window along the shot's horizontal direction that
+/// starts [`SHOT_FOG_MARGIN`] past the last seen sample before the first unseen one (closer
+/// to the landing point), so nothing is drawn over the unseen ground the shot crossed.
+#[must_use]
+pub fn shot_clip(line: WorldLine, sees: impl Fn(f32, f32) -> bool) -> LineClip {
+    let along = Vec2::new(line.to.x - line.from.x, line.to.z - line.from.z);
+    let length = along.length();
+    if length <= SHOT_FOG_STEP {
+        return NO_CLIP;
+    }
+    let axis = along / length;
+    let side = Vec2::new(-axis.y, axis.x) * SHOT_FOG_HALF_WIDTH;
+    let start = Vec2::new(line.from.x, line.from.z);
+    let seen_at = |distance: f32| {
+        let point = start + axis * distance;
+        [point, point + side, point - side]
+            .iter()
+            .all(|sample| sees(sample.x, sample.y))
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a shot of at most a few dozen world units over a step of 0.05"
+    )]
+    let steps = (length / SHOT_FOG_STEP).ceil() as u32;
+    for step in 0..=steps {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a step count below a few thousand is exact in f32"
+        )]
+        let distance = (length - step as f32 * SHOT_FOG_STEP).max(0.0);
+        if !seen_at(distance) {
+            let cut = (distance + SHOT_FOG_STEP + SHOT_FOG_MARGIN).min(length);
+            let origin = axis.dot(start);
+            return [axis.x, axis.y, origin + cut, origin + length + 1.0e3];
+        }
+    }
+    NO_CLIP
+}
+
+/// Whether the effect system draws the delivery of weapon `event` in place of its legacy
+/// combat card (plan WP11): a tracer, beam, projectile or melee event whose source unit names
+/// its weapon's looks in data ([`UnitEffectTables::names_weapon`]), or a death whose unit has
+/// a death effect ([`replaces_shatter`]). Without the effect tables nothing is replaced.
+#[must_use]
+pub fn replaces_legacy(tables: Option<&UnitEffectTables>, event: &CombatEventVisual) -> bool {
+    match event {
+        CombatEventVisual::BubbleShatter { unit_type, .. } => replaces_shatter(tables, *unit_type),
+        CombatEventVisual::HitscanTracer { source, .. }
+        | CombatEventVisual::BeamVisual { source, .. }
+        | CombatEventVisual::ProjectileVisual { source, .. }
+        | CombatEventVisual::MeleeSlashVisual { source, .. } => {
+            tables.is_some_and(|tables| tables.names_weapon(*source))
+        }
+        CombatEventVisual::SplashVisual { .. } => false,
+    }
+}
+
 /// Whether the death of a unit of `unit_type` draws its own `death` effect instead of the
 /// legacy glass shatter (plan WP9: the default stays the shatter; a unit's presentation block,
 /// or the vocabulary's `defaults.death`, may name an effect that replaces it). Without the
@@ -297,6 +434,7 @@ pub fn spawn_effects_from_events(
     catalog: Option<Res<'_, EffectCatalog>>,
     tables: Option<Res<'_, UnitEffectTables>>,
     runtime: Option<ResMut<'_, EffectRuntime>>,
+    fog: Option<Res<'_, crate::battle_pipeline::fog::BattleFog>>,
     time: Res<'_, Time<Virtual>>,
 ) {
     let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
@@ -306,6 +444,22 @@ pub fn spawn_effects_from_events(
     let now = time.elapsed_secs_f64();
     let mut lines = LineAssembly::default();
     for event in events.read() {
+        // A shot's travel is its own effect, never merged with another (plan WP11), cut where
+        // the viewer stops seeing it.
+        if let Some(shot) = travel_request(&event.0, &tables, &catalog) {
+            let owner = event.0.owner();
+            let clip = match fog.as_deref() {
+                Some(fog) if fog.viewer() != Some(owner) => shot_clip(
+                    shot.line
+                        .unwrap_or(WorldLine::whole(shot.anchor, shot.anchor)),
+                    |x, y| fog.sees(x, y),
+                ),
+                _ => NO_CLIP,
+            };
+            if let Some(handle) = runtime.spawn(&catalog, &shot, now) {
+                runtime.set_fog_clip(handle, clip);
+            }
+        }
         if let Some(ready) =
             spawn_request(&event.0, &tables, &catalog).and_then(|request| lines.push(request))
         {
@@ -488,5 +642,57 @@ pub fn apply_effect_lights(
         } else {
             visibility.set_if_neq(Visibility::Hidden);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A shot along +x (map x) at map y = 5.5, from x = 1.5 to x = 9.5.
+    fn shot() -> WorldLine {
+        WorldLine::whole(Vec3::new(1.5, 0.5, 5.5), Vec3::new(9.5, 0.5, 5.5))
+    }
+
+    #[test]
+    fn a_shot_seen_whole_is_not_cut() {
+        assert_eq!(shot_clip(shot(), |_, _| true), NO_CLIP);
+    }
+
+    #[test]
+    fn a_shot_out_of_the_fog_is_drawn_from_the_fog_edge_to_where_it_lands() {
+        // The viewer sees map x >= 5 only: the muzzle is in the fog, the landing point seen.
+        let clip = shot_clip(shot(), |x, _| x >= 5.0);
+        let [x, z, min, max] = clip;
+        assert!(
+            (x - 1.0).abs() < 1e-6 && z.abs() < 1e-6,
+            "cut along the shot: {clip:?}"
+        );
+        assert!(
+            min >= 5.0,
+            "nothing drawn over the unseen ground: cut at {min}"
+        );
+        assert!(min <= 5.0 + 0.15, "the seen part is kept: cut at {min}");
+        assert!(max >= 9.5, "drawn to where it lands: {max}");
+    }
+
+    #[test]
+    fn the_fog_beside_a_shot_cuts_it_too() {
+        // Unseen cells just beside the path (map y < 5.3) left of x = 4: the shot's glow
+        // would reach over them, so the cut lies beyond them.
+        let clip = shot_clip(shot(), |x, y| y >= 5.3 || x >= 4.0);
+        assert!(clip[2] >= 4.0, "cut at {}", clip[2]);
+    }
+
+    #[test]
+    fn a_shot_seen_only_where_it_lands_draws_at_most_its_end() {
+        let clip = shot_clip(shot(), |x, _| x >= 9.45);
+        assert!(clip[2] >= 9.45, "cut at {}", clip[2]);
+    }
+
+    #[test]
+    fn a_vertical_shot_is_not_cut() {
+        let line = WorldLine::whole(Vec3::new(2.0, 3.0, 2.0), Vec3::new(2.0, 0.5, 2.0));
+        assert_eq!(shot_clip(line, |_, _| false), NO_CLIP);
     }
 }

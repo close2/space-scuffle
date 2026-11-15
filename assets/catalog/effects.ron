@@ -17,6 +17,12 @@
 // them in assets/catalog/units.ron. `burrow_trail` (plan Amendment 2, R5) is defined and tested
 // through a lab-only entry (crates/client/tests/data/effect_lab_blocks.ron), but no shipped
 // unit names it, because no shipped burrowed mode can move yet.
+//
+// WP11 (plan Amendment 24): every weapon of every shipped unit and structure names its own
+// looks: a `Shot` effect for its `travel` (a tracer's slug, a beam, a projectile flying its
+// path) and a `Point` effect for its `impact` (or its melee strike), replacing the legacy
+// combat cards; `glass_shatter` is the default death; Fungal Growth's missile, impact and
+// affliction (F1). No new texture.
 (
     format_version: 1,
     // Baked texture sets: paths of `<set>.texture.ron` manifests below the assets root.
@@ -517,6 +523,95 @@
             (0.50, (0.0612, 0.0070, 0.0060, 0.97)),   // sRGB (70, 20, 18)
             (1.00, (0.1144, 0.0130, 0.0116, 0.97)),   // sRGB (95, 30, 28)
         ],
+        // WP11, the weapons' own looks (plan Amendment 24). Every ramp below is additive
+        // unless it says otherwise: a shot is light, its smoke and its spatter are matter.
+        // A kinetic round's tracer and a muzzle's flash: dull orange where it thins, a white-hot
+        // yellow on its axis.
+        "tracer_hot": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.30, (0.42, 0.12, 0.015, 0.45)),
+            (0.65, (1.00, 0.50, 0.10, 0.25)),
+            (0.90, (1.00, 0.86, 0.55, 0.0)),
+            (1.00, (1.00, 0.97, 0.86, 0.0)),
+        ],
+        // A sniper's round: cold, nearly colourless, blue-white on its axis.
+        "sniper_hot": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.35, (0.06, 0.14, 0.32, 0.45)),
+            (0.70, (0.45, 0.68, 1.00, 0.20)),
+            (1.00, (0.92, 0.97, 1.00, 0.0)),
+        ],
+        // Enclave plasma: a deep blue halo, a cyan body, a white core.
+        "plasma": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.25, (0.010, 0.060, 0.30, 0.40)),
+            (0.55, (0.06, 0.40, 1.00, 0.25)),
+            (0.82, (0.45, 0.85, 1.00, 0.0)),
+            (1.00, (0.92, 1.00, 1.00, 0.0)),
+        ],
+        // A prismatic or disruption beam: violet at its edges, magenta-white in its body, white
+        // on its axis.
+        "prism": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.25, (0.14, 0.02, 0.30, 0.40)),
+            (0.55, (0.52, 0.16, 1.00, 0.25)),
+            (0.82, (0.85, 0.62, 1.00, 0.0)),
+            (1.00, (1.00, 0.95, 1.00, 0.0)),
+        ],
+        // A bioluminescent spore: a dull olive halo, a yellow-green body.
+        "spore_glow": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.35, (0.08, 0.16, 0.005, 0.40)),
+            (0.75, (0.48, 0.85, 0.06, 0.22)),
+            (1.00, (0.88, 1.00, 0.45, 0.0)),
+        ],
+        // A rocket's smoke trail (alpha): a light grey that reads on dark and on bright ground,
+        // thin where the noise thins it.
+        "rocket_smoke": [
+            (0.00, (0.05, 0.05, 0.05, 0.00)),
+            (0.40, (0.16, 0.155, 0.15, 0.40)),
+            (1.00, (0.42, 0.41, 0.39, 0.62)),
+        ],
+        // Dust kicked up where a round strikes (alpha): light grey-brown.
+        "hit_dust": [
+            (0.00, (0.05, 0.042, 0.032, 0.30)),
+            (0.60, (0.20, 0.17, 0.13, 0.50)),
+            (1.00, (0.40, 0.35, 0.28, 0.58)),
+        ],
+        // A blade's psionic edge (Enclave melee): a saturated blue body, cyan-white on its edge.
+        "psi_blade": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.30, (0.02, 0.07, 0.35, 0.45)),
+            (0.65, (0.10, 0.50, 1.00, 0.25)),
+            (1.00, (0.80, 0.97, 1.00, 0.0)),
+        ],
+        // A claw's or a mandible's stroke (alpha): a pale, wet, bone-white edge over a dark
+        // body, so it reads on light and on dark ground alike.
+        "claw_edge": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.30, (0.050, 0.030, 0.025, 0.70)),
+            (0.70, (0.40, 0.33, 0.27, 0.75)),
+            (1.00, (0.92, 0.86, 0.76, 0.80)),
+        ],
+        // A tool's or a cutting beam's spark spray: welding blue-white with an orange tail.
+        "weld_hot": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.30, (0.45, 0.14, 0.03, 0.0)),
+            (0.65, (0.85, 0.70, 0.45, 0.0)),
+            (1.00, (0.85, 0.95, 1.00, 0.0)),
+        ],
+        // F1, Fungal Growth: spore clouds (alpha), olive where they thin, yellow-green where dense.
+        "spore_cloud": [
+            (0.00, (0.03, 0.04, 0.008, 0.00)),
+            (0.50, (0.17, 0.22, 0.04, 0.42)),
+            (1.00, (0.48, 0.58, 0.16, 0.55)),
+        ],
+        // F1: the fungal stain on the ground (alpha): a dark olive mould, paler where thick.
+        "fungal_mark": [
+            (0.00, (0.015, 0.020, 0.004, 0.00)),
+            (0.50, (0.05, 0.07, 0.012, 0.55)),
+            (1.00, (0.17, 0.22, 0.045, 0.72)),
+        ],
     },
     // Timing curves: (time 0..1, value, easing to the next key).
     curves: {
@@ -663,6 +758,17 @@
         "particle_fade": [(0.00, 1.00, Linear), (0.70, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
         // Particle opacity: puff in, then out.
         "puff_fade": [(0.00, 0.00, EaseOutQuad), (0.15, 1.00, Linear), (0.55, 0.80, EaseInQuad), (1.00, 0.00, Linear)],
+        // WP11. A beam's intensity: on within two frames, a slight sag, out at the end.
+        "beam_hold": [(0.00, 0.30, EaseOutCubic), (0.08, 1.00, Linear), (0.70, 0.85, EaseInQuad), (1.00, 0.00, Linear)],
+        // A beam core's erosion: the flowing noise eats a little of it while it burns and
+        // the whole of it as it ends, so it breaks up rather than fading as a flat line.
+        "beam_erode": [(0.00, 0.18, Linear), (0.70, 0.32, EaseInQuad), (1.00, 1.00, Linear)],
+        // A shot in flight: in within a frame, held, out over its last tenth.
+        "flight_hold": [(0.00, 0.40, EaseOutCubic), (0.04, 1.00, Linear), (0.90, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // A blade's crescent: whole on its first frame, eroding away.
+        "slash_erode": [(0.00, 0.00, Linear), (0.35, 0.10, EaseInQuad), (1.00, 1.00, Linear)],
+        // A crescent's sweep: thrown out a little as it fades.
+        "slash_grow": [(0.00, 0.80, EaseOutCubic), (1.00, 1.15, Linear)],
     },
     emitters: {
         // Dark rock chunks thrown out of the crater on ballistic arcs, tumbling.
@@ -791,6 +897,48 @@
             speed: (2.0, 3.6), cone_deg: 40.0, gravity: 14.0, drag: 0.5, lifetime: (0.30, 0.55),
             size: (0.035, 0.06), texture: "debris_atlas", orient: Camera, rotation: Random,
             ramp: "debris", curve: "particle_fade",
+        ),
+        // WP11. A few hot sparks where a round strikes: small, short and fast.
+        "hit_sparks": (
+            spawn: Burst(count: (base: 5, per_unit_radius: 0.0, max: 5)), shape: Point,
+            speed: (3.5, 7.0), cone_deg: 75.0, gravity: 10.0, drag: 2.4, lifetime: (0.12, 0.26),
+            size: (0.020, 0.032), texture: "droplet", orient: VelocityStretched(2.2),
+            roll_deg: 90.0, ramp: "sparks", curve: "particle_fade",
+        ),
+        // Cold motes of plasma or prismatic energy scattering off where it strikes.
+        "energy_sparks": (
+            spawn: Burst(count: (base: 6, per_unit_radius: 0.0, max: 6)), shape: Point,
+            speed: (2.0, 4.5), cone_deg: 85.0, gravity: 3.0, drag: 3.0, lifetime: (0.15, 0.32),
+            size: (0.022, 0.036), texture: "droplet", orient: VelocityStretched(1.6),
+            roll_deg: 90.0, ramp: "plasma", curve: "particle_fade",
+        ),
+        // Welding sparks: many, fine, falling (a tool's strike).
+        "weld_sparks": (
+            spawn: Burst(count: (base: 8, per_unit_radius: 0.0, max: 8)), shape: Point,
+            speed: (2.0, 4.8), cone_deg: 80.0, gravity: 14.0, drag: 1.2, lifetime: (0.18, 0.40),
+            size: (0.016, 0.026), texture: "droplet", orient: VelocityStretched(2.4),
+            roll_deg: 90.0, ramp: "weld_hot", curve: "particle_fade",
+        ),
+        // A spit's or a spore's wet spatter where it strikes.
+        "spit_spatter": (
+            spawn: Burst(count: (base: 7, per_unit_radius: 0.0, max: 7)), shape: Point,
+            speed: (2.0, 4.0), cone_deg: 75.0, gravity: 12.0, drag: 1.4, lifetime: (0.22, 0.40),
+            size: (0.035, 0.06), texture: "droplet", orient: VelocityStretched(1.3),
+            roll_deg: 90.0, ramp: "acid_glob", curve: "particle_fade",
+        ),
+        // Dark flecks thrown off a claw's or a mandible's strike.
+        "claw_flecks": (
+            spawn: Burst(count: (base: 6, per_unit_radius: 0.0, max: 6)), shape: Point,
+            speed: (1.8, 3.6), cone_deg: 70.0, gravity: 12.0, drag: 1.4, lifetime: (0.20, 0.38),
+            size: (0.03, 0.05), texture: "droplet", orient: VelocityStretched(1.3),
+            roll_deg: 90.0, ramp: "ichor", curve: "particle_fade",
+        ),
+        // F1: spore motes thrown up off a fungal impact, rising slowly as they fade.
+        "spore_motes": (
+            spawn: Burst(count: (base: 10, per_unit_radius: 4.0, max: 18)), shape: Disc,
+            speed: (0.4, 1.3), cone_deg: 40.0, gravity: -0.6, drag: 1.2, lifetime: (0.7, 1.3),
+            size: (0.03, 0.06), texture: "droplet", orient: Camera,
+            ramp: "spore_glow", curve: "particle_fade",
         ),
     },
     effects: {
@@ -2211,6 +2359,607 @@
                 ),
             ],
         ),
+        // ---- WP11: the weapons' own looks (plan Amendment 24) -------------------------------
+        // Each weapon's shot is a `Shot` effect along a line from where it leaves its unit's
+        // bubble to where it lands (`travel`), and where it lands a `Point` effect (`impact`);
+        // a melee strike is its `impact` alone. They replace the legacy combat cards for every
+        // unit that names them. No ray, stripe or speed line: a kinetic round is a short slug
+        // of light crossing the gap, a beam is a flowing column of energy broken by its noise,
+        // a projectile is a body of light or matter flying the path.
+        //
+        // A kinetic rifle round (Marine-like): a small muzzle flash and a short, hot slug that
+        // crosses the gap in a few frames. Its `Critical` slug is the shot's path.
+        "gauss_tracer": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, soft_depth: 0.1,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.3)),
+                    size: (scale: 0.18), size_curve: "flash_grow", duration: 0.07, curve: "flash",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, trail: Some(0.7),
+                        taper: (0.5, 0.15)),
+                    size: (scale: 0.1), duration: 0.13, curve: "hold", ramp_curve: "glow_out",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, trail: Some(0.6),
+                        taper: (0.5, 0.1)),
+                    size: (scale: 0.04), duration: 0.13, curve: "hold", priority: Critical,
+                ),
+            ],
+        ),
+        // A heavy cannon round (a tank's or a walker's gun, a fortress's battery): a broad
+        // muzzle blast with a breath of smoke and a thick slug.
+        "cannon_tracer": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "blast_flash", shape: Radial, soft_depth: 0.2,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.4, amount: 0.4, softness: 0.3)),
+                    size: (scale: 0.36), size_curve: "flash_grow", duration: 0.09, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "hit_dust", soft_depth: 0.3,
+                        rotation: Random, erosion: "erode_rise", drift: (0.0, 0.45, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.25, shade: 0.5)),
+                    size: (scale: 0.26), size_curve: "smoke_grow", start: 0.03, duration: 0.7, curve: "puff_fade",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, trail: Some(1.0),
+                        taper: (0.5, 0.15)),
+                    size: (scale: 0.15), duration: 0.16, curve: "hold", ramp_curve: "glow_out",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, trail: Some(0.9),
+                        taper: (0.5, 0.12)),
+                    size: (scale: 0.065), duration: 0.16, curve: "hold", priority: Critical,
+                ),
+            ],
+        ),
+        // A sniper's round: a small cold flash and a long, thin, cold slug, fast.
+        "sniper_tracer": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "sniper_hot", shape: Radial, soft_depth: 0.1,
+                        rotation: Random),
+                    size: (scale: 0.12), size_curve: "flash_grow", duration: 0.06, curve: "flash",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "sniper_hot", shape: Radial, trail: Some(1.4),
+                        taper: (0.5, 0.08)),
+                    size: (scale: 0.035), duration: 0.1, curve: "hold", priority: Critical,
+                ),
+            ],
+        ),
+        // An Enclave plasma bolt (Stalker-, Adept-, Templar-, Carrier- or cannon-like): a white
+        // core drawn out by its speed in a blue halo, a short fading trail behind it, flying the
+        // whole flight (`lasts: FlightTime`), and a brief flare at the muzzle.
+        "plasma_bolt": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, soft_depth: 0.1),
+                    size: (scale: 0.16), size_curve: "flash_grow", duration: 0.08, curve: "flash",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "plasma", shape: Radial, trail: Some(0.7),
+                        taper: (0.5, 0.0), erosion: "beam_erode",
+                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.4, softness: 0.3)),
+                    size: (scale: 0.06), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, ride: true, stretch: 1.6,
+                        soft_depth: 0.1),
+                    size: (scale: 0.26), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, ride: true, stretch: 2.0),
+                    size: (scale: 0.11), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // Swarm acid spit (Roach- or Ravager-like): a dark wet glob with a lime highlight,
+        // tumbling along the flight, a glowing acid trail behind it and a little spray at the
+        // mouth.
+        "acid_spit": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (block: Particles(emitter: "spit_spatter"), size: (scale: 0.1)),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "acid_glow", shape: Radial, trail: Some(0.6),
+                        taper: (0.5, 0.0), erosion: "beam_erode",
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.5, softness: 0.3)),
+                    size: (scale: 0.07), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "acid_glob", ramp: "acid_glob", rotation: Random, ride: true,
+                        soft_depth: 0.1),
+                    size: (scale: 0.22), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // A spore or bile bolt (Mutalisk-, Corruptor-, Queen- or spore-crawler-like): a small
+        // dark glob inside a bioluminescent yellow-green glow, a short glowing trail.
+        "spore_bolt": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Ribbon(texture: "droplet", ramp: "spore_glow", shape: Radial, trail: Some(0.55),
+                        taper: (0.5, 0.0), erosion: "beam_erode",
+                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.45, softness: 0.3)),
+                    size: (scale: 0.06), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, ride: true, stretch: 1.4),
+                    size: (scale: 0.18), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "acid_glob", ramp: "acid_glob", rotation: Random, ride: true),
+                    size: (scale: 0.13), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // A volley of chitin needles (Hydralisk-like): two dark needles drawn out along their
+        // flight, side by side.
+        "needle_volley": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "spine_chitin", ride: true, stretch: 3.0,
+                        soft_depth: 0.05),
+                    placement: Disc(count: 2, radius: (scale: 0.12)),
+                    size: (scale: 0.07), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // A rocket or a missile (Viking-, Banshee-, Liberator-, Thor- or turret-like): a hot
+        // flame at its head, a grey smoke trail broken by its noise behind it, a puff at the
+        // launcher.
+        "rocket_trail": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "rocket_smoke", soft_depth: 0.3,
+                        rotation: Random, erosion: "erode_rise",
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.25, shade: 0.5)),
+                    size: (scale: 0.2), size_curve: "smoke_grow", duration: 0.5, curve: "puff_fade",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "rocket_smoke", shape: Radial, trail: Some(1.3),
+                        taper: (0.5, 0.0), erosion: "beam_erode",
+                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.6, softness: 0.3)),
+                    size: (scale: 0.09), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, ride: true, stretch: 2.2),
+                    size: (scale: 0.09), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // A lobbed concussive shell (Marauder-like): a dark tumbling shell with a dull glow and
+        // a thin smoke wisp.
+        "grenade_lob": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Ribbon(texture: "droplet", ramp: "rocket_smoke", shape: Radial, trail: Some(0.6),
+                        taper: (0.5, 0.0), erosion: "beam_erode",
+                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.6, softness: 0.3)),
+                    size: (scale: 0.05), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, ride: true),
+                    size: (scale: 0.1), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                ),
+                (
+                    block: Sprite(texture: "debris_atlas", ramp: "debris", rotation: Random, ride: true),
+                    size: (scale: 0.08), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                ),
+            ],
+        ),
+        // A prismatic or disruption beam (Void-Ray-, Phoenix- or Sentry-like): a soft violet
+        // column, a white core whose noise flows towards the target and breaks it up, a glow
+        // where it leaves its bubble. The core is `Critical`: it is the beam's path.
+        "prism_beam": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Ribbon(texture: "droplet", ramp: "prism", shape: Radial, taper: (0.15, 0.05),
+                        repeat: 1.2, scroll: 2.5,
+                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.5, softness: 0.4)),
+                    size: (scale: 0.14), duration: 0.3, curve: "beam_hold",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "prism", shape: Radial, taper: (0.1, 0.02),
+                        repeat: 0.6, scroll: 4.0, erosion: "beam_erode",
+                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.25)),
+                    size: (scale: 0.05), duration: 0.3, curve: "beam_hold", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.1,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.5, amount: 0.3, softness: 0.3)),
+                    size: (scale: 0.16), duration: 0.3, curve: "beam_hold",
+                ),
+            ],
+        ),
+        // A thermal lance's beam (Colossus-like), from the walker to where it strikes: the same
+        // structure in white-hot orange; the line it burns is the lance's splash.
+        "lance_beam": (
+            class: Minor,
+            event: Shot,
+            layers: [
+                (
+                    block: Ribbon(texture: "droplet", ramp: "lance_hot", shape: Radial, taper: (0.15, 0.05),
+                        repeat: 1.2, scroll: 2.5,
+                        breakup: (noise: "noise_tile", scale: 1.0, amount: 0.5, softness: 0.4)),
+                    size: (scale: 0.13), duration: 0.3, curve: "beam_hold",
+                ),
+                (
+                    block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, taper: (0.1, 0.02),
+                        repeat: 0.6, scroll: 4.0, erosion: "beam_erode",
+                        breakup: (noise: "fire_noise", scale: 1.0, amount: 0.55, softness: 0.25)),
+                    size: (scale: 0.05), duration: 0.3, curve: "beam_hold", priority: Critical,
+                ),
+            ],
+        ),
+        // Where a kinetic round strikes: a hot point, a few sparks, a pinch of dust.
+        "bullet_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, soft_depth: 0.1,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.3)),
+                    size: (scale: 0.17), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
+                ),
+                (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "hit_dust", soft_depth: 0.3, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.3, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.5, softness: 0.25, shade: 0.5)),
+                    size: (scale: 0.2), size_curve: "smoke_grow", start: 0.02, duration: 0.45, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // Where a heavy round strikes: a small fireball, sparks and smoke.
+        "cannon_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "blast_flash", shape: Radial, soft_depth: 0.2,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.5, amount: 0.35, softness: 0.3)),
+                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.3,
+                        rotation: Random, erosion: "erode_late",
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
+                    size: (scale: 0.3), size_curve: "fireball_grow", ramp_curve: "cool", start: 0.01,
+                    duration: 0.4, curve: "punch",
+                ),
+                (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.4, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.45, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
+                    size: (scale: 0.26), size_curve: "smoke_grow", start: 0.08, duration: 0.9, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // Where plasma strikes: a cyan flash that blooms and fades, cold motes scattering.
+        "plasma_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, soft_depth: 0.2,
+                        rotation: Random, erosion: "glow_break",
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.3)),
+                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.16, curve: "flash", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.12), duration: 0.06, curve: "flash",
+                ),
+                (block: Particles(emitter: "energy_sparks"), size: (scale: 0.1)),
+            ],
+        ),
+        // Where acid spit or a spore lands: a wet splash crown, spatter, and a small stain
+        // that dries in a second.
+        "acid_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "acid_crown", ramp: "acid_crown", soft_depth: 0.2, rotation: Mirror,
+                        erosion: "erode_late",
+                        breakup: (noise: "noise_tile", scale: 1.4, amount: 0.35, softness: 0.2)),
+                    size: (scale: 0.28), size_curve: "burst_grow", duration: 0.3, curve: "punch", priority: Critical,
+                ),
+                (block: Particles(emitter: "spit_spatter"), size: (scale: 0.1)),
+                (
+                    block: Decal(texture: "acid_stain", ramp: "acid_stain", erosion: "erode_rise", depth: 0.6,
+                        breakup: (noise: "noise_tile", scale: 1.6, amount: 0.4, softness: 0.2)),
+                    size: (scale: 0.3), size_jitter: 0.25, start: 0.04, duration: 1.4, curve: "linger",
+                ),
+            ],
+        ),
+        // Where a needle strikes: chips and a pinch of dust.
+        "needle_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "hit_dust", soft_depth: 0.3, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.25, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.5, softness: 0.25, shade: 0.5)),
+                    size: (scale: 0.16), size_curve: "smoke_grow", duration: 0.45, curve: "puff_fade", priority: Critical,
+                ),
+                (block: Particles(emitter: "spine_chips"), size: (scale: 0.1)),
+            ],
+        ),
+        // Where a rocket or a shell bursts: a small fireball, sparks, dark smoke.
+        "rocket_hit": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.3,
+                        rotation: Random, erosion: "erode_late",
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
+                    size: (scale: 0.34), size_curve: "fireball_grow", ramp_curve: "cool",
+                    duration: 0.45, curve: "punch", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "droplet", ramp: "blast_flash", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.07, curve: "flash",
+                ),
+                (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.4, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.45, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
+                    size: (scale: 0.28), size_curve: "smoke_grow", start: 0.1, duration: 0.9, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // Where a beam burns into its target: a hot spot held while the beam holds, sparks.
+        "beam_burn": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.2,
+                        rotation: Random, erosion: "glow_break",
+                        breakup: (noise: "fire_noise", scale: 1.6, amount: 0.5, softness: 0.3)),
+                    size: (scale: 0.22), duration: 0.3, curve: "beam_hold", priority: Critical,
+                ),
+                (block: Particles(emitter: "energy_sparks"), size: (scale: 0.1)),
+            ],
+        ),
+        // Where a thermal lance burns into its target.
+        "lance_burn": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "lance_hot", shape: Radial, soft_depth: 0.2,
+                        rotation: Random, erosion: "glow_break",
+                        breakup: (noise: "fire_noise", scale: 1.6, amount: 0.5, softness: 0.3)),
+                    size: (scale: 0.22), duration: 0.3, curve: "beam_hold", priority: Critical,
+                ),
+                (block: Particles(emitter: "lance_sparks"), size: (scale: 0.1)),
+            ],
+        ),
+        // A psionic blade's strike (Zealot- or Dark-Templar-like): a blue crescent swung at the
+        // target at any angle, eroding away from its tail as it is thrown a little outward, a
+        // pinch of cold motes.
+        "psi_slash": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "psi_blade", mapping: Polar, thickness: 0.16,
+                        rotation: Random, arc: Some((scale: 0.36)), erosion: "slash_erode",
+                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.45, softness: 0.25)),
+                    radius: (from: (scale: 0.42), to: (scale: 0.5)), size_curve: "slash_grow",
+                    duration: 0.2, curve: "flash", priority: Critical,
+                ),
+                (block: Particles(emitter: "energy_sparks"), size: (scale: 0.1)),
+            ],
+        ),
+        // A claw's or a mandible's strike (Zergling-, Drone-, Queen- or Ultralisk-like): two
+        // pale crescents raked across the target, dark flecks thrown off.
+        "claw_rake": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "claw_edge", mapping: Polar, thickness: 0.14,
+                        rotation: Random, arc: Some((scale: 0.28)), erosion: "slash_erode",
+                        breakup: (noise: "noise_tile", scale: 3.0, amount: 0.45, softness: 0.25)),
+                    placement: Disc(count: 2, radius: (scale: 0.08)),
+                    radius: (from: (scale: 0.3), to: (scale: 0.36)), size_curve: "slash_grow",
+                    duration: 0.18, curve: "flash", priority: Critical,
+                ),
+                (block: Particles(emitter: "claw_flecks"), size: (scale: 0.1)),
+            ],
+        ),
+        // A tool's strike (a worker's cutter): a hot point and a spray of falling sparks.
+        "weld_sparks": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "weld_hot", shape: Radial, soft_depth: 0.1,
+                        rotation: Random, breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.3)),
+                    size: (scale: 0.12), size_curve: "flash_grow", duration: 0.1, curve: "flash", priority: Critical,
+                ),
+                (block: Particles(emitter: "weld_sparks"), size: (scale: 0.1)),
+            ],
+        ),
+        // A spine crawler's impaling strike: a chitin spike thrust up out of the ground under
+        // the target and drawn back, with chips and dust.
+        "impaler_strike": (
+            class: Minor,
+            event: Point,
+            layers: [
+                (
+                    block: Sprite(texture: "chitin_spine", ramp: "spine_chitin", orient: Upright, soft_depth: 0.05,
+                        rotation: Mirror, lift_curve: "spine_lift"),
+                    size: (scale: 0.4), size_curve: "spine_pop", duration: 0.4, priority: Critical,
+                ),
+                (block: Particles(emitter: "spine_chips"), size: (scale: 0.1)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "hit_dust", soft_depth: 0.3, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.2, 0.0),
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.5, softness: 0.25, shade: 0.5)),
+                    size: (scale: 0.22), size_curve: "dust_grow", start: 0.03, duration: 0.5, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // The default death (plan WP11, replacing the legacy glass shatter): the bubble's glass
+        // breaks outward in pale shards with one soft pale flash where it stood, and a little
+        // dust settles. Sized by the bubble.
+        "glass_shatter": (
+            class: Major,
+            event: Death,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "glass", shape: Radial, lift: 1.0, soft_depth: 0.4,
+                        breakup: (noise: "noise_tile", scale: 1.5, amount: 0.35, softness: 0.3)),
+                    size: (bind: UnitRadius, scale: 1.1), size_curve: "flash_grow", duration: 0.14,
+                    curve: "flash", priority: Critical,
+                ),
+                (block: Particles(emitter: "glass_shards"), size: (bind: UnitRadius, scale: 0.9)),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "dust_light", soft_depth: 0.5, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.3, 0.0), lift: 0.4,
+                        breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.25, shade: 0.5)),
+                    placement: Disc(count: 2, radius: (bind: UnitRadius, scale: 0.5)),
+                    size: (bind: UnitRadius, scale: 0.6), size_curve: "dust_grow", start: 0.05, duration: 0.9,
+                    curve: "puff_fade",
+                ),
+            ],
+        ),
+        // ---- WP11, F1: Fungal Growth (plan Amendment 24) --------------------------------------
+        // The missile in flight: a clot of dark spores in a sickly yellow-green glow, carried
+        // above the ground where the simulation flies it, shedding glowing motes that hang and
+        // fade behind it. Where it ends it lays `fungal_impact`.
+        "fungal_missile": (
+            class: Minor,
+            event: Missile,
+            emit: Some((effect: "fungal_trail", every: 0.035)),
+            impact: Some("fungal_impact"),
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 2.6,
+                        soft_depth: 0.1, breakup: (noise: "noise_tile", scale: 1.6, amount: 0.35, softness: 0.3)),
+                    size: (scale: 0.3), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
+                ),
+                (
+                    block: Sprite(texture: "acid_glob", ramp: "acid_glob", rotation: Random, lift: 6.5),
+                    size: (scale: 0.12), duration: 0.05, curve: "come_in", held: true, exit: 0.05,
+                    priority: Critical,
+                ),
+            ],
+        ),
+        // A mote shed by the flying missile: it hangs where it was shed, drifts and fades.
+        "fungal_trail": (
+            class: Ambient,
+            event: Missile,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 9.0,
+                        drift: (0.0, -0.15, 0.0), erosion: "erode_rise",
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.5, softness: 0.3)),
+                    placement: Disc(count: 2, radius: (scale: 0.1)),
+                    size: (scale: 0.08), size_jitter: 0.4, duration: 0.45, curve: "flash",
+                ),
+            ],
+        ),
+        // Where the missile ends: a burst of spores, a ring racing out to the search's radius
+        // and fading (`Critical`: the area the spell struck), spore clouds rising and thinning,
+        // and a fungal stain on the ground fading over the status the spell applies (`lasts:
+        // AreaTotal`), so the ground reads as fungaled exactly while its victims are.
+        "fungal_impact": (
+            class: Major,
+            event: Area,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 0.6,
+                        soft_depth: 0.3, breakup: (noise: "noise_tile", scale: 1.5, amount: 0.4, softness: 0.3)),
+                    size: (bind: AreaRadius, scale: 0.55), size_curve: "flash_grow", duration: 0.18,
+                    curve: "flash",
+                ),
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "spore_glow", orient: Ground, thickness: 0.22,
+                        mapping: Front, height: 0.04, erosion: "front_break",
+                        breakup: (noise: "noise_tile", scale: 6.0, amount: 0.5, softness: 0.3)),
+                    radius: (from: (bind: AreaRadius, scale: 0.35), to: (bind: AreaRadius, scale: 1.0), curve: "front"),
+                    duration: 0.45, curve: "front_fade", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "spore_cloud", soft_depth: 0.4, rotation: Random,
+                        erosion: "erode_rise", drift: (0.0, 0.35, 0.0), lift: 0.6, spread: 0.4,
+                        breakup: (noise: "noise_tile", scale: 1.3, amount: 0.5, softness: 0.25, shade: 0.5)),
+                    placement: Disc(count: 7, radius: (bind: AreaRadius, scale: 0.7)),
+                    size: (bind: AreaRadius, scale: 0.3), size_jitter: 0.35, size_curve: "smoke_grow",
+                    start: 0.03, duration: 1.3, curve: "puff_fade",
+                ),
+                (block: Particles(emitter: "spore_motes"), size: (bind: AreaRadius, scale: 0.8)),
+                (
+                    block: Decal(texture: "acid_stain", ramp: "fungal_mark", erosion: "erode_rise", depth: 0.8,
+                        breakup: (noise: "noise_tile", scale: 2.2, amount: 0.5, softness: 0.25),
+                        outline: Some((edge_noise: 0.12, fill: 0.6, soft: 0.35))),
+                    size: (bind: AreaRadius, scale: 1.0), start: 0.05, duration: 3.0, lasts: AreaTotal,
+                    curve: "linger",
+                ),
+            ],
+        ),
+        // The status of a unit eaten by something over time (`DamageOverTime`; plan WP11, F1):
+        // a sickly yellow-green light along its outline beating fast over a faintly green
+        // body, and glowing motes rising off it. A slowed body reads grey and dull instead
+        // (`concussive_daze`), so a unit both fungaled and slowed shows both.
+        "fungal_affliction": (
+            class: Minor,
+            event: Status,
+            emit: Some((effect: "fungal_motes", every: 0.22)),
+            layers: [
+                (
+                    block: Shell(tint: (0.45, 0.62, 0.10, 0.2), rim: (0.62, 0.95, 0.18, 0.6),
+                        pulse: Some((period: 0.4, depth: 0.5))),
+                    duration: 0.2, curve: "come_in", held: true, exit: 0.35, priority: Critical,
+                ),
+            ],
+        ),
+        // Motes rising off an afflicted body.
+        "fungal_motes": (
+            class: Ambient,
+            event: Status,
+            layers: [
+                (
+                    block: Sprite(texture: "droplet", ramp: "spore_glow", shape: Radial, lift: 2.5,
+                        drift: (0.0, 0.55, 0.0), erosion: "erode_rise",
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.5, softness: 0.3)),
+                    placement: Disc(count: 2, radius: (bind: UnitRadius, scale: 0.6)),
+                    size: (bind: UnitRadius, scale: 0.12), size_jitter: 0.4, duration: 0.7, curve: "flash",
+                ),
+            ],
+        ),
     },
     // Pool capacities (sized at load, never grown in a battle) and level of detail (§5.6).
     // Sized in WP6c to the measured peak of the stress run (`frame_budget --effect-stress 200`:
@@ -2236,19 +2985,25 @@
         full_particle_px: 96.0,
         crowd_threshold: 24,
     ),
-    // Effects used where a unit's presentation block names none. Weapons and deaths: none yet
-    // (WP11). Concealment and modes (WP8): every burrowed mode digs, stands and breaks out
-    // with these, every cloaked unit wears its viewer's cover, and every other mode that
-    // anchors its unit seals with `mode_seal_sweep`; a unit's block may name its own.
+    // Effects used where a unit's presentation block names none. Weapons: none (WP11: every
+    // shipped weapon names its own looks; the coverage test refuses a default for a splash).
+    // Deaths: `glass_shatter`, which replaced the legacy glass shatter (WP11). Concealment and
+    // modes (WP8): every burrowed mode digs, stands and breaks out with these, every cloaked
+    // unit wears its viewer's cover, and every other mode that anchors its unit seals with
+    // `mode_seal_sweep`; a unit's block may name its own.
     defaults: (
+        // WP11: a unit whose block names no death breaks its bubble's glass.
+        death: "glass_shatter",
         // WP9: every unit that receives one of these statuses shows it so, unless its block
-        // names its own look. Deaths have no default: the legacy glass shatter stays the
-        // default death, and a unit's block may name an effect that replaces it.
+        // names its own look.
         status: {
             Overclock: "stim_surge",
             Slowed: "concussive_daze",
             Dash: "charge_streak",
             Barrier: "barrier_shell",
+            // WP11, F1: a unit eaten over time (Fungal Growth; a storm's victims too, since the
+            // status table is per kind).
+            DamageOverTime: "fungal_affliction",
         },
         concealment: (
             burrow_enter: "burrow_dig",

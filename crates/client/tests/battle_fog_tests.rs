@@ -861,6 +861,9 @@ struct Delivered {
     events: Vec<CombatEventVisual>,
     /// Largest number of live effect entities seen on any frame.
     peak_effects: usize,
+    /// Effects the effect system spawned (plan WP11: it draws the shipped units' shots and
+    /// deaths in place of the legacy entities).
+    effects_spawned: u64,
 }
 
 type EffectFilter = Or<(
@@ -877,12 +880,16 @@ type EffectFilter = Or<(
 fn record_delivery(
     mut events: EventReader<'_, '_, CombatVisualEvent>,
     effects: Query<'_, '_, (), EffectFilter>,
+    runtime: Option<Res<'_, client::effects::runtime::EffectRuntime>>,
     mut delivered: ResMut<'_, Delivered>,
 ) {
     delivered
         .events
         .extend(events.read().map(|event| event.0.clone()));
     delivered.peak_effects = delivered.peak_effects.max(effects.iter().count());
+    if let Some(runtime) = runtime {
+        delivered.effects_spawned = runtime.stats.spawned;
+    }
 }
 
 fn recording(mut harness: Harness) -> Harness {
@@ -965,7 +972,12 @@ fn combat_in_sight_is_delivered() {
         "{:?}",
         seen.events
     );
-    assert!(seen.peak_effects > 0, "the effects must have been spawned");
+    // Plan WP11, re-baselined with that cause only: the shipped units' shots and deaths are the
+    // effect system's, so either it or (without it) the legacy cards drew them.
+    assert!(
+        seen.peak_effects > 0 || seen.effects_spawned > 0,
+        "the effects must have been spawned"
+    );
 }
 
 /// Publishes `events` through the world's real queue and returns what was delivered of them.

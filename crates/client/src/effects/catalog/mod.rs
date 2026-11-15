@@ -138,6 +138,10 @@ pub struct CardLook {
     pub shape: CardShape,
     /// Noise breakup.
     pub breakup: Option<Breakup>,
+    /// Whether the card rides the event's line over the layer's life (plan WP11).
+    pub ride: bool,
+    /// Length along the event's line over width, at least 1 (1 is a round card).
+    pub stretch: f32,
 }
 
 /// The look of a decal.
@@ -202,6 +206,9 @@ pub struct RibbonLook {
     pub shape: CardShape,
     /// Noise breakup.
     pub breakup: Option<Breakup>,
+    /// When set, the strip rides the line with the layer's life, its tail this many world
+    /// units behind its head (plan WP11), instead of racing out at `travel`.
+    pub trail: Option<f32>,
 }
 
 /// The look of a distortion disc (see [`schema::BlockDef::Distortion`]).
@@ -371,6 +378,21 @@ pub struct Layer {
     pub exit: f32,
     /// A factor on the intensity from a bound value, if any.
     pub strength: Option<schema::StrengthDef>,
+    /// The bound span of time the layer lasts, if any (see [`schema::LayerDef::lasts`]).
+    pub lasts: Option<schema::Binding>,
+}
+
+impl Layer {
+    /// The layer's life in seconds for an effect bound to `bound`: the value of the binding it
+    /// lasts when that is positive (a projectile's `FlightTime`, plan WP11), and its `duration`
+    /// otherwise.
+    #[must_use]
+    pub fn span(&self, bound: &crate::effects::binding::BoundValues) -> f32 {
+        self.lasts
+            .map(|binding| bound.get(binding))
+            .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+            .unwrap_or(self.duration)
+    }
 }
 
 /// A ring's radius over its layer's life, resolved.
@@ -411,6 +433,8 @@ pub struct Effect {
     pub emit: Option<Emit>,
     /// What a `Status` effect spawns on a published hit on its status.
     pub hit: Option<Hit>,
+    /// What a `Missile` effect lays where the missile ends (an `Area` effect).
+    pub impact: Option<EffectId>,
 }
 
 /// An effect laid again and again while a `Status` effect is held (see [`schema::EmitDef`]).
