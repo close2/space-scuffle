@@ -248,7 +248,7 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   `cargo test` in `flock ~/scratch/gate.lock`. Before other heavy runs, check the `anon` line of
   `/sys/fs/cgroup/user.slice/user-1002.slice/memory.stat` and keep it below about 56 GiB of the 66 GiB limit
   (`memory.current` also counts reclaimable page cache).
-- **Large files go on `~/scratch`.** The root disk is small and shared. The main checkout's own `target/` may stay on it for fast linking, but every agent worktree must build with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name>`, and large logs, captures and corpora belong under `~/scratch`. Remove a worktree, or at least its `target/`, once its branch is merged.
+- **Hot build output goes on the home disk; large files go on `~/scratch`.** The home disk (NVMe, with a per-user quota; check it with `quota -s`) holds the repository, active worktrees and hot build output. The main checkout's own `target/` stays in the checkout, and every agent worktree builds into a separate target directory, `CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/<worktree-name>`. Large logs, captures, rendered sheets, corpora and gate stamps belong under `~/scratch`, a slow spinning disk for cold, large, sequential files. Remove a worktree and its target directory once its branch is merged.
 
 ---
 
