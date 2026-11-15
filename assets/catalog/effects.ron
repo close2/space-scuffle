@@ -568,9 +568,9 @@
         // A rocket's smoke trail (alpha): a light grey that reads on dark and on bright ground,
         // thin where the noise thins it.
         "rocket_smoke": [
-            (0.00, (0.05, 0.05, 0.05, 0.00)),
-            (0.40, (0.16, 0.155, 0.15, 0.40)),
-            (1.00, (0.42, 0.41, 0.39, 0.62)),
+            (0.00, (0.03, 0.03, 0.03, 0.00)),
+            (0.40, (0.08, 0.078, 0.075, 0.55)),
+            (1.00, (0.24, 0.235, 0.225, 0.75)),
         ],
         // Dust kicked up where a round strikes (alpha): light grey-brown.
         "hit_dust": [
@@ -2547,11 +2547,11 @@
                     block: Ribbon(texture: "droplet", ramp: "rocket_smoke", shape: Radial, trail: Some(1.3),
                         taper: (0.5, 0.0), erosion: "beam_erode",
                         breakup: (noise: "noise_tile", scale: 1.0, amount: 0.6, softness: 0.3)),
-                    size: (scale: 0.09), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
+                    size: (scale: 0.13), duration: 0.6, curve: "flight_hold", lasts: FlightTime,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, ride: true, stretch: 2.2),
-                    size: (scale: 0.09), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
+                    size: (scale: 0.12), duration: 0.6, curve: "flight_hold", lasts: FlightTime, priority: Critical,
                 ),
             ],
         ),
@@ -2633,7 +2633,7 @@
                 (
                     block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, soft_depth: 0.1,
                         rotation: Random, breakup: (noise: "noise_tile", scale: 1.8, amount: 0.4, softness: 0.3)),
-                    size: (scale: 0.17), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
+                    size: (scale: 0.22), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
                 ),
                 (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
                 (
@@ -2652,13 +2652,13 @@
                 (
                     block: Sprite(texture: "droplet", ramp: "blast_flash", shape: Radial, soft_depth: 0.2,
                         rotation: Random, breakup: (noise: "noise_tile", scale: 1.5, amount: 0.35, softness: 0.3)),
-                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
+                    size: (scale: 0.42), size_curve: "flash_grow", duration: 0.08, curve: "flash", priority: Critical,
                 ),
                 (
                     block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.3,
                         rotation: Random, erosion: "erode_late",
                         breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
-                    size: (scale: 0.3), size_curve: "fireball_grow", ramp_curve: "cool", start: 0.01,
+                    size: (scale: 0.45), size_curve: "fireball_grow", ramp_curve: "cool", start: 0.01,
                     duration: 0.4, curve: "punch",
                 ),
                 (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
@@ -2666,7 +2666,7 @@
                     block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.4, rotation: Random,
                         erosion: "erode_rise", drift: (0.0, 0.45, 0.0),
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
-                    size: (scale: 0.26), size_curve: "smoke_grow", start: 0.08, duration: 0.9, curve: "puff_fade",
+                    size: (scale: 0.4), size_curve: "smoke_grow", start: 0.08, duration: 0.9, curve: "puff_fade",
                 ),
             ],
         ),
@@ -2679,7 +2679,7 @@
                     block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, soft_depth: 0.2,
                         rotation: Random, erosion: "glow_break",
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.3)),
-                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.16, curve: "flash", priority: Critical,
+                    size: (scale: 0.4), size_curve: "flash_grow", duration: 0.16, curve: "flash", priority: Critical,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "plasma", shape: Radial, soft_depth: 0.2),
@@ -2698,7 +2698,7 @@
                     block: Sprite(texture: "acid_crown", ramp: "acid_crown", soft_depth: 0.2, rotation: Mirror,
                         erosion: "erode_late",
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.35, softness: 0.2)),
-                    size: (scale: 0.28), size_curve: "burst_grow", duration: 0.3, curve: "punch", priority: Critical,
+                    size: (scale: 0.38), size_curve: "burst_grow", duration: 0.3, curve: "punch", priority: Critical,
                 ),
                 (block: Particles(emitter: "spit_spatter"), size: (scale: 0.1)),
                 (
@@ -2731,19 +2731,19 @@
                     block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire", soft_depth: 0.3,
                         rotation: Random, erosion: "erode_late",
                         breakup: (noise: "noise_tile", scale: 1.3, amount: 0.35, softness: 0.14, shade: 0.7)),
-                    size: (scale: 0.34), size_curve: "fireball_grow", ramp_curve: "cool",
+                    size: (scale: 0.5), size_curve: "fireball_grow", ramp_curve: "cool",
                     duration: 0.45, curve: "punch", priority: Critical,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "blast_flash", shape: Radial, soft_depth: 0.2),
-                    size: (scale: 0.3), size_curve: "flash_grow", duration: 0.07, curve: "flash",
+                    size: (scale: 0.42), size_curve: "flash_grow", duration: 0.07, curve: "flash",
                 ),
                 (block: Particles(emitter: "hit_sparks"), size: (scale: 0.1)),
                 (
                     block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.4, rotation: Random,
                         erosion: "erode_rise", drift: (0.0, 0.45, 0.0),
                         breakup: (noise: "noise_tile", scale: 1.2, amount: 0.45, softness: 0.2, shade: 0.5)),
-                    size: (scale: 0.28), size_curve: "smoke_grow", start: 0.1, duration: 0.9, curve: "puff_fade",
+                    size: (scale: 0.42), size_curve: "smoke_grow", start: 0.1, duration: 0.9, curve: "puff_fade",
                 ),
             ],
         ),
