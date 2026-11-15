@@ -185,8 +185,8 @@ pub enum GateError {
     DirtyTree(String),
     /// A tier was run in an agent worktree without `CARGO_TARGET_DIR` (charter §7).
     #[error(
-        "{0} is an agent worktree: set CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name> \
-         first (charter §7)"
+        "{0} is an agent worktree, which builds into a separate target directory: set \
+         CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/<worktree-name> first (charter §7)"
     )]
     TargetDirRequired(PathBuf),
     /// The command line could not be understood.

@@ -394,7 +394,8 @@ impl RunReport {
     }
 }
 
-/// Fails when `root` is an agent worktree and `CARGO_TARGET_DIR` is unset (charter §7).
+/// Fails when `root` is an agent worktree and `CARGO_TARGET_DIR` is unset (charter §7): an agent
+/// worktree builds into a separate target directory, `/home/spacescuffle/cargo-target/<worktree-name>`.
 ///
 /// # Errors
 /// [`GateError::TargetDirRequired`].
@@ -406,7 +407,8 @@ pub fn check_target_dir(root: &Path) -> Result<(), GateError> {
 }
 
 /// Whether a build in `root` with `CARGO_TARGET_DIR` = `target_dir` breaks charter §7: an agent
-/// worktree must build into `~/scratch`, never into its own `target/`.
+/// worktree must build into a separate target directory,
+/// `/home/spacescuffle/cargo-target/<worktree-name>`, never into its own `target/`.
 fn target_dir_required(root: &Path, target_dir: Option<&std::ffi::OsStr>) -> bool {
     let in_worktree = root.to_string_lossy().contains("/.claude/worktrees/");
     in_worktree && target_dir.is_none_or(std::ffi::OsStr::is_empty)
@@ -1139,13 +1141,13 @@ mod tests {
     #[test]
     fn a_worktree_without_a_target_dir_is_refused() {
         let worktree = Path::new("/home/u/repo/.claude/worktrees/agent-x");
-        let scratch = std::ffi::OsStr::new("/home/u/scratch/cargo-target/agent-x");
+        let separate = std::ffi::OsStr::new("/home/u/cargo-target/agent-x");
         assert!(target_dir_required(worktree, None));
         assert!(target_dir_required(
             worktree,
             Some(std::ffi::OsStr::new(""))
         ));
-        assert!(!target_dir_required(worktree, Some(scratch)));
+        assert!(!target_dir_required(worktree, Some(separate)));
         assert!(!target_dir_required(Path::new("/home/u/repo"), None));
     }
 
