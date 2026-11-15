@@ -2394,3 +2394,167 @@ The full-range tether spans 250 px on both drivers, and its ends stay 0.52 and 0
 The figures are in `wp10r4_measurements.txt`.
 
 Packet: section "WP10 round 4".
+
+## Amendment 24: WP11, the weapons' own looks, round 1 (2026-11-15, short note, charter §6)
+
+**Decision note (charter §6, short note: a client presentation change, catalog presentation data and their tests).**
+WP11 of §9 in the client and the catalog's presentation data, with the items the earlier rounds left for it: F1
+(Fungal Growth, WP10 review 1), E3-1 (the distortion pipeline's warm-up, WP9 review 3) and the cleave's direction
+(Amendment 5). No simulation state, golden replay or checksum changes (D-1 holds): the client reads the weapon events
+and `RenderSnapshot::spell_missiles` the simulation already publishes, and the spell catalog's effect trees and
+statuses; no simulation crate is touched.
+
+**Engine (`client::effects`).**
+
+- **`Shot` events.** A new event kind, `Shot`: a weapon's shot from where it leaves its unit's bubble to where it
+  lands. A unit's block names it in a weapon's `travel` slot (only a `Shot` effect fits there). It binds `LineLength`
+  and `FlightTime` (0 for an instant shot). `effects::systems::travel_request` builds its line:
+  - a tracer's or a beam's line starts on the source's bubble (the event publishes the source's centre; the bubble's
+    radius is the archetype's collision radius, at most 0.8 of the shot) and ends at the impact;
+  - a projectile's line runs from where the simulation launched it (already on the source's bubble) to where it
+    arrives, and binds its flight.
+
+  A shot is its own effect: it never joins another along the same path (`merge_line` joins only a splash line's
+  searches).
+- **Riding the line.** A `Sprite` may `ride` its line: its placed point moves from the line's start to its end over
+  the layer's life (a projectile's body). It may be drawn out along the line (`stretch`, camera-facing only). A
+  `Ribbon` may ride its line with a `trail`: its head at the share of the line the layer's life has reached, its tail
+  that many world units behind (a tracer round's slug, a projectile's trail).
+- **Bound spans.** A layer may `lasts: FlightTime` (a shot's layers last the projectile's flight; an instant shot keeps
+  `duration`) or `lasts: AreaTotal` / `AreaRemaining` (an area's mark lasts as long as its spell's status). The
+  effect's lifetime and its decal reservations follow (`runtime::one_shot_lifetime`, `Layer::span`).
+- **Rings roll.** A `Ring` may be rolled (`rotation: Random`), so a blade's crescent (an arc) is swung at any angle.
+- **The legacy cards are left out where a unit names its looks.** `effects::systems::replaces_legacy`: a tracer,
+  beam, projectile or melee event whose unit's block has an entry for that weapon, or a death whose unit has a death
+  look, is drawn by the effect system only. Every shipped unit and structure has such entries, and the vocabulary's
+  default death is now `glass_shatter`, so in a battle the legacy cards draw nothing. They remain as the fallback for
+  an event no block covers: a synthetic event (diagnostics, tests) or a client without the effect system.
+- **Fog (D-5).** A shot is admitted with its event, where it lands. It is cut where the viewer stops seeing its path
+  (`effects::systems::shot_clip`): the fog is asked every 0.05 units from the landing point back towards the muzzle,
+  on the path and 0.35 units either side of it, and the shot is drawn from 0.05 units past the last seen sample on.
+  A shot out of the fog is drawn from the fog's edge. A cloaked attacker's shots are seen, as in StarCraft II and as
+  the legacy cards drew them, but the attacker is not.
+- **Spell missiles (F1).** A new event kind, `Missile`: a spell missile in flight, held while
+  `RenderSnapshot::spell_missiles` publishes it (`effects::areas::keep_missiles`):
+  - its position is interpolated between the two ticks of the presented instant
+    (`BattleFrameState::presented_missiles`);
+  - it is drawn only while the viewer sees the ground round it;
+  - it may `emit` an effect of its own kind at its beat (motes it sheds, left where they were shed).
+
+  When it is no longer published it has landed: its look is released and its `impact` (an `Area` effect) is laid
+  where it was drawn last. The impact binds `AreaRadius` (the first search of the ability's effect tree,
+  `EffectFacts::targeting_radius`) and `AreaTotal` / `AreaRemaining` (the longest status the tree applies), both read
+  from the spell catalog when the tables are built (`UnitEffectTables::missile_extent`). It is cut by the fog as an
+  area of that radius is, and not laid at all where the viewer sees none of it.
+- **E3-1.** `queue_distortions` asks for its pipeline every frame, as the card and decal queues do.
+- **The effect lab** spawns a `Shot` or `Point` subject half a unit above the ground, where the simulation publishes
+  shots, and cuts a shot under its fog veil as a battle does.
+
+**Looks** (`effects.ron`; no new texture, nothing spent; every one built from `droplet`, `smoke_puff`,
+`fireball_flipbook`, `acid_glob`, `acid_crown`, `acid_stain`, `chitin_spine`, `debris_atlas` and the noise set). The
+art rules hold: no ray, stripe, sunburst or speed line. A kinetic round is a short slug crossing the gap in a few
+frames, never a line across it. A beam is a flowing column broken by its noise. A projectile is a body of light or
+matter flying the path.
+
+| Family | Look (travel; impact) | Named by |
+|---|---|---|
+| Kinetic rounds | `gauss_tracer`; `bullet_hit` | `pulse_bot` (both slots) |
+| Heavy rounds | `cannon_tracer`; `cannon_hit` (the sieged weapon keeps `shell_impact`) | `railgun_crawler` (both stances), `colossus_mech`, `planetary_bulwark_dome` |
+| Sniper round | `sniper_tracer`; `bullet_hit` | `specter_android` |
+| Plasma bolts | `plasma_bolt`; `plasma_hit` | `warp_strider`, `astral_vagrant`, `cerebral_elder`, `mothership_carrier`, `tesla_sentinel_dome` |
+| Acid spit | `acid_spit`; `acid_hit` | `rhino_beetle`, `mortar_stag`, `spore_matriarch` |
+| Spore bolts | `spore_bolt`; `acid_hit` | `sonic_bat`, `sky_leviathan`, `hive_matron` (air), `spore_spire_dome` |
+| Needles | `needle_volley`; `needle_hit` | `thorn_viper`, `hive_matron` (its talons are a spine projectile: the weapon has a projectile speed) |
+| Rockets | `rocket_trail`; `rocket_hit` (the Liberator analogue keeps `flak_burst`) | `vector_interceptor`, `cloak_gunship`, `sky_bastion`, `flak_array_dome` |
+| Shell | `grenade_lob`; `rocket_hit` | `shock_golem` |
+| Beams | `prism_beam`; `beam_burn` | `prismatic_saucer`, `flying_saucer`, `prism_weaver` |
+| Lance | `lance_beam`; `lance_burn` (the line keeps `lance_sweep`) | `tripod_annihilator` |
+| Blades | `psi_slash` (impact) | `psi_grey`, `shadow_visitor` |
+| Claws | `claw_rake` (impact; the Ultralisk analogue keeps `cleave_impact`) | `razor_mantis`, `nectar_worker`, `stag_behemoth` |
+| Tools | `weld_sparks` (impact) | `welder_drone`, `grav_harvester` |
+| Impaler | `impaler_strike` (impact) | `thorn_lasher_dome` |
+| Death | `glass_shatter` (`defaults.death`) | every unit and structure whose block names no death |
+| Fungal Growth (F1) | `fungal_missile` (held), `fungal_trail`, `fungal_impact`; `fungal_affliction` and `fungal_motes` (`defaults.status.DamageOverTime`) | `mycelium_shaman` (`"Fungal Growth"`) |
+
+The flame jet (`napalm_wheeler`) names no travel: its jet is its splash, so its legacy tracer is gone. The sieged
+tank and the Liberator analogue gain a travel next to their accepted splash. The accepted effects themselves are
+unchanged.
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **The legacy module stays as a fallback; its kinds are retired from the shipped game, not deleted.** No shipped
+  event reaches them. Deleting `vfx.rs` and `combat_fx.wgsl` would also remove the runtime capture's ownership audit
+  (`client_diagnostics::runtime_capture::ownership`), which stages synthetic events from no catalog unit and
+  inspects their legacy entities. Replacing that audit belongs to a later cleanup, with its own evidence.
+  `round2_visual_tests.rs` and `combat_fx_slot_gpu_tests.rs` test the module directly and stay green unchanged.
+- **Lightning.** No shipped weapon delivers lightning (`WeaponVisualKind::LightningArc` is used by no unit or
+  structure), so no lightning look is authored; the legacy kind remains only as the fallback.
+- **Weapons that publish no delivery event.** An instant weapon whose visual kind is `Projectile` publishes nothing
+  for the client: `jet_jumper` (Reaper analogue), `void_goliath` (Immortal analogue) and `colossus_mech`'s air
+  weapon. `volatile_tick`'s detonation shows its splash only. They name no travel or impact, the coverage test lists
+  them, and the gap is a simulation data question (a projectile speed or another visual kind), outside this plan's
+  presentation-only rule. Recorded.
+- **The cleave's direction is not added.** `SplashVisual` carries no facing. Pairing the cleave's search with the
+  same tick's `MeleeSlashVisual` would rest on event order and positions, not on a published fact. A
+  presentation-only facing on `SplashVisual` is a simulation crate change. Recorded, as Amendment 5 left it.
+- **Fungal impact position.** The simulation stops publishing a missile on the tick it lands, so its impact is laid
+  where it was drawn last: at most one tick's flight short of the target point (0.67 units for Fungal Growth). An
+  exact point needs a published impact (a presentation-only event). Recorded.
+- **`DamageOverTime` is one status kind.** The status table is per kind, so a unit hurt by a storm also wears
+  `fungal_affliction`. A look per status needs the status's name in the snapshot (a simulation change). Recorded.
+- **Units without media stay unpresented.** In a battle the looks draw only for units with media. Shown only in the
+  lab, or by stand-ins in the tests: `tripod_annihilator` (`lance_beam`, `lance_burn`), `void_goliath` (none),
+  `mycelium_shaman` (the Fungal looks; the GPU evidence casts it from a presentable stand-in given a copy of the
+  ability and block in the test world's catalog only), and every other unit or structure without media, listed in
+  the packet.
+- **No team colour.** The legacy cards were tinted by their owner's colour; the new looks are not (the reference
+  game does not tint weapon effects either). Ownership reads from the units.
+
+**Tests.**
+
+- `effect_catalog_tests.rs`:
+  - `every_shipped_weapon_names_the_looks_of_the_event_it_publishes`: the coverage test over the whole catalog.
+    Every weapon of every shipped unit and structure that publishes a delivery event is named in its block under
+    the key the simulation tags it with. A projectile's travel flies its path for its flight, and an instant line's
+    travel does not wait for one. A melee strike has an impact and no travel. A splash weapon names its splash. The
+    vocabulary has no weapon default (`defaults.splash` and `defaults.impact` are empty), and every unit has a death
+    look.
+  - `shot_layers_ride_their_line_and_last_their_flight` and `a_missile_holds_its_look_and_lays_an_area_impact`:
+    the new fields resolve, and each misuse is refused with its field.
+  - The ability-look test admits `Missile` looks whose impact binds `AreaRadius`.
+- `weapon_look_tests.rs` (new): the travel request of an instant shot (from the bubble's surface to the impact,
+  binding its length) and of a projectile (whose `Critical` body is over 25, 50 and 75 % of the path at those shares
+  of its flight, and gone with the effect once it lands); two shots along one path are two effects; a melee strike
+  asks for its impact only; the legacy card is replaced exactly where a unit names its looks, and every shipped death
+  has a look; a spell missile holds one look in flight and lands one impact where it was drawn last, bound to the
+  spell catalog's radius and status duration; an unseen missile draws nothing and lands nothing.
+- `effects::systems` unit tests: `shot_clip` (seen whole, out of the fog, fog beside the path, seen only at the
+  landing point, a vertical shot).
+- `effects::runtime` unit test: a trailing ribbon rides its line.
+- `effect_slice_gpu_tests.rs`, new parent `shipped_shots_draw_along_their_paths` (radv and lavapipe): every
+  shipped `Shot` look in the production lab on a 6-unit line. Its `Critical` layers stay within their half width of
+  the projected path. A beam's ends are within 3 px of the muzzle and the impact. A slug's head, or a projectile's
+  body, is within 3 px of where the shot has reached. Nothing is drawn after the shot ends. Under the lab's fog over
+  the muzzle half, no pixel over the unseen half changes.
+- `status_gpu_tests.rs`, re-baselined with that cause only: the control unit, whose block names no death, now dies
+  with `glass_shatter`, which is counted like the named deaths, and no dying unit draws legacy shards.
+- `area_link_gpu_tests.rs`: the caster stand-in copies area and tether looks only. A new child,
+  `fungal_growth_flies_lands_and_afflicts`, gives a stand-in a copy of Fungal Growth and its block. It casts the
+  spell on enemies in sight while an enemy stand-in in the fog casts it at the edge of the viewer's sight, and it
+  pictures every frame. The test checks that the missile looks are held in flight, that each missile lands one
+  impact, and that the victims wear the affliction.
+- `battle_fog_tests.rs`, `sync_steady_state_tests.rs` (C-17), re-baselined with that cause only: combat in sight is
+  drawn by the effect system or by the legacy cards. In a battle the legacy material pool now adds no material.
+- `sync_steady_state_tests.rs` and the valgrind-counted `sync_allocation_count_tests.rs`: in the effect-stream
+  window every weapon also shoots a test `Shot` along its path. The valgrind window also holds a spell missile that
+  lands and is replaced every eight frames.
+- `client_diagnostics::runtime_capture`: the combat checkpoint accepts the effect system's cards, as well as a
+  legacy card, as the produced combat effect. It requires the effect card pipeline (`shaders/effects/sprite.wgsl`, a
+  fourth readiness shader) in place of the legacy one.
+
+**Measured (lavapipe; the server's physical GPU exposed no render node this round, so no radv run exists).** The
+shots' paths, ends and fog results, the Fungal counts and the coverage report are in
+`docs/evidence/effects/review/wp11r1_measurements.txt`.
+
+**Gate.** The packet's section "WP11 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).

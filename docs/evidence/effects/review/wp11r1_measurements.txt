@@ -1,0 +1,84 @@
+WP11 round 1 measurements (plan Amendment 24).
+Driver: lavapipe (Mesa 25.0.7, llvmpipe), debug build under Xvfb, 1280x720. The server's physical GPU
+exposed no render node (/dev/dri held only a virtual card0) for the whole round, so no radv run exists.
+
+## effect_slice_gpu_tests::shipped_shots_draw_along_their_paths
+Every shipped Shot look; Critical layers only; a 6-unit line half a unit above the bright ground at the
+battle camera's default zoom; projectiles bind a 0.6 s flight. 'Off the path' is the largest distance of a
+changed pixel from the projected path; the fog take covers the muzzle half of the path.
+shot acid_spit (flight 0.60 s): 25 Critical pixels, at most 4.8 px off the path (half width 7.5); body centred +0.06 px from where the flight reached; nothing after its end; under the fog 90 pixels on the seen half and none on the unseen one
+shot cannon_tracer (flight 0.00 s): 95 Critical pixels, at most 1.2 px off the path (half width 2.2); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 222 pixels on the seen half and none on the unseen one
+shot gauss_tracer (flight 0.00 s): 40 Critical pixels, at most 0.8 px off the path (half width 1.4); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 100 pixels on the seen half and none on the unseen one
+shot grenade_lob (flight 0.60 s): 20 Critical pixels, at most 1.8 px off the path (half width 2.7); body centred +0.00 px from where the flight reached; nothing after its end; under the fog 43 pixels on the seen half and none on the unseen one
+shot lance_beam (flight 0.00 s): 463 Critical pixels, at most 1.2 px off the path (half width 2.0); beam ends +1.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 1262 pixels on the seen half and none on the unseen one
+shot needle_volley (flight 0.60 s): 16 Critical pixels, at most 5.8 px off the path (half width 6.5); body centred -2.00 px from where the flight reached; nothing after its end; under the fog 12 pixels on the seen half and none on the unseen one
+shot plasma_bolt (flight 0.60 s): 52 Critical pixels, at most 2.8 px off the path (half width 3.7); body centred +0.04 px from where the flight reached; nothing after its end; under the fog 275 pixels on the seen half and none on the unseen one
+shot prism_beam (flight 0.00 s): 446 Critical pixels, at most 1.2 px off the path (half width 2.0); beam ends +1.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 1308 pixels on the seen half and none on the unseen one
+shot rocket_trail (flight 0.60 s): 63 Critical pixels, at most 2.8 px off the path (half width 4.1); body centred +0.07 px from where the flight reached; nothing after its end; under the fog 169 pixels on the seen half and none on the unseen one
+shot sniper_tracer (flight 0.00 s): 56 Critical pixels, at most 0.8 px off the path (half width 1.2); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 55 pixels on the seen half and none on the unseen one
+shot spore_bolt (flight 0.60 s): 10 Critical pixels, at most 3.2 px off the path (half width 4.4); body centred -0.30 px from where the flight reached; nothing after its end; under the fog 99 pixels on the seen half and none on the unseen one
+
+## area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts
+driver lavapipe: Fungal Growth: missile looks held on 22 of 91 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 4; fog edge Some([18.884506, 7.2621036])
+
+## status_gpu_tests (re-baselined: the control unit dies with glass_shatter)
+driver lavapipe: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver lavapipe: dying unit 3 (glass_shatter) had at most 0 legacy shards near it
+driver lavapipe: bio_burst spawned 1 times at the deaths (expected 1)
+driver lavapipe: glass_shatter spawned 2 times at the deaths (expected 1)
+driver lavapipe: vehicle_wreck spawned 2 times at the deaths (expected 2)
+
+## effect_catalog_tests::every_shipped_weapon_names_the_looks_of_the_event_it_publishes
+weapon coverage: 46 weapons named
+  welder_drone Primary None MeleeSlash -> travel None, impact Some("weld_sparks"), splash None
+  pulse_bot Primary None Hitscan -> travel Some("gauss_tracer"), impact Some("bullet_hit"), splash None
+  pulse_bot Air None Hitscan -> travel Some("gauss_tracer"), impact Some("bullet_hit"), splash None
+  rhino_beetle Primary None Projectile -> travel Some("acid_spit"), impact Some("acid_hit"), splash None
+  psi_grey Primary None MeleeSlash -> travel None, impact Some("psi_slash"), splash None
+  railgun_crawler Primary None Hitscan -> travel Some("cannon_tracer"), impact Some("cannon_hit"), splash None
+  railgun_crawler Primary Some("siege_mode") Hitscan -> travel Some("cannon_tracer"), impact None, splash Some("shell_impact")
+  flying_saucer Air None LaserBeam -> travel Some("prism_beam"), impact Some("beam_burn"), splash None
+  tesla_sentinel_dome Ground None LaserBeam -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  tesla_sentinel_dome Air None LaserBeam -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  shock_golem Primary None Projectile -> travel Some("grenade_lob"), impact Some("rocket_hit"), splash None
+  specter_android Primary None Hitscan -> travel Some("sniper_tracer"), impact Some("bullet_hit"), splash None
+  napalm_wheeler Primary None Hitscan -> travel None, impact None, splash Some("flame_line")
+  colossus_mech Primary None Hitscan -> travel Some("cannon_tracer"), impact Some("cannon_hit"), splash None
+  vector_interceptor Air None Projectile -> travel Some("rocket_trail"), impact Some("rocket_hit"), splash None
+  sky_bastion Air None Projectile -> travel Some("rocket_trail"), impact None, splash Some("flak_burst")
+  cloak_gunship Primary None Projectile -> travel Some("rocket_trail"), impact Some("rocket_hit"), splash None
+  grav_harvester Primary None MeleeSlash -> travel None, impact Some("weld_sparks"), splash None
+  warp_strider Primary None Projectile -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  warp_strider Air None Projectile -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  prism_weaver Primary None LaserBeam -> travel Some("prism_beam"), impact Some("beam_burn"), splash None
+  astral_vagrant Primary None Projectile -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  cerebral_elder Primary None Projectile -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  shadow_visitor Primary None MeleeSlash -> travel None, impact Some("psi_slash"), splash None
+  tripod_annihilator Primary None LaserBeam -> travel Some("lance_beam"), impact Some("lance_burn"), splash Some("lance_sweep")
+  prismatic_saucer Primary None LaserBeam -> travel Some("prism_beam"), impact Some("beam_burn"), splash None
+  prismatic_saucer Air None LaserBeam -> travel Some("prism_beam"), impact Some("beam_burn"), splash None
+  mothership_carrier Primary None Projectile -> travel Some("plasma_bolt"), impact Some("plasma_hit"), splash None
+  nectar_worker Primary None MeleeSlash -> travel None, impact Some("claw_rake"), splash None
+  razor_mantis Primary None MeleeSlash -> travel None, impact Some("claw_rake"), splash None
+  volatile_tick Primary None Projectile -> travel None, impact None, splash Some("acid_burst")
+  mortar_stag Primary None Projectile -> travel Some("acid_spit"), impact Some("acid_hit"), splash None
+  thorn_viper Primary None Projectile -> travel Some("needle_volley"), impact Some("needle_hit"), splash None
+  thorn_viper Air None Projectile -> travel Some("needle_volley"), impact Some("needle_hit"), splash None
+  burrow_scorpion Primary Some("burrowed") MeleeSlash -> travel None, impact None, splash Some("spine_line")
+  sonic_bat Primary None Projectile -> travel Some("spore_bolt"), impact Some("acid_hit"), splash None
+  sonic_bat Air None Projectile -> travel Some("spore_bolt"), impact Some("acid_hit"), splash None
+  sky_leviathan Air None Projectile -> travel Some("spore_bolt"), impact Some("acid_hit"), splash None
+  spore_matriarch Primary None Projectile -> travel Some("acid_spit"), impact Some("acid_hit"), splash None
+  stag_behemoth Primary None MeleeSlash -> travel None, impact Some("claw_rake"), splash Some("cleave_impact")
+  hive_matron Primary None MeleeSlash -> travel Some("needle_volley"), impact Some("needle_hit"), splash None
+  hive_matron Air None Projectile -> travel Some("spore_bolt"), impact Some("acid_hit"), splash None
+  planetary_bulwark_dome Ground None Hitscan -> travel Some("cannon_tracer"), impact Some("cannon_hit"), splash None
+  flak_array_dome Air None Projectile -> travel Some("rocket_trail"), impact Some("rocket_hit"), splash None
+  thorn_lasher_dome Ground None MeleeSlash -> travel None, impact Some("impaler_strike"), splash None
+  spore_spire_dome Air None Projectile -> travel Some("spore_bolt"), impact Some("acid_hit"), splash None
+weapons that publish no delivery event: 3
+  jet_jumper Primary None Projectile
+  colossus_mech Air None Projectile
+  void_goliath Primary None Projectile

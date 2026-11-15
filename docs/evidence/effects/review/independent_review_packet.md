@@ -7,6 +7,102 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 1 (the weapons' own looks, the default death, Fungal Growth)
+
+WP11 moves every weapon look from the legacy combat cards (`vfx.rs`, `combat_fx.wgsl`) into effect definitions that
+each unit and structure names in its presentation block. It also adds a default death (`glass_shatter`, which
+replaces the legacy glass shatter) and the Fungal Growth looks left open by WP10 (F1). The decisions are plan
+Amendment 24. This is round 1 of at most five (Q0080). Please write your review to a new file next to this one,
+`independent_review_wp11_1.md`, in the same form as the WP10 reviews. Judge each family below against each of the
+seven checklist items, and check the fog rules and the engineering items. Nothing was spent and no texture was made.
+Every look is built from the existing sets.
+
+**Driver note.** The server's physical GPU had no render node for the whole of this round (`/dev/dri` held only a
+virtual `card0`; `vulkaninfo` with the radv manifest found no device), so every picture and every GPU test of this
+round ran on lavapipe, the CI reference. No radv picture exists for this round.
+
+### What the looks are meant to be (art rules: no rays, stripes, sunbursts, beams or speed lines as decoration)
+
+| Family | Looks | Meant to read as |
+|---|---|---|
+| Kinetic rounds | `gauss_tracer`, `sniper_tracer`, `cannon_tracer`; `bullet_hit`, `cannon_hit` | A muzzle flash on the shooter's bubble and a short glowing slug that crosses the gap in a few frames, never a line drawn across the whole gap; a heavy round has a broader flash, a breath of smoke and a thicker slug. Where it lands: a hot point, a few sparks and a pinch of dust (a heavy round: a small fireball and smoke). |
+| Plasma | `plasma_bolt`; `plasma_hit` | A white core drawn out by its speed inside a blue halo, flying the whole flight, with a short fading trail; a cyan bloom and cold motes where it lands. |
+| Beams | `prism_beam`, `lance_beam`; `beam_burn`, `lance_burn` | A column of energy (a soft violet or orange body and a white core whose noise flows towards the target and breaks it up), a glow where it leaves the bubble, a burning hot spot with sparks on the target. It is the weapon, so it is a beam, but it must read as energy and not as a flat line. |
+| Bio projectiles | `acid_spit`, `spore_bolt`, `needle_volley`; `acid_hit`, `needle_hit` | A dark wet glob tumbling along the flight with a glowing acid trail; a small dark glob inside a yellow-green glow; two dark chitin needles side by side. Where they land: a wet splash crown, spatter and a small stain that dries in about a second; chips and dust. |
+| Explosive | `rocket_trail`, `grenade_lob`; `rocket_hit` | A hot flame at the rocket's head with a grey smoke trail broken by its noise; a dark tumbling shell with a dull glow; a small fireball, sparks and dark smoke where it bursts. |
+| Melee | `psi_slash`, `claw_rake`, `weld_sparks`, `impaler_strike` | A blue psionic crescent swung across the target at any angle; two pale crescents raked across it with dark flecks; a hot point and falling welding sparks; a chitin spike thrust up under the target with chips and dust. |
+| Death | `glass_shatter` | The bubble's glass breaking outward in pale shards, one soft pale flash, a little dust. |
+| Fungal Growth (F1) | `fungal_missile`, `fungal_trail`, `fungal_impact`, `fungal_affliction` | A clot of dark spores in a sickly yellow-green glow flying above the ground and shedding motes; where it lands, a burst of spores, a ring racing out to the spell's search radius, rising spore clouds and a mould stain fading over the status's duration; a fungaled unit beats with a yellow-green rim and sheds rising motes (a slowed unit reads grey and dull instead). |
+
+### How the shots are drawn, and the fog (Amendment 24)
+
+- A tracer's or a beam's line starts on the shooter's bubble and ends at the impact. A projectile flies from where
+  the simulation launched it to where it arrives, over its flight. Two shots along one path are two effects.
+- A shot is admitted where it lands (as every event is) and cut where the viewer stops seeing its path: a shot out of
+  the fog is drawn from the fog's edge on. A cloaked attacker's shots are seen, as in StarCraft II and as the legacy
+  cards drew them; the attacker is not.
+- A spell missile is drawn while the viewer sees the ground round it. Its impact is cut as an area of the spell's
+  radius is (WP10's rule), and is not laid where the viewer sees none of it.
+
+### Not presented in a battle, and not covered
+
+- Units without media are not presented in a battle. In the default battle (`pulse_bot`, `rhino_beetle`,
+  `welder_drone`) the battle capture shows `gauss_tracer`, `bullet_hit`, `acid_spit`, `acid_hit`, `weld_sparks` and
+  `glass_shatter`. The other presentable weapons are `railgun_crawler`, `shock_golem`, `specter_android`,
+  `psi_grey`, `vector_interceptor`, `sky_bastion`, `cloak_gunship`, `planetary_bulwark_dome` and
+  `flak_array_dome`. The plasma, beam, spore, needle, claw and impaler looks show only in the lab. The Fungal looks
+  are cast by a presentable stand-in given a copy of the ability and its block in the test world's catalog only.
+- No lightning look: no shipped weapon delivers lightning.
+- `jet_jumper`, `void_goliath` and `colossus_mech`'s air weapon publish no event the client can draw (an instant
+  weapon whose visual kind is `Projectile`), so they have no look; recorded as a simulation data question.
+- The cleave's direction, the Fungal impact's exact point (at most one tick's flight short) and per-status looks
+  (a storm's victims also wear `fungal_affliction`) are recorded in Amendment 24.
+
+### Material
+
+All pictures were made on lavapipe (see the driver note above), from a debug build under Xvfb at 1280×720. Files
+start with `wp11r1_`.
+
+| What | Files |
+|---|---|
+| Per-family sheets from the effect lab's contact sheets (`battle_capture --effect-lab`), at the battle camera's default zoom: for each look, a labelled strip of eight ages on the brightest ground and one on the darkest. The ages are those of the look's own contact sheet (0, 0.03, 0.08, 0.15, 0.3, 0.5, 0.75 and 1 of its life). Each cell is the middle half of the 1280×720 frame shown at half size, so a look appears at half its on-screen size; the full contact sheets are reproducible with `battle_capture --effect-lab <look>`. A shot runs along +x on a 6-unit line half a unit above the ground; a projectile binds a 0.6 s flight. | [kinetic](wp11r1_family_kinetic_lavapipe.jpg) (`gauss_tracer`, `bullet_hit`, `sniper_tracer`, `cannon_tracer`, `cannon_hit`); [energy](wp11r1_family_energy_lavapipe.jpg) (`plasma_bolt`, `plasma_hit`, `prism_beam`, `beam_burn`, `lance_beam`, `lance_burn`); [bio](wp11r1_family_bio_lavapipe.jpg) (`acid_spit`, `acid_hit`, `spore_bolt`, `needle_volley`, `needle_hit`); [explosive](wp11r1_family_explosive_lavapipe.jpg) (`rocket_trail`, `grenade_lob`, `rocket_hit`); [melee](wp11r1_family_melee_lavapipe.jpg) (`psi_slash`, `claw_rake`, `weld_sparks`, `impaler_strike`); [death and Fungal impact](wp11r1_family_death_lavapipe.jpg) (`glass_shatter`, `fungal_impact` bound to Fungal Growth's radius 2.25 and status 2.86 s) |
+| A battle: the default battle's combat checkpoint (`battle_capture`, the default script with a longer wall deadline for lavapipe), Pulse Bots, Rhino Beetles and Welder Drones of two sides fighting, at the battle camera's gameplay distance. It is the script's verified combat moment, not a staged scene: only a few impacts are in view in it. | [wp11r1_battle_combat_lavapipe.jpg](wp11r1_battle_combat_lavapipe.jpg) |
+| Fungal Growth (F1), from `area_link_gpu_tests.rs`'s Fungal child, every 40 ms frame from the casts, six frames a row: round the viewer's target (four enemy stand-ins; the missile flies in from the top right, lands, the ring races out and the spores rise; the victims then wear the affliction) | [own](wp11r1_fungal_own_lavapipe.jpg) |
+| The fog case: an enemy stand-in in the fog casts Fungal Growth at the edge of the viewer's sight; its missile is drawn only once it is over seen ground, and its impact is cut where the fog begins. The client draws no fog shading here, so the unseen ground looks like the seen ground; the narrow cut part of the impact is all the viewer sees of it. | [fog](wp11r1_fungal_fog_lavapipe.jpg) |
+| The whole window every 10 frames during the Fungal take | [window](wp11r1_fungal_battle_lavapipe.jpg) |
+| Measurements: every shot's path, ends, body or slug head, after-image and fog result; the Fungal counts; the status deaths; the weapon coverage report | [wp11r1_measurements.txt](wp11r1_measurements.txt) |
+
+The tests check, on lavapipe:
+
+- **Coverage** (`effect_catalog_tests.rs`). Every weapon that publishes a delivery event is named in its unit's
+  block, with the right kinds. No weapon falls back to a default, and every death has a look.
+- **Shots along their paths** (`effect_slice_gpu_tests.rs`, `shipped_shots_draw_along_their_paths`). Each shot's
+  `Critical` layers stay within their half width of the projected path. A beam's ends are within 3 px of the muzzle
+  and the impact. A slug's head, or a projectile's body, is within 3 px of where the shot has reached. Nothing is
+  drawn after the shot's end. Under the fog over the muzzle half, no pixel over the unseen half changes.
+- **Fungal Growth** (`area_link_gpu_tests.rs`). The missile holds a look in flight, each missile lands one impact,
+  the enemy's lands where the viewer sees its target, and the victims wear the affliction.
+- **No legacy card for a shipped unit.** The status battle's deaths, the control included, draw no legacy shards
+  (`status_gpu_tests.rs`). The legacy-card tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) are green
+  unchanged.
+- **Steady state.** The effect-stream window of `sync_steady_state_tests.rs` now also fires every weapon's shot
+  along its path and keeps every buffer. The valgrind window (`sync_allocation_count_tests.rs`) also holds a spell
+  missile that lands and is replaced every eight frames.
+
+### Points to look at
+
+- Whether each kinetic round reads as a round crossing the gap (a short slug), and never as a speed line or as a
+  line drawn across the gap.
+- Whether the beams read as energy (a coloured body broken into flowing pulses, a hot spot on the target) rather
+  than as a flat UI line, at the default zoom.
+- Whether the projectiles read at gameplay zoom, the small ones (needles, the spore glob, the acid glob) included.
+- Whether the melee crescents read as blows, and whether any of them looks like a drawn arc or a UI element.
+- Whether `glass_shatter` is an acceptable default death next to the accepted named deaths.
+- Fungal Growth: whether the missile reads in flight; whether the impact's ring reads as the spell's area without
+  dominating; whether a fungaled unit reads differently from a slowed one.
+- Pops: the looks start within a frame and end by eroding or fading. Check the first and last columns of each
+  strip.
+
 ## WP10 round 4 (the tether only)
 
 Round 3's review ([`independent_review_wp10_3.md`](independent_review_wp10_3.md), kept as written) accepted both areas
