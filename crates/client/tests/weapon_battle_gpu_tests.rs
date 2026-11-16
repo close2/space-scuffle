@@ -16,8 +16,13 @@
 //!   whether it flies, or failing a shooter of that visual kind, whether it flies), so the look
 //!   is shown at 1:1 next to a real bubble.
 //!
-//! The parent checks that each staged family's looks were spawned while its wave ran and that
-//! its picture changed, prints per family what it saw, and with
+//! The units first stand unarmed for [`SETTLE_SECONDS`] and are pictured: the baseline. Then
+//! they open fire. The parent checks that each staged family's looks were spawned while its
+//! wave ran; that, against the baseline and outside both bubbles, they changed at least
+//! [`SEEN_PIXELS`] round the path and the target; and that its impact changed at least
+//! [`IMPACT_PIXELS`] just outside the struck bubble on the attacker's side in the frames after
+//! the impact spawned (review 2, E2-2, E2-3: a look drawn inside the struck bubble fails). It
+//! prints per family what it saw, and with
 //! `SPACE_SCUFFLE_WEAPON_BATTLE_EVIDENCE_DIR` set writes a sheet per family: a 40 ms sequence
 //! at 1:1 and the same frames at 2x.
 //!
@@ -131,8 +136,19 @@ const CROP: [u32; 2] = [300, 180];
 const MOST_GAP: f32 = 3.0;
 /// A pixel counts as changed when one of its channels moves by at least this many levels.
 const SEEN_LEVEL: u8 = 32;
-/// Pixels of a subject's picture its shots must change at some frame against its first.
+/// Pixels round a subject's path and target, outside both bubbles, its looks must change at
+/// some frame against the baseline (review 2, E2-3).
 const SEEN_PIXELS: usize = 30;
+/// Pixels just outside the struck bubble on the attacker's side its impact must change in
+/// the frames after the impact spawns (review 2, E2-2).
+const IMPACT_PIXELS: usize = 15;
+/// Seconds the staged units stand, unarmed, before the baseline picture: they appear and
+/// settle (review 2, E2-3).
+const SETTLE_SECONDS: f64 = 0.4;
+/// World units beyond the struck bubble's radius in which its impact is looked for.
+const IMPACT_ZONE: f32 = 0.7;
+/// Frames after an impact's spawn in which it is looked for.
+const IMPACT_FRAMES: usize = 4;
 /// Frames of a family's sheet at 1:1 and, of those, at 2x.
 const SHEET_FRAMES: (usize, usize) = (12, 6);
 
@@ -293,8 +309,19 @@ struct SubjectReport {
     /// Spawns of the travel and the impact look while the wave ran.
     travel_spawned: u32,
     impact_spawned: u32,
+    /// Spawns of the impact look so far, per frame.
+    impacts: Vec<u32>,
     /// The subject's pictures, one per frame.
     frames: Vec<String>,
+    /// The picture with the units standing and no shot fired yet.
+    base: String,
+    /// Window pixel of the pictures' top left corner.
+    crop: [u32; 2],
+    /// The shooter's and the target's bubbles on screen: centre and radius, window pixels.
+    shooter_px: [f32; 3],
+    target_px: [f32; 3],
+    /// Window pixels per world unit at the target.
+    scale: f32,
 }
 
 /// What a child saw.
@@ -318,6 +345,10 @@ enum Phase {
     Framing {
         frames: u32,
     },
+    /// The units are staged, unarmed, since `at`.
+    Settling {
+        at: f64,
+    },
     Running {
         at: f64,
         frame: u32,
@@ -334,14 +365,28 @@ struct Staging {
     /// Each subject: its shooter, its target, its centre (world `x, y`), and its looks' ids
     /// with their spawn counts at the start.
     subjects: Vec<StagedSubject>,
+    /// The shooters' weapons, held back while the baseline is pictured: `(type, weapon,
+    /// ground weapon, air weapon)`.
+    held_weapons: Vec<HeldWeapons>,
     outstanding: Arc<AtomicU32>,
     report: WaveReport,
 }
+
+/// A shooter type's weapons, held back while the baseline is pictured.
+type HeldWeapons = (
+    UnitTypeId,
+    Option<WeaponSpec>,
+    Option<WeaponSpec>,
+    Option<WeaponSpec>,
+);
 
 /// A staged subject.
 struct StagedSubject {
     units: [EntityId; 2],
     centre: Vec2,
+    /// The shooter's and the target's places (map `x, y`) and radii.
+    shooter: (Vec2, f32),
+    target: (Vec2, f32),
     looks: [Option<(client::effects::catalog::EffectId, u32)>; 2],
 }
 
@@ -547,7 +592,6 @@ fn stage(
         .catalog
         .get(target)
         .map_or(0.5, |arch| arch.collision_radius.to_f32());
-    let mut attacks = Vec::new();
     for ((shooter, family, own), spot) in wave.iter().zip(spots) {
         let arch = world
             .catalog
@@ -557,15 +601,12 @@ fn stage(
         let radii = arch.collision_radius.to_f32() + target_radius;
         let gap = (radii + range * 0.7).min(MOST_GAP).max(radii + 0.05);
         let slug = arch.slug.clone();
-        let from = spawn_still(
-            world,
-            shooter.unit_type,
-            VIEWER,
-            *spot - Vec2::new(gap * 0.5, 0.0),
-        );
-        let to = spawn_still(world, target, ENEMY, *spot + Vec2::new(gap * 0.5, 0.0));
+        let shooter_radius = arch.collision_radius.to_f32();
+        let shooter_at = *spot - Vec2::new(gap * 0.5, 0.0);
+        let target_at = *spot + Vec2::new(gap * 0.5, 0.0);
+        let from = spawn_still(world, shooter.unit_type, VIEWER, shooter_at);
+        let to = spawn_still(world, target, ENEMY, target_at);
         world.entities.get_mut(&to).expect("spawned").is_immobile = true;
-        attacks.push((from, to));
         let look = |name: &Option<String>| {
             name.as_deref()
                 .and_then(|name| catalog.effect_id(name))
@@ -574,6 +615,8 @@ fn stage(
         staging.subjects.push(StagedSubject {
             units: [from, to],
             centre: *spot,
+            shooter: (shooter_at, shooter_radius),
+            target: (target_at, target_radius),
             looks: [look(&family.travel), look(&family.impact)],
         });
         staging.report.subjects.push(SubjectReport {
@@ -583,8 +626,40 @@ fn stage(
             ..SubjectReport::default()
         });
     }
+    // The shooters stand unarmed until the baseline is pictured (review 2, E2-3).
+    let shooters: Vec<UnitTypeId> = wave.iter().map(|(shooter, ..)| shooter.unit_type).collect();
+    for unit_type in shooters {
+        if staging.held_weapons.iter().any(|held| held.0 == unit_type) {
+            continue;
+        }
+        let archetype = world
+            .catalog
+            .get_mut(unit_type)
+            .expect("invariant: the planned shooter is of this catalog");
+        staging.held_weapons.push((
+            unit_type,
+            archetype.weapon.take(),
+            archetype.ground_weapon.take(),
+            archetype.air_weapon.take(),
+        ));
+    }
     session.publish();
-    for (from, to) in attacks {
+}
+
+/// Gives the shooters their weapons back and orders every attack.
+fn open_fire(staging: &mut Staging, session: &mut BattleSession) {
+    let world = session.world_mut().expect("a ready session has a world");
+    for (unit_type, weapon, ground, air) in staging.held_weapons.drain(..) {
+        let archetype = world
+            .catalog
+            .get_mut(unit_type)
+            .expect("invariant: a held shooter is of this catalog");
+        archetype.weapon = weapon;
+        archetype.ground_weapon = ground;
+        archetype.air_weapon = air;
+    }
+    for subject in &staging.subjects {
+        let [from, to] = subject.units;
         let (world, queue) = session.world_and_commands();
         queue
             .submit_selection(
@@ -596,6 +671,36 @@ fn stage(
             )
             .expect("the client admits an attack by the viewer's own unit");
     }
+}
+
+/// Pictures every subject's baseline and records where its bubbles stand on screen.
+fn picture_base(
+    commands: &mut Commands<'_, '_>,
+    staging: &mut Staging,
+    session: &BattleSession,
+    camera: (&Camera, &GlobalTransform),
+) {
+    let world = session.world().expect("a ready session has a world");
+    let mut crops = Vec::new();
+    for (index, subject) in staging.subjects.iter().enumerate() {
+        let [x, y] = project(world, camera, subject.centre);
+        let left = (x - CROP[0] as f32 / 2.0).max(0.0) as u32;
+        let top = (y - CROP[1] as f32 * 0.6).max(0.0) as u32;
+        let file = format!("wave{}_{index}_base.png", staging.wave);
+        crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
+        let on_screen = |(at, radius): (Vec2, f32)| {
+            let [cx, cy] = project(world, camera, at);
+            let [ex, ey] = project(world, camera, at + Vec2::new(radius, 0.0));
+            [cx, cy, (ex - cx).hypot(ey - cy)]
+        };
+        let report = &mut staging.report.subjects[index];
+        report.base = file;
+        report.crop = [left, top];
+        report.shooter_px = on_screen(subject.shooter);
+        report.target_px = on_screen(subject.target);
+        report.scale = report.target_px[2] / subject.target.1.max(1e-3);
+    }
+    capture_frame(commands, crops, &staging.outstanding);
 }
 
 /// Holds every staged unit at full health, so nothing dies in the pictures.
@@ -695,6 +800,7 @@ fn count(staging: &mut Staging, runtime: &EffectRuntime) {
             |look: Option<(_, u32)>| look.map_or(0, |(id, at)| runtime.spawned_of(id) - at);
         report.travel_spawned = spawned(subject.looks[0]);
         report.impact_spawned = spawned(subject.looks[1]);
+        report.impacts.push(report.impact_spawned);
     }
 }
 
@@ -761,6 +867,22 @@ fn stage_wave_child(
             stage(&mut staging, &mut session, catalog, runtime, &spots);
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
+            Phase::Settling { at: now }
+        }
+        Phase::Settling { at } if now - at < SETTLE_SECONDS => {
+            heal(&staging, &mut session);
+            Phase::Settling { at }
+        }
+        Phase::Settling { .. } => {
+            picture_base(&mut commands, &mut staging, &session, (camera, transform));
+            open_fire(&mut staging, &mut session);
+            if let Some(runtime) = effects.0.as_deref() {
+                for subject in &mut staging.subjects {
+                    for look in subject.looks.iter_mut().flatten() {
+                        look.1 = runtime.spawned_of(look.0);
+                    }
+                }
+            }
             Phase::Running { at: now, frame: 0 }
         }
         Phase::Running { at, frame } if now - at <= WAVE_SECONDS => {
@@ -864,27 +986,65 @@ fn run_wave(wave: usize) -> TestResult<(WaveReport, tempfile::TempDir)> {
     Ok((report, directory))
 }
 
-/// The most pixels of any frame of `frames` that changed by [`SEEN_LEVEL`] against the first.
-fn most_changed(directory: &Path, frames: &[String]) -> TestResult<usize> {
-    let Some(first) = frames.first() else {
-        return Ok(0);
-    };
-    let first = image::open(directory.join(first))?.to_rgb8();
-    let mut most = 0;
-    for file in frames.iter().skip(1) {
+/// Whether pixel `(x, y)` changed by [`SEEN_LEVEL`] between `a` and `b`.
+fn changed(a: &image::RgbImage, b: &image::RgbImage, x: u32, y: u32) -> bool {
+    a.get_pixel(x, y)
+        .0
+        .iter()
+        .zip(b.get_pixel(x, y).0.iter())
+        .any(|(a, b)| a.abs_diff(*b) >= SEEN_LEVEL)
+}
+
+/// What a subject's looks changed against its baseline, outside both bubbles (review 2, E2-2,
+/// E2-3): the most pixels any frame changed round its path and its target, and the most its
+/// impact changed just outside the struck bubble on the attacker's side, in the
+/// [`IMPACT_FRAMES`] frames after each impact's spawn.
+fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<(usize, usize)> {
+    let base = image::open(directory.join(&subject.base))?.to_rgb8();
+    let crop = Vec2::new(subject.crop[0] as f32, subject.crop[1] as f32);
+    let shooter = Vec2::new(subject.shooter_px[0], subject.shooter_px[1]) - crop;
+    let target = Vec2::new(subject.target_px[0], subject.target_px[1]) - crop;
+    let (shooter_r, target_r) = (subject.shooter_px[2] + 2.0, subject.target_px[2] + 2.0);
+    let zone = target_r + IMPACT_ZONE * subject.scale;
+    let towards = (shooter - target).normalize_or_zero();
+    let impact_frames: Vec<usize> = subject
+        .impacts
+        .windows(2)
+        .enumerate()
+        .filter(|(_, pair)| pair[1] > pair[0])
+        .flat_map(|(index, _)| index + 1..index + 1 + IMPACT_FRAMES)
+        .collect();
+    let (mut most, mut most_impact) = (0, 0);
+    for (index, file) in subject.frames.iter().enumerate() {
         let frame = image::open(directory.join(file))?.to_rgb8();
-        let changed = frame
-            .pixels()
-            .zip(first.pixels())
-            .filter(|(a, b)| {
-                a.0.iter()
-                    .zip(b.0.iter())
-                    .any(|(a, b)| a.abs_diff(*b) >= SEEN_LEVEL)
-            })
-            .count();
-        most = most.max(changed);
+        let (mut around, mut impact) = (0, 0);
+        for y in 0..frame.height().min(base.height()) {
+            for x in 0..frame.width().min(base.width()) {
+                let at = Vec2::new(x as f32, y as f32);
+                if at.distance(shooter) <= shooter_r || at.distance(target) <= target_r {
+                    continue;
+                }
+                let along = (at - shooter).dot((target - shooter).normalize_or_zero());
+                let off = (at - shooter)
+                    .perp_dot((target - shooter).normalize_or_zero())
+                    .abs();
+                let on_path = along >= 0.0 && along <= shooter.distance(target) && off <= zone;
+                let near_target = at.distance(target) <= zone;
+                if !(on_path || near_target) || !changed(&frame, &base, x, y) {
+                    continue;
+                }
+                around += 1;
+                if near_target && (at - target).normalize_or_zero().dot(towards) > -0.2 {
+                    impact += 1;
+                }
+            }
+        }
+        most = most.max(around);
+        if impact_frames.contains(&index) {
+            most_impact = most_impact.max(impact);
+        }
     }
-    Ok(most)
+    Ok((most, most_impact))
 }
 
 /// Writes `subject`'s sheet: [`SHEET_FRAMES`] frames from its first changed frame at 1:1 over
@@ -899,17 +1059,13 @@ fn write_sheet(directory: &Path, subject: &SubjectReport, target: &Path, name: &
     let Some(first) = pictures.first() else {
         return Ok(());
     };
-    let start = pictures
+    // From the frame before the first impact spawn (the shots are under way by then).
+    let start = subject
+        .impacts
         .iter()
-        .position(|picture| {
-            picture.pixels().zip(first.pixels()).any(|(a, b)| {
-                a.0.iter()
-                    .zip(b.0.iter())
-                    .any(|(a, b)| a.abs_diff(*b) >= SEEN_LEVEL)
-            })
-        })
+        .position(|count| *count > 0)
         .unwrap_or(0)
-        .saturating_sub(1);
+        .saturating_sub(2);
     let (width, height) = (first.width(), first.height());
     let run: Vec<&image::RgbImage> = pictures.iter().skip(start).take(SHEET_FRAMES.0).collect();
     let columns = 6;
@@ -972,10 +1128,12 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
             );
         }
         for (index, subject) in report.subjects.iter().enumerate() {
-            let changed = most_changed(directory.path(), &subject.frames)?;
+            let (changed, impact_seen) = seen_against_base(directory.path(), subject)?;
             eprintln!(
                 "driver {driver}: wave {wave} {} on {} ({}): travel spawned {}, impact spawned \
-                 {}, at most {changed} px changed by {SEEN_LEVEL} levels over {} frames",
+                 {}; against the units-only baseline, outside both bubbles, at most {changed} px \
+                 round path and target and {impact_seen} px of impact beside the struck bubble \
+                 changed by {SEEN_LEVEL} levels over {} frames",
                 subject.family,
                 subject.shooter,
                 if subject.own { "its own" } else { "lent" },
@@ -996,13 +1154,19 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
             if changed < SEEN_PIXELS {
                 failures.push(format!("{}: {changed} px changed", subject.family));
             }
+            if impact != "none" && impact_seen < IMPACT_PIXELS {
+                failures.push(format!(
+                    "{}: its impact changed {impact_seen} px beside the struck bubble",
+                    subject.family
+                ));
+            }
             if let Some(target) = &evidence {
                 write_sheet(
                     directory.path(),
                     subject,
                     target,
                     &format!(
-                        "wp11r2_battle_{driver}_w{wave}_{index}_{}.png",
+                        "wp11r3_battle_{driver}_w{wave}_{index}_{}.png",
                         subject.family
                     ),
                 )?;

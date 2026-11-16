@@ -39,6 +39,7 @@ pub mod pool;
 pub mod render;
 pub mod runtime;
 pub mod stance;
+pub mod struck;
 pub mod systems;
 
 use bevy::prelude::*;
@@ -51,6 +52,7 @@ impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<render::EffectCatalogVersion>()
             .init_resource::<areas::AreaLooks>()
+            .init_resource::<struck::StruckBubbles>()
             .add_systems(Startup, systems::load_effect_catalog)
             .add_systems(
                 Update,

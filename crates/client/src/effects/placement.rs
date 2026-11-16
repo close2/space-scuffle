@@ -131,6 +131,36 @@ pub struct Placed {
     pub delay: f32,
 }
 
+/// The one instance of a [`PlacementDef::Behind`] placement: `distance` against the bound
+/// `Facing`, away from the attacker.
+fn place_behind(distance: super::catalog::schema::ValueDef, bound: &BoundValues) -> Placed {
+    let facing = bound.get(Binding::Facing);
+    Placed {
+        offset: -Vec3::new(facing.cos(), 0.0, facing.sin()) * resolve_value(&distance, bound),
+        delay: 0.0,
+    }
+}
+
+/// Instance `index` of an [`PlacementDef::Across`] pair: `offset` to one side of `line` (the
+/// map's `x` axis without one), the even index to the left, the odd to the right.
+fn place_across(
+    offset: super::catalog::schema::ValueDef,
+    index: u32,
+    bound: &BoundValues,
+    line: Option<WorldLine>,
+) -> Placed {
+    let direction = line
+        .map(|line| (line.to - line.from).normalize_or_zero())
+        .filter(|direction| direction.x != 0.0 || direction.z != 0.0)
+        .unwrap_or(Vec3::X);
+    let across = Vec3::new(-direction.z, 0.0, direction.x).normalize_or_zero();
+    let side = if index.is_multiple_of(2) { 1.0 } else { -1.0 };
+    Placed {
+        offset: across * resolve_value(&offset, bound) * side,
+        delay: 0.0,
+    }
+}
+
 /// How many instances `placement` makes for an effect bound to `bound` on `line`.
 #[must_use]
 pub fn instance_count(
@@ -139,7 +169,8 @@ pub fn instance_count(
     line: Option<WorldLine>,
 ) -> u32 {
     match placement {
-        PlacementDef::Point | PlacementDef::LineEnd { .. } => 1,
+        PlacementDef::Point | PlacementDef::LineEnd { .. } | PlacementDef::Behind { .. } => 1,
+        PlacementDef::Across { .. } => 2,
         PlacementDef::Disc { count, .. } | PlacementDef::Circle { count, .. } => {
             (*count).min(MAX_INSTANCES_PER_PLACEMENT)
         }
@@ -202,6 +233,8 @@ pub fn place(
             offset: Vec3::ZERO,
             delay: 0.0,
         },
+        PlacementDef::Behind { distance } => place_behind(*distance, bound),
+        PlacementDef::Across { offset } => place_across(*offset, index, bound, line),
         PlacementDef::Disc { radius, .. } => {
             let radius = resolve_value(radius, bound);
             let distance = radius * unit_float(hash3(seed, index, 0x0D15_C001)).sqrt();

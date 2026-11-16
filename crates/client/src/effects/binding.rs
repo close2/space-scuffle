@@ -17,7 +17,7 @@
 use super::catalog::schema::{Binding, EventKind, ValueDef};
 
 /// Number of [`Binding`] variants.
-pub const BINDING_COUNT: usize = 15;
+pub const BINDING_COUNT: usize = 16;
 
 /// Dense index of a binding.
 #[must_use]
@@ -38,6 +38,7 @@ pub const fn binding_index(binding: Binding) -> usize {
         Binding::ChannelProgress => 12,
         Binding::BarrierRatio => 13,
         Binding::FlightTime => 14,
+        Binding::Facing => 15,
     }
 }
 
@@ -56,11 +57,12 @@ pub const fn provides(event: EventKind, binding: Binding) -> bool {
         B::LinkLength => matches!(event, EventKind::Link),
         B::UnitRadius | B::UnitHeight => matches!(
             event,
-            EventKind::Status | EventKind::Mode | EventKind::Death
+            EventKind::Status | EventKind::Mode | EventKind::Death | EventKind::Point
         ),
         B::ChannelProgress => matches!(event, EventKind::Mode),
         B::BarrierRatio => matches!(event, EventKind::Status),
         B::FlightTime => matches!(event, EventKind::Point | EventKind::Shot),
+        B::Facing => matches!(event, EventKind::Point),
     }
 }
 
@@ -127,6 +129,7 @@ mod tests {
         Binding::ChannelProgress,
         Binding::BarrierRatio,
         Binding::FlightTime,
+        Binding::Facing,
     ];
 
     #[test]

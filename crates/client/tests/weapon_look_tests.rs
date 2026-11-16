@@ -406,61 +406,115 @@ fn an_unseen_missile_is_not_drawn_and_lands_no_impact() {
 /// Review 1, E1-1: an instant shot's impact is laid when its slug arrives, never before. At 40 ms
 /// frames, the impact's first drawn frame is not earlier than the frame the slug's head reaches
 /// the target, less one.
+/// The furthest a riding strip of `runtime`'s frame reaches along `line` from its start, world
+/// units: the head of a slug, the far end of a beam. `None` when no strip is drawn.
+fn strip_head(runtime: &EffectRuntime, line: client::effects::placement::WorldLine) -> Option<f32> {
+    use client::effects::instances::{ORIENT_RIBBON, ORIENT_RIBBON_GROUND};
+    let direction = (line.to - line.from).normalize_or_zero();
+    runtime
+        .frame
+        .sorted
+        .iter()
+        .filter(|card| card.orient == ORIENT_RIBBON || card.orient == ORIENT_RIBBON_GROUND)
+        .map(|card| {
+            let head =
+                Vec3::from(card.center) + Vec3::from(card.axis) * card.half_size * card.stretch;
+            (head - line.from).dot(direction)
+        })
+        .reduce(f32::max)
+}
+
+/// Whether `runtime`'s frame draws anything at all.
+fn draws(runtime: &EffectRuntime) -> bool {
+    !runtime.frame.sorted.is_empty()
+        || !runtime.frame.decals.is_empty()
+        || !runtime.frame.lights.is_empty()
+}
+
+/// Review 2, E2-5: for every shipped instant travel, frame by frame on its own, the slug's head
+/// (the furthest its riding strips reach) is found from the built frames; the impact, built on
+/// its own, draws nothing before the frame in which that head reaches the shot's end (within
+/// one frame's advance of the head). Independent of how the delay is computed.
 #[test]
 fn an_instant_shots_impact_waits_for_its_slug() {
     let (catalog, units, tables) = shipped();
-    let (unit, _, travel) = unit_with_travel(&catalog, &units, |effect| {
-        !flies(effect)
-            && effect.layers.iter().any(|layer| {
-                matches!(&layer.block, client::effects::catalog::Block::Ribbon(look) if look.trail.is_some())
-            })
-    });
-    let event = CombatEventVisual::HitscanTracer {
-        from: [2.0, 3.0, 0.5],
-        to: [10.0, 3.0, 0.5],
-        owner: PlayerId(0),
-        source: primary(unit),
-    };
-    let slug = travel_request(&event, &tables, &catalog).expect("a travel");
-    let impact = spawn_request(&event, &tables, &catalog).expect("an impact");
-    let arrival = catalog
-        .effect(travel)
-        .expect("defined")
-        .layers
-        .iter()
-        .filter(|layer| {
-            layer.priority == Priority::Critical
-                && matches!(&layer.block, client::effects::catalog::Block::Ribbon(look) if look.trail.is_some())
-        })
-        .map(|layer| layer.start + layer.duration)
-        .fold(0.0_f32, f32::max);
-    assert!(arrival > 0.0, "the travel has a riding slug");
-    assert!(
-        (impact.delay - arrival).abs() < 1e-6,
-        "the impact waits {} s for a slug arriving at {arrival} s",
-        impact.delay
-    );
-    // Frame by frame: the slug's head reaches the line's end on the frame of its arrival; the
-    // impact draws nothing before the frame before it.
-    let mut runtime = EffectRuntime::new(&catalog);
-    runtime
-        .spawn(&catalog, &slug, 0.0)
-        .expect("the slug spawns");
-    let impact_handle = runtime
-        .spawn(&catalog, &impact, 0.0)
-        .expect("the impact spawns");
-    let frame = 0.04_f64;
-    let arrival_frame = (f64::from(arrival) / frame).ceil();
-    for step in 0..12_u32 {
-        let now = f64::from(step) * frame;
-        runtime.build_frame(&catalog, now, None);
-        let instance = runtime.pool.get(impact_handle).expect("the impact lives");
-        let drawn = now >= instance.birth;
-        if drawn {
+    let step = 0.01_f64;
+    let mut checked = Vec::new();
+    for archetype in units.archetypes() {
+        for entry in archetype
+            .effects
+            .weapons
+            .iter()
+            .filter(|entry| entry.mode.is_none())
+        {
+            let source = EffectSource {
+                unit_type: archetype.unit_type_id,
+                weapon: WeaponKey {
+                    slot: entry.weapon,
+                    mode: None,
+                },
+            };
+            let (Some(travel), Some(_)) = (tables.travel(source), tables.impact(source)) else {
+                continue;
+            };
+            if catalog.effect(travel).is_none_or(flies) {
+                continue;
+            }
+            let event = CombatEventVisual::HitscanTracer {
+                from: [2.0, 3.0, 0.5],
+                to: [10.0, 3.0, 0.5],
+                owner: PlayerId(0),
+                source,
+            };
+            let slug = travel_request(&event, &tables, &catalog).expect("an instant travel");
+            let impact = spawn_request(&event, &tables, &catalog).expect("an impact");
+            let line = slug.line.expect("a travel has its line");
+            let length = line.from.distance(line.to);
+            let mut alone = EffectRuntime::new(&catalog);
+            alone.spawn(&catalog, &slug, 0.0).expect("the slug spawns");
+            let mut struck = EffectRuntime::new(&catalog);
+            struck
+                .spawn(&catalog, &impact, 0.0)
+                .expect("the impact spawns");
+            let (mut heads, mut first_impact) = (Vec::new(), None);
+            for frame in 0..80_u32 {
+                let now = f64::from(frame) * step;
+                alone.build_frame(&catalog, now, None);
+                struck.build_frame(&catalog, now, None);
+                heads.push(strip_head(&alone, line));
+                if first_impact.is_none() && draws(&struck) {
+                    first_impact = Some(frame);
+                }
+            }
+            let advance = heads
+                .windows(2)
+                .filter_map(|pair| Some(pair[1]? - pair[0]?))
+                .fold(0.0_f32, f32::max);
+            let arrival = heads
+                .iter()
+                .position(|head| head.is_some_and(|head| head >= length - advance - 1e-3));
+            let (Some(arrival), Some(first_impact)) = (arrival, first_impact) else {
+                panic!(
+                    "{} ({}): the slug reaches the end ({arrival:?}) and the impact draws \
+                     ({first_impact:?})",
+                    archetype.slug,
+                    catalog
+                        .effect(travel)
+                        .map_or("", |effect| effect.name.as_str())
+                );
+            };
             assert!(
-                f64::from(step) >= arrival_frame - 1.0,
-                "the impact draws at frame {step}, the slug arrives at frame {arrival_frame}"
+                first_impact as usize >= arrival,
+                "{}: the impact draws at frame {first_impact}, before the slug's head reaches \
+                 the end at frame {arrival}",
+                archetype.slug
             );
+            checked.push(format!("{}@{arrival}/{first_impact}", archetype.slug));
         }
     }
+    assert!(
+        checked.len() >= 3,
+        "the shipped instant travels: {checked:?}"
+    );
+    eprintln!("instant travels (arrival frame / first impact frame, 10 ms): {checked:?}");
 }

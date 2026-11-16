@@ -2653,3 +2653,66 @@ about one and a half radii, sized by `UnitRadius` (A1-8).
 B-107 and the "Effect presentation" row refreshed.
 
 **Gate.** The packet's section "WP11 round 2".
+
+## Amendment 26: WP11 round 3, after WP11 review 2 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 3 answers `docs/evidence/effects/review/independent_review_wp11_2.md` (REJECT on A2-1). D-1 holds: no
+simulation crate, golden replay or checksum changes. The struck bubble's radius is found on the client, from the
+presented snapshot, so no simulation change was needed for A2-1.
+
+**Engine.**
+
+- **Hits on the struck bubble's surface (A2-1, P1-2).** The simulation publishes an instant hit and a melee strike
+  at the struck unit's centre, half a unit up, inside its bubble. `effects::struck` moves them out:
+  `StruckBubbles` indexes the presented bubbles by `x` once a frame in which events arrive (a retained buffer,
+  sorted, queried by binary search), and `at_struck_surface` moves a tracer's or a beam's `to` back along the shot,
+  and a blow's `pos` along its published `angle_rad`, by the nearest bubble's radius plus 0.06 units. The bubble
+  must lie within its radius plus 0.35 units of the published point; otherwise (a synthetic event, an app without
+  a battle) the event is unchanged. A shot's point never moves back past 0.8 of its length. The slug therefore
+  ends where its impact shows, on the glass towards the shooter.
+- **Facing (A2-2).** A `Point` effect binds `Facing` (new binding: the direction from the hit point towards the
+  attacker, in the ground plane) and `UnitRadius` (the struck bubble's radius, 0.5 when it is not found). A card
+  may roll `Facing` (new rotation): an arc's middle, or a card's local `-x`, points at the attacker, with a hashed
+  mirror for the swing's direction (`runtime::facing_roll`). A new placement `Behind { distance }` moves an
+  instance away from the attacker: from the hit point back to the struck bubble's centre, so a blade's crescent
+  wraps the bubble's near side.
+- **Two spines (A2-3).** A new placement `Across { offset }`: two instances either side of the event's line.
+- **A shot's reach by end (E2-1).** `Effect::shot_reach` holds the muzzle layers' reach (used within that distance
+  of the muzzle) and the flying layers' reach across the path (a ribbon's half width; a riding card's twice its
+  size, its stretch running along the path rather than across it). `shot_clip` asks the fog that far at each
+  sample. A unit standing near unseen ground is no longer cut whole because of its attacker's muzzle smoke.
+
+**Looks.** `psi_slash` is a crescent of 1.4 to 1.52 struck radii round the struck bubble's centre, its middle
+towards the attacker, swept open across the line of the blow; `claw_rake` is three such crescents at 1.3, 1.5 and
+1.7 radii. `impaler_strike`'s spike (0.62) stands 0.18 units in front of the struck bubble's surface. Every other
+impact is drawn where it is anchored, now on the surface. `needle_volley` is two spines 0.24 units apart. P2-1:
+`cannon_hit` keeps a hot core under its breaking fireball. P2-3: `glass_shatter` throws 12 to 18 shards at 4.5
+to 7 units a second. P2-4: `acid_hit`'s dark splash is broken at its edge.
+
+**Tests.**
+
+- `effects::struck` unit tests: a tracer ends on the near surface; a short shot is never pulled past its muzzle; a
+  blow moves towards its attacker; an unknown bubble moves nothing; the index finds the nearest bubble within its
+  radius and slack.
+- `weapon_look_tests::an_instant_shots_impact_waits_for_its_slug` (E2-5), now independent of the delay formula:
+  for every shipped instant travel, the slug alone and the impact alone are built frame by frame (10 ms); the
+  impact draws nothing before the frame in which the slug's riding strip reaches the shot's end.
+- `effect_slice_gpu_tests`: the beside-the-fog take adds a positive control (E2-1): 1.3 of the shot's largest
+  reach from the fog, the shot draws (at least 30 pixels) and nothing over unseen ground. The visibility test binds
+  an impact as a battle does (`Facing`, `UnitRadius`) and prints the median display colour of each look's own
+  changed pixels (E2-4).
+- `weapon_battle_gpu_tests` (E2-2, E2-3): the units stand unarmed for 0.4 s and are pictured (the baseline), then
+  open fire. Against the baseline, outside both bubbles, each family must change at least 30 pixels round its path
+  and target, and its impact at least 15 pixels just outside the struck bubble on the attacker's side, in the four
+  frames after an impact spawns.
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **P2-2 recorded, not changed.** A sustained beam is a series of 0.46 s shots, each a line fixed at its spawn:
+  against a moving target consecutive beams splay apart for about 0.1 s, and the last beam outlives a dead target
+  by up to 0.46 s. A held beam keyed on source and target is a WP11 follow-up.
+- **The struck bubble is found by position.** The nearest presented bubble within its radius plus 0.35 units of
+  the published hit point is taken as the struck one. In a tight crowd another bubble may be nearer; the hit then
+  shows on that bubble's surface, a few tenths of a unit away. An exact match needs the target's id in the event
+  (a simulation change).

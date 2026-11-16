@@ -7,6 +7,50 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 3 (the weapons' own looks, after review 2)
+
+Round 3 answers `independent_review_wp11_2.md` (REJECT on A2-1). The decisions are plan Amendment 26. This is
+round 3 of at most five (Q0080). Please write your review to `independent_review_wp11_3.md` next to this one, in the
+same form as round 2's. Nothing was spent and no texture was made. No simulation crate was changed: the struck
+bubble is found on the client.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0`, so every picture and GPU test ran on lavapipe.
+
+### What changed, by review item
+
+| Item | Change |
+|---|---|
+| A2-1 | Instant hits and blows are moved from the struck unit's centre to its bubble's near surface towards the attacker (`effects::struck`): the struck bubble is the presented bubble nearest the published hit point, within its radius plus 0.35 units; the point moves by its radius plus 0.06. A tracer's or beam's slug ends there too (P1-2). The impaler's spike stands 0.18 units in front of the struck surface. |
+| A2-2 | A new binding `Facing` (from the hit towards the attacker) and rotation `Facing`: `psi_slash` and `claw_rake` turn their arcs' middles towards the attacker, swept across the line of the blow; a new placement `Behind` centres them on the struck bubble, so the crescents (1.4 radii for the blade, three at 1.3, 1.5 and 1.7 for the claws) wrap its near side, outside the glass. |
+| A2-3 | `needle_volley`: two spines side by side (new placement `Across`, 0.24 units apart). |
+| E2-1 | A reach per end (`Effect::shot_reach`): the muzzle layers' reach near the muzzle, the flying layers' across the whole path (a riding card's stretch no longer counts as lateral reach). The beside-the-fog take adds a positive control 1.3 reaches from the fog, which must draw. |
+| E2-2, E2-3 | The staged battle pictures the units standing, unarmed, before any shot (the baseline; the units no longer appear in the sequence). Each family must change, against the baseline and outside both bubbles, at least 30 pixels round its path and target, and its impact at least 15 pixels just outside the struck bubble on the attacker's side in the four frames after it spawns. The lab visibility test binds impacts as a battle does. |
+| E2-4 | The visibility test prints the median display colour of each look's own changed `Critical` pixels, with the floor's under them. |
+| E2-5 | `an_instant_shots_impact_waits_for_its_slug` builds the slug alone and the impact alone frame by frame for every shipped instant travel, and checks that the impact draws nothing before the slug's head reaches the end. |
+| P2-1 | `cannon_hit` keeps a hot core under its breaking fireball. |
+| P2-3 | `glass_shatter`: 12 to 18 shards thrown at 4.5 to 7 units a second. |
+| P2-4 | `acid_hit`'s dark splash is broken at its edge. |
+
+Recorded, not changed (Amendment 26): P2-2 (a sustained beam is a series of fixed lines); the struck bubble found
+by position (in a tight crowd a hit may show on a neighbour's surface).
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r3_`.
+
+| What | Files |
+|---|---|
+| The staged battle, one sheet per family: 12 frames of 40 ms at 1:1 from just before the first impact, then the first 6 at 2x; waves 0 and 1 fire their own unit's weapon, waves 2 and 3 are lab families lent to a presentable shooter | `wp11r3_battle_lavapipe_w*_*.jpg` |
+| Every shipped look in the lab at the default zoom, one row per look, the whole look at three ages on the bright floor, then the dark one (impacts bound as in a battle, struck from the left) | [looks 1](wp11r3_looks_1_lavapipe.jpg), [looks 2](wp11r3_looks_2_lavapipe.jpg) |
+| Measurements: the staged battle's per-family counts against its baseline, visibility and display colours per look and floor, the shots and both beside-the-fog takes, the impact-delay frames, the Fungal and status counts, the valgrind counts | [wp11r3_measurements.txt](wp11r3_measurements.txt) |
+
+### Points to look at
+
+- Whether every impact now reads in the battle at 1:1, on the struck bubble's side facing the attacker: the rifle
+  and sniper hits, the cannon hit, the beam burns, the blade, the claws, the worker's sparks and the spike.
+- Whether the blade's crescent reads as a blow across the target, turned by the attack.
+- Whether the two needles read as two spines.
+
 ## WP11 round 2 (the weapons' own looks, after review 1)
 
 Round 2 answers `independent_review_wp11_1.md` (REJECT). The decisions are plan Amendment 25. This is round 2 of at

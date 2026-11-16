@@ -444,6 +444,31 @@ pub struct Effect {
     /// the layer's life and lift, and a particle's flight. The fog asks this far round a shot
     /// or a missile (plan WP11 review 1, E1-2). Layers sized by a binding add their scale only.
     pub reach: f32,
+    /// A shot's reach by end (WP11 round 3, E2-2): its muzzle layers' near the muzzle, and its
+    /// flying layers' (ribbons, cards riding the line) along the whole path.
+    pub shot_reach: ShotReach,
+}
+
+/// How far a shot's layers draw beside its path, world units, by where they are (see
+/// [`Effect::shot_reach`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShotReach {
+    /// Reach of the layers drawn at the muzzle (flash, smoke, mouth spray), measured from it,
+    /// so the fog is asked this far round the path's first `muzzle` units.
+    pub muzzle: f32,
+    /// Reach of the layers flying the path (ribbons, cards riding the line), across it.
+    pub path: f32,
+}
+
+impl ShotReach {
+    /// The same reach at both ends.
+    #[must_use]
+    pub const fn uniform(reach: f32) -> Self {
+        Self {
+            muzzle: reach,
+            path: reach,
+        }
+    }
 }
 
 /// An effect laid again and again while a `Status` effect is held (see [`schema::EmitDef`]).

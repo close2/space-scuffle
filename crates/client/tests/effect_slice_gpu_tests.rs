@@ -1306,9 +1306,16 @@ fn shot_beside_fog(shot: &ShotSubject, beside: f32) -> LabSubject {
     }
 }
 
-/// How far beside the fog edge the beside-the-fog take runs: within the shot's reach.
-fn beside_offset(effect: &Effect) -> f32 {
-    0.6 * effect.reach.max(0.35)
+/// How far beside the fog edge the beside-the-fog takes run: within the reach of the shot's
+/// flying layers (`far` false: the shot is cut whole, fail-closed), or beyond the reach of every
+/// layer of it (`far` true: the positive control, drawn whole; review 2, E2-1).
+fn beside_offset(effect: &Effect, far: bool) -> f32 {
+    let reach = effect.shot_reach;
+    if far {
+        1.3 * reach.muzzle.max(reach.path).max(0.35)
+    } else {
+        0.6 * reach.path.max(0.35)
+    }
 }
 
 /// The shot's life in seconds: its longest non-held layer's span for its flight.
@@ -1344,7 +1351,9 @@ fn effect_shot_child() {
         .expect("the index is a number");
     let part = std::env::var(SHOT_PART_VAR).unwrap_or_default();
     let fog = part == "1";
-    let beside = part == "2";
+    let beside = part == "2" || part == "3";
+    let far = part == "3";
+    let prefix = if far { "far" } else { "side" };
     let subjects = shot_subjects();
     let shot = &subjects[index];
     let catalog = catalog();
@@ -1355,15 +1364,15 @@ fn effect_shot_child() {
     let lifetime = shot_lifetime(effect, shot);
     let takes = if beside {
         vec![
-            take(false, None, 0.25, &[("side_bg", 0.0)]),
+            take(false, None, 0.25, &[(&format!("{prefix}_bg"), 0.0)]),
             take(
                 true,
                 None,
                 0.02,
                 &[
-                    ("side_early", age / SHOT_LIFE * 0.25),
-                    ("side_mid", age / SHOT_LIFE * 0.5),
-                    ("side_late", age / SHOT_LIFE * 0.75),
+                    (&format!("{prefix}_early"), age / SHOT_LIFE * 0.25),
+                    (&format!("{prefix}_mid"), age / SHOT_LIFE * 0.5),
+                    (&format!("{prefix}_late"), age / SHOT_LIFE * 0.75),
                 ],
             ),
         ]
@@ -1389,7 +1398,7 @@ fn effect_shot_child() {
     };
     let program = LabProgram {
         subject: if beside {
-            shot_beside_fog(shot, beside_offset(effect))
+            shot_beside_fog(shot, beside_offset(effect, far))
         } else {
             shot_lab(shot, fog)
         },
@@ -1419,12 +1428,13 @@ fn critical_half_width(effect: &Effect, view: &View, from: Vec3, to: Vec3) -> f3
         .filter(|layer| layer.priority == Priority::Critical)
         .map(|layer| {
             // A card drawn out along the path keeps its half size across it; a disc placement
-            // moves it off the path by up to its radius.
+            // moves it off the path by up to its radius, a pair by its offset.
             let scattered = layer
                 .placements
                 .iter()
                 .map(|placement| match placement {
                     PlacementDef::Disc { radius, .. } => radius.scale,
+                    PlacementDef::Across { offset } => offset.scale,
                     _ => 0.0,
                 })
                 .fold(0.0, f32::max);
@@ -1444,6 +1454,7 @@ fn check_shot(index: usize) -> TestResult<String> {
         ("0", "shot stills"),
         ("1", "shot under fog"),
         ("2", "shot beside the fog"),
+        ("3", "shot beyond its reach of the fog"),
     ] {
         let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
         command.args(["--ignored", "--exact", "--nocapture", "effect_shot_child"]);
@@ -1584,32 +1595,50 @@ fn check_shot(index: usize) -> TestResult<String> {
     // E1-2 (d): the fog beside the path, along the camera's depth axis. No pixel whose ray
     // meets the ground over the unseen side (x < 0, less half a pixel's worth of ground) may
     // change.
-    let side_view = View::new(shot_beside_fog(shot, beside_offset(effect)).focus());
-    let side_bg = capture(directory.path(), "side_bg");
-    let mut side_unseen = 0;
-    let mut side_lit = 0;
-    for name in ["side_early", "side_mid", "side_late"] {
-        let side = capture(directory.path(), name);
-        for y in 0..SIZE.y {
-            for x in 0..SIZE.x {
-                if !lit(&side, &side_bg, x, y) {
-                    continue;
-                }
-                side_lit += 1;
-                if side_view.ground(x, y).is_some_and(|point| point.x < -0.02) {
-                    side_unseen += 1;
+    let beside_take = |far: bool| -> (usize, usize) {
+        let prefix = if far { "far" } else { "side" };
+        let view = View::new(shot_beside_fog(shot, beside_offset(effect, far)).focus());
+        let bg = capture(directory.path(), &format!("{prefix}_bg"));
+        let (mut drawn, mut unseen) = (0, 0);
+        for name in ["early", "mid", "late"] {
+            let side = capture(directory.path(), &format!("{prefix}_{name}"));
+            for y in 0..SIZE.y {
+                for x in 0..SIZE.x {
+                    if !lit(&side, &bg, x, y) {
+                        continue;
+                    }
+                    drawn += 1;
+                    if view.ground(x, y).is_some_and(|point| point.x < -0.02) {
+                        unseen += 1;
+                    }
                 }
             }
         }
-    }
+        (drawn, unseen)
+    };
+    let (side_lit, side_unseen) = beside_take(false);
+    let (far_lit, far_unseen) = beside_take(true);
     assert_eq!(
-        side_unseen, 0,
+        side_unseen + far_unseen,
+        0,
         "{}: nothing drawn over the unseen ground beside the path",
         shot.effect
     );
+    // Review 2, E2-1: the positive control. Beyond every layer's reach of the fog, the shot is
+    // not cut: it draws over the three ages.
+    assert!(
+        far_lit >= 30,
+        "{}: beyond its reach of the fog the shot draws ({far_lit} pixels)",
+        shot.effect
+    );
     Ok(format!(
-        "shot {} (flight {:.2} s; reach {:.2}): beside the fog {side_lit} pixels drawn, none over unseen ground; {count} Critical pixels, at most {widest:.1} px off the path (half width {half_width:.1}); {path}; nothing after its end; under the fog {seen_lit} pixels on the seen half and none on the unseen one",
-        shot.effect, shot.flight, effect.reach
+        "shot {} (flight {:.2} s; reach {:.2} at the muzzle, {:.2} along the path): {:.2} beside the fog {side_lit} pixels drawn and {:.2} beside it {far_lit}, none over unseen ground; {count} Critical pixels, at most {widest:.1} px off the path (half width {half_width:.1}); {path}; nothing after its end; under the fog {seen_lit} pixels on the seen half and none on the unseen one",
+        shot.effect,
+        shot.flight,
+        effect.shot_reach.muzzle,
+        effect.shot_reach.path,
+        beside_offset(effect, false),
+        beside_offset(effect, true)
     ))
 }
 
@@ -1694,7 +1723,11 @@ fn look_subjects() -> Vec<LookSubject> {
                 EventKind::Death => client::effects::binding::BoundValues::default()
                     .with(Binding::UnitRadius, DEATH_RADIUS)
                     .with(Binding::UnitHeight, DEATH_RADIUS * 2.0),
-                _ => client::effects::binding::BoundValues::default(),
+                // An impact as a battle binds it: struck by an attacker towards -x, on a bubble
+                // of a Pulse Bot's radius (its anchor on that bubble's near surface).
+                _ => client::effects::binding::BoundValues::default()
+                    .with(Binding::UnitRadius, DEATH_RADIUS)
+                    .with(Binding::Facing, std::f32::consts::PI),
             };
             LookSubject {
                 effect: name,
@@ -1833,6 +1866,18 @@ fn seen_change(image: &RgbImage, background: &RgbImage, x: u32, y: u32) -> i32 {
     channel.max(luma)
 }
 
+/// The per-channel median of `colours` (review 2, E2-4: the look's own pixels, those its
+/// `Critical` layers change by [`SEEN_LEVELS`]); black when there are none.
+fn median_colour(colours: &[[u8; 3]]) -> [u8; 3] {
+    let mut out = [0; 3];
+    for (channel, value) in out.iter_mut().enumerate() {
+        let mut values: Vec<u8> = colours.iter().map(|colour| colour[channel]).collect();
+        values.sort_unstable();
+        *value = values.get(values.len() / 2).copied().unwrap_or(0);
+    }
+    out
+}
+
 /// Runs the look child for subject `index` and measures it; returns its report line.
 fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
     let subjects = look_subjects();
@@ -1858,11 +1903,15 @@ fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
         let bg = capture(directory.path(), &format!("{prefix}_bg"));
         let mut best_area = 0;
         let mut best_critical: Vec<i32> = Vec::new();
+        let mut best_colours: Vec<[u8; 3]> = Vec::new();
+        let mut floor: Vec<[u8; 3]> = Vec::new();
         for age in 0..3 {
             let whole = capture(directory.path(), &format!("{prefix}_whole_{age}"));
             let critical = capture(directory.path(), &format!("{prefix}_critical_{age}"));
             let mut area = 0;
             let mut changes = Vec::new();
+            let mut colours = Vec::new();
+            let mut under = Vec::new();
             for y in 0..SIZE.y {
                 for x in 0..SIZE.x {
                     if seen_change(&whole, &bg, x, y) >= SEEN_LEVELS {
@@ -1872,11 +1921,17 @@ fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
                     if change > 8 {
                         changes.push(change);
                     }
+                    if change >= SEEN_LEVELS {
+                        colours.push(critical.get_pixel(x, y).0);
+                        under.push(bg.get_pixel(x, y).0);
+                    }
                 }
             }
             best_area = best_area.max(area);
             if changes.len() > best_critical.len() {
                 best_critical = changes;
+                best_colours = colours;
+                floor = under;
             }
         }
         best_critical.sort_unstable();
@@ -1886,8 +1941,10 @@ fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
             .unwrap_or(0);
         write!(
             report,
-            " {prefix}: {best_area} px seen (least {minimum}), Critical median contrast {median} levels over {} px;",
-            best_critical.len()
+            " {prefix}: {best_area} px seen (least {minimum}), Critical median contrast {median} levels over {} px, display sRGB {:?} over floor {:?};",
+            best_critical.len(),
+            median_colour(&best_colours),
+            median_colour(&floor)
         )?;
         assert!(
             best_area >= minimum,

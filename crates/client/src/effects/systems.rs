@@ -12,7 +12,9 @@
 //!   ([`replaces_shatter`]). A tracer, beam or projectile also spawns its weapon's `travel`
 //!   effect along the shot's line from the muzzle to where it lands ([`travel_request`], plan
 //!   WP11), and the legacy combat card of an event whose unit names its weapon's looks is left
-//!   out ([`replaces_legacy`]).
+//!   out ([`replaces_legacy`]). An instant hit's or a blow's point is first moved from the
+//!   struck unit's centre to its bubble's near surface (`effects::struck`), so the slug, the
+//!   beam and the impact meet the glass instead of being drawn inside it.
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -41,7 +43,7 @@
 
 use super::binding::BoundValues;
 use super::catalog::schema::{Binding, EventKind};
-use super::catalog::{EffectCatalog, UnitEffectTables, EFFECTS_CATALOG_PATH};
+use super::catalog::{EffectCatalog, ShotReach, UnitEffectTables, EFFECTS_CATALOG_PATH};
 use super::particles::LineClip;
 use super::placement::WorldLine;
 use super::render::EffectCatalogVersion;
@@ -187,20 +189,39 @@ impl LineAssembly {
     }
 }
 
-/// The spawn an admitted `event` asks for, if its source unit (or the defaults) names one. A
-/// line's search point asks for the whole line seen only at that point; [`LineAssembly`]
-/// merges the points of one line.
+/// [`spawn_request_struck`] for an event whose struck bubble is not known: an impact binds
+/// [`super::struck::DEFAULT_STRUCK_RADIUS`] as `UnitRadius`.
 #[must_use]
 pub fn spawn_request(
     event: &CombatEventVisual,
     tables: &UnitEffectTables,
     catalog: &EffectCatalog,
 ) -> Option<SpawnRequest> {
+    spawn_request_struck(event, None, tables, catalog)
+}
+
+/// The spawn an admitted `event` asks for, if its source unit (or the defaults) names one. A
+/// line's search point asks for the whole line seen only at that point; [`LineAssembly`]
+/// merges the points of one line.
+#[must_use]
+pub fn spawn_request_struck(
+    event: &CombatEventVisual,
+    struck_radius: Option<f32>,
+    tables: &UnitEffectTables,
+    catalog: &EffectCatalog,
+) -> Option<SpawnRequest> {
+    let facing = super::struck::hit_facing(event).unwrap_or(0.0);
     let impact = |source: &EffectSource, at: [f32; 3], delay: f32| {
         tables.impact(*source).map(|effect| SpawnRequest {
             effect,
             anchor: world(at),
-            bound: BoundValues::default().with(Binding::FlightTime, delay),
+            bound: BoundValues::default()
+                .with(Binding::FlightTime, delay)
+                .with(Binding::Facing, facing)
+                .with(
+                    Binding::UnitRadius,
+                    struck_radius.unwrap_or(super::struck::DEFAULT_STRUCK_RADIUS),
+                ),
             line: None,
             delay,
         })
@@ -367,24 +388,30 @@ pub fn travel_request(
 /// The clip is computed once, when the shot spawns: a projectile flies its flight under the
 /// fog of that moment (at most a second or so; recorded in Amendment 25, E1-2 (c)).
 #[must_use]
-pub fn shot_clip(line: WorldLine, reach: f32, sees: impl Fn(f32, f32) -> bool) -> LineClip {
+pub fn shot_clip(line: WorldLine, reach: ShotReach, sees: impl Fn(f32, f32) -> bool) -> LineClip {
     let along = Vec2::new(line.to.x - line.from.x, line.to.z - line.from.z);
     let length = along.length();
     if length <= SHOT_FOG_STEP {
         return NO_CLIP;
     }
     let axis = along / length;
-    let half = reach.max(SHOT_FOG_HALF_WIDTH);
     let normal = Vec2::new(-axis.y, axis.x);
     let start = Vec2::new(line.from.x, line.from.z);
-    // Samples across the path every half cell out to the reach, so no unseen cell beside the
-    // path within the reach is stepped over.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a reach of a few world units over half a cell"
-    )]
-    let across = (half / 0.5).ceil() as i32;
+    // Samples across the path every half cell out to the reach there, so no unseen cell beside
+    // the path within the reach is stepped over: the flying layers' reach along the whole path,
+    // and the muzzle layers' as well within their reach of the muzzle (review 2, E2-1).
     let seen_at = |distance: f32| {
+        let half = if distance <= reach.muzzle {
+            reach.muzzle.max(reach.path)
+        } else {
+            reach.path
+        }
+        .max(SHOT_FOG_HALF_WIDTH);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a reach of a few world units over half a cell"
+        )]
+        let across = (half / 0.5).ceil() as i32;
         let point = start + axis * distance;
         (-across..=across).all(|step| {
             #[expect(clippy::cast_precision_loss, reason = "a step below a few dozen")]
@@ -456,6 +483,10 @@ pub fn spawn_effects_from_events(
     runtime: Option<ResMut<'_, EffectRuntime>>,
     fog: Option<Res<'_, crate::battle_pipeline::fog::BattleFog>>,
     time: Res<'_, Time<Virtual>>,
+    (session, mut struck): (
+        Option<Res<'_, crate::battle_pipeline::session::BattleSession>>,
+        Option<ResMut<'_, super::struck::StruckBubbles>>,
+    ),
 ) {
     let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
         events.clear();
@@ -463,18 +494,31 @@ pub fn spawn_effects_from_events(
     };
     let now = time.elapsed_secs_f64();
     let mut lines = LineAssembly::default();
+    if !events.is_empty() {
+        if let (Some(struck), Some(session)) = (struck.as_deref_mut(), session.as_deref()) {
+            struck.rebuild(&session.frames.presented().bubbles);
+        }
+    }
     for event in events.read() {
+        // An instant hit or a blow shows on the struck bubble's near surface, where the shot's
+        // slug ends (review 2, A2-1).
+        let (event, struck_radius) = match (struck.as_deref(), session.is_some()) {
+            (Some(struck), true) => {
+                super::struck::at_struck_surface(&event.0, |x, y| struck.radius_at(x, y))
+            }
+            _ => (event.0.clone(), None),
+        };
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
-        if let Some(shot) = travel_request(&event.0, &tables, &catalog) {
-            let owner = event.0.owner();
+        if let Some(shot) = travel_request(&event, &tables, &catalog) {
+            let owner = event.owner();
             let clip = match fog.as_deref() {
                 Some(fog) if fog.viewer() != Some(owner) => shot_clip(
                     shot.line
                         .unwrap_or(WorldLine::whole(shot.anchor, shot.anchor)),
                     catalog
                         .effect(shot.effect)
-                        .map_or(0.0, |effect| effect.reach),
+                        .map_or(ShotReach::default(), |effect| effect.shot_reach),
                     |x, y| fog.sees(x, y),
                 ),
                 _ => NO_CLIP,
@@ -483,8 +527,8 @@ pub fn spawn_effects_from_events(
                 runtime.set_fog_clip(handle, clip);
             }
         }
-        if let Some(ready) =
-            spawn_request(&event.0, &tables, &catalog).and_then(|request| lines.push(request))
+        if let Some(ready) = spawn_request_struck(&event, struck_radius, &tables, &catalog)
+            .and_then(|request| lines.push(request))
         {
             runtime.spawn(&catalog, &ready, now);
         }
@@ -679,13 +723,16 @@ mod tests {
 
     #[test]
     fn a_shot_seen_whole_is_not_cut() {
-        assert_eq!(shot_clip(shot(), 0.0, |_, _| true), NO_CLIP);
+        assert_eq!(
+            shot_clip(shot(), ShotReach::uniform(0.0), |_, _| true),
+            NO_CLIP
+        );
     }
 
     #[test]
     fn a_shot_out_of_the_fog_is_drawn_from_the_fog_edge_to_where_it_lands() {
         // The viewer sees map x >= 5 only: the muzzle is in the fog, the landing point seen.
-        let clip = shot_clip(shot(), 0.0, |x, _| x >= 5.0);
+        let clip = shot_clip(shot(), ShotReach::uniform(0.0), |x, _| x >= 5.0);
         let [x, z, min, max] = clip;
         assert!(
             (x - 1.0).abs() < 1e-6 && z.abs() < 1e-6,
@@ -703,7 +750,7 @@ mod tests {
     fn the_fog_beside_a_shot_cuts_it_too() {
         // Unseen cells just beside the path (map y < 5.3) left of x = 4: the shot's glow
         // would reach over them, so the cut lies beyond them.
-        let clip = shot_clip(shot(), 0.0, |x, y| y >= 5.3 || x >= 4.0);
+        let clip = shot_clip(shot(), ShotReach::uniform(0.0), |x, y| y >= 5.3 || x >= 4.0);
         assert!(clip[2] >= 4.0, "cut at {}", clip[2]);
     }
 
@@ -711,20 +758,26 @@ mod tests {
     fn a_shot_along_a_fog_edge_within_its_reach_draws_nothing() {
         // Unseen ground 0.8 units beside the whole path (map y < 4.7): a shot reaching 1 unit
         // across draws nothing, one reaching 0.4 draws whole.
-        let clip = shot_clip(shot(), 1.0, |_, y| y >= 4.7);
+        let clip = shot_clip(shot(), ShotReach::uniform(1.0), |_, y| y >= 4.7);
         assert!(clip[2] >= 9.5, "cut past the landing point: {}", clip[2]);
-        assert_eq!(shot_clip(shot(), 0.4, |_, y| y >= 4.7), NO_CLIP);
+        assert_eq!(
+            shot_clip(shot(), ShotReach::uniform(0.4), |_, y| y >= 4.7),
+            NO_CLIP
+        );
     }
 
     #[test]
     fn a_shot_seen_only_where_it_lands_draws_at_most_its_end() {
-        let clip = shot_clip(shot(), 0.0, |x, _| x >= 9.45);
+        let clip = shot_clip(shot(), ShotReach::uniform(0.0), |x, _| x >= 9.45);
         assert!(clip[2] >= 9.45, "cut at {}", clip[2]);
     }
 
     #[test]
     fn a_vertical_shot_is_not_cut() {
         let line = WorldLine::whole(Vec3::new(2.0, 3.0, 2.0), Vec3::new(2.0, 0.5, 2.0));
-        assert_eq!(shot_clip(line, 0.0, |_, _| false), NO_CLIP);
+        assert_eq!(
+            shot_clip(line, ShotReach::uniform(0.0), |_, _| false),
+            NO_CLIP
+        );
     }
 }

@@ -147,7 +147,8 @@ pub enum Binding {
     AreaTotal,
     /// Length of a tether.
     LinkLength,
-    /// The unit's bubble radius.
+    /// The unit's bubble radius; for a `Point` effect (an impact), the struck unit's, or 0.5
+    /// when it is not found (WP11 round 3).
     UnitRadius,
     /// The unit's bubble height.
     UnitHeight,
@@ -157,6 +158,9 @@ pub enum Binding {
     BarrierRatio,
     /// Flight time of a projectile, in seconds.
     FlightTime,
+    /// The direction a hit came from, in radians in the ground plane (Bevy `atan2(z, x)`, the
+    /// map's `atan2(y, x)`): from the struck point towards the attacker (WP11 round 3, A2-2).
+    Facing,
 }
 
 /// A size, radius or spacing: a binding times a scale.
@@ -278,6 +282,11 @@ pub enum RotationDef {
     /// a claw's parallel rakes; WP11 round 2). A particle, which has no instance of its own,
     /// rolls as `Random`.
     Together,
+    /// Turned by the bound `Facing` (the direction the hit came from), with a hashed mirror: a
+    /// card's local `-x` points at the attacker, and an arc's middle does, so a blade's
+    /// crescent is swung across the line of the blow, its opening away from the attacker (WP11
+    /// round 3, A2-2). Needs an event that binds `Facing`; a particle rolls as `Random`.
+    Facing,
 }
 
 /// How a ring card maps its texture.
@@ -796,6 +805,20 @@ pub enum Priority {
 pub enum PlacementDef {
     /// One instance at the anchor.
     Point,
+    /// One instance moved `distance` away from the attacker, against the bound `Facing`: from
+    /// a hit point on the struck bubble's near surface back to its centre, so a blow's crescent
+    /// wraps the struck bubble (WP11 round 3, A2-2).
+    Behind {
+        /// Distance moved.
+        distance: ValueDef,
+    },
+    /// Two instances either side of the anchor, `offset` world units across the event's line
+    /// (across the map's `x` axis without a line): a pair side by side, such as two needles in
+    /// flight (WP11 round 3, A2-3).
+    Across {
+        /// Distance of each instance from the anchor.
+        offset: ValueDef,
+    },
     /// One instance at the far end of the event's line, moved back along the line towards its
     /// start by `back` world units (never past the start): a tether's grip set against its
     /// target's bubble at any range (WP10 review 3, A3-1 (b)). The effect's anchor is the

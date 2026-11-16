@@ -78,6 +78,7 @@ pub(super) fn resolve(
     check_status_links(path, &effects)?;
     for effect in &mut effects {
         effect.reach = effect_reach(effect, &curves, &resolver.emitters);
+        effect.shot_reach = shot_reach(effect, &curves, &resolver.emitters);
     }
     let budget = resolver.budget(file, &effects)?;
     let defaults = resolver.defaults(file)?;
@@ -156,41 +157,85 @@ fn effect_reach(effect: &Effect, curves: &[Curve], emitters: &[Emitter]) -> f32 
     effect
         .layers
         .iter()
-        .map(|layer| {
-            let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
-            let placed = layer
-                .placements
-                .iter()
-                .map(|placement| match placement {
-                    PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
-                        radius.scale.abs() * 1.5
-                    }
-                    PlacementDef::Line { scatter, .. } => *scatter,
-                    PlacementDef::Point | PlacementDef::LineEnd { .. } => 0.0,
-                })
-                .fold(0.0_f32, f32::max);
-            let body = match &layer.block {
-                Block::Sprite(look) => {
-                    let lift = look.lift.unwrap_or(0.0).abs().max(1.0) * size * look.stretch;
-                    size * look.stretch + lift + look.spread + look.drift.length() * layer.duration
-                }
-                Block::Ring { height, .. } => {
-                    size + height
-                        + layer.radius.map_or(0.0, |radius| {
-                            radius.from.scale.abs().max(radius.to.scale.abs())
-                        })
-                }
-                Block::Particles(id) => emitters.get(usize::from(id.0)).map_or(size, |emitter| {
-                    let life = emitter.lifetime.1;
-                    size + emitter.speed.1 * life / (1.0 + emitter.drag * life) + emitter.size.1
-                }),
-                Block::Distortion(look) => size + look.height,
-                Block::Light { height, .. } => size + height,
-                Block::Decal(_) | Block::Ribbon(_) | Block::Shell(_) => size,
-            };
-            body + placed
-        })
+        .map(|layer| layer_reach(layer, curves, emitters))
         .fold(0.0_f32, f32::max)
+}
+
+/// Whether `layer` flies a shot's path: a ribbon, or a card riding the line.
+fn flies_path(layer: &Layer) -> bool {
+    match &layer.block {
+        Block::Ribbon(_) => true,
+        Block::Sprite(look) => look.ride,
+        _ => false,
+    }
+}
+
+/// A shot's reach by end (see [`Effect::shot_reach`]): a flying layer reaches across the path
+/// by its half width and, standing towards the camera, as far again (its stretch runs along
+/// the path, not across it); every other layer by its whole reach, near the muzzle.
+fn shot_reach(effect: &Effect, curves: &[Curve], emitters: &[Emitter]) -> super::ShotReach {
+    effect
+        .layers
+        .iter()
+        .fold(super::ShotReach::default(), |reach, layer| {
+            if flies_path(layer) {
+                let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
+                let across = match &layer.block {
+                    Block::Sprite(_) => 2.0 * size,
+                    _ => size,
+                };
+                super::ShotReach {
+                    path: reach.path.max(across),
+                    ..reach
+                }
+            } else {
+                super::ShotReach {
+                    muzzle: reach.muzzle.max(layer_reach(layer, curves, emitters)),
+                    ..reach
+                }
+            }
+        })
+}
+
+/// How far one layer can draw from its placed points on the ground plane, world units: its
+/// size at its size curve's peak, its placement's spread, a card's stretch, drift and height
+/// (a card standing towards the camera covers ground behind it as far as it is tall), a ring's
+/// radius and height, a particle's flight.
+fn layer_reach(layer: &Layer, curves: &[Curve], emitters: &[Emitter]) -> f32 {
+    let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
+    let placed = layer
+        .placements
+        .iter()
+        .map(|placement| match placement {
+            PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                radius.scale.abs() * 1.5
+            }
+            PlacementDef::Line { scatter, .. } => *scatter,
+            PlacementDef::Across { offset } => offset.scale.abs(),
+            PlacementDef::Behind { distance } => distance.scale.abs(),
+            PlacementDef::Point | PlacementDef::LineEnd { .. } => 0.0,
+        })
+        .fold(0.0_f32, f32::max);
+    let body = match &layer.block {
+        Block::Sprite(look) => {
+            let height = look.lift.unwrap_or(0.0).abs().max(1.0) * size;
+            size * look.stretch + height + look.spread + look.drift.length() * layer.duration
+        }
+        Block::Ring { height, .. } => {
+            size + height
+                + layer.radius.map_or(0.0, |radius| {
+                    radius.from.scale.abs().max(radius.to.scale.abs())
+                })
+        }
+        Block::Particles(id) => emitters.get(usize::from(id.0)).map_or(size, |emitter| {
+            let life = emitter.lifetime.1;
+            size + emitter.speed.1 * life / (1.0 + emitter.drag * life) + emitter.size.1
+        }),
+        Block::Distortion(look) => size + look.height,
+        Block::Light { height, .. } => size + height,
+        Block::Decal(_) | Block::Ribbon(_) | Block::Shell(_) => size,
+    };
+    body + placed
 }
 
 /// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
@@ -639,6 +684,7 @@ impl Resolver<'_> {
             hit,
             impact,
             reach: 0.0,
+            shot_reach: super::ShotReach::default(),
         })
     }
 
@@ -817,6 +863,11 @@ impl Resolver<'_> {
             values.push(*arc);
         }
         self.unit_bound(at, event, layer, &block)?;
+        if let Block::Sprite(look) | Block::Ring { look, .. } = &block {
+            if look.rotation == super::schema::RotationDef::Facing {
+                self.require(at, event, super::schema::Binding::Facing)?;
+            }
+        }
         self.fraction(at, "size_jitter", layer.size_jitter)?;
         if let Some(strength) = layer.strength {
             self.unit_range(at, "strength.floor", strength.floor, 0.0)?;
@@ -924,6 +975,11 @@ impl Resolver<'_> {
     ) -> Result<(), EffectCatalogError> {
         match placement {
             PlacementDef::Point => {}
+            PlacementDef::Across { offset } => values.push(*offset),
+            PlacementDef::Behind { distance } => {
+                values.push(*distance);
+                self.require(at, event, super::schema::Binding::Facing)?;
+            }
             PlacementDef::LineEnd { back } => {
                 values.push(*back);
                 self.require_line(at, event, super::schema::Binding::LineLength)?;

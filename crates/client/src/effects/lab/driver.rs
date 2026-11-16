@@ -403,7 +403,11 @@ fn spawn_subject(
             handle,
             crate::effects::systems::shot_clip(
                 line,
-                catalog.effect(effect).map_or(0.0, |effect| effect.reach),
+                catalog
+                    .effect(effect)
+                    .map_or(crate::effects::catalog::ShotReach::default(), |effect| {
+                        effect.shot_reach
+                    }),
                 |x, _| x >= below_x,
             ),
         );

@@ -1058,7 +1058,7 @@ impl EffectRuntime {
         }
         let catalog = context.catalog;
         let (layer_a, layer_b, frame_mix) = card_frame(catalog, look, age, life, seed);
-        let (rotation, mut flags) = card_roll(look.rotation, seed, context.instance.seed);
+        let (rotation, mut flags) = card_roll(look.rotation, seed, context.instance, ring.arc_full);
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
         }
@@ -1447,6 +1447,9 @@ struct RingShape {
     edge_noise: f32,
     /// Share of the turn an arc draws, in [0, 1]; `None` for the whole ring.
     arc: Option<f32>,
+    /// The arc's share without its curve (its full sweep), which a `Facing` roll centres; 0
+    /// without an arc.
+    arc_full: f32,
     /// Whether the arc's band tapers to points at both ends.
     crescent: bool,
     /// How much the band wavers round the turn; 0 for an even band.
@@ -1484,6 +1487,9 @@ impl RingShape {
                     * catalog.sample(*arc_curve, life, 1.0))
                 .clamp(0.0, 1.0)
             }),
+            arc_full: arc.map_or(0.0, |arc| {
+                resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)
+            }),
             crescent: *crescent,
             waver: *waver,
             darken: *darken,
@@ -1495,6 +1501,7 @@ impl RingShape {
         inner: 0.0,
         edge_noise: 0.0,
         arc: None,
+        arc_full: 0.0,
         crescent: false,
         waver: 0.0,
         darken: false,
@@ -2022,16 +2029,39 @@ impl Surface {
     }
 }
 
-/// The roll and mirror bit of a card under `rotation`: drawn from the card's hash `seed`, or,
-/// for [`RotationDef::Together`], from its effect instance's hash `instance_seed`, so every card
-/// of the instance so rolled turns as one.
-fn card_roll(rotation: RotationDef, seed: u32, instance_seed: u32) -> (f32, u32) {
-    let seed = if rotation == RotationDef::Together {
-        instance_seed
+/// The roll and mirror bit of a card under `rotation`: drawn from the card's hash `seed`; for
+/// [`RotationDef::Together`], from its effect instance's hash, so every card of the instance so
+/// rolled turns as one; for [`RotationDef::Facing`], turned so that the middle of an arc of
+/// `arc` turns (0 for a card's local `-x`) points along the instance's bound `Facing`.
+fn card_roll(rotation: RotationDef, seed: u32, instance: &EffectInstance, arc: f32) -> (f32, u32) {
+    match rotation {
+        RotationDef::Together => roll_and_mirror(rotation, instance.seed),
+        RotationDef::Facing => {
+            let (_, mirror) = roll_and_mirror(RotationDef::Random, instance.seed);
+            (
+                facing_roll(instance.bound.get(Binding::Facing), arc, mirror != 0),
+                mirror,
+            )
+        }
+        _ => roll_and_mirror(rotation, seed),
+    }
+}
+
+/// The roll that points the middle of an arc of `arc` turns at ground direction `facing`
+/// (radians, Bevy `atan2(z, x)`) on a ground card, mirrored or not.
+///
+/// A ground card's texel at polar angle `phi` (its arc runs from `phi = -pi` over `arc` turns)
+/// lies, rolled by `theta`, at ground direction `phi - theta`; mirrored, at `pi - phi - theta`.
+/// The arc's middle is at `phi = arc * pi - pi`.
+#[must_use]
+pub fn facing_roll(facing: f32, arc: f32, mirrored: bool) -> f32 {
+    let middle = arc * std::f32::consts::PI - std::f32::consts::PI;
+    let roll = if mirrored {
+        std::f32::consts::PI - middle - facing
     } else {
-        seed
+        middle - facing
     };
-    roll_and_mirror(rotation, seed)
+    roll.rem_euclid(std::f32::consts::TAU)
 }
 
 /// The roll in radians and the `FLAG_*` mirror bit of a card under `rotation`, drawn from
@@ -2045,7 +2075,7 @@ pub fn roll_and_mirror(rotation: RotationDef, seed: u32) -> (f32, u32) {
     };
     match rotation {
         RotationDef::Fixed => (0.0, 0),
-        RotationDef::Random | RotationDef::Together => (
+        RotationDef::Random | RotationDef::Together | RotationDef::Facing => (
             std::f32::consts::TAU * unit_float(hash3(seed, 0x0207, 0)),
             mirror,
         ),
