@@ -9,7 +9,7 @@ changed pixel from the projected path; the fog take covers the muzzle half of th
 shot acid_spit (flight 0.60 s): 25 Critical pixels, at most 4.8 px off the path (half width 7.5); body centred +0.06 px from where the flight reached; nothing after its end; under the fog 90 pixels on the seen half and none on the unseen one
 shot cannon_tracer (flight 0.00 s): 95 Critical pixels, at most 1.2 px off the path (half width 2.2); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 222 pixels on the seen half and none on the unseen one
 shot gauss_tracer (flight 0.00 s): 40 Critical pixels, at most 0.8 px off the path (half width 1.4); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 100 pixels on the seen half and none on the unseen one
-shot grenade_lob (flight 0.60 s): 20 Critical pixels, at most 1.8 px off the path (half width 2.7); body centred +0.00 px from where the flight reached; nothing after its end; under the fog 43 pixels on the seen half and none on the unseen one
+shot grenade_lob (flight 0.60 s): 20 Critical pixels, at most 1.8 px off the path (half width 2.7); body centred +0.00 px from where the flight reached; nothing after its end; under the fog 41 pixels on the seen half and none on the unseen one
 shot lance_beam (flight 0.00 s): 463 Critical pixels, at most 1.2 px off the path (half width 2.0); beam ends +1.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 1262 pixels on the seen half and none on the unseen one
 shot needle_volley (flight 0.60 s): 16 Critical pixels, at most 5.8 px off the path (half width 6.5); body centred -2.00 px from where the flight reached; nothing after its end; under the fog 12 pixels on the seen half and none on the unseen one
 shot plasma_bolt (flight 0.60 s): 52 Critical pixels, at most 2.8 px off the path (half width 3.7); body centred +0.04 px from where the flight reached; nothing after its end; under the fog 275 pixels on the seen half and none on the unseen one
@@ -19,7 +19,7 @@ shot sniper_tracer (flight 0.00 s): 56 Critical pixels, at most 0.8 px off the p
 shot spore_bolt (flight 0.60 s): 10 Critical pixels, at most 3.2 px off the path (half width 4.4); body centred -0.30 px from where the flight reached; nothing after its end; under the fog 99 pixels on the seen half and none on the unseen one
 
 ## area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts
-driver lavapipe: Fungal Growth: missile looks held on 22 of 91 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 4; fog edge Some([18.884506, 7.2621036])
+driver lavapipe: Fungal Growth: missile looks held on 22 of 91 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 0; fog edge Some([18.884506, 7.2621036])
 
 ## status_gpu_tests (re-baselined: the control unit dies with glass_shatter)
 driver lavapipe: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it

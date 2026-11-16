@@ -2474,7 +2474,7 @@ matter flying the path.
 | Tools | `weld_sparks` (impact) | `welder_drone`, `grav_harvester` |
 | Impaler | `impaler_strike` (impact) | `thorn_lasher_dome` |
 | Death | `glass_shatter` (`defaults.death`) | every unit and structure whose block names no death |
-| Fungal Growth (F1) | `fungal_missile` (held), `fungal_trail`, `fungal_impact`; `fungal_affliction` and `fungal_motes` (`defaults.status.DamageOverTime`) | `mycelium_shaman` (`"Fungal Growth"`) |
+| Fungal Growth (F1) | `fungal_missile` (held), `fungal_trail`, `fungal_impact`; `fungal_affliction` and `fungal_motes` defined but named by no default (B-122, below) | `mycelium_shaman` (`"Fungal Growth"`) |
 
 The flame jet (`napalm_wheeler`) names no travel: its jet is its splash, so its legacy tracer is gone. The sieged
 tank and the Liberator analogue gain a travel next to their accepted splash. The accepted effects themselves are
@@ -2500,8 +2500,12 @@ unchanged.
 - **Fungal impact position.** The simulation stops publishing a missile on the tick it lands, so its impact is laid
   where it was drawn last: at most one tick's flight short of the target point (0.67 units for Fungal Growth). An
   exact point needs a published impact (a presentation-only event). Recorded.
-- **`DamageOverTime` is one status kind.** The status table is per kind, so a unit hurt by a storm also wears
-  `fungal_affliction`. A look per status needs the status's name in the snapshot (a simulation change). Recorded.
+- **`DamageOverTime` is one status kind (B-122, registered in `DESIGN.md`).** The snapshot publishes the kind only,
+  so a look keyed on it would put Fungal Growth's spores on a storm's victims (a wrong look in play). No
+  `DamageOverTime` default ships: a fungaled unit shows the slow (`concussive_daze`) and stands on the fungal mark,
+  which lasts the status's duration. `fungal_affliction` stays defined for when a per-status presentation key is
+  published (a simulation change). Keying on the flag combination `DamageOverTime + Revealed`, which only Fungal
+  Growth sets today, was rejected: it is an accident of today's catalog, not a published fact.
 - **Units without media stay unpresented.** In a battle the looks draw only for units with media. Shown only in the
   lab, or by stand-ins in the tests: `tripod_annihilator` (`lance_beam`, `lance_burn`), `void_goliath` (none),
   `mycelium_shaman` (the Fungal looks; the GPU evidence casts it from a presentable stand-in given a copy of the

@@ -2649,6 +2649,24 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
         landed as usize, expected,
         "each missile lands one impact, the enemy's where the viewer sees it"
     );
-    assert!(afflicted > 0, "the struck units wear the affliction");
+    // B-122: the snapshot does not say which spell a damage-over-time status came from, so
+    // no `DamageOverTime` look is shipped yet; when the vocabulary names one, it is held.
+    let catalog_names_one = {
+        let root = client::ResolvedAssetsRoot::resolve()?;
+        EffectCatalog::load(
+            &root
+                .as_path()
+                .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )?
+        .defaults
+        .status
+        .contains_key(&sim_types::StatusKind::DamageOverTime)
+    };
+    assert_eq!(
+        afflicted > 0,
+        catalog_names_one,
+        "the struck units wear the affliction exactly when the vocabulary names one"
+    );
     Ok(())
 }

@@ -32,7 +32,7 @@ round ran on lavapipe, the CI reference. No radv picture exists for this round.
 | Explosive | `rocket_trail`, `grenade_lob`; `rocket_hit` | A hot flame at the rocket's head with a grey smoke trail broken by its noise; a dark tumbling shell with a dull glow; a small fireball, sparks and dark smoke where it bursts. |
 | Melee | `psi_slash`, `claw_rake`, `weld_sparks`, `impaler_strike` | A blue psionic crescent swung across the target at any angle; two pale crescents raked across it with dark flecks; a hot point and falling welding sparks; a chitin spike thrust up under the target with chips and dust. |
 | Death | `glass_shatter` | The bubble's glass breaking outward in pale shards, one soft pale flash, a little dust. |
-| Fungal Growth (F1) | `fungal_missile`, `fungal_trail`, `fungal_impact`, `fungal_affliction` | A clot of dark spores in a sickly yellow-green glow flying above the ground and shedding motes; where it lands, a burst of spores, a ring racing out to the spell's search radius, rising spore clouds and a mould stain fading over the status's duration; a fungaled unit beats with a yellow-green rim and sheds rising motes (a slowed unit reads grey and dull instead). |
+| Fungal Growth (F1) | `fungal_missile`, `fungal_trail`, `fungal_impact`, `fungal_affliction` | A clot of dark spores in a sickly yellow-green glow flying above the ground and shedding motes; where it lands, a burst of spores, a ring racing out to the spell's search radius, rising spore clouds and a mould stain fading over the status's duration; a fungaled unit shows the slow's grey, dull look on the fungal mark. The affliction look (`fungal_affliction`, a yellow-green rim and rising motes) is defined but not shipped: the snapshot cannot tell Fungal Growth's damage over time from a storm's (B-122). |
 
 ### How the shots are drawn, and the fog (Amendment 24)
 
@@ -56,7 +56,8 @@ round ran on lavapipe, the CI reference. No radv picture exists for this round.
 - `jet_jumper`, `void_goliath` and `colossus_mech`'s air weapon publish no event the client can draw (an instant
   weapon whose visual kind is `Projectile`), so they have no look; recorded as a simulation data question.
 - The cleave's direction, the Fungal impact's exact point (at most one tick's flight short) and per-status looks
-  (a storm's victims also wear `fungal_affliction`) are recorded in Amendment 24.
+  (B-122: no `DamageOverTime` look ships, since the client cannot tell a storm's from Fungal Growth's) are recorded
+  in Amendment 24.
 
 ### Material
 
@@ -81,7 +82,8 @@ The tests check, on lavapipe:
   and the impact. A slug's head, or a projectile's body, is within 3 px of where the shot has reached. Nothing is
   drawn after the shot's end. Under the fog over the muzzle half, no pixel over the unseen half changes.
 - **Fungal Growth** (`area_link_gpu_tests.rs`). The missile holds a look in flight, each missile lands one impact,
-  the enemy's lands where the viewer sees its target, and the victims wear the affliction.
+  the enemy's lands where the viewer sees its target, and the victims wear an affliction look exactly when the
+  vocabulary names one (none ships, B-122).
 - **No legacy card for a shipped unit.** The status battle's deaths, the control included, draw no legacy shards
   (`status_gpu_tests.rs`). The legacy-card tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) are green
   unchanged.
@@ -99,7 +101,7 @@ The tests check, on lavapipe:
 - Whether the melee crescents read as blows, and whether any of them looks like a drawn arc or a UI element.
 - Whether `glass_shatter` is an acceptable default death next to the accepted named deaths.
 - Fungal Growth: whether the missile reads in flight; whether the impact's ring reads as the spell's area without
-  dominating; whether a fungaled unit reads differently from a slowed one.
+  dominating.
 - Pops: the looks start within a frame and end by eroding or fading. Check the first and last columns of each
   strip.
 

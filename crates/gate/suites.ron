@@ -237,6 +237,7 @@ SuiteCatalog(
                 "client/concealment_gpu_tests",
                 // `effects.ron` and the units' presentation blocks.
                 "client/effect_catalog_tests",
+                "client/weapon_look_tests",
                 "client/effect_runtime_tests",
                 "client/effect_gpu_tests",
                 "client/effect_slice_gpu_tests",

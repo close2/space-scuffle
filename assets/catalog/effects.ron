@@ -3012,9 +3012,9 @@
             Slowed: "concussive_daze",
             Dash: "charge_streak",
             Barrier: "barrier_shell",
-            // WP11, F1: a unit eaten over time (Fungal Growth; a storm's victims too, since the
-            // status table is per kind).
-            DamageOverTime: "fungal_affliction",
+            // WP11, F1: no `DamageOverTime` default. The snapshot publishes the status kind only,
+            // so a look keyed on it would show Fungal Growth's spores on a storm's victims too
+            // (B-122). `fungal_affliction` stays defined, for when the source is published.
         },
         concealment: (
             burrow_enter: "burrow_dig",
