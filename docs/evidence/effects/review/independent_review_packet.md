@@ -7,6 +7,54 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## Identity WP4/WP6 (plan `2026-11-17-effect-snapshot-identity`, B-125 and B-124)
+
+Plan: [`docs/plans/2026-11-17-effect-snapshot-identity.md`](../../../plans/2026-11-17-effect-snapshot-identity.md)
+D-3, D-6, D-9 and Amendment 2. Branch `effects-identity-client`: WP4 `29b978f3`, WP6 `593811ab`. Both move existing
+looks onto facts the simulation now publishes. No look's data changed. Per D-9 they are judged by their
+measurements. Please write your review to `independent_review_identity_1.md` next to this one. Pictures are on radv
+(the server's RX 580), debug build, Xvfb 1280x720, at the battle camera's default zoom.
+
+**What changed.**
+
+| Item | Before | Now |
+|---|---|---|
+| B-125, the struck bubble | The presented bubble nearest the hit's published point (ground + 0.5) within its radius plus 0.35, preferring the weapon slot's plane, ties broken by height | The bubble of the struck entity the event names (`StrikeEnds::target`): in the presented frame, else the previous snapshot, else the bubbles presented on the frame before (a killing hit), else the default bubble |
+| B-124, a spell missile's impact | Laid where the client last saw the missile plus half a published step, also for a missile that fizzled | Laid from the simulation's `SpellImpact` event, at the point where the impact ran (the aimed point for Fungal Growth), on the frame the presentation reaches its tick; a fizzled missile lays nothing |
+
+**Material.**
+
+| File | What it shows |
+|---|---|
+| [identity_wp4_cross_plane_radv.png](identity_wp4_cross_plane_radv.png) | The `cross_plane` wave: an anti-air shooter (left) fires at a flyer hovering over three packed ground units. Top: 12 frames at 40 ms, 1:1. Bottom: the first 6 at 2x. The hit should be on the flyer's glass, towards the shooter, and nothing should be on the ground units' glass |
+| [identity_wp6_fungal_impact_radv.png](identity_wp6_fungal_impact_radv.png) | The viewer's Fungal Growth impact 0.20 s after it was laid, with the clock stopped and only its `Critical` layer (the ring) drawn. Left: 1:1. Right: 2x. White cross: the projected aimed point. Cyan cross: the ring's fitted centre |
+| [identity_wp6_fungal_impact_critical_radv.png](identity_wp6_fungal_impact_critical_radv.png) | The whole window of that shot |
+| [identity_wp4_needle_volley_radv.png](identity_wp4_needle_volley_radv.png) | The one subject of the staged battle that fails the E4-1 bar after the waves were re-planned (see below), for judgement |
+| [identity_wp4_wp6_measurements.txt](identity_wp4_wp6_measurements.txt) | Every subject of the staged battle against its blank run, the cross-plane counts, the Fungal measurements and the valgrind counts |
+
+**Measured.**
+
+| Check | Result | Bar |
+|---|---|---|
+| Cross-plane: impact beside the flyer's glass | 271 px, its blank 24 | at least 68 (twice the blank plus 20) |
+| Cross-plane: change beside the ground units under the flyer, outside the flyer's zone | 7 px, its blank 7 | at most 15 (the blank plus 8) |
+| Fungal impact: anchor against the aimed point | 0.00000 world units | — |
+| Fungal impact: `Critical` ring's fitted centre against the projected aimed point | 0.86 px over 16 ray pairs | at most 2 px |
+| Fungal impact at the fog edge (E1-3) | 0 of 357 unseen ground samples changed, 488 of 619 seen | no unseen sample |
+| Valgrind effect stream (hits with `ends`, impacts by event) | window difference 0 | equal to its baseline (0) |
+
+**Points to look at.**
+
+1. In the cross-plane sheet: is the hit drawn on the flyer's glass, on the side the shot comes from, in every frame
+   where it shows? Does nothing of it appear on the ground units below?
+2. In the Fungal sheet: is the ring centred on the white cross at 1:1 and at 2x?
+3. The shipped data publishes an anti-air strike under `WeaponSlot::Air`, which the old rule already sent to the
+   flyer's plane. The `Primary` cross-plane case of the register is covered by a unit test only (Amendment 2). Is
+   that coverage enough?
+4. `needle_volley`+`needle_hit` lent to a projectile shooter changes 23 px beside the struck bubble against its blank's
+   7 (bar 34; 43 in WP11 round 5, at another spot). Projectile impacts land inside the struck bubble's masked
+   interior (the proposed B-127). Is the bar, the look or the staging at fault?
+
 ## WP11 round 5 (the conditions of review 4)
 
 Round 5 answers the conditions C1 and C2 of `independent_review_wp11_4.md` (ACCEPT WITH CONDITIONS) and its minor items

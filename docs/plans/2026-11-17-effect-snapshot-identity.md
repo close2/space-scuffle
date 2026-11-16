@@ -583,3 +583,102 @@ the plan left open.
   the alternated comparison with `main` (three runs each, as §5 measures) moves to WP8's
   evidence packet. The writer's additions are one pass over the published bubbles' statuses and
   one over the tick's landings, with no allocation in steady state.
+
+## Amendment 2: WP4 and WP6 as built (2026-11-16, short note, charter §6)
+
+WP4 (`29b978f3`) and WP6 (`593811ab`) are on branch `effects-identity-client`, made from
+`effects-identity` at WP3. They change the client only; no simulation crate, golden replay or
+checksum is touched. This note records the choices the plan left open, one correction to D-3
+and the evidence. The review packet is the section "Identity WP4/WP6" of
+`docs/evidence/effects/review/independent_review_packet.md`.
+
+**D-3 corrected: a third place to look for a killing hit's target.** §3.1 says the previous
+snapshot still holds a killing hit's target. That holds only when the presentation shows the
+hit's tick exactly (paused, or alpha 1). The event of tick T is popped once the presented tick
+reaches T. In play that happens on the frame that runs tick T+1, while the pose is interpolated
+from T towards T+1. Then `previous` is snapshot T, and the target was reaped on T, so neither
+snapshot lists it. `effects::struck::StruckBubbles` therefore keeps, refilled in place every
+frame, the id, radius, drawn height and dome flag of the bubbles presented on the frame before.
+The lookup order is: the presented frame, the previous snapshot, the last frame's bubbles, the
+default bubble (E3-5). Each lookup is a binary search over an id-ordered slice. Each place
+counts its finds (`StruckFrom`). The unit test
+`a_killing_hit_shown_while_interpolating_finds_its_target_in_the_last_frame` drives the real
+`BattleFrameState`: tick 1 kills, tick 2 runs, and the event pops with both snapshots lacking
+the target. The retained buffer is the one allocation the plan's "nothing is retained" did not
+foresee. It is sized by the presented bubbles and refilled without allocation in steady state:
+the valgrind effect stream's window difference is 0.
+
+**WP4: the cross-plane case and the published slot.** `sim_core::world::presentation::weapon_source`
+publishes a strike by the archetype's air weapon under `WeaponSlot::Air`, and
+`weapon_against(Air)` never returns the primary `weapon`. So a strike at a flyer from the
+shipped data is never a `Primary` strike. The removed rule preferred the flyer's plane for an
+`Air` slot, so it was not wrong in this exact staging. The register's `Primary` case (B-125)
+arises only for a synthetic or future event. The unit test
+`a_primary_shot_at_a_flyer_over_a_crowd_is_drawn_on_the_flyer` covers it. The GPU wave
+`cross_plane` proves the lookup by id on real pixels: the impact on the flyer and nothing on the
+ground units under it. It does not reproduce the old fault, which the shipped data could not
+produce.
+
+**WP4: the `cross_plane` wave.** The anti-air shooter (the first presentable unit whose block
+names looks for its `air_weapon`, found by data) fires at the largest presentable flyer. Three
+of the largest presentable ground units stand packed under the flyer, 0.05 apart, straight
+under it and either side up and down the screen. The flyer's impact must pass E4-1 beside the
+flyer's glass. Beside the ground units, outside the flyer's own zone, it may change at most
+its blank's count plus `UNDER_ALLOWANCE` (8 px).
+
+**WP4: two fixes to the staged battle's staging.** These were found while running it on the
+base branch, whose WP3 data changed the waves.
+- *Spots off the map's edge.* A wave staged `shock_golem` (radius 0.5625) at map x = 0.54. The
+  simulation stopped with "actor is outside its current full-radius movement domain", and the
+  child failed. This is not caused by WP4: the wave's subjects are planned as on the base
+  branch. `find_spots` now probes the ground `BODY_REACH` (0.5) beyond each end of the widest
+  pair, with the probe's own half unit round it, so a body of radius up to 1 stays on walkable
+  ground. On the skirmish's camera this finds 3 spots a wave instead of 5. The test then runs
+  9 waves instead of 6 (the approach subjects take two).
+- *The approach subjects were truncated to a wave's capacity.* With 3 spots, the `AtFlyer`
+  subject and one blow were silently dropped. They are now staged in as many waves as they
+  need (`approach_subjects`, chunked).
+
+**WP4: a lab family that no longer shows by the E4-1 bar (open, not changed).** In the
+re-planned waves, `needle_volley`+`needle_hit` (lent to `rhino_beetle`, a projectile) changes
+23 px beside the struck bubble against a blank of 7. The bar is 34. In WP11 round 5, in another
+wave and spot, it changed 43. The run is deterministic: two runs gave 23. Projectile impacts
+land at the struck unit's centre at ground + 0.5, inside its masked interior (the proposed
+B-127, §10). Only their spill beyond 0.8 of the radius counts, so they are the most sensitive to
+the spot and the target. The bar and the look are the review's (Q0080) and the owner's, not
+this WP's. The failure is handed back with the evidence (`identity_wp4_needle_volley_radv.png`),
+and no threshold was changed.
+
+**WP6: as planned.** `effects::areas::lay_spell_impact` (and `_seen`, which takes the fog's
+question) lays the `impact` of the `Missile` look the caster's block names for the event's
+`source`. It lays it at the event's `pos`, bound to `missile_extent`, with the area fog cut
+over the impact's whole reach, or not at all when the viewer sees none of it.
+`spawn_effects_from_events` calls it for each `SpellImpact`. `keep_missiles_seen` only holds and
+releases. `MissileSlot` lost `landing`, `step`, and `published`, `source`, `owner` and `effect`,
+which only the landing guess read. `BattleFog::reveals` returns true for `SpellImpact`.
+
+**WP6: measuring the impact's centre.** Once the viewer's impact is 0.18 s old (its ring is at
+the search's radius), the Fungal child stops `Time<Virtual>`. It pictures the `Critical` layers
+alone and then no effect layer. Along 32 ground rays out of the aimed point, each ray's reach is
+the mean distance of the samples the ring changes from 0.7 radii out (inside lie the victims'
+own looks). Opposite rays give the offset along their axis by least squares on the ground,
+projected to pixels. Two points of method:
+- A window point is read from the pixel whose square holds it (`floor`). The edge tests'
+  `changed_at` rounds, which shifts every sample half a pixel right and down.
+- The band's mean is steadier than the outermost sample, which the ring's eroded edge moves.
+
+With the outermost sample and rounding, the same picture measured 2.02 px. With the band's mean
+and `floor`, it measured 0.86 px.
+
+**Evidence (radv, the RX 580, debug build, Xvfb 1280x720).**
+
+| Check | Result |
+|---|---|
+| `struck` unit tests (11) | pass |
+| `cross_plane` wave | impact 271 px (272 in an earlier run) beside the flyer, its blank 24 (bar 68); beside the 3 ground units 7 px, its blank 7 (allowed 15) |
+| Fungal impact | laid 0.00000 world units from the aimed point; `Critical` ring centred 0.86 px from it over 16 ray pairs (tolerance 2 px) |
+| Fungal fog edge (E1-3) | 0 of 357 unseen ground samples changed; 488 of 619 seen ones |
+| Valgrind effect stream (hits with `ends`, impacts by event) | window difference 0, as its baseline; planted control 64 |
+| `areas` unit tests, `weapon_look_tests` (24), `battle_fog_tests` (10), `lab_scene_tests` | pass |
+| `area_link_gpu_tests` (3 measured tests) | pass |
+| `weapon_battle_gpu_tests` | red on `needle_volley` only, as above |
