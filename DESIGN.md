@@ -34,14 +34,57 @@ for third-party bots running headless matches. Nothing of these exists beyond th
 
 ## 2. Architecture
 
-The workspace has eight crates. Charter §5 draws their dependency graph, and check C1 keeps the drawing equal to
-Cargo's.
+The workspace has nine crates. Charter §5 states the layering rule; the graph below draws every
+workspace-internal dependency, and check C1 keeps the drawing equal to Cargo's and Cargo's edges within the rule. An
+arrow points from a dependency to its dependent; a dashed arrow is a dev-dependency.
+
+```mermaid
+flowchart TD
+    ST["crates/sim_types<br/>(fixed-point math, IDs, commands, RenderSnapshot, PlayerView)"]
+    SM["crates/sim_map<br/>(cliffs, ramps, vision, clearance field, navigation mesh, triangle A* + radius funnel, map format)"]
+    SC["crates/sim_core<br/>(deterministic tick, combat, movement, economy, catalogs)"]
+    AB["crates/asset_baker<br/>(Veo and ffmpeg flipbook baking, terrain textures)"]
+    CL["crates/client<br/>(Bevy renderer, HUD, input, map editor)"]
+    CD["crates/client_diagnostics<br/>(capture, audit and probe tools)"]
+    FX["crates/sim_fixtures<br/>(test-only shipped-data fixtures)"]
+    WC["crates/workspace_checks<br/>(charter checks)"]
+    GT["crates/gate<br/>(tiered test gates)"]
+
+    ST --> SM
+    ST --> SC
+    SM --> SC
+    ST --> AB
+    SC --> AB
+    ST --> CL
+    SM --> CL
+    SC --> CL
+    AB --> CL
+    ST --> CD
+    SM --> CD
+    SC --> CD
+    AB --> CD
+    CL --> CD
+    ST --> FX
+    SM --> FX
+    SC --> FX
+    FX -.-> SC
+    FX -.-> AB
+    FX -.-> CL
+    FX -.-> CD
+    ST -.-> WC
+```
+
+`asset_baker` depends on `sim_core` for the unit catalog it discovers archetypes from. `sim_fixtures` embeds the
+shipped catalogs for tests only; `sim_core` uses it in its integration tests, and its own unit tests embed the same
+files through `sim_core::test_support`, because a dev-dependency cycle would link a second copy of `sim_core`.
+`gate` depends on no workspace crate: it reads `cargo metadata`, Git and the sources as data, so a broken crate
+cannot break the tool that selects its tests.
 
 - **`sim_types`** — the shared contract: fixed-point math (`SimScalar`, `SimVec2`, `SimAngle`), IDs, player
   commands (`PlayerCommand`, `TickBundle`), and the presentation outputs `RenderSnapshot` and `PlayerView`. It also
   owns the tick rate, `sim_types::TICKS_PER_SECOND`.
 - **`sim_map`** — terrain: cliff levels, ramps, the map file format, line of sight with high ground, the
-  clearance field, A* corridors and the funnel.
+  clearance field, and pathfinding on a constrained Delaunay navigation mesh with triangle A* and the radius funnel.
 - **`sim_core`** — the deterministic tick (`SimWorld`): commands, economy, production and research,
   construction, transport, abilities, vision, targeting, movement, collision and push, weapons, the match result,
   the checksum and the catalogs.
@@ -58,7 +101,7 @@ Cargo's.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
   it.
 - **`sim_fixtures`** — test-only worlds and catalogs embedded from the shipped data.
-- **`workspace_checks`** — the executable charter checks (C1 to C21, and C23).
+- **`workspace_checks`** — the executable charter checks (C1 to C21, C23 and C24).
 - **`gate`** — `cargo gate`: selects the tests a change can break from the catalog `crates/gate/suites.ron`
   and runs them in the tiers of charter §4.3 (`quick`, `package`, `merge`, `full`), with stamps, flake reruns,
   the red rule's suspect list and the CI timing summary; its catalog check is C22. It depends on no other
@@ -312,6 +355,8 @@ machine, not figures of record:
 
 - [`README.md`](README.md) — the front page: the pitch and the CI showcase video.
 - [`AGENTS.md`](AGENTS.md) — the engineering charter and how each rule is checked.
+- [`docs/guides/`](docs/guides/) — the charter's binding guides: test subjects and gate tiers, the charter
+  checks, GPU and disk use on the shared server, and the `PERFORMANCE RATIONALE` example.
 - [`docs/plans/README.md`](docs/plans/README.md) — every implementation plan and what became of it.
 - [`docs/reviews/`](docs/reviews/) — independent reviews and findings.
 - [`docs/questions/`](docs/questions/) — decisions waiting for the owner.
