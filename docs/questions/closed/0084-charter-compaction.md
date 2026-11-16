@@ -31,3 +31,7 @@ Options:
 **Option 2 (Allow preparing a lossless editorial compaction of `AGENTS.md`, moving verbose procedural/how-to details to linked reference files and presenting the exact `AGENTS.md` diff in a question for owner approval before merging).**
 
 **Context-window insight:** Because `AGENTS.md` sits in the prompt prefix of every coordinator and subagent turn, keeping `AGENTS.md` concise and declarative (rules, invariants, and short pointers to topic-specific operational guides) reduces token overhead and attention dilution across every turn while preserving 100% of charter rules under owner sign-off.
+
+## Resolution
+
+Option 2 carried out: the lossless compaction is prepared on branch `charter-compaction` (`281fd0e4`; AGENTS.md 23,914 → 20,357 bytes, about 15 %; §7 and the §4.3 tier mechanics moved word for word to `docs/guides/`). Its exact AGENTS.md diff is in [Q0085](../open/0085-charter-compaction-diff.md) for approval; nothing is merged before that answer.
