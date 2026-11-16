@@ -384,8 +384,8 @@ where
     buffers.prepare(sweep_len, band_len);
 
     // --- Run 1: Unconstrained forward pass ---
-    for k in 0..band_len {
-        buffers.cost[k] = cost_fn(0, k);
+    for (k, cost) in buffers.cost[..band_len].iter_mut().enumerate() {
+        *cost = cost_fn(0, k);
     }
 
     for s in 1..sweep_len {
@@ -429,12 +429,12 @@ where
     }
 
     // --- Run 2: Constrained start pass ---
-    for k in 0..band_len {
-        if k == best_end_k {
-            buffers.cost[k] = cost_fn(0, k);
+    for (k, cost) in buffers.cost[..band_len].iter_mut().enumerate() {
+        *cost = if k == best_end_k {
+            cost_fn(0, k)
         } else {
-            buffers.cost[k] = f32::INFINITY;
-        }
+            f32::INFINITY
+        };
     }
 
     for s in 1..sweep_len {

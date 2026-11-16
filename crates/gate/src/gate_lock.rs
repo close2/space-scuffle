@@ -372,15 +372,13 @@ fn lock_owner(file: &File) -> Option<LockOwner> {
     let (major, minor) = split_device(metadata.dev());
     let locks = std::fs::read_to_string("/proc/locks").ok()?;
     let pid = flock_holder_pid(&locks, major, minor, metadata.ino())?;
-    let command_line = std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map(|raw| {
-            raw.split(|byte| *byte == 0)
-                .filter(|part| !part.is_empty())
-                .map(|part| String::from_utf8_lossy(part).into_owned())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default();
+    let command_line = std::fs::read(format!("/proc/{pid}/cmdline")).map_or_default(|raw| {
+        raw.split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
     Some(LockOwner { pid, command_line })
 }
 

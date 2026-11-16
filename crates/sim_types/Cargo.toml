@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 description = "Deterministic fixed-point math, IDs, enums, player commands, and render snapshots for Space Scuffle"
 
 [lints]
