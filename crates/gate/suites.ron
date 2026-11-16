@@ -189,6 +189,8 @@ SuiteCatalog(
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",
                 "client/battle_fog_tests",
+                // WP12: the opponent's view of mode switches made by key (effects plan D-5).
+                "client/skirmish_match_tests",
             ],
         ),
         (
@@ -246,6 +248,8 @@ SuiteCatalog(
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",
                 "client/weapon_battle_gpu_tests",
+                // WP12: the looks of mode switches made by key come from the vocabulary's defaults.
+                "client/skirmish_match_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
