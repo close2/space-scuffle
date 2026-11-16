@@ -112,6 +112,7 @@ impl LabVfxTrigger {
                 owner,
                 duration_secs: Some(1.2),
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::LaserBeam => CombatEventVisual::BeamVisual {
                 from: origin,

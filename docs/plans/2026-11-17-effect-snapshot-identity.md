@@ -512,7 +512,7 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 | `RenderSnapshot::statuses` grows the client's per-frame work | Merge cursor over two id-ordered sequences, O(bubbles + statuses); steady-state and valgrind windows |
 | A held beam's fog clip recomputed every frame costs time | At most 64 beams; `shot_clip` samples are bounded by length and reach; frame budget measured in WP8's packet |
 | A beam lingers after its attacker stops firing | Deadline is the attacker's own period plus 0.12 s, shorter than today's 0.46 s fixed life |
-| `SpellImpact` admitted without a fog check leaks an unseen impact | The handler's `area_sight` returns `Hidden` and lays nothing; `battle_fog_tests` covers it |
+| `SpellImpact` admitted without a fog check leaks an unseen impact | The handler's `area_sight` returns `Hidden` and lays nothing; the unit test `effects::areas::tests::a_real_fog_hiding_the_whole_impact_lays_nothing` covers it through a real `BattleFog` (Amendment 3) |
 | RON cannot read `visual_kind: None` for an enum field | D-7 fallback (`rename`), recorded |
 | Review rejects the shown `fungal_affliction` or the held beam | Q0080 rounds; the facts and lookups ship regardless, only the data naming waits |
 | Changed `jet_jumper` / `void_goliath` looks are unseen in play (no media) | Lab and stand-in GPU coverage, as WP11 did; recorded |
@@ -521,13 +521,13 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 
 ## 10. Out of scope (recorded, Q0002)
 
-- **Proposed new register entry (B-127):** a `ProjectileVisual` is published at ground + 0.5 at both ends. An
+- **Proposed new register entry (B-128):** a `ProjectileVisual` is published at ground + 0.5 at both ends. An
   anti-air projectile therefore flies and lands below its flyer (the same cross-plane fault as B-125, for
   projectiles). The fix publishes `ends` on `ProjectileVisual` and re-aims the arrival on the target's bubble. It is
   a follow-up, not done here, so as not to publish a field nothing reads.
 - **Inverse kind mismatches:** `hive_matron` (`MeleeSlash` with a speed) and `tesla_sentinel_dome` (`LaserBeam` with
   a speed). `visual_kind` is hashed in `ActiveProjectile::weapon_spec`, so changing it re-records goldens; it
-  belongs with B-127 or a data plan.
+  belongs with B-128 or a data plan.
 - **The Thor's Explosive Payload mode** (Javelin missiles, W5): a mechanics change, already recorded by the
   deviation-fix plan.
 - **Own looks** for the Reaper, Immortal and High Impact Payload analogues: they reuse accepted looks (D-7). A
@@ -644,7 +644,7 @@ re-planned waves, `needle_volley`+`needle_hit` (lent to `rhino_beetle`, a projec
 23 px beside the struck bubble against a blank of 7. The bar is 34. In WP11 round 5, in another
 wave and spot, it changed 43. The run is deterministic: two runs gave 23. Projectile impacts
 land at the struck unit's centre at ground + 0.5, inside its masked interior (the proposed
-B-127, §10). Only their spill beyond 0.8 of the radius counts, so they are the most sensitive to
+B-128, §10). Only their spill beyond 0.8 of the radius counts, so they are the most sensitive to
 the spot and the target. The bar and the look are the review's (Q0080) and the owner's, not
 this WP's. The failure is handed back with the evidence (`identity_wp4_needle_volley_radv.png`),
 and no threshold was changed.

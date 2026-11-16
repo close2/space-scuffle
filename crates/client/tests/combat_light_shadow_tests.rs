@@ -34,6 +34,7 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
             owner,
             duration_secs: Some(0.5),
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::BeamVisual {
             from,
@@ -213,6 +214,7 @@ fn projectile_cards_follow_their_flight_and_face_the_camera(
                 owner,
                 duration_secs: Some(1.0),
                 source: sim_types::EffectSource::default(),
+                ends: None,
             }));
         for _ in 0..2 {
             app.update();

@@ -133,6 +133,7 @@ fn a_projectile_flies_its_path_for_its_flight_and_ends_with_it() {
         owner: PlayerId(0),
         duration_secs: Some(flight),
         source: primary(unit),
+        ends: None,
     };
     let request = travel_request(&event, &tables, &catalog).expect("the unit names a travel");
     assert_eq!(request.effect, effect);

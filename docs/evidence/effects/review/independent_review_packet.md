@@ -53,7 +53,7 @@ measurements. Please write your review to `independent_review_identity_1.md` nex
    that coverage enough?
 4. `needle_volley`+`needle_hit` lent to a projectile shooter changes 23 px beside the struck bubble against its blank's
    7 (bar 34; 43 in WP11 round 5, at another spot). Projectile impacts land inside the struck bubble's masked
-   interior (the proposed B-127). Is the bar, the look or the staging at fault?
+   interior (the proposed B-128). Is the bar, the look or the staging at fault?
 
 ## WP11 round 5 (the conditions of review 4)
 

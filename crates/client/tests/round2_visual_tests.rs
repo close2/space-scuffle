@@ -853,6 +853,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 owner: secondary,
                 duration_secs: Some(1.2),
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(

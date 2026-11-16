@@ -53,6 +53,7 @@ impl EffectKind {
                 owner,
                 duration_secs: Some(1.2),
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::Laser | Self::Lightning => CombatEventVisual::BeamVisual {
                 from: origin,

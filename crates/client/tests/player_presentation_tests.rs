@@ -204,6 +204,7 @@ fn events(owner: PlayerId) -> [CombatEventVisual; 5] {
             owner,
             duration_secs: Some(0.5),
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::BeamVisual {
             from,

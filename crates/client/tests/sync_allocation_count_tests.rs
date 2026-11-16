@@ -627,7 +627,7 @@ fn hold_area_and_link(
     );
     // The previous missile's impact, as the simulation's `SpellImpact` lays it (plan
     // `2026-11-17-effect-snapshot-identity` WP6), where it flew to.
-    if *frame % 8 == 0 && *frame >= 8 {
+    if *frame >= 8 && frame.is_multiple_of(8) {
         client::effects::areas::lay_spell_impact(
             &sim_types::snapshot::CombatEventVisual::SpellImpact {
                 pos: [x + 0.8, y, z],

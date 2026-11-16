@@ -215,6 +215,7 @@ pub(in crate::runtime_capture) fn preparation_app(
             owner: PlayerId(0),
             duration_secs: Some(1.2),
             source: sim_types::EffectSource::default(),
+            ends: None,
         }));
     app.update();
     evidence.apply(

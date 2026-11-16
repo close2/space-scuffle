@@ -1438,6 +1438,7 @@ mod tests {
                 owner: source.1,
                 duration_secs: None,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             victim,
             source

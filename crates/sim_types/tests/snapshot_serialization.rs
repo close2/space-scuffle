@@ -209,6 +209,7 @@ fn test_render_snapshot_full_serialization() {
             owner: PlayerId(2),
             duration_secs: Some(0.25),
             source: SOURCE,
+            ends: None,
         },
         CombatEventVisual::BeamVisual {
             from: [12.5, 13.5, 0.7],
@@ -352,6 +353,7 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
                 owner,
                 duration_secs: Some(0.5),
                 source: SOURCE,
+                ends: None,
             },
             CombatEventVisual::BeamVisual {
                 from: [0.0; 3],

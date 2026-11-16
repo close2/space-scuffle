@@ -1038,6 +1038,7 @@ fn each_kind_of_event_is_judged_where_it_lands() {
         owner: ENEMY,
         duration_secs: Some(0.5),
         source: sim_types::EffectSource::default(),
+        ends: None,
     };
     let own_tracer = CombatEventVisual::HitscanTracer {
         from: [seen.x, seen.y, 0.5],

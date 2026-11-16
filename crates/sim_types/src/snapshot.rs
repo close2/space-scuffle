@@ -110,8 +110,8 @@ pub struct AttackSwing {
 /// Instantaneous transient visual combat event (tracers, beams, slashes, explosions).
 ///
 /// Every weapon event carries its [`EffectSource`] and a shatter its unit type, so the client
-/// can choose the effect the source unit's presentation block names. An instant strike (tracer,
-/// beam, blow) also names its [`StrikeEnds`], and a spell missile's landing is a
+/// can choose the effect the source unit's presentation block names. A strike (tracer, beam,
+/// blow, projectile) also names its [`StrikeEnds`], and a spell missile's landing is a
 /// [`CombatEventVisual::SpellImpact`]. Records written before those fields existed read their
 /// defaults, and a field left at its default is left out of the serialized event, so events
 /// without the newer facts keep their bytes.
@@ -148,6 +148,12 @@ pub enum CombatEventVisual {
         /// Archetype and weapon that fired.
         #[serde(default)]
         source: EffectSource,
+        /// The attacker and the entity the projectile was fired at; `None` for a synthetic
+        /// event (a lab, a test) and for records written before the field existed. The
+        /// simulation always fills it (plan `2026-11-17-effect-snapshot-identity` Amendment 3,
+        /// B-128).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ends: Option<StrikeEnds>,
     },
     /// Continuous laser beam or jagged lightning arc.
     BeamVisual {
@@ -500,6 +506,7 @@ mod tests {
             owner: OWNER,
             duration_secs,
             source: SOURCE,
+            ends: None,
         };
         assert_eq!(shot(Some(0.5)).anchor(), [3.0, 1.0]);
         assert_eq!(

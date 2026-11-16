@@ -589,6 +589,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 owner: _,
                 duration_secs,
                 source: _,
+                ends: _,
             } => {
                 let lifetime = duration_secs.unwrap_or(0.35);
                 self.projectile(world_point(pos), world_point(vel), lifetime, style, owner);

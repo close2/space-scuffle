@@ -900,6 +900,11 @@ pub fn lay_spell_impact_seen(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
 
@@ -1145,6 +1150,71 @@ mod tests {
         );
         assert!(hidden.is_none());
         assert_eq!(runtime.spawned_of(impact), 1);
+    }
+
+    /// Review condition 2 (plan `2026-11-17-effect-snapshot-identity` Amendment 3): through a
+    /// real [`BattleFog`], an impact the viewer sees none of lays nothing; one whose edge the
+    /// viewer sees, and the viewer's own, are laid.
+    #[test]
+    fn a_real_fog_hiding_the_whole_impact_lays_nothing() {
+        use crate::battle_pipeline::commands::SessionGeneration;
+        use sim_types::{PlayerView, VisibilityState};
+        const SIDE: u16 = 24;
+        const SEEN_COLUMNS: u16 = 8;
+        let (side, seen_columns) = (u32::from(SIDE), u32::from(SEEN_COLUMNS));
+        let (catalog, tables) = shipped();
+        let (source, impact) = missile_ability(&catalog, &tables);
+        // The viewer, player 0, sees the columns left of x = 8 and nothing else.
+        let view = PlayerView {
+            viewer: PlayerId(0),
+            map_width: side,
+            map_height: side,
+            visibility: (0..side * side)
+                .map(|cell| {
+                    if cell % side < seen_columns {
+                        VisibilityState::Visible
+                    } else {
+                        VisibilityState::Fogged
+                    }
+                })
+                .collect(),
+            ..PlayerView::default()
+        };
+        let mut fog = BattleFog::default();
+        fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+        assert_eq!(fog.viewer(), Some(PlayerId(0)));
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: 1.0,
+            delta: 0.04,
+        };
+        // The enemy's impact far inside the unseen columns, its whole reach unseen.
+        let reach = keep
+            .catalog
+            .effect(impact)
+            .map_or(0.0, |effect| effect.reach)
+            .max(tables.missile_extent(source).radius);
+        let far = f32::from(SEEN_COLUMNS) + reach + 2.0;
+        assert!(far + reach < f32::from(SIDE), "the reach fits on the map");
+        let hidden = impact_at(source, 1, [far, 12.0, 0.0]);
+        assert!(fog.reveals(&hidden), "the fog delivers every impact");
+        assert!(lay_spell_impact(&hidden, Some(&fog), &mut keep).is_none());
+        assert_eq!(keep.runtime.spawned_of(impact), 0, "nothing is laid");
+        // Its edge seen: laid, cut where the fog begins.
+        let edge = impact_at(source, 2, [f32::from(SEEN_COLUMNS) + 0.5, 12.0, 0.0]);
+        assert!(lay_spell_impact(&edge, Some(&fog), &mut keep).is_some());
+        // The viewer's own impact in the unseen columns: laid whole.
+        let own = CombatEventVisual::SpellImpact {
+            pos: [far, 12.0, 0.0],
+            missile: 3,
+            owner: PlayerId(0),
+            source,
+        };
+        assert!(lay_spell_impact(&own, Some(&fog), &mut keep).is_some());
+        assert_eq!(keep.runtime.spawned_of(impact), 2);
     }
 
     #[test]

@@ -767,6 +767,10 @@ impl SimWorld {
                 owner: shot.owner,
                 duration_secs: Some(flight_duration_secs),
                 source: shot.source,
+                ends: Some(StrikeEnds {
+                    attacker: shot.attacker,
+                    target: shot.target,
+                }),
             });
         self.presentation.record_projectile(id, shot.source);
 

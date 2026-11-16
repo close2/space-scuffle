@@ -898,7 +898,8 @@ const fn strike_ends(event: &CombatEventVisual) -> Option<StrikeEnds> {
     match event {
         CombatEventVisual::HitscanTracer { ends, .. }
         | CombatEventVisual::BeamVisual { ends, .. }
-        | CombatEventVisual::MeleeSlashVisual { ends, .. } => *ends,
+        | CombatEventVisual::MeleeSlashVisual { ends, .. }
+        | CombatEventVisual::ProjectileVisual { ends, .. } => *ends,
         _ => None,
     }
 }
@@ -923,6 +924,36 @@ fn every_instant_hit_and_blow_names_its_attacker_and_target() {
         }
     }
     assert!(strikes > 0, "the shipped catalog has instant weapons");
+}
+
+/// B-128 (plan `2026-11-17-effect-snapshot-identity` Amendment 3): every projectile a shipped
+/// weapon launches names the attacker that fired it and the target it was fired at, so the
+/// client can land it on that target's bubble.
+#[test]
+fn every_projectile_names_its_attacker_and_target() {
+    let world = flat_world(0x0e_ff0c);
+    let mut projectiles = 0;
+    for (seed, shipped) in (300_u64..).zip(shipped_weapons(&world)) {
+        let duel = fire(&shipped, seed);
+        for event in duel
+            .events
+            .iter()
+            .filter(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
+        {
+            projectiles += 1;
+            assert_eq!(
+                strike_ends(event),
+                duel.ends,
+                "{} {:?}: {event:?}",
+                shipped.arch.slug,
+                shipped.key
+            );
+        }
+    }
+    assert!(
+        projectiles > 0,
+        "the shipped catalog has projectile weapons"
+    );
 }
 
 /// Spawns the shipped unit `slug` for `owner` at `(x, y)` holding position.

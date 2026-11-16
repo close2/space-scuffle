@@ -17,9 +17,11 @@
 //!   is shown at 1:1 next to a real bubble.
 //! - **The approach wave** fires an instant shot and a blow from above and below the target on
 //!   screen, and an anti-air weapon at a flyer.
-//! - **The last wave, `cross_plane`** (plan `2026-11-17-effect-snapshot-identity` WP4, B-125),
-//!   fires the anti-air weapon at a flyer hovering over a packed group of three ground units.
-//!   Its impact must show beside the **flyer's** glass by the rule below, and change beside the
+//! - **The last waves, `cross_plane`** (plan `2026-11-17-effect-snapshot-identity` WP4, B-125,
+//!   and Amendment 3, B-128), fire the anti-air weapon at a flyer hovering over a packed group
+//!   of three ground units, and then, in a wave of its own, the first anti-air weapon whose
+//!   shots fly (a projectile), when the data offers one with looks on a presentable shooter.
+//!   Each impact must show beside the **flyer's** glass by the rule below, and change beside the
 //!   ground units no more than its blank run does, plus [`UNDER_ALLOWANCE`]: the struck bubble
 //!   is found by the struck entity's id, never by where the hit was published.
 //!
@@ -360,13 +362,21 @@ fn plan(world: &SimWorld, capacity: usize) -> (Vec<Vec<Planned>>, Vec<Family>) {
             .chunks(capacity)
             .map(<[Planned]>::to_vec),
     );
-    waves.push(cross_plane_wave(world));
+    waves.extend(cross_plane_waves(world));
     (waves, unstaged)
 }
 
 /// The first presentable mobile unit whose block names looks for its anti-air weapon, and
 /// that family.
 fn anti_air_shooter(world: &SimWorld) -> Option<(Shooter, Family)> {
+    anti_air_shooter_where(world, |_| true)
+}
+
+/// [`anti_air_shooter`] among the units whose anti-air weapon `admits`.
+fn anti_air_shooter_where(
+    world: &SimWorld,
+    admits: impl Fn(&WeaponSpec) -> bool,
+) -> Option<(Shooter, Family)> {
     let assets = assets();
     world.catalog.archetypes().find_map(|arch| {
         let entry = arch.effects.weapons.iter().find(|entry| {
@@ -374,7 +384,7 @@ fn anti_air_shooter(world: &SimWorld) -> Option<(Shooter, Family)> {
                 && entry.mode.is_none()
                 && (entry.travel.is_some() || entry.impact.is_some())
         })?;
-        let spec = arch.air_weapon.as_ref()?;
+        let spec = arch.air_weapon.as_ref().filter(|spec| admits(spec))?;
         (presentable(&assets, &arch.slug) && arch.max_speed > SimScalar::ZERO).then(|| {
             (
                 Shooter {
@@ -392,12 +402,19 @@ fn anti_air_shooter(world: &SimWorld) -> Option<(Shooter, Family)> {
     })
 }
 
-/// The last wave, `cross_plane` (plan `2026-11-17-effect-snapshot-identity` WP4, B-125): the
-/// anti-air shooter fires at a flyer hovering over a packed group of ground units.
-fn cross_plane_wave(world: &SimWorld) -> Vec<Planned> {
-    anti_air_shooter(world)
-        .map(|(shooter, family)| (shooter, family, true, Approach::CrossPlane))
+/// The last waves, `cross_plane` (plan `2026-11-17-effect-snapshot-identity` WP4, B-125): the
+/// anti-air shooter fires at a flyer hovering over a packed group of ground units. When the
+/// first anti-air shooter whose shots fly is another unit, it fires in a wave of its own
+/// (Amendment 3, B-128: a projectile lands on the flyer's glass, not below it); a wave of its
+/// own, because each subject packs three ground units round its spot.
+fn cross_plane_waves(world: &SimWorld) -> Vec<Vec<Planned>> {
+    let instant = anti_air_shooter(world);
+    let flying = anti_air_shooter_where(world, |spec| spec.projectile_speed.is_some())
+        .filter(|(shooter, _)| instant.as_ref().is_none_or(|(first, _)| first != shooter));
+    [instant, flying]
         .into_iter()
+        .flatten()
+        .map(|(shooter, family)| vec![(shooter, family, true, Approach::CrossPlane)])
         .collect()
 }
 
