@@ -28,3 +28,6 @@ Options:
 
 ## Answer
 
+**Option 2 (Allow preparing a lossless editorial compaction of `AGENTS.md`, moving verbose procedural/how-to details to linked reference files and presenting the exact `AGENTS.md` diff in a question for owner approval before merging).**
+
+**Context-window insight:** Because `AGENTS.md` sits in the prompt prefix of every coordinator and subagent turn, keeping `AGENTS.md` concise and declarative (rules, invariants, and short pointers to topic-specific operational guides) reduces token overhead and attention dilution across every turn while preserving 100% of charter rules under owner sign-off.

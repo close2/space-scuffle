@@ -30,3 +30,6 @@ Recommendation: option 1 now. Option 2 only if flakes keep costing whole runs af
 
 ## Answer
 
+**Option 1 (Keep "a flake is not green", add `cargo gate --resume` to reuse passing targets on the same git tree, and fix the known flaky GPU tests).**
+
+**Technical insight:** Keeping a flake red prevents flaky tests from accumulating silently, while `cargo gate --resume` eliminates the multi-hour penalty of re-running already-green targets on the same tree. Note also that the VM (`10.0.120.19`) currently has Debian trixie's `libvulkan1` `1.4.309.0-1`, which has a known upstream Khronos `Vulkan-Loader` use-after-free race between `loader_get_icd_and_device` and concurrent `vkCreateDevice`/`vkDestroyDevice` (`KhronosGroup/Vulkan-Loader` #2018 / PR #1866, fixed in `v1.4.345`), which may also contribute to intermittent multi-instance/multi-device Vulkan test stalls or crashes.
