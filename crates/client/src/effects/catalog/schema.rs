@@ -438,6 +438,14 @@ pub enum BlockDef {
         /// at any angle, plan WP11).
         #[serde(default)]
         rotation: RotationDef,
+        /// A factor on `arc` over the layer's life (needs `arc`): an arc that sweeps open over
+        /// its first frames, a blade's swing across its target (WP11 review 1, A1-7).
+        #[serde(default)]
+        arc_curve: Option<String>,
+        /// The band of an arc swells from nothing at both its ends to its full thickness in
+        /// its middle (needs `arc`): a crescent, not an even-width drawn arc.
+        #[serde(default)]
+        crescent: bool,
     },
     /// A ground mark projected through the depth buffer.
     Decal {

@@ -345,9 +345,10 @@ fn a_spell_missile_holds_its_look_and_lands_its_impact_where_it_ends() {
         .find(|(_, instance)| instance.effect == impact)
         .map(|(_, instance)| *instance)
         .expect("the impact is live");
-    // Drawn last at the third frame, half way to where the fourth would be: map (5, 3).
+    // Last published at map (5, 3), after a tick's flight of 1 unit along x: the impact is
+    // laid half a tick on, at (5.5, 3) (review 1, E1-6 (b), B-124).
     assert!(
-        (landed.anchor - Vec3::new(5.0, 0.0, 3.0)).length() < 1e-4,
+        (landed.anchor - Vec3::new(5.5, 0.0, 3.0)).length() < 1e-4,
         "{:?}",
         landed.anchor
     );
@@ -400,4 +401,66 @@ fn an_unseen_missile_is_not_drawn_and_lands_no_impact() {
         "nothing of it is drawn"
     );
     assert!(runtime.frame.decals.is_empty(), "it lays no mark");
+}
+
+/// Review 1, E1-1: an instant shot's impact is laid when its slug arrives, never before. At 40 ms
+/// frames, the impact's first drawn frame is not earlier than the frame the slug's head reaches
+/// the target, less one.
+#[test]
+fn an_instant_shots_impact_waits_for_its_slug() {
+    let (catalog, units, tables) = shipped();
+    let (unit, _, travel) = unit_with_travel(&catalog, &units, |effect| {
+        !flies(effect)
+            && effect.layers.iter().any(|layer| {
+                matches!(&layer.block, client::effects::catalog::Block::Ribbon(look) if look.trail.is_some())
+            })
+    });
+    let event = CombatEventVisual::HitscanTracer {
+        from: [2.0, 3.0, 0.5],
+        to: [10.0, 3.0, 0.5],
+        owner: PlayerId(0),
+        source: primary(unit),
+    };
+    let slug = travel_request(&event, &tables, &catalog).expect("a travel");
+    let impact = spawn_request(&event, &tables, &catalog).expect("an impact");
+    let arrival = catalog
+        .effect(travel)
+        .expect("defined")
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer.priority == Priority::Critical
+                && matches!(&layer.block, client::effects::catalog::Block::Ribbon(look) if look.trail.is_some())
+        })
+        .map(|layer| layer.start + layer.duration)
+        .fold(0.0_f32, f32::max);
+    assert!(arrival > 0.0, "the travel has a riding slug");
+    assert!(
+        (impact.delay - arrival).abs() < 1e-6,
+        "the impact waits {} s for a slug arriving at {arrival} s",
+        impact.delay
+    );
+    // Frame by frame: the slug's head reaches the line's end on the frame of its arrival; the
+    // impact draws nothing before the frame before it.
+    let mut runtime = EffectRuntime::new(&catalog);
+    runtime
+        .spawn(&catalog, &slug, 0.0)
+        .expect("the slug spawns");
+    let impact_handle = runtime
+        .spawn(&catalog, &impact, 0.0)
+        .expect("the impact spawns");
+    let frame = 0.04_f64;
+    let arrival_frame = (f64::from(arrival) / frame).ceil();
+    for step in 0..12_u32 {
+        let now = f64::from(step) * frame;
+        runtime.build_frame(&catalog, now, None);
+        let instance = runtime.pool.get(impact_handle).expect("the impact lives");
+        let drawn = now >= instance.birth;
+        if drawn {
+            assert!(
+                f64::from(step) >= arrival_frame - 1.0,
+                "the impact draws at frame {step}, the slug arrives at frame {arrival_frame}"
+            );
+        }
+    }
 }

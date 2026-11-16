@@ -67,7 +67,7 @@ pub const fn status_index(kind: StatusKind) -> usize {
 }
 
 /// The effects of one weapon.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponEffectIds {
     /// Slot and mode of the weapon.
     pub key: WeaponKey,
@@ -80,6 +80,10 @@ pub struct WeaponEffectIds {
     pub impact: Option<EffectId>,
     /// Each splash search.
     pub splash: Option<EffectId>,
+    /// Seconds after an instant shot (a tracer or a beam) that its impact is laid: when the
+    /// travel's `Critical` riding strip (its slug) reaches the target, so the round arrives
+    /// before its hit (plan WP11 review 1, E1-1); 0 without one.
+    pub impact_delay: f32,
 }
 
 /// The effects of one mode, by the archetype's mode index.
@@ -246,6 +250,14 @@ impl UnitEffectTables {
         self.units
             .get(usize::from(unit.0))
             .map_or(0.0, |entry| entry.muzzle)
+    }
+
+    /// Seconds after an instant shot of `source` that its impact is laid (see
+    /// [`WeaponEffectIds::impact_delay`]).
+    #[must_use]
+    pub fn impact_delay(&self, source: EffectSource) -> f32 {
+        self.weapon(source)
+            .map_or(0.0, |weapon| weapon.impact_delay)
     }
 
     /// The impact effect of `source`, or the default.
@@ -426,13 +438,17 @@ fn resolve_unit(
             .as_deref()
             .map(|name| mode_index(archetype, name))
             .transpose()?;
+        let travel = check.name("weapon travel", weapon.travel.as_ref(), SHOT_KINDS)?;
         entry.weapons.push(WeaponEffectIds {
             key: WeaponKey {
                 slot: weapon.weapon,
                 mode,
             },
             launch: check.name("weapon launch", weapon.launch.as_ref(), POINT_KINDS)?,
-            travel: check.name("weapon travel", weapon.travel.as_ref(), SHOT_KINDS)?,
+            travel,
+            impact_delay: travel
+                .and_then(|id| effects.effect(id))
+                .map_or(0.0, slug_arrival),
             impact: check.name("weapon impact", weapon.impact.as_ref(), POINT_KINDS)?,
             splash: check.name("weapon splash", weapon.splash.as_ref(), SPLASH_KINDS)?,
         });
@@ -527,6 +543,23 @@ fn resolve_abilities(
         }
     }
     Ok(())
+}
+
+/// When the `Critical` riding strip (a slug) of the shot `effect` reaches the far end of its
+/// line on an instant shot: the strip's head rides the line with its layer's life, so it
+/// arrives at the layer's end. Layers lasting a bound span (a projectile's flight) do not
+/// count: a projectile's impact already waits for its flight. 0 without such a strip.
+fn slug_arrival(effect: &super::Effect) -> f32 {
+    effect
+        .layers
+        .iter()
+        .filter(|layer| {
+            layer.priority == super::schema::Priority::Critical
+                && layer.lasts.is_none()
+                && matches!(&layer.block, super::Block::Ribbon(look) if look.trail.is_some())
+        })
+        .map(|layer| layer.start + layer.duration)
+        .fold(0.0_f32, f32::max)
 }
 
 /// Nodes a walk of an ability's effect tree visits at most: the catalog's trees are a few

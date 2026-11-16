@@ -286,6 +286,10 @@ pub enum Block {
         edge_noise: f32,
         /// Share of the turn drawn (bound, clamped to [0, 1]); `None` draws the whole ring.
         arc: Option<ValueDef>,
+        /// A factor on the arc over the layer's life (a swing sweeping open).
+        arc_curve: Option<CurveId>,
+        /// Whether the arc's band tapers to points at both ends (a crescent).
+        crescent: bool,
         /// How much the band's width and radius waver round the turn; 0 for an even band.
         waver: f32,
         /// Whether the ring darkens the ground under it (multiplied, never lightened).
@@ -435,6 +439,11 @@ pub struct Effect {
     pub hit: Option<Hit>,
     /// What a `Missile` effect lays where the missile ends (an `Area` effect).
     pub impact: Option<EffectId>,
+    /// How far, in world units, its constant-sized layers can draw from their placed point on
+    /// the ground plane: size times the size curve's peak, placement radius, spread, drift over
+    /// the layer's life and lift, and a particle's flight. The fog asks this far round a shot
+    /// or a missile (plan WP11 review 1, E1-2). Layers sized by a binding add their scale only.
+    pub reach: f32,
 }
 
 /// An effect laid again and again while a `Status` effect is held (see [`schema::EmitDef`]).

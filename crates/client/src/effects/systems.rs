@@ -247,8 +247,11 @@ pub fn spawn_request(
                 delay: 0.0,
             })
         }
+        // An instant shot's impact waits for its slug to arrive (review 1, E1-1).
         CombatEventVisual::HitscanTracer { to, source, .. }
-        | CombatEventVisual::BeamVisual { to, source, .. } => impact(source, *to, 0.0),
+        | CombatEventVisual::BeamVisual { to, source, .. } => {
+            impact(source, *to, tables.impact_delay(*source))
+        }
         CombatEventVisual::MeleeSlashVisual { pos, source, .. } => impact(source, *pos, 0.0),
         CombatEventVisual::ProjectileVisual {
             pos,
@@ -285,8 +288,8 @@ pub fn spawn_request(
 /// Distance in world units between the fog samples [`shot_clip`] takes along a shot.
 const SHOT_FOG_STEP: f32 = 0.05;
 
-/// Distance in world units either side of a shot's path at which [`shot_clip`] also asks the
-/// fog: a shot's widest layers (a muzzle flash, a bolt's glow) reach about this far from it.
+/// Least distance in world units either side of a shot's path at which [`shot_clip`] asks the
+/// fog; a shot's own reach (`Effect::reach`, its widest layers) is used when it is larger.
 const SHOT_FOG_HALF_WIDTH: f32 = 0.35;
 
 /// World units a shot's fog cut keeps beyond the last unseen sample: the clip's anti-aliased
@@ -348,30 +351,47 @@ pub fn travel_request(
     })
 }
 
-/// The fog clip of a shot along `line` (Bevy world space) for a viewer who sees map point
-/// `(x, y)` when `sees(x, y)` (plan WP11, D-5): the shot is admitted where it lands, so it is
-/// drawn from its landing point back to where it leaves the viewer's sight, and no further.
+/// The fog clip of a shot along `line` (Bevy world space) whose layers draw up to `reach`
+/// world units from it (`Effect::reach`), for a viewer who sees map point `(x, y)` when
+/// `sees(x, y)` (plan WP11, D-5): the shot is admitted where it lands, so it is drawn from its
+/// landing point back to where it leaves the viewer's sight, and no further.
 ///
 /// The fog is asked every [`SHOT_FOG_STEP`] from the landing point back towards the muzzle,
-/// on the path and [`SHOT_FOG_HALF_WIDTH`] either side of it. Returns [`NO_CLIP`] when every
-/// sample is seen, and otherwise a clip window along the shot's horizontal direction that
-/// starts [`SHOT_FOG_MARGIN`] past the last seen sample before the first unseen one (closer
-/// to the landing point), so nothing is drawn over the unseen ground the shot crossed.
+/// on the path and at its reach (at least [`SHOT_FOG_HALF_WIDTH`]) either side of it. Returns
+/// [`NO_CLIP`] when every sample is seen, and otherwise a clip window along the shot's
+/// horizontal direction that starts [`SHOT_FOG_MARGIN`] past the last seen sample before the
+/// first unseen one (closer to the landing point). Fail-closed across the path too: unseen
+/// ground anywhere within the reach beside the path cuts everything behind it, so a shot running
+/// along a fog edge within its reach draws nothing over it (review 1, E1-2 (b)).
+///
+/// The clip is computed once, when the shot spawns: a projectile flies its flight under the
+/// fog of that moment (at most a second or so; recorded in Amendment 25, E1-2 (c)).
 #[must_use]
-pub fn shot_clip(line: WorldLine, sees: impl Fn(f32, f32) -> bool) -> LineClip {
+pub fn shot_clip(line: WorldLine, reach: f32, sees: impl Fn(f32, f32) -> bool) -> LineClip {
     let along = Vec2::new(line.to.x - line.from.x, line.to.z - line.from.z);
     let length = along.length();
     if length <= SHOT_FOG_STEP {
         return NO_CLIP;
     }
     let axis = along / length;
-    let side = Vec2::new(-axis.y, axis.x) * SHOT_FOG_HALF_WIDTH;
+    let half = reach.max(SHOT_FOG_HALF_WIDTH);
+    let normal = Vec2::new(-axis.y, axis.x);
     let start = Vec2::new(line.from.x, line.from.z);
+    // Samples across the path every half cell out to the reach, so no unseen cell beside the
+    // path within the reach is stepped over.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a reach of a few world units over half a cell"
+    )]
+    let across = (half / 0.5).ceil() as i32;
     let seen_at = |distance: f32| {
         let point = start + axis * distance;
-        [point, point + side, point - side]
-            .iter()
-            .all(|sample| sees(sample.x, sample.y))
+        (-across..=across).all(|step| {
+            #[expect(clippy::cast_precision_loss, reason = "a step below a few dozen")]
+            let offset = (step as f32 / across.max(1) as f32) * half;
+            let sample = point + normal * offset;
+            sees(sample.x, sample.y)
+        })
     };
     #[expect(
         clippy::cast_possible_truncation,
@@ -452,6 +472,9 @@ pub fn spawn_effects_from_events(
                 Some(fog) if fog.viewer() != Some(owner) => shot_clip(
                     shot.line
                         .unwrap_or(WorldLine::whole(shot.anchor, shot.anchor)),
+                    catalog
+                        .effect(shot.effect)
+                        .map_or(0.0, |effect| effect.reach),
                     |x, y| fog.sees(x, y),
                 ),
                 _ => NO_CLIP,
@@ -656,13 +679,13 @@ mod tests {
 
     #[test]
     fn a_shot_seen_whole_is_not_cut() {
-        assert_eq!(shot_clip(shot(), |_, _| true), NO_CLIP);
+        assert_eq!(shot_clip(shot(), 0.0, |_, _| true), NO_CLIP);
     }
 
     #[test]
     fn a_shot_out_of_the_fog_is_drawn_from_the_fog_edge_to_where_it_lands() {
         // The viewer sees map x >= 5 only: the muzzle is in the fog, the landing point seen.
-        let clip = shot_clip(shot(), |x, _| x >= 5.0);
+        let clip = shot_clip(shot(), 0.0, |x, _| x >= 5.0);
         let [x, z, min, max] = clip;
         assert!(
             (x - 1.0).abs() < 1e-6 && z.abs() < 1e-6,
@@ -680,19 +703,28 @@ mod tests {
     fn the_fog_beside_a_shot_cuts_it_too() {
         // Unseen cells just beside the path (map y < 5.3) left of x = 4: the shot's glow
         // would reach over them, so the cut lies beyond them.
-        let clip = shot_clip(shot(), |x, y| y >= 5.3 || x >= 4.0);
+        let clip = shot_clip(shot(), 0.0, |x, y| y >= 5.3 || x >= 4.0);
         assert!(clip[2] >= 4.0, "cut at {}", clip[2]);
     }
 
     #[test]
+    fn a_shot_along_a_fog_edge_within_its_reach_draws_nothing() {
+        // Unseen ground 0.8 units beside the whole path (map y < 4.7): a shot reaching 1 unit
+        // across draws nothing, one reaching 0.4 draws whole.
+        let clip = shot_clip(shot(), 1.0, |_, y| y >= 4.7);
+        assert!(clip[2] >= 9.5, "cut past the landing point: {}", clip[2]);
+        assert_eq!(shot_clip(shot(), 0.4, |_, y| y >= 4.7), NO_CLIP);
+    }
+
+    #[test]
     fn a_shot_seen_only_where_it_lands_draws_at_most_its_end() {
-        let clip = shot_clip(shot(), |x, _| x >= 9.45);
+        let clip = shot_clip(shot(), 0.0, |x, _| x >= 9.45);
         assert!(clip[2] >= 9.45, "cut at {}", clip[2]);
     }
 
     #[test]
     fn a_vertical_shot_is_not_cut() {
         let line = WorldLine::whole(Vec3::new(2.0, 3.0, 2.0), Vec3::new(2.0, 0.5, 2.0));
-        assert_eq!(shot_clip(line, |_, _| false), NO_CLIP);
+        assert_eq!(shot_clip(line, 0.0, |_, _| false), NO_CLIP);
     }
 }

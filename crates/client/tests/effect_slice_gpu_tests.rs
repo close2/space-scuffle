@@ -71,6 +71,7 @@ use client::effects::lab::{
 use client::ResolvedAssetsRoot;
 use effect_subjects::SplashSubject;
 use image::RgbImage;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -1293,6 +1294,23 @@ fn shot_lab(shot: &ShotSubject, fog: bool) -> LabSubject {
     }
 }
 
+/// The beside-the-fog take of `shot` (review 1, E1-2 (d)): its line along the camera's depth
+/// axis (+z), `beside` world units on the seen side of the lab's fog edge at x = 0, so the
+/// fog lies beside the whole path, within its reach.
+fn shot_beside_fog(shot: &ShotSubject, beside: f32) -> LabSubject {
+    LabSubject {
+        anchor: Vec3::new(beside, 0.0, -SHOT_LENGTH * 0.5),
+        line_to: Some(Vec3::new(beside, 0.0, SHOT_LENGTH * 0.5)),
+        fog_below_x: Some(0.0),
+        ..shot_lab(shot, false)
+    }
+}
+
+/// How far beside the fog edge the beside-the-fog take runs: within the shot's reach.
+fn beside_offset(effect: &Effect) -> f32 {
+    0.6 * effect.reach.max(0.35)
+}
+
 /// The shot's life in seconds: its longest non-held layer's span for its flight.
 fn shot_lifetime(effect: &Effect, shot: &ShotSubject) -> f32 {
     let bound =
@@ -1324,7 +1342,9 @@ fn effect_shot_child() {
         .expect("the parent names the subject")
         .parse()
         .expect("the index is a number");
-    let fog = std::env::var(SHOT_PART_VAR).is_ok_and(|part| part == "1");
+    let part = std::env::var(SHOT_PART_VAR).unwrap_or_default();
+    let fog = part == "1";
+    let beside = part == "2";
     let subjects = shot_subjects();
     let shot = &subjects[index];
     let catalog = catalog();
@@ -1333,7 +1353,21 @@ fn effect_shot_child() {
         .expect("resolves");
     let age = shot_age(effect, shot);
     let lifetime = shot_lifetime(effect, shot);
-    let takes = if fog {
+    let takes = if beside {
+        vec![
+            take(false, None, 0.25, &[("side_bg", 0.0)]),
+            take(
+                true,
+                None,
+                0.02,
+                &[
+                    ("side_early", age / SHOT_LIFE * 0.25),
+                    ("side_mid", age / SHOT_LIFE * 0.5),
+                    ("side_late", age / SHOT_LIFE * 0.75),
+                ],
+            ),
+        ]
+    } else if fog {
         vec![
             take(false, None, 0.25, &[("fog_bg", 0.0)]),
             take(
@@ -1354,7 +1388,11 @@ fn effect_shot_child() {
         ]
     };
     let program = LabProgram {
-        subject: shot_lab(shot, fog),
+        subject: if beside {
+            shot_beside_fog(shot, beside_offset(effect))
+        } else {
+            shot_lab(shot, fog)
+        },
         takes,
         out,
     };
@@ -1402,7 +1440,11 @@ fn check_shot(index: usize) -> TestResult<String> {
     let subjects = shot_subjects();
     let shot = &subjects[index];
     let directory = tempfile::tempdir()?;
-    for (part, label) in [("0", "shot stills"), ("1", "shot under fog")] {
+    for (part, label) in [
+        ("0", "shot stills"),
+        ("1", "shot under fog"),
+        ("2", "shot beside the fog"),
+    ] {
         let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
         command.args(["--ignored", "--exact", "--nocapture", "effect_shot_child"]);
         command.env(OUT_VAR, directory.path());
@@ -1539,9 +1581,35 @@ fn check_shot(index: usize) -> TestResult<String> {
         "{}: the seen half of the shot is drawn",
         shot.effect
     );
+    // E1-2 (d): the fog beside the path, along the camera's depth axis. No pixel whose ray
+    // meets the ground over the unseen side (x < 0, less half a pixel's worth of ground) may
+    // change.
+    let side_view = View::new(shot_beside_fog(shot, beside_offset(effect)).focus());
+    let side_bg = capture(directory.path(), "side_bg");
+    let mut side_unseen = 0;
+    let mut side_lit = 0;
+    for name in ["side_early", "side_mid", "side_late"] {
+        let side = capture(directory.path(), name);
+        for y in 0..SIZE.y {
+            for x in 0..SIZE.x {
+                if !lit(&side, &side_bg, x, y) {
+                    continue;
+                }
+                side_lit += 1;
+                if side_view.ground(x, y).is_some_and(|point| point.x < -0.02) {
+                    side_unseen += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        side_unseen, 0,
+        "{}: nothing drawn over the unseen ground beside the path",
+        shot.effect
+    );
     Ok(format!(
-        "shot {} (flight {:.2} s): {count} Critical pixels, at most {widest:.1} px off the path (half width {half_width:.1}); {path}; nothing after its end; under the fog {seen_lit} pixels on the seen half and none on the unseen one",
-        shot.effect, shot.flight
+        "shot {} (flight {:.2} s; reach {:.2}): beside the fog {side_lit} pixels drawn, none over unseen ground; {count} Critical pixels, at most {widest:.1} px off the path (half width {half_width:.1}); {path}; nothing after its end; under the fog {seen_lit} pixels on the seen half and none on the unseen one",
+        shot.effect, shot.flight, effect.reach
     ))
 }
 
@@ -1561,4 +1629,309 @@ fn shipped_shots_draw_along_their_paths() -> TestResult {
         eprintln!("{report}");
     }
     Ok(())
+}
+
+// --- WP11 round 2: every shipped weapon look can be seen (review 1, E1-5) ----------------------
+//
+// Every `Shot` and `Point` look a shipped unit names, and the default death, in the production
+// lab at the battle camera's default zoom on the brightest and the darkest ground: at its peak
+// of the sampled ages, the pixels the whole look changes by at least [`SEEN_LEVELS`] cover at
+// least its class's [`seen_minimum`], and its `Critical` layers' median contrast against the
+// floor is at least [`SEEN_LEVELS`]. Both are printed per look and ground.
+
+/// Environment variable carrying the look child's subject index.
+const LOOK_INDEX_VAR: &str = "SPACE_SCUFFLE_EFFECT_LOOK_INDEX";
+/// A pixel counts as seen when its largest channel or its luminance changes by this many levels.
+const SEEN_LEVELS: i32 = 32;
+/// Least `UnitRadius` the default death is shown with: a Pulse Bot's bubble.
+const DEATH_RADIUS: f32 = 0.375;
+
+/// A shipped weapon look, its event kind and the values it binds in the lab.
+#[derive(Debug, Clone)]
+struct LookSubject {
+    effect: String,
+    kind: client::effects::catalog::schema::EventKind,
+    bound: client::effects::binding::BoundValues,
+}
+
+/// Every travel and impact a shipped unit names, and the default death, sorted by name.
+fn look_subjects() -> Vec<LookSubject> {
+    use client::effects::catalog::schema::EventKind;
+    let catalog = catalog();
+    let mut names: Vec<String> = sim_fixtures::shipped_catalogs()
+        .units
+        .archetypes()
+        .flat_map(|archetype| archetype.effects.weapons.clone())
+        .flat_map(|entry| [entry.travel, entry.impact])
+        .flatten()
+        .collect();
+    names.extend(
+        catalog
+            .defaults
+            .death
+            .and_then(|id| catalog.effect(id))
+            .map(|effect| effect.name.clone()),
+    );
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .map(|name| {
+            let effect = catalog
+                .effect(catalog.effect_id(&name).expect("defined"))
+                .expect("resolves");
+            let flies = effect
+                .layers
+                .iter()
+                .any(|layer| layer.lasts == Some(Binding::FlightTime));
+            let bound = match effect.event {
+                EventKind::Shot => client::effects::binding::BoundValues::default()
+                    .with(Binding::LineLength, SHOT_LENGTH)
+                    .with(Binding::FlightTime, if flies { SHOT_FLIGHT } else { 0.0 }),
+                EventKind::Death => client::effects::binding::BoundValues::default()
+                    .with(Binding::UnitRadius, DEATH_RADIUS)
+                    .with(Binding::UnitHeight, DEATH_RADIUS * 2.0),
+                _ => client::effects::binding::BoundValues::default(),
+            };
+            LookSubject {
+                effect: name,
+                kind: effect.event,
+                bound,
+            }
+        })
+        .collect()
+}
+
+/// The least area in screen pixels a look of `kind` must change by [`SEEN_LEVELS`] at its
+/// peak: a shot's slug or body, an impact's flash or splash, a death's burst.
+fn seen_minimum(kind: client::effects::catalog::schema::EventKind) -> usize {
+    use client::effects::catalog::schema::EventKind;
+    match kind {
+        EventKind::Shot => 40,
+        EventKind::Death => 150,
+        _ => 80,
+    }
+}
+
+/// The ages a look is sampled at: a shot at 0.3, 0.5 and 0.7 of its `Critical` layers' life,
+/// anything else in its first frames, where an impact peaks.
+fn look_ages(effect: &Effect, subject: &LookSubject) -> [f32; 3] {
+    use client::effects::catalog::schema::EventKind;
+    if subject.kind != EventKind::Shot {
+        return [0.02, 0.06, 0.12];
+    }
+    let end = effect
+        .layers
+        .iter()
+        .filter(|layer| layer.priority == Priority::Critical)
+        .map(|layer| layer.start + layer.span(&subject.bound))
+        .fold(0.0, f32::max);
+    [end * 0.3, end * 0.5, end * 0.7]
+}
+
+/// The lab subject of a look: a shot's line along +x, anything else at the origin.
+fn look_lab(subject: &LookSubject) -> LabSubject {
+    use client::effects::catalog::schema::EventKind;
+    let line = subject.kind == EventKind::Shot;
+    LabSubject {
+        effect: subject.effect.clone(),
+        bound: subject.bound,
+        anchor: if line {
+            Vec3::new(-SHOT_LENGTH * 0.5, 0.0, 0.0)
+        } else {
+            Vec3::ZERO
+        },
+        line_to: line.then_some(Vec3::new(SHOT_LENGTH * 0.5, 0.0, 0.0)),
+        line_seen: u64::MAX,
+        fog_below_x: None,
+        repeat: None,
+    }
+}
+
+/// The look child: on each ground the background, then the whole look and its `Critical` layers
+/// at the sampled ages.
+#[test]
+#[ignore = "launched by the look visibility test on a virtual display"]
+fn effect_look_child() {
+    let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let index: usize = std::env::var(LOOK_INDEX_VAR)
+        .expect("the parent names the subject")
+        .parse()
+        .expect("the index is a number");
+    let subjects = look_subjects();
+    let subject = &subjects[index];
+    let catalog = catalog();
+    let effect = catalog
+        .effect(catalog.effect_id(&subject.effect).expect("defined"))
+        .expect("resolves");
+    let ages = look_ages(effect, subject);
+    let mut takes = Vec::new();
+    for (ground, prefix) in [(LabGround::Bright, "bright"), (LabGround::Dark, "dark")] {
+        let named = |what: &str| -> Vec<(String, f32)> {
+            ages.iter()
+                .enumerate()
+                .map(|(index, age)| (format!("{prefix}_{what}_{index}"), *age))
+                .collect()
+        };
+        let whole = named("whole");
+        let critical = named("critical");
+        let shots = |list: &[(String, f32)]| -> Vec<LabShot> {
+            list.iter()
+                .map(|(name, age)| LabShot {
+                    age: *age,
+                    overlay: false,
+                    name: name.clone(),
+                })
+                .collect()
+        };
+        takes.push(LabTake {
+            ground,
+            zoom: LabZoom::Default,
+            effect: false,
+            only: None,
+            step: 0.25,
+            shots: shots(&[(format!("{prefix}_bg"), 0.0)]),
+        });
+        takes.push(LabTake {
+            ground,
+            zoom: LabZoom::Default,
+            effect: true,
+            only: None,
+            step: 0.02,
+            shots: shots(&whole),
+        });
+        takes.push(LabTake {
+            ground,
+            zoom: LabZoom::Default,
+            effect: true,
+            only: Some(Priority::Critical),
+            step: 0.02,
+            shots: shots(&critical),
+        });
+    }
+    let program = LabProgram {
+        subject: look_lab(subject),
+        takes,
+        out,
+    };
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+/// How far pixel `(x, y)` of `image` lies from `background`: the larger of its largest channel
+/// change and its luminance change, levels.
+fn seen_change(image: &RgbImage, background: &RgbImage, x: u32, y: u32) -> i32 {
+    let channel = difference(image, background, x, y);
+    #[expect(clippy::cast_possible_truncation, reason = "levels below 256")]
+    let luma = (luminance(image, x, y) - luminance(background, x, y))
+        .abs()
+        .round() as i32;
+    channel.max(luma)
+}
+
+/// Runs the look child for subject `index` and measures it; returns its report line.
+fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
+    let subjects = look_subjects();
+    let subject = &subjects[index];
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", "effect_look_child"]);
+    command.env(OUT_VAR, directory.path());
+    command.env(LOOK_INDEX_VAR, index.to_string());
+    let driver = command.driver().map_or("unknown", gpu_run::GpuDriver::name);
+    command.assert_passes_validation("look visibility");
+    if let Some(keep) = keep {
+        let keep = keep.join(driver).join(&subject.effect);
+        std::fs::create_dir_all(&keep)?;
+        for entry in std::fs::read_dir(directory.path())? {
+            let entry = entry?;
+            std::fs::copy(entry.path(), keep.join(entry.file_name()))?;
+        }
+    }
+    let minimum = seen_minimum(subject.kind);
+    let mut report = format!("look {} on {driver}:", subject.effect);
+    for prefix in ["bright", "dark"] {
+        let bg = capture(directory.path(), &format!("{prefix}_bg"));
+        let mut best_area = 0;
+        let mut best_critical: Vec<i32> = Vec::new();
+        for age in 0..3 {
+            let whole = capture(directory.path(), &format!("{prefix}_whole_{age}"));
+            let critical = capture(directory.path(), &format!("{prefix}_critical_{age}"));
+            let mut area = 0;
+            let mut changes = Vec::new();
+            for y in 0..SIZE.y {
+                for x in 0..SIZE.x {
+                    if seen_change(&whole, &bg, x, y) >= SEEN_LEVELS {
+                        area += 1;
+                    }
+                    let change = seen_change(&critical, &bg, x, y);
+                    if change > 8 {
+                        changes.push(change);
+                    }
+                }
+            }
+            best_area = best_area.max(area);
+            if changes.len() > best_critical.len() {
+                best_critical = changes;
+            }
+        }
+        best_critical.sort_unstable();
+        let median = best_critical
+            .get(best_critical.len() / 2)
+            .copied()
+            .unwrap_or(0);
+        write!(
+            report,
+            " {prefix}: {best_area} px seen (least {minimum}), Critical median contrast {median} levels over {} px;",
+            best_critical.len()
+        )?;
+        assert!(
+            best_area >= minimum,
+            "{} on {prefix} ground: {best_area} px change by {SEEN_LEVELS} levels, less than {minimum}",
+            subject.effect
+        );
+        assert!(
+            median >= SEEN_LEVELS,
+            "{} on {prefix} ground: the Critical layers' median contrast is {median} levels",
+            subject.effect
+        );
+    }
+    Ok(report)
+}
+
+/// Review 1, E1-5: every shipped weapon look and the default death can be seen at the battle
+/// camera's default zoom on both grounds.
+#[test]
+fn shipped_weapon_looks_can_be_seen() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let keep = std::env::var_os(KEEP_VAR).map(PathBuf::from);
+    let subjects = look_subjects();
+    assert!(
+        subjects.len() >= 20,
+        "the shipped units name their looks: {subjects:?}"
+    );
+    let mut failures = Vec::new();
+    for (index, subject) in subjects.iter().enumerate() {
+        match std::panic::catch_unwind(|| check_look(index, keep.as_deref())) {
+            Ok(Ok(report)) => eprintln!("{report}"),
+            Ok(Err(error)) => failures.push(format!("{}: {error}", subject.effect)),
+            Err(panic) => failures.push(format!(
+                "{}: {}",
+                subject.effect,
+                panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_default()
+            )),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "looks that cannot be seen:\n{}",
+        failures.join("\n")
+    );
 }

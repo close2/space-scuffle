@@ -401,7 +401,11 @@ fn spawn_subject(
     if let (Some(EventKind::Shot), Some(below_x), Some(line)) = (kind, subject.fog_below_x, line) {
         runtime.set_fog_clip(
             handle,
-            crate::effects::systems::shot_clip(line, |x, _| x >= below_x),
+            crate::effects::systems::shot_clip(
+                line,
+                catalog.effect(effect).map_or(0.0, |effect| effect.reach),
+                |x, _| x >= below_x,
+            ),
         );
     }
     Ok(())

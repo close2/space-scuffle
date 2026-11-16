@@ -533,11 +533,29 @@ fn verify_combat_effect_visible(world: &mut World) -> Result<(), CaptureError> {
         .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>()
         .iter(world)
         .any(|visibility| visibility.get());
-    let effect_drawn = world
-        .get_resource::<client::effects::runtime::EffectRuntime>()
-        .is_some_and(|runtime| {
-            !runtime.frame.sorted.is_empty() || !runtime.frame.decals.is_empty()
-        });
+    // Only a weapon's shot, impact or a death counts, never a status or an area look (review 1,
+    // E1-8): a live combat effect that is still burning while the frame draws cards or marks.
+    let effect_drawn = match (
+        world.get_resource::<client::effects::runtime::EffectRuntime>(),
+        world.get_resource::<client::effects::catalog::EffectCatalog>(),
+    ) {
+        (Some(runtime), Some(catalog)) => {
+            let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
+            let combat = runtime.pool.iter().any(|(_, instance)| {
+                now < instance.fire_end
+                    && catalog.effect(instance.effect).is_some_and(|effect| {
+                        matches!(
+                            effect.event,
+                            client::effects::catalog::schema::EventKind::Shot
+                                | client::effects::catalog::schema::EventKind::Point
+                                | client::effects::catalog::schema::EventKind::Death
+                        )
+                    })
+            });
+            combat && (!runtime.frame.sorted.is_empty() || !runtime.frame.decals.is_empty())
+        }
+        _ => false,
+    };
     if !legacy_visible && !effect_drawn {
         return Err(failure(
             "damage occurred but produced combat effect is not visible",

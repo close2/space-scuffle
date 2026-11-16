@@ -262,10 +262,23 @@ struct MissileSlot {
     source: AbilitySource,
     /// The player whose cast launched it.
     owner: PlayerId,
-    /// Where it was drawn last (world space): where it lands its impact once it is gone.
-    position: Vec3,
+    /// Its last published position (world space, the tick it is interpolated towards).
+    published: Vec3,
+    /// How far it flew over its last published tick (world space): its impact is laid half
+    /// a tick on along it (review 1, E1-6 (b)).
+    step: Vec3,
     /// Whether it was kept this frame.
     kept: bool,
+}
+
+impl MissileSlot {
+    /// Where its impact is laid once it is gone: half a tick past its last published position
+    /// along its last tick's flight. The simulation stops publishing a missile on the tick it
+    /// lands, which lies within one tick's flight past that position; half a tick on halves
+    /// the worst offset (B-124).
+    fn landing(&self) -> Vec3 {
+        self.published + self.step * 0.5
+    }
 }
 
 /// The looks held on the published areas and tethers.
@@ -749,11 +762,13 @@ pub fn keep_missiles_seen(
         let start = Vec3::from_array(missile.position);
         let position = start + (Vec3::from_array(next) - start) * fraction.clamp(0.0, 1.0);
         let anchor = world(position.to_array());
-        let clip = match sight(
-            missile.owner,
-            Vec2::new(position.x, position.y),
-            MISSILE_SIGHT_RADIUS,
-        ) {
+        let (published, flown) = (world(next), world(next) - world(missile.position));
+        let reach = keep
+            .catalog
+            .effect(effect)
+            .map_or(0.0, |effect| effect.reach)
+            .max(MISSILE_SIGHT_RADIUS);
+        let clip = match sight(missile.owner, Vec2::new(position.x, position.y), reach) {
             AreaSight::Whole => NO_CLIP,
             AreaSight::Part(clip) => clip,
             AreaSight::Hidden => CLIP_NOTHING,
@@ -767,7 +782,15 @@ pub fn keep_missiles_seen(
                 slot.kept = keep
                     .runtime
                     .update_held(slot.handle, anchor, BoundValues::default());
-                slot.position = anchor;
+                if flown != Vec3::ZERO {
+                    slot.step = flown;
+                }
+                if published != slot.published {
+                    if flown == Vec3::ZERO {
+                        slot.step = published - slot.published;
+                    }
+                    slot.published = published;
+                }
                 slot.handle
             }
             Err(index) => {
@@ -794,7 +817,8 @@ pub fn keep_missiles_seen(
                         handle,
                         source: missile.source,
                         owner: missile.owner,
-                        position: anchor,
+                        published,
+                        step: flown,
                         kept: true,
                     },
                 );
@@ -804,18 +828,21 @@ pub fn keep_missiles_seen(
         keep.runtime.set_fog_clip(handle, clip);
         shed(missile.id, effect, anchor, clip, keep);
     }
+    // One compaction pass: the kept slots move down in order and the landed ones go, so many
+    // missiles landing on one frame cost one pass (review 1, E1-7).
     let now = keep.now;
-    let mut index = 0;
-    while index < looks.missiles.len() {
+    let mut kept = 0;
+    for index in 0..looks.missiles.len() {
         let slot = looks.missiles[index];
         if slot.kept {
-            index += 1;
-            continue;
+            looks.missiles[kept] = slot;
+            kept += 1;
+        } else {
+            keep.runtime.release(slot.handle, now);
+            land(&slot, &sight, keep);
         }
-        keep.runtime.release(slot.handle, now);
-        land(&slot, &sight, keep);
-        looks.missiles.remove(index);
     }
+    looks.missiles.truncate(kept);
 }
 
 /// Lays the `emit` effect of missile `id`'s look `effect` at `anchor` when its beat is due (a
@@ -844,7 +871,8 @@ fn shed(id: u32, effect: EffectId, anchor: Vec3, clip: LineClip, keep: &mut Keep
     }
 }
 
-/// Lays the impact of the landed missile `slot` where it was drawn last (plan WP11, F1).
+/// Lays the impact of the landed missile `slot` half a tick past its last published position
+/// (plan WP11, F1; B-124), cut by the fog over the impact's whole reach.
 fn land(
     slot: &MissileSlot,
     sight: &impl Fn(PlayerId, Vec2, f32) -> AreaSight,
@@ -858,15 +886,22 @@ fn land(
         return;
     };
     let extent = keep.tables.missile_extent(slot.source);
-    let center = Vec2::new(slot.position.x, slot.position.z);
-    let clip = match sight(slot.owner, center, extent.radius.max(MISSILE_SIGHT_RADIUS)) {
+    let landing = slot.landing();
+    let center = Vec2::new(landing.x, landing.z);
+    let reach = keep
+        .catalog
+        .effect(impact)
+        .map_or(0.0, |effect| effect.reach)
+        .max(extent.radius)
+        .max(MISSILE_SIGHT_RADIUS);
+    let clip = match sight(slot.owner, center, reach) {
         AreaSight::Whole => NO_CLIP,
         AreaSight::Part(clip) => clip,
         AreaSight::Hidden => return,
     };
     let request = SpawnRequest {
         effect: impact,
-        anchor: slot.position,
+        anchor: landing,
         bound: BoundValues::default()
             .with(Binding::AreaRadius, extent.radius)
             .with(Binding::AreaTotal, extent.seconds)

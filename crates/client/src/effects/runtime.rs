@@ -43,9 +43,10 @@ use super::catalog::{
     ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_DARKEN, FLAG_MIRROR, FLAG_POLAR,
-    NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
-    ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_MEMBRANE, SHAPE_RADIAL, SHAPE_TEXTURE,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_CRESCENT, FLAG_DARKEN,
+    FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON,
+    ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT,
+    SHAPE_MEMBRANE, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
@@ -996,15 +997,7 @@ impl EffectRuntime {
                 seed,
                 RingShape::NONE,
             ),
-            Block::Ring {
-                look,
-                thickness,
-                height,
-                edge_noise,
-                arc,
-                waver,
-                darken,
-            } => self.push_card(
+            Block::Ring { look, height, .. } => self.push_card(
                 context,
                 look,
                 position + Vec3::Y * *height,
@@ -1013,16 +1006,7 @@ impl EffectRuntime {
                 life,
                 intensity,
                 seed,
-                RingShape {
-                    inner: 1.0
-                        - (thickness * catalog.sample(layer.size_curve, life, 1.0))
-                            .clamp(0.01, 0.99),
-                    edge_noise: *edge_noise,
-                    arc: arc
-                        .map(|arc| resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)),
-                    waver: *waver,
-                    darken: *darken,
-                },
+                RingShape::of(context, life),
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
@@ -1149,10 +1133,10 @@ impl EffectRuntime {
             rotation: rotation + lean,
             orient,
             ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-            flags: if ring.arc.is_some() {
-                flags | FLAG_ARC
-            } else {
-                flags
+            flags: match (ring.arc.is_some(), ring.crescent) {
+                (true, true) => flags | FLAG_ARC | FLAG_CRESCENT,
+                (true, false) => flags | FLAG_ARC,
+                _ => flags,
             },
             arc: ring.arc.unwrap_or(0.0),
             warp: ring.waver,
@@ -1463,6 +1447,8 @@ struct RingShape {
     edge_noise: f32,
     /// Share of the turn an arc draws, in [0, 1]; `None` for the whole ring.
     arc: Option<f32>,
+    /// Whether the arc's band tapers to points at both ends.
+    crescent: bool,
     /// How much the band wavers round the turn; 0 for an even band.
     waver: f32,
     /// Whether the ring darkens the ground under it.
@@ -1470,11 +1456,46 @@ struct RingShape {
 }
 
 impl RingShape {
+    /// The ring mask of `context`'s layer at `life` (its share of its span, [0, 1]): its band
+    /// thinned by its size curve, its arc swept by its arc curve. [`Self::NONE`] for a layer
+    /// that is not a ring.
+    fn of(context: &LayerContext<'_>, life: f32) -> Self {
+        let catalog = context.catalog;
+        let Block::Ring {
+            thickness,
+            edge_noise,
+            arc,
+            arc_curve,
+            crescent,
+            waver,
+            darken,
+            ..
+        } = &context.layer.block
+        else {
+            return Self::NONE;
+        };
+        Self {
+            inner: 1.0
+                - (thickness * catalog.sample(context.layer.size_curve, life, 1.0))
+                    .clamp(0.01, 0.99),
+            edge_noise: *edge_noise,
+            arc: arc.map(|arc| {
+                (resolve_value(&arc, &context.instance.bound)
+                    * catalog.sample(*arc_curve, life, 1.0))
+                .clamp(0.0, 1.0)
+            }),
+            crescent: *crescent,
+            waver: *waver,
+            darken: *darken,
+        }
+    }
+
     /// A plain card.
     const NONE: Self = Self {
         inner: 0.0,
         edge_noise: 0.0,
         arc: None,
+        crescent: false,
         waver: 0.0,
         darken: false,
     };

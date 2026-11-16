@@ -76,6 +76,9 @@ pub(super) fn resolve(
         effects.push(resolver.effect(name, effect)?);
     }
     check_status_links(path, &effects)?;
+    for effect in &mut effects {
+        effect.reach = effect_reach(effect, &curves, &resolver.emitters);
+    }
     let budget = resolver.budget(file, &effects)?;
     let defaults = resolver.defaults(file)?;
     let effect_names = resolver
@@ -131,6 +134,63 @@ fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatal
         }
     }
     Ok(())
+}
+
+/// The peak value of curve `id` over its life (1 without a curve).
+fn curve_peak(curves: &[Curve], id: Option<CurveId>) -> f32 {
+    id.and_then(|id| curves.get(usize::from(id.0)))
+        .map_or(1.0, |curve| {
+            (0..=64)
+                .map(|step| {
+                    #[expect(clippy::cast_precision_loss, reason = "a step below 65")]
+                    let t = step as f32 / 64.0;
+                    curve.sample(t)
+                })
+                .fold(0.0_f32, f32::max)
+        })
+}
+
+/// How far `effect`'s layers can draw from their placed points on the ground plane, world
+/// units (see [`Effect::reach`]).
+fn effect_reach(effect: &Effect, curves: &[Curve], emitters: &[Emitter]) -> f32 {
+    effect
+        .layers
+        .iter()
+        .map(|layer| {
+            let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
+            let placed = layer
+                .placements
+                .iter()
+                .map(|placement| match placement {
+                    PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                        radius.scale.abs() * 1.5
+                    }
+                    PlacementDef::Line { scatter, .. } => *scatter,
+                    PlacementDef::Point | PlacementDef::LineEnd { .. } => 0.0,
+                })
+                .fold(0.0_f32, f32::max);
+            let body = match &layer.block {
+                Block::Sprite(look) => {
+                    let lift = look.lift.unwrap_or(0.0).abs().max(1.0) * size * look.stretch;
+                    size * look.stretch + lift + look.spread + look.drift.length() * layer.duration
+                }
+                Block::Ring { height, .. } => {
+                    size + height
+                        + layer.radius.map_or(0.0, |radius| {
+                            radius.from.scale.abs().max(radius.to.scale.abs())
+                        })
+                }
+                Block::Particles(id) => emitters.get(usize::from(id.0)).map_or(size, |emitter| {
+                    let life = emitter.lifetime.1;
+                    size + emitter.speed.1 * life / (1.0 + emitter.drag * life) + emitter.size.1
+                }),
+                Block::Distortion(look) => size + look.height,
+                Block::Light { height, .. } => size + height,
+                Block::Decal(_) | Block::Ribbon(_) | Block::Shell(_) => size,
+            };
+            body + placed
+        })
+        .fold(0.0_f32, f32::max)
 }
 
 /// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
@@ -578,6 +638,7 @@ impl Resolver<'_> {
             emit,
             hit,
             impact,
+            reach: 0.0,
         })
     }
 
@@ -1181,6 +1242,8 @@ impl Resolver<'_> {
             height: *height,
             edge_noise: *edge_noise,
             arc: None,
+            arc_curve: None,
+            crescent: false,
             waver: 0.0,
             darken: false,
         })
@@ -1237,10 +1300,21 @@ impl Resolver<'_> {
             waver,
             darken,
             rotation,
+            arc_curve,
+            crescent,
         } = block
         else {
             return self.block(at, block);
         };
+        if arc.is_none() && (arc_curve.is_some() || *crescent) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: if *crescent { "crescent" } else { "arc_curve" },
+                value: 0.0,
+                rule: "a sweep or a crescent shapes an arc: it needs `arc`",
+            });
+        }
         if *darken && *orient != super::schema::Orient::Ground {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -1301,6 +1375,8 @@ impl Resolver<'_> {
                 height,
                 edge_noise,
                 arc: *arc,
+                arc_curve: self.curve(arc_curve.as_ref(), at)?,
+                crescent: *crescent,
                 waver: *waver,
                 darken: *darken,
             },
