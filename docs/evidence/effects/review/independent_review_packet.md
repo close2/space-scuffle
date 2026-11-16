@@ -7,6 +7,46 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 4 (the conditions of review 3)
+
+Round 4 answers the conditions C1 to C5 of `independent_review_wp11_3.md` (ACCEPT WITH CONDITIONS) and its minor items
+E3-4 and E3-5. The decisions are plan Amendment 27. This is round 4 of at most five (Q0080). Please write your review
+to `independent_review_wp11_4.md` next to this one. No simulation crate was changed; nothing was spent.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0`, so every picture and GPU test ran on lavapipe.
+
+### What changed, by condition
+
+| Item | Change |
+|---|---|
+| C1 (A3-1) | The struck-bubble index keeps each bubble's drawn centre height and whether it flies. The hit point is set on the struck bubble's glass at that height, so a shot at a flyer ends on the flyer. Over a flyer and a ground unit in plan, an `Air`-slot weapon takes the flyer, a `Ground`-slot weapon the ground unit, a `Primary` weapon the nearest in plan (ties by height). The staged battle has an anti-air weapon firing at a flyer. |
+| C2 (A3-2) | A shot's end and hit, and a blow's point, are put on the struck bubble's outline as the battle camera sees it, on the side the attack comes from on screen (at its radius plus 0.12), so they are never behind the bubble or over its face. The staged battle's last wave fires the first native instant shot and the first native blow from above and from below the target on screen. |
+| C3 (E3-1) | The battle measure masks the interior (0.8 of the radius) of every presented bubble's drawn disc (projected at its drawn centre height), the subject's and its neighbours', and measures the band of glass round it, where a hit is drawn; looks for the impact from its birth (an instant shot's impact waits for its slug), and runs planted negatives: one tracer's, one beam's and one blow's impact struck across the screen, and the blow struck from above, each replaced in a copy of the vocabulary by a card too small to draw, which must fail the impact check. The impact check counts pixels off the shot's own line (a blank beam impact otherwise still counted the beam's end) and needs 40 (a blank melee impact leaves up to 33 in the band of glass, from the attacker's rim; the blow from above draws 44). |
+| C4 (E3-2) | `DESIGN.md`: B-125 (the struck bubble found by position) and B-126 (a sustained beam is a series of fixed lines) registered; the "Effect presentation" row refreshed to Amendment 27. Amendment 26's crowd case corrected: a wrong match moves the point by the neighbour's radius from the target's own centre, not onto the neighbour. |
+| C5 (E3-3) | The index is a uniform grid (cells of 1 unit, at most 512 a side) rebuilt by counting sort into retained buffers; every bubble, a dome included, is entered in each cell its reach covers, so a query reads one cell. The valgrind effect stream now sends an instant hit and a blow at a presented bubble every frame, through the index, with an impact using `Facing` and `Behind`. |
+| E3-4 | `a_shots_muzzle_reach_counts_only_near_its_muzzle`: unseen ground between the two reaches beside the landing half leaves the shot whole; beside the muzzle it cuts the shot behind it. |
+| E3-5 | An unfound struck bubble counts as one of the default radius on the published point: the point is moved by it, so `Behind` lands on that bubble's centre. |
+| P3-1 | `claw_rake`'s rakes at 1.3, 1.45 and 1.6 struck radii (from 1.3 to 1.7). |
+
+Deferred (Amendment 27): P3-2 and P3-3. `bullet_hit`'s and `weld_sparks`' hot flashes are larger and last a little longer, so that more of
+each lies outside the struck bubble's interior; `impaler_strike` raises two spikes either side of the blow, where a
+melee attacker touching its target does not hide them.
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r4_`.
+
+| What | Files |
+|---|---|
+| The staged battle, one sheet per subject: 12 frames of 40 ms at 1:1 from two frames before the first impact's birth, then the first 6 at 2x; the file name gives the wave, the approach (`Across`, `Above`, `Below`, `AtFlyer`) and the family | `wp11r4_battle_lavapipe_w*_*.jpg` |
+| Measurements: the battle's per-subject counts against the baseline (every bubble's interior masked, the impact from its birth), the planted negatives, every look's visibility in the lab, the valgrind counts | [wp11r4_measurements.txt](wp11r4_measurements.txt) |
+
+### Points to look at
+
+- The far-side (`Above`) hits of the rifle round and the worker's cutter (the first native blow): in front of the glass, or hidden.
+- The hit on the flyer: on its glass.
+- Whether the raised hit point reads as striking the bubble rather than floating over it, in the `Across` subjects.
+
 ## WP11 round 3 (the weapons' own looks, after review 2)
 
 Round 3 answers `independent_review_wp11_2.md` (REJECT on A2-1). The decisions are plan Amendment 26. This is

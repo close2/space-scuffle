@@ -43,7 +43,8 @@
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::needless_pass_by_value,
-    clippy::too_many_arguments
+    clippy::too_many_arguments,
+    clippy::type_complexity
 )]
 
 #[allow(
@@ -73,11 +74,13 @@ use bevy::time::TimeUpdateStrategy;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_pipeline::BattleSet;
+use client::bubble_shader::BubbleInstance;
 use client::effects::catalog::{EffectCatalog, UnitEffectTables};
 use client::effects::lab::driver::track_render_idle;
 use client::effects::lab::LabRenderIdle;
 use client::effects::runtime::EffectRuntime;
 use client::runtime_battle::SKIRMISH_SCENARIO;
+use client::scene_controller::LiveBattleBubble;
 use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::SimWorld;
@@ -93,6 +96,10 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const CHILD_OUT_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_CHILD_OUT";
 /// Environment variable carrying the child's wave.
 const WAVE_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_WAVE";
+/// Environment variable naming, comma-separated, effects the child draws as nothing (a copy of
+/// the vocabulary with each replaced by an invisible card): the planted negatives of review 3,
+/// E3-1, which the measure must catch.
+const PLANT_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_PLANT";
 /// Environment variable naming a directory the parent writes its sheets to.
 const EVIDENCE_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_EVIDENCE_DIR";
 /// Frame cap that makes the media policy strict. The GPU run's own deadline ends a stuck child.
@@ -139,16 +146,24 @@ const SEEN_LEVEL: u8 = 32;
 /// Pixels round a subject's path and target, outside both bubbles, its looks must change at
 /// some frame against the baseline (review 2, E2-3).
 const SEEN_PIXELS: usize = 30;
-/// Pixels just outside the struck bubble on the attacker's side its impact must change in
-/// the frames after the impact spawns (review 2, E2-2).
-const IMPACT_PIXELS: usize = 15;
+/// Pixels beside the struck bubble on the attacker's side, outside every bubble's interior, its
+/// impact must change from its birth (review 2, E2-2): above what a blank impact leaves there
+/// (the attacker's rim turning as it strikes; the planted negatives, at most 33 measured).
+const IMPACT_PIXELS: usize = 40;
 /// Seconds the staged units stand, unarmed, before the baseline picture: they appear and
 /// settle (review 2, E2-3).
 const SETTLE_SECONDS: f64 = 0.4;
 /// World units beyond the struck bubble's radius in which its impact is looked for.
 const IMPACT_ZONE: f32 = 0.7;
-/// Frames after an impact's spawn in which it is looked for.
+/// World units either side of a shot's line left out of its impact's count: the shot's own
+/// body ends there.
+const PATH_HALF: f32 = 0.15;
+/// Frames from an impact's birth in which it is looked for.
 const IMPACT_FRAMES: usize = 4;
+/// Share of a bubble's drawn disc that is masked: its interior, where its unit's flipbook
+/// animates. The band of glass round it is measured, because a hit is drawn there (a hit on
+/// the far side of a bubble lies over its upper rim on screen).
+const MASK_SHARE: f32 = 0.8;
 /// Frames of a family's sheet at 1:1 and, of those, at 2x.
 const SHEET_FRAMES: (usize, usize) = (12, 6);
 
@@ -189,8 +204,23 @@ struct Shooter {
     slot: WeaponSlot,
 }
 
-/// A planned subject: a shooter, the family it fires, and whether that family is its own.
-type Planned = (Shooter, Family, bool);
+/// Where a subject's shooter stands from its target (review 3, A3-1, A3-2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+enum Approach {
+    /// On the target's left on screen.
+    #[default]
+    Across,
+    /// Above the target on screen: on the side away from the camera.
+    Above,
+    /// Below the target on screen: on the side towards the camera.
+    Below,
+    /// On the target's left, the target a flyer.
+    AtFlyer,
+}
+
+/// A planned subject: a shooter, the family it fires, whether that family is its own, and
+/// where the shooter stands.
+type Planned = (Shooter, Family, bool, Approach);
 
 /// The waves of at most `capacity` subjects, planned from `world`'s catalog alone: first each
 /// presentable family on its own shooter, then each lab family lent to a native shooter whose
@@ -250,7 +280,7 @@ fn plan(world: &SimWorld, capacity: usize) -> (Vec<Vec<Planned>>, Vec<Family>) {
         .map(|chunk| {
             chunk
                 .iter()
-                .map(|(shooter, family)| (*shooter, family.clone(), true))
+                .map(|(shooter, family)| (*shooter, family.clone(), true, Approach::Across))
                 .collect()
         })
         .collect();
@@ -294,9 +324,52 @@ fn plan(world: &SimWorld, capacity: usize) -> (Vec<Vec<Planned>>, Vec<Family>) {
             .iter()
             .find(|shooter| wave.iter().all(|(used, ..)| used != *shooter))
             .expect("invariant: the wave was chosen for a free matching shooter");
-        wave.push((shooter, family, false));
+        wave.push((shooter, family, false, Approach::Across));
     }
+    waves.push(approach_wave(world, &native, capacity));
     (waves, unstaged)
+}
+
+/// The last wave (review 3, A3-1, A3-2): the first native instant shot and the first native
+/// blow, each from above and from below the target on screen, and a shooter with an anti-air
+/// weapon firing it at a flyer; at most `capacity` subjects.
+fn approach_wave(world: &SimWorld, native: &[(Shooter, Family)], capacity: usize) -> Vec<Planned> {
+    let mut wave = Vec::new();
+    for kind in [WeaponVisualKind::Hitscan, WeaponVisualKind::MeleeSlash] {
+        if let Some((shooter, family)) = native.iter().find(|(_, family)| family.kind == kind) {
+            for approach in [Approach::Above, Approach::Below] {
+                wave.push((*shooter, family.clone(), true, approach));
+            }
+        }
+    }
+    let assets = assets();
+    let flyer_shooter = world.catalog.archetypes().find_map(|arch| {
+        let entry = arch.effects.weapons.iter().find(|entry| {
+            entry.weapon == WeaponSlot::Air
+                && entry.mode.is_none()
+                && (entry.travel.is_some() || entry.impact.is_some())
+        })?;
+        let spec = arch.air_weapon.as_ref()?;
+        (presentable(&assets, &arch.slug) && arch.max_speed > SimScalar::ZERO).then(|| {
+            (
+                Shooter {
+                    unit_type: arch.unit_type_id,
+                    slot: WeaponSlot::Air,
+                },
+                Family {
+                    travel: entry.travel.clone(),
+                    impact: entry.impact.clone(),
+                    kind: spec.visual_kind,
+                    flies: spec.projectile_speed.is_some(),
+                },
+            )
+        })
+    });
+    if let Some((shooter, family)) = flyer_shooter {
+        wave.push((shooter, family, true, Approach::AtFlyer));
+    }
+    wave.truncate(capacity.max(1));
+    wave
 }
 
 /// One staged subject of a wave.
@@ -322,6 +395,16 @@ struct SubjectReport {
     target_px: [f32; 3],
     /// Window pixels per world unit at the target.
     scale: f32,
+    /// Where the shooter stood.
+    approach: Approach,
+    /// The visual kind of the weapon whose looks it fires, and whether its shots fly.
+    kind: Option<WeaponVisualKind>,
+    flies: bool,
+    /// Every presented bubble's drawn disc at the baseline, `[x, y, radius]`, window pixels
+    /// (review 3, E3-1: masked, the subject's own and its neighbours').
+    masks: Vec<[f32; 3]>,
+    /// Per frame, whether one of the impact look's instances is born and alive.
+    impact_born: Vec<bool>,
 }
 
 /// What a child saw.
@@ -390,6 +473,25 @@ struct StagedSubject {
     looks: [Option<(client::effects::catalog::EffectId, u32)>; 2],
 }
 
+/// Whether the ground under `point` and half a unit round it is walkable.
+fn walkable(world: &SimWorld, point: Vec2) -> bool {
+    let map = &world.map;
+    [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)]
+        .iter()
+        .all(|(x, y): &(i32, i32)| {
+            let probe = point + Vec2::new(*x as f32 * 0.5, *y as f32 * 0.5);
+            map.world_to_cell(sim_position(probe))
+                .ok()
+                .and_then(|(cx, cy)| map.cell(cx, cy).ok())
+                .is_some_and(|cell| {
+                    cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                        && !cell.flags.intersects(
+                            CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::UNPASSABLE_CLIFF,
+                        )
+                })
+        })
+}
+
 /// Whether the 5 by 5 cells around `point` are open, walkable ground.
 fn open(world: &SimWorld, point: Vec2) -> bool {
     let map = &world.map;
@@ -448,9 +550,12 @@ fn find_spots(
                 .iter()
                 .all(|dx| on_screen(point + Vec2::new(*dx, 0.0)));
             // Open ground under both ends of the widest pair, so no picture runs off the map.
-            let sides = [-MOST_GAP * 0.5, MOST_GAP * 0.5]
-                .iter()
-                .all(|dx| open(world, point + Vec2::new(*dx, 0.0)));
+            // Open ground at both ends of the widest pair, across and up and down the screen
+            // (the approach wave stands pairs along the map's `y`).
+            let sides = [-MOST_GAP * 0.5, MOST_GAP * 0.5].iter().all(|offset| {
+                walkable(world, point + Vec2::new(*offset, 0.0))
+                    && walkable(world, point + Vec2::new(0.0, *offset))
+            });
             if open(world, point)
                 && sides
                 && units
@@ -506,23 +611,40 @@ fn project(world: &SimWorld, camera: (&Camera, &GlobalTransform), point: Vec2) -
         .map_or([-1.0, -1.0], |at| (at + offset).to_array())
 }
 
-/// A presentable mobile ground unit type that is no shooter of `wave`: the targets' type,
-/// unarmed in the test world's catalog so the targets fire on nothing.
-fn target_type(world: &mut SimWorld, wave: &[Planned]) -> UnitTypeId {
+/// Projects a Bevy world point to window pixels.
+fn project3(camera: (&Camera, &GlobalTransform), point: Vec3) -> [f32; 2] {
+    let (camera, transform) = camera;
+    let offset = camera
+        .physical_viewport_rect()
+        .map_or(Vec2::ZERO, |rect| rect.min.as_vec2());
+    camera
+        .world_to_viewport(transform, point)
+        .map_or([-1.0, -1.0], |at| (at + offset).to_array())
+}
+
+/// A presentable mobile unit type, a flyer when `air` and a ground unit otherwise, that is no
+/// shooter of `wave`: the targets' type, unarmed in the test world's catalog so the targets
+/// fire on nothing.
+fn target_type(world: &mut SimWorld, wave: &[Planned], air: bool) -> UnitTypeId {
     let shooters: Vec<UnitTypeId> = wave.iter().map(|(shooter, ..)| shooter.unit_type).collect();
+    let mover = if air {
+        MoverType::Air
+    } else {
+        MoverType::Ground
+    };
     let id = world
         .catalog
         .archetypes()
         .filter(|arch| {
             arch.max_speed > SimScalar::ZERO
-                && arch.mover_type == MoverType::Ground
+                && arch.mover_type == mover
                 && arch.modes.is_empty()
                 && !shooters.contains(&arch.unit_type_id)
                 && presentable(&assets(), &arch.slug)
         })
         .max_by_key(|arch| arch.collision_radius)
         .map(|arch| arch.unit_type_id)
-        .expect("a presentable ground unit is no shooter");
+        .expect("a presentable unit of that plane is no shooter");
     let archetype = world
         .catalog
         .get_mut(id)
@@ -535,7 +657,7 @@ fn target_type(world: &mut SimWorld, wave: &[Planned]) -> UnitTypeId {
 
 /// Lends each lab family of `wave` to its shooter's weapon entry, in the test world's catalog.
 fn lend(world: &mut SimWorld, wave: &[Planned]) {
-    for (shooter, family, _) in wave.iter().filter(|(.., own)| !own) {
+    for (shooter, family, ..) in wave.iter().filter(|(_, _, own, _)| !own) {
         let archetype = world
             .catalog
             .get_mut(shooter.unit_type)
@@ -578,6 +700,7 @@ fn stage(
     catalog: &EffectCatalog,
     runtime: &EffectRuntime,
     spots: &[Vec2],
+    up: Vec2,
 ) {
     let world = session.world_mut().expect("a ready session has a world");
     let (waves, unstaged) = plan(world, spots.len());
@@ -586,13 +709,21 @@ fn stage(
     let Some(wave) = waves.get(staging.wave) else {
         return;
     };
-    let target = target_type(world, wave);
+    let ground_target = target_type(world, wave, false);
+    let flyer_target = wave
+        .iter()
+        .any(|(.., approach)| *approach == Approach::AtFlyer)
+        .then(|| target_type(world, wave, true));
     lend(world, wave);
-    let target_radius = world
-        .catalog
-        .get(target)
-        .map_or(0.5, |arch| arch.collision_radius.to_f32());
-    for ((shooter, family, own), spot) in wave.iter().zip(spots) {
+    for ((shooter, family, own, approach), spot) in wave.iter().zip(spots) {
+        let target = match approach {
+            Approach::AtFlyer => flyer_target.unwrap_or(ground_target),
+            _ => ground_target,
+        };
+        let target_radius = world
+            .catalog
+            .get(target)
+            .map_or(0.5, |arch| arch.collision_radius.to_f32());
         let arch = world
             .catalog
             .get(shooter.unit_type)
@@ -602,8 +733,14 @@ fn stage(
         let gap = (radii + range * 0.7).min(MOST_GAP).max(radii + 0.05);
         let slug = arch.slug.clone();
         let shooter_radius = arch.collision_radius.to_f32();
-        let shooter_at = *spot - Vec2::new(gap * 0.5, 0.0);
-        let target_at = *spot + Vec2::new(gap * 0.5, 0.0);
+        // From the shooter to the target, on the map.
+        let towards = match approach {
+            Approach::Across | Approach::AtFlyer => Vec2::X,
+            Approach::Above => -up,
+            Approach::Below => up,
+        };
+        let shooter_at = *spot - towards * gap * 0.5;
+        let target_at = *spot + towards * gap * 0.5;
         let from = spawn_still(world, shooter.unit_type, VIEWER, shooter_at);
         let to = spawn_still(world, target, ENEMY, target_at);
         world.entities.get_mut(&to).expect("spawned").is_immobile = true;
@@ -623,6 +760,9 @@ fn stage(
             family: family.label(),
             shooter: slug,
             own: *own,
+            approach: *approach,
+            kind: Some(family.kind),
+            flies: family.flies,
             ..SubjectReport::default()
         });
     }
@@ -679,8 +819,25 @@ fn picture_base(
     staging: &mut Staging,
     session: &BattleSession,
     camera: (&Camera, &GlobalTransform),
+    bubbles: &[(EntityId, Vec3, f32)],
 ) {
     let world = session.world().expect("a ready session has a world");
+    // A bubble's disc on screen: its drawn centre (review 3, E3-1) and radius.
+    let disc = |(centre, radius): (Vec3, f32)| {
+        let [cx, cy] = project3(camera, centre);
+        let [ex, ey] = project3(camera, centre + Vec3::X * radius);
+        [cx, cy, (ex - cx).hypot(ey - cy)]
+    };
+    let drawn = |id: EntityId| {
+        bubbles
+            .iter()
+            .find(|(bubble, ..)| *bubble == id)
+            .map(|(_, centre, radius)| disc((*centre, *radius)))
+    };
+    let masks: Vec<[f32; 3]> = bubbles
+        .iter()
+        .map(|(_, centre, radius)| disc((*centre, *radius)))
+        .collect();
     let mut crops = Vec::new();
     for (index, subject) in staging.subjects.iter().enumerate() {
         let [x, y] = project(world, camera, subject.centre);
@@ -688,7 +845,7 @@ fn picture_base(
         let top = (y - CROP[1] as f32 * 0.6).max(0.0) as u32;
         let file = format!("wave{}_{index}_base.png", staging.wave);
         crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
-        let on_screen = |(at, radius): (Vec2, f32)| {
+        let on_ground = |(at, radius): (Vec2, f32)| {
             let [cx, cy] = project(world, camera, at);
             let [ex, ey] = project(world, camera, at + Vec2::new(radius, 0.0));
             [cx, cy, (ex - cx).hypot(ey - cy)]
@@ -696,9 +853,10 @@ fn picture_base(
         let report = &mut staging.report.subjects[index];
         report.base = file;
         report.crop = [left, top];
-        report.shooter_px = on_screen(subject.shooter);
-        report.target_px = on_screen(subject.target);
+        report.shooter_px = drawn(subject.units[0]).unwrap_or_else(|| on_ground(subject.shooter));
+        report.target_px = drawn(subject.units[1]).unwrap_or_else(|| on_ground(subject.target));
         report.scale = report.target_px[2] / subject.target.1.max(1e-3);
+        report.masks.clone_from(&masks);
     }
     capture_frame(commands, crops, &staging.outstanding);
 }
@@ -794,13 +952,22 @@ fn picture(
 }
 
 /// Records each subject's spawns since the staging.
-fn count(staging: &mut Staging, runtime: &EffectRuntime) {
+fn count(staging: &mut Staging, runtime: &EffectRuntime, now: f64) {
     for (subject, report) in staging.subjects.iter().zip(&mut staging.report.subjects) {
         let spawned =
             |look: Option<(_, u32)>| look.map_or(0, |(id, at)| runtime.spawned_of(id) - at);
         report.travel_spawned = spawned(subject.looks[0]);
         report.impact_spawned = spawned(subject.looks[1]);
         report.impacts.push(report.impact_spawned);
+        // Review 3, E3-1: an instant shot's impact waits for its slug, so the impact is looked
+        // for from its birth, not from its spawn request.
+        let born = subject.looks[1].is_some_and(|(id, _)| {
+            runtime
+                .pool
+                .iter()
+                .any(|(_, instance)| instance.effect == id && instance.birth <= now)
+        });
+        report.impact_born.push(born);
     }
 }
 
@@ -816,7 +983,10 @@ fn stage_wave_child(
         Option<Res<'_, EffectRuntime>>,
         Option<Res<'_, EffectCatalog>>,
     ),
-    cameras: Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
+    (cameras, bubbles): (
+        Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
+        Query<'_, '_, &BubbleInstance, With<LiveBattleBubble>>,
+    ),
     idle: Res<'_, LabRenderIdle>,
 ) {
     let fog = fog.expect("the skirmish presents a player, so it keeps a fog");
@@ -863,8 +1033,18 @@ fn stage_wave_child(
                 MAX_SUBJECTS,
                 on_screen(world, (camera, transform)),
             );
+            // The map direction that runs up the screen (away from the camera).
+            let up = {
+                let [_, y0] = project(world, (camera, transform), rts.target);
+                let [_, y1] = project(world, (camera, transform), rts.target + Vec2::Y);
+                if y1 < y0 {
+                    Vec2::Y
+                } else {
+                    -Vec2::Y
+                }
+            };
             hold_own_units(&mut session);
-            stage(&mut staging, &mut session, catalog, runtime, &spots);
+            stage(&mut staging, &mut session, catalog, runtime, &spots, up);
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
             Phase::Settling { at: now }
@@ -874,7 +1054,27 @@ fn stage_wave_child(
             Phase::Settling { at }
         }
         Phase::Settling { .. } => {
-            picture_base(&mut commands, &mut staging, &session, (camera, transform));
+            let drawn: Vec<(EntityId, Vec3, f32)> = bubbles
+                .iter()
+                .map(|bubble| {
+                    let instance = &bubble.0;
+                    let dome = matches!(instance.shape, sim_types::ShapeKind::BuildingDome { .. });
+                    let [x, y, altitude] = instance.world_pos;
+                    let lift = if dome { 0.0 } else { instance.radius };
+                    (
+                        instance.entity_id,
+                        Vec3::new(x, altitude + lift, y),
+                        instance.radius,
+                    )
+                })
+                .collect();
+            picture_base(
+                &mut commands,
+                &mut staging,
+                &session,
+                (camera, transform),
+                &drawn,
+            );
             open_fire(&mut staging, &mut session);
             if let Some(runtime) = effects.0.as_deref() {
                 for subject in &mut staging.subjects {
@@ -895,7 +1095,7 @@ fn stage_wave_child(
                 frame,
             );
             if let Some(runtime) = effects.0.as_deref() {
-                count(&mut staging, runtime);
+                count(&mut staging, runtime, now);
             }
             Phase::Running {
                 at,
@@ -953,6 +1153,11 @@ fn weapon_wave_child() {
         SKIRMISH_SCENARIO.as_ref(),
     )
     .expect("the shipped assets must start the client");
+    if let Ok(planted) = std::env::var(PLANT_VAR) {
+        let path = PathBuf::from(&directory).join("planted_effects.ron");
+        planted_vocabulary(&planted, &path);
+        app.insert_resource(client::effects::systems::EffectCatalogSource(path));
+    }
     let idle = LabRenderIdle::default();
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render
@@ -971,13 +1176,43 @@ fn weapon_wave_child() {
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 
-/// Runs the child of `wave`; returns its report and directory.
-fn run_wave(wave: usize) -> TestResult<(WaveReport, tempfile::TempDir)> {
+/// Writes to `path` a copy of the shipped vocabulary in which each effect `planted` names
+/// (comma-separated, each a `Point` effect) draws one card too small to be drawn.
+fn planted_vocabulary(planted: &str, path: &Path) {
+    let root = client::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let shipped = root
+        .as_path()
+        .join(client::effects::catalog::EFFECTS_CATALOG_PATH);
+    let mut text = std::fs::read_to_string(&shipped).expect("the shipped vocabulary reads");
+    for name in planted.split(',') {
+        let head = format!("        \"{name}\": (\n            class:");
+        let start = text.find(&head).expect("a planted effect is defined");
+        let end = start
+            + text[start..]
+                .find("\n        ),\n")
+                .expect("the definition ends")
+            + "\n        ),\n".len();
+        let blank = format!(
+            "        \"{name}\": (\n            class: Minor,\n            event: Point,\n            \
+             layers: [\n                (block: Sprite(texture: \"droplet\", ramp: \"tracer_body\", \
+             shape: Radial), size: (scale: 0.001), duration: 0.2),\n            ],\n        ),\n"
+        );
+        text.replace_range(start..end, &blank);
+    }
+    std::fs::write(path, text).expect("the child's directory is writable");
+}
+
+/// Runs the child of `wave`, with the effects `planted` names drawn as nothing; returns its
+/// report and directory.
+fn run_wave(wave: usize, planted: Option<&str>) -> TestResult<(WaveReport, tempfile::TempDir)> {
     let directory = tempfile::tempdir()?;
     let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", "weapon_wave_child"]);
     command.env(CHILD_OUT_VAR, directory.path());
     command.env(WAVE_VAR, wave.to_string());
+    if let Some(planted) = planted {
+        command.env(PLANT_VAR, planted);
+    }
     command.allow_for_hex_tiling_driver_defect();
     command.assert_passes_validation("weapon wave");
     let report: WaveReport = ron::from_str(&std::fs::read_to_string(
@@ -1004,39 +1239,77 @@ fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<(u
     let crop = Vec2::new(subject.crop[0] as f32, subject.crop[1] as f32);
     let shooter = Vec2::new(subject.shooter_px[0], subject.shooter_px[1]) - crop;
     let target = Vec2::new(subject.target_px[0], subject.target_px[1]) - crop;
-    let (shooter_r, target_r) = (subject.shooter_px[2] + 2.0, subject.target_px[2] + 2.0);
-    let zone = target_r + IMPACT_ZONE * subject.scale;
+    let target_r = subject.target_px[2] * MASK_SHARE;
+    let zone = subject.target_px[2] + IMPACT_ZONE * subject.scale;
     let towards = (shooter - target).normalize_or_zero();
+    // Every presented bubble's drawn disc is masked: the subject's two and its neighbours'
+    // (review 3, E3-1).
+    let masks: Vec<(Vec2, f32)> = subject
+        .masks
+        .iter()
+        .map(|[x, y, radius]| (Vec2::new(*x, *y) - crop, radius * MASK_SHARE))
+        .filter(|(centre, radius)| {
+            centre.x + radius >= 0.0
+                && centre.y + radius >= 0.0
+                && centre.x - radius <= CROP[0] as f32
+                && centre.y - radius <= CROP[1] as f32
+        })
+        .collect();
+    // The impact is looked for from its birth (review 3, E3-1): in the frames where one of its
+    // instances is born and alive, up to IMPACT_FRAMES after each birth.
     let impact_frames: Vec<usize> = subject
-        .impacts
-        .windows(2)
+        .impact_born
+        .iter()
         .enumerate()
-        .filter(|(_, pair)| pair[1] > pair[0])
-        .flat_map(|(index, _)| index + 1..index + 1 + IMPACT_FRAMES)
+        .filter(|(index, born)| **born && (*index == 0 || !subject.impact_born[index - 1]))
+        .flat_map(|(index, _)| index..index + IMPACT_FRAMES)
+        .filter(|index| subject.impact_born.get(*index).copied().unwrap_or(false))
+        .collect();
+    // PERFORMANCE RATIONALE:
+    // Why: the masks hold every presented bubble, and the crop is measured on every frame.
+    // What: each pixel is classed once (masked, round path or target, beside the struck
+    // bubble), and the frames are read through that class.
+    // Trade-off: one class buffer per subject.
+    let (width, height) = (base.width(), base.height());
+    let direction = (target - shooter).normalize_or_zero();
+    let travels = !subject.family.starts_with("none+");
+    let class: Vec<(u32, u32, bool)> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter_map(|(x, y)| {
+            let at = Vec2::new(x as f32, y as f32);
+            if at.distance(target) <= target_r
+                || masks
+                    .iter()
+                    .any(|(centre, radius)| at.distance(*centre) <= *radius)
+            {
+                return None;
+            }
+            let along = (at - shooter).dot(direction);
+            let off = (at - shooter).perp_dot(direction).abs();
+            let on_path = along >= 0.0 && along <= shooter.distance(target) && off <= zone;
+            let near_target = at.distance(target) <= zone;
+            (on_path || near_target).then_some((
+                x,
+                y,
+                // Beside the struck bubble on the attacker's side, off the shot's own line (a
+                // beam's or a slug's end lies on it).
+                near_target
+                    && (at - target).normalize_or_zero().dot(towards) > -0.2
+                    && (!travels || off > PATH_HALF * subject.scale),
+            ))
+        })
         .collect();
     let (mut most, mut most_impact) = (0, 0);
     for (index, file) in subject.frames.iter().enumerate() {
         let frame = image::open(directory.join(file))?.to_rgb8();
+        if frame.width() < width || frame.height() < height {
+            continue;
+        }
         let (mut around, mut impact) = (0, 0);
-        for y in 0..frame.height().min(base.height()) {
-            for x in 0..frame.width().min(base.width()) {
-                let at = Vec2::new(x as f32, y as f32);
-                if at.distance(shooter) <= shooter_r || at.distance(target) <= target_r {
-                    continue;
-                }
-                let along = (at - shooter).dot((target - shooter).normalize_or_zero());
-                let off = (at - shooter)
-                    .perp_dot((target - shooter).normalize_or_zero())
-                    .abs();
-                let on_path = along >= 0.0 && along <= shooter.distance(target) && off <= zone;
-                let near_target = at.distance(target) <= zone;
-                if !(on_path || near_target) || !changed(&frame, &base, x, y) {
-                    continue;
-                }
+        for (x, y, beside) in &class {
+            if changed(&frame, &base, *x, *y) {
                 around += 1;
-                if near_target && (at - target).normalize_or_zero().dot(towards) > -0.2 {
-                    impact += 1;
-                }
+                impact += usize::from(*beside);
             }
         }
         most = most.max(around);
@@ -1059,11 +1332,11 @@ fn write_sheet(directory: &Path, subject: &SubjectReport, target: &Path, name: &
     let Some(first) = pictures.first() else {
         return Ok(());
     };
-    // From the frame before the first impact spawn (the shots are under way by then).
+    // From two frames before the first impact's birth (the shots are under way by then).
     let start = subject
-        .impacts
+        .impact_born
         .iter()
-        .position(|count| *count > 0)
+        .position(|born| *born)
         .unwrap_or(0)
         .saturating_sub(2);
     let (width, height) = (first.width(), first.height());
@@ -1105,22 +1378,86 @@ fn write_sheet(directory: &Path, subject: &SubjectReport, target: &Path, name: &
     Ok(())
 }
 
-/// Review 1, V1-1: every family of weapon looks fires in a staged battle at the default zoom,
-/// the presentable ones on their own units and the lab ones lent to a real bubble.
+/// Measures one subject, prints what it saw, and returns its failures and its impact pixels.
+fn judge(
+    directory: &Path,
+    subject: &SubjectReport,
+    wave: usize,
+    driver: &str,
+) -> TestResult<(Vec<String>, usize)> {
+    let (changed, impact_seen) = seen_against_base(directory, subject)?;
+    eprintln!(
+        "driver {driver}: wave {wave} {} on {} ({}, {:?}): travel spawned {}, impact spawned {}; \
+         against the units-only baseline, outside every bubble's interior, at most {changed} px round path \
+         and target and, from the impact's birth, {impact_seen} px beside the struck bubble \
+         changed by {SEEN_LEVEL} levels over {} frames",
+        subject.family,
+        subject.shooter,
+        if subject.own { "its own" } else { "lent" },
+        subject.approach,
+        subject.travel_spawned,
+        subject.impact_spawned,
+        subject.frames.len()
+    );
+    let (travel, impact) = subject
+        .family
+        .split_once('+')
+        .expect("invariant: a family's label joins its two looks with '+'");
+    let mut failures = Vec::new();
+    if travel != "none" && subject.travel_spawned == 0 {
+        failures.push(format!("{}: its travel never spawned", subject.family));
+    }
+    if impact != "none" && subject.impact_spawned == 0 {
+        failures.push(format!("{}: its impact never spawned", subject.family));
+    }
+    if changed < SEEN_PIXELS {
+        failures.push(format!("{}: {changed} px changed", subject.family));
+    }
+    if impact != "none" && impact_seen < IMPACT_PIXELS {
+        failures.push(format!(
+            "{} ({:?}): its impact changed {impact_seen} px beside the struck bubble",
+            subject.family, subject.approach
+        ));
+    }
+    Ok((failures, impact_seen))
+}
+
+/// The impact look of `subject`'s family, if it has one.
+fn impact_of(subject: &SubjectReport) -> Option<&str> {
+    subject
+        .family
+        .split_once('+')
+        .map(|(_, impact)| impact)
+        .filter(|impact| *impact != "none")
+}
+
+/// Review 1, V1-1; reviews 2 and 3 (E2-3, E3-1, A3-1, A3-2): every family of weapon looks
+/// fires in a staged battle at the default zoom, the presentable ones on their own units and
+/// the lab ones lent to a real bubble, an instant shot and a blow from above and below the
+/// target on screen, and an anti-air weapon at a flyer; the measure catches a family whose
+/// impact draws nothing (planted negatives).
 #[test]
 fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
     if gpu_run::gpu_tests_opted_out() {
         return Ok(());
     }
-    let driver = gpu_run::selected_driver().driver;
+    let driver = gpu_run::selected_driver().driver.to_string();
     let evidence = std::env::var_os(EVIDENCE_VAR).map(PathBuf::from);
     if let Some(target) = &evidence {
         std::fs::create_dir_all(target)?;
     }
     let mut wave = 0;
     let mut failures = Vec::new();
+    // The planted negatives (E3-1): one tracer's, one beam's and one blow's impact, and the
+    // wave each fires in.
+    let mut plants: Vec<(usize, String)> = Vec::new();
+    let mut planted_kinds: Vec<WeaponVisualKind> = Vec::new();
     loop {
-        let (report, directory) = run_wave(wave)?;
+        let (report, directory) = run_wave(wave, None)?;
+        assert!(
+            !report.subjects.is_empty(),
+            "wave {wave} staged no subject (no open spot was found)"
+        );
         if wave == 0 {
             eprintln!(
                 "driver {driver}: {} waves; lab families no presentable shooter carries: {:?}",
@@ -1128,37 +1465,33 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
             );
         }
         for (index, subject) in report.subjects.iter().enumerate() {
-            let (changed, impact_seen) = seen_against_base(directory.path(), subject)?;
-            eprintln!(
-                "driver {driver}: wave {wave} {} on {} ({}): travel spawned {}, impact spawned \
-                 {}; against the units-only baseline, outside both bubbles, at most {changed} px \
-                 round path and target and {impact_seen} px of impact beside the struck bubble \
-                 changed by {SEEN_LEVEL} levels over {} frames",
-                subject.family,
-                subject.shooter,
-                if subject.own { "its own" } else { "lent" },
-                subject.travel_spawned,
-                subject.impact_spawned,
-                subject.frames.len()
-            );
-            let (travel, impact) = subject
-                .family
-                .split_once('+')
-                .expect("invariant: a family's label joins its two looks with '+'");
-            if travel != "none" && subject.travel_spawned == 0 {
-                failures.push(format!("{}: its travel never spawned", subject.family));
+            failures.extend(judge(directory.path(), subject, wave, &driver)?.0);
+            // A blow struck from above the target on screen (its hit drawn over the attacker's
+            // rim), planted too.
+            if subject.kind == Some(WeaponVisualKind::MeleeSlash)
+                && subject.approach == Approach::Above
+                && !plants.iter().any(|(planted, _)| *planted == wave)
+            {
+                if let Some(impact) = impact_of(subject) {
+                    plants.push((wave, impact.to_owned()));
+                }
             }
-            if impact != "none" && subject.impact_spawned == 0 {
-                failures.push(format!("{}: its impact never spawned", subject.family));
-            }
-            if changed < SEEN_PIXELS {
-                failures.push(format!("{}: {changed} px changed", subject.family));
-            }
-            if impact != "none" && impact_seen < IMPACT_PIXELS {
-                failures.push(format!(
-                    "{}: its impact changed {impact_seen} px beside the struck bubble",
-                    subject.family
-                ));
+            // An instant tracer, a beam (an instant line) and a blow, the first of each.
+            for kind in [
+                WeaponVisualKind::Hitscan,
+                WeaponVisualKind::LaserBeam,
+                WeaponVisualKind::MeleeSlash,
+            ] {
+                if subject.kind == Some(kind)
+                    && !subject.flies
+                    && subject.approach == Approach::Across
+                    && !planted_kinds.contains(&kind)
+                {
+                    if let Some(impact) = impact_of(subject) {
+                        plants.push((wave, impact.to_owned()));
+                        planted_kinds.push(kind);
+                    }
+                }
             }
             if let Some(target) = &evidence {
                 write_sheet(
@@ -1166,8 +1499,8 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
                     subject,
                     target,
                     &format!(
-                        "wp11r3_battle_{driver}_w{wave}_{index}_{}.png",
-                        subject.family
+                        "wp11r4_battle_{driver}_w{wave}_{index}_{:?}_{}.png",
+                        subject.approach, subject.family
                     ),
                 )?;
             }
@@ -1182,5 +1515,37 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
         "families that did not show:\n{}",
         failures.join("\n")
     );
+    // E3-1: with each planted impact drawn as nothing, the measure fails for its family.
+    assert!(
+        plants.len() >= 3,
+        "a tracer, a beam and a blow are planted: {plants:?}"
+    );
+    let mut waves: Vec<usize> = plants.iter().map(|(wave, _)| *wave).collect();
+    waves.dedup();
+    for wave in waves {
+        let names: Vec<&str> = plants
+            .iter()
+            .filter(|(planted, _)| *planted == wave)
+            .map(|(_, name)| name.as_str())
+            .collect();
+        let (report, directory) = run_wave(wave, Some(&names.join(",")))?;
+        for subject in report
+            .subjects
+            .iter()
+            .filter(|subject| impact_of(subject).is_some_and(|impact| names.contains(&impact)))
+        {
+            let (_, impact_seen) = judge(directory.path(), subject, wave, &driver)?;
+            eprintln!(
+                "driver {driver}: planted negative, {} drawn as nothing: {impact_seen} px beside \
+                 the struck bubble (the check needs {IMPACT_PIXELS})",
+                subject.family
+            );
+            assert!(
+                impact_seen < IMPACT_PIXELS,
+                "{}: with its impact drawn as nothing the measure still saw {impact_seen} px",
+                subject.family
+            );
+        }
+    }
     Ok(())
 }

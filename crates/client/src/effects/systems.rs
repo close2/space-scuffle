@@ -471,6 +471,14 @@ pub fn replaces_shatter(
     tables.is_some_and(|tables| tables.death(unit_type).is_some())
 }
 
+/// What the event wiring reads to put a hit on the struck bubble's glass: the battle (its
+/// presented bubbles), the struck-bubble index, and the battle camera (its view direction).
+type StruckContext<'w, 's> = (
+    Option<Res<'w, crate::battle_pipeline::session::BattleSession>>,
+    Option<ResMut<'w, super::struck::StruckBubbles>>,
+    Query<'w, 's, &'static GlobalTransform, With<crate::RtsCamera>>,
+);
+
 /// Spawns the effect of every admitted combat event.
 #[expect(
     clippy::needless_pass_by_value,
@@ -483,10 +491,7 @@ pub fn spawn_effects_from_events(
     runtime: Option<ResMut<'_, EffectRuntime>>,
     fog: Option<Res<'_, crate::battle_pipeline::fog::BattleFog>>,
     time: Res<'_, Time<Virtual>>,
-    (session, mut struck): (
-        Option<Res<'_, crate::battle_pipeline::session::BattleSession>>,
-        Option<ResMut<'_, super::struck::StruckBubbles>>,
-    ),
+    (session, mut struck, cameras): StruckContext<'_, '_>,
 ) {
     let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
         events.clear();
@@ -499,14 +504,22 @@ pub fn spawn_effects_from_events(
             struck.rebuild(&session.frames.presented().bubbles);
         }
     }
+    // The battle camera's view direction: a shot's end and hit are drawn on the struck
+    // bubble's outline as it sees it.
+    let view = cameras
+        .get_single()
+        .ok()
+        .map(|transform| transform.forward().as_vec3());
     for event in events.read() {
-        // An instant hit or a blow shows on the struck bubble's near surface, where the shot's
-        // slug ends (review 2, A2-1).
+        // An instant hit or a blow shows on the struck bubble's glass, where the shot's slug
+        // ends (reviews 2 and 3, A2-1, A3-1, A3-2).
         let (event, struck_radius) = match (struck.as_deref(), session.is_some()) {
-            (Some(struck), true) => {
-                super::struck::at_struck_surface(&event.0, |x, y| struck.radius_at(x, y))
-            }
-            _ => (event.0.clone(), None),
+            (Some(struck), true) => super::struck::at_struck_surface(
+                &event.0,
+                |x, y, z, plane| struck.struck_at(x, y, z, plane),
+                view,
+            ),
+            _ => super::struck::at_struck_surface(&event.0, |_, _, _, _| None, view),
         };
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
@@ -763,6 +776,37 @@ mod tests {
         assert_eq!(
             shot_clip(shot(), ShotReach::uniform(0.4), |_, y| y >= 4.7),
             NO_CLIP
+        );
+    }
+
+    #[test]
+    fn a_shots_muzzle_reach_counts_only_near_its_muzzle() {
+        // Review 3, E3-4. The muzzle layers reach 1 unit, the flying ones 0.2. Unseen ground 0.6
+        // units beside the landing half (map y < 4.9 where x > 5.5) lies between the two
+        // reaches: the shot draws whole there.
+        let reach = ShotReach {
+            muzzle: 1.0,
+            path: 0.2,
+        };
+        assert_eq!(
+            shot_clip(shot(), reach, |x, y| x <= 5.5 || y >= 4.9),
+            NO_CLIP
+        );
+        // The same ground beside the muzzle (x < 2.0): the shot is cut behind it, drawn from
+        // past the muzzle's reach to its landing point.
+        let clip = shot_clip(shot(), reach, |x, y| x >= 2.0 || y >= 4.9);
+        assert!(
+            clip[2] > 1.5 && clip[2] < 9.5,
+            "cut behind the muzzle's reach: {}",
+            clip[2]
+        );
+        // With the muzzle's reach along the whole path, as a single reach would have it, the
+        // landing half's fog cuts the whole shot.
+        let whole = shot_clip(shot(), ShotReach::uniform(1.0), |x, y| x <= 5.5 || y >= 4.9);
+        assert!(
+            whole[2] >= 9.5,
+            "a single reach cuts it whole: {}",
+            whole[2]
         );
     }
 

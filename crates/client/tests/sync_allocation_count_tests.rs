@@ -224,14 +224,45 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     Ok(app)
 }
 
-/// Sends one splash event per frame, its centre walking over a 9 by 7 grid.
+/// Sends one splash event per frame, its centre walking over a 9 by 7 grid, and an instant hit
+/// and a blow at one of the presented bubbles in turn (WP11 review 3, E3-3: the struck-bubble
+/// index and the move onto the glass are in the counted path).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn send_splash(
     mut counter: Local<'_, u32>,
     mut events: EventWriter<'_, client::CombatVisualEvent>,
+    session: Res<'_, BattleSession>,
+    source: Res<'_, StreamSource>,
 ) {
     *counter = counter.wrapping_add(1);
     let x = f32::from(u8::try_from(*counter % 9).unwrap_or(0));
     let y = f32::from(u8::try_from(*counter % 7).unwrap_or(0));
+    let bubbles = &session.frames.presented().bubbles;
+    if !bubbles.is_empty() {
+        let index = usize::try_from(*counter).unwrap_or(0) % bubbles.len();
+        let [bx, by, _] = bubbles[index].world_pos;
+        let hit = [bx, by, 0.5];
+        events.send(client::CombatVisualEvent(
+            sim_types::snapshot::CombatEventVisual::HitscanTracer {
+                from: [bx - 3.0, by + 1.0, 0.5],
+                to: hit,
+                owner: sim_types::PlayerId(0),
+                source: source.0,
+            },
+        ));
+        events.send(client::CombatVisualEvent(
+            sim_types::snapshot::CombatEventVisual::MeleeSlashVisual {
+                pos: hit,
+                angle_rad: f32::from(u8::try_from(*counter % 8).unwrap_or(0)) * 0.785,
+                radius: 0.5,
+                owner: sim_types::PlayerId(0),
+                source: source.0,
+            },
+        ));
+    }
     events.send(client::CombatVisualEvent(
         sim_types::snapshot::CombatEventVisual::SplashVisual {
             center: [x, y, 0.0],
@@ -242,6 +273,10 @@ fn send_splash(
         },
     ));
 }
+
+/// The weapon the stream's instant hits and blows come from.
+#[derive(Resource)]
+struct StreamSource(sim_types::EffectSource);
 
 /// The vocabulary of the effect stream: the default splash draws a card, a ring, a decal, a
 /// light and a particle burst, all within 0.6 s, so at one splash per 20 ms frame about 30
@@ -289,6 +324,14 @@ const STREAM_EFFECTS: &str = r#"
     "spore_mote": (class: Ambient, event: Missile, layers: [
         (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.05), duration: 0.3),
     ]),
+    "hit": (class: Minor, event: Point, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.2), duration: 0.1,
+         priority: Critical),
+        (block: Ring(texture: "solid", ramp: "green", thickness: 0.2, rotation: Facing,
+         arc: Some((scale: 0.4))), placement: Behind(distance: (bind: UnitRadius, scale: 1.15)),
+         radius: (from: (bind: UnitRadius, scale: 1.2), to: (bind: UnitRadius, scale: 1.3)),
+         duration: 0.1),
+    ]),
     "splat": (class: Minor, event: Area, layers: [
         (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: AreaRadius, scale: 1.0),
          duration: 0.5, lasts: AreaTotal, priority: Critical),
@@ -306,7 +349,23 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
     use client::effects::catalog::{EffectCatalog, UnitEffectTables};
     use client::effects::runtime::EffectRuntime;
     use client::effects::systems::{build_effect_frame, spawn_effects_from_events};
-    app.add_systems(Update, send_splash.before(publish_combat_events));
+    // The instant hits and blows come from a unit's primary weapon, which the stream names.
+    let source = app
+        .world()
+        .resource::<client::CatalogResource>()
+        .0
+        .archetypes()
+        .find(|archetype| archetype.weapon.is_some())
+        .map(|archetype| sim_types::EffectSource {
+            unit_type: archetype.unit_type_id,
+            weapon: sim_types::WeaponKey {
+                slot: sim_types::WeaponSlot::Primary,
+                mode: None,
+            },
+        })
+        .ok_or("the shipped catalog has an armed unit")?;
+    app.insert_resource(StreamSource(source))
+        .add_systems(Update, send_splash.before(publish_combat_events));
     if !with_effects {
         return Ok(());
     }
@@ -332,7 +391,7 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         mode: None,
         launch: None,
         travel: Some("bolt".to_owned()),
-        impact: None,
+        impact: Some("hit".to_owned()),
         splash: Some("burst".to_owned()),
     };
     for id in ids {
@@ -354,6 +413,7 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         .insert_resource(catalog)
         .insert_resource(views)
         .init_resource::<client::effects::areas::AreaLooks>()
+        .init_resource::<client::effects::struck::StruckBubbles>()
         .add_systems(
             Update,
             (
@@ -628,6 +688,17 @@ fn run_child(variant: Variant) -> TestResult {
             return Err(
                 format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
             );
+        }
+        // The instant hits and blows reached the struck-bubble path (review 3, E3-3).
+        let world = app.world();
+        let catalog = world.resource::<client::effects::catalog::EffectCatalog>();
+        let hits = catalog.effect_id("hit").map_or(0, |hit| {
+            world
+                .resource::<client::effects::runtime::EffectRuntime>()
+                .spawned_of(hit)
+        });
+        if hits < frames {
+            return Err(format!("the effect stream struck {hits} hits in {frames} frames").into());
         }
     }
     let after = tick(&app);

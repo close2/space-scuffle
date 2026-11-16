@@ -141,18 +141,20 @@ fn place_behind(distance: super::catalog::schema::ValueDef, bound: &BoundValues)
     }
 }
 
-/// Instance `index` of an [`PlacementDef::Across`] pair: `offset` to one side of `line` (the
-/// map's `x` axis without one), the even index to the left, the odd to the right.
+/// Instance `index` of an [`PlacementDef::Across`] pair: `offset` to one side of `line`, or,
+/// without one, of the line of the hit (its bound `Facing`; the map's `x` axis when it binds
+/// none), the even index to the left, the odd to the right.
 fn place_across(
     offset: super::catalog::schema::ValueDef,
     index: u32,
     bound: &BoundValues,
     line: Option<WorldLine>,
 ) -> Placed {
+    let facing = bound.get(Binding::Facing);
     let direction = line
         .map(|line| (line.to - line.from).normalize_or_zero())
         .filter(|direction| direction.x != 0.0 || direction.z != 0.0)
-        .unwrap_or(Vec3::X);
+        .unwrap_or_else(|| Vec3::new(facing.cos(), 0.0, facing.sin()));
     let across = Vec3::new(-direction.z, 0.0, direction.x).normalize_or_zero();
     let side = if index.is_multiple_of(2) { 1.0 } else { -1.0 };
     Placed {
@@ -558,6 +560,43 @@ mod tests {
         let mut far = WorldLine::whole(Vec3::ZERO, Vec3::X);
         far.seen = 1 << 63;
         assert!(far.sees_point(63) && far.sees_point(200) && !far.sees_point(62));
+    }
+
+    /// WP11 rounds 3 and 4: a pair across a shot's line, or, without a line, across the hit's
+    /// bound `Facing`; `Behind` moves away from the attacker.
+    #[test]
+    fn a_pair_lies_across_the_line_or_the_blow_and_behind_moves_away_from_the_attacker() {
+        let offset = ValueDef {
+            bind: Binding::Const,
+            scale: 0.5,
+        };
+        let across = PlacementDef::Across { offset };
+        let line = WorldLine::whole(Vec3::ZERO, Vec3::new(0.0, 0.0, 4.0));
+        let bound = BoundValues::default();
+        let a = place(&across, 0, 1, &bound, Some(line)).offset;
+        let b = place(&across, 1, 1, &bound, Some(line)).offset;
+        assert!((a + b).length() < 1e-6 && (a.x.abs() - 0.5).abs() < 1e-6 && a.z.abs() < 1e-6);
+        // Struck from +x (Facing 0): the pair lies along z, either side of the blow.
+        let blow = BoundValues::default().with(Binding::Facing, 0.0);
+        let side = place(&across, 0, 1, &blow, None).offset;
+        assert!(
+            side.x.abs() < 1e-6 && (side.z.abs() - 0.5).abs() < 1e-6,
+            "{side:?}"
+        );
+        let struck = BoundValues::default().with(Binding::Facing, std::f32::consts::FRAC_PI_2);
+        let behind = place(
+            &PlacementDef::Behind { distance: offset },
+            0,
+            1,
+            &struck,
+            None,
+        )
+        .offset;
+        assert!(
+            behind.x.abs() < 1e-6 && (behind.z + 0.5).abs() < 1e-6,
+            "{behind:?}"
+        );
+        assert_eq!(instance_count(&across, &bound, None), 2);
     }
 
     /// WP10 review 3, A3-1 (b): a grip set back from the line's far end by a fixed distance,

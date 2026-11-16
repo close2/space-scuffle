@@ -813,8 +813,8 @@ pub enum PlacementDef {
         distance: ValueDef,
     },
     /// Two instances either side of the anchor, `offset` world units across the event's line
-    /// (across the map's `x` axis without a line): a pair side by side, such as two needles in
-    /// flight (WP11 round 3, A2-3).
+    /// (without a line, across the line of the hit, its bound `Facing`): a pair side by side,
+    /// such as two needles in flight (WP11 round 3, A2-3) or two spikes either side of a blow.
     Across {
         /// Distance of each instance from the anchor.
         offset: ValueDef,

@@ -2713,6 +2713,77 @@ to 7 units a second. P2-4: `acid_hit`'s dark splash is broken at its edge.
   against a moving target consecutive beams splay apart for about 0.1 s, and the last beam outlives a dead target
   by up to 0.46 s. A held beam keyed on source and target is a WP11 follow-up.
 - **The struck bubble is found by position.** The nearest presented bubble within its radius plus 0.35 units of
-  the published hit point is taken as the struck one. In a tight crowd another bubble may be nearer; the hit then
-  shows on that bubble's surface, a few tenths of a unit away. An exact match needs the target's id in the event
-  (a simulation change).
+  the published hit point is taken as the struck one, and only its radius (and, from round 4, its drawn height) is
+  used: the point is always moved from the published point, the struck unit's own centre. If another bubble's centre
+  is nearer (on the ground collision keeps bubbles apart, so this needs interpolation lag in a tight crowd), the hit
+  is moved by that neighbour's radius from the target's own centre, a few hundredths of a unit off its glass; it is
+  not put on the neighbour's surface. (Corrected in round 4, review 3, E3-2.) An exact match needs the target's id in
+  the event (a simulation change; B-125).
+
+## Amendment 27: WP11 round 4, after WP11 review 3 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 4 answers the conditions of `docs/evidence/effects/review/independent_review_wp11_3.md` (ACCEPT WITH
+CONDITIONS, C1 to C5) and its minor items E3-4 and E3-5. D-1 holds: no simulation crate, golden replay or checksum
+changes; every condition was met on the client.
+
+**Engine (`effects::struck`).**
+
+- **Hits on the struck bubble's glass, flyers included (C1, A3-1).** The index keeps each bubble's drawn centre
+  height (its altitude plus its radius; a dome's base) and whether it flies (more than 1 unit above its ground). The
+  hit point is set to that height, so a shot at a flyer ends on its glass, 2.5 units up, not on the ground under
+  it. Where a flyer and a ground unit overlap in plan, a weapon in the `Air` slot takes the flyer and one in the
+  `Ground` slot the ground unit; a `Primary` weapon takes the nearest in plan, ties broken by height from the
+  published point.
+- **Far-side hits in front of the glass (C2, A3-2).** A shot's end (a tracer's or a beam's, and with it its hit)
+  and a blow's point are put on the struck bubble's outline as the battle camera sees it: the point of the bubble's
+  silhouette, at its radius plus 0.12, on the side the attack comes from on screen (`struck::onto_outline`, from the
+  camera's view direction). It is never in front of the bubble's face, where the bubble would sit behind it and its
+  interior hide it, nor behind the bubble. Its horizontal distance from the struck centre is 0.85 to 1 of the radius
+  plus 0.12, so looks placed `Behind` a blow move back by `UnitRadius × 1.15` in data (to within about 0.1 units of
+  the centre for the shipped radii). Without a camera (a tool, a test app) the point is raised 45 degrees up the
+  bubble towards the attacker instead. `impaler_strike`'s spikes rise from about 0.36 units below their point
+  (`spine_lift_struck`): near the ground for an attack across the screen, partly below it for one from below, and
+  about 0.3 units above it for one from above (recorded).
+- **A bounded query (C5, E3-3).** A uniform grid over the presented bubbles (cells of 1 unit, at most 512 a side),
+  rebuilt by counting sort into retained buffers once a frame with events; each bubble, a structure's dome included,
+  is entered in every cell its radius plus 0.35 covers, so a query reads one cell.
+- **An unfound bubble (E3-5).** An event whose struck bubble is not found is moved as if it struck a bubble of the
+  default radius (0.5) centred on its published point, the radius its impact binds, so a look placed `Behind` the
+  hit lands on that bubble's centre.
+
+**Looks.** `claw_rake`'s three rakes at 1.3, 1.45 and 1.6 struck radii (from 1.3 to 1.7), less across the attacker
+(P3-1), and outside the struck bubble's drawn disc, where the battle measure counts them (on the glass they would be
+masked). `bullet_hit`'s and `weld_sparks`' hot flashes are larger (0.42 and 0.4) and last 0.16 and 0.18 s, so more of
+them lies outside the struck bubble's interior. `impaler_strike` now raises two spikes either side of the line of
+the blow (`Across` without a line follows the bound `Facing`), 0.9 struck radii out, where an attacker standing
+against its target does not hide them; the shipped attacker (a spine crawler analogue) strikes from range, so a
+single spike would do there, and the pair is recorded as a deviation of the look.
+
+**Tests.**
+
+- `effects::struck` unit tests: the point on the glass towards the muzzle and up; a hit on a flyer rises to its
+  glass; the grid finds the nearest bubble, a wide dome from any cell it covers, the flyer for an anti-air weapon
+  and the ground unit for a ground weapon over the same point; an unknown bubble counts as the default.
+- `effects::systems::a_shots_muzzle_reach_counts_only_near_its_muzzle` (E3-4): unseen ground between the path's
+  reach and the muzzle's beside the landing half leaves the shot whole; beside the muzzle it cuts the shot behind
+  it; a single reach would cut it whole.
+- `weapon_battle_gpu_tests` (C1 to C3): a last wave stages the first native instant shot and the first native
+  blow each from above and from below the target on screen, and a shooter's anti-air weapon at a flyer. Every
+  presented bubble's drawn disc (its centre projected at its drawn height) is masked out to 0.8 of its radius, the
+  subject's and its neighbours': its interior, where its unit's flipbook animates; the band of glass round it is
+  measured, because a hit is drawn there (a hit on the far side lies over the upper rim on screen). The planted
+  negatives show that the band adds no false impact. The impact is looked for from its birth (an instant shot's impact waits for its slug). Planted
+  negatives: one tracer's, one beam's and one blow's impact struck across the screen, and the blow struck from above
+  the target, each replaced in a copy of the vocabulary by a card too small to draw, must fail the impact check. The
+  impact check counts pixels beside the struck bubble on the attacker's side, off the shot's own line (0.15 units
+  either side: a beam's or a slug's end lies on it, and a blank beam impact otherwise still counted 118), and needs
+  40 of them (was 15): a blank melee impact still leaves up to 33 (measured on the blow struck from above) in the band of glass where the attacker's rim turns
+  as it strikes.
+- `sync_allocation_count_tests` (C5): the effect stream also sends an instant hit and a blow at a presented
+  bubble every frame, through the struck-bubble index, with an impact using `Facing` and `Behind`; the stream must
+  spawn at least one hit a frame.
+
+**Decisions and out of scope (Q0002, reversible).** P3-2 (`glass_shatter`'s shards) and P3-3 (`acid_hit`'s
+splash) are deferred to a polish pass. B-125 (match by position) and B-126 (a held beam is a series of lines) are
+registered in `DESIGN.md`.
