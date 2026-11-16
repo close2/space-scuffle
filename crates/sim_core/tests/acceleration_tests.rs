@@ -129,16 +129,14 @@ impl Bench {
 
     /// Steps one tick, issuing `order` to the mover first when given.
     fn step(&mut self, order: Option<UnitOrder>) {
-        let commands = order
-            .map(|order| {
-                vec![PlayerCommand {
-                    player_id: PlayerId(0),
-                    entities: vec![self.mover],
-                    order,
-                    queue: false,
-                }]
-            })
-            .unwrap_or_default();
+        let commands = order.map_or_default(|order| {
+            vec![PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![self.mover],
+                order,
+                queue: false,
+            }]
+        });
         self.world.step(&TickBundle {
             tick: Tick(self.tick),
             commands,

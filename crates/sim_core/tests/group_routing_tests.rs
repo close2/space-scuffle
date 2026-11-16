@@ -102,8 +102,7 @@ fn members(world: &SimWorld, group: u32) -> Vec<(EntityId, u32)> {
         .route_groups()
         .iter()
         .find(|g| g.id == RouteGroupId(group))
-        .map(|g| g.members.clone())
-        .unwrap_or_default()
+        .map_or_default(|g| g.members.clone())
 }
 
 /// G-6a: ordinals through Move A, queued Move B, a chase pushed in front and ended, a retarget,

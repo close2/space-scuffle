@@ -145,7 +145,7 @@ jobs:
 
       - name: Install Rust toolchain
         if: steps.decide.outputs.render == 'true'
-        uses: dtolnay/rust-toolchain@1.99.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       # Its own key, so the release cache never replaces the test jobs' caches. rust-cache saves
       # only when its key missed (a new Cargo.lock or toolchain), not on every run (plan D-13).

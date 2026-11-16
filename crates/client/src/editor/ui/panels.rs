@@ -490,10 +490,9 @@ fn render_loadout_selectors(
     let loadouts = &terrain.loadouts;
     ui.label("Playtest Slot Loadouts:");
     if let Some(loads) = &loadouts {
-        for slot in 0..2 {
+        for (slot, current_slug) in tool_state.player_loadouts.iter_mut().take(2).enumerate() {
             ui.horizontal(|ui| {
                 ui.label(format!("P{slot}:"));
-                let current_slug = &mut tool_state.player_loadouts[slot];
                 egui::ComboBox::from_id_salt(format!("loadout_slot_{slot}"))
                     .selected_text(current_slug.as_str())
                     .show_ui(ui, |ui| {

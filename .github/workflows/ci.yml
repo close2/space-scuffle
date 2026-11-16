@@ -96,7 +96,7 @@ jobs:
       # `cargo gate full` also replays the golden fixture on wasm32-wasip1 under wasmtime and checks
       # the simulation crates for wasm32-unknown-unknown (the `commands` of crates/gate/suites.ron).
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.99.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
           targets: wasm32-wasip1, wasm32-unknown-unknown
@@ -237,7 +237,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.99.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Rust Cargo Cache
         uses: Swatinem/rust-cache@v2
@@ -263,7 +263,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain with WebAssembly targets
-        uses: dtolnay/rust-toolchain@1.99.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: wasm32-wasip1, wasm32-unknown-unknown
 
@@ -295,7 +295,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.99.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Rust Cargo Cache
         uses: Swatinem/rust-cache@v2
