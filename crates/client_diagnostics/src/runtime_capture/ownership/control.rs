@@ -45,6 +45,7 @@ impl EffectKind {
                 to: end,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::Projectile => CombatEventVisual::ProjectileVisual {
                 pos: origin,
@@ -59,6 +60,7 @@ impl EffectKind {
                 owner,
                 is_lightning: self == Self::Lightning,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::Melee => CombatEventVisual::MeleeSlashVisual {
                 pos: origin,
@@ -66,6 +68,7 @@ impl EffectKind {
                 radius: 0.8,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::Shatter => CombatEventVisual::BubbleShatter {
                 pos: origin,

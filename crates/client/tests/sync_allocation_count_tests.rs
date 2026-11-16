@@ -251,6 +251,7 @@ fn send_splash(
                 to: hit,
                 owner: sim_types::PlayerId(0),
                 source: source.0,
+                ends: None,
             },
         ));
         events.send(client::CombatVisualEvent(
@@ -260,6 +261,7 @@ fn send_splash(
                 radius: 0.5,
                 owner: sim_types::PlayerId(0),
                 source: source.0,
+                ends: None,
             },
         ));
     }

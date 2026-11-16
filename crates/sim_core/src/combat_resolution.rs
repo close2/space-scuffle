@@ -1128,6 +1128,7 @@ impl SimWorld {
                 to,
                 owner,
                 source,
+                ends: None,
             },
             WeaponVisualKind::LaserBeam => CombatEventVisual::BeamVisual {
                 from,
@@ -1135,6 +1136,7 @@ impl SimWorld {
                 is_lightning: false,
                 owner,
                 source,
+                ends: None,
             },
             WeaponVisualKind::LightningArc => CombatEventVisual::BeamVisual {
                 from,
@@ -1142,6 +1144,7 @@ impl SimWorld {
                 is_lightning: true,
                 owner,
                 source,
+                ends: None,
             },
             WeaponVisualKind::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: to,
@@ -1149,6 +1152,7 @@ impl SimWorld {
                 radius: 0.5,
                 owner,
                 source,
+                ends: None,
             },
             _ => return,
         };

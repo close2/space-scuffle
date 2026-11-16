@@ -388,7 +388,8 @@ pub fn at_struck_surface(
         }
         CombatEventVisual::ProjectileVisual { .. }
         | CombatEventVisual::BubbleShatter { .. }
-        | CombatEventVisual::SplashVisual { .. } => None,
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::SpellImpact { .. } => None,
     };
     (moved, radius)
 }
@@ -405,7 +406,9 @@ pub fn hit_facing(event: &CombatEventVisual) -> Option<f32> {
         }
         CombatEventVisual::MeleeSlashVisual { angle_rad, .. } => Some(*angle_rad),
         CombatEventVisual::ProjectileVisual { vel, .. } => Some((-vel[1]).atan2(-vel[0])),
-        CombatEventVisual::BubbleShatter { .. } | CombatEventVisual::SplashVisual { .. } => None,
+        CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::SpellImpact { .. } => None,
     }
 }
 
@@ -437,6 +440,7 @@ mod tests {
             to,
             owner: PlayerId(0),
             source: source(slot),
+            ends: None,
         }
     }
 
@@ -566,6 +570,7 @@ mod tests {
             radius: 0.5,
             owner: PlayerId(1),
             source: EffectSource::default(),
+            ends: None,
         };
         let bubble = StruckBubble {
             radius: 0.4,

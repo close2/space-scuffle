@@ -599,6 +599,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 is_lightning,
                 owner: _,
                 source: _,
+                ends: _,
             } => {
                 let (from, to) = (world_point(from), world_point(to));
                 self.beam(from, to, *is_lightning, style, owner);
@@ -609,6 +610,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 radius,
                 owner: _,
                 source: _,
+                ends: _,
             } => self.melee_slash(pos, *angle_rad, *radius, style, owner),
             CombatEventVisual::BubbleShatter {
                 pos,
@@ -625,9 +627,10 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 style,
                 owner,
             ),
-            // Area-damage searches get their effect from the effect system (plan
-            // `2026-11-09-effect-visualization` WP6); until then they draw nothing, as before.
-            CombatEventVisual::SplashVisual { .. } => {}
+            // Area-damage searches and spell missiles' impacts are drawn by the effect system
+            // alone (plans `2026-11-09-effect-visualization` WP6 and
+            // `2026-11-17-effect-snapshot-identity` D-6); the legacy cards draw none.
+            CombatEventVisual::SplashVisual { .. } | CombatEventVisual::SpellImpact { .. } => {}
         }
     }
 

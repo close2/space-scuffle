@@ -26,6 +26,7 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
             to,
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::ProjectileVisual {
             pos: from,
@@ -40,6 +41,7 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
             owner,
             is_lightning: false,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::BeamVisual {
             from,
@@ -47,6 +49,7 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
             owner,
             is_lightning: true,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: from,
@@ -54,6 +57,7 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
             radius: 0.8,
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::BubbleShatter {
             pos: to,
@@ -258,6 +262,7 @@ fn melee_slash_applies_its_angle_once_and_keeps_the_card_facing_up(
                 radius: 1.0,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             }));
         app.update();
         let world = app.world_mut();

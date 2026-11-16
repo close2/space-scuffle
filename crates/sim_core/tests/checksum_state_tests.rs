@@ -801,6 +801,7 @@ fn hashing_is_pure_and_ordering_contracts_are_respected() {
             to: [1.0; 3],
             owner: PlayerId(0),
             source: sim_types::EffectSource::default(),
+            ends: None,
         });
     assert_eq!(
         baseline,

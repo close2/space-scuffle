@@ -11,8 +11,20 @@
 use sim_types::{
     AbilitySource, AnimState, AreaView, AttackSwing, BubbleRenderInstance, CombatEventVisual,
     Concealment, EffectSource, EntityId, LineView, LinkView, ModeTransitionView, PlayerId,
-    PlayerView, RenderSnapshot, ShapeKind, SilhouetteClass, StanceView, StatusFlags, Tick,
-    UnitTypeId, WeaponKey, WeaponSlot, WeaponVisualKind,
+    PlayerView, RenderSnapshot, ShapeKind, SilhouetteClass, StanceView, StatusFlags, StatusId,
+    StatusView, StrikeEnds, Tick, UnitTypeId, WeaponKey, WeaponSlot, WeaponVisualKind,
+};
+
+/// Strike ends with distinct, non-default ids.
+const ENDS: StrikeEnds = StrikeEnds {
+    attacker: EntityId(3),
+    target: EntityId(8),
+};
+
+/// A spell source with every field away from its default.
+const SPELL: AbilitySource = AbilitySource {
+    unit_type: UnitTypeId(12),
+    ability: 2,
 };
 
 /// A weapon source with every field away from its default.
@@ -189,6 +201,7 @@ fn test_render_snapshot_full_serialization() {
             to: [25.0, 30.0, 0.5],
             owner: PlayerId(1),
             source: SOURCE,
+            ends: Some(ENDS),
         },
         CombatEventVisual::ProjectileVisual {
             pos: [18.0, 22.0, 0.6],
@@ -203,6 +216,7 @@ fn test_render_snapshot_full_serialization() {
             is_lightning: false,
             owner: PlayerId(1),
             source: SOURCE,
+            ends: Some(ENDS),
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: [24.0, 29.0, 0.3],
@@ -210,6 +224,7 @@ fn test_render_snapshot_full_serialization() {
             radius: 1.2,
             owner: PlayerId(1),
             source: SOURCE,
+            ends: None,
         },
         CombatEventVisual::BubbleShatter {
             pos: [25.0, 30.0, 0.0],
@@ -237,6 +252,12 @@ fn test_render_snapshot_full_serialization() {
             }),
             source: SOURCE,
             owner: PlayerId(2),
+        },
+        CombatEventVisual::SpellImpact {
+            pos: [20.0, 21.0, 1.5],
+            missile: 17,
+            owner: PlayerId(2),
+            source: SPELL,
         },
     ];
 
@@ -266,6 +287,20 @@ fn test_render_snapshot_full_serialization() {
                 ability: 0,
             },
         }],
+        statuses: vec![
+            StatusView {
+                entity: EntityId(2),
+                status: StatusId(4),
+            },
+            StatusView {
+                entity: EntityId(2),
+                status: StatusId(5),
+            },
+            StatusView {
+                entity: EntityId(7),
+                status: StatusId(0),
+            },
+        ],
         ..RenderSnapshot::default()
     };
 
@@ -309,6 +344,7 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
                 to: [1.0; 3],
                 owner,
                 source: SOURCE,
+                ends: Some(ENDS),
             },
             CombatEventVisual::ProjectileVisual {
                 pos: [0.0; 3],
@@ -323,6 +359,7 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
                 is_lightning: false,
                 owner,
                 source: SOURCE,
+                ends: Some(ENDS),
             },
             CombatEventVisual::MeleeSlashVisual {
                 pos: [0.0; 3],
@@ -330,6 +367,7 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
                 radius: 1.0,
                 owner,
                 source: SOURCE,
+                ends: Some(ENDS),
             },
             CombatEventVisual::BubbleShatter {
                 pos: [0.0; 3],
@@ -344,6 +382,12 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
                 line: None,
                 source: SOURCE,
                 owner,
+            },
+            CombatEventVisual::SpellImpact {
+                pos: [0.0; 3],
+                missile: 3,
+                owner,
+                source: SPELL,
             },
         ];
         for event in events {
@@ -565,4 +609,125 @@ fn clearing_a_view_empties_revealed() {
     assert_eq!(view.revealed, Vec::<EntityId>::new());
     assert_eq!(view.revealed.capacity(), capacity, "the buffer is kept");
     assert_eq!(view, PlayerView::default());
+}
+
+/// Events written before they named their strike ends read `ends: None`, and a snapshot written
+/// before it listed statuses reads an empty list.
+#[test]
+fn events_and_snapshots_written_before_ends_still_read() {
+    let old_events = [
+        "HitscanTracer(from:(0.0,0.0,0.5),to:(1.0,1.0,0.5),owner:(2),source:(unit_type:(38),weapon:(slot:Air,mode:Some(2))))",
+        "BeamVisual(from:(0.0,0.0,0.5),to:(1.0,1.0,0.5),is_lightning:false,owner:(2),source:(unit_type:(38),weapon:(slot:Air,mode:Some(2))))",
+        "MeleeSlashVisual(pos:(1.0,1.0,0.5),angle_rad:0.5,radius:1.0,owner:(2),source:(unit_type:(38),weapon:(slot:Air,mode:Some(2))))",
+    ];
+    for text in old_events {
+        let event: CombatEventVisual =
+            ron::from_str(text).expect("invariant: an event without ends still reads");
+        assert!(
+            matches!(
+                event,
+                CombatEventVisual::HitscanTracer { ends: None, .. }
+                    | CombatEventVisual::BeamVisual { ends: None, .. }
+                    | CombatEventVisual::MeleeSlashVisual { ends: None, .. }
+            ),
+            "{text} read as {event:?}"
+        );
+        assert_eq!(event.source(), Some(SOURCE));
+    }
+
+    let old_frame = "(tick:(9),checksum:7,bubbles:[],combat_events:[],match_result:InProgress,\
+        players:((minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false),\
+        (minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false)),\
+        resource_nodes:[],areas:[],links:[])";
+    let frame: RenderSnapshot =
+        ron::from_str(old_frame).expect("invariant: a frame without statuses still reads");
+    assert_eq!(frame.statuses, Vec::new());
+    assert_eq!(frame.tick, Tick(9));
+    assert!(
+        ron::from_str::<StrikeEnds>("(attacker:(1),target:(2),plane:Air)").is_err(),
+        "an unknown strike-ends field is rejected"
+    );
+    assert!(
+        ron::from_str::<StatusView>("(entity:(1),status:(2),stacks:3)").is_err(),
+        "an unknown status-view field is rejected"
+    );
+}
+
+/// A frame without strike ends, statuses or impacts serializes to exactly the text it had before
+/// those facts existed (captured from `main` at `92d7d39f`), so recorded frames keep their bytes.
+#[test]
+fn a_frame_without_the_new_facts_keeps_its_bytes() {
+    let events = vec![
+        CombatEventVisual::HitscanTracer {
+            from: [0.0, 1.0, 0.5],
+            to: [2.0, 3.0, 0.5],
+            owner: PlayerId(1),
+            source: SOURCE,
+            ends: None,
+        },
+        CombatEventVisual::BeamVisual {
+            from: [0.0, 1.0, 0.5],
+            to: [2.0, 3.0, 0.5],
+            is_lightning: true,
+            owner: PlayerId(1),
+            source: SOURCE,
+            ends: None,
+        },
+        CombatEventVisual::MeleeSlashVisual {
+            pos: [2.0, 3.0, 0.5],
+            angle_rad: 0.5,
+            radius: 1.25,
+            owner: PlayerId(1),
+            source: SOURCE,
+            ends: None,
+        },
+    ];
+    let frame = RenderSnapshot {
+        tick: Tick(9),
+        checksum: 7,
+        combat_events: events,
+        ..RenderSnapshot::default()
+    };
+    let source = "source:(unit_type:(38),weapon:(slot:Air,mode:Some(2)))";
+    let player = "(minerals:0,gas:0,supply_used:0,supply_max:0,defeated:false)";
+    let before = format!(
+        "(tick:(9),checksum:7,bubbles:[],combat_events:[\
+         HitscanTracer(from:(0.0,1.0,0.5),to:(2.0,3.0,0.5),owner:(1),{source}),\
+         BeamVisual(from:(0.0,1.0,0.5),to:(2.0,3.0,0.5),is_lightning:true,owner:(1),{source}),\
+         MeleeSlashVisual(pos:(2.0,3.0,0.5),angle_rad:0.5,radius:1.25,owner:(1),{source})],\
+         match_result:InProgress,players:({players}),resource_nodes:[],areas:[],links:[])",
+        players = [player; 8].join(","),
+    );
+    let text = ron::to_string(&frame).expect("invariant: valid snapshot serialization");
+    assert_eq!(text, before);
+
+    let with_ends = RenderSnapshot {
+        combat_events: vec![CombatEventVisual::HitscanTracer {
+            from: [0.0, 1.0, 0.5],
+            to: [2.0, 3.0, 0.5],
+            owner: PlayerId(1),
+            source: SOURCE,
+            ends: Some(ENDS),
+        }],
+        statuses: vec![StatusView {
+            entity: EntityId(8),
+            status: StatusId(1),
+        }],
+        ..frame
+    };
+    let text = ron::to_string(&with_ends).expect("invariant: valid snapshot serialization");
+    assert!(
+        text.contains(",ends:Some((attacker:(3),target:(8))))"),
+        "the ends follow the source: {text}"
+    );
+    assert!(
+        text.ends_with(",statuses:[(entity:(8),status:(1))])"),
+        "the statuses close the frame: {text}"
+    );
 }

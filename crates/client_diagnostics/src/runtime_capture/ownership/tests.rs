@@ -57,6 +57,7 @@ fn app() -> Result<(App, OwnershipState), Box<dyn std::error::Error>> {
             to: [4.0, 5.0, 0.5],
             owner: PlayerId(0),
             source: sim_types::EffectSource::default(),
+            ends: None,
         }));
     app.update();
     let mut evidence = OwnershipState::default();
@@ -497,6 +498,7 @@ fn actual_fingerprint_ron_roundtrip_preserves_nanoseconds_above_u32() -> TestRes
             to: [4.0, 5.0, 0.5],
             owner: PlayerId(0),
             source: sim_types::EffectSource::default(),
+            ends: None,
         }));
     app.update();
     let actual = Fingerprint::capture(app.world_mut())?;

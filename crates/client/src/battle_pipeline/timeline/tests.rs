@@ -21,6 +21,7 @@ fn event() -> CombatEventVisual {
         to: [1.0; 3],
         owner: PlayerId(0),
         source: sim_types::EffectSource::default(),
+        ends: None,
     }
 }
 

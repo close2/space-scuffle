@@ -843,6 +843,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 to: [10.0, 0.0, 0.5],
                 owner: primary,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -861,6 +862,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 is_lightning: true,
                 owner: primary,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -870,6 +872,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 radius: 0.8,
                 owner: secondary,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(

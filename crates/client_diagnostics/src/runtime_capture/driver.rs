@@ -1325,6 +1325,7 @@ mod tests {
             to: victim.world_pos,
             owner: source.owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         };
         assert!(!displayed_contact(&proof, 16, victim, source, &event));
         assert!(displayed_contact(&proof, 17, victim, source, &event));
@@ -1397,6 +1398,7 @@ mod tests {
             to,
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         };
         assert!(event_matches_contact(
             &tracer(source.0, victim.0, source.1),

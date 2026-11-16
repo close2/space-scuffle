@@ -98,6 +98,7 @@ fn an_instant_shot_asks_for_its_travel_from_the_bubble_to_the_impact() {
         to: [10.0, 3.0, 0.5],
         owner: PlayerId(0),
         source: primary(unit),
+        ends: None,
     };
     let request = travel_request(&event, &tables, &catalog).expect("the unit names a travel");
     assert_eq!(request.effect, effect);
@@ -183,6 +184,7 @@ fn two_shots_along_one_path_are_two_effects() {
         to: [10.0, 3.0, 0.5],
         owner: PlayerId(0),
         source: primary(unit),
+        ends: None,
     };
     let request = travel_request(&event, &tables, &catalog).expect("a travel");
     let mut runtime = EffectRuntime::new(&catalog);
@@ -213,6 +215,7 @@ fn a_melee_strike_asks_for_its_impact_only() {
         radius: 0.5,
         owner: PlayerId(0),
         source: primary(melee.unit_type_id),
+        ends: None,
     };
     assert!(travel_request(&event, &tables, &catalog).is_none());
     let impact = spawn_request(&event, &tables, &catalog).expect("the strike has a look");
@@ -232,6 +235,7 @@ fn the_legacy_card_is_left_out_exactly_where_a_unit_names_its_looks() {
         to: [1.0, 0.0, 0.0],
         owner: PlayerId(0),
         source,
+        ends: None,
     };
     assert!(replaces_legacy(Some(&tables), &tracer(primary(unit))));
     assert!(
@@ -465,6 +469,7 @@ fn an_instant_shots_impact_waits_for_its_slug() {
                 to: [10.0, 3.0, 0.5],
                 owner: PlayerId(0),
                 source,
+                ends: None,
             };
             let slug = travel_request(&event, &tables, &catalog).expect("an instant travel");
             let impact = spawn_request(&event, &tables, &catalog).expect("an impact");

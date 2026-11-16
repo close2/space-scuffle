@@ -196,6 +196,7 @@ fn events(owner: PlayerId) -> [CombatEventVisual; 5] {
             to,
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::ProjectileVisual {
             pos: from,
@@ -210,6 +211,7 @@ fn events(owner: PlayerId) -> [CombatEventVisual; 5] {
             owner,
             is_lightning: true,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: from,
@@ -217,6 +219,7 @@ fn events(owner: PlayerId) -> [CombatEventVisual; 5] {
             radius: 0.5,
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         },
         CombatEventVisual::BubbleShatter {
             pos: to,

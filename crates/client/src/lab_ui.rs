@@ -104,6 +104,7 @@ impl LabVfxTrigger {
                 to: target,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::PlasmaBolt => CombatEventVisual::ProjectileVisual {
                 pos: origin,
@@ -118,6 +119,7 @@ impl LabVfxTrigger {
                 is_lightning: false,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::LightningArc => CombatEventVisual::BeamVisual {
                 from: origin,
@@ -125,6 +127,7 @@ impl LabVfxTrigger {
                 is_lightning: true,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
             Self::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: origin,
@@ -132,6 +135,7 @@ impl LabVfxTrigger {
                 radius: 1.0,
                 owner,
                 source: sim_types::EffectSource::default(),
+                ends: None,
             },
         }
     }

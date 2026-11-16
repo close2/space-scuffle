@@ -303,6 +303,10 @@ pub fn spawn_request_struck(
             line: None,
             delay: 0.0,
         }),
+        // A spell missile's impact is laid by the missile looks (`effects::areas`), not by a
+        // weapon's tables: it asks for no weapon spawn (plan `2026-11-17-effect-snapshot-identity`
+        // WP1; its own handler is WP6).
+        CombatEventVisual::SpellImpact { .. } => None,
     }
 }
 
@@ -357,7 +361,8 @@ pub fn travel_request(
         }
         CombatEventVisual::MeleeSlashVisual { .. }
         | CombatEventVisual::SplashVisual { .. }
-        | CombatEventVisual::BubbleShatter { .. } => return None,
+        | CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SpellImpact { .. } => return None,
     };
     let effect = tables.travel(*source)?;
     catalog.effect(effect)?;
@@ -455,7 +460,7 @@ pub fn replaces_legacy(tables: Option<&UnitEffectTables>, event: &CombatEventVis
         | CombatEventVisual::MeleeSlashVisual { source, .. } => {
             tables.is_some_and(|tables| tables.names_weapon(*source))
         }
-        CombatEventVisual::SplashVisual { .. } => false,
+        CombatEventVisual::SplashVisual { .. } | CombatEventVisual::SpellImpact { .. } => false,
     }
 }
 
