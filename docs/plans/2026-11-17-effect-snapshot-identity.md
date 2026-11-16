@@ -682,3 +682,41 @@ and `floor`, it measured 0.86 px.
 | `areas` unit tests, `weapon_look_tests` (24), `battle_fog_tests` (10), `lab_scene_tests` | pass |
 | `area_link_gpu_tests` (3 measured tests) | pass |
 | `weapon_battle_gpu_tests` | red on `needle_volley` only, as above |
+
+## Amendment 3: B-128 brought into scope, and the WP4/WP6 review conditions (2026-11-16, short note, charter §6)
+
+The independent review of WP4/WP6 accepted the code with conditions. `weapon_battle_gpu_tests` is red on
+`needle_volley`+`needle_hit` (23 px beside the struck bubble against a bar of 34). WP4 does not touch the projectile
+path; the red comes from re-staging (WP3's data and the `find_spots` fix put the subject in another wave, spot,
+shooter and target). Its cause is the fault §10 listed as out of scope: a `ProjectileVisual` is published at
+ground + 0.5 and its impact is laid at the struck unit's centre, inside the bubble's masked interior, for ground
+targets as well as flyers. A red test is not merged, and a bar is not lowered to pass it (charter §1.1). The
+follow-up is therefore done here as WP4b.
+
+**Register.** The entry §10 proposed as B-127 is **B-128** (B-127 is now the radv test stall on `main`). DESIGN.md
+gains the B-128 row, worded for every target: *a projectile's flight and impact are not aimed at the struck
+bubble; the impact is laid at the target's centre at ground + 0.5, inside a ground bubble's masked interior and
+below a flyer.* Every "proposed B-127" in this plan and in the review packet becomes B-128.
+
+**WP4b (sim_types, sim_core, client).**
+- `CombatEventVisual::ProjectileVisual` gains `ends: Option<StrikeEnds>`, with the same serde attributes and
+  meaning as on `HitscanTracer` (`None` for synthetic events and old records). `sim_core`'s presentation writer
+  fills it from the projectile's source and target entity. This is presentation output only: no authoritative
+  state, no checksum field and no golden replay may change (stop rule §8; run the goldens in debug, release and on
+  `wasm32-wasip1`).
+- The client aims the projectile at the struck bubble by id through WP4's lookup (`effects::struck`): its arrival
+  point and impact lie on that bubble's surface facing the shooter, at its drawn height. This applies to ground and
+  air targets alike, as `at_struck_surface` already does for instant hits. If the lookup finds nothing, the current
+  behaviour stays, and it is counted under `Nowhere`.
+- Tests: a unit test per plane (ground target and flyer) shows the impact on the glass, not at the centre. The GPU
+  wave `cross_plane` gains a projectile subject if the data offers an anti-air projectile shooter; otherwise a unit
+  test covers it, and that is recorded. `weapon_battle_gpu_tests` must pass on radv with its bars unchanged.
+- The inverse kind mismatches of §10 (`hive_matron`, `tesla_sentinel_dome`) stay out of scope: they re-record
+  goldens.
+
+**Review conditions, also done here.**
+1. A system-level test proves that `spawn_effects_from_events` remembers the presented bubbles only after its
+   lookups. Swapping the order must fail it.
+2. A unit test of `lay_spell_impact_seen` with a real `BattleFog`, which hides the whole impact, shows that nothing
+   is laid. Alternatively, §9's risk row is corrected to name the test that covers it.
+3. `StruckBubbles` is cleared when the battle session changes, because entity ids restart in a new `SimWorld`.
