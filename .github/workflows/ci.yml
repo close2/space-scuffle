@@ -192,9 +192,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # Cargo up to 1.99 put test executables in target/debug/deps/; Cargo 1.100 puts each in
+      # target/debug/build/<crate>/<hash>/out/. Both steps search target/debug for either layout.
       - name: Test binaries carry compressed debug info
         run: |
-          bin=$(ls -t target/debug/deps/skirmish_match_tests-* | grep -v '\.d$' | head -1)
+          bin=$(find target/debug -type f -executable -name 'skirmish_match_tests-*' ! -name '*.d' \
+            -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          [ -n "$bin" ] || { echo "::error title=Disk budget::no skirmish_match_tests executable under target/debug"; exit 1; }
           readelf -SW "$bin" | sed 's/^ *\[ *[0-9]*\]//' \
             | awk '$1 == ".debug_info" { found = 1; ok = ($7 ~ /C/) } END { exit !(found && ok) }' \
             || { echo "::error title=Disk budget::$bin has uncompressed .debug_info; is RUSTFLAGS overriding .cargo/config.toml?"; exit 1; }
@@ -204,8 +208,9 @@ jobs:
         if: always()
         run: |
           df -h "$GITHUB_WORKSPACE"
-          du -sh target target/debug/deps 2>/dev/null || true
-          find target/debug/deps -maxdepth 1 -type f -size +100M -printf '%s %f\n' 2>/dev/null \
+          du -sh target 2>/dev/null || true
+          du -sh target/debug/deps target/debug/build 2>/dev/null || true
+          find target/debug -type f -size +100M -printf '%s %f\n' 2>/dev/null \
             | sort -rn | head -5 | awk '{ printf "%6.0f MiB  %s\n", $1 / 1048576, $2 }'
 
   # The charter requires bit-for-bit identical simulation on every target. These jobs make
