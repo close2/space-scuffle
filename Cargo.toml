@@ -113,5 +113,9 @@ opt-level = 2
 [profile.dev.package.asset_baker]
 opt-level = 2
 
-[profile.test]
+# Line tables only, for `cargo build`/`cargo run` as for `cargo test` (the test profile inherits
+# dev): backtraces keep file and line, and since both profiles now hash the same settings, a
+# target directory builds every dependency once instead of once per profile. A debugger session
+# that needs full debug info passes `--config profile.dev.debug=2`.
+[profile.dev]
 debug = "line-tables-only"
