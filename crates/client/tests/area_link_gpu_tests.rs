@@ -295,6 +295,14 @@ struct Report {
     /// Where the enemy's missile was aimed at the edge of the viewer's sight, map `x, y`.
     #[serde(default)]
     fungal_fog_edge: Option<[f32; 2]>,
+    /// Ground samples round the enemy's missile's target (review 1, E1-3): window pixel and
+    /// whether the viewer sees the ground there (`None` within [`FOG_MARGIN`] of a fog cell
+    /// edge).
+    #[serde(default)]
+    fungal_fog_ground: Vec<([f32; 2], Option<bool>)>,
+    /// Window pixel of the top left corner of the `fungal_fog` crops.
+    #[serde(default)]
+    fungal_fog_crop: Option<[u32; 2]>,
 }
 
 /// How the effect layers are drawn for a shot.
@@ -2521,9 +2529,126 @@ fn set_up_fungal(
         cast(sim, enemy, edge);
         staging.fungal_edge = Some(edge);
         staging.report.fungal_fog_edge = Some(edge.to_array());
+        staging.report.fungal_fog_ground = fog_ground(sim, fog, camera, edge);
     }
     staging.caster = Some(caster);
     staging.spots = spots;
+}
+
+/// World units round the enemy's missile's target sampled for the fog check (review 1, E1-3):
+/// the impact's reach and a margin.
+const FUNGAL_FOG_REACH: f32 = 2.0;
+
+/// Ground samples every 0.1 world units within [`FUNGAL_FOG_REACH`] of `centre`: window pixel
+/// and whether the viewer sees the ground there, `None` within [`FOG_MARGIN`] of a fog cell
+/// edge.
+fn fog_ground(
+    world: &SimWorld,
+    fog: &BattleFog,
+    camera: (&Camera, &GlobalTransform),
+    centre: Vec2,
+) -> Vec<([f32; 2], Option<bool>)> {
+    let step = 0.1;
+    let reach = (FUNGAL_FOG_REACH / step) as i32;
+    let mut ground = Vec::new();
+    for row in -reach..=reach {
+        for column in -reach..=reach {
+            let offset = Vec2::new(column as f32, row as f32) * step;
+            if offset.length() > FUNGAL_FOG_REACH {
+                continue;
+            }
+            let point = centre + offset;
+            let seen = fog.sees(point.x, point.y);
+            let firm = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+                .iter()
+                .all(|(dx, dy)| {
+                    fog.sees(point.x + dx * FOG_MARGIN, point.y + dy * FOG_MARGIN) == seen
+                });
+            ground.push((project(world, camera, point), firm.then_some(seen)));
+        }
+    }
+    ground
+}
+
+/// What the enemy's missile changed round its target over the sequence (review 1, E1-3): the
+/// most seen and unseen ground samples any frame changed against the first, the frame of the
+/// most seen ones, and the samples in crop pixels.
+struct FogChange {
+    seen: usize,
+    unseen: usize,
+    total: (usize, usize),
+    peak_frame: usize,
+}
+
+/// Measures [`FogChange`] over the `fungal_fog` crops and writes the overlay of the fog cells
+/// (seen samples green, unseen red, changed ones bright) on the peak frame.
+fn fungal_fog_change(
+    directory: &Path,
+    report: &Report,
+    driver: &str,
+) -> TestResult<Option<FogChange>> {
+    let (Some(origin), Some(files)) = (
+        report.fungal_fog_crop,
+        report
+            .sequences
+            .iter()
+            .find(|(key, _)| key == "fungal_fog")
+            .map(|(_, files)| files),
+    ) else {
+        return Ok(None);
+    };
+    let local = |at: [f32; 2]| [at[0] - origin[0] as f32, at[1] - origin[1] as f32];
+    let first = image::open(directory.join(&files[0]))?.to_rgb8();
+    let mut change = FogChange {
+        seen: 0,
+        unseen: 0,
+        total: (0, 0),
+        peak_frame: 0,
+    };
+    change.total = report
+        .fungal_fog_ground
+        .iter()
+        .fold((0, 0), |(seen, unseen), (_, sight)| match sight {
+            Some(true) => (seen + 1, unseen),
+            Some(false) => (seen, unseen + 1),
+            None => (seen, unseen),
+        });
+    for (index, file) in files.iter().enumerate().skip(1) {
+        let frame = image::open(directory.join(file))?.to_rgb8();
+        let (mut seen, mut unseen) = (0, 0);
+        for (at, sight) in &report.fungal_fog_ground {
+            let changed = changed_at(&frame, &first, local(*at));
+            match sight {
+                Some(true) => seen += usize::from(changed),
+                Some(false) => unseen += usize::from(changed),
+                None => {}
+            }
+        }
+        if seen > change.seen {
+            change.seen = seen;
+            change.peak_frame = index;
+        }
+        change.unseen = change.unseen.max(unseen);
+    }
+    let peak = image::open(directory.join(&files[change.peak_frame]))?.to_rgb8();
+    let mut overlay = peak.clone();
+    for (at, sight) in &report.fungal_fog_ground {
+        let [x, y] = local(*at);
+        if x < 0.0 || y < 0.0 || x >= overlay.width() as f32 || y >= overlay.height() as f32 {
+            continue;
+        }
+        let changed = changed_at(&peak, &first, [x, y]);
+        let colour = match (sight, changed) {
+            (Some(true), false) => [40, 140, 40],
+            (Some(true), true) => [80, 255, 80],
+            (Some(false), false) => [140, 40, 40],
+            (Some(false), true) => [255, 60, 60],
+            (None, _) => continue,
+        };
+        overlay.put_pixel(x as u32, y as u32, image::Rgb(colour));
+    }
+    overlay.save(directory.join(format!("sheet_fungal_fog_overlay_{driver}.png")))?;
+    Ok(Some(change))
 }
 
 /// The crops the Fungal Growth child writes this frame: round the viewer's target and round the
@@ -2546,6 +2671,9 @@ fn fungal_frame(
         let left = (x - CROP[0] as f32 / 2.0).max(0.0) as u32;
         let top = (y - CROP[1] as f32 / 2.0).max(0.0) as u32;
         crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
+        if key == "fungal_fog" {
+            staging.report.fungal_fog_crop = Some([left, top]);
+        }
         note(&mut staging.report, &key, file);
     }
     if frame.is_multiple_of(FUNGAL_BATTLE_EVERY) {
@@ -2618,6 +2746,7 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
     let driver = gpu_run::selected_driver().driver;
     let directory = tempfile::tempdir()?;
     let report = run_gpu_child("area_link_fungal_child", directory.path())?;
+    let fog_change = fungal_fog_change(directory.path(), &report, &driver.to_string())?;
     keep_evidence(directory.path(), &report, &driver.to_string())?;
     let flying = report.fungal.iter().filter(|frame| frame.1 > 0).count();
     let landed = report.fungal.last().map_or(0, |frame| frame.2);
@@ -2640,6 +2769,16 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
         report.fungal_fog_edge
     );
     assert!(flying > 0, "a missile look is held in flight");
+    // Review 1, E1-3: the enemy's missile and its impact, cut at the viewer's sight, change no
+    // unseen ground sample round its target and change some seen ones.
+    if let Some(change) = &fog_change {
+        eprintln!(
+            "driver {driver}: Fungal Growth at the fog edge: at most {} of {} seen and {} of {}              unseen ground samples changed against the first frame (most seen on frame {})",
+            change.seen, change.total.0, change.unseen, change.total.1, change.peak_frame
+        );
+        assert_eq!(change.unseen, 0, "no unseen ground sample changes");
+        assert!(change.seen > 0, "the seen part of the impact is drawn");
+    }
     assert!(
         first_landed > first_flying,
         "the impact is laid after the flight"

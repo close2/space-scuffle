@@ -126,6 +126,7 @@ SuiteCatalog(
         // Status and death looks (plan 2026-11-09-effect-visualization WP9): two parents, each
         // a whole skirmish client in its child. One thread, as for the stance looks.
         "client/status_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        "client/weapon_battle_gpu_tests": (class: Gpu, test_threads: Some(1)),
         // Area and tether looks (plan 2026-11-09-effect-visualization WP10): one parent, a whole
         // skirmish client in its child. One thread, as for the status looks.
         "client/area_link_gpu_tests": (class: Gpu, test_threads: Some(1)),
@@ -244,6 +245,7 @@ SuiteCatalog(
                 "client/stance_gpu_tests",
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",
+                "client/weapon_battle_gpu_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),

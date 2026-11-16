@@ -273,6 +273,11 @@ pub enum RotationDef {
     /// No roll; a horizontal mirror drawn from the hash (upright elements such as spikes,
     /// which must keep their base down).
     Mirror,
+    /// A roll and a mirror as `Random`, drawn from the effect instance's own hash, so every
+    /// card of the instance that rolls `Together` turns as one (a blade's body under its light,
+    /// a claw's parallel rakes; WP11 round 2). A particle, which has no instance of its own,
+    /// rolls as `Random`.
+    Together,
 }
 
 /// How a ring card maps its texture.

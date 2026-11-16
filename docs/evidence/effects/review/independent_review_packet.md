@@ -7,6 +7,62 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 2 (the weapons' own looks, after review 1)
+
+Round 2 answers `independent_review_wp11_1.md` (REJECT). The decisions are plan Amendment 25. This is round 2 of at
+most five (Q0080). Please write your review to `independent_review_wp11_2.md` next to this one, in the same form as
+round 1's. Nothing was spent and no texture was made.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0` for the whole round, so every picture and GPU test ran
+on lavapipe, the CI reference. No radv picture exists for this round.
+
+### What changed, by review item
+
+| Item | Change |
+|---|---|
+| A1-1, A1-2 | The rifle slug is a warm alpha body (size 0.11) under a hot core (0.06) with a muzzle flash; the cannon's muzzle breathes dark smoke (`smoke_dark`, an alpha grey); the sniper's slug is cold with a blue-white head and a fading tail, with a cold flash. |
+| A1-3 | Every particle is at least 0.06 units (2 px): `hit_sparks`, `energy_sparks`, `weld_sparks`, `claw_flecks`, `spit_spatter`, and the new `needle_chips` and `glass_burst`. `bullet_hit` holds a hot point (size 0.32) for 0.12 s, then dark dust; `needle_hit` a dark puff and chips; `weld_sparks` a hot point (size 0.28) and a falling spray; the impaler spike (size 0.55) stands 0.45 units beside the target; `acid_hit` shows a dark wet splash from its first frame; beam burns are a hot spot on a body of size 0.42. |
+| A1-4 | Every additive light stands on an alpha-blended body of its own hue (`*_body` ramps, drawn behind it); a body's intensity rises above 1 so its coverage fills its core and ends in a firm edge. Display colours are sampled in the measurements. |
+| A1-5 | Beams: a coloured body (size 0.15 to 0.16), a hot core, four pulses ridden from muzzle to target (one every 0.09 s), a muzzle glow and the burn. A beam lasts 0.46 s, longer than the Void-Ray analogue's period and its largest random delay, so a sustained attack keeps its beam on. |
+| A1-6 | `acid_spit`: a dark wet glob (size 0.2) leading a short green trail. `needle_volley`: two dark spines with a pale rim. `grenade_lob`: a dark shell with a dull orange glow. `rocket_trail`: a mid-dark grey alpha trail and a dark launch puff. |
+| A1-7 | `psi_slash`: a crescent (new `Ring` field `crescent`: the band swells from points at both ends to its full width in the middle) swept open over its first frames (`arc_curve`), a blue alpha body under its light, eroding from its tail; body and light turn as one (new rotation `Together`). `claw_rake`: three dark crescents with a pale edge, parallel, with dark flecks. |
+| A1-8 | `glass_shatter`: pale shards with dark edges, thrown out to about one and a half radii; the flash is a pale disc with a dark rim; all sized by `UnitRadius` (the dying unit's bubble radius). |
+| E1-1 | An instant shot's impact waits until its slug arrives (`weapon_look_tests::an_instant_shots_impact_waits_for_its_slug`). |
+| E1-2 | Each effect has a reach (`Effect::reach`); a shot's fog cut samples across its path out to it; the clip lifetime is recorded as a bounded leak (Amendment 25); the shot test adds a take along the camera's depth axis beside the fog edge. |
+| E1-3 | The Fungal fog case counts ground samples round the enemy's target: none unseen may change, some seen must; an overlay of the samples is in the material. |
+| E1-4 | The status battle counts its own `BubbleShatter` events: each death effect spawns exactly once per event naming it; a positive control (a death of a type no table covers) must draw legacy shards the test counts. |
+| E1-5 | `shipped_weapon_looks_can_be_seen`: every shipped `Shot` and `Point` look and the default death, at the default zoom, on both lab grounds; area changed by 32 levels at least 40 px (shot), 80 px (impact), 150 px (death), and the `Critical` layers' median contrast at least 32 levels. Printed per look. |
+| E1-6 | `DESIGN.md`: B-123 (weapons that publish no event), B-124 (a missile's impact up to half a step short, with the half-step extrapolation); the "Effect presentation" row and B-107 refreshed; B-122 now follows B-121. |
+| E1-7 | Missile slots compact in one pass; the valgrind block counts (baseline and window) are in the measurements. |
+| E1-8 | The capture's combat check counts only live `Shot`, `Point` and `Death` cards. |
+| V1-1 | `weapon_battle_gpu_tests` (new): the shipped skirmish at the default zoom; the first waves stage one presentable unit per family firing its own weapon at an unarmed target (as many a wave as the child finds open spots for: five); the later waves lend each lab family to a presentable shooter whose weapon publishes the same kind of event. Each family has a sheet: a 40 ms sequence at 1:1 and its first frames at 2x. |
+| P1-1 | `fungal_impact`'s flash, spore puffs and motes rise less and gather over the disc (the E1-3 fog check needed it: standing cards over seen ground covered pixels of the fog beyond). |
+| P1-3 | The staged battle's spots keep 3 units from resource nodes (the crystal props). |
+
+Deferred (Amendment 25): P1-2 (the slug's end on the target's surface) and P1-4. In the beside-the-fog take every
+shot draws nothing: a shot whose reach meets unseen ground along its whole path is cut whole (fail-closed).
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r2_`.
+
+| What | Files |
+|---|---|
+| Every shipped look at the default zoom, one row per look: the whole look at its three sampled ages on the bright lab ground, then on the dark one (240×160 crops at 1:1) | [looks 1](wp11r2_looks_1_lavapipe.jpg), [looks 2](wp11r2_looks_2_lavapipe.jpg) |
+| The staged battle, one sheet per family: 12 frames of 40 ms at 1:1 from the first shot, then the first 6 at 2x; waves 0 and 1 fire their own unit's weapon, waves 2 and 3 are lab families lent to a presentable shooter (the measurements name each shooter) | `wp11r2_battle_lavapipe_w*_*.jpg` |
+| Fungal Growth at the fog edge, with the ground samples overlaid on the peak frame (green seen, red unseen; bright where changed) | [overlay](wp11r2_fungal_fog_overlay_lavapipe.jpg), [sequence](wp11r2_fungal_fog_lavapipe.jpg), [own target](wp11r2_fungal_own_lavapipe.jpg) |
+| Measurements: visibility per look and ground, shots and fog takes, the Fungal fog counts, the death counts and positive control, the staged battle, the valgrind counts | [wp11r2_measurements.txt](wp11r2_measurements.txt) |
+
+### Points to look at
+
+- Whether each look reads at 1:1 in the staged battle next to a real bubble, the small ones (needles, globs, sparks)
+  included, and on both grounds in the looks sheets.
+- Whether the beams read as energy carried to the target, and whether the prismatic beam stays on through a
+  sustained attack.
+- Whether the blade reads as a swept crescent and the claws as rakes, not as drawn arcs.
+- Whether colour survives on the bright ground (plasma, spores, psionic blue, prism violet).
+- Pops at the start and end of each look in the battle sequences.
+
 ## WP11 round 1 (the weapons' own looks, the default death, Fungal Growth)
 
 WP11 moves every weapon look from the legacy combat cards (`vfx.rs`, `combat_fx.wgsl`) into effect definitions that

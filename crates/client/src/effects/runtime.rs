@@ -1058,7 +1058,7 @@ impl EffectRuntime {
         }
         let catalog = context.catalog;
         let (layer_a, layer_b, frame_mix) = card_frame(catalog, look, age, life, seed);
-        let (rotation, mut flags) = roll_and_mirror(look.rotation, seed);
+        let (rotation, mut flags) = card_roll(look.rotation, seed, context.instance.seed);
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
         }
@@ -2022,6 +2022,18 @@ impl Surface {
     }
 }
 
+/// The roll and mirror bit of a card under `rotation`: drawn from the card's hash `seed`, or,
+/// for [`RotationDef::Together`], from its effect instance's hash `instance_seed`, so every card
+/// of the instance so rolled turns as one.
+fn card_roll(rotation: RotationDef, seed: u32, instance_seed: u32) -> (f32, u32) {
+    let seed = if rotation == RotationDef::Together {
+        instance_seed
+    } else {
+        seed
+    };
+    roll_and_mirror(rotation, seed)
+}
+
 /// The roll in radians and the `FLAG_*` mirror bit of a card under `rotation`, drawn from
 /// the card's hash `seed`.
 #[must_use]
@@ -2033,7 +2045,7 @@ pub fn roll_and_mirror(rotation: RotationDef, seed: u32) -> (f32, u32) {
     };
     match rotation {
         RotationDef::Fixed => (0.0, 0),
-        RotationDef::Random => (
+        RotationDef::Random | RotationDef::Together => (
             std::f32::consts::TAU * unit_float(hash3(seed, 0x0207, 0)),
             mirror,
         ),
@@ -2478,6 +2490,11 @@ mod tests {
             assert_eq!(roll_and_mirror(RotationDef::Fixed, seed), (0.0, 0));
             let (roll, _) = roll_and_mirror(RotationDef::Random, seed);
             assert!((0.0..std::f32::consts::TAU).contains(&roll));
+            assert_eq!(
+                roll_and_mirror(RotationDef::Together, seed),
+                roll_and_mirror(RotationDef::Random, seed),
+                "a shared roll is drawn as a random one, from the instance's seed"
+            );
         }
         assert!(
             mirrored > 16 && mirrored < 48,

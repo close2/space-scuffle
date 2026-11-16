@@ -2562,3 +2562,94 @@ shots' paths, ends and fog results, the Fungal counts and the coverage report ar
 
 **Gate.** The packet's section "WP11 round 1"; the orchestrator runs the independent review (Q0080, up to five
 rounds).
+
+## Amendment 25: WP11 round 2, after WP11 review 1 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 2 answers `docs/evidence/effects/review/independent_review_wp11_1.md` (REJECT). D-1 holds: no simulation
+crate, golden replay or checksum changes.
+
+**Engine.**
+
+- **Crescents (A1-7).** A `Ring` arc may `crescent: true`: its band swells from nothing at the arc's two ends to its
+  full thickness in its middle (`FLAG_CRESCENT`, `sprite.wgsl`), densest along its spine. It may `arc_curve`: a
+  factor on the arc over the layer's life, so a blade's swing sweeps open over its first frames. Both need `arc`;
+  the catalog refuses them without one.
+- **Each effect's reach (E1-2 (a), (b)).** `Effect::reach`, resolved with the catalog: how far the effect's layers
+  can draw from their placed points on the ground plane (the largest card half size, ring radius, ribbon half width
+  or particle throw at its curves' peaks, plus its placement radius). A shot's fog cut (`shot_clip`) samples across
+  its path every half cell out to its reach (at least 0.35 units), fail-closed, so no unseen cell beside the path
+  within its reach is stepped over. A spell missile is drawn while the ground within its reach is seen, and its
+  impact is cut over the impact's reach.
+- **Fail-closed beside the fog (E1-2 (d)).** A shot whose reach meets unseen ground along its whole path is not
+  drawn at all: in the beside-the-fog take, every shipped shot run 0.6 of its reach from the edge draws nothing.
+- **Clip lifetime (E1-2 (c)).** A shot's clip is fixed when it is spawned and kept for its life (at most 0.6 s for a
+  shipped shot). The viewer's sight may shrink while the shot flies; the shot is not re-clipped. Recorded as a
+  bounded leak: at most one shot's life of a path the viewer saw at the shot's spawn.
+- **An instant shot's impact waits for its slug (E1-1).** A tracer's or a beam's impact is delayed by the time its
+  `Critical` trailing ribbon needs to reach the impact (`WeaponEffectIds::impact_delay`, the end of that layer's
+  span): the hit flashes where the slug arrives, not before it.
+- **Missile landing (E1-6).** A missile's impact is laid half a published step past its last published position
+  (`MissileSlot::landing`), the expected arrival point when the simulation stops publishing it on the tick it lands;
+  the rest of the offset is registered as B-124.
+- **Rolled together (A1-7).** A new rotation, `Together`: a random roll and mirror drawn from the effect
+  instance's own hash, so every card of the instance that rolls `Together` turns as one (the blade's body under its
+  light, the claw's parallel rakes). A particle, which has no instance of its own, rolls as `Random`.
+- **Prismatic beam held (A1-5).** Beams last 0.46 s, longer than the Void-Ray analogue's attack period and its
+  largest random delay (0.36 + 0.09 s), so a sustained attack keeps a beam on its target.
+
+**Looks (`effects.ron`, nothing spent, no new texture).** Every look is sized for the battle camera's default zoom
+(about 34 px per world unit). Every additive light stands on an alpha-blended body of its own hue (`*_body` ramps,
+sorted behind it), whose intensity curve rises above 1 (`body_*` curves) so its coverage fills its core and ends in
+a firm edge; the colour then reads on the bright floors where additive light clips to white (A1-4). The tracers
+are slugs (a warm body of size 0.09 to 0.11 under a hot core) with a muzzle flash; the cannon breathes dark smoke; the sniper's slug is cold with a blue
+head (A1-1, A1-2). Particles are at least 0.06 units (2 px) (A1-3). Beams are a violet or red body (size 0.15 to 0.16), a hot core
+and four pulses ridden from muzzle to target (A1-5). The acid glob, the needles and the shell are dark bodies with a
+pale rim or a dull glow; rocket smoke is a mid-dark alpha grey with a launch puff (A1-6). The blade is a swept blue
+crescent; the claw is three dark crescents with a pale edge (A1-7). The death throws pale, dark-edged shards out to
+about one and a half radii, sized by `UnitRadius` (A1-8).
+
+**Tests.**
+
+- `effects::systems` unit test `a_shot_along_a_fog_edge_within_its_reach_draws_nothing`;
+  `weapon_look_tests::an_instant_shots_impact_waits_for_its_slug` (E1-1); the missile landing expectation moved half
+  a step.
+- `effect_slice_gpu_tests`: `shipped_shots_draw_along_their_paths` adds a third part, the shot along the camera's
+  depth axis beside the fog edge within its reach, which may change no pixel over unseen ground (E1-2 (d)); new
+  `shipped_weapon_looks_can_be_seen` (E1-5): every shipped `Shot` and `Point` look and the default death, at the
+  default zoom on the brightest and the darkest lab ground, changes at least its class's area by 32 levels at its
+  peak (shot 40 px, impact 80 px, death 150 px), and its `Critical` layers' median contrast is at least 32 levels.
+- `area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts` (E1-3): ground samples every 0.1 units within 2 units
+  of the enemy missile's target, classed seen or unseen (with a margin at cell edges); no unseen sample changes over
+  the sequence and some seen ones do; an overlay of the samples on the peak frame is kept.
+- `status_gpu_tests` (E1-4): each death effect spawns exactly once per `BubbleShatter` event whose unit names it
+  (counted by the test from the battle's own events); a positive control, a synthetic death of a unit type no table
+  covers, must draw legacy shards the test counts.
+- `weapon_battle_gpu_tests` (new, class `Gpu`; V1-1): the shipped skirmish at the default zoom, one wave per child;
+  the first waves stage one presentable unit per family firing its own weapon at an unarmed target, the later waves
+  lend each lab family to a presentable shooter of the same event kind (or, failing one, the same flight) in the test
+  world's catalog only. Each family's looks must spawn and change its picture;
+  the evidence holds 40 ms sequences at 1:1 and 2x.
+- `client_diagnostics::runtime_capture`: the combat check counts only live `Shot`, `Point` and `Death` cards
+  (E1-8).
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **P1-1 taken (E1-3 needed it).** `fungal_impact`'s standing cards (its flash and its spore puffs) and its motes
+  rose high enough that, drawn over seen ground, they covered pixels whose ground lies in the fog beyond: the new
+  fog check counted 32 unseen samples changed. Their lift, drift and rise are lowered and the puffs gathered to
+  half the radius, so the mass sits over the disc; the check then counts none.
+- **P1-2 deferred.** An instant slug still ends at the target's centre. Ending it on the target's surface needs the
+  target's radius on the impact end of the line, which the event does not publish (only the source's centre is
+  used for the start).
+- **P1-4 deferred.** The coverage test keeps its own copy of the rule for which event a weapon publishes; a test
+  that fires each weapon kind through `SimWorld` belongs with B-123's simulation data fix, which changes that rule's
+  inputs.
+- **The visibility minimums are this round's choice** (E1-5 named the measure, not the numbers): 40 px for a shot,
+  80 px for an impact and 150 px for a death changed by 32 levels at the look's peak, and a `Critical` median
+  contrast of 32 levels, both on the lab's brightest and darkest ground at the default zoom.
+
+**Registered (E1-6).** B-123 (weapons that publish no event), B-124 (a missile's impact up to half a step short);
+B-107 and the "Effect presentation" row refreshed.
+
+**Gate.** The packet's section "WP11 round 2".

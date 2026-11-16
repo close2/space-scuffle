@@ -1641,6 +1641,9 @@ fn shipped_shots_draw_along_their_paths() -> TestResult {
 
 /// Environment variable carrying the look child's subject index.
 const LOOK_INDEX_VAR: &str = "SPACE_SCUFFLE_EFFECT_LOOK_INDEX";
+/// Environment variable naming, comma-separated, the only looks the visibility test measures
+/// (a convenience while tuning; unset, every look is measured).
+const LOOK_ONLY_VAR: &str = "SPACE_SCUFFLE_EFFECT_LOOK_ONLY";
 /// A pixel counts as seen when its largest channel or its luminance changes by this many levels.
 const SEEN_LEVELS: i32 = 32;
 /// Least `UnitRadius` the default death is shown with: a Pulse Bot's bubble.
@@ -1914,7 +1917,14 @@ fn shipped_weapon_looks_can_be_seen() {
         "the shipped units name their looks: {subjects:?}"
     );
     let mut failures = Vec::new();
+    let only = std::env::var(LOOK_ONLY_VAR).ok();
     for (index, subject) in subjects.iter().enumerate() {
+        if only
+            .as_deref()
+            .is_some_and(|only| !only.split(',').any(|name| name == subject.effect))
+        {
+            continue;
+        }
         match std::panic::catch_unwind(|| check_look(index, keep.as_deref())) {
             Ok(Ok(report)) => eprintln!("{report}"),
             Ok(Err(error)) => failures.push(format!("{}: {error}", subject.effect)),
