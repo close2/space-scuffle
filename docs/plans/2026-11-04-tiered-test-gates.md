@@ -941,3 +941,12 @@ complete suite: the test phase took 2,842 s against 7,076 s, every target passed
 conclusion of §2.6 and the §6 row "Concurrent binaries": the default is now three lanes (one GPU lane, two
 general lanes), set by `--jobs` or `SPACE_SCUFFLE_GATE_JOBS`. `valgrind` jobs no longer take two general lanes;
 they run alone, first, with every target whose memory this host has not measured. CI keeps one lane.
+
+## Amendment 7 (2026-11-16): resuming a red run (owner, Q0082 option 1)
+
+The flake rule of §3.5 stands: a flake is not green. What changes is the cost of the next attempt. Every run on a
+clean tree records each target's and step's result beside the stamps, and `cargo gate <tier> --resume` reuses the
+passes recorded for the same tree, toolchain and catalog and runs only the rest, so a flaky target must pass in a
+later run before the tree is stamped. The full run's automatic repeat of §3.5 is unchanged for a run without
+`--resume`. Design, tests and the fixes of the known flaky GPU tests: plan
+[`2026-11-11-faster-gates.md`](2026-11-11-faster-gates.md), Amendment 1.

@@ -128,6 +128,8 @@ mod tests {
             jobs: None,
             test_wall_ms: None,
             overlapped_flakes: Vec::new(),
+            resumed_targets: Vec::new(),
+            resumed_steps: Vec::new(),
         }
     }
 

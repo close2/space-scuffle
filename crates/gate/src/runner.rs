@@ -12,6 +12,9 @@
 //! saved against the last `full` stamp (blueprint §8) and, for a red `full` run, the red rule's
 //! suspect list (`suspects.rs`). Before building, `merge` and `full` reuse a green stamp of the
 //! same clean tree when one exists (Amendment 3, "test a tree once").
+//! Every run on a clean tree records each step's and target's result as it arrives
+//! (`resume.rs`), and `--resume` skips what that record shows passed on the same tree,
+//! toolchain and catalog (plan 2026-11-11-faster-gates, Amendment 1; Q0082).
 //!
 //! # How it fits
 //! `src/main.rs` calls [`run_tier`]; everything that spawns a process lives in `execute.rs`,
@@ -26,6 +29,8 @@
 //! - A flaky target never makes a run green; only the one repeat of a `full` run can.
 //! - A reused run builds and runs nothing, and its stamp names the stamp it stands on; it is
 //!   only ever for the exact tree that stamp recorded, on a clean working tree.
+//! - A resumed run skips only recorded passes, so its stamp, like any other, means every selected
+//!   target and step passed on this tree; a flaky target has to pass in a later run first.
 
 use crate::catalog::SuiteCatalog;
 use crate::changes::{cargo_program, ChangeSpec, Git};
@@ -39,6 +44,7 @@ use crate::execute::{
 use crate::explain::render_selection;
 use crate::memory::{own_process_group, MemorySource};
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
+use crate::resume::{plan_resume, RecordedOutcome, ResultRecord, ResumeKey, ResumePlan, Resumed};
 use crate::schedule::{Job, MemoryLimits, Scheduler};
 use crate::select::{
     is_judged_by_content, select_change, Change, ClippyScope, Inputs, Reason, Selected, Selection,
@@ -54,6 +60,7 @@ use crate::GateError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Everything the gate reads about the repository.
@@ -190,6 +197,9 @@ pub struct RunReport {
     pub slice_peak_anon_mib: Option<u64>,
     /// Whether `cargo gate stop` ended the run (red, no stamp, exit status 2).
     pub stopped: bool,
+    /// The targets and steps that passed on this tree in an earlier run and were not run again
+    /// (`--resume`).
+    pub resumed: Resumed,
 }
 
 impl RunReport {
@@ -220,6 +230,20 @@ impl RunReport {
                 "  {verdict:<5} {:>8.1} s            step {}{retry}",
                 step.wall.as_secs_f64(),
                 step.name
+            );
+        }
+        for name in &self.resumed.steps {
+            let _ = writeln!(
+                out,
+                "  REUSED                     step {name} (passed on this tree before)"
+            );
+        }
+        for (name, target) in &self.resumed.targets {
+            let seconds = Duration::from_millis(target.wall_ms).as_secs_f64();
+            let _ = writeln!(
+                out,
+                "  REUSED {seconds:>7.1} s            {:<8} {name} (passed on this tree before)",
+                target.class.name()
             );
         }
         let mut targets = self.targets.clone();
@@ -422,6 +446,15 @@ fn scratch(rest: &str) -> Result<PathBuf, GateError> {
     Ok(PathBuf::from(home).join("scratch").join(rest))
 }
 
+/// The log directory of a run of `tier` on the tree at `HEAD`: `~/scratch/logs/gate/<tree>/<tier>`.
+///
+/// # Errors
+/// Git errors; [`GateError::Usage`] when `HOME` is unset.
+fn default_log_dir(context: &Context, tier: Tier) -> Result<PathBuf, GateError> {
+    let tree = context.git.tree("HEAD")?;
+    Ok(scratch("logs/gate")?.join(tree).join(tier.name()))
+}
+
 /// The stamp directory of `options`.
 ///
 /// # Errors
@@ -459,8 +492,15 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
             };
             let selection = select_change(*tier, context.inputs(), &change)?;
             println!("{}", render_selection(&selection, &what));
-            let mut report = execute(&context, &selection, options, &[], &[])?;
-            if *tier == Tier::Full && !report.stopped && report.red_only_by_flakes() {
+            let recorder = Recorder::start(&context, &selection, options, options.resume)?;
+            let mut report = execute(&context, &selection, options, recorder.as_ref(), (&[], &[]))?;
+            // A resumed run is not repeated: its next attempt is another `--resume`, which runs
+            // only what did not pass.
+            if *tier == Tier::Full
+                && !options.resume
+                && !report.stopped
+                && report.red_only_by_flakes()
+            {
                 let flakes = report.flaky_targets();
                 let overlapped = report.overlapped_flakes();
                 println!(
@@ -468,7 +508,22 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
                      (blueprint §3.5)",
                     flakes.join(", ")
                 );
-                report = execute(&context, &selection, options, &flakes, &overlapped)?;
+                // The repeat logs beside the first attempt, which holds the flakes' evidence.
+                let repeat = RunOptions {
+                    log_dir: Some(match &options.log_dir {
+                        Some(dir) => dir.join("repeat"),
+                        None => default_log_dir(&context, *tier)?.join("repeat"),
+                    }),
+                    ..options.clone()
+                };
+                let recorder = Recorder::start(&context, &selection, &repeat, false)?;
+                report = execute(
+                    &context,
+                    &selection,
+                    &repeat,
+                    recorder.as_ref(),
+                    (&flakes, &overlapped),
+                )?;
                 report.notes.push(format!(
                     "The first attempt was red only by flakes ({}); this repeat records them in \
                      its stamp.",
@@ -480,7 +535,8 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
         }
         Command::Merge { branch, options } => {
             let selection = merge_selection(&context, branch, options)?;
-            let mut report = execute(&context, &selection, options, &[], &[])?;
+            let recorder = Recorder::start(&context, &selection, options, options.resume)?;
+            let mut report = execute(&context, &selection, options, recorder.as_ref(), (&[], &[]))?;
             annotate(&context, &mut report, options)?;
             Ok(report)
         }
@@ -526,6 +582,7 @@ fn reuse_green_stamp(context: &Context, command: &Command) -> Result<Option<RunR
         test_wall: None,
         slice_peak_anon_mib: None,
         stopped: false,
+        resumed: Resumed::default(),
     }))
 }
 
@@ -562,6 +619,8 @@ fn write_reuse_stamp(
         jobs: None,
         test_wall_ms: None,
         overlapped_flakes: Vec::new(),
+        resumed_targets: Vec::new(),
+        resumed_steps: Vec::new(),
     };
     stamp.write(dir).map_err(|error| error.to_string())
 }
@@ -579,6 +638,99 @@ fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// The result record of one run on a clean tree, and what the run may skip (`--resume`, plan
+/// 2026-11-11-faster-gates Amendment 1).
+///
+/// The record is rewritten after every step and every finished target, so a run that turns red,
+/// is stopped or is killed leaves every result it reached.
+struct Recorder {
+    /// The stamp directory; the record lives in its `results/` subdirectory.
+    dir: PathBuf,
+    /// What this run reuses; its `record` moves into [`Recorder::record`].
+    plan: ResumePlan,
+    /// The record as it grows; locked by lanes as their targets finish.
+    record: Mutex<ResultRecord>,
+}
+
+impl Recorder {
+    /// The recorder of a run of `selection`: `None` on a dirty working tree, whose tree hash
+    /// does not name what runs. With `resume`, it reads the record of this tree and tier and
+    /// prints what it reuses or why it reuses nothing.
+    ///
+    /// # Errors
+    /// [`GateError::DirtyTree`] when `resume` is asked for on a dirty tree; Git, `rustc` and
+    /// stamp-directory errors.
+    fn start(
+        context: &Context,
+        selection: &Selection,
+        options: &RunOptions,
+        resume: bool,
+    ) -> Result<Option<Self>, GateError> {
+        let key = match ResumeKey::of_clean_head(&context.git, selection.tier) {
+            Ok(key) => key,
+            Err(GateError::DirtyTree(_)) if !resume => {
+                println!("results: the working tree has uncommitted changes, so no result is recorded for --resume");
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        let dir = stamp_dir(options)?;
+        let mut plan = if resume {
+            let selected: BTreeSet<String> =
+                selection.targets.keys().map(ToString::to_string).collect();
+            match ResultRecord::read(&dir, &key.tree, key.tier) {
+                Ok(recorded) => plan_resume(recorded, &key, &selected),
+                Err(error) => ResumePlan {
+                    refused: Some(format!("the recorded results are unreadable: {error}")),
+                    ..ResumePlan::fresh(&key)
+                },
+            }
+        } else {
+            ResumePlan::fresh(&key)
+        };
+        if resume {
+            println!("{}", plan.message());
+        }
+        let record = std::mem::replace(&mut plan.record, ResultRecord::new(&key));
+        Ok(Some(Self {
+            dir,
+            plan,
+            record: Mutex::new(record),
+        }))
+    }
+
+    /// Whether the step `name`, about to run `command`, passed with that command on this tree
+    /// before and is skipped.
+    fn reuses_step(&self, name: &str, command: &str) -> bool {
+        self.plan.reuses_step(name, command)
+    }
+
+    /// Whether `target` passed on this tree before and is skipped.
+    fn reuses_target(&self, target: &TargetId) -> bool {
+        self.plan.reuses_target(&target.to_string())
+    }
+
+    /// Records the result of a step that ran `command`, and saves the record.
+    fn step(&self, step: &StepResult, command: &str) {
+        self.update(|record| record.record_step(&step.name, command, step.passed, step.retried));
+    }
+
+    /// Records a target's result and saves the record.
+    fn target(&self, result: &TargetResult) {
+        self.update(|record| record.record_target(result));
+    }
+
+    /// Applies `change` and rewrites the file. A write failure is printed, not fatal: the run's
+    /// verdict and stamp do not depend on the record, only a later `--resume` does.
+    fn update(&self, change: impl FnOnce(&mut ResultRecord)) {
+        let mut record = self.record.lock().unwrap_or_else(PoisonError::into_inner);
+        change(&mut record);
+        if let Err(error) = record.write(&self.dir, unix_now()) {
+            println!("results: cannot record for --resume: {error}");
+        }
+    }
 }
 
 /// Adds the report's notes: flake findings, the time saved against the last `full` stamp (for
@@ -742,34 +894,55 @@ fn restamp_selection(
     Ok(selection)
 }
 
+/// What every step of one run shares: the repository, the log directory and the recorder.
+#[derive(Clone, Copy)]
+struct StepEnv<'a> {
+    context: &'a Context,
+    log_dir: &'a Path,
+    recorder: Option<&'a Recorder>,
+}
+
 /// Runs one fixed step in the repository root, retrying it once after a compiler crash, and
-/// records it.
+/// records it; a step that passed on this tree before (`--resume`) is reported as reused and
+/// not run.
 fn step(
-    steps: &mut Vec<StepResult>,
+    report: &mut RunReport,
+    at: StepEnv<'_>,
     name: &str,
     program: &str,
     args: &[String],
     env: &BTreeMap<String, String>,
-    context: &Context,
-    log_dir: &Path,
 ) -> Result<bool, GateError> {
-    println!("step {name}: {program} {}", args.join(" "));
-    let log = log_dir.join(format!("{name}.log"));
-    let caches = incremental_dirs(&context.workspace.target_directory, args);
+    let command = format!("{program} {}", args.join(" "));
+    if at
+        .recorder
+        .is_some_and(|recorder| recorder.reuses_step(name, &command))
+    {
+        println!("step {name}: passed on this tree before with the same command; reused");
+        report.resumed.steps.push(name.to_string());
+        return Ok(true);
+    }
+    println!("step {name}: {command}");
+    let log = at.log_dir.join(format!("{name}.log"));
+    let caches = incremental_dirs(&at.context.workspace.target_directory, args);
     let start = Instant::now();
     let run = run_with_crash_retry(
         &log,
         &caches,
-        || run_logged(program, args, env, context.git.root(), &log),
+        || run_logged(program, args, env, at.context.git.root(), &log),
         |passed| *passed,
     )?;
-    steps.push(StepResult {
+    let result = StepResult {
         name: name.to_string(),
         passed: run.value,
         wall: start.elapsed(),
         log,
         retried: run.retried,
-    });
+    };
+    if let Some(recorder) = at.recorder {
+        recorder.step(&result, &command);
+    }
+    report.steps.push(result);
     Ok(run.value)
 }
 
@@ -795,20 +968,23 @@ fn clippy_args(scope: &ClippyScope) -> Option<Vec<String>> {
 }
 
 /// Runs the selection's steps and tests, then stamps a green run; `flakes` are the flaky
-/// targets of an earlier attempt of the same run, recorded in the stamp.
+/// targets of an earlier attempt of the same run, recorded in the stamp, and `overlapped` those
+/// of them that overlapped other targets. The recorder, if any, records every result and names
+/// what this run reuses instead of running.
 fn execute(
     context: &Context,
     selection: &Selection,
     options: &RunOptions,
-    flakes: &[String],
-    overlapped: &[String],
+    recorder: Option<&Recorder>,
+    (flakes, overlapped): (&[String], &[String]),
 ) -> Result<RunReport, GateError> {
-    let tree = context.git.tree("HEAD")?;
     let log_dir = match &options.log_dir {
         Some(dir) => dir.clone(),
-        None => scratch("logs/gate")?
-            .join(&tree)
-            .join(selection.tier.name()),
+        // A resumed run keeps the red run's logs: they are the evidence of its failures.
+        None if options.resume => {
+            default_log_dir(context, selection.tier)?.join(format!("resume-{}", unix_now()))
+        }
+        None => default_log_dir(context, selection.tier)?,
     };
     std::fs::create_dir_all(&log_dir).map_err(|source| GateError::Io {
         path: log_dir.clone(),
@@ -824,33 +1000,27 @@ fn execute(
         test_wall: None,
         slice_peak_anon_mib: None,
         stopped: false,
+        resumed: Resumed {
+            targets: recorder.map_or_default(|r| r.plan.reused_targets.clone()),
+            steps: Vec::new(),
+        },
+    };
+    let at = StepEnv {
+        context,
+        log_dir: &log_dir,
+        recorder,
     };
     let cargo = cargo_program();
     let none = BTreeMap::new();
-    let mut ok = step(
-        &mut report.steps,
-        "fmt",
-        &cargo,
-        &strings(&["fmt", "--all", "--", "--check"]),
-        &none,
-        context,
-        &log_dir,
-    )?;
+    let fmt = strings(&["fmt", "--all", "--", "--check"]);
+    let mut ok = step(&mut report, at, "fmt", &cargo, &fmt, &none)?;
     if ok {
         if let Some(args) = clippy_args(&selection.clippy) {
-            ok = step(
-                &mut report.steps,
-                "clippy",
-                &cargo,
-                &args,
-                &none,
-                context,
-                &log_dir,
-            )?;
+            ok = step(&mut report, at, "clippy", &cargo, &args, &none)?;
         }
     }
     if ok {
-        run_tests(context, selection, options, &log_dir, &mut report)?;
+        run_tests(at, selection, options, &mut report)?;
     }
     if report.passed() {
         report.stamp = stamp_run(context, selection, options, &report, (flakes, overlapped));
@@ -860,36 +1030,76 @@ fn execute(
     Ok(report)
 }
 
-/// Builds and runs the selected targets, then doc tests and catalog commands.
-fn run_tests(
-    context: &Context,
-    selection: &Selection,
-    options: &RunOptions,
-    log_dir: &Path,
+/// Builds `ids`, the selected targets this run does not reuse, as the step `build`; the whole
+/// workspace in one build when `whole` is set. `None` when the build failed.
+fn build_step(
     report: &mut RunReport,
-) -> Result<(), GateError> {
-    let root = context.git.root();
-    let whole = selection.complete.is_some();
-    let ids: BTreeSet<TargetId> = selection.targets.keys().cloned().collect();
+    at: StepEnv<'_>,
+    ids: &BTreeSet<TargetId>,
+    whole: bool,
+) -> Result<Option<BTreeMap<TargetId, PathBuf>>, GateError> {
+    let context = at.context;
     let start = Instant::now();
     println!("step build: {} test target(s)", ids.len());
-    let build_log = log_dir.join("build.log");
+    let build_log = at.log_dir.join("build.log");
     let caches = incremental_dirs(&context.workspace.target_directory, &[]);
     let built = run_with_crash_retry(
         &build_log,
         &caches,
-        || build_targets(root, &context.workspace, &ids, whole, &build_log),
+        || {
+            build_targets(
+                context.git.root(),
+                &context.workspace,
+                ids,
+                whole,
+                &build_log,
+            )
+        },
         Option::is_some,
     )?;
-    report.steps.push(StepResult {
+    let result = StepResult {
         name: "build".to_string(),
         passed: built.value.is_some(),
         wall: start.elapsed(),
         log: build_log,
         retried: built.retried,
-    });
-    let Some(executables) = built.value else {
-        return Ok(());
+    };
+    if let Some(recorder) = at.recorder {
+        // The build is never reused: it is what finds the executables to run.
+        recorder.step(&result, "");
+    }
+    report.steps.push(result);
+    Ok(built.value)
+}
+
+/// Builds and runs the selected targets that this run does not reuse, then doc tests and
+/// catalog commands. Every result is recorded as it arrives; a target's final outcome (flaky
+/// after its rerun, say) replaces its lane result once the reruns are done.
+fn run_tests(
+    at: StepEnv<'_>,
+    selection: &Selection,
+    options: &RunOptions,
+    report: &mut RunReport,
+) -> Result<(), GateError> {
+    let context = at.context;
+    let reused = |id: &TargetId| at.recorder.is_some_and(|r| r.reuses_target(id));
+    let ids: BTreeSet<TargetId> = selection
+        .targets
+        .keys()
+        .filter(|id| !reused(id))
+        .cloned()
+        .collect();
+    let executables = if ids.is_empty() {
+        println!("step build: every selected target passed on this tree before; nothing to build");
+        BTreeMap::new()
+    } else {
+        // A resumed run builds only the targets it runs; the whole workspace only when it runs
+        // all of them.
+        let whole = selection.complete.is_some() && ids.len() == selection.targets.len();
+        let Some(executables) = build_step(report, at, &ids, whole)? else {
+            return Ok(());
+        };
+        executables
     };
     if options.no_run {
         report.stamp = Err("--no-run builds only".to_string());
@@ -899,6 +1109,7 @@ fn run_tests(
     let jobs: Vec<Job> = selection
         .targets
         .iter()
+        .filter(|(id, _)| ids.contains(*id))
         .map(|(id, selected)| {
             let expected = expected.get(&id.to_string()).copied().unwrap_or_default();
             Job {
@@ -912,19 +1123,25 @@ fn run_tests(
             }
         })
         .collect();
+    let record = |result: &TargetResult| {
+        if let Some(recorder) = at.recorder {
+            recorder.target(result);
+        }
+    };
     let memory = MemorySource::discover();
     let limits = memory_limits(options, &memory);
     let scheduler = Scheduler::new(options.jobs, jobs.clone(), limits);
     let run = LaneRun {
-        root,
+        root: context.git.root(),
         workspace: &context.workspace,
         executables: &executables,
-        log_dir,
+        log_dir: at.log_dir,
         memory,
         stop_file: options.stop_file.clone(),
+        on_finish: Some(&record),
     };
     let lanes = run_targets(&run, scheduler);
-    write_lanes_tsv(log_dir, &lanes.results)?;
+    write_lanes_tsv(at.log_dir, &lanes.results)?;
     report.targets = lanes.results;
     report.test_wall = Some(lanes.wall);
     report.slice_peak_anon_mib = lanes.slice_peak_mib;
@@ -933,8 +1150,9 @@ fn run_tests(
         return Ok(());
     }
     rerun_failures(&run, &jobs, report)?;
+    report.targets.iter().for_each(record);
     note_overlapping_flakes(report, options.jobs);
-    run_extras(context, selection, log_dir, report)
+    run_extras(at, selection, report)
 }
 
 /// The admission limits of this run: the budget and ceiling options, else the defaults.
@@ -999,9 +1217,8 @@ fn rerun_failures(
 
 /// Doc tests of the selected libraries, then the selected catalog commands.
 fn run_extras(
-    context: &Context,
+    at: StepEnv<'_>,
     selection: &Selection,
-    log_dir: &Path,
     report: &mut RunReport,
 ) -> Result<(), GateError> {
     let cargo = cargo_program();
@@ -1024,26 +1241,17 @@ fn run_extras(
         }
     }
     if !doc.is_empty() {
-        step(
-            &mut report.steps,
-            "doc-tests",
-            &cargo,
-            &doc,
-            &none,
-            context,
-            log_dir,
-        )?;
+        step(report, at, "doc-tests", &cargo, &doc, &none)?;
     }
-    for command in &context.catalog.commands {
+    for command in &at.context.catalog.commands {
         if selection.commands.contains_key(&command.name) {
             step(
-                &mut report.steps,
+                report,
+                at,
                 &command.name,
                 &command.program,
                 &command.args,
                 &command.env,
-                context,
-                log_dir,
             )?;
         }
     }
@@ -1103,6 +1311,20 @@ fn stamp_run(
                 passed: result.outcome == Outcome::Passed,
                 peak_anon_mib: result.lane.as_ref().and_then(|lane| lane.peak_anon_mib),
             })
+            .chain(
+                report
+                    .resumed
+                    .targets
+                    .iter()
+                    .map(|(name, target)| StampTarget {
+                        target: name.clone(),
+                        class: target.class,
+                        wall_ms: target.wall_ms,
+                        cpu_ms: target.cpu_ms,
+                        passed: target.outcome == RecordedOutcome::Passed,
+                        peak_anon_mib: target.peak_anon_mib,
+                    }),
+            )
             .collect(),
         commands: selection.commands.keys().cloned().collect(),
         flakes: flakes.to_vec(),
@@ -1112,6 +1334,8 @@ fn stamp_run(
         jobs: Some(options.jobs),
         test_wall_ms: report.test_wall.map(millis),
         overlapped_flakes: overlapped.to_vec(),
+        resumed_targets: report.resumed.targets.keys().cloned().collect(),
+        resumed_steps: report.resumed.steps.clone(),
     };
     let dir = stamp_dir(options).map_err(|error| error.to_string())?;
     stamp.write(&dir).map_err(|error| error.to_string())
@@ -1169,6 +1393,7 @@ mod tests {
             test_wall: None,
             slice_peak_anon_mib: None,
             stopped: false,
+            resumed: Resumed::default(),
         };
         assert!(report.passed(), "a crash cured by the retry is green");
         assert_eq!(report.retried_steps(), ["clippy"]);
@@ -1218,6 +1443,7 @@ mod tests {
             test_wall: Some(Duration::from_secs(2_410)),
             slice_peak_anon_mib: Some(25_395),
             stopped: false,
+            resumed: Resumed::default(),
         }
     }
 
@@ -1305,6 +1531,7 @@ mod tests {
             test_wall: None,
             slice_peak_anon_mib: None,
             stopped: false,
+            resumed: Resumed::default(),
         };
         assert!(!report.passed());
         let text = report.render();

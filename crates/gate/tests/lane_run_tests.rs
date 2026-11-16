@@ -23,16 +23,18 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use gate::{
-    lanes_tsv, mark_flakes, read_process_table, rerun_alone, run_targets, stop_request, GateError,
-    Job, LaneOutcome, LaneRun, MemoryLimits, MemorySource, Outcome, Package, Scheduler, Target,
-    TargetId, TestClass, Workspace,
+    lanes_tsv, mark_flakes, plan_resume, read_process_table, rerun_alone, run_targets,
+    stop_request, GateError, Job, LaneOutcome, LaneRun, MemoryLimits, MemorySource, Outcome,
+    Package, RecordedOutcome, ResultRecord, ResumeKey, Scheduler, Target, TargetId, TestClass,
+    Tier, Workspace,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// The variable that turns this binary into a fake test executable, with its behaviour.
@@ -221,6 +223,7 @@ impl Sandbox {
                 limit_bytes: None,
             },
             stop_file,
+            on_finish: None,
         }
     }
 }
@@ -300,7 +303,7 @@ fn three_lanes_overlap_and_each_target_writes_only_its_own_log() -> Result<(), G
             );
         }
     }
-    let lanes: std::collections::BTreeSet<String> = outcome
+    let lanes: BTreeSet<String> = outcome
         .results
         .iter()
         .filter_map(|r| r.lane.as_ref().map(|l| l.lane.to_string()))
@@ -450,6 +453,114 @@ fn a_failed_target_is_rerun_alone_after_the_lanes_finish() -> Result<(), GateErr
     assert!(results
         .iter()
         .any(|r| matches!(r.outcome, Outcome::Flaky { .. })));
+    Ok(())
+}
+
+/// `--resume` at the process level (plan Amendment 1): the lanes report each result as it
+/// finishes, a flaky target's final outcome replaces its lane result, and the resumed run runs
+/// only the targets without a pass; once its flaky target passes, nothing is left to run.
+#[test]
+fn a_resumed_run_runs_only_what_did_not_pass_and_a_flake_must_pass_again() -> Result<(), GateError>
+{
+    let sandbox = Sandbox::with(|root| {
+        vec![
+            Fake {
+                fail_once: Some(root.join("failed-once")),
+                ..fake("wobbly", 200)
+            },
+            fake("steady", 200),
+            Fake {
+                exit: 3,
+                ..fake("broken", 100)
+            },
+        ]
+    });
+    let key = ResumeKey {
+        tier: Tier::Package,
+        tree: "tree".into(),
+        commit: "commit".into(),
+        toolchain: "rustc test".into(),
+        catalog: "catalog".into(),
+    };
+    let stamps = sandbox.path("stamps");
+    let all = ["wobbly", "steady", "broken"];
+    let selected: BTreeSet<String> = all.iter().map(|name| format!("fake/{name}")).collect();
+    let jobs: Vec<Job> = all.iter().map(|name| job(name, 1, Some(10))).collect();
+
+    // The first run: its lanes record each result as it arrives.
+    let record = Mutex::new(ResultRecord::new(&key));
+    let on_finish = |result: &gate::TargetResult| {
+        record
+            .lock()
+            .expect("invariant: no recorder panics")
+            .record_target(result);
+    };
+    let run = LaneRun {
+        on_finish: Some(&on_finish),
+        ..sandbox.lane_run(None)
+    };
+    let first = run_targets(
+        &run,
+        Scheduler::new(3, jobs.clone(), MemoryLimits::UNLIMITED),
+    );
+    assert_eq!(
+        record.lock().expect("invariant: unpoisoned").targets.len(),
+        3,
+        "every lane result is recorded as it finishes"
+    );
+    let reruns = rerun_alone(&run, &jobs, &first.results)?
+        .expect("invariant: two targets failed, so there is a rerun");
+    let mut results = first.results.clone();
+    mark_flakes(&mut results, &reruns.results);
+    let mut record = record.into_inner().expect("invariant: unpoisoned");
+    for result in &results {
+        record.record_target(result);
+    }
+    assert_eq!(
+        record.targets["fake/wobbly"].outcome,
+        RecordedOutcome::Flaky
+    );
+    assert_eq!(
+        record.targets["fake/broken"].outcome,
+        RecordedOutcome::Failed
+    );
+    record.write(&stamps, 1)?;
+
+    // The resumed run: only the flaky and the failed target run; `steady` is reused.
+    let plan = plan_resume(
+        ResultRecord::read(&stamps, "tree", Tier::Package)?,
+        &key,
+        &selected,
+    );
+    let rerun: Vec<Job> = jobs
+        .iter()
+        .filter(|job| !plan.reuses_target(&job.target.to_string()))
+        .cloned()
+        .collect();
+    let names: Vec<String> = rerun.iter().map(|job| job.target.to_string()).collect();
+    assert_eq!(names, ["fake/wobbly", "fake/broken"]);
+    let mut record = plan.record;
+    let resumed = run_targets(
+        &sandbox.lane_run(None),
+        Scheduler::new(3, rerun, MemoryLimits::UNLIMITED),
+    );
+    for result in &resumed.results {
+        record.record_target(result);
+    }
+    record.write(&stamps, 2)?;
+    let plan = plan_resume(
+        ResultRecord::read(&stamps, "tree", Tier::Package)?,
+        &key,
+        &selected,
+    );
+    assert!(
+        plan.reuses_target("fake/wobbly"),
+        "the flake passed in the resumed run"
+    );
+    assert!(
+        !plan.reuses_target("fake/broken"),
+        "a target that fails again is never reused"
+    );
     Ok(())
 }
 

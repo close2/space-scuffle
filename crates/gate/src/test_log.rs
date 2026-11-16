@@ -297,6 +297,8 @@ fn render_contradictions(targets: Vec<StampTarget>) -> String {
         jobs: None,
         test_wall_ms: None,
         overlapped_flakes: Vec::new(),
+        resumed_targets: Vec::new(),
+        resumed_steps: Vec::new(),
     };
     let findings = class_report(&[run]);
     let mut out = String::from(
