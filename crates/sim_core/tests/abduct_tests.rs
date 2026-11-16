@@ -20,8 +20,8 @@ mod effect_support;
 use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AbilityEffectSpec, AbilitySource, EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick,
-    TickBundle, UnitOrder,
+    AbilityEffectSpec, AbilitySource, CombatEventVisual, EntityId, PlayerCommand, PlayerId,
+    SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 const BLUE: PlayerId = PlayerId(0);
@@ -1005,4 +1005,34 @@ fn a_missile_reaches_a_walking_and_a_flown_receding_target() {
             );
         }
     }
+}
+
+/// Plan `2026-11-17-effect-snapshot-identity` D-6: the tongue is a tether missile, whose
+/// landing is the pull with its own presentation (the link), so no frame from the cast to the
+/// landing carries a `SpellImpact`.
+#[test]
+fn a_tether_missile_publishes_no_impact() {
+    let mut world = world();
+    let caster = viper(&mut world, BLUE, 10.0, 20.0);
+    let target = held(&mut world, "shock_golem", RED, 18.0, 20.0);
+    steps(&mut world, 2);
+    assert!(abduct(&mut world, caster, target));
+    let mut contact = false;
+    for _ in 0..60 {
+        let snapshot = world.step(&TickBundle {
+            tick: Tick(world.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        contact |= abducted(&world, target);
+        assert!(
+            !snapshot
+                .combat_events
+                .iter()
+                .any(|event| matches!(event, CombatEventVisual::SpellImpact { .. })),
+            "tick {}: a tether publishes no impact",
+            snapshot.tick.0
+        );
+    }
+    assert!(contact, "the tongue reached the target");
 }

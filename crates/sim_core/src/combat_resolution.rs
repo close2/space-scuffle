@@ -33,7 +33,8 @@ use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
     AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
     LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, SimVec2, SplashShape, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
+    SimAngle, SimScalar, SimVec2, SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId,
+    WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -1122,13 +1123,17 @@ impl SimWorld {
         let to = [hit.position.x.to_f32(), hit.position.y.to_f32(), tz + 0.5];
         let owner = shot.owner;
         let source = shot.source;
+        let ends = Some(StrikeEnds {
+            attacker: shot.attacker,
+            target: shot.target,
+        });
         let event = match shot.weapon.visual_kind {
             WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer {
                 from,
                 to,
                 owner,
                 source,
-                ends: None,
+                ends,
             },
             WeaponVisualKind::LaserBeam => CombatEventVisual::BeamVisual {
                 from,
@@ -1136,7 +1141,7 @@ impl SimWorld {
                 is_lightning: false,
                 owner,
                 source,
-                ends: None,
+                ends,
             },
             WeaponVisualKind::LightningArc => CombatEventVisual::BeamVisual {
                 from,
@@ -1144,7 +1149,7 @@ impl SimWorld {
                 is_lightning: true,
                 owner,
                 source,
-                ends: None,
+                ends,
             },
             WeaponVisualKind::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: to,
@@ -1152,7 +1157,7 @@ impl SimWorld {
                 radius: 0.5,
                 owner,
                 source,
-                ends: None,
+                ends,
             },
             _ => return,
         };

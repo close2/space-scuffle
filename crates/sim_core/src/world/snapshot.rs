@@ -2,11 +2,12 @@
 //!
 //! # Responsibility
 //! Writes the world's visible state into a [`RenderSnapshot`]: player status, resource nodes,
-//! one bubble per entity not carried in a transport, the effect engine's areas, links and
-//! spell missiles, and the tick's
-//! visual events. A bubble's attack cycle (`AttackSwing`) is derived from the weapon state
-//! machine through the same weapon resolution combat uses, with no state of its own; its
-//! concealment, stance, status and barrier fraction come from `world::presentation`.
+//! one bubble per entity not carried in a transport, the catalog statuses each such bubble
+//! bears, the effect engine's areas, links and spell missiles, and the tick's visual events,
+//! including a `SpellImpact` per spell missile that landed during the tick. A bubble's attack
+//! cycle (`AttackSwing`) is derived from the weapon state machine through the same weapon
+//! resolution combat uses, with no state of its own; its concealment, stance, status and
+//! barrier fraction come from `world::presentation`.
 //!
 //! # How it fits
 //! The last phase of `step_into`, and the only place the simulation converts fixed-point values
@@ -14,8 +15,9 @@
 //!
 //! # Invariants
 //! - Writing a snapshot changes no authoritative state and no checksum; it only drains
-//!   `pending_events` and the tick's barrier hits.
-//! - Bubbles are ordered by entity ID, areas by persistent id.
+//!   `pending_events`, the tick's barrier hits and the tick's spell-missile landings.
+//! - Bubbles are ordered by entity ID, statuses by `(entity, status)`, areas by persistent id.
+//! - A spell impact follows the tick's other events, in the order the impacts ran.
 
 use super::presentation;
 use super::AIR_UNIT_ALTITUDE;
@@ -24,9 +26,9 @@ use crate::entity::{Entity, WeaponPhase, OVERCLOCK_BUFF_ID};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    AreaView, AttackSwing, BubbleRenderInstance, EntityId, MoverType, PlayerSlot, PlayerStatusView,
-    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, StatusKind, Tick,
-    WeaponVisualKind,
+    AreaView, AttackSwing, BubbleRenderInstance, CombatEventVisual, EntityId, MoverType,
+    PlayerSlot, PlayerStatusView, RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar,
+    StatusKind, StatusView, Tick, WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -62,6 +64,7 @@ impl SimWorld {
         // Trade-off: Callers must consume output events before reusing the buffer.
         output.bubbles.clear();
         output.bubbles.reserve(self.entities.len());
+        output.statuses.clear();
         output.combat_events.clear();
         output.tick = Tick(self.current_tick);
         output.checksum = self.last_checksum;
@@ -81,12 +84,24 @@ impl SimWorld {
             let swing = self.published_swing(entity, arch);
             let barrier_hit = self.presentation.barrier_hit(entity.id);
             let mut bubble = bubble_instance(entity, arch, &self.map, swing, barrier_hit);
-            self.raise_status_flags(entity.id, &mut bubble.status);
+            self.publish_statuses(entity.id, &mut bubble.status, &mut output.statuses);
             output.bubbles.push(bubble);
         }
         self.presentation.clear_barrier_hits();
 
         output.combat_events.append(&mut self.pending_events);
+        for landed in self.presentation.drain_spell_impacts() {
+            output.combat_events.push(CombatEventVisual::SpellImpact {
+                pos: [
+                    landed.contact.x.to_f32(),
+                    landed.contact.y.to_f32(),
+                    self.map.terrain_altitude_at(landed.contact),
+                ],
+                missile: landed.missile,
+                owner: landed.owner,
+                source: landed.source,
+            });
+        }
     }
 
     /// Replaces the effect engine's views (plan `2026-11-10-spellcaster-mechanics` D-19): an
@@ -200,13 +215,26 @@ impl SimWorld {
         });
     }
 
-    /// Raises the presentation flags of every status `entity` carries.
-    fn raise_status_flags(&self, entity: EntityId, flags: &mut sim_types::StatusFlags) {
+    /// Raises the presentation flags of every status `entity` carries and appends each one's
+    /// identity to `statuses` (plan `2026-11-17-effect-snapshot-identity` D-5).
+    ///
+    /// The effect engine keeps its statuses sorted by `(entity, status)` and unique, and the
+    /// writer calls this in entity order, so `statuses` stays sorted with no sort of its own.
+    fn publish_statuses(
+        &self,
+        entity: EntityId,
+        flags: &mut sim_types::StatusFlags,
+        statuses: &mut Vec<StatusView>,
+    ) {
         let spells = self.catalog.spells();
         for active in self.effects.statuses_of(entity) {
             let Some(status) = spells.status(active.status) else {
                 continue;
             };
+            statuses.push(StatusView {
+                entity,
+                status: active.status,
+            });
             for kind in &status.spec.presentation {
                 match kind {
                     StatusKind::Overclock => flags.overclock = true,
@@ -402,6 +430,7 @@ mod tests {
     use super::*;
     use crate::weapon_timing::AttackRate;
     use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{CombatEventVisual, RenderSnapshot, Tick, WeaponVisualKind};
     use sim_types::{EntityId, PlayerId, ShapeKind, SimVec2, WeaponSpec};
 
     /// A world holding one mobile unit armed against ground, its ID and its archetype.
@@ -596,5 +625,139 @@ mod tests {
         assert_eq!(doubled.period_ticks, plain.spec.period_ticks / 2);
         assert_eq!(doubled.to_spec().period_ticks, doubled.period_ticks);
         assert_eq!(doubled.to_spec().max_range, plain.max_range);
+    }
+
+    /// Scratch spell tables: a point missile presented as a projectile whose impact marks every
+    /// unit within 2 with a long status. Appended to the shipped tables, as `sim_fixtures`
+    /// does, under names of their own.
+    fn install_scratch_marker(world: &mut SimWorld) -> sim_types::EffectId {
+        use crate::catalog::SpellCatalog;
+        let mut statuses =
+            SpellCatalog::parse_statuses(include_str!("../../../../assets/catalog/statuses.ron"))
+                .expect("invariant: the shipped statuses.ron parses");
+        let mut effects = SpellCatalog::parse_effects(include_str!(
+            "../../../../assets/catalog/ability_effects.ron"
+        ))
+        .expect("invariant: the shipped ability_effects.ron parses");
+        statuses.extend(
+            SpellCatalog::parse_statuses(
+                r#"(statuses: [(name: "scratch_mark", duration_ticks: 500.0,
+                    presentation: [DamageOverTime])])"#,
+            )
+            .expect("valid scratch statuses"),
+        );
+        effects.extend(
+            SpellCatalog::parse_effects(
+                r#"(effects: [
+                    (name: "scratch_bolt", node: LaunchMissile((to: TargetPoint, speed: 0.5,
+                        view: Projectile, impact: Use("scratch_bolt_search")))),
+                    (name: "scratch_bolt_search", node: Search((radius: 2.0,
+                        child: ApplyStatus((status: "scratch_mark"))))),
+                ])"#,
+            )
+            .expect("valid scratch effects"),
+        );
+        let spells = SpellCatalog::from_defs(statuses, effects).expect("a valid merged catalog");
+        world
+            .catalog
+            .set_spell_catalog(spells)
+            .expect("the shipped abilities resolve in the merged tables");
+        world
+            .catalog
+            .spells()
+            .effect_id("scratch_bolt")
+            .expect("installed")
+    }
+
+    /// D-8 of plan `2026-11-17-effect-snapshot-identity`: in a world holding statuses, a landing
+    /// spell missile and instant hits, the checksum after the snapshot is written equals the one
+    /// the tick computed before writing it, on every tick; and the frames did carry each fact.
+    #[test]
+    fn writing_a_snapshot_changes_no_checksum() {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat 32x32 map is valid");
+        let mut world = crate::test_support::world(map, 11);
+        let root = install_scratch_marker(&mut world);
+        let shooter_type = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch
+                        .weapon_against(MoverType::Ground, None)
+                        .is_some_and(|w| {
+                            w.projectile_speed.is_none()
+                                && w.visual_kind == WeaponVisualKind::Hitscan
+                                && w.max_range >= SimScalar::from_i32(2)
+                        })
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a unit with an instant ground weapon");
+        let at = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+        for (owner, x) in [(0, 16), (1, 18)] {
+            world
+                .spawn_unit(shooter_type, PlayerId(owner), at(x, 16))
+                .expect("the unit spawns");
+        }
+        let launch = at(16, 24);
+        world.run_effect(
+            root,
+            sim_types::EffectContext {
+                owner: PlayerId(0),
+                caster: None,
+                ability: sim_types::AbilitySource::default(),
+                origin: launch,
+                source_point: launch,
+                target: sim_types::EffectTarget::Point(at(17, 16)),
+            },
+        );
+        let mut bundle = sim_types::TickBundle {
+            tick: Tick(0),
+            commands: Vec::new(),
+            state_checksum: None,
+        };
+        let mut output = RenderSnapshot::default();
+        let (mut statuses, mut impacts, mut hits) = (0, 0, 0);
+        for _ in 0..40 {
+            bundle.tick = Tick(world.current_tick);
+            world.step_into(&bundle, &mut output);
+            assert_eq!(
+                world.compute_checksum(),
+                output.checksum,
+                "tick {}: writing the snapshot moved the checksum",
+                output.tick.0
+            );
+            statuses += output.statuses.len();
+            for event in &output.combat_events {
+                match event {
+                    CombatEventVisual::SpellImpact { .. } => impacts += 1,
+                    CombatEventVisual::HitscanTracer { ends, .. }
+                    | CombatEventVisual::BeamVisual { ends, .. }
+                    | CombatEventVisual::MeleeSlashVisual { ends, .. } => {
+                        assert!(ends.is_some(), "{event:?}");
+                        hits += 1;
+                    }
+                    _ => {}
+                }
+            }
+            let before = world.compute_checksum();
+            let mut again = RenderSnapshot::default();
+            world.write_render_snapshot(&mut again);
+            assert_eq!(
+                world.compute_checksum(),
+                before,
+                "a second write moves nothing"
+            );
+            assert_eq!(
+                again.statuses, output.statuses,
+                "the statuses are state, not events"
+            );
+        }
+        assert_eq!(impacts, 1, "the missile landed once");
+        assert!(
+            statuses > 0,
+            "the marked units were published with their status"
+        );
+        assert!(hits > 0, "the units traded instant hits");
     }
 }

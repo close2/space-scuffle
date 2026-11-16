@@ -18,8 +18,8 @@
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, EntityId, PlayerCommand,
-    PlayerId, SimScalar, SimVec2, StatusKind, Tick, TickBundle, UnitOrder,
+    AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, CombatEventVisual, EntityId,
+    PlayerCommand, PlayerId, SimScalar, SimVec2, StatusKind, Tick, TickBundle, UnitOrder,
 };
 
 const BLUE: PlayerId = PlayerId(0);
@@ -592,4 +592,55 @@ fn a_cast_order_out_of_range_walks_into_range_then_casts() {
         distance > SimScalar::from_num(10.0),
         "cast as soon as in range"
     );
+}
+
+/// B-124 (plan `2026-11-17-effect-snapshot-identity` D-6, F2): the frame of the tick the
+/// impact runs (the 13th step) carries exactly one `SpellImpact`, at the aimed point
+/// (`ImpactLocation TargetPoint`, void EffectData:1143), with the caster's owner and ability
+/// and the missile's id; no other tick carries one.
+#[test]
+fn the_impact_is_published_where_it_ran() {
+    let mut world = world();
+    let caster = infestor(&mut world, 7.5, 20.0);
+    let index = fungal_index(&world, caster);
+    let kind = world.entities[&caster].unit_type_id;
+    let victim = held(&mut world, "shock_golem", RED, 16.0, 20.5);
+    assert!(fungal(&mut world, caster, 16.0, 20.0));
+    let missile = world.effects().missiles()[0].id;
+    let mut impacts = Vec::new();
+    for step_index in 1..=30_u32 {
+        let snapshot = world.step(&TickBundle {
+            tick: Tick(world.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        for event in &snapshot.combat_events {
+            if let CombatEventVisual::SpellImpact {
+                pos,
+                missile: id,
+                owner,
+                source,
+            } = event
+            {
+                impacts.push((step_index, *pos, *id, *owner, *source));
+            }
+        }
+    }
+    assert!(fungaled(&world, victim), "the impact ran");
+    assert_eq!(impacts.len(), 1, "one impact in all: {impacts:?}");
+    let (step_index, pos, id, owner, source) = impacts[0];
+    assert_eq!(step_index, 13, "on the step that reaches the point");
+    assert_eq!((id, owner), (missile, BLUE));
+    assert_eq!(
+        source,
+        AbilitySource {
+            unit_type: kind,
+            ability: index,
+        }
+    );
+    assert!(
+        (pos[0] - 16.0).abs() < 1e-4 && (pos[1] - 20.0).abs() < 1e-4,
+        "at the aimed point, not the victim: {pos:?}"
+    );
+    assert!(pos[2].abs() < 1e-4, "on the flat ground: {pos:?}");
 }
