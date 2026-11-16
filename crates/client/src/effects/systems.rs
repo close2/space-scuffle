@@ -9,7 +9,8 @@
 //!   sized by its zones; a tracer, beam, projectile or melee event spawns its weapon's `impact`
 //!   effect where it lands; a `BubbleShatter` spawns the dead unit's `death` effect, sized by
 //!   its radius, where it stood (plan WP9), and the legacy glass shatter is then left out
-//!   ([`replaces_shatter`]). A tracer, beam or projectile also spawns its weapon's `travel`
+//!   ([`replaces_shatter`]); a `SpellImpact` lays its ability's missile impact where the
+//!   simulation ran it (`effects::areas::lay_spell_impact`). A tracer, beam or projectile also spawns its weapon's `travel`
 //!   effect along the shot's line from the muzzle to where it lands ([`travel_request`], plan
 //!   WP11), and the legacy combat card of an event whose unit names its weapon's looks is left
 //!   out ([`replaces_legacy`]). An instant hit's or a blow's point is first moved from the
@@ -304,9 +305,9 @@ pub fn spawn_request_struck(
             line: None,
             delay: 0.0,
         }),
-        // A spell missile's impact is laid by the missile looks (`effects::areas`), not by a
-        // weapon's tables: it asks for no weapon spawn (plan `2026-11-17-effect-snapshot-identity`
-        // WP1; its own handler is WP6).
+        // A spell missile's impact is the impact of its ability's missile look, laid by
+        // `effects::areas::lay_spell_impact`, not by a weapon's tables: it asks for no weapon
+        // spawn (plan `2026-11-17-effect-snapshot-identity` D-6).
         CombatEventVisual::SpellImpact { .. } => None,
     }
 }
@@ -552,6 +553,18 @@ pub fn spawn_effects_from_events(
             .and_then(|request| lines.push(request))
         {
             runtime.spawn(&catalog, &ready, now);
+        }
+        // A spell missile's impact, where and when the simulation ran it (plan
+        // `2026-11-17-effect-snapshot-identity` D-6, B-124), cut by the fog as an area.
+        if matches!(event, CombatEventVisual::SpellImpact { .. }) {
+            let mut keep = super::areas::Keep {
+                catalog: &catalog,
+                tables: &tables,
+                runtime: &mut runtime,
+                now,
+                delta: time.delta_secs_f64(),
+            };
+            super::areas::lay_spell_impact(&event, fog.as_deref(), &mut keep);
         }
     }
     if let Some(ready) = lines.finish() {

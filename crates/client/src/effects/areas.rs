@@ -11,7 +11,12 @@
 //!   that effect again at its beat while the area holds (a storm's churning flares);
 //! - a tether holds its ability's `Link` effect along a line from the caster's bubble to the
 //!   target's, each end on its bubble's surface, moved with both bubbles every frame and bound
-//!   to `LinkLength`.
+//!   to `LinkLength`;
+//! - a spell missile holds its ability's `Missile` look while it is published
+//!   ([`keep_missiles`]), and its impact is laid by the simulation's `SpellImpact` event, where
+//!   and when the impact ran ([`lay_spell_impact`]; plan `2026-11-17-effect-snapshot-identity`
+//!   D-6, B-124). A missile that stops being published without an impact (it fizzled) lays
+//!   nothing.
 //!
 //! # Fog (D-5), judged per frame
 //! - An area of the viewer's own (or with no fog kept) is drawn whole. An enemy's area is drawn
@@ -44,6 +49,7 @@ use super::stance::{anchors, emit_due};
 use crate::battle_pipeline::fog::{presence_of, BattleFog, Presence};
 use crate::battle_pipeline::session::BattleSession;
 use bevy::prelude::*;
+use sim_types::snapshot::CombatEventVisual;
 use sim_types::{
     AbilitySource, AreaView, BubbleRenderInstance, EntityId, LinkView, PlayerId, SpellMissileView,
 };
@@ -254,31 +260,10 @@ struct LinkSlot {
 struct MissileSlot {
     /// The published missile's id: the slots are kept sorted by it.
     id: u32,
-    /// The effect held.
-    effect: EffectId,
     /// Its live instance.
     handle: EffectHandle,
-    /// The caster type and ability that launched it.
-    source: AbilitySource,
-    /// The player whose cast launched it.
-    owner: PlayerId,
-    /// Its last published position (world space, the tick it is interpolated towards).
-    published: Vec3,
-    /// How far it flew over its last published tick (world space): its impact is laid half
-    /// a tick on along it (review 1, E1-6 (b)).
-    step: Vec3,
     /// Whether it was kept this frame.
     kept: bool,
-}
-
-impl MissileSlot {
-    /// Where its impact is laid once it is gone: half a tick past its last published position
-    /// along its last tick's flight. The simulation stops publishing a missile on the tick it
-    /// lands, which lies within one tick's flight past that position; half a tick on halves
-    /// the worst offset (B-124).
-    fn landing(&self) -> Vec3 {
-        self.published + self.step * 0.5
-    }
 }
 
 /// The looks held on the published areas and tethers.
@@ -704,8 +689,8 @@ fn disc_sight_under(
     }
 }
 
-/// Keeps a look held on every published spell missile and lays its impact where it ends (plan
-/// WP11, F1), under `fog` (`None`: no fog kept): the missile part of [`present_areas_and_links`].
+/// Keeps a look held on every published spell missile (plan WP11, F1), under `fog` (`None`: no
+/// fog kept): the missile part of [`present_areas_and_links`].
 pub fn keep_missiles(
     looks: &mut AreaLooks,
     missiles: MissileFrame<'_>,
@@ -732,10 +717,9 @@ pub fn keep_missiles(
 ///
 /// A missile's look is held at its position, interpolated between the two ticks of the
 /// presented instant, and drawn only while the viewer sees the ground round it. A missile no
-/// longer published has landed: its look is released and its effect's `impact` is laid where
-/// it was drawn last, bound to the extent the spell catalog gives its ability
-/// ([`UnitEffectTables::missile_extent`]) and cut by the fog as an area of that radius is
-/// (D-5): not at all when the viewer sees none of it.
+/// longer published has its look released, and nothing more: whether and where it landed is
+/// the simulation's `SpellImpact` event, laid by [`lay_spell_impact`] (plan
+/// `2026-11-17-effect-snapshot-identity` D-6, B-124), so a missile that fizzled lays nothing.
 pub fn keep_missiles_seen(
     looks: &mut AreaLooks,
     (from, to, fraction): MissileFrame<'_>,
@@ -762,7 +746,6 @@ pub fn keep_missiles_seen(
         let start = Vec3::from_array(missile.position);
         let position = start + (Vec3::from_array(next) - start) * fraction.clamp(0.0, 1.0);
         let anchor = world(position.to_array());
-        let (published, flown) = (world(next), world(next) - world(missile.position));
         let reach = keep
             .catalog
             .effect(effect)
@@ -782,15 +765,6 @@ pub fn keep_missiles_seen(
                 slot.kept = keep
                     .runtime
                     .update_held(slot.handle, anchor, BoundValues::default());
-                if flown != Vec3::ZERO {
-                    slot.step = flown;
-                }
-                if published != slot.published {
-                    if flown == Vec3::ZERO {
-                        slot.step = published - slot.published;
-                    }
-                    slot.published = published;
-                }
                 slot.handle
             }
             Err(index) => {
@@ -813,12 +787,7 @@ pub fn keep_missiles_seen(
                     index,
                     MissileSlot {
                         id: missile.id,
-                        effect,
                         handle,
-                        source: missile.source,
-                        owner: missile.owner,
-                        published,
-                        step: flown,
                         kept: true,
                     },
                 );
@@ -828,21 +797,15 @@ pub fn keep_missiles_seen(
         keep.runtime.set_fog_clip(handle, clip);
         shed(missile.id, effect, anchor, clip, keep);
     }
-    // One compaction pass: the kept slots move down in order and the landed ones go, so many
-    // missiles landing on one frame cost one pass (review 1, E1-7).
+    // One pass: the slots no longer published are released and go, so many missiles landing on
+    // one frame cost one pass (review 1, E1-7).
     let now = keep.now;
-    let mut kept = 0;
-    for index in 0..looks.missiles.len() {
-        let slot = looks.missiles[index];
-        if slot.kept {
-            looks.missiles[kept] = slot;
-            kept += 1;
-        } else {
+    looks.missiles.retain(|slot| {
+        if !slot.kept {
             keep.runtime.release(slot.handle, now);
-            land(&slot, &sight, keep);
         }
-    }
-    looks.missiles.truncate(kept);
+        slot.kept
+    });
 }
 
 /// Lays the `emit` effect of missile `id`'s look `effect` at `anchor` when its beat is due (a
@@ -871,37 +834,59 @@ fn shed(id: u32, effect: EffectId, anchor: Vec3, clip: LineClip, keep: &mut Keep
     }
 }
 
-/// Lays the impact of the landed missile `slot` half a tick past its last published position
-/// (plan WP11, F1; B-124), cut by the fog over the impact's whole reach.
-fn land(
-    slot: &MissileSlot,
-    sight: &impl Fn(PlayerId, Vec2, f32) -> AreaSight,
+/// Lays the impact of a spell missile the simulation landed, from its `SpellImpact` `event`,
+/// under `fog` (`None`: no fog kept); see [`lay_spell_impact_seen`]. Any other event lays
+/// nothing.
+pub fn lay_spell_impact(
+    event: &CombatEventVisual,
+    fog: Option<&BattleFog>,
     keep: &mut Keep<'_>,
-) {
-    let Some(impact) = keep
-        .catalog
-        .effect(slot.effect)
-        .and_then(|effect| effect.impact)
+) -> Option<EffectHandle> {
+    lay_spell_impact_seen(
+        event,
+        |owner, center, radius| disc_sight_under(fog, owner, center, radius),
+        keep,
+    )
+}
+
+/// [`lay_spell_impact`] with the fog's question given: how the viewer sees a disc of a
+/// player's round a map point (`sight(owner, center, radius)`); tests ask it directly.
+///
+/// The impact is the `impact` of the `Missile` look the caster's block names for the ability
+/// (`source`), laid at the event's `pos`, where the simulation ran it (for Fungal Growth the
+/// aimed point; plan `2026-11-17-effect-snapshot-identity` D-6, B-124), on the frame the
+/// presentation reaches the impact's tick, bound to the extent the spell catalog gives the
+/// ability ([`UnitEffectTables::missile_extent`]). The fog cuts it as an area of its whole reach
+/// (D-5): in part where the viewer sees part of it, not at all where the viewer sees none of it.
+/// Returns the laid impact.
+pub fn lay_spell_impact_seen(
+    event: &CombatEventVisual,
+    sight: impl Fn(PlayerId, Vec2, f32) -> AreaSight,
+    keep: &mut Keep<'_>,
+) -> Option<EffectHandle> {
+    let CombatEventVisual::SpellImpact {
+        pos, owner, source, ..
+    } = event
     else {
-        return;
+        return None;
     };
-    let extent = keep.tables.missile_extent(slot.source);
-    let landing = slot.landing();
-    let center = Vec2::new(landing.x, landing.z);
+    let look = ability_effect(keep.catalog, keep.tables, Some(*source), EventKind::Missile)?;
+    let impact = keep.catalog.effect(look)?.impact?;
+    let extent = keep.tables.missile_extent(*source);
     let reach = keep
         .catalog
         .effect(impact)
         .map_or(0.0, |effect| effect.reach)
         .max(extent.radius)
         .max(MISSILE_SIGHT_RADIUS);
-    let clip = match sight(slot.owner, center, reach) {
+    let clip = match sight(*owner, Vec2::new(pos[0], pos[1]), reach) {
         AreaSight::Whole => NO_CLIP,
         AreaSight::Part(clip) => clip,
-        AreaSight::Hidden => return,
+        AreaSight::Hidden => return None,
     };
     let request = SpawnRequest {
         effect: impact,
-        anchor: landing,
+        anchor: world(*pos),
         bound: BoundValues::default()
             .with(Binding::AreaRadius, extent.radius)
             .with(Binding::AreaTotal, extent.seconds)
@@ -909,9 +894,9 @@ fn land(
         line: None,
         delay: 0.0,
     };
-    if let Some(handle) = keep.runtime.spawn(keep.catalog, &request, keep.now) {
-        keep.runtime.set_fog_clip(handle, clip);
-    }
+    let handle = keep.runtime.spawn(keep.catalog, &request, keep.now)?;
+    keep.runtime.set_fog_clip(handle, clip);
+    Some(handle)
 }
 
 #[cfg(test)]
@@ -1045,5 +1030,202 @@ mod tests {
         let looks = AreaLooks::default();
         assert_eq!(looks.held(), (0, 0));
         assert!(looks.capacities().0 >= HELD_SLOTS && looks.capacities().1 >= HELD_SLOTS);
+    }
+
+    /// The shipped vocabulary and the shipped units' tables.
+    fn shipped() -> (EffectCatalog, UnitEffectTables) {
+        let root = crate::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+        let catalog = EffectCatalog::load(
+            &root
+                .as_path()
+                .join(super::super::catalog::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )
+        .expect("the shipped vocabulary loads");
+        let units = sim_fixtures::shipped_catalogs().units;
+        let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
+        (catalog, tables)
+    }
+
+    /// The first shipped ability whose caster's block names a `Missile` look with an impact:
+    /// the ability and that impact. Found by what the data names, never by name (C5).
+    fn missile_ability(
+        catalog: &EffectCatalog,
+        tables: &UnitEffectTables,
+    ) -> (AbilitySource, EffectId) {
+        sim_fixtures::shipped_catalogs()
+            .units
+            .archetypes()
+            .find_map(|archetype| {
+                (0..archetype.abilities.len()).find_map(|index| {
+                    let source = AbilitySource {
+                        unit_type: archetype.unit_type_id,
+                        ability: u8::try_from(index).ok()?,
+                    };
+                    let look = ability_effect(catalog, tables, Some(source), EventKind::Missile)?;
+                    Some((source, catalog.effect(look)?.impact?))
+                })
+            })
+            .expect("a shipped caster names a missile look with an impact")
+    }
+
+    /// A `SpellImpact` of `source` at map `(x, y)`, altitude `z`.
+    fn impact_at(source: AbilitySource, missile: u32, [x, y, z]: [f32; 3]) -> CombatEventVisual {
+        CombatEventVisual::SpellImpact {
+            pos: [x, y, z],
+            missile,
+            owner: PlayerId(1),
+            source,
+        }
+    }
+
+    /// The anchors of the live instances of `effect`.
+    fn anchors_of(runtime: &EffectRuntime, effect: EffectId) -> Vec<Vec3> {
+        runtime
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.effect == effect)
+            .map(|(_, instance)| instance.anchor)
+            .collect()
+    }
+
+    #[test]
+    fn an_impact_is_laid_where_the_event_says() {
+        let (catalog, tables) = shipped();
+        let (source, impact) = missile_ability(&catalog, &tables);
+        let extent = tables.missile_extent(source);
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: 1.0,
+            delta: 0.04,
+        };
+        let laid = lay_spell_impact_seen(
+            &impact_at(source, 3, [7.25, 4.5, 0.3]),
+            |_, _, _| AreaSight::Whole,
+            &mut keep,
+        );
+        assert!(laid.is_some(), "the impact is laid");
+        // No other event lays an impact.
+        let splash = CombatEventVisual::SplashVisual {
+            center: [1.0, 1.0, 0.0],
+            zones: [0.5, 0.8, 1.0],
+            line: None,
+            source: sim_types::EffectSource::default(),
+            owner: PlayerId(1),
+        };
+        assert!(lay_spell_impact_seen(&splash, |_, _, _| AreaSight::Whole, &mut keep).is_none());
+        assert_eq!(runtime.spawned_of(impact), 1);
+        assert_eq!(
+            anchors_of(&runtime, impact),
+            vec![Vec3::new(7.25, 0.3, 4.5)]
+        );
+        let instance = runtime
+            .pool
+            .iter()
+            .find(|(_, instance)| instance.effect == impact)
+            .map(|(_, instance)| instance.bound)
+            .expect("the impact is live");
+        assert!((instance.get(Binding::AreaRadius) - extent.radius).abs() < f32::EPSILON);
+        assert!((instance.get(Binding::AreaTotal) - extent.seconds).abs() < f32::EPSILON);
+        // An impact the viewer sees none of is not laid.
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: 1.0,
+            delta: 0.04,
+        };
+        let hidden = lay_spell_impact_seen(
+            &impact_at(source, 4, [20.0, 20.0, 0.0]),
+            |_, _, _| AreaSight::Hidden,
+            &mut keep,
+        );
+        assert!(hidden.is_none());
+        assert_eq!(runtime.spawned_of(impact), 1);
+    }
+
+    #[test]
+    fn a_vanished_missile_without_an_impact_lays_nothing() {
+        let (catalog, tables) = shipped();
+        let (source, impact) = missile_ability(&catalog, &tables);
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut looks = AreaLooks::default();
+        let flying = [SpellMissileView {
+            id: 9,
+            owner: PlayerId(1),
+            position: [3.0, 3.0, 1.0],
+            source,
+        }];
+        // Published for two frames, then gone with no `SpellImpact` (it fizzled).
+        for (index, frame) in [&flying[..], &flying[..], &[][..]].into_iter().enumerate() {
+            let mut keep = Keep {
+                catalog: &catalog,
+                tables: &tables,
+                runtime: &mut runtime,
+                #[expect(clippy::cast_precision_loss, reason = "a frame index")]
+                now: index as f64 * 0.04,
+                delta: 0.04,
+            };
+            keep_missiles_seen(
+                &mut looks,
+                (frame, frame, 0.0),
+                |_, _, _| AreaSight::Whole,
+                &mut keep,
+            );
+            assert_eq!(
+                looks.missiles().0,
+                usize::from(!frame.is_empty()),
+                "frame {index}"
+            );
+        }
+        assert_eq!(runtime.spawned_of(impact), 0, "no impact without the event");
+    }
+
+    /// Several ticks run in one frame at high battle speed: every tick's impact is still laid,
+    /// each where its event says, because the impacts are events, which the timeline queues
+    /// tick by tick, not a frame list of the two snapshots it presents (D-6).
+    #[test]
+    fn impacts_of_skipped_ticks_are_still_laid() {
+        use crate::battle_pipeline::commands::SessionGeneration;
+        use crate::battle_pipeline::timeline::BattleFrameState;
+        let (catalog, tables) = shipped();
+        let (source, impact) = missile_ability(&catalog, &tables);
+        let mut frames = BattleFrameState::default();
+        frames.initialize(SessionGeneration::FIRST).expect("fresh");
+        frames.finish_initialization().expect("initialized");
+        for (tick, at) in [(1, [4.0, 5.0, 0.0]), (2, [9.0, 2.0, 0.5])] {
+            let snapshot = frames.begin_tick().expect("ready");
+            snapshot.tick = sim_types::Tick(tick);
+            snapshot.combat_events = vec![impact_at(source, tick, at)];
+            frames.finish_tick().expect("published");
+        }
+        // One presentation of the latest tick: the snapshot before it, tick 1, is gone.
+        frames.present(1.0).expect("presented");
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut keep = Keep {
+            catalog: &catalog,
+            tables: &tables,
+            runtime: &mut runtime,
+            now: 0.5,
+            delta: 0.04,
+        };
+        let mut shown = 0;
+        while let Some(event) = frames.pop_presented_event() {
+            shown += 1;
+            assert!(
+                lay_spell_impact_seen(&event.event, |_, _, _| AreaSight::Whole, &mut keep)
+                    .is_some()
+            );
+        }
+        assert_eq!(shown, 2, "both ticks' impacts are shown");
+        let mut laid = anchors_of(&runtime, impact);
+        laid.sort_by(|a, b| a.x.total_cmp(&b.x));
+        assert_eq!(
+            laid,
+            vec![Vec3::new(4.0, 0.0, 5.0), Vec3::new(9.0, 0.5, 2.0)]
+        );
     }
 }

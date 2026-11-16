@@ -10,9 +10,10 @@
 //!   the flight; two shots along one path are two effects.
 //! - The legacy combat card of an event is left out exactly when its unit names its weapon's
 //!   looks ([`replaces_legacy`]); every shipped death has a look.
-//! - A spell missile holds its look while it is published and lays its impact where it was
-//!   drawn last, bound to the radius and the status duration the spell catalog gives its
-//!   ability; an enemy's impact the viewer cannot see is not laid.
+//! - A spell missile holds its look while it is published, and its impact is laid where the
+//!   simulation ran it (its `SpellImpact` event, plan `2026-11-17-effect-snapshot-identity`
+//!   D-6), bound to the radius and the status duration the spell catalog gives its ability; an
+//!   enemy's impact the viewer cannot see is not laid.
 //!
 //! # Invariants verified
 //! As listed; no unit, weapon or effect is named in Rust except through the shipped data
@@ -21,7 +22,9 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::float_cmp)]
 
 use bevy::math::{Vec2, Vec3};
-use client::effects::areas::{keep_missiles_seen, AreaLooks, AreaSight, Keep};
+use client::effects::areas::{
+    keep_missiles_seen, lay_spell_impact_seen, AreaLooks, AreaSight, Keep,
+};
 use client::effects::catalog::schema::{Binding, EventKind, Priority};
 use client::effects::catalog::{EffectCatalog, EffectId, UnitEffectTables, EFFECTS_CATALOG_PATH};
 use client::effects::runtime::EffectRuntime;
@@ -322,6 +325,14 @@ fn a_spell_missile_holds_its_look_and_lands_its_impact_where_it_ends() {
         vec![missile(source, 7, 5.0, 3.0)],
         Vec::new(),
     ];
+    // The simulation ran the impact at (5.8, 3.0): 0.8 of a tick's flight past the missile's
+    // last published position, not the half step the client used to guess (B-124).
+    let landing = CombatEventVisual::SpellImpact {
+        pos: [5.8, 3.0, 0.0],
+        missile: 7,
+        owner: PlayerId(1),
+        source,
+    };
     for (index, frame) in frames.iter().enumerate() {
         let next = frames.get(index + 1).unwrap_or(frame);
         let mut keep = Keep {
@@ -338,6 +349,12 @@ fn a_spell_missile_holds_its_look_and_lands_its_impact_where_it_ends() {
             |_, _, _| AreaSight::Whole,
             &mut keep,
         );
+        // The impact's event is shown on the frame the missile stops being published.
+        if frame.is_empty() {
+            assert!(
+                lay_spell_impact_seen(&landing, |_, _, _| AreaSight::Whole, &mut keep).is_some()
+            );
+        }
         let held = usize::from(!frame.is_empty());
         assert_eq!(looks.missiles().0, held, "frame {index}");
     }
@@ -349,10 +366,9 @@ fn a_spell_missile_holds_its_look_and_lands_its_impact_where_it_ends() {
         .find(|(_, instance)| instance.effect == impact)
         .map(|(_, instance)| *instance)
         .expect("the impact is live");
-    // Last published at map (5, 3), after a tick's flight of 1 unit along x: the impact is
-    // laid half a tick on, at (5.5, 3) (review 1, E1-6 (b), B-124).
+    // Laid where the event says (plan `2026-11-17-effect-snapshot-identity` D-6).
     assert!(
-        (landed.anchor - Vec3::new(5.5, 0.0, 3.0)).length() < 1e-4,
+        (landed.anchor - Vec3::new(5.8, 0.0, 3.0)).length() < 1e-6,
         "{:?}",
         landed.anchor
     );
@@ -386,6 +402,17 @@ fn an_unseen_missile_is_not_drawn_and_lands_no_impact() {
             |_, _, _| AreaSight::Hidden,
             &mut keep,
         );
+        if frame.is_empty() {
+            let landing = CombatEventVisual::SpellImpact {
+                pos: [3.5, 3.0, 0.0],
+                missile: 3,
+                owner: PlayerId(1),
+                source,
+            };
+            assert!(
+                lay_spell_impact_seen(&landing, |_, _, _| AreaSight::Hidden, &mut keep).is_none()
+            );
+        }
     }
     assert_eq!(
         runtime.spawned_of(impact),
