@@ -111,6 +111,47 @@ fn count(selection: &Selection, class: TestClass) -> usize {
         .count()
 }
 
+/// The selected targets of `class`.
+fn of_class(selection: &Selection, class: TestClass) -> BTreeSet<TargetId> {
+    selection
+        .targets
+        .iter()
+        .filter(|(_, s)| s.class == class)
+        .map(|(target, _)| target.clone())
+        .collect()
+}
+
+/// Every GPU binary of the workspace: the test targets of `cargo metadata` that the catalog
+/// classes [`TestClass::Gpu`]. Deriving the expectation keeps these tests true when a GPU binary
+/// is added; `suite_catalog_tests.rs` (C22) proves the catalog classes every GPU binary.
+fn gpu_binaries(repo: &Repo) -> BTreeSet<TargetId> {
+    repo.workspace
+        .test_targets()
+        .filter(|target| repo.catalog.class_of(&target.id) == TestClass::Gpu)
+        .map(|target| target.id.clone())
+        .collect()
+}
+
+/// A floor under [`gpu_binaries`], so an empty or truncated catalog cannot pass vacuously:
+/// 21 client GPU binaries and 3 in `client_diagnostics` when this was written.
+const MIN_GPU_BINARIES: usize = 20;
+
+/// Asserts that `selection` runs exactly the workspace's GPU binaries, and that there are enough
+/// of them for the check to mean something.
+fn assert_every_gpu_binary(repo: &Repo, selection: &Selection) {
+    let expected = gpu_binaries(repo);
+    assert!(
+        expected.len() >= MIN_GPU_BINARIES,
+        "only {} GPU binaries in the catalog: {expected:#?}",
+        expected.len()
+    );
+    assert_eq!(
+        of_class(selection, TestClass::Gpu),
+        expected,
+        "{selection:#?}"
+    );
+}
+
 #[test]
 fn a_simulation_change_runs_its_crate_contracts_and_goldens_but_no_client_renderer(
 ) -> Result<(), GateError> {
@@ -205,11 +246,7 @@ fn a_renderer_change_runs_every_client_gpu_binary_and_the_frame_budget() -> Resu
         has(&selection, "client/weapon_battle_gpu_tests"),
         "a client GPU binary (WP11's staged battle), by its class"
     );
-    assert_eq!(
-        count(&selection, TestClass::Gpu),
-        24,
-        "21 client GPU binaries and 3 diagnostics"
-    );
+    assert_every_gpu_binary(&repo, &selection);
     assert!(!has(&selection, "client/sync_allocation_count_tests"));
     Ok(())
 }
@@ -233,7 +270,20 @@ fn a_gpu_support_file_selects_every_target_that_loads_it() -> Result<(), GateErr
         has(&selection, "client/weapon_battle_gpu_tests"),
         "it loads the GPU harness"
     );
-    assert_eq!(count(&selection, TestClass::Gpu), 24);
+    let loaders = repo
+        .sources
+        .targets_of("crates/client/tests/support/gpu_run.rs");
+    assert!(
+        loaders.len() >= MIN_GPU_BINARIES,
+        "the GPU harness is loaded by {loaders:#?}"
+    );
+    for target in &loaders {
+        assert!(
+            selection.targets.contains_key(target),
+            "{target:?} loads the harness"
+        );
+    }
+    assert_every_gpu_binary(&repo, &selection);
     let harness = repo.select(
         Tier::Package,
         &["crates/client/tests/support/battle_harness.rs"],
@@ -259,7 +309,7 @@ fn a_shader_change_runs_the_gpu_binaries_without_any_crate_change() -> Result<()
     let selection = repo.select(Tier::Package, &["assets/shaders/bubble_dome.wgsl"])?;
     assert!(selection.changed_crates.is_empty());
     assert!(has(&selection, "client/weapon_battle_gpu_tests"));
-    assert_eq!(count(&selection, TestClass::Gpu), 24);
+    assert_every_gpu_binary(&repo, &selection);
     assert!(has(&selection, "client/headless_tests"));
     assert!(!has(&selection, "client/lib"));
     Ok(())

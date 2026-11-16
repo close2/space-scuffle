@@ -756,9 +756,8 @@ fn lock_holder(file: &File) -> Option<LockHolder> {
     let (major, minor, inode) = device_and_inode(file)?;
     let locks = std::fs::read_to_string("/proc/locks").ok()?;
     let pid = flock_holder_pid(&locks, major, minor, inode)?;
-    let command_line = std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map(|raw| command_line_text(&raw))
-        .unwrap_or_default();
+    let command_line =
+        std::fs::read(format!("/proc/{pid}/cmdline")).map_or_default(|raw| command_line_text(&raw));
     Some(LockHolder { pid, command_line })
 }
 

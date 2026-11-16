@@ -474,9 +474,7 @@ pub fn assemble_with(
             pitch: validated.cards.title.pitch.clone(),
             revision: options.revision.clone(),
             revision_date: options.revision_date.clone(),
-            adapter: first
-                .map(|manifest| manifest.adapter.name.clone())
-                .unwrap_or_default(),
+            adapter: first.map_or_default(|manifest| manifest.adapter.name.clone()),
             anisotropy: first.and_then(|manifest| manifest.anisotropy_override.clone()),
             run_url: options.run_url.clone(),
             scenes: takes

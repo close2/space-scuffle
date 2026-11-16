@@ -16,7 +16,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.99.0"
+rust-version = "1.100.0"
 authors = ["Space Scuffle Systems Engineering Team"]
 license = "Apache-2.0"
 repository = "https://github.com/space-scuffle/space-scuffle"
@@ -107,5 +107,15 @@ opt-level = 2
 [profile.dev.package.sim_map]
 opt-level = 2
 
-[profile.test]
+# `asset_baker` is optimised for the same reason: every battle-driving test, the client and the
+# valgrind allocation test load the unit media, whose per-pixel alpha scan took about 59 % of a
+# battle test's CPU at opt-level 0. `[profile.test]` inherits these per-package overrides.
+[profile.dev.package.asset_baker]
+opt-level = 2
+
+# Line tables only, for `cargo build`/`cargo run` as for `cargo test` (the test profile inherits
+# dev): backtraces keep file and line, and since both profiles now hash the same settings, a
+# target directory builds every dependency once instead of once per profile. A debugger session
+# that needs full debug info passes `--config profile.dev.debug=2`.
+[profile.dev]
 debug = "line-tables-only"

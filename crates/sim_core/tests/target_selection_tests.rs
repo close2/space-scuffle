@@ -194,16 +194,14 @@ fn spawn(
 
 /// Steps `world` once at `tick`, issuing `order` to `unit` first when given.
 fn step(world: &mut SimWorld, tick: u32, order: Option<(EntityId, UnitOrder)>) {
-    let commands = order
-        .map(|(unit, order)| {
-            vec![PlayerCommand {
-                player_id: world.entities.get(&unit).map_or(PlayerId(0), |e| e.owner),
-                entities: vec![unit],
-                order,
-                queue: false,
-            }]
-        })
-        .unwrap_or_default();
+    let commands = order.map_or_default(|(unit, order)| {
+        vec![PlayerCommand {
+            player_id: world.entities.get(&unit).map_or(PlayerId(0), |e| e.owner),
+            entities: vec![unit],
+            order,
+            queue: false,
+        }]
+    });
     world.step(&TickBundle {
         tick: Tick(tick),
         commands,

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 description = "Bevy 3D renderer, custom WGSL shaders, and Visual Lab for Space Scuffle"
 
 [[bin]]
