@@ -2643,7 +2643,7 @@ fn stage_onsets(
                 let arch = world.catalog.get(attacker_type).ok();
                 staging.report.attackers.push((
                     pair,
-                    arch.map(|arch| arch.slug.clone()).unwrap_or_default(),
+                    arch.map_or_default(|arch| arch.slug.clone()),
                     format!(
                         "{:?}",
                         arch.and_then(|arch| arch.weapon.as_ref())

@@ -521,13 +521,13 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 
 ## 10. Out of scope (recorded, Q0002)
 
-- **Proposed new register entry (B-127):** a `ProjectileVisual` is published at ground + 0.5 at both ends. An
-  anti-air projectile therefore flies and lands below its flyer (the same cross-plane fault as B-125, for
-  projectiles). The fix publishes `ends` on `ProjectileVisual` and re-aims the arrival on the target's bubble. It is
+- **Proposed new register entry (B-128; B-127 went to a gate flake first):** a `ProjectileVisual` is published at
+  ground + 0.5 at both ends. An anti-air projectile therefore flies and lands below its flyer (the same cross-plane
+  fault as B-125, for projectiles). The fix publishes `ends` on `ProjectileVisual` and re-aims the arrival on the target's bubble. It is
   a follow-up, not done here, so as not to publish a field nothing reads.
 - **Inverse kind mismatches:** `hive_matron` (`MeleeSlash` with a speed) and `tesla_sentinel_dome` (`LaserBeam` with
   a speed). `visual_kind` is hashed in `ActiveProjectile::weapon_spec`, so changing it re-records goldens; it
-  belongs with B-127 or a data plan.
+  belongs with B-128 or a data plan.
 - **The Thor's Explosive Payload mode** (Javelin missiles, W5): a mechanics change, already recorded by the
   deviation-fix plan.
 - **Own looks** for the Reaper, Immortal and High Impact Payload analogues: they reuse accepted looks (D-7). A

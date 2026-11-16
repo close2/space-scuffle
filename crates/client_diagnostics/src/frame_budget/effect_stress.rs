@@ -309,7 +309,7 @@ impl EffectStress {
 
     /// Publishes the counters (no allocation).
     fn publish_counters(&self, runtime: Option<&EffectRuntime>) {
-        let stats = runtime.map(|runtime| runtime.stats).unwrap_or_default();
+        let stats = runtime.map_or_default(|runtime| runtime.stats);
         self.handle.update(|summary| {
             summary.events_sent = self.sequence;
             summary.effects_spawned = stats.spawned;
