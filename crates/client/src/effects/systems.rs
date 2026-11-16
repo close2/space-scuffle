@@ -13,8 +13,9 @@
 //!   effect along the shot's line from the muzzle to where it lands ([`travel_request`], plan
 //!   WP11), and the legacy combat card of an event whose unit names its weapon's looks is left
 //!   out ([`replaces_legacy`]). An instant hit's or a blow's point is first moved from the
-//!   struck unit's centre to its bubble's near surface (`effects::struck`), so the slug, the
-//!   beam and the impact meet the glass instead of being drawn inside it.
+//!   struck unit's centre to its bubble's near surface (`effects::struck`, the bubble found by
+//!   the struck entity's id), so the slug, the beam and the impact meet the glass instead of
+//!   being drawn inside it.
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -477,7 +478,8 @@ pub fn replaces_shatter(
 }
 
 /// What the event wiring reads to put a hit on the struck bubble's glass: the battle (its
-/// presented bubbles), the struck-bubble index, and the battle camera (its view direction).
+/// presented frame and previous snapshot), the last frame's bubbles, and the battle camera (its
+/// view direction).
 type StruckContext<'w, 's> = (
     Option<Res<'w, crate::battle_pipeline::session::BattleSession>>,
     Option<ResMut<'w, super::struck::StruckBubbles>>,
@@ -504,27 +506,28 @@ pub fn spawn_effects_from_events(
     };
     let now = time.elapsed_secs_f64();
     let mut lines = LineAssembly::default();
-    if !events.is_empty() {
-        if let (Some(struck), Some(session)) = (struck.as_deref_mut(), session.as_deref()) {
-            struck.rebuild(&session.frames.presented().bubbles);
-        }
-    }
     // The battle camera's view direction: a shot's end and hit are drawn on the struck
     // bubble's outline as it sees it.
     let view = cameras
         .get_single()
         .ok()
         .map(|transform| transform.forward().as_vec3());
+    let frames = session.as_deref().map(|session| &session.frames);
+    let presented = frames.map_or(&[][..], |frames| frames.presented().bubbles.as_slice());
+    let previous = frames
+        .and_then(|frames| frames.previous())
+        .map(|snapshot| snapshot.bubbles.as_slice());
     for event in events.read() {
         // An instant hit or a blow shows on the struck bubble's glass, where the shot's slug
-        // ends (reviews 2 and 3, A2-1, A3-1, A3-2).
-        let (event, struck_radius) = match (struck.as_deref(), session.is_some()) {
-            (Some(struck), true) => super::struck::at_struck_surface(
+        // ends (reviews 2 and 3, A2-1, A3-1, A3-2), the bubble found by the struck entity's id
+        // (plan `2026-11-17-effect-snapshot-identity` D-3, B-125).
+        let (event, struck_radius) = match struck.as_deref_mut() {
+            Some(struck) => super::struck::at_struck_surface(
                 &event.0,
-                |x, y, z, plane| struck.struck_at(x, y, z, plane),
+                |id| struck.find(presented, previous, id),
                 view,
             ),
-            _ => super::struck::at_struck_surface(&event.0, |_, _, _, _| None, view),
+            None => super::struck::at_struck_surface(&event.0, |_| None, view),
         };
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
@@ -553,6 +556,11 @@ pub fn spawn_effects_from_events(
     }
     if let Some(ready) = lines.finish() {
         runtime.spawn(&catalog, &ready, now);
+    }
+    // A later frame's killing hit finds its target among this frame's bubbles (plan
+    // `2026-11-17-effect-snapshot-identity` Amendment 2).
+    if let Some(struck) = struck.as_deref_mut() {
+        struck.remember(presented);
     }
 }
 

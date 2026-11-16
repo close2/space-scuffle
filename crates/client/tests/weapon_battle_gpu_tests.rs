@@ -15,6 +15,13 @@
 //!   to a presentable shooter whose weapon publishes the same kind of event (visual kind and
 //!   whether it flies, or failing a shooter of that visual kind, whether it flies), so the look
 //!   is shown at 1:1 next to a real bubble.
+//! - **The approach wave** fires an instant shot and a blow from above and below the target on
+//!   screen, and an anti-air weapon at a flyer.
+//! - **The last wave, `cross_plane`** (plan `2026-11-17-effect-snapshot-identity` WP4, B-125),
+//!   fires the anti-air weapon at a flyer hovering over a packed group of three ground units.
+//!   Its impact must show beside the **flyer's** glass by the rule below, and change beside the
+//!   ground units no more than its blank run does, plus [`UNDER_ALLOWANCE`]: the struck bubble
+//!   is found by the struck entity's id, never by where the hit was published.
 //!
 //! The units first stand unarmed for [`SETTLE_SECONDS`] and are pictured: the baseline. Then
 //! they open fire. The parent checks that each staged family's looks were spawned while its
@@ -143,6 +150,10 @@ const SCREEN_BOTTOM_SHARE: f32 = 0.7;
 const CROP: [u32; 2] = [300, 180];
 /// Longest gap between a shooter and its target, world units, so both fit one picture.
 const MOST_GAP: f32 = 3.0;
+/// World units beyond each end of a spot's widest pair at which the ground is probed: with the
+/// probe's own half unit round it ([`walkable`]), the ground a unit's body of radius up to 1
+/// covers there is on the map and walkable.
+const BODY_REACH: f32 = 0.5;
 /// A pixel counts as changed when one of its channels moves by at least this many levels.
 const SEEN_LEVEL: u8 = 32;
 /// Pixels round a subject's path and target, outside both bubbles, its looks must change at
@@ -169,6 +180,18 @@ const IMPACT_FRAMES: usize = 4;
 const MASK_SHARE: f32 = 0.8;
 /// Frames of a family's sheet at 1:1 and, of those, at 2x.
 const SHEET_FRAMES: (usize, usize) = (12, 6);
+/// World units between the bubbles of the ground units packed under the cross-plane wave's
+/// flyer: they nearly touch.
+const UNDER_GAP: f32 = 0.05;
+/// Pixels beside the ground units under the cross-plane wave's flyer by which its impact may
+/// change more than its blank run changes there (plan `2026-11-17-effect-snapshot-identity`
+/// WP4). The two runs stage the same battle frame for frame and differ only by the impact, so
+/// what the impact draws there is the whole difference (on radv both counted 7 px). The
+/// allowance covers a faint glow of the flyer's own impact spilling past its zone, and is far
+/// below the [`IMPACT_MARGIN`] an impact must show by: an impact drawn on a ground unit's glass,
+/// as the removed position match could draw it, changes there what it changes beside the flyer
+/// (272 px on radv).
+const UNDER_ALLOWANCE: usize = 8;
 
 /// A family of looks: a `travel` and an `impact` look a block names for a weapon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +242,9 @@ enum Approach {
     Below,
     /// On the target's left, the target a flyer.
     AtFlyer,
+    /// On the target's left, the target a flyer hovering over a packed group of ground units
+    /// (plan `2026-11-17-effect-snapshot-identity` WP4, B-125: the cross-plane case).
+    CrossPlane,
 }
 
 /// A planned subject: a shooter, the family it fires, whether that family is its own, and
@@ -329,24 +355,20 @@ fn plan(world: &SimWorld, capacity: usize) -> (Vec<Vec<Planned>>, Vec<Family>) {
             .expect("invariant: the wave was chosen for a free matching shooter");
         wave.push((shooter, family, false, Approach::Across));
     }
-    waves.push(approach_wave(world, &native, capacity));
+    waves.extend(
+        approach_subjects(world, &native)
+            .chunks(capacity)
+            .map(<[Planned]>::to_vec),
+    );
+    waves.push(cross_plane_wave(world));
     (waves, unstaged)
 }
 
-/// The last wave (review 3, A3-1, A3-2): the first native instant shot and the first native
-/// blow, each from above and from below the target on screen, and a shooter with an anti-air
-/// weapon firing it at a flyer; at most `capacity` subjects.
-fn approach_wave(world: &SimWorld, native: &[(Shooter, Family)], capacity: usize) -> Vec<Planned> {
-    let mut wave = Vec::new();
-    for kind in [WeaponVisualKind::Hitscan, WeaponVisualKind::MeleeSlash] {
-        if let Some((shooter, family)) = native.iter().find(|(_, family)| family.kind == kind) {
-            for approach in [Approach::Above, Approach::Below] {
-                wave.push((*shooter, family.clone(), true, approach));
-            }
-        }
-    }
+/// The first presentable mobile unit whose block names looks for its anti-air weapon, and
+/// that family.
+fn anti_air_shooter(world: &SimWorld) -> Option<(Shooter, Family)> {
     let assets = assets();
-    let flyer_shooter = world.catalog.archetypes().find_map(|arch| {
+    world.catalog.archetypes().find_map(|arch| {
         let entry = arch.effects.weapons.iter().find(|entry| {
             entry.weapon == WeaponSlot::Air
                 && entry.mode.is_none()
@@ -367,11 +389,34 @@ fn approach_wave(world: &SimWorld, native: &[(Shooter, Family)], capacity: usize
                 },
             )
         })
-    });
-    if let Some((shooter, family)) = flyer_shooter {
+    })
+}
+
+/// The last wave, `cross_plane` (plan `2026-11-17-effect-snapshot-identity` WP4, B-125): the
+/// anti-air shooter fires at a flyer hovering over a packed group of ground units.
+fn cross_plane_wave(world: &SimWorld) -> Vec<Planned> {
+    anti_air_shooter(world)
+        .map(|(shooter, family)| (shooter, family, true, Approach::CrossPlane))
+        .into_iter()
+        .collect()
+}
+
+/// The approach subjects (review 3, A3-1, A3-2): the first native instant shot and the first
+/// native blow, each from above and from below the target on screen, and a shooter with an
+/// anti-air weapon firing it at a flyer. They are staged in as many waves as the spots found
+/// need, none left out.
+fn approach_subjects(world: &SimWorld, native: &[(Shooter, Family)]) -> Vec<Planned> {
+    let mut wave = Vec::new();
+    for kind in [WeaponVisualKind::Hitscan, WeaponVisualKind::MeleeSlash] {
+        if let Some((shooter, family)) = native.iter().find(|(_, family)| family.kind == kind) {
+            for approach in [Approach::Above, Approach::Below] {
+                wave.push((*shooter, family.clone(), true, approach));
+            }
+        }
+    }
+    if let Some((shooter, family)) = anti_air_shooter(world) {
         wave.push((shooter, family, true, Approach::AtFlyer));
     }
-    wave.truncate(capacity.max(1));
     wave
 }
 
@@ -408,6 +453,10 @@ struct SubjectReport {
     masks: Vec<[f32; 3]>,
     /// Per frame, whether one of the impact look's instances is born and alive.
     impact_born: Vec<bool>,
+    /// The drawn discs of the ground units under a cross-plane subject's flyer, `[x, y,
+    /// radius]`, window pixels (plan `2026-11-17-effect-snapshot-identity` WP4).
+    #[serde(default)]
+    under_px: Vec<[f32; 3]>,
 }
 
 /// What a child saw.
@@ -474,6 +523,8 @@ struct StagedSubject {
     shooter: (Vec2, f32),
     target: (Vec2, f32),
     looks: [Option<(client::effects::catalog::EffectId, u32)>; 2],
+    /// The ground units packed under a cross-plane subject's flyer.
+    under: Vec<EntityId>,
 }
 
 /// Whether the ground under `point` and half a unit round it is walkable.
@@ -555,7 +606,11 @@ fn find_spots(
             // Open ground under both ends of the widest pair, so no picture runs off the map.
             // Open ground at both ends of the widest pair, across and up and down the screen
             // (the approach wave stands pairs along the map's `y`).
-            let sides = [-MOST_GAP * 0.5, MOST_GAP * 0.5].iter().all(|offset| {
+            // Each end is probed a body's reach further out, so no staged unit's disc runs off
+            // the map's edge (a shooter of radius 0.6 at x = 0.54 broke the simulation's
+            // movement domain).
+            let reach = MOST_GAP * 0.5 + BODY_REACH;
+            let sides = [-reach, reach].iter().all(|offset| {
                 walkable(world, point + Vec2::new(*offset, 0.0))
                     && walkable(world, point + Vec2::new(0.0, *offset))
             });
@@ -715,12 +770,16 @@ fn stage(
     let ground_target = target_type(world, wave, false);
     let flyer_target = wave
         .iter()
-        .any(|(.., approach)| *approach == Approach::AtFlyer)
+        .any(|(.., approach)| matches!(approach, Approach::AtFlyer | Approach::CrossPlane))
         .then(|| target_type(world, wave, true));
+    let ground_radius = world
+        .catalog
+        .get(ground_target)
+        .map_or(0.5, |arch| arch.collision_radius.to_f32());
     lend(world, wave);
     for ((shooter, family, own, approach), spot) in wave.iter().zip(spots) {
         let target = match approach {
-            Approach::AtFlyer => flyer_target.unwrap_or(ground_target),
+            Approach::AtFlyer | Approach::CrossPlane => flyer_target.unwrap_or(ground_target),
             _ => ground_target,
         };
         let target_radius = world
@@ -738,7 +797,7 @@ fn stage(
         let shooter_radius = arch.collision_radius.to_f32();
         // From the shooter to the target, on the map.
         let towards = match approach {
-            Approach::Across | Approach::AtFlyer => Vec2::X,
+            Approach::Across | Approach::AtFlyer | Approach::CrossPlane => Vec2::X,
             Approach::Above => -up,
             Approach::Below => up,
         };
@@ -747,6 +806,27 @@ fn stage(
         let from = spawn_still(world, shooter.unit_type, VIEWER, shooter_at);
         let to = spawn_still(world, target, ENEMY, target_at);
         world.entities.get_mut(&to).expect("spawned").is_immobile = true;
+        eprintln!(
+            "weapon wave {}: {slug} ({from:?}) at {shooter_at:?} fires {} ({approach:?}) at \
+             {to:?} at {target_at:?}",
+            staging.wave,
+            family.label()
+        );
+        // The cross-plane case (B-125): ground units packed under the flyer, one straight
+        // under it and one either side up and down the screen, touching it.
+        let under: Vec<EntityId> = if *approach == Approach::CrossPlane {
+            let apart = 2.0 * ground_radius + UNDER_GAP;
+            [0.0, apart, -apart]
+                .iter()
+                .map(|offset| {
+                    let unit = spawn_still(world, ground_target, ENEMY, target_at + up * *offset);
+                    world.entities.get_mut(&unit).expect("spawned").is_immobile = true;
+                    unit
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let look = |name: &Option<String>| {
             name.as_deref()
                 .and_then(|name| catalog.effect_id(name))
@@ -758,6 +838,7 @@ fn stage(
             shooter: (shooter_at, shooter_radius),
             target: (target_at, target_radius),
             looks: [look(&family.travel), look(&family.impact)],
+            under,
         });
         staging.report.subjects.push(SubjectReport {
             family: family.label(),
@@ -860,6 +941,7 @@ fn picture_base(
         report.target_px = drawn(subject.units[1]).unwrap_or_else(|| on_ground(subject.target));
         report.scale = report.target_px[2] / subject.target.1.max(1e-3);
         report.masks.clone_from(&masks);
+        report.under_px = subject.under.iter().filter_map(|id| drawn(*id)).collect();
     }
     capture_frame(commands, crops, &staging.outstanding);
 }
@@ -1233,11 +1315,22 @@ fn changed(a: &image::RgbImage, b: &image::RgbImage, x: u32, y: u32) -> bool {
         .any(|(a, b)| a.abs_diff(*b) >= SEEN_LEVEL)
 }
 
-/// What a subject's looks changed against its baseline, outside both bubbles (review 2, E2-2,
-/// E2-3): the most pixels any frame changed round its path and its target, and the most its
-/// impact changed just outside the struck bubble on the attacker's side, in the
-/// [`IMPACT_FRAMES`] frames after each impact's spawn.
-fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<(usize, usize)> {
+/// What a subject's looks changed against its baseline, outside every bubble's interior.
+#[derive(Debug, Clone, Copy, Default)]
+struct Seen {
+    /// The most pixels any frame changed round its path and its target (review 2, E2-2, E2-3).
+    around: usize,
+    /// The most its impact changed just outside the struck bubble on the attacker's side, in
+    /// the [`IMPACT_FRAMES`] frames after each impact's birth.
+    impact: usize,
+    /// The most changed, in those frames, just outside the ground units under a cross-plane
+    /// subject's flyer on the attacker's side, away from the flyer's own zone (plan
+    /// `2026-11-17-effect-snapshot-identity` WP4); 0 for any other subject.
+    under: usize,
+}
+
+/// [`Seen`] of `subject` from its pictures in `directory`.
+fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<Seen> {
     let base = image::open(directory.join(&subject.base))?.to_rgb8();
     let crop = Vec2::new(subject.crop[0] as f32, subject.crop[1] as f32);
     let shooter = Vec2::new(subject.shooter_px[0], subject.shooter_px[1]) - crop;
@@ -1276,7 +1369,28 @@ fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<(u
     let (width, height) = (base.width(), base.height());
     let direction = (target - shooter).normalize_or_zero();
     let travels = !subject.family.starts_with("none+");
-    let class: Vec<(u32, u32, bool)> = (0..height)
+    // The ground units under a cross-plane subject's flyer: their centre and the zone beside
+    // them an impact on their glass would change.
+    let under: Vec<(Vec2, f32)> = subject
+        .under_px
+        .iter()
+        .map(|[x, y, radius]| {
+            (
+                Vec2::new(*x, *y) - crop,
+                radius + IMPACT_ZONE * subject.scale,
+            )
+        })
+        .collect();
+    let beside_under = |at: Vec2| {
+        at.distance(target) > zone
+            && under.iter().any(|(centre, reach)| {
+                at.distance(*centre) <= *reach
+                    && (at - *centre).normalize_or_zero().dot(towards) > -0.2
+            })
+    };
+    // Per pixel: round the path or the target, beside the struck bubble, beside a ground unit
+    // under a cross-plane flyer.
+    let class: Vec<(u32, u32, bool, bool, bool)> = (0..height)
         .flat_map(|y| (0..width).map(move |x| (x, y)))
         .filter_map(|(x, y)| {
             let at = Vec2::new(x as f32, y as f32);
@@ -1291,36 +1405,41 @@ fn seen_against_base(directory: &Path, subject: &SubjectReport) -> TestResult<(u
             let off = (at - shooter).perp_dot(direction).abs();
             let on_path = along >= 0.0 && along <= shooter.distance(target) && off <= zone;
             let near_target = at.distance(target) <= zone;
-            (on_path || near_target).then_some((
+            let under = beside_under(at);
+            (on_path || near_target || under).then_some((
                 x,
                 y,
+                on_path || near_target,
                 // Beside the struck bubble on the attacker's side, off the shot's own line (a
                 // beam's or a slug's end lies on it).
                 near_target
                     && (at - target).normalize_or_zero().dot(towards) > -0.2
                     && (!travels || off > PATH_HALF * subject.scale),
+                under,
             ))
         })
         .collect();
-    let (mut most, mut most_impact) = (0, 0);
+    let mut seen = Seen::default();
     for (index, file) in subject.frames.iter().enumerate() {
         let frame = image::open(directory.join(file))?.to_rgb8();
         if frame.width() < width || frame.height() < height {
             continue;
         }
-        let (mut around, mut impact) = (0, 0);
-        for (x, y, beside) in &class {
+        let (mut around, mut impact, mut under) = (0, 0, 0);
+        for (x, y, near, beside, below) in &class {
             if changed(&frame, &base, *x, *y) {
-                around += 1;
+                around += usize::from(*near);
                 impact += usize::from(*beside);
+                under += usize::from(*below);
             }
         }
-        most = most.max(around);
+        seen.around = seen.around.max(around);
         if impact_frames.contains(&index) {
-            most_impact = most_impact.max(impact);
+            seen.impact = seen.impact.max(impact);
+            seen.under = seen.under.max(under);
         }
     }
-    Ok((most, most_impact))
+    Ok(seen)
 }
 
 /// Writes `subject`'s sheet: [`SHEET_FRAMES`] frames from its first changed frame at 1:1 over
@@ -1387,8 +1506,9 @@ fn judge(
     subject: &SubjectReport,
     wave: usize,
     driver: &str,
-) -> TestResult<(Vec<String>, usize)> {
-    let (changed, impact_seen) = seen_against_base(directory, subject)?;
+) -> TestResult<(Vec<String>, Seen)> {
+    let seen = seen_against_base(directory, subject)?;
+    let (changed, impact_seen) = (seen.around, seen.impact);
     eprintln!(
         "driver {driver}: wave {wave} {} on {} ({}, {:?}): travel spawned {}, impact spawned {}; \
          against the units-only baseline, outside every bubble's interior, at most {changed} px round path \
@@ -1416,7 +1536,7 @@ fn judge(
     if changed < SEEN_PIXELS {
         failures.push(format!("{}: {changed} px changed", subject.family));
     }
-    Ok((failures, impact_seen))
+    Ok((failures, seen))
 }
 
 /// The impact look of `subject`'s family, if it has one.
@@ -1465,7 +1585,8 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
         impacts.dedup();
         let (blank, blank_directory) = run_wave(wave, Some(&impacts.join(",")))?;
         for (index, subject) in report.subjects.iter().enumerate() {
-            let (judged, impact_seen) = judge(directory.path(), subject, wave, &driver)?;
+            let (judged, seen) = judge(directory.path(), subject, wave, &driver)?;
+            let impact_seen = seen.impact;
             failures.extend(judged);
             if impact_of(subject).is_some() {
                 let blank_subject = blank
@@ -1473,8 +1594,36 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
                     .get(index)
                     .filter(|other| other.family == subject.family)
                     .ok_or("the blank run stages the same subjects")?;
-                let (_, blank_seen) = seen_against_base(blank_directory.path(), blank_subject)?;
+                let blank = seen_against_base(blank_directory.path(), blank_subject)?;
+                let blank_seen = blank.impact;
                 let needed = 2 * blank_seen + IMPACT_MARGIN;
+                // B-125 (plan `2026-11-17-effect-snapshot-identity` WP4): the flyer's impact is
+                // drawn on the flyer, not on a ground unit under it.
+                if subject.approach == Approach::CrossPlane {
+                    eprintln!(
+                        "driver {driver}: wave {wave} {} (CrossPlane): beside the {} ground \
+                         units under the flyer, the impact changed {} px, its blank {} px \
+                         (allowed {})",
+                        subject.family,
+                        subject.under_px.len(),
+                        seen.under,
+                        blank.under,
+                        blank.under + UNDER_ALLOWANCE
+                    );
+                    if subject.under_px.is_empty() {
+                        failures.push(format!(
+                            "{} (CrossPlane): no ground unit was drawn under the flyer",
+                            subject.family
+                        ));
+                    }
+                    if seen.under > blank.under + UNDER_ALLOWANCE {
+                        failures.push(format!(
+                            "{} (CrossPlane): its impact changed {} px beside the ground units \
+                             under the flyer, its blank {}",
+                            subject.family, seen.under, blank.under
+                        ));
+                    }
+                }
                 eprintln!(
                     "driver {driver}: wave {wave} {} ({:?}): impact {impact_seen} px beside the \
                      struck bubble, its blank {blank_seen} px (needs {needed})",
