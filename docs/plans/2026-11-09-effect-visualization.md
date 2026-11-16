@@ -2734,7 +2734,11 @@ changes; every condition was met on the client.
   hit point is set to that height, so a shot at a flyer ends on its glass, 2.5 units up, not on the ground under
   it. Where a flyer and a ground unit overlap in plan, a weapon in the `Air` slot takes the flyer and one in the
   `Ground` slot the ground unit; a `Primary` weapon takes the nearest in plan, ties broken by height from the
-  published point.
+  published point. The published height is always the ground plus 0.5, so for a `Primary` weapon that hits both
+  planes (most of the catalog's anti-air, the rifle analogue's included) the tie-break favours the ground unit: a
+  shot at a flyer over a packed ground army may be drawn on a ground unit's glass, about 2.5 units (about 50 px at
+  the default zoom) below the flyer. This cross-plane case is registered with B-125; its fix is the simulation's
+  (publish the target's id, or its drawn altitude in `to[2]`). (Stated in round 5, review 4, A4-2.)
 - **Far-side hits in front of the glass (C2, A3-2).** A shot's end (a tracer's or a beam's, and with it its hit)
   and a blow's point are put on the struck bubble's outline as the battle camera sees it: the point of the bubble's
   silhouette, at its radius plus 0.12, on the side the attack comes from on screen (`struck::onto_outline`, from the
@@ -2778,7 +2782,7 @@ single spike would do there, and the pair is recorded as a deviation of the look
   the target, each replaced in a copy of the vocabulary by a card too small to draw, must fail the impact check. The
   impact check counts pixels beside the struck bubble on the attacker's side, off the shot's own line (0.15 units
   either side: a beam's or a slug's end lies on it, and a blank beam impact otherwise still counted 118), and needs
-  40 of them (was 15): a blank melee impact still leaves up to 33 (measured on the blow struck from above) in the band of glass where the attacker's rim turns
+  40 of them (was 15): a blank melee impact still leaves up to 33 (measured on the blow struck from below; corrected in round 5, E4-2) in the band of glass where the attacker's rim turns
   as it strikes.
 - `sync_allocation_count_tests` (C5): the effect stream also sends an instant hit and a blow at a presented
   bubble every frame, through the struck-bubble index, with an impact using `Facing` and `Behind`; the stream must
@@ -2787,3 +2791,29 @@ single spike would do there, and the pair is recorded as a deviation of the look
 **Decisions and out of scope (Q0002, reversible).** P3-2 (`glass_shatter`'s shards) and P3-3 (`acid_hit`'s
 splash) are deferred to a polish pass. B-125 (match by position) and B-126 (a held beam is a series of lines) are
 registered in `DESIGN.md`.
+
+## Amendment 28: WP11 round 5, after WP11 review 4 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code and its tests).** Round 5 answers the
+conditions of `docs/evidence/effects/review/independent_review_wp11_4.md` (ACCEPT WITH CONDITIONS, C1 and C2) and its
+minor items E4-1 to E4-3. D-1 holds: no simulation crate, golden replay or checksum changes; no look's data changed.
+
+- **A dome struck from the camera's side (C1, A4-1).** The struck-bubble index keeps whether a bubble is a
+  structure's dome. A dome is a half sphere standing on its base, with nothing below: where the outline point of a
+  full sphere would lie below the base (an attack with a component towards the camera), the point is put on the
+  dome's base rim instead, at its radius plus 0.12 in plan, towards the attacker on screen, 0.1 above the base
+  (`struck::DOME_RIM_LIFT`); from the far side it stays on the upper outline. Unit test
+  `a_dome_is_struck_on_its_visible_outline_never_below_its_base`: a dome of radius 2 struck from below, across and
+  above on screen is struck at or above its base and outside its glass.
+- **The cross-plane mismatch (C2, A4-2).** Registered: B-125 and Amendment 27 state that a `Primary` weapon's shot at
+  a flyer over a packed ground army may be drawn on a ground unit's glass about 2.5 units low, with the simulation
+  fix. Not done (optional): choosing the plane from a `Primary` weapon's `target_flags`, which in this catalog name
+  armour attributes rather than planes, so they cannot tell an anti-air weapon from an anti-ground one.
+- **The impact check per subject (E4-1).** Each wave of the staged battle runs twice; the second run draws every
+  impact of the wave as nothing (its blank). A subject's impact must change beside the struck bubble at least twice
+  what its own blank changes there, plus 20 pixels, replacing the single bar of 40 and the separate planted negatives.
+  What the units' animations change (the attacker's rim among them) is in both runs.
+- **E4-2.** The 33-pixel blank was the blow struck from below; Amendment 27 and the test's comment say so now.
+- **E4-3.** The valgrind effect stream checks, after its window, that the index built from the presented bubbles
+  finds every one of them where it stands with its own radius, so a broken lookup falling back to the default bubble
+  fails the stream.

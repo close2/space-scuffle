@@ -673,33 +673,7 @@ fn run_child(variant: Variant) -> TestResult {
     let spawned_before = effects_spawned(&app);
     measured_steady_frames(&mut app, frames);
     if variant == Variant::EffectStream {
-        let held = app
-            .world()
-            .resource::<client::effects::areas::AreaLooks>()
-            .held();
-        if held != (2, 1) {
-            return Err(format!(
-                "the stream must hold two areas (one seen in part) and one tether, held {held:?}"
-            )
-            .into());
-        }
-        let spawned = effects_spawned(&app) - spawned_before;
-        if spawned < u64::from(frames) {
-            return Err(
-                format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
-            );
-        }
-        // The instant hits and blows reached the struck-bubble path (review 3, E3-3).
-        let world = app.world();
-        let catalog = world.resource::<client::effects::catalog::EffectCatalog>();
-        let hits = catalog.effect_id("hit").map_or(0, |hit| {
-            world
-                .resource::<client::effects::runtime::EffectRuntime>()
-                .spawned_of(hit)
-        });
-        if hits < frames {
-            return Err(format!("the effect stream struck {hits} hits in {frames} frames").into());
-        }
+        check_effect_stream(&app, frames, spawned_before)?;
     }
     let after = tick(&app);
     if !variant.is_running() {
@@ -723,6 +697,59 @@ fn run_child(variant: Variant) -> TestResult {
         .map(|bubble| bubble.entity_id);
     if let Some(id) = busy {
         return Err(format!("the running window must stay idle, but {id:?} is not").into());
+    }
+    Ok(())
+}
+
+/// The effect stream's own checks after its window: the held areas and tether, the spawns,
+/// the hits and blows, and the struck-bubble index.
+fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResult {
+    let held = app
+        .world()
+        .resource::<client::effects::areas::AreaLooks>()
+        .held();
+    if held != (2, 1) {
+        return Err(format!(
+            "the stream must hold two areas (one seen in part) and one tether, held {held:?}"
+        )
+        .into());
+    }
+    let spawned = effects_spawned(app) - spawned_before;
+    if spawned < u64::from(frames) {
+        return Err(
+            format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
+        );
+    }
+    // The instant hits and blows reached the struck-bubble path (review 3, E3-3).
+    let world = app.world();
+    let catalog = world.resource::<client::effects::catalog::EffectCatalog>();
+    let hits = catalog.effect_id("hit").map_or(0, |hit| {
+        world
+            .resource::<client::effects::runtime::EffectRuntime>()
+            .spawned_of(hit)
+    });
+    if hits < frames {
+        return Err(format!("the effect stream struck {hits} hits in {frames} frames").into());
+    }
+    // The index built from the presented bubbles finds each of them where it stands, so
+    // the hits were put on a found bubble, not on the default one (review 4, E4-3).
+    let struck = world.resource::<client::effects::struck::StruckBubbles>();
+    let bubbles = &world.resource::<BattleSession>().frames.presented().bubbles;
+    let lost = bubbles
+        .iter()
+        .filter(|bubble| {
+            let [x, y, _] = bubble.world_pos;
+            struck
+                .struck_at(x, y, 0.5, None)
+                .is_none_or(|found| (found.radius - bubble.radius).abs() > 1e-6)
+        })
+        .count();
+    if bubbles.is_empty() || lost > 0 {
+        return Err(format!(
+            "the struck-bubble index lost {lost} of {} presented bubbles",
+            bubbles.len()
+        )
+        .into());
     }
     Ok(())
 }

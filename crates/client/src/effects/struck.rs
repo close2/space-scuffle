@@ -45,6 +45,8 @@ pub const MATCH_SLACK: f32 = 0.35;
 pub const MOST_PULL: f32 = 0.8;
 /// The struck bubble's radius an impact binds (`UnitRadius`) when the bubble is not found.
 pub const DEFAULT_STRUCK_RADIUS: f32 = 0.5;
+/// Height above a dome's base at which a hit on its rim shows, so it is not sunk in the floor.
+pub const DOME_RIM_LIFT: f32 = 0.1;
 /// How far up the struck bubble, from its drawn centre, its hit shows: 45 degrees, radians.
 pub const HIT_ELEVATION: f32 = std::f32::consts::FRAC_PI_4;
 /// Height above its ground at which a unit's bubble counts as flying, world units (air units
@@ -66,6 +68,8 @@ struct Indexed {
     radius: f32,
     /// Whether it flies.
     air: bool,
+    /// Whether it is a structure's dome (a half sphere standing on its base).
+    dome: bool,
 }
 
 /// The bubble a hit struck.
@@ -73,8 +77,11 @@ struct Indexed {
 pub struct StruckBubble {
     /// Its glass radius, world units.
     pub radius: f32,
-    /// Height of its drawn centre, world units (the event's height convention).
+    /// Height of its drawn centre, world units (the event's height convention); a dome's base.
     pub height: f32,
+    /// Whether it is a structure's dome: a half sphere standing on `height`, with nothing of
+    /// it below (review 4, A4-1).
+    pub dome: bool,
 }
 
 /// Which plane a weapon strikes, from its slot: an `Air` weapon a flyer, a `Ground` weapon a
@@ -115,12 +122,14 @@ impl StruckBubbles {
                 height: bubble.world_pos[2] + if dome { 0.0 } else { bubble.radius },
                 radius: bubble.radius,
                 air: !dome && bubble.world_pos[2] - bubble.ground_z > AIR_ABOVE_GROUND,
+                dome,
             }
         }));
         self.fill();
     }
 
-    /// Refills the index from `(map x, y, drawn centre height, radius, flies)` entries.
+    /// Refills the index from `(map x, y, drawn centre height, radius, flies)` entries of unit
+    /// bubbles (spheres).
     pub fn rebuild_from(&mut self, bubbles: impl IntoIterator<Item = (Vec2, f32, f32, bool)>) {
         self.bubbles.clear();
         self.bubbles.extend(
@@ -131,6 +140,7 @@ impl StruckBubbles {
                     height,
                     radius,
                     air,
+                    dome: false,
                 }),
         );
         self.fill();
@@ -271,6 +281,7 @@ impl StruckBubbles {
             .map(|(bubble, _)| StruckBubble {
                 radius: bubble.radius,
                 height: bubble.height,
+                dome: bubble.dome,
             })
     }
 }
@@ -291,9 +302,9 @@ fn onto_glass(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f
 /// bubble's silhouette, at its radius plus [`SURFACE_MARGIN`], on the side of `towards` (a unit
 /// map direction) on screen, so a shot's end, its hit and a blow are drawn at the edge of the
 /// glass the attack comes from, never in front of the bubble's face or behind it (review 3,
-/// A3-2). The
-/// horizontal move is at most `most`. Falls back to [`onto_glass`] when `towards` runs along
-/// the view.
+/// A3-2). On a dome, which has nothing below its base, a point that would fall below the base
+/// is put on the base rim instead (review 4, A4-1). The horizontal move is at most `most`.
+/// Falls back to [`onto_glass`] when `towards` runs along the view.
 fn onto_outline(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f32, view: Vec3) {
     let across = Vec3::new(towards.x, 0.0, towards.y);
     let side = across - view * across.dot(view);
@@ -301,10 +312,19 @@ fn onto_outline(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most:
         onto_glass(point, struck, towards, most);
         return;
     }
-    let mut offset = side.normalize() * (struck.radius + SURFACE_MARGIN);
+    let reach = struck.radius + SURFACE_MARGIN;
+    let mut offset = side.normalize() * reach;
+    // A dome has nothing below its base: on the side towards the camera its visible outline is
+    // its base rim, so the point stays there, a little above the floor (review 4, A4-1).
+    if struck.dome && offset.y < DOME_RIM_LIFT {
+        let flat = Vec2::new(offset.x, offset.z).normalize_or(towards) * reach;
+        offset = Vec3::new(flat.x, DOME_RIM_LIFT, flat.y);
+    }
     let flat = offset.x.hypot(offset.z);
     if flat > most {
-        offset *= most / flat;
+        let shrink = most / flat;
+        offset.x *= shrink;
+        offset.z *= shrink;
     }
     point[0] += offset.x;
     point[1] += offset.z;
@@ -330,6 +350,7 @@ pub fn at_struck_surface(
     let assumed = |point: &[f32; 3]| StruckBubble {
         radius: DEFAULT_STRUCK_RADIUS,
         height: point[2],
+        dome: false,
     };
     let radius = match &mut moved {
         CombatEventVisual::HitscanTracer {
@@ -428,6 +449,7 @@ mod tests {
         let bubble = StruckBubble {
             radius: 0.5,
             height: 0.5,
+            dome: false,
         };
         let shot = tracer([0.0, 0.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Primary);
         let (moved, radius) = at_struck_surface(&shot, |_, _, _, _| Some(bubble), None);
@@ -444,6 +466,7 @@ mod tests {
         let flyer = StruckBubble {
             radius: 0.6,
             height: 3.1,
+            dome: false,
         };
         let shot = tracer([0.0, 0.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Air);
         let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(flyer), None).0);
@@ -458,6 +481,7 @@ mod tests {
         let bubble = StruckBubble {
             radius: 0.5,
             height: 0.5,
+            dome: false,
         };
         // A camera looking down at 58 degrees towards +z (the map's +y).
         let pitch = 58.0_f32.to_radians();
@@ -483,6 +507,41 @@ mod tests {
         assert!(near_eq(to[0], 4.0 - reach) && near_eq(to[2], 0.5), "{to:?}");
     }
 
+    #[test]
+    fn a_dome_is_struck_on_its_visible_outline_never_below_its_base() {
+        // A dome of radius 2 standing on the floor at 0 (review 4, A4-1).
+        let dome = StruckBubble {
+            radius: 2.0,
+            height: 0.0,
+            dome: true,
+        };
+        let pitch = 58.0_f32.to_radians();
+        let view = Vec3::new(0.0, -pitch.sin(), pitch.cos());
+        // From below on screen (the camera's side), across, and from above.
+        for (from, name) in [
+            ([10.0, -10.0, 0.5], "from below"),
+            ([0.0, 0.0, 0.5], "across"),
+            ([10.0, 10.0, 0.5], "from above"),
+        ] {
+            let shot = tracer(from, [10.0, 0.0, 0.5], WeaponSlot::Primary);
+            let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(dome), Some(view)).0);
+            let flat = (to[0] - 10.0).hypot(to[1]);
+            assert!(to[2] >= 0.0, "{name}: at or above the base: {to:?}");
+            // On the outline: as far out as the dome's radius in plan, or up its far side.
+            assert!(
+                flat >= 2.0 - 1e-4 || to[2] > 2.0 * 0.5,
+                "{name}: outside the dome: {to:?}"
+            );
+        }
+        // From below: on the base rim, towards the camera, lifted off the floor.
+        let shot = tracer([10.0, -10.0, 0.5], [10.0, 0.0, 0.5], WeaponSlot::Primary);
+        let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(dome), Some(view)).0);
+        assert!(
+            near_eq(to[2], DOME_RIM_LIFT) && near_eq(to[1], -(2.0 + SURFACE_MARGIN)),
+            "{to:?}"
+        );
+    }
+
     fn near_eq(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
     }
@@ -492,6 +551,7 @@ mod tests {
         let bubble = StruckBubble {
             radius: 2.0,
             height: 0.5,
+            dome: false,
         };
         let shot = tracer([0.0, 0.0, 0.5], [0.5, 0.0, 0.5], WeaponSlot::Primary);
         let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(bubble), None).0);
@@ -510,6 +570,7 @@ mod tests {
         let bubble = StruckBubble {
             radius: 0.4,
             height: 0.4,
+            dome: false,
         };
         let pos = hit_point(&at_struck_surface(&blow, |_, _, _, _| Some(bubble), None).0);
         let across = (0.4 + SURFACE_MARGIN) * HIT_ELEVATION.cos();

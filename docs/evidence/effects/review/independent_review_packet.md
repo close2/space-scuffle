@@ -7,6 +7,27 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 5 (the conditions of review 4)
+
+Round 5 answers the conditions C1 and C2 of `independent_review_wp11_4.md` (ACCEPT WITH CONDITIONS) and its minor items
+E4-1 to E4-3. The decisions are plan Amendment 28. No look's data changed, so no new pictures were made; the round-4
+sheets (`wp11r4_*`) still show the looks. No simulation crate was changed. Please write your review to
+`independent_review_wp11_5.md` next to this one.
+
+**Driver note.** The server's physical GPU was back for this round: the GPU tests below ran on radv (the RX 580),
+through the test harness's lock. The round-4 sheets were made on lavapipe.
+
+| Item | Change |
+|---|---|
+| C1 (A4-1) | The struck-bubble index keeps whether a bubble is a structure's dome. Where a full sphere's outline point would lie below a dome's base (an attack with a component towards the camera), the point is put on the dome's base rim instead: its radius plus 0.12 out in plan, towards the attacker on screen, 0.1 above the base. From the far side it stays on the upper outline. Unit test `a_dome_is_struck_on_its_visible_outline_never_below_its_base`: a dome of radius 2 struck from below, across and above on screen. |
+| C2 (A4-2) | B-125 and Amendment 27 state the cross-plane case: a `Primary` weapon that hits both planes, shooting a flyer over a packed ground army, may have its hit drawn on a ground unit's glass about 2.5 units (about 50 px) low; the fix is the simulation's (the target's id, or its drawn altitude in `to[2]`). Choosing the plane from `target_flags` was not done: in this catalog they name armour attributes, not planes. |
+| E4-1 | The staged battle runs each wave twice, the second time with every impact of the wave drawn as nothing (its blank). A subject's impact must change beside the struck bubble at least twice its own blank's count plus 20, replacing the single bar of 40 and the separate planted negatives. |
+| E4-2 | The 33-pixel blank was the blow from below; Amendment 27 and the test's comment say so. |
+| E4-3 | The valgrind effect stream checks after its window that the index built from the presented bubbles finds each of them with its own radius. |
+
+Measurements (per subject: impact, its blank, the bar; the shots test; the valgrind counts):
+[wp11r5_measurements.txt](wp11r5_measurements.txt).
+
 ## WP11 round 4 (the conditions of review 3)
 
 Round 4 answers the conditions C1 to C5 of `independent_review_wp11_3.md` (ACCEPT WITH CONDITIONS) and its minor items

@@ -18,10 +18,12 @@
 //!
 //! The units first stand unarmed for [`SETTLE_SECONDS`] and are pictured: the baseline. Then
 //! they open fire. The parent checks that each staged family's looks were spawned while its
-//! wave ran; that, against the baseline and outside both bubbles, they changed at least
-//! [`SEEN_PIXELS`] round the path and the target; and that its impact changed at least
-//! [`IMPACT_PIXELS`] just outside the struck bubble on the attacker's side in the frames after
-//! the impact spawned (review 2, E2-2, E2-3: a look drawn inside the struck bubble fails). It
+//! wave ran; that, against the baseline and outside every bubble's interior, they changed at
+//! least [`SEEN_PIXELS`] round the path and the target; and that its impact, from its birth,
+//! changed beside the struck bubble on the attacker's side at least twice what the same
+//! subject changes there in a blank run of the wave (every impact drawn as nothing), plus
+//! [`IMPACT_MARGIN`] (reviews 2 to 4, E2-2, E2-3, E3-1, E4-1: a look drawn inside the struck
+//! bubble, or not at all, fails). It
 //! prints per family what it saw, and with
 //! `SPACE_SCUFFLE_WEAPON_BATTLE_EVIDENCE_DIR` set writes a sheet per family: a 40 ms sequence
 //! at 1:1 and the same frames at 2x.
@@ -97,8 +99,8 @@ const CHILD_OUT_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_CHILD_OUT";
 /// Environment variable carrying the child's wave.
 const WAVE_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_WAVE";
 /// Environment variable naming, comma-separated, effects the child draws as nothing (a copy of
-/// the vocabulary with each replaced by an invisible card): the planted negatives of review 3,
-/// E3-1, which the measure must catch.
+/// the vocabulary with each replaced by an invisible card): a wave's blank run (review 4,
+/// E4-1).
 const PLANT_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_PLANT";
 /// Environment variable naming a directory the parent writes its sheets to.
 const EVIDENCE_VAR: &str = "SPACE_SCUFFLE_WEAPON_BATTLE_EVIDENCE_DIR";
@@ -146,10 +148,11 @@ const SEEN_LEVEL: u8 = 32;
 /// Pixels round a subject's path and target, outside both bubbles, its looks must change at
 /// some frame against the baseline (review 2, E2-3).
 const SEEN_PIXELS: usize = 30;
-/// Pixels beside the struck bubble on the attacker's side, outside every bubble's interior, its
-/// impact must change from its birth (review 2, E2-2): above what a blank impact leaves there
-/// (the attacker's rim turning as it strikes; the planted negatives, at most 33 measured).
-const IMPACT_PIXELS: usize = 40;
+/// Pixels beside the struck bubble on the attacker's side, outside every bubble's interior,
+/// by which a subject's impact must exceed twice what its blank run leaves there (review 4,
+/// E4-1: the units' animations, the attacker's rim turning as it strikes among them, change
+/// those pixels on both runs; a blank melee impact left up to 33 there, on the blow from below).
+const IMPACT_MARGIN: usize = 20;
 /// Seconds the staged units stand, unarmed, before the baseline picture: they appear and
 /// settle (review 2, E2-3).
 const SETTLE_SECONDS: f64 = 0.4;
@@ -1413,12 +1416,6 @@ fn judge(
     if changed < SEEN_PIXELS {
         failures.push(format!("{}: {changed} px changed", subject.family));
     }
-    if impact != "none" && impact_seen < IMPACT_PIXELS {
-        failures.push(format!(
-            "{} ({:?}): its impact changed {impact_seen} px beside the struck bubble",
-            subject.family, subject.approach
-        ));
-    }
     Ok((failures, impact_seen))
 }
 
@@ -1431,11 +1428,13 @@ fn impact_of(subject: &SubjectReport) -> Option<&str> {
         .filter(|impact| *impact != "none")
 }
 
-/// Review 1, V1-1; reviews 2 and 3 (E2-3, E3-1, A3-1, A3-2): every family of weapon looks
-/// fires in a staged battle at the default zoom, the presentable ones on their own units and
-/// the lab ones lent to a real bubble, an instant shot and a blow from above and below the
-/// target on screen, and an anti-air weapon at a flyer; the measure catches a family whose
-/// impact draws nothing (planted negatives).
+/// Review 1, V1-1; reviews 2 to 4 (E2-3, E3-1, A3-1, A3-2, E4-1): every family of weapon
+/// looks fires in a staged battle at the default zoom, the presentable ones on their own units
+/// and the lab ones lent to a real bubble, an instant shot and a blow from above and below the
+/// target on screen, and an anti-air weapon at a flyer. Each wave is run twice, the second time
+/// with every impact of the wave drawn as nothing (its blank): each subject's impact must change
+/// beside the struck bubble at least twice what its own blank changes there, plus
+/// [`IMPACT_MARGIN`], so what the units' animations change on both runs cancels.
 #[test]
 fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
     if gpu_run::gpu_tests_opted_out() {
@@ -1448,10 +1447,6 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
     }
     let mut wave = 0;
     let mut failures = Vec::new();
-    // The planted negatives (E3-1): one tracer's, one beam's and one blow's impact, and the
-    // wave each fires in.
-    let mut plants: Vec<(usize, String)> = Vec::new();
-    let mut planted_kinds: Vec<WeaponVisualKind> = Vec::new();
     loop {
         let (report, directory) = run_wave(wave, None)?;
         assert!(
@@ -1464,33 +1459,33 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
                 report.waves, report.unstaged
             );
         }
+        // The wave's blank: the same staging with every impact of the wave drawn as nothing.
+        let mut impacts: Vec<&str> = report.subjects.iter().filter_map(impact_of).collect();
+        impacts.sort_unstable();
+        impacts.dedup();
+        let (blank, blank_directory) = run_wave(wave, Some(&impacts.join(",")))?;
         for (index, subject) in report.subjects.iter().enumerate() {
-            failures.extend(judge(directory.path(), subject, wave, &driver)?.0);
-            // A blow struck from above the target on screen (its hit drawn over the attacker's
-            // rim), planted too.
-            if subject.kind == Some(WeaponVisualKind::MeleeSlash)
-                && subject.approach == Approach::Above
-                && !plants.iter().any(|(planted, _)| *planted == wave)
-            {
-                if let Some(impact) = impact_of(subject) {
-                    plants.push((wave, impact.to_owned()));
-                }
-            }
-            // An instant tracer, a beam (an instant line) and a blow, the first of each.
-            for kind in [
-                WeaponVisualKind::Hitscan,
-                WeaponVisualKind::LaserBeam,
-                WeaponVisualKind::MeleeSlash,
-            ] {
-                if subject.kind == Some(kind)
-                    && !subject.flies
-                    && subject.approach == Approach::Across
-                    && !planted_kinds.contains(&kind)
-                {
-                    if let Some(impact) = impact_of(subject) {
-                        plants.push((wave, impact.to_owned()));
-                        planted_kinds.push(kind);
-                    }
+            let (judged, impact_seen) = judge(directory.path(), subject, wave, &driver)?;
+            failures.extend(judged);
+            if impact_of(subject).is_some() {
+                let blank_subject = blank
+                    .subjects
+                    .get(index)
+                    .filter(|other| other.family == subject.family)
+                    .ok_or("the blank run stages the same subjects")?;
+                let (_, blank_seen) = seen_against_base(blank_directory.path(), blank_subject)?;
+                let needed = 2 * blank_seen + IMPACT_MARGIN;
+                eprintln!(
+                    "driver {driver}: wave {wave} {} ({:?}): impact {impact_seen} px beside the \
+                     struck bubble, its blank {blank_seen} px (needs {needed})",
+                    subject.family, subject.approach
+                );
+                if impact_seen < needed {
+                    failures.push(format!(
+                        "{} ({:?}): its impact changed {impact_seen} px beside the struck \
+                         bubble, its blank {blank_seen}",
+                        subject.family, subject.approach
+                    ));
                 }
             }
             if let Some(target) = &evidence {
@@ -1499,7 +1494,7 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
                     subject,
                     target,
                     &format!(
-                        "wp11r4_battle_{driver}_w{wave}_{index}_{:?}_{}.png",
+                        "wp11r5_battle_{driver}_w{wave}_{index}_{:?}_{}.png",
                         subject.approach, subject.family
                     ),
                 )?;
@@ -1515,37 +1510,5 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
         "families that did not show:\n{}",
         failures.join("\n")
     );
-    // E3-1: with each planted impact drawn as nothing, the measure fails for its family.
-    assert!(
-        plants.len() >= 3,
-        "a tracer, a beam and a blow are planted: {plants:?}"
-    );
-    let mut waves: Vec<usize> = plants.iter().map(|(wave, _)| *wave).collect();
-    waves.dedup();
-    for wave in waves {
-        let names: Vec<&str> = plants
-            .iter()
-            .filter(|(planted, _)| *planted == wave)
-            .map(|(_, name)| name.as_str())
-            .collect();
-        let (report, directory) = run_wave(wave, Some(&names.join(",")))?;
-        for subject in report
-            .subjects
-            .iter()
-            .filter(|subject| impact_of(subject).is_some_and(|impact| names.contains(&impact)))
-        {
-            let (_, impact_seen) = judge(directory.path(), subject, wave, &driver)?;
-            eprintln!(
-                "driver {driver}: planted negative, {} drawn as nothing: {impact_seen} px beside \
-                 the struck bubble (the check needs {IMPACT_PIXELS})",
-                subject.family
-            );
-            assert!(
-                impact_seen < IMPACT_PIXELS,
-                "{}: with its impact drawn as nothing the measure still saw {impact_seen} px",
-                subject.family
-            );
-        }
-    }
     Ok(())
 }
