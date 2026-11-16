@@ -33,3 +33,12 @@ Recommendation: option 1 now. Option 2 only if flakes keep costing whole runs af
 **Option 1 (Keep "a flake is not green", add `cargo gate --resume` to reuse passing targets on the same git tree, and fix the known flaky GPU tests).**
 
 **Technical insight:** Keeping a flake red prevents flaky tests from accumulating silently, while `cargo gate --resume` eliminates the multi-hour penalty of re-running already-green targets on the same tree. Note also that the VM (`10.0.120.19`) currently has Debian trixie's `libvulkan1` `1.4.309.0-1`, which has a known upstream Khronos `Vulkan-Loader` use-after-free race between `loader_get_icd_and_device` and concurrent `vkCreateDevice`/`vkDestroyDevice` (`KhronosGroup/Vulkan-Loader` #2018 / PR #1866, fixed in `v1.4.345`), which may also contribute to intermittent multi-instance/multi-device Vulkan test stalls or crashes.
+
+## Resolution
+
+Option 1 carried out, merged in `f81e75e3`:
+- **The rule stays.** A flake is not green.
+- **`cargo gate <tier> --resume`** reuses only the results that passed on the same tree. The run must also have the same `rustc -V`, `suites.ron`, `RUSTFLAGS` and test driver, and its tree must stay clean from start to end. A target that passed only on its rerun counts as `Flaky` and is never reused. Details are in Amendment 1 of `docs/plans/2026-11-11-faster-gates.md`.
+- **B-129 is fixed.** This was the `gpu_validation_tests` flake: the frame limit expired while pipelines were still compiling asynchronously.
+- **B-130 stays open.** This is `concealment_gpu_tests`, which did not reproduce in 35 runs. CI now uploads a cancelled run's logs, and the `full` repeat no longer overwrites the first attempt's logs, so the next occurrence keeps its failure text.
+- **B-127 stays open,** waiting for a recurrence. This is the radv stall in `stance_gpu_tests`, which was seen with the loader version that has the use-after-free race; the loader has since been updated.
