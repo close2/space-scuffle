@@ -649,9 +649,15 @@ target that had passed.
   table.
 - **Refusals.** A record is reused only for the identical key: tier, tree hash of a clean working tree, `rustc -V`
   in the repository root (which follows `rust-toolchain.toml`), and the Git blob hash of `crates/gate/suites.ron`
-  (which decides classes, thread caps and time limits). Another key, a missing or unreadable record is refused with
+  (which decides classes, thread caps and time limits), and the environment variables `RUSTFLAGS` and
+  `SPACE_SCUFFLE_GPU_TEST_DRIVER` (`KEY_ENVIRONMENT`). Another key, a missing or unreadable record is refused with
   its reason printed, and the run tests the whole selection and starts a new record. `--resume` on a dirty tree is
-  an error.
+  an error; without `--resume`, a key that cannot be computed (a failing `rustc -V`, say) is printed and nothing is
+  recorded, as for a dirty tree, and the gate runs on.
+- **One tree per run.** Before every write the recorder checks that the working tree is still the clean tree the
+  run started on; an edit, commit or checkout during the run stops recording for the rest of it. The stamp is
+  refused the same way: only a run that began and ended on the same clean tree is stamped (independent review,
+  2026-11-16).
 - **The stamp.** As before, a stamp is written only when every selected target and step passed on this tree. A
   resumed stamp lists every selected target, the reused ones with their recorded times, and names them in
   `resumed_targets` and `resumed_steps` (new fields; older stamps read as none). A flaky target is never reused, so
@@ -664,8 +670,8 @@ target that had passed.
 - **D-A1.** Results, not executables, are keyed: the tree hash fixes the sources, `rustc -V` the compiler and the
   catalog hash how each target runs. Hashing executables (the evaluation's item 3b) would add nothing a clean tree
   and the toolchain do not already fix.
-- **D-A2.** The environment is not part of the key (for example `SPACE_SCUFFLE_GPU_TEST_DRIVER`): resume in the
-  environment of the red run. The gate's own runs set nothing of the kind, and CI never resumes.
+- **D-A2.** Of the environment, only `RUSTFLAGS` and `SPACE_SCUFFLE_GPU_TEST_DRIVER` are keyed: they change
+  every binary and the GPU driver a test proves. Other variables are not; resume in the environment of the red run.
 - **D-A3.** The evaluation's option "green with a recorded flake" (item 3a, Q0082 option 2) is not taken; the owner
   chose option 1.
 
@@ -682,6 +688,8 @@ target that had passed.
 - `crates/gate/tests/lane_run_tests.rs`: the lanes report each result as it finishes, the flaky target's final
   outcome replaces its lane result, and the resumed run runs only the failed and the flaky target.
 - `crates/gate/tests/gate_lock_tests.rs`: a stopped run writes no stamp and leaves its record.
+- `crates/gate/src/runner.rs` unit test: a tree that turns dirty or is committed during a run is neither recorded
+  nor stamped (`same_clean_tree`).
 - `crates/client/src/lib.rs` unit tests (A1.4): a ready render finishes at its frame limit, a loading one waits
   until the grace runs out and then fails, a failed one fails at once, and readiness follows the pipelines and the
   live battle.
@@ -705,8 +713,9 @@ pressure), one test thread as the catalog sets for `gpu_validation_tests`.
   only slows the run further. **Fix:** the frame limit counts frames, and a run that reaches it while the render is
   still loading waits for it, up to `FRAME_LIMIT_READINESS_GRACE` (90 s of real time, `crates/client/src/lib.rs`),
   then fails as before; a failed pipeline or a failed battle fails at once (`frame_limit_verdict`, with unit tests).
-  90 s is seven times the slowest readiness measured and stays under the harness's 120 s run limit on `radv`, so a
-  render that never becomes ready still fails with the client's own message rather than by being killed. Not a
+  90 s is seven times the slowest readiness measured. A render that never becomes ready still fails: with the
+  client's own message when the limit is reached within 30 s of the start on `radv` (the harness allows 120 s) or
+  210 s on `lavapipe` (300 s), otherwise by the harness's timeout, which names the slowest phase. Not a
   timeout raised blindly: the deadline moves from a frame count, which no host speed justifies, to a time, which the
   measurements do. After the fix, 15 of 15 runs of the binary on lavapipe and four CPUs
   passed (some under a load average above 150 from another user); in 2 of them `--lab --max-frames 10` reached

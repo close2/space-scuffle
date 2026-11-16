@@ -481,6 +481,7 @@ fn a_resumed_run_runs_only_what_did_not_pass_and_a_flake_must_pass_again() -> Re
         commit: "commit".into(),
         toolchain: "rustc test".into(),
         catalog: "catalog".into(),
+        environment: String::new(),
     };
     let stamps = sandbox.path("stamps");
     let all = ["wobbly", "steady", "broken"];

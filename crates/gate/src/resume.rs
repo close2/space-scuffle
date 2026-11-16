@@ -40,6 +40,24 @@ use std::path::{Path, PathBuf};
 /// The subdirectory of the stamp directory that holds the result records.
 pub const RESULTS_DIR: &str = "results";
 
+/// The environment variables that change what a test run proves, and so belong to the key:
+/// `RUSTFLAGS` changes every compiled binary, and `SPACE_SCUFFLE_GPU_TEST_DRIVER` the driver a
+/// GPU test renders on (`radv` or `lavapipe`, charter §7).
+pub const KEY_ENVIRONMENT: [&str; 2] = ["RUSTFLAGS", "SPACE_SCUFFLE_GPU_TEST_DRIVER"];
+
+/// The [`KEY_ENVIRONMENT`] variables as `lookup` reports them, one `NAME=value` per line, a
+/// variable that is unset as `NAME` alone, so an unset and an empty variable differ.
+#[must_use]
+pub fn environment_of(lookup: impl Fn(&str) -> Option<String>) -> String {
+    KEY_ENVIRONMENT
+        .iter()
+        .map(|name| {
+            lookup(name).map_or_else(|| (*name).to_string(), |value| format!("{name}={value}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What must match for a recorded result to be reused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResumeKey {
@@ -54,6 +72,8 @@ pub struct ResumeKey {
     /// The Git blob hash of `crates/gate/suites.ron` (`git hash-object`), whose thread caps,
     /// classes and time limits decide how a target runs.
     pub catalog: String,
+    /// The [`KEY_ENVIRONMENT`] variables of the run ([`environment_of`]).
+    pub environment: String,
 }
 
 impl ResumeKey {
@@ -70,6 +90,7 @@ impl ResumeKey {
             commit: head.commit,
             toolchain: toolchain(git.root())?,
             catalog: catalog_hash(git.root())?,
+            environment: environment_of(|name| std::env::var(name).ok()),
         })
     }
 }
@@ -180,6 +201,10 @@ pub struct ResultRecord {
     pub toolchain: String,
     /// The Git blob hash of the suite catalog of the runs.
     pub catalog: String,
+    /// The [`KEY_ENVIRONMENT`] variables of the runs. Records written before this field existed
+    /// read as empty, which no run's key matches.
+    #[serde(default)]
+    pub environment: String,
     /// When the record was last written, in seconds since the Unix epoch.
     pub updated_unix_s: u64,
     /// Steps by name.
@@ -198,6 +223,7 @@ impl ResultRecord {
             commit: key.commit.clone(),
             toolchain: key.toolchain.clone(),
             catalog: key.catalog.clone(),
+            environment: key.environment.clone(),
             updated_unix_s: 0,
             steps: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -229,6 +255,13 @@ impl ResultRecord {
             return Some(format!(
                 "{CATALOG_PATH} changed since the recorded results (blob {}, now {})",
                 self.catalog, key.catalog
+            ));
+        }
+        if self.environment != key.environment {
+            return Some(format!(
+                "the recorded results ran with another environment ({}), not ({})",
+                self.environment.replace('\n', ", "),
+                key.environment.replace('\n', ", ")
             ));
         }
         None
@@ -438,6 +471,7 @@ mod tests {
             commit: "c1".into(),
             toolchain: "rustc 1.100.0".into(),
             catalog: "cat1".into(),
+            environment: environment_of(|_| None),
         }
     }
 
@@ -542,8 +576,18 @@ mod tests {
     #[test]
     fn another_tree_toolchain_catalog_or_tier_is_refused() {
         let recorded = record_with_every_outcome();
-        let cases: [(&str, Change); 4] = [
+        let cases: [(&str, Change); 6] = [
             ("tree", |k| k.tree = "tree2".into()),
+            ("RUSTFLAGS=-Cdebuginfo=0", |k| {
+                k.environment = environment_of(|name| {
+                    (name == "RUSTFLAGS").then(|| "-Cdebuginfo=0".to_string())
+                });
+            }),
+            ("SPACE_SCUFFLE_GPU_TEST_DRIVER=radv", |k| {
+                k.environment = environment_of(|name| {
+                    (name == "SPACE_SCUFFLE_GPU_TEST_DRIVER").then(|| "radv".to_string())
+                });
+            }),
             ("rustc 1.101.0", |k| k.toolchain = "rustc 1.101.0".into()),
             ("suites.ron", |k| k.catalog = "cat2".into()),
             ("full", |k| k.tier = Tier::Full),

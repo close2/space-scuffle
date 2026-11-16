@@ -231,8 +231,11 @@ pub enum FrameLimitVerdict {
 /// depends on the host's speed, not on the frame count: on `lavapipe` with four CPUs, as on CI,
 /// ten frames of `client --lab` can pass before its pipelines settle (register B-129). A frame
 /// count is therefore not a deadline; the limit counts frames, and this grace is the deadline.
-/// It is below the GPU test harness's 120 s run limit on `radv` (`support/gpu_run.rs`), so a
-/// render that never becomes ready fails here, with this message, rather than by being killed.
+/// It is seven times the slowest readiness measured there (12.9 s). A render that never becomes
+/// ready fails here, with its own message, when the limit is reached early enough: within 30 s
+/// of the start under the GPU test harness's 120 s run limit on `radv`, within 210 s under its
+/// 300 s limit on `lavapipe` (`support/gpu_run.rs`). A run that reaches its limit later is
+/// killed by the harness first, whose message names the slowest phase; either way it fails.
 pub const FRAME_LIMIT_READINESS_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// The verdict at the frame limit for a render in state `readiness` that reached the limit

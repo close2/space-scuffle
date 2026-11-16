@@ -78,8 +78,8 @@ pub use memory::{
 };
 pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 pub use resume::{
-    catalog_hash, plan_resume, toolchain, RecordedOutcome, RecordedStep, RecordedTarget,
-    ResultRecord, ResumeKey, ResumePlan, Resumed, RESULTS_DIR,
+    catalog_hash, environment_of, plan_resume, toolchain, RecordedOutcome, RecordedStep,
+    RecordedTarget, ResultRecord, ResumeKey, ResumePlan, Resumed, KEY_ENVIRONMENT, RESULTS_DIR,
 };
 pub use runner::{check_target_dir, run_tier, stamp_dir, Context, RunReport, StepResult};
 pub use schedule::{Job, Lane, MemoryLimits, Scheduler};

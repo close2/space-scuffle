@@ -646,22 +646,29 @@ fn unix_now() -> u64 {
 /// The record is rewritten after every step and every finished target, so a run that turns red,
 /// is stopped or is killed leaves every result it reached.
 struct Recorder {
+    /// The repository, to check before every write that its tree is still the one recorded.
+    git: Git,
+    /// The clean tree the run started on, which the record belongs to.
+    tree: StampTree,
     /// The stamp directory; the record lives in its `results/` subdirectory.
     dir: PathBuf,
     /// What this run reuses; its `record` moves into [`Recorder::record`].
     plan: ResumePlan,
-    /// The record as it grows; locked by lanes as their targets finish.
-    record: Mutex<ResultRecord>,
+    /// The record as it grows, and whether recording stopped because the working tree changed;
+    /// locked by lanes as their targets finish.
+    record: Mutex<(ResultRecord, bool)>,
 }
 
 impl Recorder {
     /// The recorder of a run of `selection`: `None` on a dirty working tree, whose tree hash
-    /// does not name what runs. With `resume`, it reads the record of this tree and tier and
-    /// prints what it reuses or why it reuses nothing.
+    /// does not name what runs, and, without `resume`, when the key cannot be computed (the
+    /// error is printed; recording is a convenience, never a reason to stop a gate). With
+    /// `resume`, it reads the record of this tree and tier and prints what it reuses or why it
+    /// reuses nothing.
     ///
     /// # Errors
-    /// [`GateError::DirtyTree`] when `resume` is asked for on a dirty tree; Git, `rustc` and
-    /// stamp-directory errors.
+    /// With `resume` only: [`GateError::DirtyTree`] on a dirty tree, and Git or `rustc` errors
+    /// computing the key. Stamp-directory errors.
     fn start(
         context: &Context,
         selection: &Selection,
@@ -674,7 +681,15 @@ impl Recorder {
                 println!("results: the working tree has uncommitted changes, so no result is recorded for --resume");
                 return Ok(None);
             }
+            Err(error) if !resume => {
+                println!("results: nothing is recorded for --resume: {error}");
+                return Ok(None);
+            }
             Err(error) => return Err(error),
+        };
+        let tree = StampTree {
+            tree: key.tree.clone(),
+            commit: key.commit.clone(),
         };
         let dir = stamp_dir(options)?;
         let mut plan = if resume {
@@ -695,9 +710,11 @@ impl Recorder {
         }
         let record = std::mem::replace(&mut plan.record, ResultRecord::new(&key));
         Ok(Some(Self {
+            git: context.git.clone(),
+            tree,
             dir,
             plan,
-            record: Mutex::new(record),
+            record: Mutex::new((record, false)),
         }))
     }
 
@@ -722,14 +739,44 @@ impl Recorder {
         self.update(|record| record.record_target(result));
     }
 
-    /// Applies `change` and rewrites the file. A write failure is printed, not fatal: the run's
-    /// verdict and stamp do not depend on the record, only a later `--resume` does.
+    /// Applies `change` and rewrites the file, while the working tree is still the clean tree
+    /// the run started on. Once it is not (an edit, a commit or a checkout during the run), the
+    /// results no longer belong to one tree, and recording stops for the rest of the run, with
+    /// one line saying why. A write failure is printed, not fatal: the run's verdict and stamp
+    /// do not depend on the record, only a later `--resume` does.
     fn update(&self, change: impl FnOnce(&mut ResultRecord)) {
-        let mut record = self.record.lock().unwrap_or_else(PoisonError::into_inner);
-        change(&mut record);
+        let mut guard = self.record.lock().unwrap_or_else(PoisonError::into_inner);
+        let (record, halted) = &mut *guard;
+        if *halted {
+            return;
+        }
+        if let Err(why) = same_clean_tree(&self.tree, StampTree::of_clean_head(&self.git)) {
+            *halted = true;
+            println!("results: recording for --resume stops: {why}");
+            return;
+        }
+        change(record);
         if let Err(error) = record.write(&self.dir, unix_now()) {
             println!("results: cannot record for --resume: {error}");
         }
+    }
+}
+
+/// `Ok` when `now`, the working tree read at the end of a step or of a run, is the clean tree
+/// `start` the run began on; otherwise why not. Results and stamps name one tree, so a run whose
+/// tree changed or turned dirty while it ran has tested neither tree for certain.
+fn same_clean_tree(start: &StampTree, now: Result<StampTree, GateError>) -> Result<(), String> {
+    match now {
+        Ok(now) if now.tree == start.tree => Ok(()),
+        Ok(now) => Err(format!(
+            "the working tree changed during the run (tree {} at the start, {} now)",
+            start.tree, now.tree
+        )),
+        Err(GateError::DirtyTree(_)) => Err(format!(
+            "the working tree has uncommitted changes that it did not have at the start (tree {})",
+            start.tree
+        )),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -978,6 +1025,8 @@ fn execute(
     recorder: Option<&Recorder>,
     (flakes, overlapped): (&[String], &[String]),
 ) -> Result<RunReport, GateError> {
+    // The tree a stamp may name: the clean tree at the start, if it is still that at the end.
+    let start_tree = StampTree::of_clean_head(&context.git).ok();
     let log_dir = match &options.log_dir {
         Some(dir) => dir.clone(),
         // A resumed run keeps the red run's logs: they are the evidence of its failures.
@@ -1023,7 +1072,14 @@ fn execute(
         run_tests(at, selection, options, &mut report)?;
     }
     if report.passed() {
-        report.stamp = stamp_run(context, selection, options, &report, (flakes, overlapped));
+        report.stamp = stamp_run(
+            context,
+            selection,
+            options,
+            &report,
+            start_tree.as_ref(),
+            (flakes, overlapped),
+        );
     } else if report.stopped {
         report.stamp = Err("stopped by `cargo gate stop`".to_string());
     }
@@ -1274,12 +1330,15 @@ fn recorded(options: &RunOptions) -> (BTreeMap<String, Duration>, BTreeMap<Strin
     (timings, peak_estimates(&stamps, &host_name()))
 }
 
-/// Writes the stamp of a green run, or says why there is none.
+/// Writes the stamp of a green run, or says why there is none. `start` is the clean tree the run
+/// began on, `None` when it began dirty: only a run that began and ended on the same clean tree
+/// tested what a stamp names.
 fn stamp_run(
     context: &Context,
     selection: &Selection,
     options: &RunOptions,
     report: &RunReport,
+    start: Option<&StampTree>,
     (flakes, overlapped): (&[String], &[String]),
 ) -> Result<PathBuf, String> {
     if selection.tier == Tier::Quick {
@@ -1289,6 +1348,12 @@ fn stamp_run(
         return Err("--no-run builds only".to_string());
     }
     let tree = StampTree::of_clean_head(&context.git).map_err(|error| error.to_string())?;
+    let start = start.ok_or_else(|| {
+        "the working tree had uncommitted changes when the run started, so no tree hash names \
+         what was tested"
+            .to_string()
+    })?;
+    same_clean_tree(start, Ok(tree.clone()))?;
     let base = context.git.merge_base("HEAD", &options.main_ref).ok();
     let host = host_name();
     let finished_unix_s = unix_now();
@@ -1360,6 +1425,78 @@ mod tests {
             some.join(" "),
             "clippy --all-targets --locked -p a -p b -- -D warnings"
         );
+    }
+
+    /// A repository in a temporary directory with one commit of `a.txt`.
+    fn repository() -> Result<(tempfile::TempDir, Git), GateError> {
+        let dir = tempfile::tempdir().map_err(|source| GateError::Io {
+            path: PathBuf::from("tempdir"),
+            source,
+        })?;
+        let root = dir.path().to_path_buf();
+        let write = |text: &str| {
+            std::fs::write(root.join("a.txt"), text).map_err(|source| GateError::Io {
+                path: root.join("a.txt"),
+                source,
+            })
+        };
+        crate::changes::capture("git", &["init", "--quiet"], &root)?;
+        write("one")?;
+        crate::changes::capture("git", &["add", "a.txt"], &root)?;
+        commit(&root)?;
+        let git = Git::discover(&root)?;
+        Ok((dir, git))
+    }
+
+    fn commit(root: &Path) -> Result<(), GateError> {
+        crate::changes::capture(
+            "git",
+            &[
+                "-c",
+                "user.name=gate",
+                "-c",
+                "user.email=gate@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-am",
+                "change",
+            ],
+            root,
+        )
+        .map(|_| ())
+    }
+
+    #[test]
+    fn only_the_clean_tree_a_run_started_on_may_be_recorded_or_stamped() -> Result<(), GateError> {
+        let (dir, git) = repository()?;
+        let start = StampTree::of_clean_head(&git)?;
+        assert_eq!(
+            same_clean_tree(&start, StampTree::of_clean_head(&git)),
+            Ok(())
+        );
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "two").map_err(|source| GateError::Io {
+            path: file.clone(),
+            source,
+        })?;
+        let dirty = same_clean_tree(&start, StampTree::of_clean_head(&git));
+        assert!(
+            dirty
+                .as_ref()
+                .is_err_and(|why| why.contains("uncommitted changes")),
+            "a tree that turned dirty mid-run: {dirty:?}"
+        );
+        commit(dir.path())?;
+        let moved = same_clean_tree(&start, StampTree::of_clean_head(&git));
+        assert!(
+            moved
+                .as_ref()
+                .is_err_and(|why| why.contains("changed during the run")),
+            "a commit mid-run gives another tree: {moved:?}"
+        );
+        Ok(())
     }
 
     #[test]
