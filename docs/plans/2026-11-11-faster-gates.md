@@ -623,7 +623,7 @@ are the slice's 66 GiB `memory.high`, keeping `anon` below about 56 GiB.
 ## Amendment 1 (2026-11-16): `cargo gate <tier> --resume`, and the known flaky GPU tests (owner, Q0082 option 1)
 
 This amendment is the plan note (charter §6) for the owner's answer to
-[Q0082](../questions/open/0082-gate-flake-policy.md): keep "a flake is not green" (blueprint §3.5), cut the cost of a
+[Q0082](../questions/closed/0082-gate-flake-policy.md): keep "a flake is not green" (blueprint §3.5), cut the cost of a
 red run by resuming it, and fix the known flaky GPU tests. The setup evaluation of 2026-11-16
 (`~/scratch/setup-evaluation-2026-11-16.md`, item 3) measured the cost: on CI, 4 of the last 5 cancelled runs were red
 only because `client/gpu_validation_tests` (three times) or `client/concealment_gpu_tests` (once) flaked, and the
