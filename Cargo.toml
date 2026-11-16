@@ -107,5 +107,11 @@ opt-level = 2
 [profile.dev.package.sim_map]
 opt-level = 2
 
+# `asset_baker` is optimised for the same reason: every battle-driving test, the client and the
+# valgrind allocation test load the unit media, whose per-pixel alpha scan took about 59 % of a
+# battle test's CPU at opt-level 0. `[profile.test]` inherits these per-package overrides.
+[profile.dev.package.asset_baker]
+opt-level = 2
+
 [profile.test]
 debug = "line-tables-only"
