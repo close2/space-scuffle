@@ -1,12 +1,13 @@
 # AGENTS.md — Engineering Standards & Architectural Charter
 
-This document is the binding engineering charter for all human developers and AI agents working on **Space Scuffle**. Every pull request, crate, module, shader, and test must adhere strictly to these principles. Each rule carries a tag saying how it is checked; §9 explains the tags.
+This document is the binding engineering charter for all human developers and AI agents working on **Space Scuffle**. Every pull request, crate, module, shader, and test must adhere strictly to these principles. Each rule carries a tag saying how it is checked; §9 explains the tags. A rule that links a guide under `docs/guides/` is followed as that guide describes, and the guide binds like this charter.
 
 ---
 
 ## 1. Core Philosophy: A Textbook-Grade Reference Project
 
-**Space Scuffle** is built to be an exemplary, production-grade software engineering showcase—a codebase that can be presented to university students and systems engineers as a reference for how to design, document, test, and scale a large, real-time, deterministic project in Rust.
+**Space Scuffle** is a production-grade showcase for university students and systems engineers of how to design,
+document, test and scale a large, real-time, deterministic project in Rust.
 
 ### 1.1 Zero Shortcuts, Zero `TODO`s, Zero Placeholders
 - **No `todo!()`, `unimplemented!()` or `TODO`/`FIXME`/`XXX` comments.** Every feature, function and match arm on
@@ -22,10 +23,12 @@ This document is the binding engineering charter for all human developers and AI
   - A fallible result is never discarded with `let _ =` in the simulation crates. [CI: C12]
 
 ### 1.2 Zero Fake Assets, Procedural Stand-Ins, or Silent Workarounds
-- **Never Fake High-Quality Media or Systems in Code:** [Review]
-  - When a task requires real video sequences (e.g., Veo `.mp4` animations), real 3D rendering, or an external service/API, **never** invent a cheap programmatic hack to pretend the requirement is met (such as drawing crude pixel shapes in Rust, wobbling/translating a single static JPEG by a few pixels to fake a "walking/attacking video", or silently substituting dummy data).
-- **Stop and Escalate When a Tool, Key, or Asset Is Blocked:** [Procedure]
-  - If an API key is missing, a service is disabled, a shader fails to load, or a tool cannot produce the required quality, **fail loudly and ask the user immediately** rather than writing a silent fallback or low-quality workaround.
+- **Never fake media or systems in code.** When a task requires real video (e.g. Veo `.mp4` animations), real 3D
+  rendering or an external service/API, no programmatic hack pretends it is met: no crude pixel shapes drawn in
+  Rust, no static JPEG wobbled a few pixels to fake a "walking/attacking video", no silent dummy data. [Review]
+- **Stop and escalate when a tool, key or asset is blocked** (missing API key, disabled service, shader that fails
+  to load, tool below the required quality): fail loudly and ask the user immediately; never write a silent fallback
+  or low-quality workaround. [Procedure]
 - **Real End-to-End Verification Only:** tests compile the real shaders, load real assets from the runtime paths the
   binary uses, and never pass by skipping work; a local GPU opt-out panics in CI. Procedural flipbooks exist only as
   temporary test fixtures, never under `assets/`. [CI: C15 subjects, `runtime_assets_tests.rs`,
@@ -37,31 +40,27 @@ This document is the binding engineering charter for all human developers and AI
 
 Because this codebase serves as a teaching example for large-scale architecture:
 
-1. **Module-Level Architecture Docs (`//!`):** [CI: C4]
-   - Every file/module must begin with a `//!` doc comment explaining **what responsibility this module owns**, **how it fits into the larger system**, and **what invariants it maintains**.
-2. **Public API Docs (`///`):**
-   - All public structs, enums, traits, and functions must have `///` rustdoc comments. [CI: missing_docs] They explain parameters, return values, coordinate spaces, and units (e.g., radians vs. binary angles, ticks vs. seconds, world units vs. grid cells). [Review]
-3. **Justified Performance Optimizations (`// PERFORMANCE RATIONALE:`):** [CI: C11 format; Review]
-   - Default to clean, idiomatic, readable, and type-safe Rust.
-   - Whenever we diverge from the most idiomatic or elegant code for performance reasons (e.g., flat structure-of-arrays layout, lookup tables for deterministic trig, GPU buffer packing, avoiding allocations in hot loops), you **must** document it with a structured comment block:
-     ```rust
-     // PERFORMANCE RATIONALE:
-     // Why: In a 400-unit battle, naive O(N^2) pairwise collision checks perform 160,000 tests/tick.
-     // What: We partition entities into a fixed-size spatial hash grid using pre-allocated flat slabs.
-     // Trade-off: Slightly more bookkeeping on position updates in exchange for O(N) neighborhood queries
-     // and zero heap allocations during the simulation tick.
-     ```
-4. **Short Functions:**
-   - No production function exceeds 100 lines, as counted by `clippy::too_many_lines` with the threshold in
-     `clippy.toml`. Tests are exempt. A suppression outside test code is not allowed. [CI: clippy, C8]
+1. **Module-Level Architecture Docs (`//!`):** every file/module begins with a `//!` doc comment explaining what
+   responsibility the module owns, how it fits into the larger system, and what invariants it maintains. [CI: C4]
+2. **Public API Docs (`///`):** all public structs, enums, traits and functions have `///` rustdoc comments.
+   [CI: missing_docs] They explain parameters, return values, coordinate spaces and units (e.g. radians vs. binary
+   angles, ticks vs. seconds, world units vs. grid cells). [Review]
+3. **Justified Performance Optimizations (`// PERFORMANCE RATIONALE:`):** default to clean, idiomatic, readable,
+   type-safe Rust. Whenever code diverges from the most idiomatic or elegant form for performance (e.g. flat
+   structure-of-arrays layout, lookup tables for deterministic trig, GPU buffer packing, avoiding allocations in hot
+   loops), it must carry a `// PERFORMANCE RATIONALE:` comment block with `Why:`, `What:` and `Trade-off:` lines, as
+   in the example in [`docs/guides/performance-rationale.md`](docs/guides/performance-rationale.md).
+   [CI: C11 format; Review]
+4. **Short Functions:** no production function exceeds 100 lines, as counted by `clippy::too_many_lines` with the
+   threshold in `clippy.toml`. Tests are exempt. A suppression outside test code is not allowed. [CI: clippy, C8]
 
 ---
 
 ## 3. Strict Determinism & Separation of Concerns
 
 ### 3.1 The Simulation Boundary (`sim_types`, `sim_map`, `sim_core`)
-- **100% Platform-Independent Determinism:**
-  - Simulation crates (`sim_types`, `sim_map`, `sim_core`) must produce **bit-for-bit identical results** across Linux (`x86_64`), Windows (`x86_64`), macOS (`ARM64`), and WebAssembly (`wasm32`).
+- **100% Platform-Independent Determinism:** the simulation crates produce **bit-for-bit identical results** on
+  Linux x86_64, Windows x86_64, macOS ARM64 and WebAssembly (`wasm32`).
   - **No Floats in Authoritative State:** positions, velocities, angles, health and cooldowns use `SimScalar`,
     `SimVec2` and `SimAngle`. Floats appear in the simulation crates only where they produce presentation output or
     read authored data. [CI: C7]
@@ -90,16 +89,15 @@ Because this codebase serves as a teaching example for large-scale architecture:
     matches (e.g. `rhino_beetle`, `pulse_bot`, `marine`, `RhinoBeetle`). [CI: C5]
   - Adding, removing or rebalancing these requires zero code changes and zero recompilation: production code reads
     them at run time and embeds no catalog. [CI: C6, `runtime_catalog_tests.rs`]
-  - They live in `assets/catalog/` (`assets/catalog/units.ron`, `assets/catalog/structures.ron`,
-    `assets/catalog/upgrades.ron`, `assets/catalog/factions.ron`, `assets/catalog/start_loadouts.ron`) and
-    `assets/scenarios/`.
-- **Capability-Driven Mechanics:** [CI: C5 partial; Review]
-  - Mechanics (e.g., stim/overclock, harvesting, detectors) must be queried via optional capability components on `UnitArchetype` (`Option<OverclockSpec>`, `Option<HarvesterSpec>`), never by branching on specific `UnitTypeId`s.
-- **Dynamic Asset Loading & Zero Per-Frame Allocations:**
-  - The client and asset baker discover flipbooks and catalog entries at run time.
-  - Battle and preview synchronization systems allocate nothing in steady state and use no O(N²) search. [CI:
-    `sync_allocation_count_tests.rs` (counted by valgrind for the live battle sync), `sync_steady_state_tests.rs`
-    (assets, entities, retained buffers); Review for the rest]
+  - They live in `assets/catalog/` (`units.ron`, `structures.ron`, `upgrades.ron`, `factions.ron`,
+    `start_loadouts.ron`) and `assets/scenarios/`.
+- **Capability-Driven Mechanics:** mechanics (e.g. stim/overclock, harvesting, detectors) are queried via optional
+  capability components on `UnitArchetype` (`Option<OverclockSpec>`, `Option<HarvesterSpec>`), never by branching
+  on specific `UnitTypeId`s. [CI: C5 partial; Review]
+- **Dynamic Asset Loading & Zero Per-Frame Allocations:** the client and asset baker discover flipbooks and catalog
+  entries at run time. Battle and preview synchronization systems allocate nothing in steady state and use no O(N²)
+  search. [CI: `sync_allocation_count_tests.rs` (counted by valgrind for the live battle sync),
+  `sync_steady_state_tests.rs` (assets, entities, retained buffers); Review for the rest]
 
 ---
 
@@ -126,29 +124,23 @@ Code without tests is considered incomplete.
 | `gate` | Selection, globs, scheduling, stamps, catalog consistency | `selection_tests.rs`, `suite_catalog_tests.rs` |
 
 3. **Quality gates.** [CI: C16, C22] Tests are selected by `cargo gate`, from the catalog
-   `crates/gate/suites.ron`, in four tiers:
-   - `cargo gate quick`: optional, while working: fmt, clippy on the changed crates, their fast tests.
-   - `cargo gate package`: required once per package, after merging `main`, on the package's final tree.
-     Clippy on the whole workspace, `workspace_checks`, every test of the changed crates (GPU and valgrind tests
-     when the change touches their triggers), the tests the catalog's path rules and downstream contracts select,
-     and the golden replays in release and on `wasm32-wasip1` for simulation changes. The implementation agent
-     hands back after `quick` and the tests its change needs; a verifier agent on a cheap model then runs `package`
-     and reports the stamp, or the failing targets, which go back to the implementation agent (owner, Q0061).
+   `crates/gate/suites.ron`, in four tiers. What each tier runs, and when a stamp lets a tier pass at once, is in
+   [`docs/guides/test-gates.md`](docs/guides/test-gates.md).
+   - `cargo gate quick`: optional, while working.
+   - `cargo gate package`: required once per package, after merging `main`, on the package's final tree. The
+     implementation agent hands back after `quick` and the tests its change needs; a verifier agent on a cheap model
+     then runs `package` and reports the stamp, or the failing targets, which go back to the implementation agent
+     (owner, Q0061).
    - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
-   - `cargo gate full`: the full gate, on `main` before a push that contains a crate change, and on CI. Push only a
-     commit whose tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing
-     catalog rule.
-   - **Test a tree once.** A tier passes at once, without building or running anything, when its tree already has a
-     green stamp of that tier or a stricter one; a green `package` stamp counts for `merge` and `full` when the
-     agent merged `main` right before its gate and nothing landed since (the merged tree is the tested tree). Merge
-     branches one at a time in that order, batch pushes to a few a day, and run at most one or two building agents
-     at once (owner, Q0055).
+   - `cargo gate full`: on `main` before a push that contains a crate change, and on CI. Push only a commit whose
+     tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing catalog rule.
+   - **Test a tree once:** a tree with a green stamp of a tier, or of a stricter one, is not tested again for it.
+     Merge branches one at a time in that order, batch pushes to a few a day, and run at most one or two building
+     agents at once (owner, Q0055).
    - **Full gate** (what CI runs on every push):
      - `cargo fmt --all -- --check`
      - `cargo clippy --workspace --all-targets --locked -- -D warnings`
-     - `cargo gate full`: every test executable and doc test of the workspace, each executable with its thread
-       cap from `crates/gate/suites.ron` so that the run fits the runner's memory, and the golden replays.
-   - Docs-only changes: `cargo gate package` runs fmt and `workspace_checks` only.
+     - `cargo gate full`: every test executable and doc test of the workspace, and the golden replays.
 
 ---
 
@@ -222,33 +214,26 @@ cannot break the tool that selects its tests.
 
 ## 7. Shared Development Server: GPU and Disk
 
-Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, `/dev/dri/renderD128`, driven by `radv`) is shared with another autonomous agent user, and the machine also has software Vulkan (`lavapipe` / `llvmpipe`). Every agent must follow these rules:
+Development runs on a shared VM whose physical **AMD Radeon RX 580** is shared with another autonomous agent user;
+the machine also has software Vulkan (`lavapipe`). Every agent follows these rules, with the commands, lock and
+driver details of [`docs/guides/gpu-and-disk.md`](docs/guides/gpu-and-disk.md):
 
-- **Use the physical GPU.** It is the default for every GPU task: rendering, visual checks, validation runs and GPU tests. The other users need it only about 1% of the time, so do not avoid it.
-- **Hold the GPU lock per command, never for hours.** Wrap each command that runs on the physical GPU in `with-gpu-lock`, and release it between tasks so the other users get a short slot. Lock one test process or one capture at a time, not a whole test suite or session. A wait of a few seconds for the lock is normal. Unlocked use risks VRAM contention, driver resets, and skewed timings. This includes running `client` or any other binary with no driver selected, because Vulkan may then pick the physical GPU.
-  ```bash
-  WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock <command>
-  ```
-- **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. It no longer passes the lock to the command it runs, so a process the command leaves behind cannot hold it, and it logs every acquisition, timeout and release to `/run/lock/gpu-lock.log` (Q0060). Raise it with `GPU_LOCK_TIMEOUT=1200` only for a single long command, such as a frame-budget measurement.
-- **Software Vulkan is the fallback, not the default.** Use `lavapipe` only where no physical GPU exists (CI) or to reproduce a CI result exactly. It needs no lock:
-  ```bash
-  WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json <command>
-  ```
-  `WGPU_BACKEND=vulkan` is required in both commands: `VK_ICD_FILENAMES` only filters Vulkan drivers, and without it wgpu may fall back to its OpenGL backend, which runs on the physical GPU through `radeonsi` with no lock. The ICD files are `radeon_icd.json` and `lvp_icd.json`; the `*.x86_64.json` names some distributions use do not exist on this server.
-- **GPU tests lock the GPU themselves, one test child at a time.** `crates/client/tests/support/gpu_run.rs` runs
-  each GPU test child on the physical GPU (`radv`, with `MESA_VK_WSI_DEBUG=sw` under `xvfb-run`). It takes
-  `/run/lock/gpu.lock`, the lock `with-gpu-lock` uses, just before the child starts, and releases it when the
-  child exits, so other users get the GPU between children. Run `cargo test --workspace` as it is and never wrap it
-  in `with-gpu-lock`; the harness detects that and fails. A child waits up to `GPU_LOCK_TIMEOUT` (default 290 s)
-  for the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is
-  missing, as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces
-  CI on this server, and `=radv` fails instead of falling back.
-- **Run one `cargo gate` or workspace `cargo test` at a time across all worktrees.** `cargo gate` serializes
-  itself through the gate lock (`~/scratch/gate.lock`, `crates/gate/src/gate_lock.rs`); wrap any other workspace
-  `cargo test` in `flock ~/scratch/gate.lock`. Before other heavy runs, check the `anon` line of
-  `/sys/fs/cgroup/user.slice/user-1002.slice/memory.stat` and keep it below about 56 GiB of the 66 GiB limit
-  (`memory.current` also counts reclaimable page cache).
-- **Hot build output goes on the home disk; large files go on `~/scratch`.** The home disk (NVMe, with a per-user quota; check it with `quota -s`) holds the repository, active worktrees and hot build output. The main checkout's own `target/` stays in the checkout, and every agent worktree builds into a separate target directory, `CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/<worktree-name>`. Large logs, captures, rendered sheets, corpora and gate stamps belong under `~/scratch`, a slow spinning disk for cold, large, sequential files. Remove a worktree and its target directory once its branch is merged.
+- **Use the physical GPU** by default for every GPU task: rendering, visual checks, validation runs and GPU tests.
+- **Hold the GPU lock per command, never for hours.** Wrap each command that runs on the physical GPU in
+  `with-gpu-lock`, one test process or one capture at a time, never a whole test suite or session; this includes
+  running `client` or any other binary with no driver selected. Select the driver with both `WGPU_BACKEND=vulkan`
+  and `VK_ICD_FILENAMES`. Raise the lock's 600-second timeout only for a single long command.
+- **Software Vulkan is the fallback, not the default:** use `lavapipe` only where no physical GPU exists (CI) or to
+  reproduce a CI result exactly. It needs no lock.
+- **GPU tests lock the GPU themselves, one test child at a time,** through `crates/client/tests/support/gpu_run.rs`.
+  Run `cargo test --workspace` as it is and never wrap it in `with-gpu-lock`.
+- **Run one `cargo gate` or workspace `cargo test` at a time across all worktrees.** Wrap any workspace
+  `cargo test` outside `cargo gate` in `flock ~/scratch/gate.lock`, and before other heavy runs keep the user
+  cgroup's anonymous memory below about 56 GiB of the 66 GiB limit.
+- **Hot build output goes on the home disk; large files go on `~/scratch`.** Every agent worktree builds into
+  `CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/<worktree-name>`; large logs, captures, rendered sheets,
+  corpora and gate stamps belong under `~/scratch`. Remove a worktree and its target directory once its branch is
+  merged.
 
 ---
 
