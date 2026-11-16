@@ -33,7 +33,7 @@ use sim_types::{
     AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, BubbleRenderInstance,
     CombatEventVisual, Concealment, EffectContext, EffectSource, EffectTarget, EntityId, MoverType,
     PlayerId, RenderSnapshot, ShapeKind, SimScalar, SimVec2, StatusView, StrikeEnds, Tick,
-    TickBundle, UnitOrder, UnitTypeId, WeaponKey, WeaponSlot,
+    TickBundle, UnitOrder, UnitTypeId, WeaponKey, WeaponSlot, WeaponVisualKind,
 };
 
 const ATTACKER: PlayerId = PlayerId(0);
@@ -376,15 +376,52 @@ fn duel(world: &mut SimWorld, shipped: &ShippedWeapon, attacker: EntityId) -> Du
     }
 }
 
+/// The event kind a weapon of this delivery publishes for its delivery, by its speed and
+/// `visual_kind`: an instant tracer, beam or blow, or a projectile; `None` for a weapon that
+/// publishes only its splash.
+fn delivery_event(weapon: &WeaponSpec) -> Option<&'static str> {
+    if weapon.projectile_speed.is_some() {
+        return Some("ProjectileVisual");
+    }
+    match weapon.visual_kind {
+        WeaponVisualKind::Hitscan => Some("HitscanTracer"),
+        WeaponVisualKind::LaserBeam | WeaponVisualKind::LightningArc => Some("BeamVisual"),
+        WeaponVisualKind::MeleeSlash => Some("MeleeSlashVisual"),
+        WeaponVisualKind::Projectile | WeaponVisualKind::None => None,
+    }
+}
+
+/// The variant name of `event`.
+const fn event_kind(event: &CombatEventVisual) -> &'static str {
+    match event {
+        CombatEventVisual::HitscanTracer { .. } => "HitscanTracer",
+        CombatEventVisual::ProjectileVisual { .. } => "ProjectileVisual",
+        CombatEventVisual::BeamVisual { .. } => "BeamVisual",
+        CombatEventVisual::MeleeSlashVisual { .. } => "MeleeSlashVisual",
+        CombatEventVisual::BubbleShatter { .. } => "BubbleShatter",
+        CombatEventVisual::SplashVisual { .. } => "SplashVisual",
+        CombatEventVisual::SpellImpact { .. } => "SpellImpact",
+    }
+}
+
+/// B-123 (plan `2026-11-17-effect-snapshot-identity` WP3; plan `2026-11-09-effect-visualization`
+/// Amendment 25, P1-4): every shipped weapon with a target fires at least one event in its
+/// duel, each event carries the weapon's source, and its delivery event is the one its data
+/// names: an instant `Hitscan` a tracer, a beam a beam, a blow a blow, a speed a projectile,
+/// and a weapon without a delivery (`None`) only its splash. No weapon is silent.
 #[test]
-fn every_weapon_event_carries_its_source() {
+fn every_shipped_weapon_publishes_its_delivery_or_splash() {
     let world = flat_world(0x0e_ff03);
-    let mut fired = 0;
     let mut silent = Vec::new();
+    let mut fired = 0;
     for (seed, shipped) in (1_u64..).zip(shipped_weapons(&world)) {
+        if target_for(&world, &shipped.weapon, shipped.plane).is_none() {
+            continue;
+        }
+        let label = format!("{} {:?}", shipped.arch.slug, shipped.key);
         let events = fire(&shipped, seed).events;
         if events.is_empty() {
-            silent.push(format!("{} {:?}", shipped.arch.slug, shipped.key));
+            silent.push(label);
             continue;
         }
         fired += 1;
@@ -393,19 +430,28 @@ fn every_weapon_event_carries_its_source() {
             weapon: shipped.key,
         };
         for event in &events {
-            assert_eq!(
-                event.source(),
-                Some(expected),
-                "{} {:?}: {event:?}",
-                shipped.arch.slug,
-                shipped.key
+            assert_eq!(event.source(), Some(expected), "{label}: {event:?}");
+        }
+        let kinds: Vec<_> = events
+            .iter()
+            .map(event_kind)
+            .filter(|kind| *kind != "SplashVisual")
+            .collect();
+        if let Some(kind) = delivery_event(&shipped.weapon) {
+            assert!(
+                !kinds.is_empty() && kinds.iter().all(|seen| *seen == kind),
+                "{label}: publishes {kind}, saw {kinds:?}"
+            );
+        } else {
+            assert_eq!(kinds, Vec::<&str>::new(), "{label}: only its splash");
+            assert!(
+                shipped.weapon.splash.is_some(),
+                "{label}: no delivery, no splash"
             );
         }
     }
-    assert!(
-        fired * 4 >= (fired + silent.len()) * 3,
-        "most shipped weapons fire in the duel; silent: {silent:?}"
-    );
+    assert!(fired > 0, "the shipped catalog has weapons");
+    assert_eq!(silent, Vec::<String>::new(), "weapons that fired no event");
 }
 
 /// The zones a `SplashVisual` of `splash` publishes: innermost, middle, outermost.

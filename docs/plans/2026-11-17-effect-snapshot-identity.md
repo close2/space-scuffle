@@ -536,3 +536,50 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 - **Steering a missile's last interpolation step into its impact** (D-6 residual).
 - **The unused `BubbleRenderInstance::attack_target_pos`** (always `None`): removal or use is a separate cleanup.
 - **The cleave's facing on `SplashVisual`** (Amendments 5 and 24): unchanged.
+
+---
+
+## Amendment 1: WP1 to WP3 as built, and the verify items (2026-11-16, short note, charter §6)
+
+The simulation package (WP1 `1f72b8f8`, WP2 `a2cf5c5a`, WP3 on branch `effects-identity`) was
+implemented as planned. This note records the **verify** items' outcomes and the small choices
+the plan left open.
+
+**Verify items.**
+
+| Item | Outcome |
+|---|---|
+| D-7: RON reads `visual_kind: None` for the non-`Option` `WeaponVisualKind` field | Yes. The shipped `units.ron` loads with `volatile_tick`'s `visual_kind: None` and the weapon reads `WeaponVisualKind::None` (it publishes only its splash in `every_shipped_weapon_publishes_its_delivery_or_splash`). No `rename` was needed |
+| D-7 / §8: no changed weapon reaches a hashed `WeaponSpec`; no golden or matrix result moves | Confirmed at WP2 and again at WP3 (data in place): `golden_replay_tests` in debug, release and on `wasm32-wasip1` under wasmtime, `sc2_who_wins_matchup_matrix_tests` (against `fixtures/matchup_matrix.ron`), `sc2_battle_benchmarks_tests`, `checksum_state_tests` and `determinism_lockstep_tests` pass unchanged; `git diff main -- crates/sim_core/src/checksum.rs crates/sim_core/src/checksum/ crates/sim_core/tests/fixtures/` is empty. Nothing was re-recorded |
+| D-1: the C7 ratchet | `crates/sim_types/src/snapshot.rs` 30 → 31 (`SpellImpact::pos`), reason unchanged. `presentation.rs` gains no float (`StrikeEnds` and `StatusView` hold ids). `crates/sim_core/src/world/snapshot.rs` needs no change: the conversion is `to_f32()` calls, which the ratchet does not count |
+| D-8: the writer changes no checksum | `world::snapshot::tests::writing_a_snapshot_changes_no_checksum`: on every tick of a world with a scratch status, a landing scratch missile and instant hits, `compute_checksum()` after the tick's snapshot equals the checksum the tick computed before writing it, and a second write moves nothing |
+
+**Choices made while building.**
+
+- **Statuses are written per bubble.** `raise_status_flags` became `publish_statuses`, which raises
+  the kind flags and appends the bubble's `StatusView`s from `EffectWorld::statuses_of` in the
+  same pass. Bubbles are written in entity order and the engine keeps its statuses sorted and
+  unique, so the list is sorted with no sort of its own, and a carried unit (no bubble) lists
+  nothing. A status the spell catalog cannot resolve is skipped for both, as before.
+- **The loader error's field** carries the slot prefix, as every weapon field does
+  (`weapon.visual_kind`, `ground_weapon.visual_kind`, `air_weapon.visual_kind`).
+- **WP3's coverage test** `every_shipped_weapon_publishes_its_delivery_or_splash` replaces
+  `every_weapon_event_carries_its_source` and keeps its source check. It covers every shipped
+  weapon for which the catalog has a target; none is silent.
+- **The allocation test** (`effect_tree_allocation_tests.rs`) counts the new writer frames
+  (`publish_statuses`, `record_spell_impact`, `drain_spell_impacts`) as engine frames, and its
+  children assert that twenty units' statuses are published and that Fungal Growth lands in the
+  shipped child's window. Both children allocate nothing in the engine.
+- **Abduct** gains a test of its own (`a_tether_missile_publishes_no_impact`) rather than a
+  change to an existing one.
+- **Plan row status.** `docs/plans/README.md` accepts no "In progress" status (C18); the row is
+  `Active`. The WP1 commit carried "In progress", corrected in WP2.
+- **Client.** Beyond compile fixes nothing reads the new facts yet (WP4 to WP7). The legacy
+  `vfx`, `effects::systems` and `effects::struck` pass `SpellImpact` through without a spawn.
+- **Throughput (D-8, deferred in part).** One release run of `cargo bench -p sim_core --bench
+  throughput` at WP3, at load average 39 to 56 on the shared server: 2598, 939, 134, 163 and 190
+  ticks/s on the flat rows, 112 on `showcase_canyon` and 163 with 67 casters, every row far above
+  the floor of 25. At that load the figures cannot show "within noise" against `DESIGN.md` §5, so
+  the alternated comparison with `main` (three runs each, as §5 measures) moves to WP8's
+  evidence packet. The writer's additions are one pass over the published bubbles' statuses and
+  one over the tick's landings, with no allocation in steady state.

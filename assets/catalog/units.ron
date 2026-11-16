@@ -750,7 +750,10 @@
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Dual Gauss Pistols",
-                visual_kind: Projectile,
+                // B-123: P38ScytheGuassPistol (liberty WeaponData:317-328) runs the persistent
+                // P38ScytheGuassPistolBurst (liberty EffectData:1803-1818), two channelled
+                // CEffectDamage strikes 0.122 s apart with no CEffectLaunchMissile: instant.
+                visual_kind: Hitscan,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 5.0,
@@ -780,6 +783,11 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-17-effect-snapshot-identity D-7): the gauss rounds reuse
+            // the accepted kinetic looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("gauss_tracer"), impact: Some("bullet_hit"))],
             ),
             veo_prompts: {
                 Idle: "Thruster Hound: Slender bipedal scout with flaming jump jets mounted to backplate holding twin pistols.",
@@ -1032,7 +1040,10 @@
             )),
             air_weapon: Some((
                 name: "High Impact Payload",
-                visual_kind: Projectile,
+                // B-123: LanceMissileLaunchers runs LanceMissileLaunchersDamage; its launch-missile
+                // line is commented out in every layer (swarmmulti WeaponData:39-52, void
+                // WeaponData:74-87, voidmulti WeaponData:128-132, EffectData:748-751): instant.
+                visual_kind: Hitscan,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 11.0,
@@ -1089,7 +1100,11 @@
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
             effects: (
-                weapons: [(weapon: Primary, travel: Some("cannon_tracer"), impact: Some("cannon_hit"))],
+                weapons: [
+                    (weapon: Primary, travel: Some("cannon_tracer"), impact: Some("cannon_hit")),
+                    // Plan 2026-11-17-effect-snapshot-identity D-7: High Impact Payload.
+                    (weapon: Air, travel: Some("cannon_tracer"), impact: Some("rocket_hit")),
+                ],
             ),
             veo_prompts: {
                 Idle: "Titan AA-Walker: Giant bipedal battle mech of bold clean armor plates, its two massive arm-cannons hanging low at its sides, muzzles pointing forward and down, two fixed missile pods on its shoulders, seen from slightly above at a three-quarter angle, whole from head to feet, centred with empty space all around it, no floor, no shadow.",
@@ -2058,7 +2073,10 @@
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Phase Disruptor",
-                visual_kind: Projectile,
+                // B-123: PhaseDisruptors (liberty WeaponData:507-511, void WeaponData:54-62) names
+                // no Effect, so it runs the CEffectDamage of its own id (liberty
+                // EffectData:2430-2440): instant.
+                visual_kind: Hitscan,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 6.0,
@@ -2091,6 +2109,11 @@
                     cooldown_ticks: 804,
                 )),
                 is_resource_dropoff: false,
+            ),
+            // Presentation (plan 2026-11-17-effect-snapshot-identity D-7): the disruptor bolt
+            // reuses the accepted plasma looks.
+            effects: (
+                weapons: [(weapon: Primary, travel: Some("cannon_tracer"), impact: Some("plasma_hit"))],
             ),
             veo_prompts: {
                 Idle: "Hardened Shield Walker: Four-legged alien walker with massive twin forward disruptor cannons and pulsing kinetic dome.",
@@ -2711,7 +2734,9 @@
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Volatile Burst",
-                visual_kind: Projectile,
+                // B-123: VolatileBurst (liberty WeaponData:463-475, EffectData:1739-1759) damages
+                // an area at the caster with no delivery; its splash is its whole picture.
+                visual_kind: None,
                 target_flags: (bits: 255),
                 min_range: 0.0,
                 max_range: 0.25,

@@ -2244,6 +2244,13 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
         silent.len(),
         silent.join("\n  ")
     );
+    // B-123 (plan `2026-11-17-effect-snapshot-identity` WP3): every shipped weapon publishes a
+    // delivery or splash event, so none is silent.
+    assert_eq!(
+        silent,
+        Vec::<String>::new(),
+        "weapons that publish no event"
+    );
 }
 
 /// Plan WP11: a `Shot` effect binds its line and flight; a card may ride the line and be drawn

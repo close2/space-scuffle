@@ -17,7 +17,7 @@ use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ProjectileTargetLossBehavior, SimAngle,
-    SimScalar,
+    SimScalar, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -797,6 +797,16 @@ impl WeaponSpecDef {
         }
         self.validate_arcs(definition, prefix)?;
         self.validate_turret(definition, prefix)?;
+        // B-123 (plan `2026-11-17-effect-snapshot-identity` D-7): the delivery path is chosen by
+        // the speed, and an instant hit publishes its event by `visual_kind`, which has no event
+        // for `Projectile`: such a weapon would fire with no look at all.
+        if self.projectile_speed.is_none() && self.visual_kind == WeaponVisualKind::Projectile {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.visual_kind"),
+                "an instant weapon publishes no projectile",
+            ));
+        }
         if let Some(speed) = self.projectile_speed {
             positive(definition, &format!("{prefix}.projectile_speed"), speed)?;
             if self.max_projectile_lifetime_ticks == 0 {
@@ -1788,5 +1798,40 @@ mod tests {
         assert!(validate_slug("").is_err());
         assert!(validate_slug(" \t\n").is_err());
         assert!(validate_slug("Fixture-Identity").is_ok());
+    }
+
+    /// B-123 (plan `2026-11-17-effect-snapshot-identity` D-7): a weapon without a projectile
+    /// speed is delivered instantly, so it may not author `visual_kind: Projectile`; with a speed
+    /// it may. The shipped catalogs load under the rule.
+    #[test]
+    fn an_instant_weapon_may_not_publish_a_projectile() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let mut file: CatalogFile = ron::from_str(units)?;
+        for unit in &file.units {
+            unit.validate()?;
+        }
+        crate::test_support::shipped_catalogs();
+        let unit = file
+            .units
+            .iter_mut()
+            .find(|unit| {
+                unit.weapon
+                    .as_ref()
+                    .is_some_and(|weapon| weapon.projectile_speed.is_none())
+            })
+            .ok_or("the shipped catalog has an instant weapon")?;
+        let weapon = unit.weapon.as_mut().ok_or("armed")?;
+        weapon.visual_kind = sim_types::WeaponVisualKind::Projectile;
+        let field = match unit.validate() {
+            Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        };
+        assert_eq!(field.as_deref(), Some("weapon.visual_kind"));
+        let weapon = unit.weapon.as_mut().ok_or("armed")?;
+        weapon.projectile_speed = Some(1.0);
+        weapon.max_projectile_lifetime_ticks = weapon.max_projectile_lifetime_ticks.max(1);
+        unit.validate()?;
+        Ok(())
     }
 }
