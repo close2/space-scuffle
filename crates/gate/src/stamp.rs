@@ -95,6 +95,14 @@ pub struct Stamp {
     /// lanes. Older stamps read as none.
     #[serde(default)]
     pub overlapped_flakes: Vec<String>,
+    /// The targets of [`Stamp::targets`] that this run did not run, because a run of the same
+    /// tier on the same tree, toolchain and catalog had passed them (`--resume`, plan
+    /// 2026-11-11-faster-gates Amendment 1). Older stamps read as none.
+    #[serde(default)]
+    pub resumed_targets: Vec<String>,
+    /// The steps this run did not run again, for the same reason. Older stamps read as none.
+    #[serde(default)]
+    pub resumed_steps: Vec<String>,
 }
 
 /// How many recent runs of a target on this host its memory estimate looks back over.
@@ -355,6 +363,8 @@ mod tests {
             jobs: None,
             test_wall_ms: None,
             overlapped_flakes: Vec::new(),
+            resumed_targets: Vec::new(),
+            resumed_steps: Vec::new(),
         }
     }
 
@@ -382,6 +392,8 @@ mod tests {
         let text = stamp.to_ron()?;
         let old = text
             .replace("overlapped_flakes: [],", "")
+            .replace("resumed_targets: [],", "")
+            .replace("resumed_steps: [],", "")
             .replace("flakes: [],", "")
             .replace("retries: [],", "");
         assert!(!old.contains("flakes"), "{old}");
@@ -399,7 +411,9 @@ mod tests {
             .replace("peak_anon_mib: None,", "")
             .replace("jobs: None,", "")
             .replace("test_wall_ms: None,", "")
-            .replace("overlapped_flakes: [],", "");
+            .replace("overlapped_flakes: [],", "")
+            .replace("resumed_targets: [],", "")
+            .replace("resumed_steps: [],", "");
         assert!(!old.contains("peak"), "{old}");
         assert_eq!(Stamp::from_ron(&old, Path::new("old.ron"))?, stamp);
         Ok(())

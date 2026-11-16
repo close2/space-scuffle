@@ -197,9 +197,96 @@ pub struct FrameLimit {
     pub screenshot_out: Option<PathBuf>,
     /// Whether a screenshot request is already pending.
     pub screenshot_pending: bool,
+    /// Real time since startup at which the frame count reached the limit while the render was
+    /// still loading; `None` until then (see [`frame_limit_verdict`]).
+    pub limit_reached_at: Option<std::time::Duration>,
 }
 
-/// System that exits the application when the target frame count is reached.
+/// Where the render stands when a run reaches its frame limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderReadiness {
+    /// Every GPU pipeline compiled and, in a live battle, the battle and its sprites loaded.
+    Ready,
+    /// Pipelines are still compiling, or the battle or its sprites are still loading.
+    Loading,
+    /// A pipeline failed to compile, or the battle failed to start.
+    Failed,
+}
+
+/// What a frame-limited run does on a frame at or past its limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameLimitVerdict {
+    /// Take the screenshot, if one is asked for, and exit successfully.
+    Finish,
+    /// Keep rendering: the render is still loading and the grace has not run out.
+    Wait,
+    /// Exit with an error: the render failed, or it was still loading when the grace ran out.
+    Fail,
+}
+
+/// How long, in real time, a run that reaches its frame limit while its render is still loading
+/// waits for it before failing.
+///
+/// Pipelines compile and assets load asynchronously, so the frame at which they are ready
+/// depends on the host's speed, not on the frame count: on `lavapipe` with four CPUs, as on CI,
+/// ten frames of `client --lab` can pass before its pipelines settle (register B-129). A frame
+/// count is therefore not a deadline; the limit counts frames, and this grace is the deadline.
+/// It is seven times the slowest readiness measured there (12.9 s). A render that never becomes
+/// ready fails here, with its own message, when the limit is reached early enough: within 30 s
+/// of the start under the GPU test harness's 120 s run limit on `radv`, within 210 s under its
+/// 300 s limit on `lavapipe` (`support/gpu_run.rs`). A run that reaches its limit later is
+/// killed by the harness first, whose message names the slowest phase; either way it fails.
+pub const FRAME_LIMIT_READINESS_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// The verdict at the frame limit for a render in state `readiness` that reached the limit
+/// `waited` ago in real time.
+#[must_use]
+pub fn frame_limit_verdict(
+    readiness: RenderReadiness,
+    waited: std::time::Duration,
+) -> FrameLimitVerdict {
+    match readiness {
+        RenderReadiness::Ready => FrameLimitVerdict::Finish,
+        RenderReadiness::Loading if waited < FRAME_LIMIT_READINESS_GRACE => FrameLimitVerdict::Wait,
+        RenderReadiness::Loading | RenderReadiness::Failed => FrameLimitVerdict::Fail,
+    }
+}
+
+/// The render's readiness from its pipeline status and, on the lab's live battle tab, the
+/// battle session and its map sprites.
+fn render_readiness(
+    render_status: Option<&runtime_battle::BattleRenderStatus>,
+    lab: Option<&LabState>,
+    map_presentation: Option<&runtime_battle::MapPresentation>,
+    images: Option<&Assets<Image>>,
+    session: Option<&battle_pipeline::session::BattleSession>,
+) -> RenderReadiness {
+    let in_battle = lab.filter(|lab| lab.current_tab == LabTab::LiveBattle);
+    if render_status.is_some_and(runtime_battle::BattleRenderStatus::failed)
+        || in_battle.is_some_and(|lab| lab.battle_failure.is_some())
+    {
+        return RenderReadiness::Failed;
+    }
+    let battle_loading = in_battle.is_some()
+        && (session.is_none_or(|session| session.world().is_none())
+            || !map_presentation.is_some_and(|presentation| {
+                images.is_some_and(|images| {
+                    presentation
+                        .sprite_images
+                        .iter()
+                        .all(|handle| images.contains(handle))
+                })
+            }));
+    if battle_loading || render_status.is_some_and(|status| !status.is_ready()) {
+        RenderReadiness::Loading
+    } else {
+        RenderReadiness::Ready
+    }
+}
+
+/// System that exits the application when the target frame count is reached and the render is
+/// ready, or with an error when the render failed or is still loading
+/// [`FRAME_LIMIT_READINESS_GRACE`] after the limit.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -217,6 +304,7 @@ pub fn frame_limit_system(
     map_presentation: Option<Res<'_, runtime_battle::MapPresentation>>,
     images: Option<Res<'_, Assets<Image>>>,
     session: Option<Res<'_, battle_pipeline::session::BattleSession>>,
+    real_time: Res<'_, Time<Real>>,
 ) {
     if let Some(max) = frame_limit.max_frames {
         frame_limit.current_frame += 1;
@@ -225,27 +313,44 @@ pub fn frame_limit_system(
                 return;
             }
 
-            let battle_failed = lab.is_some_and(|lab| {
-                lab.current_tab == LabTab::LiveBattle
-                    && (session
-                        .as_ref()
-                        .is_none_or(|session| session.world().is_none())
-                        || lab.battle_failure.is_some()
-                        || !map_presentation.as_ref().is_some_and(|presentation| {
-                            images.as_ref().is_some_and(|images| {
-                                presentation
-                                    .sprite_images
-                                    .iter()
-                                    .all(|handle| images.contains(handle))
-                            })
-                        }))
-            });
-            if battle_failed
-                || render_status.is_some_and(|status| status.failed() || !status.is_ready())
-            {
-                error!("Render verification reached its frame limit before valid GPU pipelines and battle assets were ready");
-                exit_events.send(AppExit::error());
-                return;
+            let readiness = render_readiness(
+                render_status.as_deref(),
+                lab.as_deref(),
+                map_presentation.as_deref(),
+                images.as_deref(),
+                session.as_deref(),
+            );
+            let now = real_time.elapsed();
+            let reached = *frame_limit.limit_reached_at.get_or_insert(now);
+            match frame_limit_verdict(readiness, now.saturating_sub(reached)) {
+                FrameLimitVerdict::Wait => {
+                    if now == reached {
+                        info!(
+                            "Frame limit {max} reached while GPU pipelines or battle assets are \
+                             still loading; waiting up to {} s for them",
+                            FRAME_LIMIT_READINESS_GRACE.as_secs()
+                        );
+                    }
+                    return;
+                }
+                FrameLimitVerdict::Fail => {
+                    error!(
+                        "Render verification failed at frame {}: GPU pipelines or battle assets \
+                         failed, or were not ready {} s after the frame limit {max}",
+                        frame_limit.current_frame,
+                        FRAME_LIMIT_READINESS_GRACE.as_secs()
+                    );
+                    exit_events.send(AppExit::error());
+                    return;
+                }
+                FrameLimitVerdict::Finish if now > reached => {
+                    info!(
+                        "Render ready at frame {}, {:.1} s after the frame limit {max}",
+                        frame_limit.current_frame,
+                        now.saturating_sub(reached).as_secs_f64()
+                    );
+                }
+                FrameLimitVerdict::Finish => {}
             }
 
             if let Some(screenshot_path) = frame_limit.screenshot_out.clone() {
@@ -356,6 +461,7 @@ impl ClientAppPlugin {
                 current_frame: 0,
                 screenshot_out: self.screenshot_out.clone(),
                 screenshot_pending: false,
+                limit_reached_at: None,
             })
             .add_event::<CombatVisualEvent>();
     }
@@ -877,4 +983,81 @@ fn add_headless_systems(app: &mut App) {
                 .chain(),
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_ready_render_finishes_at_the_limit_however_long_it_took() {
+        for waited in [Duration::ZERO, FRAME_LIMIT_READINESS_GRACE * 2] {
+            assert_eq!(
+                frame_limit_verdict(RenderReadiness::Ready, waited),
+                FrameLimitVerdict::Finish
+            );
+        }
+    }
+
+    #[test]
+    fn a_loading_render_waits_for_the_grace_and_then_fails() {
+        assert_eq!(
+            frame_limit_verdict(RenderReadiness::Loading, Duration::ZERO),
+            FrameLimitVerdict::Wait,
+            "reaching the frame count before the pipelines settle is not a failure (B-129)"
+        );
+        assert_eq!(
+            frame_limit_verdict(
+                RenderReadiness::Loading,
+                FRAME_LIMIT_READINESS_GRACE.saturating_sub(Duration::from_millis(1))
+            ),
+            FrameLimitVerdict::Wait
+        );
+        assert_eq!(
+            frame_limit_verdict(RenderReadiness::Loading, FRAME_LIMIT_READINESS_GRACE),
+            FrameLimitVerdict::Fail,
+            "a render that never becomes ready still fails, by its own deadline"
+        );
+    }
+
+    #[test]
+    fn a_failed_render_fails_at_once() {
+        assert_eq!(
+            frame_limit_verdict(RenderReadiness::Failed, Duration::ZERO),
+            FrameLimitVerdict::Fail
+        );
+    }
+
+    #[test]
+    fn readiness_follows_the_pipelines_and_the_live_battle() {
+        assert_eq!(
+            render_readiness(None, None, None, None, None),
+            RenderReadiness::Ready,
+            "a run with nothing to wait for is ready"
+        );
+        let pending = runtime_battle::BattleRenderStatus::default();
+        assert_eq!(
+            render_readiness(Some(&pending), None, None, None, None),
+            RenderReadiness::Loading,
+            "no pipeline has compiled yet"
+        );
+        let battle = LabState {
+            current_tab: LabTab::LiveBattle,
+            ..LabState::default()
+        };
+        assert_eq!(
+            render_readiness(None, Some(&battle), None, None, None),
+            RenderReadiness::Loading,
+            "the live battle has no session yet"
+        );
+        let failed = LabState {
+            battle_failure: Some("the scenario did not load".into()),
+            ..battle
+        };
+        assert_eq!(
+            render_readiness(None, Some(&failed), None, None, None),
+            RenderReadiness::Failed
+        );
+    }
 }

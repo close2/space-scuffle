@@ -1,6 +1,6 @@
 # Faster gates: test lanes, diff-aware catalog and lockfile selection, explicit sim→client contracts
 
-Date: 2026-11-11. Status: Done (results in §12). Base: `main` at `a0f8e7b`. Host: the shared Debian 13 VM, 16 cores, AMD Radeon
+Date: 2026-11-11. Status: Done (results in §12); Amendment 1 (`--resume`, Q0082) implemented. Base: `main` at `a0f8e7b`. Host: the shared Debian 13 VM, 16 cores, AMD Radeon
 RX 580 on `radv`; the user slice's `memory.high` is now 66 GiB (`memory.max` 70 GiB). Charter sections touched:
 §7 (the memory figures, WP8 only). §4.3, §5, §6 and the check table are not changed: `cargo gate full` stays the
 CI command word for word (C16), and C22 keeps its meaning.
@@ -619,3 +619,110 @@ evaluation's window, and the executables' sums are equal, so the load does not c
 **WP7:** the default is `--jobs 3` (`DEFAULT_JOBS`, usage text); `SPACE_SCUFFLE_GATE_JOBS` and `--jobs` override
 it, and CI stays at one lane. The tiered-gates blueprint gained Amendment 6. **WP8:** charter §7's memory figures
 are the slice's 66 GiB `memory.high`, keeping `anon` below about 56 GiB.
+
+## Amendment 1 (2026-11-16): `cargo gate <tier> --resume`, and the known flaky GPU tests (owner, Q0082 option 1)
+
+This amendment is the plan note (charter §6) for the owner's answer to
+[Q0082](../questions/open/0082-gate-flake-policy.md): keep "a flake is not green" (blueprint §3.5), cut the cost of a
+red run by resuming it, and fix the known flaky GPU tests. The setup evaluation of 2026-11-16
+(`~/scratch/setup-evaluation-2026-11-16.md`, item 3) measured the cost: on CI, 4 of the last 5 cancelled runs were red
+only because `client/gpu_validation_tests` (three times) or `client/concealment_gpu_tests` (once) flaked, and the
+repeated full run then hit the 150-minute job limit; locally, a package gate red only by one flake repeats every
+target that had passed.
+
+### A1.1 What `--resume` does
+
+- **Results are recorded on every run.** A run of any tier on a clean working tree keeps a result record,
+  `<stamp dir>/results/<tree hash>.<tier>.ron` (`crates/gate/src/resume.rs`, `ResultRecord`): the outcome, class,
+  wall and CPU time and memory peak of every target, and the command and verdict of every step. The runner rewrites
+  it after every step and every finished target (`LaneRun::on_finish`), so a red, stopped or killed run leaves what
+  it reached. A target's final outcome replaces its lane result after the reruns, so a target that failed and then
+  passed alone is recorded `Flaky`, not `Passed`. Reruns never record a pass of their own. The file sits in a
+  subdirectory so that `Stamp::read_all` never reads it as a stamp. A dirty tree records nothing: its tree hash does
+  not name what ran.
+- **`--resume` reuses passes only.** `cargo gate <tier> --resume` (every tier, `merge` too) reads the record of the
+  same tree and tier and skips every selected target recorded `Passed`, and every step that passed with the same
+  command line (the selection decides clippy's scope and the doc tests' crates, so a different command runs
+  again). A target that failed, flaked, timed out, errored, was skipped by `cargo gate stop`, or never ran runs
+  again; so does the build, which finds the executables, but only for the targets that run, and not at all when
+  every target is reused. The run prints `REUSED` for each reused step and target at the start and in the result
+  table.
+- **Refusals.** A record is reused only for the identical key: tier, tree hash of a clean working tree, `rustc -V`
+  in the repository root (which follows `rust-toolchain.toml`), and the Git blob hash of `crates/gate/suites.ron`
+  (which decides classes, thread caps and time limits), and the environment variables `RUSTFLAGS` and
+  `SPACE_SCUFFLE_GPU_TEST_DRIVER` (`KEY_ENVIRONMENT`). Another key, a missing or unreadable record is refused with
+  its reason printed, and the run tests the whole selection and starts a new record. `--resume` on a dirty tree is
+  an error; without `--resume`, a key that cannot be computed (a failing `rustc -V`, say) is printed and nothing is
+  recorded, as for a dirty tree, and the gate runs on.
+- **One tree per run.** Before every write the recorder checks that the working tree is still the clean tree the
+  run started on; an edit, commit or checkout during the run stops recording for the rest of it. The stamp is
+  refused the same way: only a run that began and ended on the same clean tree is stamped (independent review,
+  2026-11-16).
+- **The stamp.** As before, a stamp is written only when every selected target and step passed on this tree. A
+  resumed stamp lists every selected target, the reused ones with their recorded times, and names them in
+  `resumed_targets` and `resumed_steps` (new fields; older stamps read as none). A flaky target is never reused, so
+  it must pass in a later run of the tree: "a flake is not green" holds across resumes.
+- **The automatic repeat of `full`** (blueprint §3.5) stays for a run without `--resume`, which is how CI runs. A
+  resumed run is not repeated; its next attempt is another `--resume`.
+
+### A1.2 Decisions and out of scope
+
+- **D-A1.** Results, not executables, are keyed: the tree hash fixes the sources, `rustc -V` the compiler and the
+  catalog hash how each target runs. Hashing executables (the evaluation's item 3b) would add nothing a clean tree
+  and the toolchain do not already fix.
+- **D-A2.** Of the environment, only `RUSTFLAGS` and `SPACE_SCUFFLE_GPU_TEST_DRIVER` are keyed: they change
+  every binary and the GPU driver a test proves. Other variables are not; resume in the environment of the red run.
+- **D-A3.** The evaluation's option "green with a recorded flake" (item 3a, Q0082 option 2) is not taken; the owner
+  chose option 1.
+
+### A1.3 Tests
+
+- `crates/gate/src/resume.rs` unit tests: only passes are reused, a pass outside the selection is not, another tree,
+  toolchain, catalog or tier is refused, a later result replaces an earlier one, the record round-trips and is never
+  read as a stamp, and a step with another command runs again.
+- `crates/gate/tests/resume_tests.rs`: the key on a real repository; reuse across two commits of one tree; a flake
+  must pass in the resumed run before nothing is left to run; refusal of another toolchain, catalog or tree and of a
+  dirty tree; and the real `gate` binary on a two-test workspace, whose first `package` run is red only by a flake
+  and writes a record but no stamp, and whose `--resume` runs only the flaky test, reuses fmt and clippy and the
+  passed test, and stamps the tree.
+- `crates/gate/tests/lane_run_tests.rs`: the lanes report each result as it finishes, the flaky target's final
+  outcome replaces its lane result, and the resumed run runs only the failed and the flaky target.
+- `crates/gate/tests/gate_lock_tests.rs`: a stopped run writes no stamp and leaves its record.
+- `crates/gate/src/runner.rs` unit test: a tree that turns dirty or is committed during a run is neither recorded
+  nor stamped (`same_clean_tree`).
+- `crates/client/src/lib.rs` unit tests (A1.4): a ready render finishes at its frame limit, a loading one waits
+  until the grace runs out and then fails, a failed one fails at once, and readiness follows the pipelines and the
+  live battle.
+
+### A1.4 The flaky GPU tests
+
+The CI logs of the flaky runs were lost: each first attempt was red only by the flake, the full run repeated
+(blueprint §3.5), the repeat hit the 150-minute job limit, and the artifact step ran only on `failure()`, not on a
+cancelled job. Both targets were therefore run repeatedly on this server with
+`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, pinned with `taskset` to four CPUs as on CI's runner (and to two, to add
+pressure), one test thread as the catalog sets for `gpu_validation_tests`.
+
+- **B-129, `client/gpu_validation_tests`: a frame count used as a deadline.** One of three runs failed:
+  `the_selected_driver_is_the_one_that_rendered` starts `client --lab --max-frames 10`, and the client exited with
+  "Render verification reached its frame limit before valid GPU pipelines and battle assets were ready".
+  `frame_limit_system` failed a run whose render was not ready at the limit frame, but pipelines compile and assets
+  load asynchronously, so the frame at which the render is ready depends on the host's speed, not on the frame
+  count. Measured with the fixed client and `--max-frames 1` (it logs when the render becomes ready), lavapipe on
+  four CPUs without the validation layer: `--lab` ready at frames 3 to 10 (6.4 to 12.3 s, 8 runs), `--skirmish` at
+  frames 3 to 14 (9.7 to 12.9 s, 4 runs). Ten frames had no margin, and the validation layer the harness enables
+  only slows the run further. **Fix:** the frame limit counts frames, and a run that reaches it while the render is
+  still loading waits for it, up to `FRAME_LIMIT_READINESS_GRACE` (90 s of real time, `crates/client/src/lib.rs`),
+  then fails as before; a failed pipeline or a failed battle fails at once (`frame_limit_verdict`, with unit tests).
+  90 s is seven times the slowest readiness measured. A render that never becomes ready still fails: with the
+  client's own message when the limit is reached within 30 s of the start on `radv` (the harness allows 120 s) or
+  210 s on `lavapipe` (300 s), otherwise by the harness's timeout, which names the slowest phase. Not a
+  timeout raised blindly: the deadline moves from a frame count, which no host speed justifies, to a time, which the
+  measurements do. After the fix, 15 of 15 runs of the binary on lavapipe and four CPUs
+  passed (some under a load average above 150 from another user); in 2 of them `--lab --max-frames 10` reached
+  frame 10 still loading and became ready at frame 11, 0.5 s later, which the old rule failed. `radv`: 1 of 1.
+- **B-130, `client/concealment_gpu_tests`: open.** Its one CI failure (2026-11-11) took 38.0 s, a normal run's
+  length, so an assertion or the child's exit failed, not a stall. 35 lavapipe runs here (15 on four CPUs, 20 on
+  two) and one on `radv` all passed; CI's runner (Ubuntu 26.04) has Mesa 26.0.8, this server 25.0.7. No cause is
+  claimed without the failure's text. The evidence is kept from now on: the CI job uploads the gate's logs when it
+  is cancelled too (`.github/workflows/ci.yml`), and the repeat of a full run logs under `repeat/`, a resumed run
+  under `resume-<unix time>/`, instead of over the first attempt's logs (`crates/gate/src/runner.rs`).

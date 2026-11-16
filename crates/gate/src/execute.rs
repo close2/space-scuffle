@@ -427,6 +427,9 @@ pub struct LaneRun<'a> {
     pub memory: MemorySource,
     /// The stop request file `cargo gate stop` writes, if this run can be stopped.
     pub stop_file: Option<PathBuf>,
+    /// Called with each result as its target finishes, before the run ends, so the runner can
+    /// record it at once (`--resume`, plan 2026-11-11-faster-gates Amendment 1); `None` for none.
+    pub on_finish: Option<&'a (dyn Fn(&TargetResult) + Sync)>,
 }
 
 /// What a lane run produced.
@@ -671,6 +674,9 @@ pub fn run_targets(run: &LaneRun<'_>, scheduler: Scheduler) -> LaneOutcome {
                         Some(exe) => running.run(&job, lane, &exe),
                         None => not_built(&job, running.run.log_dir),
                     };
+                    if let Some(on_finish) = running.run.on_finish {
+                        on_finish(&result);
+                    }
                     let mut lanes = state.lock().unwrap_or_else(PoisonError::into_inner);
                     lanes.scheduler.finish(lane);
                     println!("{}", finish_line(&result, lanes.results.len() + 1, total));
@@ -745,6 +751,8 @@ pub fn rerun_alone(
         log_dir: &rerun_dir,
         memory: first.memory.clone(),
         stop_file: first.stop_file.clone(),
+        // A rerun only tells a flake from a failure; its pass is never a pass of record.
+        on_finish: None,
         ..*first
     };
     Ok(Some(run_targets(
