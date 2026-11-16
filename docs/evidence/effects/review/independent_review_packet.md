@@ -7,6 +7,265 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP11 round 5 (the conditions of review 4)
+
+Round 5 answers the conditions C1 and C2 of `independent_review_wp11_4.md` (ACCEPT WITH CONDITIONS) and its minor items
+E4-1 to E4-3. The decisions are plan Amendment 28. No look's data changed, so no new pictures were made; the round-4
+sheets (`wp11r4_*`) still show the looks. No simulation crate was changed. Please write your review to
+`independent_review_wp11_5.md` next to this one.
+
+**Driver note.** The server's physical GPU was back for this round: the GPU tests below ran on radv (the RX 580),
+through the test harness's lock. The round-4 sheets were made on lavapipe.
+
+| Item | Change |
+|---|---|
+| C1 (A4-1) | The struck-bubble index keeps whether a bubble is a structure's dome. Where a full sphere's outline point would lie below a dome's base (an attack with a component towards the camera), the point is put on the dome's base rim instead: its radius plus 0.12 out in plan, towards the attacker on screen, 0.1 above the base. From the far side it stays on the upper outline. Unit test `a_dome_is_struck_on_its_visible_outline_never_below_its_base`: a dome of radius 2 struck from below, across and above on screen. |
+| C2 (A4-2) | B-125 and Amendment 27 state the cross-plane case: a `Primary` weapon that hits both planes, shooting a flyer over a packed ground army, may have its hit drawn on a ground unit's glass about 2.5 units (about 50 px) low; the fix is the simulation's (the target's id, or its drawn altitude in `to[2]`). Choosing the plane from `target_flags` was not done: in this catalog they name armour attributes, not planes. |
+| E4-1 | The staged battle runs each wave twice, the second time with every impact of the wave drawn as nothing (its blank). A subject's impact must change beside the struck bubble at least twice its own blank's count plus 20, replacing the single bar of 40 and the separate planted negatives. |
+| E4-2 | The 33-pixel blank was the blow from below; Amendment 27 and the test's comment say so. |
+| E4-3 | The valgrind effect stream checks after its window that the index built from the presented bubbles finds each of them with its own radius. |
+
+Measurements (per subject: impact, its blank, the bar; the shots test; the valgrind counts):
+[wp11r5_measurements.txt](wp11r5_measurements.txt).
+
+## WP11 round 4 (the conditions of review 3)
+
+Round 4 answers the conditions C1 to C5 of `independent_review_wp11_3.md` (ACCEPT WITH CONDITIONS) and its minor items
+E3-4 and E3-5. The decisions are plan Amendment 27. This is round 4 of at most five (Q0080). Please write your review
+to `independent_review_wp11_4.md` next to this one. No simulation crate was changed; nothing was spent.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0`, so every picture and GPU test ran on lavapipe.
+
+### What changed, by condition
+
+| Item | Change |
+|---|---|
+| C1 (A3-1) | The struck-bubble index keeps each bubble's drawn centre height and whether it flies. The hit point is set on the struck bubble's glass at that height, so a shot at a flyer ends on the flyer. Over a flyer and a ground unit in plan, an `Air`-slot weapon takes the flyer, a `Ground`-slot weapon the ground unit, a `Primary` weapon the nearest in plan (ties by height). The staged battle has an anti-air weapon firing at a flyer. |
+| C2 (A3-2) | A shot's end and hit, and a blow's point, are put on the struck bubble's outline as the battle camera sees it, on the side the attack comes from on screen (at its radius plus 0.12), so they are never behind the bubble or over its face. The staged battle's last wave fires the first native instant shot and the first native blow from above and from below the target on screen. |
+| C3 (E3-1) | The battle measure masks the interior (0.8 of the radius) of every presented bubble's drawn disc (projected at its drawn centre height), the subject's and its neighbours', and measures the band of glass round it, where a hit is drawn; looks for the impact from its birth (an instant shot's impact waits for its slug), and runs planted negatives: one tracer's, one beam's and one blow's impact struck across the screen, and the blow struck from above, each replaced in a copy of the vocabulary by a card too small to draw, which must fail the impact check. The impact check counts pixels off the shot's own line (a blank beam impact otherwise still counted the beam's end) and needs 40 (a blank melee impact leaves up to 33 in the band of glass, from the attacker's rim; the blow from above draws 44). |
+| C4 (E3-2) | `DESIGN.md`: B-125 (the struck bubble found by position) and B-126 (a sustained beam is a series of fixed lines) registered; the "Effect presentation" row refreshed to Amendment 27. Amendment 26's crowd case corrected: a wrong match moves the point by the neighbour's radius from the target's own centre, not onto the neighbour. |
+| C5 (E3-3) | The index is a uniform grid (cells of 1 unit, at most 512 a side) rebuilt by counting sort into retained buffers; every bubble, a dome included, is entered in each cell its reach covers, so a query reads one cell. The valgrind effect stream now sends an instant hit and a blow at a presented bubble every frame, through the index, with an impact using `Facing` and `Behind`. |
+| E3-4 | `a_shots_muzzle_reach_counts_only_near_its_muzzle`: unseen ground between the two reaches beside the landing half leaves the shot whole; beside the muzzle it cuts the shot behind it. |
+| E3-5 | An unfound struck bubble counts as one of the default radius on the published point: the point is moved by it, so `Behind` lands on that bubble's centre. |
+| P3-1 | `claw_rake`'s rakes at 1.3, 1.45 and 1.6 struck radii (from 1.3 to 1.7). |
+
+Deferred (Amendment 27): P3-2 and P3-3. `bullet_hit`'s and `weld_sparks`' hot flashes are larger and last a little longer, so that more of
+each lies outside the struck bubble's interior; `impaler_strike` raises two spikes either side of the blow, where a
+melee attacker touching its target does not hide them.
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r4_`.
+
+| What | Files |
+|---|---|
+| The staged battle, one sheet per subject: 12 frames of 40 ms at 1:1 from two frames before the first impact's birth, then the first 6 at 2x; the file name gives the wave, the approach (`Across`, `Above`, `Below`, `AtFlyer`) and the family | `wp11r4_battle_lavapipe_w*_*.jpg` |
+| Measurements: the battle's per-subject counts against the baseline (every bubble's interior masked, the impact from its birth), the planted negatives, every look's visibility in the lab, the valgrind counts | [wp11r4_measurements.txt](wp11r4_measurements.txt) |
+
+### Points to look at
+
+- The far-side (`Above`) hits of the rifle round and the worker's cutter (the first native blow): in front of the glass, or hidden.
+- The hit on the flyer: on its glass.
+- Whether the raised hit point reads as striking the bubble rather than floating over it, in the `Across` subjects.
+
+## WP11 round 3 (the weapons' own looks, after review 2)
+
+Round 3 answers `independent_review_wp11_2.md` (REJECT on A2-1). The decisions are plan Amendment 26. This is
+round 3 of at most five (Q0080). Please write your review to `independent_review_wp11_3.md` next to this one, in the
+same form as round 2's. Nothing was spent and no texture was made. No simulation crate was changed: the struck
+bubble is found on the client.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0`, so every picture and GPU test ran on lavapipe.
+
+### What changed, by review item
+
+| Item | Change |
+|---|---|
+| A2-1 | Instant hits and blows are moved from the struck unit's centre to its bubble's near surface towards the attacker (`effects::struck`): the struck bubble is the presented bubble nearest the published hit point, within its radius plus 0.35 units; the point moves by its radius plus 0.06. A tracer's or beam's slug ends there too (P1-2). The impaler's spike stands 0.18 units in front of the struck surface. |
+| A2-2 | A new binding `Facing` (from the hit towards the attacker) and rotation `Facing`: `psi_slash` and `claw_rake` turn their arcs' middles towards the attacker, swept across the line of the blow; a new placement `Behind` centres them on the struck bubble, so the crescents (1.4 radii for the blade, three at 1.3, 1.5 and 1.7 for the claws) wrap its near side, outside the glass. |
+| A2-3 | `needle_volley`: two spines side by side (new placement `Across`, 0.24 units apart). |
+| E2-1 | A reach per end (`Effect::shot_reach`): the muzzle layers' reach near the muzzle, the flying layers' across the whole path (a riding card's stretch no longer counts as lateral reach). The beside-the-fog take adds a positive control 1.3 reaches from the fog, which must draw. |
+| E2-2, E2-3 | The staged battle pictures the units standing, unarmed, before any shot (the baseline; the units no longer appear in the sequence). Each family must change, against the baseline and outside both bubbles, at least 30 pixels round its path and target, and its impact at least 15 pixels just outside the struck bubble on the attacker's side in the four frames after it spawns. The lab visibility test binds impacts as a battle does. |
+| E2-4 | The visibility test prints the median display colour of each look's own changed `Critical` pixels, with the floor's under them. |
+| E2-5 | `an_instant_shots_impact_waits_for_its_slug` builds the slug alone and the impact alone frame by frame for every shipped instant travel, and checks that the impact draws nothing before the slug's head reaches the end. |
+| P2-1 | `cannon_hit` keeps a hot core under its breaking fireball. |
+| P2-3 | `glass_shatter`: 12 to 18 shards thrown at 4.5 to 7 units a second. |
+| P2-4 | `acid_hit`'s dark splash is broken at its edge. |
+
+Recorded, not changed (Amendment 26): P2-2 (a sustained beam is a series of fixed lines); the struck bubble found
+by position (in a tight crowd a hit may show on a neighbour's surface).
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r3_`.
+
+| What | Files |
+|---|---|
+| The staged battle, one sheet per family: 12 frames of 40 ms at 1:1 from just before the first impact, then the first 6 at 2x; waves 0 and 1 fire their own unit's weapon, waves 2 and 3 are lab families lent to a presentable shooter | `wp11r3_battle_lavapipe_w*_*.jpg` |
+| Every shipped look in the lab at the default zoom, one row per look, the whole look at three ages on the bright floor, then the dark one (impacts bound as in a battle, struck from the left) | [looks 1](wp11r3_looks_1_lavapipe.jpg), [looks 2](wp11r3_looks_2_lavapipe.jpg) |
+| Measurements: the staged battle's per-family counts against its baseline, visibility and display colours per look and floor, the shots and both beside-the-fog takes, the impact-delay frames, the Fungal and status counts, the valgrind counts | [wp11r3_measurements.txt](wp11r3_measurements.txt) |
+
+### Points to look at
+
+- Whether every impact now reads in the battle at 1:1, on the struck bubble's side facing the attacker: the rifle
+  and sniper hits, the cannon hit, the beam burns, the blade, the claws, the worker's sparks and the spike.
+- Whether the blade's crescent reads as a blow across the target, turned by the attack.
+- Whether the two needles read as two spines.
+
+## WP11 round 2 (the weapons' own looks, after review 1)
+
+Round 2 answers `independent_review_wp11_1.md` (REJECT). The decisions are plan Amendment 25. This is round 2 of at
+most five (Q0080). Please write your review to `independent_review_wp11_2.md` next to this one, in the same form as
+round 1's. Nothing was spent and no texture was made.
+
+**Driver note.** `/dev/dri` again held only a virtual `card0` for the whole round, so every picture and GPU test ran
+on lavapipe, the CI reference. No radv picture exists for this round.
+
+### What changed, by review item
+
+| Item | Change |
+|---|---|
+| A1-1, A1-2 | The rifle slug is a warm alpha body (size 0.11) under a hot core (0.06) with a muzzle flash; the cannon's muzzle breathes dark smoke (`smoke_dark`, an alpha grey); the sniper's slug is cold with a blue-white head and a fading tail, with a cold flash. |
+| A1-3 | Every particle is at least 0.06 units (2 px): `hit_sparks`, `energy_sparks`, `weld_sparks`, `claw_flecks`, `spit_spatter`, and the new `needle_chips` and `glass_burst`. `bullet_hit` holds a hot point (size 0.32) for 0.12 s, then dark dust; `needle_hit` a dark puff and chips; `weld_sparks` a hot point (size 0.28) and a falling spray; the impaler spike (size 0.55) stands 0.45 units beside the target; `acid_hit` shows a dark wet splash from its first frame; beam burns are a hot spot on a body of size 0.42. |
+| A1-4 | Every additive light stands on an alpha-blended body of its own hue (`*_body` ramps, drawn behind it); a body's intensity rises above 1 so its coverage fills its core and ends in a firm edge. Display colours are sampled in the measurements. |
+| A1-5 | Beams: a coloured body (size 0.15 to 0.16), a hot core, four pulses ridden from muzzle to target (one every 0.09 s), a muzzle glow and the burn. A beam lasts 0.46 s, longer than the Void-Ray analogue's period and its largest random delay, so a sustained attack keeps its beam on. |
+| A1-6 | `acid_spit`: a dark wet glob (size 0.2) leading a short green trail. `needle_volley`: two dark spines with a pale rim. `grenade_lob`: a dark shell with a dull orange glow. `rocket_trail`: a mid-dark grey alpha trail and a dark launch puff. |
+| A1-7 | `psi_slash`: a crescent (new `Ring` field `crescent`: the band swells from points at both ends to its full width in the middle) swept open over its first frames (`arc_curve`), a blue alpha body under its light, eroding from its tail; body and light turn as one (new rotation `Together`). `claw_rake`: three dark crescents with a pale edge, parallel, with dark flecks. |
+| A1-8 | `glass_shatter`: pale shards with dark edges, thrown out to about one and a half radii; the flash is a pale disc with a dark rim; all sized by `UnitRadius` (the dying unit's bubble radius). |
+| E1-1 | An instant shot's impact waits until its slug arrives (`weapon_look_tests::an_instant_shots_impact_waits_for_its_slug`). |
+| E1-2 | Each effect has a reach (`Effect::reach`); a shot's fog cut samples across its path out to it; the clip lifetime is recorded as a bounded leak (Amendment 25); the shot test adds a take along the camera's depth axis beside the fog edge. |
+| E1-3 | The Fungal fog case counts ground samples round the enemy's target: none unseen may change, some seen must; an overlay of the samples is in the material. |
+| E1-4 | The status battle counts its own `BubbleShatter` events: each death effect spawns exactly once per event naming it; a positive control (a death of a type no table covers) must draw legacy shards the test counts. |
+| E1-5 | `shipped_weapon_looks_can_be_seen`: every shipped `Shot` and `Point` look and the default death, at the default zoom, on both lab grounds; area changed by 32 levels at least 40 px (shot), 80 px (impact), 150 px (death), and the `Critical` layers' median contrast at least 32 levels. Printed per look. |
+| E1-6 | `DESIGN.md`: B-123 (weapons that publish no event), B-124 (a missile's impact up to half a step short, with the half-step extrapolation); the "Effect presentation" row and B-107 refreshed; B-122 now follows B-121. |
+| E1-7 | Missile slots compact in one pass; the valgrind block counts (baseline and window) are in the measurements. |
+| E1-8 | The capture's combat check counts only live `Shot`, `Point` and `Death` cards. |
+| V1-1 | `weapon_battle_gpu_tests` (new): the shipped skirmish at the default zoom; the first waves stage one presentable unit per family firing its own weapon at an unarmed target (as many a wave as the child finds open spots for: five); the later waves lend each lab family to a presentable shooter whose weapon publishes the same kind of event. Each family has a sheet: a 40 ms sequence at 1:1 and its first frames at 2x. |
+| P1-1 | `fungal_impact`'s flash, spore puffs and motes rise less and gather over the disc (the E1-3 fog check needed it: standing cards over seen ground covered pixels of the fog beyond). |
+| P1-3 | The staged battle's spots keep 3 units from resource nodes (the crystal props). |
+
+Deferred (Amendment 25): P1-2 (the slug's end on the target's surface) and P1-4. In the beside-the-fog take every
+shot draws nothing: a shot whose reach meets unseen ground along its whole path is cut whole (fail-closed).
+
+### Material
+
+All pictures on lavapipe, debug build, Xvfb 1280×720. Files start with `wp11r2_`.
+
+| What | Files |
+|---|---|
+| Every shipped look at the default zoom, one row per look: the whole look at its three sampled ages on the bright lab ground, then on the dark one (240×160 crops at 1:1) | [looks 1](wp11r2_looks_1_lavapipe.jpg), [looks 2](wp11r2_looks_2_lavapipe.jpg) |
+| The staged battle, one sheet per family: 12 frames of 40 ms at 1:1 from the first shot, then the first 6 at 2x; waves 0 and 1 fire their own unit's weapon, waves 2 and 3 are lab families lent to a presentable shooter (the measurements name each shooter) | `wp11r2_battle_lavapipe_w*_*.jpg` |
+| Fungal Growth at the fog edge, with the ground samples overlaid on the peak frame (green seen, red unseen; bright where changed) | [overlay](wp11r2_fungal_fog_overlay_lavapipe.jpg), [sequence](wp11r2_fungal_fog_lavapipe.jpg), [own target](wp11r2_fungal_own_lavapipe.jpg) |
+| Measurements: visibility per look and ground, shots and fog takes, the Fungal fog counts, the death counts and positive control, the staged battle, the valgrind counts | [wp11r2_measurements.txt](wp11r2_measurements.txt) |
+
+### Points to look at
+
+- Whether each look reads at 1:1 in the staged battle next to a real bubble, the small ones (needles, globs, sparks)
+  included, and on both grounds in the looks sheets.
+- Whether the beams read as energy carried to the target, and whether the prismatic beam stays on through a
+  sustained attack.
+- Whether the blade reads as a swept crescent and the claws as rakes, not as drawn arcs.
+- Whether colour survives on the bright ground (plasma, spores, psionic blue, prism violet).
+- Pops at the start and end of each look in the battle sequences.
+
+## WP11 round 1 (the weapons' own looks, the default death, Fungal Growth)
+
+WP11 moves every weapon look from the legacy combat cards (`vfx.rs`, `combat_fx.wgsl`) into effect definitions that
+each unit and structure names in its presentation block. It also adds a default death (`glass_shatter`, which
+replaces the legacy glass shatter) and the Fungal Growth looks left open by WP10 (F1). The decisions are plan
+Amendment 24. This is round 1 of at most five (Q0080). Please write your review to a new file next to this one,
+`independent_review_wp11_1.md`, in the same form as the WP10 reviews. Judge each family below against each of the
+seven checklist items, and check the fog rules and the engineering items. Nothing was spent and no texture was made.
+Every look is built from the existing sets.
+
+**Driver note.** The server's physical GPU had no render node for the whole of this round (`/dev/dri` held only a
+virtual `card0`; `vulkaninfo` with the radv manifest found no device), so every picture and every GPU test of this
+round ran on lavapipe, the CI reference. No radv picture exists for this round.
+
+### What the looks are meant to be (art rules: no rays, stripes, sunbursts, beams or speed lines as decoration)
+
+| Family | Looks | Meant to read as |
+|---|---|---|
+| Kinetic rounds | `gauss_tracer`, `sniper_tracer`, `cannon_tracer`; `bullet_hit`, `cannon_hit` | A muzzle flash on the shooter's bubble and a short glowing slug that crosses the gap in a few frames, never a line drawn across the whole gap; a heavy round has a broader flash, a breath of smoke and a thicker slug. Where it lands: a hot point, a few sparks and a pinch of dust (a heavy round: a small fireball and smoke). |
+| Plasma | `plasma_bolt`; `plasma_hit` | A white core drawn out by its speed inside a blue halo, flying the whole flight, with a short fading trail; a cyan bloom and cold motes where it lands. |
+| Beams | `prism_beam`, `lance_beam`; `beam_burn`, `lance_burn` | A column of energy (a soft violet or orange body and a white core whose noise flows towards the target and breaks it up), a glow where it leaves the bubble, a burning hot spot with sparks on the target. It is the weapon, so it is a beam, but it must read as energy and not as a flat line. |
+| Bio projectiles | `acid_spit`, `spore_bolt`, `needle_volley`; `acid_hit`, `needle_hit` | A dark wet glob tumbling along the flight with a glowing acid trail; a small dark glob inside a yellow-green glow; two dark chitin needles side by side. Where they land: a wet splash crown, spatter and a small stain that dries in about a second; chips and dust. |
+| Explosive | `rocket_trail`, `grenade_lob`; `rocket_hit` | A hot flame at the rocket's head with a grey smoke trail broken by its noise; a dark tumbling shell with a dull glow; a small fireball, sparks and dark smoke where it bursts. |
+| Melee | `psi_slash`, `claw_rake`, `weld_sparks`, `impaler_strike` | A blue psionic crescent swung across the target at any angle; two pale crescents raked across it with dark flecks; a hot point and falling welding sparks; a chitin spike thrust up under the target with chips and dust. |
+| Death | `glass_shatter` | The bubble's glass breaking outward in pale shards, one soft pale flash, a little dust. |
+| Fungal Growth (F1) | `fungal_missile`, `fungal_trail`, `fungal_impact`, `fungal_affliction` | A clot of dark spores in a sickly yellow-green glow flying above the ground and shedding motes; where it lands, a burst of spores, a ring racing out to the spell's search radius, rising spore clouds and a mould stain fading over the status's duration; a fungaled unit shows the slow's grey, dull look on the fungal mark. The affliction look (`fungal_affliction`, a yellow-green rim and rising motes) is defined but not shipped: the snapshot cannot tell Fungal Growth's damage over time from a storm's (B-122). |
+
+### How the shots are drawn, and the fog (Amendment 24)
+
+- A tracer's or a beam's line starts on the shooter's bubble and ends at the impact. A projectile flies from where
+  the simulation launched it to where it arrives, over its flight. Two shots along one path are two effects.
+- A shot is admitted where it lands (as every event is) and cut where the viewer stops seeing its path: a shot out of
+  the fog is drawn from the fog's edge on. A cloaked attacker's shots are seen, as in StarCraft II and as the legacy
+  cards drew them; the attacker is not.
+- A spell missile is drawn while the viewer sees the ground round it. Its impact is cut as an area of the spell's
+  radius is (WP10's rule), and is not laid where the viewer sees none of it.
+
+### Not presented in a battle, and not covered
+
+- Units without media are not presented in a battle. In the default battle (`pulse_bot`, `rhino_beetle`,
+  `welder_drone`) the battle capture shows `gauss_tracer`, `bullet_hit`, `acid_spit`, `acid_hit`, `weld_sparks` and
+  `glass_shatter`. The other presentable weapons are `railgun_crawler`, `shock_golem`, `specter_android`,
+  `psi_grey`, `vector_interceptor`, `sky_bastion`, `cloak_gunship`, `planetary_bulwark_dome` and
+  `flak_array_dome`. The plasma, beam, spore, needle, claw and impaler looks show only in the lab. The Fungal looks
+  are cast by a presentable stand-in given a copy of the ability and its block in the test world's catalog only.
+- No lightning look: no shipped weapon delivers lightning.
+- `jet_jumper`, `void_goliath` and `colossus_mech`'s air weapon publish no event the client can draw (an instant
+  weapon whose visual kind is `Projectile`), so they have no look; recorded as a simulation data question.
+- The cleave's direction, the Fungal impact's exact point (at most one tick's flight short) and per-status looks
+  (B-122: no `DamageOverTime` look ships, since the client cannot tell a storm's from Fungal Growth's) are recorded
+  in Amendment 24.
+
+### Material
+
+All pictures were made on lavapipe (see the driver note above), from a debug build under Xvfb at 1280×720. Files
+start with `wp11r1_`.
+
+| What | Files |
+|---|---|
+| Per-family sheets from the effect lab's contact sheets (`battle_capture --effect-lab`), at the battle camera's default zoom: for each look, a labelled strip of eight ages on the brightest ground and one on the darkest. The ages are those of the look's own contact sheet (0, 0.03, 0.08, 0.15, 0.3, 0.5, 0.75 and 1 of its life). Each cell is the middle half of the 1280×720 frame shown at half size, so a look appears at half its on-screen size; the full contact sheets are reproducible with `battle_capture --effect-lab <look>`. A shot runs along +x on a 6-unit line half a unit above the ground; a projectile binds a 0.6 s flight. | [kinetic](wp11r1_family_kinetic_lavapipe.jpg) (`gauss_tracer`, `bullet_hit`, `sniper_tracer`, `cannon_tracer`, `cannon_hit`); [energy](wp11r1_family_energy_lavapipe.jpg) (`plasma_bolt`, `plasma_hit`, `prism_beam`, `beam_burn`, `lance_beam`, `lance_burn`); [bio](wp11r1_family_bio_lavapipe.jpg) (`acid_spit`, `acid_hit`, `spore_bolt`, `needle_volley`, `needle_hit`); [explosive](wp11r1_family_explosive_lavapipe.jpg) (`rocket_trail`, `grenade_lob`, `rocket_hit`); [melee](wp11r1_family_melee_lavapipe.jpg) (`psi_slash`, `claw_rake`, `weld_sparks`, `impaler_strike`); [death and Fungal impact](wp11r1_family_death_lavapipe.jpg) (`glass_shatter`, `fungal_impact` bound to Fungal Growth's radius 2.25 and status 2.86 s) |
+| A battle: the default battle's combat checkpoint (`battle_capture`, the default script with a longer wall deadline for lavapipe), Pulse Bots, Rhino Beetles and Welder Drones of two sides fighting, at the battle camera's gameplay distance. It is the script's verified combat moment, not a staged scene: only a few impacts are in view in it. | [wp11r1_battle_combat_lavapipe.jpg](wp11r1_battle_combat_lavapipe.jpg) |
+| Fungal Growth (F1), from `area_link_gpu_tests.rs`'s Fungal child, every 40 ms frame from the casts, six frames a row: round the viewer's target (four enemy stand-ins; the missile flies in from the top right, lands, the ring races out and the spores rise; the victims then wear the affliction) | [own](wp11r1_fungal_own_lavapipe.jpg) |
+| The fog case: an enemy stand-in in the fog casts Fungal Growth at the edge of the viewer's sight; its missile is drawn only once it is over seen ground, and its impact is cut where the fog begins. The client draws no fog shading here, so the unseen ground looks like the seen ground; the narrow cut part of the impact is all the viewer sees of it. | [fog](wp11r1_fungal_fog_lavapipe.jpg) |
+| The whole window every 10 frames during the Fungal take | [window](wp11r1_fungal_battle_lavapipe.jpg) |
+| Measurements: every shot's path, ends, body or slug head, after-image and fog result; the Fungal counts; the status deaths; the weapon coverage report | [wp11r1_measurements.txt](wp11r1_measurements.txt) |
+
+The tests check, on lavapipe:
+
+- **Coverage** (`effect_catalog_tests.rs`). Every weapon that publishes a delivery event is named in its unit's
+  block, with the right kinds. No weapon falls back to a default, and every death has a look.
+- **Shots along their paths** (`effect_slice_gpu_tests.rs`, `shipped_shots_draw_along_their_paths`). Each shot's
+  `Critical` layers stay within their half width of the projected path. A beam's ends are within 3 px of the muzzle
+  and the impact. A slug's head, or a projectile's body, is within 3 px of where the shot has reached. Nothing is
+  drawn after the shot's end. Under the fog over the muzzle half, no pixel over the unseen half changes.
+- **Fungal Growth** (`area_link_gpu_tests.rs`). The missile holds a look in flight, each missile lands one impact,
+  the enemy's lands where the viewer sees its target, and the victims wear an affliction look exactly when the
+  vocabulary names one (none ships, B-122).
+- **No legacy card for a shipped unit.** The status battle's deaths, the control included, draw no legacy shards
+  (`status_gpu_tests.rs`). The legacy-card tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) are green
+  unchanged.
+- **Steady state.** The effect-stream window of `sync_steady_state_tests.rs` now also fires every weapon's shot
+  along its path and keeps every buffer. The valgrind window (`sync_allocation_count_tests.rs`) also holds a spell
+  missile that lands and is replaced every eight frames.
+
+### Points to look at
+
+- Whether each kinetic round reads as a round crossing the gap (a short slug), and never as a speed line or as a
+  line drawn across the gap.
+- Whether the beams read as energy (a coloured body broken into flowing pulses, a hot spot on the target) rather
+  than as a flat UI line, at the default zoom.
+- Whether the projectiles read at gameplay zoom, the small ones (needles, the spore glob, the acid glob) included.
+- Whether the melee crescents read as blows, and whether any of them looks like a drawn arc or a UI element.
+- Whether `glass_shatter` is an acceptable default death next to the accepted named deaths.
+- Fungal Growth: whether the missile reads in flight; whether the impact's ring reads as the spell's area without
+  dominating.
+- Pops: the looks start within a frame and end by eroding or fading. Check the first and last columns of each
+  strip.
+
 ## WP10 round 4 (the tether only)
 
 Round 3's review ([`independent_review_wp10_3.md`](independent_review_wp10_3.md), kept as written) accepted both areas

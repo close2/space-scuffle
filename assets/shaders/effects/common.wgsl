@@ -98,6 +98,7 @@ const FLAG_MIRROR: u32 = 1u;
 const FLAG_POLAR: u32 = 2u;
 const FLAG_ARC: u32 = 4u;
 const FLAG_DARKEN: u32 = 8u;
+const FLAG_CRESCENT: u32 = 16u;
 
 
 // Colour of `ramps` row `row` at luminance `x` (0..1), linearly interpolated between texels.

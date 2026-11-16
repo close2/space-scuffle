@@ -821,16 +821,10 @@ fn queue_distortions(
     let Some(entities) = entities else {
         return;
     };
-    if gpu.distortion_count == 0 || gpu.distortion_group.is_none() {
-        return;
-    }
     let Some((view_entity, view, msaa, _)) = views
         .iter()
         .find(|(_, _, _, prepass)| prepass.depth.is_some())
     else {
-        return;
-    };
-    let Some(phase) = phases.get_mut(&view_entity) else {
         return;
     };
     let key = EffectPipelineKey {
@@ -839,9 +833,24 @@ fn queue_distortions(
         hdr: view.hdr,
         darken: false,
     };
+    // PERFORMANCE RATIONALE:
+    // Why: A pipeline compiles on first use, and an item whose pipeline is still compiling is
+    // not drawn: asked for only once distortions existed, the session's first heat haze or
+    // shimmer went undrawn for most of a second (WP9 review 3, E3-1; the gap E2-1 closed for
+    // the card and decal pipelines).
+    // What: The distortion pipeline of the view is asked for every frame, whether or not a
+    // distortion is drawn, as `queue_effects` asks for the card and decal pipelines.
+    // Trade-off: One lookup in the specialization cache per frame.
+    let specialized = pipelines.specialize(&cache, &pipeline, key);
+    if gpu.distortion_count == 0 || gpu.distortion_group.is_none() {
+        return;
+    }
+    let Some(phase) = phases.get_mut(&view_entity) else {
+        return;
+    };
     phase.add(Transmissive3d {
         distance: f32::MAX,
-        pipeline: pipelines.specialize(&cache, &pipeline, key),
+        pipeline: specialized,
         entity: (entities.distortion, MainEntity::from(Entity::PLACEHOLDER)),
         draw_function: draw_functions.read().id::<DrawEffects>(),
         batch_range: 0..1,

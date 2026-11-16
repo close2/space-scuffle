@@ -6,7 +6,7 @@
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
     SpriteInstance, ORIENT_GROUND, ORIENT_VERTICAL, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_RIBBON,
-    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, SHAPE_RADIAL, SHAPE_FRONT, SHAPE_MEMBRANE, ramp_lookup,
+    ORIENT_RIBBON_GROUND, FLAG_MIRROR, FLAG_POLAR, FLAG_ARC, FLAG_DARKEN, FLAG_CRESCENT, SHAPE_RADIAL, SHAPE_FRONT, SHAPE_MEMBRANE, ramp_lookup,
     erosion_step, breakup_order, self_shade, noise_sample, clip_fade, soft_depth_fade,
     flipbook_sample, premultiply, card_mip_level, derivative_mip_level, darkening_factor, NOWHERE,
 }
@@ -323,6 +323,17 @@ fn texture_texel(card: SpriteInstance, uv_in: vec2<f32>, centred: vec2<f32>, rad
             let arc = arc_texel(centred, card.arc);
             mask *= arc.x;
             shading = min(shading + arc.y, 1.0);
+            if ((card.flags & FLAG_CRESCENT) != 0u) {
+                // A crescent: the band swells from nothing at the arc's two ends to its full
+                // width in its middle, its outer edge on the radius.
+                let turn = atan2(centred.y, centred.x) / TAU + 0.5;
+                let along = clamp(turn / max(card.arc, 1e-4), 0.0, 1.0);
+                let swell = sin(along * 3.14159265);
+                let inner = 1.0 - (1.0 - card.ring_inner) * swell;
+                mask *= smoothstep(inner - edge, inner + edge, radius);
+                // Densest along its spine, so the blade has an edge and a body.
+                shading = min(shading * (0.6 + 0.4 * swell), 1.0);
+            }
         }
     }
     return vec4<f32>(shading, texel.g, texel.b, mask);

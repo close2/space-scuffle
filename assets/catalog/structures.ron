@@ -132,6 +132,10 @@
             )),
             air_weapon: None,
             abilities: [],
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Ground, travel: Some("cannon_tracer"), impact: Some("cannon_hit"))],
+            ),
             veo_prompts: {
                 "Idle": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base and sloped armor, two long heavy cannon barrels mounted side by side on its top, aimed forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
                 "Constructing": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base and sloped armor, two long heavy cannon barrels mounted side by side on its top, aimed forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
@@ -408,6 +412,10 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             abilities: [],
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Air, travel: Some("rocket_trail"), impact: Some("rocket_hit"))],
+            ),
             veo_prompts: {
                 "Idle": "Flak Array Dome: a compact armored missile turret dome with a short round base, two fixed missile pods on its sides with capped tubes pointing up, a cyan scanner eye on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The scanner eye glows steadily and small status lights flicker.",
                 "Constructing": "Flak Array Dome: a compact armored missile turret dome with a short round base, two fixed missile pods on its sides with capped tubes pointing up, a cyan scanner eye on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
@@ -921,6 +929,13 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             abilities: [],
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [
+                    (weapon: Ground, travel: Some("plasma_bolt"), impact: Some("plasma_hit")),
+                    (weapon: Air, travel: Some("plasma_bolt"), impact: Some("plasma_hit")),
+                ],
+            ),
             veo_prompts: {},
         ),
         (
@@ -1495,6 +1510,10 @@
             )),
             air_weapon: None,
             abilities: [],
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Ground, impact: Some("impaler_strike"))],
+            ),
             veo_prompts: {},
         ),
         (
@@ -1553,6 +1572,10 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             abilities: [],
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            effects: (
+                weapons: [(weapon: Air, travel: Some("spore_bolt"), impact: Some("acid_hit"))],
+            ),
             veo_prompts: {},
         ),
         (

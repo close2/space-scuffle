@@ -224,14 +224,45 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     Ok(app)
 }
 
-/// Sends one splash event per frame, its centre walking over a 9 by 7 grid.
+/// Sends one splash event per frame, its centre walking over a 9 by 7 grid, and an instant hit
+/// and a blow at one of the presented bubbles in turn (WP11 review 3, E3-3: the struck-bubble
+/// index and the move onto the glass are in the counted path).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn send_splash(
     mut counter: Local<'_, u32>,
     mut events: EventWriter<'_, client::CombatVisualEvent>,
+    session: Res<'_, BattleSession>,
+    source: Res<'_, StreamSource>,
 ) {
     *counter = counter.wrapping_add(1);
     let x = f32::from(u8::try_from(*counter % 9).unwrap_or(0));
     let y = f32::from(u8::try_from(*counter % 7).unwrap_or(0));
+    let bubbles = &session.frames.presented().bubbles;
+    if !bubbles.is_empty() {
+        let index = usize::try_from(*counter).unwrap_or(0) % bubbles.len();
+        let [bx, by, _] = bubbles[index].world_pos;
+        let hit = [bx, by, 0.5];
+        events.send(client::CombatVisualEvent(
+            sim_types::snapshot::CombatEventVisual::HitscanTracer {
+                from: [bx - 3.0, by + 1.0, 0.5],
+                to: hit,
+                owner: sim_types::PlayerId(0),
+                source: source.0,
+            },
+        ));
+        events.send(client::CombatVisualEvent(
+            sim_types::snapshot::CombatEventVisual::MeleeSlashVisual {
+                pos: hit,
+                angle_rad: f32::from(u8::try_from(*counter % 8).unwrap_or(0)) * 0.785,
+                radius: 0.5,
+                owner: sim_types::PlayerId(0),
+                source: source.0,
+            },
+        ));
+    }
     events.send(client::CombatVisualEvent(
         sim_types::snapshot::CombatEventVisual::SplashVisual {
             center: [x, y, 0.0],
@@ -242,6 +273,10 @@ fn send_splash(
         },
     ));
 }
+
+/// The weapon the stream's instant hits and blows come from.
+#[derive(Resource)]
+struct StreamSource(sim_types::EffectSource);
 
 /// The vocabulary of the effect stream: the default splash draws a card, a ring, a decal, a
 /// light and a particle burst, all within 0.6 s, so at one splash per 20 ms frame about 30
@@ -274,6 +309,32 @@ const STREAM_EFFECTS: &str = r#"
     "tongue": (class: Minor, event: Link, layers: [
         (block: Ribbon(texture: "soft_disc", ramp: "red_add", scroll: 1.0), size: (scale: 0.05),
          duration: 0.1, held: true, priority: Critical),
+    ]),
+    "bolt": (class: Minor, event: Shot, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add", ride: true, stretch: 2.0),
+         size: (scale: 0.1), duration: 0.2, lasts: FlightTime, priority: Critical),
+        (block: Ribbon(texture: "solid", ramp: "red_add", shape: Radial, trail: Some(0.5)),
+         size: (scale: 0.03), duration: 0.2, lasts: FlightTime),
+    ]),
+    "spore": (class: Minor, event: Missile, impact: Some("splat"),
+        emit: Some((effect: "spore_mote", every: 0.05)), layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.2),
+         duration: 0.05, held: true, exit: 0.05, priority: Critical),
+    ]),
+    "spore_mote": (class: Ambient, event: Missile, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.05), duration: 0.3),
+    ]),
+    "hit": (class: Minor, event: Point, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "red_add"), size: (scale: 0.2), duration: 0.1,
+         priority: Critical),
+        (block: Ring(texture: "solid", ramp: "green", thickness: 0.2, rotation: Facing,
+         arc: Some((scale: 0.4))), placement: Behind(distance: (bind: UnitRadius, scale: 1.15)),
+         radius: (from: (bind: UnitRadius, scale: 1.2), to: (bind: UnitRadius, scale: 1.3)),
+         duration: 0.1),
+    ]),
+    "splat": (class: Minor, event: Area, layers: [
+        (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: AreaRadius, scale: 1.0),
+         duration: 0.5, lasts: AreaTotal, priority: Critical),
     ])
 "#;
 
@@ -288,7 +349,23 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
     use client::effects::catalog::{EffectCatalog, UnitEffectTables};
     use client::effects::runtime::EffectRuntime;
     use client::effects::systems::{build_effect_frame, spawn_effects_from_events};
-    app.add_systems(Update, send_splash.before(publish_combat_events));
+    // The instant hits and blows come from a unit's primary weapon, which the stream names.
+    let source = app
+        .world()
+        .resource::<client::CatalogResource>()
+        .0
+        .archetypes()
+        .find(|archetype| archetype.weapon.is_some())
+        .map(|archetype| sim_types::EffectSource {
+            unit_type: archetype.unit_type_id,
+            weapon: sim_types::WeaponKey {
+                slot: sim_types::WeaponSlot::Primary,
+                mode: None,
+            },
+        })
+        .ok_or("the shipped catalog has an armed unit")?;
+    app.insert_resource(StreamSource(source))
+        .add_systems(Update, send_splash.before(publish_combat_events));
     if !with_effects {
         return Ok(());
     }
@@ -308,9 +385,25 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         .archetypes()
         .map(|archetype| archetype.unit_type_id)
         .collect();
+    // Every weapon shoots the test's `bolt` along its path (plan WP11: a shot's travel).
+    let shot = |weapon| sim_core::catalog::WeaponEffects {
+        weapon,
+        mode: None,
+        launch: None,
+        travel: Some("bolt".to_owned()),
+        impact: Some("hit".to_owned()),
+        splash: Some("burst".to_owned()),
+    };
     for id in ids {
         if let Ok(archetype) = units.get_mut(id) {
-            archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+            archetype.effects = sim_core::catalog::ArchetypeEffects {
+                weapons: vec![
+                    shot(sim_types::WeaponSlot::Primary),
+                    shot(sim_types::WeaponSlot::Ground),
+                    shot(sim_types::WeaponSlot::Air),
+                ],
+                ..sim_core::catalog::ArchetypeEffects::default()
+            };
         }
     }
     let views = held_views(app, &mut units)?;
@@ -320,6 +413,7 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         .insert_resource(catalog)
         .insert_resource(views)
         .init_resource::<client::effects::areas::AreaLooks>()
+        .init_resource::<client::effects::struck::StruckBubbles>()
         .add_systems(
             Update,
             (
@@ -341,11 +435,18 @@ struct HeldViews {
     fog: client::battle_pipeline::fog::BattleFog,
     /// The tether.
     link: [sim_types::LinkView; 1],
+    /// A spell missile's ability and where it flies (plan WP11, F1): a new missile every few
+    /// frames, the previous one landing its impact.
+    missile: (sim_types::AbilitySource, sim_types::PlayerId, [f32; 3]),
 }
 
 /// Gives the first archetype with two abilities the stream vocabulary's area and tether for
 /// them, and builds an area of the first and a tether of the second between the battle's first
 /// two presented units.
+#[allow(
+    clippy::too_many_lines,
+    reason = "test setup: one area, tether and missile staged in place"
+)]
 fn held_views(
     app: &App,
     units: &mut sim_core::catalog::UnitCatalog,
@@ -355,6 +456,15 @@ fn held_views(
         .find(|archetype| archetype.abilities.len() >= 2)
         .map(|archetype| archetype.unit_type_id)
         .ok_or("the shipped catalog has a unit with two abilities")?;
+    // A second caster's first ability launches the stream vocabulary's missile.
+    let launcher = units
+        .archetypes()
+        .find(|archetype| archetype.unit_type_id != caster && !archetype.abilities.is_empty())
+        .map(|archetype| archetype.unit_type_id)
+        .ok_or("the shipped catalog has a second unit with an ability")?;
+    let missile_name = units.get(launcher)?.abilities[0].name.clone();
+    units.get_mut(launcher)?.effects.abilities =
+        std::iter::once((missile_name, "spore".to_owned())).collect();
     let archetype = units.get_mut(caster)?;
     let names: Vec<String> = archetype
         .abilities
@@ -444,6 +554,18 @@ fn held_views(
                 ability: 1,
             },
         }],
+        missile: (
+            sim_types::AbilitySource {
+                unit_type: launcher,
+                ability: 0,
+            },
+            enemy,
+            [
+                first.world_pos[0] + 3.0,
+                first.world_pos[1] + 1.0,
+                first.ground_z,
+            ],
+        ),
     })
 }
 
@@ -451,7 +573,8 @@ fn held_views(
 /// battle's `present_areas_and_links` runs on the presented snapshot.
 #[expect(
     clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
+    clippy::too_many_arguments,
+    reason = "Bevy passes system parameters by value, each a separate declared dependency"
 )]
 fn hold_area_and_link(
     views: Res<'_, HeldViews>,
@@ -461,7 +584,9 @@ fn hold_area_and_link(
     mut runtime: ResMut<'_, client::effects::runtime::EffectRuntime>,
     mut looks: ResMut<'_, client::effects::areas::AreaLooks>,
     time: Res<'_, Time<Virtual>>,
+    mut frame: Local<'_, u32>,
 ) {
+    *frame = frame.wrapping_add(1);
     let mut keep = client::effects::areas::Keep {
         catalog: &catalog,
         tables: &tables,
@@ -473,6 +598,21 @@ fn hold_area_and_link(
         &mut looks,
         (&views.area, &views.link),
         session.frames.presented().bubbles.as_slice(),
+        Some(&views.fog),
+        &mut keep,
+    );
+    // A new missile every eight frames, flying a little each frame; the previous one lands.
+    let (source, owner, [x, y, z]) = views.missile;
+    let flown = 0.1 * f32::from(u8::try_from(*frame % 8).unwrap_or(0));
+    let missile = [sim_types::SpellMissileView {
+        id: *frame / 8,
+        owner,
+        position: [x + flown, y, z],
+        source,
+    }];
+    client::effects::areas::keep_missiles(
+        &mut looks,
+        (&missile, &missile, 0.0),
         Some(&views.fog),
         &mut keep,
     );
@@ -533,22 +673,7 @@ fn run_child(variant: Variant) -> TestResult {
     let spawned_before = effects_spawned(&app);
     measured_steady_frames(&mut app, frames);
     if variant == Variant::EffectStream {
-        let held = app
-            .world()
-            .resource::<client::effects::areas::AreaLooks>()
-            .held();
-        if held != (2, 1) {
-            return Err(format!(
-                "the stream must hold two areas (one seen in part) and one tether, held {held:?}"
-            )
-            .into());
-        }
-        let spawned = effects_spawned(&app) - spawned_before;
-        if spawned < u64::from(frames) {
-            return Err(
-                format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
-            );
-        }
+        check_effect_stream(&app, frames, spawned_before)?;
     }
     let after = tick(&app);
     if !variant.is_running() {
@@ -572,6 +697,59 @@ fn run_child(variant: Variant) -> TestResult {
         .map(|bubble| bubble.entity_id);
     if let Some(id) = busy {
         return Err(format!("the running window must stay idle, but {id:?} is not").into());
+    }
+    Ok(())
+}
+
+/// The effect stream's own checks after its window: the held areas and tether, the spawns,
+/// the hits and blows, and the struck-bubble index.
+fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResult {
+    let held = app
+        .world()
+        .resource::<client::effects::areas::AreaLooks>()
+        .held();
+    if held != (2, 1) {
+        return Err(format!(
+            "the stream must hold two areas (one seen in part) and one tether, held {held:?}"
+        )
+        .into());
+    }
+    let spawned = effects_spawned(app) - spawned_before;
+    if spawned < u64::from(frames) {
+        return Err(
+            format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
+        );
+    }
+    // The instant hits and blows reached the struck-bubble path (review 3, E3-3).
+    let world = app.world();
+    let catalog = world.resource::<client::effects::catalog::EffectCatalog>();
+    let hits = catalog.effect_id("hit").map_or(0, |hit| {
+        world
+            .resource::<client::effects::runtime::EffectRuntime>()
+            .spawned_of(hit)
+    });
+    if hits < frames {
+        return Err(format!("the effect stream struck {hits} hits in {frames} frames").into());
+    }
+    // The index built from the presented bubbles finds each of them where it stands, so
+    // the hits were put on a found bubble, not on the default one (review 4, E4-3).
+    let struck = world.resource::<client::effects::struck::StruckBubbles>();
+    let bubbles = &world.resource::<BattleSession>().frames.presented().bubbles;
+    let lost = bubbles
+        .iter()
+        .filter(|bubble| {
+            let [x, y, _] = bubble.world_pos;
+            struck
+                .struck_at(x, y, 0.5, None)
+                .is_none_or(|found| (found.radius - bubble.radius).abs() > 1e-6)
+        })
+        .count();
+    if bubbles.is_empty() || lost > 0 {
+        return Err(format!(
+            "the struck-bubble index lost {lost} of {} presented bubbles",
+            bubbles.len()
+        )
+        .into());
     }
     Ok(())
 }

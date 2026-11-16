@@ -1,0 +1,50 @@
+WP11 round 5 measurements (radv, the server's physical GPU; debug build, Xvfb 1280x720).
+
+== Staged battle: each subject's impact against its own blank run (weapon_looks_fire_in_a_staged_battle)
+driver radv: 5 waves; lab families no presentable shooter carries: []
+driver radv: wave 0 none+weld_sparks (Across): impact 173 px beside the struck bubble, its blank 4 px (needs 28)
+driver radv: wave 0 gauss_tracer+bullet_hit (Across): impact 59 px beside the struck bubble, its blank 0 px (needs 20)
+driver radv: wave 0 acid_spit+acid_hit (Across): impact 98 px beside the struck bubble, its blank 2 px (needs 24)
+driver radv: wave 0 none+psi_slash (Across): impact 233 px beside the struck bubble, its blank 48 px (needs 116)
+driver radv: wave 0 cannon_tracer+cannon_hit (Across): impact 119 px beside the struck bubble, its blank 4 px (needs 28)
+driver radv: wave 1 grenade_lob+rocket_hit (Across): impact 185 px beside the struck bubble, its blank 0 px (needs 20)
+driver radv: wave 1 sniper_tracer+bullet_hit (Across): impact 61 px beside the struck bubble, its blank 0 px (needs 20)
+driver radv: wave 1 rocket_trail+rocket_hit (Across): impact 122 px beside the struck bubble, its blank 35 px (needs 90)
+driver radv: wave 2 plasma_bolt+plasma_hit (Across): impact 109 px beside the struck bubble, its blank 0 px (needs 20)
+driver radv: wave 2 prism_beam+beam_burn (Across): impact 88 px beside the struck bubble, its blank 10 px (needs 40)
+driver radv: wave 2 lance_beam+lance_burn (Across): impact 101 px beside the struck bubble, its blank 2 px (needs 24)
+driver radv: wave 2 none+claw_rake (Across): impact 117 px beside the struck bubble, its blank 27 px (needs 74)
+driver radv: wave 2 needle_volley+needle_hit (Across): impact 43 px beside the struck bubble, its blank 7 px (needs 34)
+driver radv: wave 3 spore_bolt+acid_hit (Across): impact 135 px beside the struck bubble, its blank 0 px (needs 20)
+driver radv: wave 3 none+impaler_strike (Across): impact 134 px beside the struck bubble, its blank 6 px (needs 32)
+driver radv: wave 4 gauss_tracer+bullet_hit (Above): impact 88 px beside the struck bubble, its blank 2 px (needs 24)
+driver radv: wave 4 gauss_tracer+bullet_hit (Below): impact 92 px beside the struck bubble, its blank 13 px (needs 46)
+driver radv: wave 4 none+weld_sparks (Above): impact 44 px beside the struck bubble, its blank 7 px (needs 34)
+driver radv: wave 4 none+weld_sparks (Below): impact 135 px beside the struck bubble, its blank 33 px (needs 86)
+driver radv: wave 4 gauss_tracer+bullet_hit (AtFlyer): impact 282 px beside the struck bubble, its blank 47 px (needs 114)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 522.34s
+
+== Shots along their paths and beside the fog (shipped_shots_draw_along_their_paths)
+shot acid_spit (flight 0.60 s; reach 1.22 at the muzzle, 0.40 along the path): 0.24 beside the fog 0 pixels drawn and 1.58 beside it 584, none over unseen ground; 224 Critical pixels, at most 6.2 px off the path (half width 6.8); body centred -2.00 px from where the flight reached; nothing after its end; under the fog 223 pixels on the seen half and none on the unseen one
+shot cannon_tracer (flight 0.00 s; reach 1.15 at the muzzle, 0.11 along the path): 0.21 beside the fog 0 pixels drawn and 1.50 beside it 994, none over unseen ground; 226 Critical pixels, at most 3.2 px off the path (half width 3.7); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 228 pixels on the seen half and none on the unseen one
+shot gauss_tracer (flight 0.00 s; reach 0.43 at the muzzle, 0.11 along the path): 0.21 beside the fog 0 pixels drawn and 0.56 beside it 470, none over unseen ground; 161 Critical pixels, at most 3.2 px off the path (half width 3.7); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 158 pixels on the seen half and none on the unseen one
+shot grenade_lob (flight 0.60 s; reach 0.00 at the muzzle, 0.44 along the path): 0.26 beside the fog 0 pixels drawn and 0.57 beside it 357, none over unseen ground; 94 Critical pixels, at most 6.2 px off the path (half width 7.5); body centred -0.10 px from where the flight reached; nothing after its end; under the fog 127 pixels on the seen half and none on the unseen one
+shot lance_beam (flight 0.00 s; reach 0.48 at the muzzle, 0.22 along the path): 0.21 beside the fog 0 pixels drawn and 0.62 beside it 6350, none over unseen ground; 2341 Critical pixels, at most 5.2 px off the path (half width 5.1); beam ends +0.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 2309 pixels on the seen half and none on the unseen one
+shot needle_volley (flight 0.60 s; reach 0.00 at the muzzle, 0.18 along the path): 0.21 beside the fog 0 pixels drawn and 0.45 beside it 321, none over unseen ground; 101 Critical pixels, at most 6.2 px off the path (half width 6.3); body centred -0.02 px from where the flight reached; nothing after its end; under the fog 108 pixels on the seen half and none on the unseen one
+shot plasma_bolt (flight 0.60 s; reach 0.48 at the muzzle, 0.36 along the path): 0.22 beside the fog 0 pixels drawn and 0.62 beside it 617, none over unseen ground; 186 Critical pixels, at most 6.2 px off the path (half width 6.1); body centred +0.04 px from where the flight reached; nothing after its end; under the fog 246 pixels on the seen half and none on the unseen one
+shot prism_beam (flight 0.00 s; reach 0.48 at the muzzle, 0.24 along the path): 0.21 beside the fog 0 pixels drawn and 0.62 beside it 6866, none over unseen ground; 2561 Critical pixels, at most 5.2 px off the path (half width 5.4); beam ends +0.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 2529 pixels on the seen half and none on the unseen one
+shot rocket_trail (flight 0.60 s; reach 0.84 at the muzzle, 0.44 along the path): 0.26 beside the fog 0 pixels drawn and 1.09 beside it 1733, none over unseen ground; 332 Critical pixels, at most 7.2 px off the path (half width 7.5); body centred -0.02 px from where the flight reached; nothing after its end; under the fog 606 pixels on the seen half and none on the unseen one
+shot sniper_tracer (flight 0.00 s; reach 0.43 at the muzzle, 0.14 along the path): 0.21 beside the fog 0 pixels drawn and 0.56 beside it 696, none over unseen ground; 209 Critical pixels, at most 2.8 px off the path (half width 3.1); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 219 pixels on the seen half and none on the unseen one
+shot spore_bolt (flight 0.60 s; reach 0.00 at the muzzle, 0.52 along the path): 0.31 beside the fog 0 pixels drawn and 0.68 beside it 907, none over unseen ground; 326 Critical pixels, at most 8.2 px off the path (half width 8.9); body centred +0.07 px from where the flight reached; nothing after its end; under the fog 358 pixels on the seen half and none on the unseen one
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 478.26s
+
+== Valgrind block counts and the effect stream's checks (sync_allocation_count_tests)
+blocks allocated inside measured_steady_frames after 64 warm frames:
+  LiveSync 64 frames: 0 (process 27298), 0 (process 27298); 128 frames: 0 (process 27300), 0 (process 27300); difference Some(0)
+  Baseline 64 frames: 0 (process 25543); 128 frames: 0 (process 25545); difference Some(0)
+  Planted 64 frames: 64 (process 27450); 128 frames: 128 (process 27510); difference Some(64)
+  RunningLive 64 frames: 384 (process 43126); 128 frames: 768 (process 43506); difference Some(384)
+  RunningBaseline 64 frames: 384 (process 41718); 128 frames: 768 (process 42102); difference Some(384)
+  EffectStream 64 frames: 0 (process 30683); 128 frames: 0 (process 30683); difference Some(0)
+  EffectBaseline 64 frames: 0 (process 27363); 128 frames: 0 (process 27361); difference Some(0)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 231.98s

@@ -1,0 +1,114 @@
+WP11 round 2 measurements (lavapipe, debug build, Xvfb 1280x720).
+
+== E1-5 visibility (shipped_weapon_looks_can_be_seen)
+look acid_hit on lavapipe: bright: 724 px seen (least 80), Critical median contrast 61 levels over 860 px; dark: 658 px seen (least 80), Critical median contrast 54 levels over 826 px;
+look acid_spit on lavapipe: bright: 214 px seen (least 40), Critical median contrast 80 levels over 243 px; dark: 201 px seen (least 40), Critical median contrast 75 levels over 238 px;
+look beam_burn on lavapipe: bright: 505 px seen (least 80), Critical median contrast 55 levels over 688 px; dark: 484 px seen (least 80), Critical median contrast 59 levels over 677 px;
+look bullet_hit on lavapipe: bright: 283 px seen (least 80), Critical median contrast 41 levels over 479 px; dark: 422 px seen (least 80), Critical median contrast 66 levels over 534 px;
+look cannon_hit on lavapipe: bright: 563 px seen (least 80), Critical median contrast 33 levels over 950 px; dark: 754 px seen (least 80), Critical median contrast 49 levels over 1105 px;
+look cannon_tracer on lavapipe: bright: 441 px seen (least 40), Critical median contrast 67 levels over 235 px; dark: 626 px seen (least 40), Critical median contrast 128 levels over 255 px;
+look claw_rake on lavapipe: bright: 189 px seen (least 80), Critical median contrast 85 levels over 288 px; dark: 243 px seen (least 80), Critical median contrast 67 levels over 279 px;
+look gauss_tracer on lavapipe: bright: 194 px seen (least 40), Critical median contrast 67 levels over 165 px; dark: 240 px seen (least 40), Critical median contrast 130 levels over 178 px;
+look glass_shatter on lavapipe: bright: 539 px seen (least 150), Critical median contrast 38 levels over 912 px; dark: 548 px seen (least 150), Critical median contrast 34 levels over 836 px;
+look grenade_lob on lavapipe: bright: 105 px seen (least 40), Critical median contrast 41 levels over 129 px; dark: 122 px seen (least 40), Critical median contrast 43 levels over 180 px;
+look impaler_strike on lavapipe: bright: 155 px seen (least 80), Critical median contrast 90 levels over 118 px; dark: 102 px seen (least 80), Critical median contrast 78 levels over 116 px;
+look lance_beam on lavapipe: bright: 2281 px seen (least 40), Critical median contrast 69 levels over 2552 px; dark: 2501 px seen (least 40), Critical median contrast 131 levels over 2561 px;
+look lance_burn on lavapipe: bright: 501 px seen (least 80), Critical median contrast 58 levels over 685 px; dark: 636 px seen (least 80), Critical median contrast 91 levels over 741 px;
+look needle_hit on lavapipe: bright: 378 px seen (least 80), Critical median contrast 52 levels over 269 px; dark: 248 px seen (least 80), Critical median contrast 47 levels over 268 px;
+look needle_volley on lavapipe: bright: 116 px seen (least 40), Critical median contrast 90 levels over 117 px; dark: 162 px seen (least 40), Critical median contrast 84 levels over 116 px;
+look plasma_bolt on lavapipe: bright: 217 px seen (least 40), Critical median contrast 64 levels over 206 px; dark: 202 px seen (least 40), Critical median contrast 55 levels over 201 px;
+look plasma_hit on lavapipe: bright: 694 px seen (least 80), Critical median contrast 40 levels over 1157 px; dark: 701 px seen (least 80), Critical median contrast 45 levels over 1125 px;
+look prism_beam on lavapipe: bright: 2558 px seen (least 40), Critical median contrast 77 levels over 2570 px; dark: 2464 px seen (least 40), Critical median contrast 98 levels over 2569 px;
+look psi_slash on lavapipe: bright: 228 px seen (least 80), Critical median contrast 42 levels over 249 px; dark: 238 px seen (least 80), Critical median contrast 54 levels over 260 px;
+look rocket_hit on lavapipe: bright: 974 px seen (least 80), Critical median contrast 34 levels over 1469 px; dark: 1266 px seen (least 80), Critical median contrast 61 levels over 1639 px;
+look rocket_trail on lavapipe: bright: 568 px seen (least 40), Critical median contrast 52 levels over 371 px; dark: 399 px seen (least 40), Critical median contrast 83 levels over 404 px;
+look sniper_tracer on lavapipe: bright: 257 px seen (least 40), Critical median contrast 83 levels over 218 px; dark: 273 px seen (least 40), Critical median contrast 109 levels over 219 px;
+look spore_bolt on lavapipe: bright: 295 px seen (least 40), Critical median contrast 53 levels over 365 px; dark: 275 px seen (least 40), Critical median contrast 47 levels over 358 px;
+look weld_sparks on lavapipe: bright: 217 px seen (least 80), Critical median contrast 43 levels over 354 px; dark: 315 px seen (least 80), Critical median contrast 37 levels over 403 px;
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 538.81s
+
+== Shots along their paths and beside the fog (shipped_shots_draw_along_their_paths)
+shot acid_spit (flight 0.60 s; reach 1.22): beside the fog 0 pixels drawn, none over unseen ground; 225 Critical pixels, at most 6.2 px off the path (half width 6.8); body centred -2.03 px from where the flight reached; nothing after its end; under the fog 223 pixels on the seen half and none on the unseen one
+shot cannon_tracer (flight 0.00 s; reach 1.15): beside the fog 0 pixels drawn, none over unseen ground; 226 Critical pixels, at most 3.2 px off the path (half width 3.7); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 228 pixels on the seen half and none on the unseen one
+shot gauss_tracer (flight 0.00 s; reach 0.43): beside the fog 0 pixels drawn, none over unseen ground; 161 Critical pixels, at most 3.2 px off the path (half width 3.7); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 158 pixels on the seen half and none on the unseen one
+shot grenade_lob (flight 0.60 s; reach 0.44): beside the fog 0 pixels drawn, none over unseen ground; 94 Critical pixels, at most 6.2 px off the path (half width 7.5); body centred -0.10 px from where the flight reached; nothing after its end; under the fog 126 pixels on the seen half and none on the unseen one
+shot lance_beam (flight 0.00 s; reach 0.48): beside the fog 0 pixels drawn, none over unseen ground; 2341 Critical pixels, at most 5.2 px off the path (half width 5.1); beam ends +0.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 2309 pixels on the seen half and none on the unseen one
+shot needle_volley (flight 0.60 s; reach 0.96): beside the fog 0 pixels drawn, none over unseen ground; 106 Critical pixels, at most 4.8 px off the path (half width 7.5); body centred +1.49 px from where the flight reached; nothing after its end; under the fog 142 pixels on the seen half and none on the unseen one
+shot plasma_bolt (flight 0.60 s; reach 0.58): beside the fog 0 pixels drawn, none over unseen ground; 187 Critical pixels, at most 6.2 px off the path (half width 6.1); body centred -0.01 px from where the flight reached; nothing after its end; under the fog 246 pixels on the seen half and none on the unseen one
+shot prism_beam (flight 0.00 s; reach 0.48): beside the fog 0 pixels drawn, none over unseen ground; 2561 Critical pixels, at most 5.2 px off the path (half width 5.4); beam ends +0.35 px and -0.35 px from the muzzle and the impact; nothing after its end; under the fog 2530 pixels on the seen half and none on the unseen one
+shot rocket_trail (flight 0.60 s; reach 0.88): beside the fog 0 pixels drawn, none over unseen ground; 332 Critical pixels, at most 7.2 px off the path (half width 7.5); body centred -0.02 px from where the flight reached; nothing after its end; under the fog 607 pixels on the seen half and none on the unseen one
+shot sniper_tracer (flight 0.00 s; reach 0.43): beside the fog 0 pixels drawn, none over unseen ground; 209 Critical pixels, at most 2.8 px off the path (half width 3.1); slug head -0.50 px from where the shot reached; nothing after its end; under the fog 219 pixels on the seen half and none on the unseen one
+shot spore_bolt (flight 0.60 s; reach 0.73): beside the fog 0 pixels drawn, none over unseen ground; 326 Critical pixels, at most 8.2 px off the path (half width 8.9); body centred +0.09 px from where the flight reached; nothing after its end; under the fog 358 pixels on the seen half and none on the unseen one
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 299.52s
+
+== Fungal Growth (fungal_growth_flies_lands_and_afflicts)
+driver lavapipe: Fungal Growth: missile looks held on 22 of 91 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 0; fog edge Some([18.884506, 7.2621036])
+driver lavapipe: Fungal Growth at the fog edge: at most 397 of 619 seen and 0 of 357              unseen ground samples changed against the first frame (most seen on frame 10)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 65.68s
+
+== Status battle deaths (status_looks_follow_their_statuses_and_deaths_replace_the_shatter)
+driver lavapipe: dying unit 0 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 1 (vehicle_wreck) had at most 0 legacy shards near it
+driver lavapipe: dying unit 2 (bio_burst) had at most 0 legacy shards near it
+driver lavapipe: dying unit 3 (glass_shatter) had at most 0 legacy shards near it
+driver lavapipe: bio_burst spawned 1 times from the kill to the end; 1 BubbleShatter events named it (1 staged deaths)
+driver lavapipe: glass_shatter spawned 2 times from the kill to the end; 2 BubbleShatter events named it (1 staged deaths)
+driver lavapipe: vehicle_wreck spawned 2 times from the kill to the end; 2 BubbleShatter events named it (2 staged deaths)
+driver lavapipe: the positive control drew 16 legacy shards
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 67.80s
+
+== Staged battle (weapon_looks_fire_in_a_staged_battle)
+driver lavapipe: 4 waves; lab families no presentable shooter carries: []
+driver lavapipe: wave 0 none+weld_sparks on welder_drone (its own): travel spawned 0, impact spawned 2, at most 3416 px changed by 32 levels over 50 frames
+driver lavapipe: wave 0 gauss_tracer+bullet_hit on pulse_bot (its own): travel spawned 4, impact spawned 4, at most 5441 px changed by 32 levels over 50 frames
+driver lavapipe: wave 0 acid_spit+acid_hit on rhino_beetle (its own): travel spawned 2, impact spawned 2, at most 6304 px changed by 32 levels over 50 frames
+driver lavapipe: wave 0 none+psi_slash on psi_grey (its own): travel spawned 0, impact spawned 6, at most 4993 px changed by 32 levels over 50 frames
+driver lavapipe: wave 1 cannon_tracer+cannon_hit on railgun_crawler (its own): travel spawned 3, impact spawned 3, at most 6054 px changed by 32 levels over 50 frames
+driver lavapipe: wave 1 grenade_lob+rocket_hit on shock_golem (its own): travel spawned 2, impact spawned 7, at most 7406 px changed by 32 levels over 50 frames
+driver lavapipe: wave 1 sniper_tracer+bullet_hit on specter_android (its own): travel spawned 2, impact spawned 2, at most 9847 px changed by 32 levels over 50 frames
+driver lavapipe: wave 1 rocket_trail+rocket_hit on cloak_gunship (its own): travel spawned 5, impact spawned 7, at most 8392 px changed by 32 levels over 50 frames
+driver lavapipe: wave 2 plasma_bolt+plasma_hit on rhino_beetle (lent): travel spawned 2, impact spawned 2, at most 4125 px changed by 32 levels over 50 frames
+driver lavapipe: wave 2 prism_beam+beam_burn on pulse_bot (lent): travel spawned 4, impact spawned 4, at most 7661 px changed by 32 levels over 50 frames
+driver lavapipe: wave 2 lance_beam+lance_burn on railgun_crawler (lent): travel spawned 3, impact spawned 3, at most 7975 px changed by 32 levels over 50 frames
+driver lavapipe: wave 2 none+claw_rake on welder_drone (lent): travel spawned 0, impact spawned 2, at most 6061 px changed by 32 levels over 50 frames
+driver lavapipe: wave 3 needle_volley+needle_hit on rhino_beetle (lent): travel spawned 2, impact spawned 2, at most 4320 px changed by 32 levels over 50 frames
+driver lavapipe: wave 3 spore_bolt+acid_hit on shock_golem (lent): travel spawned 2, impact spawned 2, at most 6450 px changed by 32 levels over 50 frames
+driver lavapipe: wave 3 none+impaler_strike on welder_drone (lent): travel spawned 0, impact spawned 2, at most 4543 px changed by 32 levels over 50 frames
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 327.72s
+
+== Valgrind block counts (sync_allocation_count_tests)
+blocks allocated inside measured_steady_frames after 64 warm frames:
+  LiveSync 64 frames: 0 (process 27302), 0 (process 27302); 128 frames: 0 (process 27300), 0 (process 27300); difference Some(0)
+  Baseline 64 frames: 0 (process 25543); 128 frames: 0 (process 25543); difference Some(0)
+  Planted 64 frames: 64 (process 27448); 128 frames: 128 (process 27512); difference Some(64)
+  RunningLive 64 frames: 384 (process 43126); 128 frames: 768 (process 43508); difference Some(384)
+  RunningBaseline 64 frames: 384 (process 41718); 128 frames: 768 (process 42102); difference Some(384)
+  EffectStream 64 frames: 0 (process 30361); 128 frames: 0 (process 30357); difference Some(0)
+  EffectBaseline 64 frames: 0 (process 27354); 128 frames: 0 (process 27352); difference Some(0)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 357.43s
+
+== A1-4 display colours: sRGB at the look's anchor (window centre) at its middle sampled age, look over bare floor
+acid_hit: bright: srgb(83,100,73) over srgb(168,158,149); dark: srgb(53,96,70) over srgb(99,146,144)
+acid_spit: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+beam_burn: bright: srgb(152,117,187) over srgb(168,158,149); dark: srgb(121,109,185) over srgb(99,146,144)
+bullet_hit: bright: srgb(177,148,133) over srgb(168,158,149); dark: srgb(134,138,129) over srgb(99,146,144)
+cannon_hit: bright: srgb(231,183,150) over srgb(168,158,149); dark: srgb(197,174,146) over srgb(99,146,144)
+cannon_tracer: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+claw_rake: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+gauss_tracer: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+glass_shatter: bright: srgb(113,115,116) over srgb(168,158,149); dark: srgb(89,111,115) over srgb(99,146,144)
+grenade_lob: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+impaler_strike: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+lance_beam: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+lance_burn: bright: srgb(199,128,107) over srgb(168,158,149); dark: srgb(179,121,103) over srgb(99,146,144)
+needle_hit: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+needle_volley: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+plasma_bolt: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+plasma_hit: bright: srgb(111,145,219) over srgb(168,158,149); dark: srgb(71,140,218) over srgb(99,146,144)
+prism_beam: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+psi_slash: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+rocket_hit: bright: srgb(255,215,126) over srgb(168,158,149); dark: srgb(255,213,124) over srgb(99,146,144)
+rocket_trail: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+sniper_tracer: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+spore_bolt: bright: srgb(168,158,149) over srgb(168,158,149); dark: srgb(99,146,144) over srgb(99,146,144)
+weld_sparks: bright: srgb(169,156,146) over srgb(168,158,149); dark: srgb(106,144,141) over srgb(99,146,144)

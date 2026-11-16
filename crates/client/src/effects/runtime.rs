@@ -43,9 +43,10 @@ use super::catalog::{
     ElementRef, Layer, Pool, RibbonLook,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_DARKEN, FLAG_MIRROR, FLAG_POLAR,
-    NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON, ORIENT_RIBBON_GROUND, ORIENT_STRETCHED,
-    ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_MEMBRANE, SHAPE_RADIAL, SHAPE_TEXTURE,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_CRESCENT, FLAG_DARKEN,
+    FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON,
+    ORIENT_RIBBON_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT,
+    SHAPE_MEMBRANE, SHAPE_RADIAL, SHAPE_TEXTURE,
 };
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
@@ -285,6 +286,7 @@ impl EffectRuntime {
         let effect = catalog.effect(request.effect)?;
         let birth = now + f64::from(request.delay);
         let line_delay = max_line_delay(&effect.layers, request.line);
+        let lifetime = one_shot_lifetime(effect, &request.bound);
         let spans = effect_spans(effect, request);
         // A newborn effect is never the one stripped: over its class cap, the oldest burning
         // effect of its class gives its detail up (Amendment 7).
@@ -297,7 +299,7 @@ impl EffectRuntime {
             effect: request.effect,
             class: effect.class,
             birth,
-            end: birth + f64::from(effect.lifetime + line_delay),
+            end: birth + f64::from(lifetime + line_delay),
             anchor: request.anchor,
             bound: request.bound,
             line: request.line,
@@ -488,7 +490,13 @@ impl EffectRuntime {
         line: WorldLine,
         now: f64,
     ) -> bool {
-        let Some(layers) = catalog.effect(effect).map(|effect| &effect.layers) else {
+        // Only a splash line's searches join one effect: two shots along one path (a unit
+        // firing twice at a target that stands still) are two shots (plan WP11).
+        let Some(layers) = catalog
+            .effect(effect)
+            .filter(|effect| effect.event == super::catalog::schema::EventKind::Line)
+            .map(|effect| &effect.layers)
+        else {
             return false;
         };
         for slot in 0..self.pool.capacity() as usize {
@@ -961,9 +969,11 @@ impl EffectRuntime {
             }),
             _ => size,
         };
-        // A ribbon is as large on screen as its line is long, however thin it is.
+        // A ribbon is as large on screen as its line is long, however thin it is; a card drawn
+        // out along its line (a needle in flight) as large as its length.
         let lod_extent = match (&layer.block, context.instance.line) {
             (Block::Ribbon(_), Some(line)) => extent.max(0.5 * line.from.distance(line.to)),
+            (Block::Sprite(look), Some(_)) => extent * look.stretch,
             _ => extent,
         };
         if let Some(camera) = context.camera {
@@ -987,15 +997,7 @@ impl EffectRuntime {
                 seed,
                 RingShape::NONE,
             ),
-            Block::Ring {
-                look,
-                thickness,
-                height,
-                edge_noise,
-                arc,
-                waver,
-                darken,
-            } => self.push_card(
+            Block::Ring { look, height, .. } => self.push_card(
                 context,
                 look,
                 position + Vec3::Y * *height,
@@ -1004,16 +1006,7 @@ impl EffectRuntime {
                 life,
                 intensity,
                 seed,
-                RingShape {
-                    inner: 1.0
-                        - (thickness * catalog.sample(layer.size_curve, life, 1.0))
-                            .clamp(0.01, 0.99),
-                    edge_noise: *edge_noise,
-                    arc: arc
-                        .map(|arc| resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)),
-                    waver: *waver,
-                    darken: *darken,
-                },
+                RingShape::of(context, life),
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
@@ -1065,7 +1058,7 @@ impl EffectRuntime {
         }
         let catalog = context.catalog;
         let (layer_a, layer_b, frame_mix) = card_frame(catalog, look, age, life, seed);
-        let (rotation, mut flags) = roll_and_mirror(look.rotation, seed);
+        let (rotation, mut flags) = card_roll(look.rotation, seed, context.instance, ring.arc_full);
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
         }
@@ -1075,6 +1068,12 @@ impl EffectRuntime {
         }
         let line = context.instance.line;
         let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
+        // A riding card is carried along its line with its life (a projectile, plan WP11).
+        let position = match line {
+            Some(line) if look.ride => position + (line.to - line.from) * life,
+            _ => position,
+        };
+        let stretched = look.stretch > 1.0 && line_axis != Vec3::ZERO;
         let standing = matches!(look.orient, Orient::VerticalAlongLine | Orient::Upright);
         // A standing card clipped to its line stands whole inside it (review round 5).
         let (position, extent) = match line {
@@ -1089,6 +1088,7 @@ impl EffectRuntime {
         let outward = spread_offset(look.spread, position - context.instance.anchor, life, seed);
         let center = position + Vec3::Y * extent * lift + outward + look.drift * age;
         let (orient, axis) = match look.orient {
+            Orient::Camera if stretched => (ORIENT_STRETCHED, line_axis),
             Orient::Ground => (ORIENT_GROUND, Vec3::ZERO),
             Orient::Upright => (ORIENT_UPRIGHT, Vec3::ZERO),
             Orient::VerticalAlongLine if line_axis != Vec3::ZERO => (ORIENT_VERTICAL, line_axis),
@@ -1115,7 +1115,13 @@ impl EffectRuntime {
             center: center.to_array(),
             half_size: extent,
             axis: axis.to_array(),
-            stretch: if standing { lift } else { 1.0 },
+            stretch: if standing {
+                lift
+            } else if stretched {
+                look.stretch
+            } else {
+                1.0
+            },
             layer_a,
             layer_b,
             frame_mix,
@@ -1127,10 +1133,10 @@ impl EffectRuntime {
             rotation: rotation + lean,
             orient,
             ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-            flags: if ring.arc.is_some() {
-                flags | FLAG_ARC
-            } else {
-                flags
+            flags: match (ring.arc.is_some(), ring.crescent) {
+                (true, true) => flags | FLAG_ARC | FLAG_CRESCENT,
+                (true, false) => flags | FLAG_ARC,
+                _ => flags,
             },
             arc: ring.arc.unwrap_or(0.0),
             warp: ring.waver,
@@ -1207,7 +1213,7 @@ impl EffectRuntime {
         }
         let length = line.from.distance(line.to);
         let direction = (line.to - line.from).normalize_or_zero();
-        let (tail, head) = ribbon_span(look, length, age);
+        let (tail, head) = ribbon_span(look, length, age, life);
         if head - tail <= RIBBON_MIN_LENGTH || direction == Vec3::ZERO || extent <= 0.0 {
             return Written::Skipped;
         }
@@ -1441,6 +1447,11 @@ struct RingShape {
     edge_noise: f32,
     /// Share of the turn an arc draws, in [0, 1]; `None` for the whole ring.
     arc: Option<f32>,
+    /// The arc's share without its curve (its full sweep), which a `Facing` roll centres; 0
+    /// without an arc.
+    arc_full: f32,
+    /// Whether the arc's band tapers to points at both ends.
+    crescent: bool,
     /// How much the band wavers round the turn; 0 for an even band.
     waver: f32,
     /// Whether the ring darkens the ground under it.
@@ -1448,11 +1459,50 @@ struct RingShape {
 }
 
 impl RingShape {
+    /// The ring mask of `context`'s layer at `life` (its share of its span, [0, 1]): its band
+    /// thinned by its size curve, its arc swept by its arc curve. [`Self::NONE`] for a layer
+    /// that is not a ring.
+    fn of(context: &LayerContext<'_>, life: f32) -> Self {
+        let catalog = context.catalog;
+        let Block::Ring {
+            thickness,
+            edge_noise,
+            arc,
+            arc_curve,
+            crescent,
+            waver,
+            darken,
+            ..
+        } = &context.layer.block
+        else {
+            return Self::NONE;
+        };
+        Self {
+            inner: 1.0
+                - (thickness * catalog.sample(context.layer.size_curve, life, 1.0))
+                    .clamp(0.01, 0.99),
+            edge_noise: *edge_noise,
+            arc: arc.map(|arc| {
+                (resolve_value(&arc, &context.instance.bound)
+                    * catalog.sample(*arc_curve, life, 1.0))
+                .clamp(0.0, 1.0)
+            }),
+            arc_full: arc.map_or(0.0, |arc| {
+                resolve_value(&arc, &context.instance.bound).clamp(0.0, 1.0)
+            }),
+            crescent: *crescent,
+            waver: *waver,
+            darken: *darken,
+        }
+    }
+
     /// A plain card.
     const NONE: Self = Self {
         inner: 0.0,
         edge_noise: 0.0,
         arc: None,
+        arc_full: 0.0,
+        crescent: false,
         waver: 0.0,
         darken: false,
     };
@@ -1529,7 +1579,7 @@ fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f
                     .is_none_or(|released| now - released <= f64::from(layer.exit));
             }
             age <= layer.start
-                + layer.duration
+                + layer.span(&instance.bound)
                 + max_line_delay(std::slice::from_ref(*layer), instance.line)
         })
         .map(|layer| {
@@ -1567,7 +1617,7 @@ fn effect_spans(effect: &super::catalog::Effect, request: &SpawnRequest) -> Span
     };
     for layer in &effect.layers {
         let end = layer.start
-            + layer.duration
+            + layer.span(&request.bound)
             + max_line_delay(std::slice::from_ref(layer), request.line);
         match layer.block.pool() {
             Pool::Decals => {
@@ -1625,13 +1675,14 @@ pub fn layer_clock(
         return None;
     }
     let held = layer.held && instance.held;
+    let duration = layer.span(&instance.bound);
     if !held {
-        if age > layer.duration {
+        if age > duration {
             return None;
         }
         return Some(LayerClock {
             age,
-            life: (age / layer.duration).clamp(0.0, 1.0),
+            life: (age / duration).clamp(0.0, 1.0),
             exit: 0.0,
         });
     }
@@ -1648,9 +1699,25 @@ pub fn layer_clock(
     }
     Some(LayerClock {
         age,
-        life: (age / layer.duration).clamp(0.0, 1.0),
+        life: (age / duration).clamp(0.0, 1.0),
         exit,
     })
+}
+
+/// Seconds from the event until the last layer of `effect` that is not held ends, for an
+/// effect bound to `bound`: [`super::catalog::Effect::lifetime`], except that a layer lasting
+/// a bound span lasts it (plan WP11), so a projectile's effect lives as long as it flies.
+#[must_use]
+pub fn one_shot_lifetime(effect: &super::catalog::Effect, bound: &BoundValues) -> f32 {
+    if !effect.layers.iter().any(|layer| layer.lasts.is_some()) {
+        return effect.lifetime;
+    }
+    effect
+        .layers
+        .iter()
+        .filter(|layer| !layer.held)
+        .map(|layer| layer.start + layer.span(bound))
+        .fold(0.0_f32, f32::max)
 }
 
 /// The factor `layer`'s `strength` puts on its intensity for the values `bound`:
@@ -1740,13 +1807,19 @@ const LINE_MERGE_SLACK: f32 = 0.1;
 /// tail (or the tail catching the head), not yet or no longer a strip.
 const RIBBON_MIN_LENGTH: f32 = 1e-3;
 
-/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer,
-/// as distances from the line's start: `(tail, head)`. The head races out at the look's
-/// `travel` (the whole line at once without one); after `tail_delay` the tail follows at the
-/// same speed, so the strip becomes a segment sweeping along the line and then shrinks into
-/// its end. Without travel the tail stays at the start.
+/// The span of a ribbon along a line of `length` world units at `age` seconds of its layer
+/// (`life` of its duration, 0..1), as distances from the line's start: `(tail, head)`. The
+/// head races out at the look's `travel` (the whole line at once without one); after
+/// `tail_delay` the tail follows at the same speed, so the strip becomes a segment sweeping
+/// along the line and then shrinks into its end. Without travel the tail stays at the start.
+/// A strip with a `trail` rides the line instead: its head at `life` of the line and its tail
+/// `trail` behind it, never before the start (plan WP11).
 #[must_use]
-pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32) -> (f32, f32) {
+pub fn ribbon_span(look: &RibbonLook, length: f32, age: f32, life: f32) -> (f32, f32) {
+    if let Some(trail) = look.trail {
+        let head = length * life.clamp(0.0, 1.0);
+        return ((head - trail).max(0.0), head);
+    }
     if look.travel <= 0.0 {
         return (0.0, length);
     }
@@ -1956,6 +2029,41 @@ impl Surface {
     }
 }
 
+/// The roll and mirror bit of a card under `rotation`: drawn from the card's hash `seed`; for
+/// [`RotationDef::Together`], from its effect instance's hash, so every card of the instance so
+/// rolled turns as one; for [`RotationDef::Facing`], turned so that the middle of an arc of
+/// `arc` turns (0 for a card's local `-x`) points along the instance's bound `Facing`.
+fn card_roll(rotation: RotationDef, seed: u32, instance: &EffectInstance, arc: f32) -> (f32, u32) {
+    match rotation {
+        RotationDef::Together => roll_and_mirror(rotation, instance.seed),
+        RotationDef::Facing => {
+            let (_, mirror) = roll_and_mirror(RotationDef::Random, instance.seed);
+            (
+                facing_roll(instance.bound.get(Binding::Facing), arc, mirror != 0),
+                mirror,
+            )
+        }
+        _ => roll_and_mirror(rotation, seed),
+    }
+}
+
+/// The roll that points the middle of an arc of `arc` turns at ground direction `facing`
+/// (radians, Bevy `atan2(z, x)`) on a ground card, mirrored or not.
+///
+/// A ground card's texel at polar angle `phi` (its arc runs from `phi = -pi` over `arc` turns)
+/// lies, rolled by `theta`, at ground direction `phi - theta`; mirrored, at `pi - phi - theta`.
+/// The arc's middle is at `phi = arc * pi - pi`.
+#[must_use]
+pub fn facing_roll(facing: f32, arc: f32, mirrored: bool) -> f32 {
+    let middle = arc * std::f32::consts::PI - std::f32::consts::PI;
+    let roll = if mirrored {
+        std::f32::consts::PI - middle - facing
+    } else {
+        middle - facing
+    };
+    roll.rem_euclid(std::f32::consts::TAU)
+}
+
 /// The roll in radians and the `FLAG_*` mirror bit of a card under `rotation`, drawn from
 /// the card's hash `seed`.
 #[must_use]
@@ -1967,7 +2075,7 @@ pub fn roll_and_mirror(rotation: RotationDef, seed: u32) -> (f32, u32) {
     };
     match rotation {
         RotationDef::Fixed => (0.0, 0),
-        RotationDef::Random => (
+        RotationDef::Random | RotationDef::Together | RotationDef::Facing => (
             std::f32::consts::TAU * unit_float(hash3(seed, 0x0207, 0)),
             mirror,
         ),
@@ -2123,6 +2231,7 @@ mod tests {
             held: true,
             exit: 0.3,
             strength,
+            lasts: None,
         };
         let bound = |ratio: f32| BoundValues::default().with(Binding::BarrierRatio, ratio);
         assert_eq!(layer_strength(&layer(None), &bound(0.2)), 1.0);
@@ -2180,43 +2289,72 @@ mod tests {
             sort_bias: 0.0,
             shape: CardShape::Radial,
             breakup: None,
+            trail: None,
         }
+    }
+
+    #[test]
+    fn a_trailing_ribbon_rides_its_line_with_its_life() {
+        let slug = RibbonLook {
+            trail: Some(0.5),
+            ..ribbon(0.0, None)
+        };
+        assert_eq!(
+            ribbon_span(&slug, 6.0, 0.0, 0.0),
+            (0.0, 0.0),
+            "at the muzzle"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 0.05);
+        assert!(
+            tail.abs() < 1e-6 && (head - 0.3).abs() < 1e-5,
+            "never behind the start"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 0.5);
+        assert!(
+            (tail - 2.5).abs() < 1e-5 && (head - 3.0).abs() < 1e-5,
+            "half way, half a unit long: {tail}..{head}"
+        );
+        let (tail, head) = ribbon_span(&slug, 6.0, 0.0, 1.5);
+        assert!(
+            (tail - 5.5).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
+            "held at the end"
+        );
     }
 
     #[test]
     fn a_ribbon_races_out_then_sweeps_and_shrinks_into_its_end() {
         assert_eq!(
-            ribbon_span(&ribbon(0.0, None), 6.0, 0.3),
+            ribbon_span(&ribbon(0.0, None), 6.0, 0.3, 0.0),
             (0.0, 6.0),
             "no travel"
         );
         assert_eq!(
-            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3),
+            ribbon_span(&ribbon(0.0, Some(0.1)), 6.0, 0.3, 0.0),
             (0.0, 6.0),
             "without travel the tail stays"
         );
         let racing = ribbon(10.0, Some(0.2));
         assert_eq!(
-            ribbon_span(&racing, 6.0, 0.0),
+            ribbon_span(&racing, 6.0, 0.0, 0.0),
             (0.0, 0.0),
             "nothing at once"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 0.1);
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.1, 0.0);
         assert!(
             tail.abs() < 1e-6 && (head - 1.0).abs() < 1e-5,
             "head out 1 unit"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 0.5);
+        let (tail, head) = ribbon_span(&racing, 6.0, 0.5, 0.0);
         assert!(
             (tail - 3.0).abs() < 1e-5 && (head - 5.0).abs() < 1e-5,
             "a segment sweeping: {tail}..{head}"
         );
-        let (tail, head) = ribbon_span(&racing, 6.0, 1.0);
+        let (tail, head) = ribbon_span(&racing, 6.0, 1.0, 0.0);
         assert!(
             (tail - 6.0).abs() < 1e-5 && (head - 6.0).abs() < 1e-5,
             "shrunk into the end"
         );
-        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0);
+        let (tail, head) = ribbon_span(&ribbon(10.0, None), 6.0, 5.0, 0.0);
         assert!(tail.abs() < 1e-6 && (head - 6.0).abs() < 1e-5, "held whole");
     }
 
@@ -2382,6 +2520,11 @@ mod tests {
             assert_eq!(roll_and_mirror(RotationDef::Fixed, seed), (0.0, 0));
             let (roll, _) = roll_and_mirror(RotationDef::Random, seed);
             assert!((0.0..std::f32::consts::TAU).contains(&roll));
+            assert_eq!(
+                roll_and_mirror(RotationDef::Together, seed),
+                roll_and_mirror(RotationDef::Random, seed),
+                "a shared roll is drawn as a random one, from the instance's seed"
+            );
         }
         assert!(
             mirrored > 16 && mirrored < 48,

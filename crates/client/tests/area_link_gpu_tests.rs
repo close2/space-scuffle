@@ -22,6 +22,11 @@
 //! - **Sequences** (evidence only): the looks cast again and pictured every other frame at the
 //!   default zoom, assembled by the parent into contact sheets.
 //!
+//! - **Fungal Growth** (plan WP11, F1): a third child casts the shipped missile spell on enemies
+//!   in sight and, from an enemy in the fog, at the edge of the viewer's sight, and pictures
+//!   every frame; [`fungal_growth_flies_lands_and_afflicts`] checks the missile looks, the
+//!   impacts and the affliction.
+//!
 //! With `SPACE_SCUFFLE_AREA_EVIDENCE_DIR` set, the parent copies its pictures and sheets there.
 //!
 //! # How it fits
@@ -283,6 +288,21 @@ struct Report {
     tether_far: Option<[[f32; 2]; 2]>,
     /// Where the evidence child put the full-range victim, map `x, y`, if it found a place.
     far_place: Option<[f32; 2]>,
+    /// The Fungal Growth child (plan WP11, F1), per frame: seconds since the casts, missile
+    /// looks held, missile impacts laid so far, and `DamageOverTime` looks held so far.
+    #[serde(default)]
+    fungal: Vec<(f32, usize, u32, u32)>,
+    /// Where the enemy's missile was aimed at the edge of the viewer's sight, map `x, y`.
+    #[serde(default)]
+    fungal_fog_edge: Option<[f32; 2]>,
+    /// Ground samples round the enemy's missile's target (review 1, E1-3): window pixel and
+    /// whether the viewer sees the ground there (`None` within [`FOG_MARGIN`] of a fog cell
+    /// edge).
+    #[serde(default)]
+    fungal_fog_ground: Vec<([f32; 2], Option<bool>)>,
+    /// Window pixel of the top left corner of the `fungal_fog` crops.
+    #[serde(default)]
+    fungal_fog_crop: Option<[u32; 2]>,
 }
 
 /// How the effect layers are drawn for a shot.
@@ -374,6 +394,11 @@ struct Staging {
     far_first: Option<u32>,
     /// What the evidence child pictures, by published area or tether.
     watches: Vec<Watch>,
+    /// The Fungal Growth child (plan WP11, F1): a missile ability cast by the viewer on enemies
+    /// and by an enemy out of the fog, pictured every frame.
+    fungal: bool,
+    /// The Fungal Growth child's fog edge, where the enemy's missile lands.
+    fungal_edge: Option<Vec2>,
 }
 
 /// An area or the tether the evidence child pictures (V1-1).
@@ -582,9 +607,33 @@ fn published_tick(session: &BattleSession) -> u32 {
 /// presentation block names a look for, with those looks, and a deep energy pool; returns it
 /// and `(look, index, target kind)` per copied ability.
 fn caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<(String, u8, AbilityTargetKind)>) {
+    // Only area and tether looks: a missile's look (plan WP11, F1) is staged elsewhere.
+    let root = client::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let looks = EffectCatalog::load(
+        &root
+            .as_path()
+            .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        root.as_path(),
+    )
+    .expect("the shipped vocabulary loads");
+    let area_or_link = |look: &str| {
+        looks
+            .effect_id(look)
+            .and_then(|id| looks.effect(id))
+            .is_some_and(|effect| {
+                matches!(
+                    effect.event,
+                    client::effects::catalog::schema::EventKind::Area
+                        | client::effects::catalog::schema::EventKind::Link
+                )
+            })
+    };
     let mut copied: Vec<(sim_types::AbilitySpec, String)> = Vec::new();
     for arch in world.catalog.archetypes() {
         for (name, look) in &arch.effects.abilities {
+            if !area_or_link(look) {
+                continue;
+            }
             if let Some(spec) = arch.abilities.iter().find(|spec| spec.name == *name) {
                 copied.push((spec.clone(), look.clone()));
             }
@@ -1307,17 +1356,32 @@ fn stage(
             }
         }
         Phase::Booting { .. } => {
-            set_up(
-                &mut staging,
-                &mut session,
-                &fog,
-                (camera, transform),
-                rts.target,
-            );
+            if staging.fungal {
+                set_up_fungal(
+                    &mut staging,
+                    &mut session,
+                    &fog,
+                    (camera, transform),
+                    rts.target,
+                );
+            } else {
+                set_up(
+                    &mut staging,
+                    &mut session,
+                    &fog,
+                    (camera, transform),
+                    rts.target,
+                );
+            }
             commands.queue(rebuild_tables);
             lab.battle_paused = false;
             let sim = session.world_mut().expect("a ready session has a world");
-            if staging.sequence_only {
+            if staging.fungal {
+                Phase::Sequence {
+                    frame: 0,
+                    since: now,
+                }
+            } else if staging.sequence_only {
                 begin_sequence(&staging, sim);
                 Phase::Sequence {
                     frame: 0,
@@ -1388,8 +1452,19 @@ fn stage(
             Phase::Capturing
         }
         Phase::Capturing => Phase::Capturing,
-        Phase::Sequence { frame, since } if now - since < SEQUENCE_SECONDS => {
-            let crops = sequence_frame(&mut staging, &session, (camera, transform), now, frame);
+        Phase::Sequence { frame, since }
+            if now - since
+                < if staging.fungal {
+                    FUNGAL_SECONDS
+                } else {
+                    SEQUENCE_SECONDS
+                } =>
+        {
+            let crops = if staging.fungal {
+                fungal_frame(&mut staging, &session, (camera, transform), frame)
+            } else {
+                sequence_frame(&mut staging, &session, (camera, transform), now, frame)
+            };
             if !crops.is_empty() {
                 let outstanding = Arc::clone(&staging.outstanding);
                 capture_crops(&mut commands, crops, &outstanding);
@@ -1586,6 +1661,7 @@ fn run_child(staging: Staging) {
         .insert_resource(staging)
         .init_resource::<EffectView>()
         .add_systems(Update, stage.in_set(BattleSet::Present))
+        .add_systems(PostUpdate, record_fungal)
         .add_systems(
             PostUpdate,
             apply_effect_view.after(client::effects::systems::build_effect_frame),
@@ -2323,4 +2399,413 @@ fn every_shot_belongs_to_one_stage() {
     assert_eq!(shot_at(3), (1, Shot::Tether));
     assert_eq!(shot_at(9), (2, Shot::FogBare));
     assert_eq!(shot_at(4), (1, Shot::TetherLater));
+}
+
+// --- WP11, F1: Fungal Growth -------------------------------------------------------------------
+//
+// The Fungal Growth child (plan WP11, Amendment 24): a presentable stand-in gets copies of every
+// ability a shipped block names a `Missile` look for (Fungal Growth's), with those looks. The
+// viewer's stand-in casts it on a group of enemy stand-ins on open ground in sight, and an enemy
+// stand-in standing in the fog casts it at the edge of the viewer's sight at the same moment.
+// The child pictures every 40 ms frame round both targets and the whole window every
+// [`FUNGAL_BATTLE_EVERY`] frames, and reports per frame the missile looks held, the impacts
+// laid and the `DamageOverTime` looks held. The parent checks that the viewer's missile held a
+// look in flight, that both missiles landed an impact (the enemy's seen in part), that the
+// struck units wore the affliction, and that no missile look was held before the casts.
+
+/// Seconds the Fungal Growth child pictures after the casts: the flight, the impact and most of
+/// the status.
+const FUNGAL_SECONDS: f64 = 3.6;
+/// Frames between two whole-window pictures of the Fungal Growth child.
+const FUNGAL_BATTLE_EVERY: u32 = 10;
+/// Enemy stand-ins round the viewer's Fungal Growth target.
+const FUNGAL_VICTIMS: usize = 4;
+
+/// Gives a presentable ground unit type copies of every ability a shipped block names a
+/// `Missile` look for, with those looks; returns it and the copied abilities' indices.
+fn missile_caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<u8>) {
+    let root = client::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let looks = EffectCatalog::load(
+        &root
+            .as_path()
+            .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        root.as_path(),
+    )
+    .expect("the shipped vocabulary loads");
+    let missile = |look: &str| {
+        looks
+            .effect_id(look)
+            .and_then(|id| looks.effect(id))
+            .is_some_and(|effect| {
+                effect.event == client::effects::catalog::schema::EventKind::Missile
+            })
+    };
+    let copied: Vec<(sim_types::AbilitySpec, String)> = world
+        .catalog
+        .archetypes()
+        .flat_map(|arch| {
+            arch.effects
+                .abilities
+                .iter()
+                .filter(|(_, look)| missile(look))
+                .filter_map(|(name, look)| {
+                    arch.abilities
+                        .iter()
+                        .find(|spec| spec.name == *name)
+                        .map(|spec| (spec.clone(), look.clone()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(!copied.is_empty(), "a shipped block names a missile look");
+    let id = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.max_speed > SimScalar::ZERO
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+                && arch.abilities.is_empty()
+                && presentable(&assets(), &arch.slug)
+        })
+        .map(|arch| arch.unit_type_id)
+        .next()
+        .expect("the catalog ships a presentable ground unit");
+    let archetype = world
+        .catalog
+        .get_mut(id)
+        .expect("invariant: the type was just found in this catalog");
+    archetype.max_energy = SimScalar::from_num(1000);
+    archetype.weapon = None;
+    archetype.ground_weapon = None;
+    archetype.air_weapon = None;
+    let mut indices = Vec::new();
+    for (spec, look) in copied {
+        indices.push(u8::try_from(archetype.abilities.len()).expect("a few abilities"));
+        archetype.effects.abilities.insert(spec.name.clone(), look);
+        archetype.abilities.push(spec);
+    }
+    (id, indices)
+}
+
+/// Sets the Fungal Growth child up once the camera is still, and orders both casts.
+fn set_up_fungal(
+    staging: &mut Staging,
+    session: &mut BattleSession,
+    fog: &BattleFog,
+    camera: (&Camera, &GlobalTransform),
+    target: Vec2,
+) {
+    let sim = session.world_mut().expect("a ready session has a world");
+    let (kind, indices) = missile_caster_type(sim);
+    let ability = indices[0];
+    staging.caster_type = Some(kind);
+    let visible = on_screen(sim, camera);
+    let spots = find_spots(sim, fog, target, 4, 5.0, &visible);
+    let edge = find_fog_edge(sim, fog, target, false, &visible);
+    drop(visible);
+    let caster = spawn_still(sim, kind, VIEWER, spots[2]);
+    for index in 0..FUNGAL_VICTIMS {
+        let angle = index as f32 * std::f32::consts::TAU / FUNGAL_VICTIMS as f32;
+        spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
+    }
+    let cast = |sim: &mut SimWorld, unit: EntityId, at: Vec2| {
+        sim.entities
+            .get_mut(&unit)
+            .expect("the caster stands")
+            .issue_order(
+                UnitOrder::CastAbility {
+                    ability_index: ability,
+                    target_pos: Some(sim_position(at)),
+                    target_entity: None,
+                },
+                false,
+            )
+            .expect("the cast is admitted");
+    };
+    cast(sim, caster, spots[0]);
+    if let Some((edge, enemy_at, _)) = edge {
+        let enemy = spawn_still(sim, kind, ENEMY, enemy_at);
+        cast(sim, enemy, edge);
+        staging.fungal_edge = Some(edge);
+        staging.report.fungal_fog_edge = Some(edge.to_array());
+        staging.report.fungal_fog_ground = fog_ground(sim, fog, camera, edge);
+    }
+    staging.caster = Some(caster);
+    staging.spots = spots;
+}
+
+/// World units round the enemy's missile's target sampled for the fog check (review 1, E1-3):
+/// the impact's reach and a margin.
+const FUNGAL_FOG_REACH: f32 = 2.0;
+
+/// Ground samples every 0.1 world units within [`FUNGAL_FOG_REACH`] of `centre`: window pixel
+/// and whether the viewer sees the ground there, `None` within [`FOG_MARGIN`] of a fog cell
+/// edge.
+fn fog_ground(
+    world: &SimWorld,
+    fog: &BattleFog,
+    camera: (&Camera, &GlobalTransform),
+    centre: Vec2,
+) -> Vec<([f32; 2], Option<bool>)> {
+    let step = 0.1;
+    let reach = (FUNGAL_FOG_REACH / step) as i32;
+    let mut ground = Vec::new();
+    for row in -reach..=reach {
+        for column in -reach..=reach {
+            let offset = Vec2::new(column as f32, row as f32) * step;
+            if offset.length() > FUNGAL_FOG_REACH {
+                continue;
+            }
+            let point = centre + offset;
+            let seen = fog.sees(point.x, point.y);
+            let firm = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+                .iter()
+                .all(|(dx, dy)| {
+                    fog.sees(point.x + dx * FOG_MARGIN, point.y + dy * FOG_MARGIN) == seen
+                });
+            ground.push((project(world, camera, point), firm.then_some(seen)));
+        }
+    }
+    ground
+}
+
+/// What the enemy's missile changed round its target over the sequence (review 1, E1-3): the
+/// most seen and unseen ground samples any frame changed against the first, the frame of the
+/// most seen ones, and the samples in crop pixels.
+struct FogChange {
+    seen: usize,
+    unseen: usize,
+    total: (usize, usize),
+    peak_frame: usize,
+}
+
+/// Measures [`FogChange`] over the `fungal_fog` crops and writes the overlay of the fog cells
+/// (seen samples green, unseen red, changed ones bright) on the peak frame.
+fn fungal_fog_change(
+    directory: &Path,
+    report: &Report,
+    driver: &str,
+) -> TestResult<Option<FogChange>> {
+    let (Some(origin), Some(files)) = (
+        report.fungal_fog_crop,
+        report
+            .sequences
+            .iter()
+            .find(|(key, _)| key == "fungal_fog")
+            .map(|(_, files)| files),
+    ) else {
+        return Ok(None);
+    };
+    let local = |at: [f32; 2]| [at[0] - origin[0] as f32, at[1] - origin[1] as f32];
+    let first = image::open(directory.join(&files[0]))?.to_rgb8();
+    let mut change = FogChange {
+        seen: 0,
+        unseen: 0,
+        total: (0, 0),
+        peak_frame: 0,
+    };
+    change.total = report
+        .fungal_fog_ground
+        .iter()
+        .fold((0, 0), |(seen, unseen), (_, sight)| match sight {
+            Some(true) => (seen + 1, unseen),
+            Some(false) => (seen, unseen + 1),
+            None => (seen, unseen),
+        });
+    for (index, file) in files.iter().enumerate().skip(1) {
+        let frame = image::open(directory.join(file))?.to_rgb8();
+        let (mut seen, mut unseen) = (0, 0);
+        for (at, sight) in &report.fungal_fog_ground {
+            let changed = changed_at(&frame, &first, local(*at));
+            match sight {
+                Some(true) => seen += usize::from(changed),
+                Some(false) => unseen += usize::from(changed),
+                None => {}
+            }
+        }
+        if seen > change.seen {
+            change.seen = seen;
+            change.peak_frame = index;
+        }
+        change.unseen = change.unseen.max(unseen);
+    }
+    let peak = image::open(directory.join(&files[change.peak_frame]))?.to_rgb8();
+    let mut overlay = peak.clone();
+    for (at, sight) in &report.fungal_fog_ground {
+        let [x, y] = local(*at);
+        if x < 0.0 || y < 0.0 || x >= overlay.width() as f32 || y >= overlay.height() as f32 {
+            continue;
+        }
+        let changed = changed_at(&peak, &first, [x, y]);
+        let colour = match (sight, changed) {
+            (Some(true), false) => [40, 140, 40],
+            (Some(true), true) => [80, 255, 80],
+            (Some(false), false) => [140, 40, 40],
+            (Some(false), true) => [255, 60, 60],
+            (None, _) => continue,
+        };
+        overlay.put_pixel(x as u32, y as u32, image::Rgb(colour));
+    }
+    overlay.save(directory.join(format!("sheet_fungal_fog_overlay_{driver}.png")))?;
+    Ok(Some(change))
+}
+
+/// The crops the Fungal Growth child writes this frame: round the viewer's target and round the
+/// fog edge every frame, the whole window every [`FUNGAL_BATTLE_EVERY`] frames.
+fn fungal_frame(
+    staging: &mut Staging,
+    session: &BattleSession,
+    camera: (&Camera, &GlobalTransform),
+    frame: u32,
+) -> Vec<(PathBuf, [u32; 4])> {
+    let sim = session.world().expect("a ready session has a world");
+    let mut wanted = vec![("fungal_own".to_owned(), staging.spots[0])];
+    if let Some(edge) = staging.fungal_edge {
+        wanted.push(("fungal_fog".to_owned(), edge));
+    }
+    let mut crops = Vec::new();
+    for (key, at) in wanted {
+        let [x, y] = project(sim, camera, at);
+        let file = format!("seq_{key}_{frame:03}.png");
+        let left = (x - CROP[0] as f32 / 2.0).max(0.0) as u32;
+        let top = (y - CROP[1] as f32 / 2.0).max(0.0) as u32;
+        crops.push((staging.directory.join(&file), [left, top, CROP[0], CROP[1]]));
+        if key == "fungal_fog" {
+            staging.report.fungal_fog_crop = Some([left, top]);
+        }
+        note(&mut staging.report, &key, file);
+    }
+    if frame.is_multiple_of(FUNGAL_BATTLE_EVERY) {
+        let file = format!("seq_fungal_battle_{frame:03}.png");
+        crops.push((
+            staging.directory.join(&file),
+            [0, 0, u32::MAX / 4, u32::MAX / 4],
+        ));
+        note(&mut staging.report, "fungal_battle", file);
+    }
+    crops
+}
+
+/// Records, every frame of the Fungal Growth child's sequence, the missile looks held, the
+/// missile impacts laid and the `DamageOverTime` looks held so far.
+fn record_fungal(
+    mut staging: ResMut<'_, Staging>,
+    looks: Res<'_, AreaLooks>,
+    runtime: Option<Res<'_, EffectRuntime>>,
+    catalog: Option<Res<'_, EffectCatalog>>,
+    tables: Option<Res<'_, UnitEffectTables>>,
+    time: Res<'_, Time<Virtual>>,
+) {
+    let Phase::Sequence { since, .. } = staging.phase else {
+        return;
+    };
+    if !staging.fungal {
+        return;
+    }
+    let (Some(runtime), Some(catalog), Some(tables)) = (runtime, catalog, tables) else {
+        return;
+    };
+    let kind = staging.caster_type.expect("made");
+    let impacts: u32 = catalog
+        .effects
+        .iter()
+        .filter_map(|effect| effect.impact)
+        .map(|impact| runtime.spawned_of(impact))
+        .sum();
+    let afflictions = tables
+        .status(kind, sim_types::StatusKind::DamageOverTime)
+        .map_or(0, |look| runtime.spawned_of(look));
+    let at = (time.elapsed_secs_f64() - since) as f32;
+    staging
+        .report
+        .fungal
+        .push((at, looks.missiles().0, impacts, afflictions));
+}
+
+/// The Fungal Growth child.
+#[test]
+#[ignore = "launched by the test below on a virtual display"]
+fn area_link_fungal_child() {
+    let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names a directory");
+    run_child(Staging {
+        directory: PathBuf::from(directory),
+        fungal: true,
+        ..Staging::default()
+    });
+}
+
+/// Plan WP11, F1: a Fungal Growth missile holds its look in flight and lands its impact where
+/// it ends, its victims wear the affliction, and an enemy's missile out of the fog lands where
+/// the viewer sees its target.
+#[test]
+fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let driver = gpu_run::selected_driver().driver;
+    let directory = tempfile::tempdir()?;
+    let report = run_gpu_child("area_link_fungal_child", directory.path())?;
+    let fog_change = fungal_fog_change(directory.path(), &report, &driver.to_string())?;
+    keep_evidence(directory.path(), &report, &driver.to_string())?;
+    let flying = report.fungal.iter().filter(|frame| frame.1 > 0).count();
+    let landed = report.fungal.last().map_or(0, |frame| frame.2);
+    let afflicted = report.fungal.last().map_or(0, |frame| frame.3);
+    let first_flying = report
+        .fungal
+        .iter()
+        .find(|frame| frame.1 > 0)
+        .map(|frame| frame.0);
+    let first_landed = report
+        .fungal
+        .iter()
+        .find(|frame| frame.2 > 0)
+        .map(|frame| frame.0);
+    eprintln!(
+        "driver {driver}: Fungal Growth: missile looks held on {flying} of {} frames (first at \
+         {first_flying:?} s), impacts laid {landed} (first at {first_landed:?} s), afflictions \
+         held {afflicted}; fog edge {:?}",
+        report.fungal.len(),
+        report.fungal_fog_edge
+    );
+    assert!(flying > 0, "a missile look is held in flight");
+    // Review 1, E1-3: the enemy's missile and its impact, cut at the viewer's sight, change no
+    // unseen ground sample round its target and change some seen ones.
+    if let Some(change) = &fog_change {
+        eprintln!(
+            "driver {driver}: Fungal Growth at the fog edge: at most {} of {} seen and {} of {}              unseen ground samples changed against the first frame (most seen on frame {})",
+            change.seen, change.total.0, change.unseen, change.total.1, change.peak_frame
+        );
+        assert_eq!(change.unseen, 0, "no unseen ground sample changes");
+        assert!(change.seen > 0, "the seen part of the impact is drawn");
+    }
+    assert!(
+        first_landed > first_flying,
+        "the impact is laid after the flight"
+    );
+    let expected = 1 + usize::from(report.fungal_fog_edge.is_some());
+    assert_eq!(
+        landed as usize, expected,
+        "each missile lands one impact, the enemy's where the viewer sees it"
+    );
+    // B-122: the snapshot does not say which spell a damage-over-time status came from, so
+    // no `DamageOverTime` look is shipped yet; when the vocabulary names one, it is held.
+    let catalog_names_one = {
+        let root = client::ResolvedAssetsRoot::resolve()?;
+        EffectCatalog::load(
+            &root
+                .as_path()
+                .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )?
+        .defaults
+        .status
+        .contains_key(&sim_types::StatusKind::DamageOverTime)
+    };
+    assert_eq!(
+        afflicted > 0,
+        catalog_names_one,
+        "the struck units wear the affliction exactly when the vocabulary names one"
+    );
+    Ok(())
 }

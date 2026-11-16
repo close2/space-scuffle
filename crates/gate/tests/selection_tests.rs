@@ -201,10 +201,14 @@ fn a_renderer_change_runs_every_client_gpu_binary_and_the_frame_budget() -> Resu
         has(&selection, "client_diagnostics/frame_budget_tests"),
         "by trigger"
     );
+    assert!(
+        has(&selection, "client/weapon_battle_gpu_tests"),
+        "a client GPU binary (WP11's staged battle), by its class"
+    );
     assert_eq!(
         count(&selection, TestClass::Gpu),
-        23,
-        "20 client GPU binaries and 3 diagnostics"
+        24,
+        "21 client GPU binaries and 3 diagnostics"
     );
     assert!(!has(&selection, "client/sync_allocation_count_tests"));
     Ok(())
@@ -225,7 +229,11 @@ fn a_live_sync_change_runs_valgrind_and_the_skirmish() -> Result<(), GateError> 
 fn a_gpu_support_file_selects_every_target_that_loads_it() -> Result<(), GateError> {
     let repo = Repo::load()?;
     let selection = repo.select(Tier::Package, &["crates/client/tests/support/gpu_run.rs"])?;
-    assert_eq!(count(&selection, TestClass::Gpu), 23);
+    assert!(
+        has(&selection, "client/weapon_battle_gpu_tests"),
+        "it loads the GPU harness"
+    );
+    assert_eq!(count(&selection, TestClass::Gpu), 24);
     let harness = repo.select(
         Tier::Package,
         &["crates/client/tests/support/battle_harness.rs"],
@@ -233,6 +241,10 @@ fn a_gpu_support_file_selects_every_target_that_loads_it() -> Result<(), GateErr
     assert!(
         has(&harness, "client/skirmish_match_tests"),
         "a gpu target that loads it"
+    );
+    assert!(
+        has(&harness, "client/weapon_battle_gpu_tests"),
+        "another gpu target that loads it"
     );
     assert!(
         !has(&harness, "client/gpu_validation_tests"),
@@ -246,7 +258,8 @@ fn a_shader_change_runs_the_gpu_binaries_without_any_crate_change() -> Result<()
     let repo = Repo::load()?;
     let selection = repo.select(Tier::Package, &["assets/shaders/bubble_dome.wgsl"])?;
     assert!(selection.changed_crates.is_empty());
-    assert_eq!(count(&selection, TestClass::Gpu), 23);
+    assert!(has(&selection, "client/weapon_battle_gpu_tests"));
+    assert_eq!(count(&selection, TestClass::Gpu), 24);
     assert!(has(&selection, "client/headless_tests"));
     assert!(!has(&selection, "client/lib"));
     Ok(())

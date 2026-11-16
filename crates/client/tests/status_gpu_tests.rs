@@ -23,7 +23,8 @@
 //!   while its status is published, that the stim's rim beats and its fumes keep their beat,
 //!   that the charge lays its dust while it moves and never otherwise, that every absorbed hit
 //!   is answered by at most one flash per beat, that each named death spawned its effect once
-//!   per unit and drew no legacy shards, and that the control unit shattered.
+//!   per unit and drew no legacy shards, and that the control unit died with the vocabulary's
+//!   default death (WP11: an effect of its own, no legacy shards either).
 //! - **Onsets** ([`status_onset_child`]): pairs of one type side by side, one of each taking its
 //!   status while the camera watches (the stim, a concussive slow, a barrier raised by a ranged
 //!   and by a melee attacker's first hit), so each look comes in instead of starting settled.
@@ -90,7 +91,7 @@ use client::effects::runtime::EffectRuntime;
 use client::effects::stance::{status_shown, StanceTrack};
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::scene_controller::LiveBattleBubble;
-use client::vfx::ShatterShard;
+use client::vfx::{CombatVisualEvent, ShatterShard};
 use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
 use sim_core::entity::{ActiveBuff, OVERCLOCK_BUFF_ID};
@@ -1293,6 +1294,13 @@ const DEATH_SPACING: f32 = 1.3;
 const FRAMING_FRAMES: u32 = 12;
 /// World units within which a glass shard counts as one dying unit's.
 const SHARD_REACH: f32 = 2.5;
+/// Seconds into the battle at which the positive control is sent: a synthetic death of a unit
+/// type no table covers, where the first dying unit stood, which must draw the legacy shards the
+/// test counts (review 1, E1-4).
+const CONTROL_SECONDS: f64 = DEATH_SECONDS + 1.2;
+/// A unit type outside every catalog's table: its death has no effect, so the legacy shatter
+/// draws it.
+const UNCOVERED_TYPE: UnitTypeId = UnitTypeId(u16::MAX);
 
 /// One frame's sample of the subjects.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1328,11 +1336,19 @@ struct BattleReport {
     samples: Vec<BattleSample>,
     /// Where each subject's units stood on screen on the first frame, window pixels.
     placed: Vec<(Subject, Vec<[f32; 2]>)>,
-    /// Each dying unit: the effect its block names for its death (`None`: the default
-    /// shatter), and where it stood (Bevy world XZ).
+    /// Each dying unit: the effect its block names for its death (`None`: the vocabulary's
+    /// default death), and where it stood (Bevy world XZ).
     dying: Vec<(Option<String>, [f32; 2])>,
+    /// The vocabulary's default death effect (plan WP11: `glass_shatter`, which replaced the
+    /// legacy glass shatter), if it names one.
+    default_death: Option<String>,
     /// Spawns of each named death effect `(name, before the deaths, at the end)`.
     deaths_spawned: Vec<(String, u32, u32)>,
+    /// The battle's own `BubbleShatter` events from the kill to the end, by the death effect
+    /// their unit's table names (review 1, E1-4: the exact count each effect must spawn).
+    shatters: Vec<(String, u32)>,
+    /// Whether the positive control (a death of [`UNCOVERED_TYPE`]) was sent.
+    control_sent: bool,
     /// The stim's emitted effect's beat, seconds.
     fumes_every: f32,
 }
@@ -1563,7 +1579,7 @@ fn stage_battle(
                 // An attacker whose shots draw no splash of their own; raised from the start,
                 // so the shell is pictured whole before the hits wear it down.
                 let attacker = presentable_ground(world, &taken, |arch| {
-                    arch.weapon.is_some() && arch.effects.weapons.is_empty()
+                    arch.weapon.is_some() && no_splash(arch)
                 })
                 .expect("a presentable armed unit");
                 let enemy = spawn_still(world, attacker, ENEMY, *spot + Vec2::new(0.0, 2.2));
@@ -1822,11 +1838,17 @@ fn resolve_counted(
     let (fumes, every) = laid(StatusKind::Overclock);
     staging.counted = Some((dust, fumes));
     staging.report.fumes_every = every;
+    staging.report.default_death = catalog
+        .defaults
+        .death
+        .and_then(|id| catalog.effect(id))
+        .map(|effect| effect.name.clone());
+    let default_death = staging.report.default_death.clone();
     let mut names: Vec<String> = staging
         .report
         .dying
         .iter()
-        .filter_map(|(death, _)| death.clone())
+        .filter_map(|(death, _)| death.clone().or_else(|| default_death.clone()))
         .collect();
     names.sort();
     names.dedup();
@@ -1873,6 +1895,9 @@ fn stage_battle_child(
     };
     let tick = published_tick(&session);
     let now = time.elapsed_secs_f64();
+    if let BattlePhase::Running { at, .. } = staging.phase {
+        send_control(&mut commands, &mut staging, now - at);
+    }
     staging.phase = match staging.phase {
         BattlePhase::Boot if tick < 2 => BattlePhase::Boot,
         BattlePhase::Boot => BattlePhase::Booting {
@@ -1956,6 +1981,69 @@ fn stage_battle_child(
     };
 }
 
+/// Sends the positive control once, at [`CONTROL_SECONDS`]: a death of [`UNCOVERED_TYPE`] where
+/// the first dying unit stood, which no effect replaces, so the legacy shatter draws its shards.
+fn send_control(commands: &mut Commands<'_, '_>, staging: &mut BattleStaging, since: f64) {
+    if staging.report.control_sent || since < CONTROL_SECONDS {
+        return;
+    }
+    let Some((_, [x, z])) = staging.report.dying.first() else {
+        return;
+    };
+    commands.send_event(CombatVisualEvent(
+        sim_types::CombatEventVisual::BubbleShatter {
+            pos: [*x, *z, 0.0],
+            radius: 0.5,
+            is_dome: false,
+            owner: VIEWER,
+            unit_type: UNCOVERED_TYPE,
+        },
+    ));
+    staging.report.control_sent = true;
+}
+
+/// Counts the battle's own `BubbleShatter` events from the kill to the end, by the death
+/// effect their unit's table names. Runs after the effect system spawns its effects and before
+/// the staging reads the spawn counts, so both see the same events.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn count_shatters(
+    mut events: EventReader<'_, '_, CombatVisualEvent>,
+    mut staging: ResMut<'_, BattleStaging>,
+    tables: Option<Res<'_, UnitEffectTables>>,
+) {
+    let counting = staging.killed && matches!(staging.phase, BattlePhase::Running { .. });
+    for event in events.read() {
+        let sim_types::CombatEventVisual::BubbleShatter { unit_type, .. } = &event.0 else {
+            continue;
+        };
+        let Some(death) = tables
+            .as_deref()
+            .and_then(|tables| tables.death(*unit_type))
+        else {
+            continue;
+        };
+        if !counting {
+            continue;
+        }
+        let Some(name) = staging
+            .death_ids
+            .iter()
+            .find(|(_, id)| *id == death)
+            .map(|(name, _)| name.clone())
+        else {
+            continue;
+        };
+        let shatters = &mut staging.report.shatters;
+        match shatters.iter_mut().find(|(counted, _)| *counted == name) {
+            Some((_, count)) => *count += 1,
+            None => shatters.push((name, 1)),
+        }
+    }
+}
+
 /// A test of whether a ground point lies in the window's open part, clear of its edges and of
 /// the HUD along its bottom, seen through `camera`.
 fn on_screen<'a>(
@@ -1991,7 +2079,9 @@ fn status_battle_child() {
             directory: PathBuf::from(directory),
             ..BattleStaging::default()
         },
-        stage_battle_child,
+        (count_shatters, stage_battle_child)
+            .chain()
+            .after(client::effects::systems::spawn_effects_from_events),
     );
 }
 
@@ -2166,8 +2256,11 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
         "flashes keep their beat: {flashes:?}"
     );
 
-    // Review 1, E1-1: each named death spawned its effect once per unit, those units drew no
-    // legacy shards, and the control unit with the default death did.
+    // Review 1, E1-1: each named death spawned its effect once per unit and drew no legacy
+    // shards. Re-baselined in WP11 (Amendment 24), with that cause only: the control unit,
+    // whose block names no death, now dies with the vocabulary's default death
+    // (`glass_shatter`, an effect of its own), so it draws no legacy shards either and its
+    // default death is counted like the named ones.
     let died = samples
         .iter()
         .any(|sample| f64::from(sample.at) > DEATH_SECONDS && sample.standing_deaths == 0);
@@ -2188,26 +2281,65 @@ fn status_looks_follow_their_statuses_and_deaths_replace_the_shatter() -> TestRe
     for (index, (death, _)) in report.dying.iter().enumerate() {
         eprintln!(
             "driver {driver}: dying unit {index} ({}) had at most {} legacy shards near it",
-            death.as_deref().unwrap_or("default shatter"),
+            death
+                .as_deref()
+                .or(report.default_death.as_deref())
+                .unwrap_or("legacy shatter"),
             peak(index)
         );
-        match death {
-            Some(_) => assert_eq!(peak(index), 0, "a named death draws no legacy shards"),
-            None => assert!(peak(index) > 0, "the default death still shatters"),
-        }
+        assert!(
+            report.default_death.is_some(),
+            "the vocabulary names a default death (WP11)"
+        );
+        assert_eq!(peak(index), 0, "no death draws legacy shards");
     }
+    // Review 1, E1-4: each death effect spawned exactly once per `BubbleShatter` event of the
+    // battle whose unit names it, the staged deaths and every other death of the battle alike,
+    // and at least once per staged death.
     for (name, before, after) in &report.deaths_spawned {
-        let expected = report
+        let staged = report
             .dying
             .iter()
-            .filter(|(death, _)| death.as_deref() == Some(name.as_str()))
+            .filter(|(death, _)| {
+                death.as_deref().or(report.default_death.as_deref()) == Some(name.as_str())
+            })
             .count() as u32;
+        let events = report
+            .shatters
+            .iter()
+            .find(|(counted, _)| counted == name)
+            .map_or(0, |(_, count)| *count);
         eprintln!(
-            "driver {driver}: {name} spawned {} times at the deaths (expected {expected})",
+            "driver {driver}: {name} spawned {} times from the kill to the end; {events} BubbleShatter events named it ({staged} staged deaths)",
             after - before
         );
-        assert_eq!(after - before, expected, "{name} spawns once per death");
+        assert_eq!(
+            after - before,
+            events,
+            "{name} spawns once per BubbleShatter event that names it"
+        );
+        assert!(
+            events >= staged,
+            "{name}: every staged death published its event"
+        );
     }
+    // Review 1, E1-4: the positive control. A death no effect covers draws the legacy shards,
+    // and the count above finds them, so its zero for every real death is a measurement.
+    assert!(report.control_sent, "the positive control was sent");
+    let control_peak = samples
+        .iter()
+        .filter(|sample| {
+            let at = f64::from(sample.at);
+            (CONTROL_SECONDS..=CONTROL_SECONDS + 0.3).contains(&at)
+        })
+        .map(|sample| sample.shards.first().copied().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    eprintln!("driver {driver}: the positive control drew {control_peak} legacy shards");
+    assert!(
+        control_peak > 0,
+        "a death of a type no table covers draws legacy shards the test counts"
+    );
     Ok(())
 }
 
@@ -2365,7 +2497,7 @@ fn stage_pairs(
                     arch.weapon.as_ref().is_some_and(|weapon| {
                         weapon.visual_kind == wanted
                             && (melee || weapon.max_range.to_f32() >= RANGED_DISTANCE)
-                    }) && arch.effects.weapons.is_empty()
+                    }) && no_splash(arch)
                 })
                 .expect("a presentable attacker of the kind");
                 let distance = if melee {
@@ -2700,4 +2832,13 @@ fn status_onsets_play_on_units_already_seen() -> TestResult {
     eprintln!("driver {driver}: absorb flashes spawned: {flashes}");
     assert!(flashes > 0, "the shielded units flashed");
     Ok(())
+}
+
+/// Whether `arch`'s block names no splash for any weapon, so its shots draw no area of their own
+/// (plan WP11: every weapon names its travel and impact, so an empty block no longer marks it).
+fn no_splash(arch: &sim_core::UnitArchetype) -> bool {
+    arch.effects
+        .weapons
+        .iter()
+        .all(|entry| entry.splash.is_none())
 }

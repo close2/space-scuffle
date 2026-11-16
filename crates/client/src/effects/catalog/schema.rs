@@ -101,6 +101,16 @@ pub enum EventKind {
     Line,
     /// A weapon's impact point (tracer end, beam end, projectile arrival, melee contact).
     Point,
+    /// A weapon's shot from its muzzle to where it lands (plan WP11): a tracer's or a beam's
+    /// path, or a projectile's flight. The event's line runs from the muzzle on the source's
+    /// bubble to the landing point; it binds `LineLength` and `FlightTime` (0 for an instant
+    /// shot).
+    Shot,
+    /// A spell missile in flight (`RenderSnapshot::spell_missiles`, plan WP11, F1): held while
+    /// the simulation publishes it, anchored where it flies. It binds nothing; where it ends it
+    /// lays its `impact` (an `Area` effect bound to the radius of the search its impact runs
+    /// and the duration of the status it applies, read from the spell catalog).
+    Missile,
     /// A persistent area (`RenderSnapshot::areas`).
     Area,
     /// A tether between two units.
@@ -137,7 +147,8 @@ pub enum Binding {
     AreaTotal,
     /// Length of a tether.
     LinkLength,
-    /// The unit's bubble radius.
+    /// The unit's bubble radius; for a `Point` effect (an impact), the struck unit's, or 0.5
+    /// when it is not found (WP11 round 3).
     UnitRadius,
     /// The unit's bubble height.
     UnitHeight,
@@ -147,6 +158,9 @@ pub enum Binding {
     BarrierRatio,
     /// Flight time of a projectile, in seconds.
     FlightTime,
+    /// The direction a hit came from, in radians in the ground plane (Bevy `atan2(z, x)`, the
+    /// map's `atan2(y, x)`): from the struck point towards the attacker (WP11 round 3, A2-2).
+    Facing,
 }
 
 /// A size, radius or spacing: a binding times a scale.
@@ -263,6 +277,16 @@ pub enum RotationDef {
     /// No roll; a horizontal mirror drawn from the hash (upright elements such as spikes,
     /// which must keep their base down).
     Mirror,
+    /// A roll and a mirror as `Random`, drawn from the effect instance's own hash, so every
+    /// card of the instance that rolls `Together` turns as one (a blade's body under its light,
+    /// a claw's parallel rakes; WP11 round 2). A particle, which has no instance of its own,
+    /// rolls as `Random`.
+    Together,
+    /// Turned by the bound `Facing` (the direction the hit came from), with a hashed mirror: a
+    /// card's local `-x` points at the attacker, and an arc's middle does, so a blade's
+    /// crescent is swung across the line of the blow, its opening away from the attacker (WP11
+    /// round 3, A2-2). Needs an event that binds `Facing`; a particle rolls as `Random`.
+    Facing,
 }
 
 /// How a ring card maps its texture.
@@ -357,6 +381,16 @@ pub enum BlockDef {
         /// Noise breakup of the erosion and edges.
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// The card rides the event's line (plan WP11): its placed point moves from the line's
+        /// start at the beginning of the layer's life to its end at the end of it (a projectile
+        /// in flight, with the layer's `flight`). Needs an event with a line.
+        #[serde(default)]
+        ride: bool,
+        /// With an event line and `orient: Camera`, the card is drawn this many times longer
+        /// along the line than across it, still facing the camera (a bolt's glow drawn out by
+        /// its speed); at least 1, and 1 draws it round.
+        #[serde(default = "one")]
+        stretch: f32,
     },
     /// A card masked to a ring, its radius animated from `radius.from` to `radius.to`.
     Ring {
@@ -413,6 +447,19 @@ pub enum BlockDef {
         /// ground is multiplied by.
         #[serde(default)]
         darken: bool,
+        /// How the ring is rolled about its centre: `Fixed` starts an arc at the same angle
+        /// every time, `Random` at a hashed one with a hashed mirror (a blade's crescent swung
+        /// at any angle, plan WP11).
+        #[serde(default)]
+        rotation: RotationDef,
+        /// A factor on `arc` over the layer's life (needs `arc`): an arc that sweeps open over
+        /// its first frames, a blade's swing across its target (WP11 review 1, A1-7).
+        #[serde(default)]
+        arc_curve: Option<String>,
+        /// The band of an arc swells from nothing at both its ends to its full thickness in
+        /// its middle (needs `arc`): a crescent, not an even-width drawn arc.
+        #[serde(default)]
+        crescent: bool,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -518,6 +565,13 @@ pub enum BlockDef {
         /// and scrolls with the texture).
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// The strip rides the line with the layer's life instead of racing out at `travel`
+        /// (plan WP11): its head lies at the share of the line the layer's life has reached
+        /// and its tail this many world units behind it, never before the line's start (a
+        /// tracer round's short glowing slug, a projectile's trail). Positive; `travel` must
+        /// then be 0 and `tail_delay` unset.
+        #[serde(default)]
+        trail: Option<f32>,
     },
     /// A screen-space refraction (plan §5.1 "Distortion", WP7): heat haze over a burn, air
     /// rippling around a blast, a cloaked body's shimmer. It bends what is already drawn opaque
@@ -751,6 +805,20 @@ pub enum Priority {
 pub enum PlacementDef {
     /// One instance at the anchor.
     Point,
+    /// One instance moved `distance` away from the attacker, against the bound `Facing`: from
+    /// a hit point on the struck bubble's near surface back to its centre, so a blow's crescent
+    /// wraps the struck bubble (WP11 round 3, A2-2).
+    Behind {
+        /// Distance moved.
+        distance: ValueDef,
+    },
+    /// Two instances either side of the anchor, `offset` world units across the event's line
+    /// (without a line, across the line of the hit, its bound `Facing`): a pair side by side,
+    /// such as two needles in flight (WP11 round 3, A2-3) or two spikes either side of a blow.
+    Across {
+        /// Distance of each instance from the anchor.
+        offset: ValueDef,
+    },
     /// One instance at the far end of the event's line, moved back along the line towards its
     /// start by `back` world units (never past the start): a tether's grip set against its
     /// target's bubble at any range (WP10 review 3, A3-1 (b)). The effect's anchor is the
@@ -859,6 +927,14 @@ pub struct LayerDef {
     /// A factor on the layer's intensity from a bound value (see [`StrengthDef`]); `None` is 1.
     #[serde(default)]
     pub strength: Option<StrengthDef>,
+    /// The layer lasts a bound span of time (plan WP11): its duration is the bound value in
+    /// seconds when it is positive, and `duration` otherwise. `FlightTime` makes a shot's
+    /// layer last the projectile's flight (a card that rides the line arrives when the
+    /// projectile does; an instant shot keeps `duration`); `AreaTotal` makes an area's mark
+    /// last as long as the status its spell applies. The event must provide the binding, and
+    /// a held layer cannot last a span.
+    #[serde(default)]
+    pub lasts: Option<Binding>,
 }
 
 /// Default seconds a held layer takes to erode out once released.
@@ -901,6 +977,11 @@ pub struct EffectDefRaw {
     /// (see [`HitDef`]).
     #[serde(default)]
     pub hit: Option<HitDef>,
+    /// For a `Missile` effect: the `Area` effect laid where the missile ends (plan WP11, F1),
+    /// bound to `AreaRadius` (the radius of the search its impact runs), `AreaTotal` and
+    /// `AreaRemaining` (both the duration of the longest status that search applies).
+    #[serde(default)]
+    pub impact: Option<String>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.

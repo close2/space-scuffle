@@ -35,6 +35,9 @@ pub const FLAG_ARC: u32 = 4;
 /// ramp opacity times its coverage), so it never lightens anything, a shadow included (WP8
 /// review 2, B2-2).
 pub const FLAG_DARKEN: u32 = 8;
+/// With [`FLAG_ARC`], the arc's band swells from nothing at both its ends to its full thickness
+/// in its middle: a crescent (WP11 review 1, A1-7).
+pub const FLAG_CRESCENT: u32 = 16;
 /// The card stands upright and turns about world up to face the camera.
 pub const ORIENT_UPRIGHT: u32 = 4;
 /// A ribbon: the card faces the camera about its length along `axis` (as

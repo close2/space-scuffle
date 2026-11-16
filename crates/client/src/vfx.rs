@@ -15,6 +15,13 @@
 //! `gpu_upload` copies it into the slot's GPU buffer during extraction. No system here modifies a
 //! material asset, so steady combat creates, modifies and removes none.
 //!
+//! # The legacy fallback (plan `2026-11-09-effect-visualization` WP11)
+//! Every shipped unit and structure names its weapons' looks and every death has a look in
+//! data (`assets/catalog/effects.ron`), drawn by [`crate::effects`]; an event whose unit names
+//! them is not drawn here ([`crate::effects::systems::replaces_legacy`]). These cards remain
+//! only for an event no presentation block covers: an app without the effect system, or a
+//! source no catalog entry names (synthetic events of diagnostics and tests).
+//!
 //! # Invariants
 //! - An effect's live shader state is its [`CombatFxInstance`], never its material asset.
 //! - Every effect entity gets its material from the pool, through [`EffectMaterials::effect`].
@@ -820,12 +827,10 @@ pub fn process_combat_events_system(
     };
 
     for event_wrapper in event_reader.read() {
-        // A unit whose block names a death effect draws it instead of the glass shatter (the
-        // effect system spawns it, plan WP9).
-        if let CombatEventVisual::BubbleShatter { unit_type, .. } = &event_wrapper.0 {
-            if crate::effects::systems::replaces_shatter(effect_tables.as_deref(), *unit_type) {
-                continue;
-            }
+        // A unit whose block names its weapon's looks, or a death effect, has them drawn by the
+        // effect system instead of the legacy cards (plan WP9, WP11).
+        if crate::effects::systems::replaces_legacy(effect_tables.as_deref(), &event_wrapper.0) {
+            continue;
         }
         let owner = event_wrapper.0.owner();
         let resolved = if lab.current_tab == crate::LabTab::LiveBattle {

@@ -2394,3 +2394,426 @@ The full-range tether spans 250 px on both drivers, and its ends stay 0.52 and 0
 The figures are in `wp10r4_measurements.txt`.
 
 Packet: section "WP10 round 4".
+
+## Amendment 24: WP11, the weapons' own looks, round 1 (2026-11-15, short note, charter §6)
+
+**Decision note (charter §6, short note: a client presentation change, catalog presentation data and their tests).**
+WP11 of §9 in the client and the catalog's presentation data, with the items the earlier rounds left for it: F1
+(Fungal Growth, WP10 review 1), E3-1 (the distortion pipeline's warm-up, WP9 review 3) and the cleave's direction
+(Amendment 5). No simulation state, golden replay or checksum changes (D-1 holds): the client reads the weapon events
+and `RenderSnapshot::spell_missiles` the simulation already publishes, and the spell catalog's effect trees and
+statuses; no simulation crate is touched.
+
+**Engine (`client::effects`).**
+
+- **`Shot` events.** A new event kind, `Shot`: a weapon's shot from where it leaves its unit's bubble to where it
+  lands. A unit's block names it in a weapon's `travel` slot (only a `Shot` effect fits there). It binds `LineLength`
+  and `FlightTime` (0 for an instant shot). `effects::systems::travel_request` builds its line:
+  - a tracer's or a beam's line starts on the source's bubble (the event publishes the source's centre; the bubble's
+    radius is the archetype's collision radius, at most 0.8 of the shot) and ends at the impact;
+  - a projectile's line runs from where the simulation launched it (already on the source's bubble) to where it
+    arrives, and binds its flight.
+
+  A shot is its own effect: it never joins another along the same path (`merge_line` joins only a splash line's
+  searches).
+- **Riding the line.** A `Sprite` may `ride` its line: its placed point moves from the line's start to its end over
+  the layer's life (a projectile's body). It may be drawn out along the line (`stretch`, camera-facing only). A
+  `Ribbon` may ride its line with a `trail`: its head at the share of the line the layer's life has reached, its tail
+  that many world units behind (a tracer round's slug, a projectile's trail).
+- **Bound spans.** A layer may `lasts: FlightTime` (a shot's layers last the projectile's flight; an instant shot keeps
+  `duration`) or `lasts: AreaTotal` / `AreaRemaining` (an area's mark lasts as long as its spell's status). The
+  effect's lifetime and its decal reservations follow (`runtime::one_shot_lifetime`, `Layer::span`).
+- **Rings roll.** A `Ring` may be rolled (`rotation: Random`), so a blade's crescent (an arc) is swung at any angle.
+- **The legacy cards are left out where a unit names its looks.** `effects::systems::replaces_legacy`: a tracer,
+  beam, projectile or melee event whose unit's block has an entry for that weapon, or a death whose unit has a death
+  look, is drawn by the effect system only. Every shipped unit and structure has such entries, and the vocabulary's
+  default death is now `glass_shatter`, so in a battle the legacy cards draw nothing. They remain as the fallback for
+  an event no block covers: a synthetic event (diagnostics, tests) or a client without the effect system.
+- **Fog (D-5).** A shot is admitted with its event, where it lands. It is cut where the viewer stops seeing its path
+  (`effects::systems::shot_clip`): the fog is asked every 0.05 units from the landing point back towards the muzzle,
+  on the path and 0.35 units either side of it, and the shot is drawn from 0.05 units past the last seen sample on.
+  A shot out of the fog is drawn from the fog's edge. A cloaked attacker's shots are seen, as in StarCraft II and as
+  the legacy cards drew them, but the attacker is not.
+- **Spell missiles (F1).** A new event kind, `Missile`: a spell missile in flight, held while
+  `RenderSnapshot::spell_missiles` publishes it (`effects::areas::keep_missiles`):
+  - its position is interpolated between the two ticks of the presented instant
+    (`BattleFrameState::presented_missiles`);
+  - it is drawn only while the viewer sees the ground round it;
+  - it may `emit` an effect of its own kind at its beat (motes it sheds, left where they were shed).
+
+  When it is no longer published it has landed: its look is released and its `impact` (an `Area` effect) is laid
+  where it was drawn last. The impact binds `AreaRadius` (the first search of the ability's effect tree,
+  `EffectFacts::targeting_radius`) and `AreaTotal` / `AreaRemaining` (the longest status the tree applies), both read
+  from the spell catalog when the tables are built (`UnitEffectTables::missile_extent`). It is cut by the fog as an
+  area of that radius is, and not laid at all where the viewer sees none of it.
+- **E3-1.** `queue_distortions` asks for its pipeline every frame, as the card and decal queues do.
+- **The effect lab** spawns a `Shot` or `Point` subject half a unit above the ground, where the simulation publishes
+  shots, and cuts a shot under its fog veil as a battle does.
+
+**Looks** (`effects.ron`; no new texture, nothing spent; every one built from `droplet`, `smoke_puff`,
+`fireball_flipbook`, `acid_glob`, `acid_crown`, `acid_stain`, `chitin_spine`, `debris_atlas` and the noise set). The
+art rules hold: no ray, stripe, sunburst or speed line. A kinetic round is a short slug crossing the gap in a few
+frames, never a line across it. A beam is a flowing column broken by its noise. A projectile is a body of light or
+matter flying the path.
+
+| Family | Look (travel; impact) | Named by |
+|---|---|---|
+| Kinetic rounds | `gauss_tracer`; `bullet_hit` | `pulse_bot` (both slots) |
+| Heavy rounds | `cannon_tracer`; `cannon_hit` (the sieged weapon keeps `shell_impact`) | `railgun_crawler` (both stances), `colossus_mech`, `planetary_bulwark_dome` |
+| Sniper round | `sniper_tracer`; `bullet_hit` | `specter_android` |
+| Plasma bolts | `plasma_bolt`; `plasma_hit` | `warp_strider`, `astral_vagrant`, `cerebral_elder`, `mothership_carrier`, `tesla_sentinel_dome` |
+| Acid spit | `acid_spit`; `acid_hit` | `rhino_beetle`, `mortar_stag`, `spore_matriarch` |
+| Spore bolts | `spore_bolt`; `acid_hit` | `sonic_bat`, `sky_leviathan`, `hive_matron` (air), `spore_spire_dome` |
+| Needles | `needle_volley`; `needle_hit` | `thorn_viper`, `hive_matron` (its talons are a spine projectile: the weapon has a projectile speed) |
+| Rockets | `rocket_trail`; `rocket_hit` (the Liberator analogue keeps `flak_burst`) | `vector_interceptor`, `cloak_gunship`, `sky_bastion`, `flak_array_dome` |
+| Shell | `grenade_lob`; `rocket_hit` | `shock_golem` |
+| Beams | `prism_beam`; `beam_burn` | `prismatic_saucer`, `flying_saucer`, `prism_weaver` |
+| Lance | `lance_beam`; `lance_burn` (the line keeps `lance_sweep`) | `tripod_annihilator` |
+| Blades | `psi_slash` (impact) | `psi_grey`, `shadow_visitor` |
+| Claws | `claw_rake` (impact; the Ultralisk analogue keeps `cleave_impact`) | `razor_mantis`, `nectar_worker`, `stag_behemoth` |
+| Tools | `weld_sparks` (impact) | `welder_drone`, `grav_harvester` |
+| Impaler | `impaler_strike` (impact) | `thorn_lasher_dome` |
+| Death | `glass_shatter` (`defaults.death`) | every unit and structure whose block names no death |
+| Fungal Growth (F1) | `fungal_missile` (held), `fungal_trail`, `fungal_impact`; `fungal_affliction` and `fungal_motes` defined but named by no default (B-122, below) | `mycelium_shaman` (`"Fungal Growth"`) |
+
+The flame jet (`napalm_wheeler`) names no travel: its jet is its splash, so its legacy tracer is gone. The sieged
+tank and the Liberator analogue gain a travel next to their accepted splash. The accepted effects themselves are
+unchanged.
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **The legacy module stays as a fallback; its kinds are retired from the shipped game, not deleted.** No shipped
+  event reaches them. Deleting `vfx.rs` and `combat_fx.wgsl` would also remove the runtime capture's ownership audit
+  (`client_diagnostics::runtime_capture::ownership`), which stages synthetic events from no catalog unit and
+  inspects their legacy entities. Replacing that audit belongs to a later cleanup, with its own evidence.
+  `round2_visual_tests.rs` and `combat_fx_slot_gpu_tests.rs` test the module directly and stay green unchanged.
+- **Lightning.** No shipped weapon delivers lightning (`WeaponVisualKind::LightningArc` is used by no unit or
+  structure), so no lightning look is authored; the legacy kind remains only as the fallback.
+- **Weapons that publish no delivery event.** An instant weapon whose visual kind is `Projectile` publishes nothing
+  for the client: `jet_jumper` (Reaper analogue), `void_goliath` (Immortal analogue) and `colossus_mech`'s air
+  weapon. `volatile_tick`'s detonation shows its splash only. They name no travel or impact, the coverage test lists
+  them, and the gap is a simulation data question (a projectile speed or another visual kind), outside this plan's
+  presentation-only rule. Recorded.
+- **The cleave's direction is not added.** `SplashVisual` carries no facing. Pairing the cleave's search with the
+  same tick's `MeleeSlashVisual` would rest on event order and positions, not on a published fact. A
+  presentation-only facing on `SplashVisual` is a simulation crate change. Recorded, as Amendment 5 left it.
+- **Fungal impact position.** The simulation stops publishing a missile on the tick it lands, so its impact is laid
+  where it was drawn last: at most one tick's flight short of the target point (0.67 units for Fungal Growth). An
+  exact point needs a published impact (a presentation-only event). Recorded.
+- **`DamageOverTime` is one status kind (B-122, registered in `DESIGN.md`).** The snapshot publishes the kind only,
+  so a look keyed on it would put Fungal Growth's spores on a storm's victims (a wrong look in play). No
+  `DamageOverTime` default ships: a fungaled unit shows the slow (`concussive_daze`) and stands on the fungal mark,
+  which lasts the status's duration. `fungal_affliction` stays defined for when a per-status presentation key is
+  published (a simulation change). Keying on the flag combination `DamageOverTime + Revealed`, which only Fungal
+  Growth sets today, was rejected: it is an accident of today's catalog, not a published fact.
+- **Units without media stay unpresented.** In a battle the looks draw only for units with media. Shown only in the
+  lab, or by stand-ins in the tests: `tripod_annihilator` (`lance_beam`, `lance_burn`), `void_goliath` (none),
+  `mycelium_shaman` (the Fungal looks; the GPU evidence casts it from a presentable stand-in given a copy of the
+  ability and block in the test world's catalog only), and every other unit or structure without media, listed in
+  the packet.
+- **No team colour.** The legacy cards were tinted by their owner's colour; the new looks are not (the reference
+  game does not tint weapon effects either). Ownership reads from the units.
+
+**Tests.**
+
+- `effect_catalog_tests.rs`:
+  - `every_shipped_weapon_names_the_looks_of_the_event_it_publishes`: the coverage test over the whole catalog.
+    Every weapon of every shipped unit and structure that publishes a delivery event is named in its block under
+    the key the simulation tags it with. A projectile's travel flies its path for its flight, and an instant line's
+    travel does not wait for one. A melee strike has an impact and no travel. A splash weapon names its splash. The
+    vocabulary has no weapon default (`defaults.splash` and `defaults.impact` are empty), and every unit has a death
+    look.
+  - `shot_layers_ride_their_line_and_last_their_flight` and `a_missile_holds_its_look_and_lays_an_area_impact`:
+    the new fields resolve, and each misuse is refused with its field.
+  - The ability-look test admits `Missile` looks whose impact binds `AreaRadius`.
+- `weapon_look_tests.rs` (new): the travel request of an instant shot (from the bubble's surface to the impact,
+  binding its length) and of a projectile (whose `Critical` body is over 25, 50 and 75 % of the path at those shares
+  of its flight, and gone with the effect once it lands); two shots along one path are two effects; a melee strike
+  asks for its impact only; the legacy card is replaced exactly where a unit names its looks, and every shipped death
+  has a look; a spell missile holds one look in flight and lands one impact where it was drawn last, bound to the
+  spell catalog's radius and status duration; an unseen missile draws nothing and lands nothing.
+- `effects::systems` unit tests: `shot_clip` (seen whole, out of the fog, fog beside the path, seen only at the
+  landing point, a vertical shot).
+- `effects::runtime` unit test: a trailing ribbon rides its line.
+- `effect_slice_gpu_tests.rs`, new parent `shipped_shots_draw_along_their_paths` (radv and lavapipe): every
+  shipped `Shot` look in the production lab on a 6-unit line. Its `Critical` layers stay within their half width of
+  the projected path. A beam's ends are within 3 px of the muzzle and the impact. A slug's head, or a projectile's
+  body, is within 3 px of where the shot has reached. Nothing is drawn after the shot ends. Under the lab's fog over
+  the muzzle half, no pixel over the unseen half changes.
+- `status_gpu_tests.rs`, re-baselined with that cause only: the control unit, whose block names no death, now dies
+  with `glass_shatter`, which is counted like the named deaths, and no dying unit draws legacy shards.
+- `area_link_gpu_tests.rs`: the caster stand-in copies area and tether looks only. A new child,
+  `fungal_growth_flies_lands_and_afflicts`, gives a stand-in a copy of Fungal Growth and its block. It casts the
+  spell on enemies in sight while an enemy stand-in in the fog casts it at the edge of the viewer's sight, and it
+  pictures every frame. The test checks that the missile looks are held in flight, that each missile lands one
+  impact, and that the victims wear the affliction.
+- `battle_fog_tests.rs`, `sync_steady_state_tests.rs` (C-17), re-baselined with that cause only: combat in sight is
+  drawn by the effect system or by the legacy cards. In a battle the legacy material pool now adds no material.
+- `sync_steady_state_tests.rs` and the valgrind-counted `sync_allocation_count_tests.rs`: in the effect-stream
+  window every weapon also shoots a test `Shot` along its path. The valgrind window also holds a spell missile that
+  lands and is replaced every eight frames.
+- `client_diagnostics::runtime_capture`: the combat checkpoint accepts the effect system's cards, as well as a
+  legacy card, as the produced combat effect. It requires the effect card pipeline (`shaders/effects/sprite.wgsl`, a
+  fourth readiness shader) in place of the legacy one.
+
+**Measured (lavapipe; the server's physical GPU exposed no render node this round, so no radv run exists).** The
+shots' paths, ends and fog results, the Fungal counts and the coverage report are in
+`docs/evidence/effects/review/wp11r1_measurements.txt`.
+
+**Gate.** The packet's section "WP11 round 1"; the orchestrator runs the independent review (Q0080, up to five
+rounds).
+
+## Amendment 25: WP11 round 2, after WP11 review 1 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 2 answers `docs/evidence/effects/review/independent_review_wp11_1.md` (REJECT). D-1 holds: no simulation
+crate, golden replay or checksum changes.
+
+**Engine.**
+
+- **Crescents (A1-7).** A `Ring` arc may `crescent: true`: its band swells from nothing at the arc's two ends to its
+  full thickness in its middle (`FLAG_CRESCENT`, `sprite.wgsl`), densest along its spine. It may `arc_curve`: a
+  factor on the arc over the layer's life, so a blade's swing sweeps open over its first frames. Both need `arc`;
+  the catalog refuses them without one.
+- **Each effect's reach (E1-2 (a), (b)).** `Effect::reach`, resolved with the catalog: how far the effect's layers
+  can draw from their placed points on the ground plane (the largest card half size, ring radius, ribbon half width
+  or particle throw at its curves' peaks, plus its placement radius). A shot's fog cut (`shot_clip`) samples across
+  its path every half cell out to its reach (at least 0.35 units), fail-closed, so no unseen cell beside the path
+  within its reach is stepped over. A spell missile is drawn while the ground within its reach is seen, and its
+  impact is cut over the impact's reach.
+- **Fail-closed beside the fog (E1-2 (d)).** A shot whose reach meets unseen ground along its whole path is not
+  drawn at all: in the beside-the-fog take, every shipped shot run 0.6 of its reach from the edge draws nothing.
+- **Clip lifetime (E1-2 (c)).** A shot's clip is fixed when it is spawned and kept for its life (at most 0.6 s for a
+  shipped shot). The viewer's sight may shrink while the shot flies; the shot is not re-clipped. Recorded as a
+  bounded leak: at most one shot's life of a path the viewer saw at the shot's spawn.
+- **An instant shot's impact waits for its slug (E1-1).** A tracer's or a beam's impact is delayed by the time its
+  `Critical` trailing ribbon needs to reach the impact (`WeaponEffectIds::impact_delay`, the end of that layer's
+  span): the hit flashes where the slug arrives, not before it.
+- **Missile landing (E1-6).** A missile's impact is laid half a published step past its last published position
+  (`MissileSlot::landing`), the expected arrival point when the simulation stops publishing it on the tick it lands;
+  the rest of the offset is registered as B-124.
+- **Rolled together (A1-7).** A new rotation, `Together`: a random roll and mirror drawn from the effect
+  instance's own hash, so every card of the instance that rolls `Together` turns as one (the blade's body under its
+  light, the claw's parallel rakes). A particle, which has no instance of its own, rolls as `Random`.
+- **Prismatic beam held (A1-5).** Beams last 0.46 s, longer than the Void-Ray analogue's attack period and its
+  largest random delay (0.36 + 0.09 s), so a sustained attack keeps a beam on its target.
+
+**Looks (`effects.ron`, nothing spent, no new texture).** Every look is sized for the battle camera's default zoom
+(about 34 px per world unit). Every additive light stands on an alpha-blended body of its own hue (`*_body` ramps,
+sorted behind it), whose intensity curve rises above 1 (`body_*` curves) so its coverage fills its core and ends in
+a firm edge; the colour then reads on the bright floors where additive light clips to white (A1-4). The tracers
+are slugs (a warm body of size 0.09 to 0.11 under a hot core) with a muzzle flash; the cannon breathes dark smoke; the sniper's slug is cold with a blue
+head (A1-1, A1-2). Particles are at least 0.06 units (2 px) (A1-3). Beams are a violet or red body (size 0.15 to 0.16), a hot core
+and four pulses ridden from muzzle to target (A1-5). The acid glob, the needles and the shell are dark bodies with a
+pale rim or a dull glow; rocket smoke is a mid-dark alpha grey with a launch puff (A1-6). The blade is a swept blue
+crescent; the claw is three dark crescents with a pale edge (A1-7). The death throws pale, dark-edged shards out to
+about one and a half radii, sized by `UnitRadius` (A1-8).
+
+**Tests.**
+
+- `effects::systems` unit test `a_shot_along_a_fog_edge_within_its_reach_draws_nothing`;
+  `weapon_look_tests::an_instant_shots_impact_waits_for_its_slug` (E1-1); the missile landing expectation moved half
+  a step.
+- `effect_slice_gpu_tests`: `shipped_shots_draw_along_their_paths` adds a third part, the shot along the camera's
+  depth axis beside the fog edge within its reach, which may change no pixel over unseen ground (E1-2 (d)); new
+  `shipped_weapon_looks_can_be_seen` (E1-5): every shipped `Shot` and `Point` look and the default death, at the
+  default zoom on the brightest and the darkest lab ground, changes at least its class's area by 32 levels at its
+  peak (shot 40 px, impact 80 px, death 150 px), and its `Critical` layers' median contrast is at least 32 levels.
+- `area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts` (E1-3): ground samples every 0.1 units within 2 units
+  of the enemy missile's target, classed seen or unseen (with a margin at cell edges); no unseen sample changes over
+  the sequence and some seen ones do; an overlay of the samples on the peak frame is kept.
+- `status_gpu_tests` (E1-4): each death effect spawns exactly once per `BubbleShatter` event whose unit names it
+  (counted by the test from the battle's own events); a positive control, a synthetic death of a unit type no table
+  covers, must draw legacy shards the test counts.
+- `weapon_battle_gpu_tests` (new, class `Gpu`; V1-1): the shipped skirmish at the default zoom, one wave per child;
+  the first waves stage one presentable unit per family firing its own weapon at an unarmed target, the later waves
+  lend each lab family to a presentable shooter of the same event kind (or, failing one, the same flight) in the test
+  world's catalog only. Each family's looks must spawn and change its picture;
+  the evidence holds 40 ms sequences at 1:1 and 2x.
+- `client_diagnostics::runtime_capture`: the combat check counts only live `Shot`, `Point` and `Death` cards
+  (E1-8).
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **P1-1 taken (E1-3 needed it).** `fungal_impact`'s standing cards (its flash and its spore puffs) and its motes
+  rose high enough that, drawn over seen ground, they covered pixels whose ground lies in the fog beyond: the new
+  fog check counted 32 unseen samples changed. Their lift, drift and rise are lowered and the puffs gathered to
+  half the radius, so the mass sits over the disc; the check then counts none.
+- **P1-2 deferred.** An instant slug still ends at the target's centre. Ending it on the target's surface needs the
+  target's radius on the impact end of the line, which the event does not publish (only the source's centre is
+  used for the start).
+- **P1-4 deferred.** The coverage test keeps its own copy of the rule for which event a weapon publishes; a test
+  that fires each weapon kind through `SimWorld` belongs with B-123's simulation data fix, which changes that rule's
+  inputs.
+- **The visibility minimums are this round's choice** (E1-5 named the measure, not the numbers): 40 px for a shot,
+  80 px for an impact and 150 px for a death changed by 32 levels at the look's peak, and a `Critical` median
+  contrast of 32 levels, both on the lab's brightest and darkest ground at the default zoom.
+
+**Registered (E1-6).** B-123 (weapons that publish no event), B-124 (a missile's impact up to half a step short);
+B-107 and the "Effect presentation" row refreshed.
+
+**Gate.** The packet's section "WP11 round 2".
+
+## Amendment 26: WP11 round 3, after WP11 review 2 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 3 answers `docs/evidence/effects/review/independent_review_wp11_2.md` (REJECT on A2-1). D-1 holds: no
+simulation crate, golden replay or checksum changes. The struck bubble's radius is found on the client, from the
+presented snapshot, so no simulation change was needed for A2-1.
+
+**Engine.**
+
+- **Hits on the struck bubble's surface (A2-1, P1-2).** The simulation publishes an instant hit and a melee strike
+  at the struck unit's centre, half a unit up, inside its bubble. `effects::struck` moves them out:
+  `StruckBubbles` indexes the presented bubbles by `x` once a frame in which events arrive (a retained buffer,
+  sorted, queried by binary search), and `at_struck_surface` moves a tracer's or a beam's `to` back along the shot,
+  and a blow's `pos` along its published `angle_rad`, by the nearest bubble's radius plus 0.06 units. The bubble
+  must lie within its radius plus 0.35 units of the published point; otherwise (a synthetic event, an app without
+  a battle) the event is unchanged. A shot's point never moves back past 0.8 of its length. The slug therefore
+  ends where its impact shows, on the glass towards the shooter.
+- **Facing (A2-2).** A `Point` effect binds `Facing` (new binding: the direction from the hit point towards the
+  attacker, in the ground plane) and `UnitRadius` (the struck bubble's radius, 0.5 when it is not found). A card
+  may roll `Facing` (new rotation): an arc's middle, or a card's local `-x`, points at the attacker, with a hashed
+  mirror for the swing's direction (`runtime::facing_roll`). A new placement `Behind { distance }` moves an
+  instance away from the attacker: from the hit point back to the struck bubble's centre, so a blade's crescent
+  wraps the bubble's near side.
+- **Two spines (A2-3).** A new placement `Across { offset }`: two instances either side of the event's line.
+- **A shot's reach by end (E2-1).** `Effect::shot_reach` holds the muzzle layers' reach (used within that distance
+  of the muzzle) and the flying layers' reach across the path (a ribbon's half width; a riding card's twice its
+  size, its stretch running along the path rather than across it). `shot_clip` asks the fog that far at each
+  sample. A unit standing near unseen ground is no longer cut whole because of its attacker's muzzle smoke.
+
+**Looks.** `psi_slash` is a crescent of 1.4 to 1.52 struck radii round the struck bubble's centre, its middle
+towards the attacker, swept open across the line of the blow; `claw_rake` is three such crescents at 1.3, 1.5 and
+1.7 radii. `impaler_strike`'s spike (0.62) stands 0.18 units in front of the struck bubble's surface. Every other
+impact is drawn where it is anchored, now on the surface. `needle_volley` is two spines 0.24 units apart. P2-1:
+`cannon_hit` keeps a hot core under its breaking fireball. P2-3: `glass_shatter` throws 12 to 18 shards at 4.5
+to 7 units a second. P2-4: `acid_hit`'s dark splash is broken at its edge.
+
+**Tests.**
+
+- `effects::struck` unit tests: a tracer ends on the near surface; a short shot is never pulled past its muzzle; a
+  blow moves towards its attacker; an unknown bubble moves nothing; the index finds the nearest bubble within its
+  radius and slack.
+- `weapon_look_tests::an_instant_shots_impact_waits_for_its_slug` (E2-5), now independent of the delay formula:
+  for every shipped instant travel, the slug alone and the impact alone are built frame by frame (10 ms); the
+  impact draws nothing before the frame in which the slug's riding strip reaches the shot's end.
+- `effect_slice_gpu_tests`: the beside-the-fog take adds a positive control (E2-1): 1.3 of the shot's largest
+  reach from the fog, the shot draws (at least 30 pixels) and nothing over unseen ground. The visibility test binds
+  an impact as a battle does (`Facing`, `UnitRadius`) and prints the median display colour of each look's own
+  changed pixels (E2-4).
+- `weapon_battle_gpu_tests` (E2-2, E2-3): the units stand unarmed for 0.4 s and are pictured (the baseline), then
+  open fire. Against the baseline, outside both bubbles, each family must change at least 30 pixels round its path
+  and target, and its impact at least 15 pixels just outside the struck bubble on the attacker's side, in the four
+  frames after an impact spawns.
+
+**Decisions and out of scope (Q0002, reversible).**
+
+- **P2-2 recorded, not changed.** A sustained beam is a series of 0.46 s shots, each a line fixed at its spawn:
+  against a moving target consecutive beams splay apart for about 0.1 s, and the last beam outlives a dead target
+  by up to 0.46 s. A held beam keyed on source and target is a WP11 follow-up.
+- **The struck bubble is found by position.** The nearest presented bubble within its radius plus 0.35 units of
+  the published hit point is taken as the struck one, and only its radius (and, from round 4, its drawn height) is
+  used: the point is always moved from the published point, the struck unit's own centre. If another bubble's centre
+  is nearer (on the ground collision keeps bubbles apart, so this needs interpolation lag in a tight crowd), the hit
+  is moved by that neighbour's radius from the target's own centre, a few hundredths of a unit off its glass; it is
+  not put on the neighbour's surface. (Corrected in round 4, review 3, E3-2.) An exact match needs the target's id in
+  the event (a simulation change; B-125).
+
+## Amendment 27: WP11 round 4, after WP11 review 3 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code, catalog presentation data and their tests).**
+Round 4 answers the conditions of `docs/evidence/effects/review/independent_review_wp11_3.md` (ACCEPT WITH
+CONDITIONS, C1 to C5) and its minor items E3-4 and E3-5. D-1 holds: no simulation crate, golden replay or checksum
+changes; every condition was met on the client.
+
+**Engine (`effects::struck`).**
+
+- **Hits on the struck bubble's glass, flyers included (C1, A3-1).** The index keeps each bubble's drawn centre
+  height (its altitude plus its radius; a dome's base) and whether it flies (more than 1 unit above its ground). The
+  hit point is set to that height, so a shot at a flyer ends on its glass, 2.5 units up, not on the ground under
+  it. Where a flyer and a ground unit overlap in plan, a weapon in the `Air` slot takes the flyer and one in the
+  `Ground` slot the ground unit; a `Primary` weapon takes the nearest in plan, ties broken by height from the
+  published point. The published height is always the ground plus 0.5, so for a `Primary` weapon that hits both
+  planes (most of the catalog's anti-air, the rifle analogue's included) the tie-break favours the ground unit: a
+  shot at a flyer over a packed ground army may be drawn on a ground unit's glass, about 2.5 units (about 50 px at
+  the default zoom) below the flyer. This cross-plane case is registered with B-125; its fix is the simulation's
+  (publish the target's id, or its drawn altitude in `to[2]`). (Stated in round 5, review 4, A4-2.)
+- **Far-side hits in front of the glass (C2, A3-2).** A shot's end (a tracer's or a beam's, and with it its hit)
+  and a blow's point are put on the struck bubble's outline as the battle camera sees it: the point of the bubble's
+  silhouette, at its radius plus 0.12, on the side the attack comes from on screen (`struck::onto_outline`, from the
+  camera's view direction). It is never in front of the bubble's face, where the bubble would sit behind it and its
+  interior hide it, nor behind the bubble. Its horizontal distance from the struck centre is 0.85 to 1 of the radius
+  plus 0.12, so looks placed `Behind` a blow move back by `UnitRadius × 1.15` in data (to within about 0.1 units of
+  the centre for the shipped radii). Without a camera (a tool, a test app) the point is raised 45 degrees up the
+  bubble towards the attacker instead. `impaler_strike`'s spikes rise from about 0.36 units below their point
+  (`spine_lift_struck`): near the ground for an attack across the screen, partly below it for one from below, and
+  about 0.3 units above it for one from above (recorded).
+- **A bounded query (C5, E3-3).** A uniform grid over the presented bubbles (cells of 1 unit, at most 512 a side),
+  rebuilt by counting sort into retained buffers once a frame with events; each bubble, a structure's dome included,
+  is entered in every cell its radius plus 0.35 covers, so a query reads one cell.
+- **An unfound bubble (E3-5).** An event whose struck bubble is not found is moved as if it struck a bubble of the
+  default radius (0.5) centred on its published point, the radius its impact binds, so a look placed `Behind` the
+  hit lands on that bubble's centre.
+
+**Looks.** `claw_rake`'s three rakes at 1.3, 1.45 and 1.6 struck radii (from 1.3 to 1.7), less across the attacker
+(P3-1), and outside the struck bubble's drawn disc, where the battle measure counts them (on the glass they would be
+masked). `bullet_hit`'s and `weld_sparks`' hot flashes are larger (0.42 and 0.4) and last 0.16 and 0.18 s, so more of
+them lies outside the struck bubble's interior. `impaler_strike` now raises two spikes either side of the line of
+the blow (`Across` without a line follows the bound `Facing`), 0.9 struck radii out, where an attacker standing
+against its target does not hide them; the shipped attacker (a spine crawler analogue) strikes from range, so a
+single spike would do there, and the pair is recorded as a deviation of the look.
+
+**Tests.**
+
+- `effects::struck` unit tests: the point on the glass towards the muzzle and up; a hit on a flyer rises to its
+  glass; the grid finds the nearest bubble, a wide dome from any cell it covers, the flyer for an anti-air weapon
+  and the ground unit for a ground weapon over the same point; an unknown bubble counts as the default.
+- `effects::systems::a_shots_muzzle_reach_counts_only_near_its_muzzle` (E3-4): unseen ground between the path's
+  reach and the muzzle's beside the landing half leaves the shot whole; beside the muzzle it cuts the shot behind
+  it; a single reach would cut it whole.
+- `weapon_battle_gpu_tests` (C1 to C3): a last wave stages the first native instant shot and the first native
+  blow each from above and from below the target on screen, and a shooter's anti-air weapon at a flyer. Every
+  presented bubble's drawn disc (its centre projected at its drawn height) is masked out to 0.8 of its radius, the
+  subject's and its neighbours': its interior, where its unit's flipbook animates; the band of glass round it is
+  measured, because a hit is drawn there (a hit on the far side lies over the upper rim on screen). The planted
+  negatives show that the band adds no false impact. The impact is looked for from its birth (an instant shot's impact waits for its slug). Planted
+  negatives: one tracer's, one beam's and one blow's impact struck across the screen, and the blow struck from above
+  the target, each replaced in a copy of the vocabulary by a card too small to draw, must fail the impact check. The
+  impact check counts pixels beside the struck bubble on the attacker's side, off the shot's own line (0.15 units
+  either side: a beam's or a slug's end lies on it, and a blank beam impact otherwise still counted 118), and needs
+  40 of them (was 15): a blank melee impact still leaves up to 33 (measured on the blow struck from below; corrected in round 5, E4-2) in the band of glass where the attacker's rim turns
+  as it strikes.
+- `sync_allocation_count_tests` (C5): the effect stream also sends an instant hit and a blow at a presented
+  bubble every frame, through the struck-bubble index, with an impact using `Facing` and `Behind`; the stream must
+  spawn at least one hit a frame.
+
+**Decisions and out of scope (Q0002, reversible).** P3-2 (`glass_shatter`'s shards) and P3-3 (`acid_hit`'s
+splash) are deferred to a polish pass. B-125 (match by position) and B-126 (a held beam is a series of lines) are
+registered in `DESIGN.md`.
+
+## Amendment 28: WP11 round 5, after WP11 review 4 (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client presentation code and its tests).** Round 5 answers the
+conditions of `docs/evidence/effects/review/independent_review_wp11_4.md` (ACCEPT WITH CONDITIONS, C1 and C2) and its
+minor items E4-1 to E4-3. D-1 holds: no simulation crate, golden replay or checksum changes; no look's data changed.
+
+- **A dome struck from the camera's side (C1, A4-1).** The struck-bubble index keeps whether a bubble is a
+  structure's dome. A dome is a half sphere standing on its base, with nothing below: where the outline point of a
+  full sphere would lie below the base (an attack with a component towards the camera), the point is put on the
+  dome's base rim instead, at its radius plus 0.12 in plan, towards the attacker on screen, 0.1 above the base
+  (`struck::DOME_RIM_LIFT`); from the far side it stays on the upper outline. Unit test
+  `a_dome_is_struck_on_its_visible_outline_never_below_its_base`: a dome of radius 2 struck from below, across and
+  above on screen is struck at or above its base and outside its glass.
+- **The cross-plane mismatch (C2, A4-2).** Registered: B-125 and Amendment 27 state that a `Primary` weapon's shot at
+  a flyer over a packed ground army may be drawn on a ground unit's glass about 2.5 units low, with the simulation
+  fix. Not done (optional): choosing the plane from a `Primary` weapon's `target_flags`, which in this catalog name
+  armour attributes rather than planes, so they cannot tell an anti-air weapon from an anti-ground one.
+- **The impact check per subject (E4-1).** Each wave of the staged battle runs twice; the second run draws every
+  impact of the wave as nothing (its blank). A subject's impact must change beside the struck bubble at least twice
+  what its own blank changes there, plus 20 pixels, replacing the single bar of 40 and the separate planted negatives.
+  What the units' animations change (the attacker's rim among them) is in both runs.
+- **E4-2.** The 33-pixel blank was the blow struck from below; Amendment 27 and the test's comment say so now.
+- **E4-3.** The valgrind effect stream checks, after its window, that the index built from the presented bubbles
+  finds every one of them where it stands with its own radius, so a broken lookup falling back to the default bubble
+  fails the stream.

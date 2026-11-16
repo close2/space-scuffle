@@ -138,6 +138,10 @@ pub struct CardLook {
     pub shape: CardShape,
     /// Noise breakup.
     pub breakup: Option<Breakup>,
+    /// Whether the card rides the event's line over the layer's life (plan WP11).
+    pub ride: bool,
+    /// Length along the event's line over width, at least 1 (1 is a round card).
+    pub stretch: f32,
 }
 
 /// The look of a decal.
@@ -202,6 +206,9 @@ pub struct RibbonLook {
     pub shape: CardShape,
     /// Noise breakup.
     pub breakup: Option<Breakup>,
+    /// When set, the strip rides the line with the layer's life, its tail this many world
+    /// units behind its head (plan WP11), instead of racing out at `travel`.
+    pub trail: Option<f32>,
 }
 
 /// The look of a distortion disc (see [`schema::BlockDef::Distortion`]).
@@ -279,6 +286,10 @@ pub enum Block {
         edge_noise: f32,
         /// Share of the turn drawn (bound, clamped to [0, 1]); `None` draws the whole ring.
         arc: Option<ValueDef>,
+        /// A factor on the arc over the layer's life (a swing sweeping open).
+        arc_curve: Option<CurveId>,
+        /// Whether the arc's band tapers to points at both ends (a crescent).
+        crescent: bool,
         /// How much the band's width and radius waver round the turn; 0 for an even band.
         waver: f32,
         /// Whether the ring darkens the ground under it (multiplied, never lightened).
@@ -371,6 +382,21 @@ pub struct Layer {
     pub exit: f32,
     /// A factor on the intensity from a bound value, if any.
     pub strength: Option<schema::StrengthDef>,
+    /// The bound span of time the layer lasts, if any (see [`schema::LayerDef::lasts`]).
+    pub lasts: Option<schema::Binding>,
+}
+
+impl Layer {
+    /// The layer's life in seconds for an effect bound to `bound`: the value of the binding it
+    /// lasts when that is positive (a projectile's `FlightTime`, plan WP11), and its `duration`
+    /// otherwise.
+    #[must_use]
+    pub fn span(&self, bound: &crate::effects::binding::BoundValues) -> f32 {
+        self.lasts
+            .map(|binding| bound.get(binding))
+            .filter(|seconds| *seconds > 0.0 && seconds.is_finite())
+            .unwrap_or(self.duration)
+    }
 }
 
 /// A ring's radius over its layer's life, resolved.
@@ -411,6 +437,38 @@ pub struct Effect {
     pub emit: Option<Emit>,
     /// What a `Status` effect spawns on a published hit on its status.
     pub hit: Option<Hit>,
+    /// What a `Missile` effect lays where the missile ends (an `Area` effect).
+    pub impact: Option<EffectId>,
+    /// How far, in world units, its constant-sized layers can draw from their placed point on
+    /// the ground plane: size times the size curve's peak, placement radius, spread, drift over
+    /// the layer's life and lift, and a particle's flight. The fog asks this far round a shot
+    /// or a missile (plan WP11 review 1, E1-2). Layers sized by a binding add their scale only.
+    pub reach: f32,
+    /// A shot's reach by end (WP11 round 3, E2-2): its muzzle layers' near the muzzle, and its
+    /// flying layers' (ribbons, cards riding the line) along the whole path.
+    pub shot_reach: ShotReach,
+}
+
+/// How far a shot's layers draw beside its path, world units, by where they are (see
+/// [`Effect::shot_reach`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShotReach {
+    /// Reach of the layers drawn at the muzzle (flash, smoke, mouth spray), measured from it,
+    /// so the fog is asked this far round the path's first `muzzle` units.
+    pub muzzle: f32,
+    /// Reach of the layers flying the path (ribbons, cards riding the line), across it.
+    pub path: f32,
+}
+
+impl ShotReach {
+    /// The same reach at both ends.
+    #[must_use]
+    pub const fn uniform(reach: f32) -> Self {
+        Self {
+            muzzle: reach,
+            path: reach,
+        }
+    }
 }
 
 /// An effect laid again and again while a `Status` effect is held (see [`schema::EmitDef`]).

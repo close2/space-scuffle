@@ -76,6 +76,10 @@ pub(super) fn resolve(
         effects.push(resolver.effect(name, effect)?);
     }
     check_status_links(path, &effects)?;
+    for effect in &mut effects {
+        effect.reach = effect_reach(effect, &curves, &resolver.emitters);
+        effect.shot_reach = shot_reach(effect, &curves, &resolver.emitters);
+    }
     let budget = resolver.budget(file, &effects)?;
     let defaults = resolver.defaults(file)?;
     let effect_names = resolver
@@ -101,6 +105,16 @@ pub(super) fn resolve(
 /// that every effect an `Area` effect lays is an `Area` effect (it binds the area's radius).
 fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatalogError> {
     for effect in effects {
+        let landed = effect.impact.and_then(|id| effects.get(usize::from(id.0)));
+        if landed.is_some_and(|landed| landed.event != EventKind::Area) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: path.to_path_buf(),
+                site: site(&effect.name, None),
+                field: "impact",
+                value: 0.0,
+                rule: "a missile lays an `Area` effect where it ends",
+            });
+        }
         let links = [
             ("emit", effect.emit.map(|emit| emit.effect)),
             ("hit", effect.hit.map(|hit| hit.effect)),
@@ -115,12 +129,113 @@ fn check_status_links(path: &Path, effects: &[Effect]) -> Result<(), EffectCatal
                     site: site(&effect.name, None),
                     field,
                     value: 0.0,
-                    rule: "the effect it names must be of its own kind (`Status` or `Area`)",
+                    rule: "the effect it names must be of its own kind (`Status`, `Area` or `Missile`)",
                 });
             }
         }
     }
     Ok(())
+}
+
+/// The peak value of curve `id` over its life (1 without a curve).
+fn curve_peak(curves: &[Curve], id: Option<CurveId>) -> f32 {
+    id.and_then(|id| curves.get(usize::from(id.0)))
+        .map_or(1.0, |curve| {
+            (0..=64)
+                .map(|step| {
+                    #[expect(clippy::cast_precision_loss, reason = "a step below 65")]
+                    let t = step as f32 / 64.0;
+                    curve.sample(t)
+                })
+                .fold(0.0_f32, f32::max)
+        })
+}
+
+/// How far `effect`'s layers can draw from their placed points on the ground plane, world
+/// units (see [`Effect::reach`]).
+fn effect_reach(effect: &Effect, curves: &[Curve], emitters: &[Emitter]) -> f32 {
+    effect
+        .layers
+        .iter()
+        .map(|layer| layer_reach(layer, curves, emitters))
+        .fold(0.0_f32, f32::max)
+}
+
+/// Whether `layer` flies a shot's path: a ribbon, or a card riding the line.
+fn flies_path(layer: &Layer) -> bool {
+    match &layer.block {
+        Block::Ribbon(_) => true,
+        Block::Sprite(look) => look.ride,
+        _ => false,
+    }
+}
+
+/// A shot's reach by end (see [`Effect::shot_reach`]): a flying layer reaches across the path
+/// by its half width and, standing towards the camera, as far again (its stretch runs along
+/// the path, not across it); every other layer by its whole reach, near the muzzle.
+fn shot_reach(effect: &Effect, curves: &[Curve], emitters: &[Emitter]) -> super::ShotReach {
+    effect
+        .layers
+        .iter()
+        .fold(super::ShotReach::default(), |reach, layer| {
+            if flies_path(layer) {
+                let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
+                let across = match &layer.block {
+                    Block::Sprite(_) => 2.0 * size,
+                    _ => size,
+                };
+                super::ShotReach {
+                    path: reach.path.max(across),
+                    ..reach
+                }
+            } else {
+                super::ShotReach {
+                    muzzle: reach.muzzle.max(layer_reach(layer, curves, emitters)),
+                    ..reach
+                }
+            }
+        })
+}
+
+/// How far one layer can draw from its placed points on the ground plane, world units: its
+/// size at its size curve's peak, its placement's spread, a card's stretch, drift and height
+/// (a card standing towards the camera covers ground behind it as far as it is tall), a ring's
+/// radius and height, a particle's flight.
+fn layer_reach(layer: &Layer, curves: &[Curve], emitters: &[Emitter]) -> f32 {
+    let size = layer.size.scale.abs() * curve_peak(curves, layer.size_curve);
+    let placed = layer
+        .placements
+        .iter()
+        .map(|placement| match placement {
+            PlacementDef::Disc { radius, .. } | PlacementDef::Circle { radius, .. } => {
+                radius.scale.abs() * 1.5
+            }
+            PlacementDef::Line { scatter, .. } => *scatter,
+            PlacementDef::Across { offset } => offset.scale.abs(),
+            PlacementDef::Behind { distance } => distance.scale.abs(),
+            PlacementDef::Point | PlacementDef::LineEnd { .. } => 0.0,
+        })
+        .fold(0.0_f32, f32::max);
+    let body = match &layer.block {
+        Block::Sprite(look) => {
+            let height = look.lift.unwrap_or(0.0).abs().max(1.0) * size;
+            size * look.stretch + height + look.spread + look.drift.length() * layer.duration
+        }
+        Block::Ring { height, .. } => {
+            size + height
+                + layer.radius.map_or(0.0, |radius| {
+                    radius.from.scale.abs().max(radius.to.scale.abs())
+                })
+        }
+        Block::Particles(id) => emitters.get(usize::from(id.0)).map_or(size, |emitter| {
+            let life = emitter.lifetime.1;
+            size + emitter.speed.1 * life / (1.0 + emitter.drag * life) + emitter.size.1
+        }),
+        Block::Distortion(look) => size + look.height,
+        Block::Light { height, .. } => size + height,
+        Block::Decal(_) | Block::Ribbon(_) | Block::Shell(_) => size,
+    };
+    body + placed
 }
 
 /// The deepest bite a torn front may declare, as a share of its radius (`edge_noise` times
@@ -538,6 +653,23 @@ impl Resolver<'_> {
             }
         }
         let (emit, hit) = self.status_links(name, effect)?;
+        let impact = match &effect.impact {
+            Some(impact) if effect.event == EventKind::Missile => Some(EffectId(self.id(
+                NameKind::Effect,
+                impact,
+                &site(name, None),
+            )?)),
+            Some(_) => {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: site(name, None),
+                    field: "impact",
+                    value: 0.0,
+                    rule: "only a `Missile` effect lays an impact where it ends",
+                });
+            }
+            None => None,
+        };
         Ok(Effect {
             name: name.to_owned(),
             class: effect.class,
@@ -550,6 +682,9 @@ impl Resolver<'_> {
             salt: effect.seed.unwrap_or_else(|| name_hash(name)),
             emit,
             hit,
+            impact,
+            reach: 0.0,
+            shot_reach: super::ShotReach::default(),
         })
     }
 
@@ -568,7 +703,10 @@ impl Resolver<'_> {
             (
                 "emit",
                 effect.emit.is_some(),
-                matches!(effect.event, EventKind::Status | EventKind::Area),
+                matches!(
+                    effect.event,
+                    EventKind::Status | EventKind::Area | EventKind::Missile
+                ),
             ),
             (
                 "hit",
@@ -583,20 +721,20 @@ impl Resolver<'_> {
                     field,
                     value: 0.0,
                     rule: "only a `Status` effect may lay or spawn another, and an `Area` \
-                           effect lay one",
+                           or a `Missile` effect lay one",
                 });
             }
         }
         let emit = match &effect.emit {
             Some(emit) => {
                 self.positive_seconds(&at, "emit.every", emit.every)?;
-                if emit.moving && effect.event == EventKind::Area {
+                if emit.moving && effect.event != EventKind::Status {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),
                         site: at,
                         field: "emit.moving",
                         value: 1.0,
-                        rule: "an area does not move",
+                        rule: "only a unit's status lays while its unit moves",
                     });
                 }
                 Some(super::Emit {
@@ -665,7 +803,11 @@ impl Resolver<'_> {
         } else {
             matches!(
                 event,
-                EventKind::Mode | EventKind::Status | EventKind::Area | EventKind::Link
+                EventKind::Mode
+                    | EventKind::Status
+                    | EventKind::Area
+                    | EventKind::Link
+                    | EventKind::Missile
             )
         };
         if !allowed {
@@ -674,8 +816,8 @@ impl Resolver<'_> {
                 site: at.clone(),
                 field,
                 value: 0.0,
-                rule: "only a `Mode`, `Status`, `Area` or `Link` effect is held and may hold a \
-                       layer, and only a `Mode` or `Status` effect may shape a bubble",
+                rule: "only a `Mode`, `Status`, `Area`, `Link` or `Missile` effect is held and \
+                       may hold a layer, and only a `Mode` or `Status` effect may shape a bubble",
             });
         }
         if matches!(block, Block::Particles(_)) && layer.held {
@@ -721,6 +863,11 @@ impl Resolver<'_> {
             values.push(*arc);
         }
         self.unit_bound(at, event, layer, &block)?;
+        if let Block::Sprite(look) | Block::Ring { look, .. } = &block {
+            if look.rotation == super::schema::RotationDef::Facing {
+                self.require(at, event, super::schema::Binding::Facing)?;
+            }
+        }
         self.fraction(at, "size_jitter", layer.size_jitter)?;
         if let Some(strength) = layer.strength {
             self.unit_range(at, "strength.floor", strength.floor, 0.0)?;
@@ -733,6 +880,7 @@ impl Resolver<'_> {
             self.require(at, event, value.bind)?;
         }
         self.ribbon_spans_line(at, event, &block, &placements)?;
+        self.rides_line(at, event, layer, &block)?;
         if matches!(block, Block::Ring { .. }) && layer.radius.is_none() {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -772,7 +920,48 @@ impl Resolver<'_> {
             held: layer.held,
             exit: layer.exit,
             strength: layer.strength,
+            lasts: layer.lasts,
         })
+    }
+
+    /// Checks the shot fields of a layer (plan WP11): a layer that lasts a bound span lasts a
+    /// span of time its event provides and is not held; a card that rides its line, or is
+    /// drawn out along it, needs the event's line.
+    fn rides_line(
+        &self,
+        at: &Site,
+        event: EventKind,
+        layer: &LayerDef,
+        block: &Block,
+    ) -> Result<(), EffectCatalogError> {
+        if let Some(binding) = layer.lasts {
+            let span = matches!(
+                binding,
+                super::schema::Binding::FlightTime
+                    | super::schema::Binding::AreaTotal
+                    | super::schema::Binding::AreaRemaining
+            );
+            if !span || layer.held {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "lasts",
+                    value: 0.0,
+                    rule: "a layer that is not held lasts a span of time: `FlightTime`, \
+                           `AreaTotal` or `AreaRemaining`",
+                });
+            }
+            self.require(at, event, binding)?;
+        }
+        let along_line = match block {
+            Block::Sprite(look) => look.ride || look.stretch > 1.0,
+            Block::Ribbon(look) => look.trail.is_some(),
+            _ => false,
+        };
+        if along_line {
+            self.require_line(at, event, super::schema::Binding::LineLength)?;
+        }
+        Ok(())
     }
 
     /// Checks one placement of a layer of an effect of kind `event`, adding the values it binds
@@ -786,6 +975,11 @@ impl Resolver<'_> {
     ) -> Result<(), EffectCatalogError> {
         match placement {
             PlacementDef::Point => {}
+            PlacementDef::Across { offset } => values.push(*offset),
+            PlacementDef::Behind { distance } => {
+                values.push(*distance);
+                self.require(at, event, super::schema::Binding::Facing)?;
+            }
             PlacementDef::LineEnd { back } => {
                 values.push(*back);
                 self.require_line(at, event, super::schema::Binding::LineLength)?;
@@ -964,8 +1158,21 @@ impl Resolver<'_> {
                 clip_to_line,
                 shape,
                 breakup,
+                ride,
+                stretch,
             } => {
                 self.at_least(at, "soft_depth", *soft_depth, 0.0)?;
+                self.at_least(at, "stretch", *stretch, 1.0)?;
+                if *stretch > 1.0 && *orient != super::schema::Orient::Camera {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        field: "stretch",
+                        value: *stretch,
+                        rule: "only a card facing the camera (`orient: Camera`) is drawn out \
+                               along its line",
+                    });
+                }
                 self.at_least(at, "lean_deg", *lean_deg, 0.0)?;
                 self.at_least(at, "spread", *spread, 0.0)?;
                 if let Some(fps) = fps {
@@ -994,6 +1201,8 @@ impl Resolver<'_> {
                     clip_to_line: *clip_to_line,
                     shape: *shape,
                     breakup: self.breakup(breakup.as_ref(), at)?,
+                    ride: *ride,
+                    stretch: *stretch,
                 })
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
@@ -1082,11 +1291,15 @@ impl Resolver<'_> {
                 clip_to_line: false,
                 shape: super::schema::CardShape::Texture,
                 breakup,
+                ride: false,
+                stretch: 1.0,
             },
             thickness: *thickness,
             height: *height,
             edge_noise: *edge_noise,
             arc: None,
+            arc_curve: None,
+            crescent: false,
             waver: 0.0,
             darken: false,
         })
@@ -1142,10 +1355,22 @@ impl Resolver<'_> {
             arc,
             waver,
             darken,
+            rotation,
+            arc_curve,
+            crescent,
         } = block
         else {
             return self.block(at, block);
         };
+        if arc.is_none() && (arc_curve.is_some() || *crescent) {
+            return Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field: if *crescent { "crescent" } else { "arc_curve" },
+                value: 0.0,
+                rule: "a sweep or a crescent shapes an arc: it needs `arc`",
+            });
+        }
         if *darken && *orient != super::schema::Orient::Ground {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -1192,17 +1417,22 @@ impl Resolver<'_> {
         }
         Ok(match block {
             Block::Ring {
-                look,
+                mut look,
                 thickness,
                 height,
                 edge_noise,
                 ..
             } => Block::Ring {
-                look,
+                look: {
+                    look.rotation = *rotation;
+                    look
+                },
                 thickness,
                 height,
                 edge_noise,
                 arc: *arc,
+                arc_curve: self.curve(arc_curve.as_ref(), at)?,
+                crescent: *crescent,
                 waver: *waver,
                 darken: *darken,
             },
@@ -1427,10 +1657,24 @@ impl Resolver<'_> {
             sort_bias,
             shape,
             breakup,
+            trail,
         } = block
         else {
             return self.block(at, block);
         };
+        if let Some(trail) = trail {
+            self.at_least(at, "trail", *trail, 0.001)?;
+            if *travel > 0.0 || tail_delay.is_some() {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "trail",
+                    value: *trail,
+                    rule: "a strip that rides its line with the layer's life neither travels \
+                           nor delays its tail",
+                });
+            }
+        }
         if *shape == super::schema::CardShape::Membrane {
             return Err(EffectCatalogError::InvalidValue {
                 path: self.path.to_path_buf(),
@@ -1495,6 +1739,7 @@ impl Resolver<'_> {
             sort_bias: *sort_bias,
             shape: *shape,
             breakup: self.breakup(breakup.as_ref(), at)?,
+            trail: *trail,
         }))
     }
 

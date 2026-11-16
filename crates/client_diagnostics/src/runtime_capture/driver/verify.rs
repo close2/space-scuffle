@@ -57,7 +57,7 @@ struct FrameFacts {
     roots: usize,
     bubbles: VisibleBubbles,
     required_mask: u8,
-    counts: [usize; 3],
+    counts: [usize; 4],
     transport: Option<super::super::transport::TransportProof>,
     ownership: Option<super::super::ownership::OwnershipProof>,
 }
@@ -507,7 +507,9 @@ fn verify_subjects(
 }
 
 /// The production shader pipelines the goal draws, as a mask over the shader order of
-/// [`PipelineEvidence`]: bit 0 terrain, bit 1 bubble domes, bit 2 combat effects.
+/// [`PipelineEvidence`]: bit 0 terrain, bit 1 bubble domes, bit 2 the legacy combat cards, bit 3
+/// the effect system's cards. A battle's combat is drawn by the effect system (plan WP11); the
+/// Visual Lab's staged effects (synthetic events no unit names) by the legacy cards.
 fn required_shader_mask(goal: Goal, lab_goal: bool) -> u8 {
     if matches!(
         goal.ownership_view(),
@@ -517,19 +519,44 @@ fn required_shader_mask(goal: Goal, lab_goal: bool) -> u8 {
     } else if lab_goal {
         2
     } else if goal == Goal::Combat {
-        1 | 2 | 4
+        1 | 2 | 8
     } else {
         1 | 2
     }
 }
 
-/// After damage, at least one produced combat effect must be visible.
+/// After damage, at least one produced combat effect must be visible: a legacy combat card, or
+/// (plan `2026-11-09-effect-visualization` WP11: the shipped units' shots, impacts and deaths are
+/// the effect system's) a card or a mark the effect runtime draws this frame.
 fn verify_combat_effect_visible(world: &mut World) -> Result<(), CaptureError> {
-    let effect_visible = world
+    let legacy_visible = world
         .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>()
         .iter(world)
         .any(|visibility| visibility.get());
-    if !effect_visible {
+    // Only a weapon's shot, impact or a death counts, never a status or an area look (review 1,
+    // E1-8): a live combat effect that is still burning while the frame draws cards or marks.
+    let effect_drawn = match (
+        world.get_resource::<client::effects::runtime::EffectRuntime>(),
+        world.get_resource::<client::effects::catalog::EffectCatalog>(),
+    ) {
+        (Some(runtime), Some(catalog)) => {
+            let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
+            let combat = runtime.pool.iter().any(|(_, instance)| {
+                now < instance.fire_end
+                    && catalog.effect(instance.effect).is_some_and(|effect| {
+                        matches!(
+                            effect.event,
+                            client::effects::catalog::schema::EventKind::Shot
+                                | client::effects::catalog::schema::EventKind::Point
+                                | client::effects::catalog::schema::EventKind::Death
+                        )
+                    })
+            });
+            combat && (!runtime.frame.sorted.is_empty() || !runtime.frame.decals.is_empty())
+        }
+        _ => false,
+    };
+    if !legacy_visible && !effect_drawn {
         return Err(failure(
             "damage occurred but produced combat effect is not visible",
         ));

@@ -17,7 +17,7 @@
 use super::catalog::schema::{Binding, EventKind, ValueDef};
 
 /// Number of [`Binding`] variants.
-pub const BINDING_COUNT: usize = 15;
+pub const BINDING_COUNT: usize = 16;
 
 /// Dense index of a binding.
 #[must_use]
@@ -38,6 +38,7 @@ pub const fn binding_index(binding: Binding) -> usize {
         Binding::ChannelProgress => 12,
         Binding::BarrierRatio => 13,
         Binding::FlightTime => 14,
+        Binding::Facing => 15,
     }
 }
 
@@ -50,16 +51,18 @@ pub const fn provides(event: EventKind, binding: Binding) -> bool {
         B::SplashFull | B::SplashMid | B::SplashReach => {
             matches!(event, EventKind::Splash | EventKind::Line)
         }
-        B::LineLength | B::LineSpacing => matches!(event, EventKind::Line),
+        B::LineLength => matches!(event, EventKind::Line | EventKind::Shot),
+        B::LineSpacing => matches!(event, EventKind::Line),
         B::AreaRadius | B::AreaRemaining | B::AreaTotal => matches!(event, EventKind::Area),
         B::LinkLength => matches!(event, EventKind::Link),
         B::UnitRadius | B::UnitHeight => matches!(
             event,
-            EventKind::Status | EventKind::Mode | EventKind::Death
+            EventKind::Status | EventKind::Mode | EventKind::Death | EventKind::Point
         ),
         B::ChannelProgress => matches!(event, EventKind::Mode),
         B::BarrierRatio => matches!(event, EventKind::Status),
-        B::FlightTime => matches!(event, EventKind::Point),
+        B::FlightTime => matches!(event, EventKind::Point | EventKind::Shot),
+        B::Facing => matches!(event, EventKind::Point),
     }
 }
 
@@ -126,6 +129,7 @@ mod tests {
         Binding::ChannelProgress,
         Binding::BarrierRatio,
         Binding::FlightTime,
+        Binding::Facing,
     ];
 
     #[test]
@@ -144,6 +148,11 @@ mod tests {
         assert!(provides(EventKind::Line, Binding::LineSpacing));
         assert!(provides(EventKind::Line, Binding::SplashFull));
         assert!(provides(EventKind::Death, Binding::UnitRadius));
+        // A shot (plan WP11) has a line and a flight, but no search spacing or zones.
+        assert!(provides(EventKind::Shot, Binding::LineLength));
+        assert!(provides(EventKind::Shot, Binding::FlightTime));
+        assert!(!provides(EventKind::Shot, Binding::LineSpacing));
+        assert!(!provides(EventKind::Shot, Binding::SplashReach));
     }
 
     #[test]
