@@ -326,3 +326,36 @@ The `charter-compaction` branch did a clean lossless pass (-15%), while preservi
    - *Reasoning:* Examples like *"no static JPEG wobbled a few pixels to fake a 'walking/attacking video'"* (§1.2, now enforced mechanically by `bake_integrity_tests.rs`), §6 item 4 (*"Owner rule: the split into full plans and short notes is the owner's..."*, which adds no rule beyond §6 items 1–3), and legislative chains like `(Q0051, which supersedes Q0008; the sanctioned list is Q0052)` or `(owner, Q0061)` can be stated directly as clean present-tense rules (linking `DESIGN.md` for sanctioned deviations).
 6. **Move the duplicated 3-command CI Full Gate list in §4.3 to `docs/guides/test-gates.md` and point `C16` at `docs/guides/test-gates.md` (~100 tokens):**
    - *Reasoning:* This both removes the redundant 3-line block from `AGENTS.md` §4.3 *and* closes the trade-off you noted in `Q0085` by extending `C16` to validate `docs/guides/test-gates.md` as well.
+
+## Resolution
+
+Approved and carried out on branch `charter-compaction` (the merge commit after `281fd0e4`), together with the
+owner's optional suggestions as follows. `AGENTS.md` (and `CLAUDE.md`, a symbolic link to it): **23,914 bytes /
+3,420 words on `main` before, 15,296 bytes / 2,204 words after** (−36 %, about 2,150 tokens per agent turn).
+Section numbers are unchanged.
+
+- **S1, applied fully.** The C1–C24 table is in `docs/guides/charter-checks.md`; §9 keeps the tag explanation, the
+  "no unchecked statement of fact" rule (now also for the guides) and a link to the table. Inline `[CI: …]` tags
+  stay as they were: where they name a test file, that file is the check, and the name tells a reader what to run.
+- **S2, applied fully.** The test-subject table is in `docs/guides/test-gates.md` (section "Test subjects"); §4 keeps
+  the unit and integration test standard. C15 reads the table there.
+- **S3, applied fully.** §5 is three crate lists (layers in order, test-support crates, the standalone `gate`), and
+  C1 now also checks Cargo's edges against them: a backward edge between layers, a normal dependency on a
+  test-support crate, any edge of a standalone crate, and a crate in no list or in two are findings. The Mermaid
+  graph and its footnote moved to `DESIGN.md` §2, which C1 compares with Cargo; the `sim_map` label now reads
+  "clearance field, navigation mesh, triangle A* + radius funnel" (and §2's prose was corrected the same way, with
+  nine crates and C24 in `workspace_checks`).
+- **S4, applied in part.** The host detail left in §7 (the 600-second lock timeout and the 56 / 66 GiB anonymous
+  memory threshold) now lives only in `docs/guides/gpu-and-disk.md`; §7 keeps its rules. Which Vulkan driver is
+  the default for GPU tests was **not** changed: Q0083 chose option 1 first (offscreen and KWin children on
+  `radv`), and plan `2026-11-17-gpu-test-readback` decides the lavapipe rule by measurement (WP5) and puts the §7
+  driver wording to the owner as Q0086 (WP7, §9). That plan now names `docs/guides/gpu-and-disk.md` as the place
+  the harness sentence lives.
+- **S5, applied fully.** Decision-history chains and owner/question attributions were removed from §1.2, §4.3 and
+  §8, and §6 item 4 was dropped (§6 items 1–3 are unchanged). §8 points to the sanctioned-deviation list
+  (`docs/questions/closed/0052-sanctioned-sc2-deviations.md`) and to the bug register in `DESIGN.md` §4.
+- **S6, applied fully.** The **Full gate** list is in `docs/guides/test-gates.md`; C16 reads it there and checks
+  every `cargo` command of the guide as well as of charter §4.
+
+C20 now also checks the paths named in every guide under `docs/guides/`, so paths moved out of the charter stay
+checked, and `crates/gate/suites.ron` runs `workspace_checks` when a guide changes.

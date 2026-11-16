@@ -40,8 +40,8 @@ mod smog_math;
 mod source;
 
 pub use charter_claims::{
-    charter_paths_exist, ci_runs_the_gate, test_subjects, CI_WORKFLOW, PROPERTY_TESTED_CRATES,
-    UNTRACKED_PATHS,
+    charter_paths_exist, ci_runs_the_gate, test_subjects, CI_WORKFLOW, GUIDES_DIR,
+    PROPERTY_TESTED_CRATES, TEST_GATES_GUIDE, UNTRACKED_PATHS,
 };
 
 pub use checks::{float_ratchet, FLOAT_RATCHET_MESSAGE};

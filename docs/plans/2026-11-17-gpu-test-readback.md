@@ -292,7 +292,7 @@ mean:
 | WP4 | `crates/gate/src/{execute,runner,test_log}.rs` (ledger variable, top-5 table), `crates/gate` tests |
 | WP5 | Evidence file (append) |
 | WP6 (conditional) | `crates/gate/src/{catalog,schedule,execute}.rs`, `crates/gate/suites.ron`, `crates/gate/tests/{suite_catalog_tests,selection_tests}.rs`, `crates/client/tests/support/gpu_run.rs` (`LP_NUM_THREADS`) |
-| WP7 | `AGENTS.md` §7 (owner-approved text only), `docs/plans/README.md`, pointer amendment in `docs/plans/2026-11-03-gpu-test-harness.md`, `docs/questions/` (Q0083 and Q0086 closed with resolutions) |
+| WP7 | `AGENTS.md` §7 and `docs/guides/gpu-and-disk.md` (owner-approved text only), `docs/plans/README.md`, pointer amendment in `docs/plans/2026-11-03-gpu-test-harness.md`, `docs/questions/` (Q0083 and Q0086 closed with resolutions) |
 
 ---
 
@@ -458,7 +458,8 @@ file.
 
 ### WP7: Bookkeeping
 
-- `AGENTS.md` §7 with the approved text only.
+- `AGENTS.md` §7 and `docs/guides/gpu-and-disk.md` (where the harness and driver detail of §7 lives since Q0085)
+  with the approved text only.
 - A pointer amendment in `2026-11-03-gpu-test-harness.md` (D5's environment table, the "Limits" bullet).
 - This plan's row: Done.
 - Q0083 and Q0086 closed with their resolutions.
@@ -517,7 +518,9 @@ charter change.
 ## 9. Charter §7 wording (owner)
 
 The charter states the harness's display path as part of a rule ("runs each GPU test child on the physical GPU
-(`radv`, with `MESA_VK_WSI_DEBUG=sw` under `xvfb-run`)"). This plan makes that sentence false for offscreen and KWin
+(`radv`, with `MESA_VK_WSI_DEBUG=sw` under `xvfb-run`)"). Since Q0085 that sentence is in
+`docs/guides/gpu-and-disk.md`, which §7 links and which binds like the charter; the diff Q0086 shows covers both
+files. This plan makes that sentence false for offscreen and KWin
 children, so the text must change, and that change belongs to the owner.
 
 - The orchestrator files Q0086 at the end of WP1 with the exact diff (Q0084's procedure). Its default: WP2 and WP3 are
