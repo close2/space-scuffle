@@ -13,6 +13,9 @@
 //!   private file and run on every host, CI included.
 //! - `radv` never lowers terrain anisotropy (decision D7), and every run proves the adapter it
 //!   rendered on (decision D6).
+//! - An offscreen child (plan `2026-11-17-gpu-test-readback`, D-7, T-5) starts with no display
+//!   wrapper and none of the display variables, keeps the driver, the lock and the test-display
+//!   flag, and is recorded as `display=offscreen`; a windowed child keeps its virtual display.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -31,9 +34,9 @@ mod gpu_run;
 mod shader_ir;
 
 use gpu_run::{
-    AdapterEvidence, AllowedValidationId, DriverRequest, DriverSelectionError, FindingSeverity,
-    GpuCommand, GpuDriver, GpuLock, GpuLockError, HostGpu, MissingPrerequisite, RenderNode,
-    ValidationReport, VALIDATION_ALLOWLIST,
+    AdapterEvidence, AllowedValidationId, ChildDisplay, DriverRequest, DriverSelectionError,
+    FindingSeverity, GpuCommand, GpuDriver, GpuLock, GpuLockError, GpuSelection, HostGpu,
+    MissingPrerequisite, RenderNode, ValidationReport, VALIDATION_ALLOWLIST,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -888,4 +891,177 @@ fn the_executable_is_read_before_the_lock_and_recorded() -> Result<(), Box<dyn s
         run.preload
     );
     Ok(())
+}
+
+/// A fixed driver selection, so the command tests do not depend on the host.
+fn fixture_selection(driver: GpuDriver) -> GpuSelection {
+    GpuSelection {
+        driver,
+        manifest: PathBuf::from("/fixture/icd.json"),
+        reason: "fixture".into(),
+    }
+}
+
+/// What a command does with one variable of the child's environment.
+#[derive(Debug, PartialEq, Eq)]
+enum Setting {
+    /// Sets it to this value.
+    Set(String),
+    /// Removes it.
+    Removed,
+    /// Leaves it as this process has it.
+    Inherited,
+}
+
+/// What `command` does with `key`.
+fn variable(command: &GpuCommand, key: &str) -> Setting {
+    match command
+        .environment()
+        .into_iter()
+        .find(|(name, _)| name == key)
+    {
+        Some((_, Some(value))) => Setting::Set(value),
+        Some((_, None)) => Setting::Removed,
+        None => Setting::Inherited,
+    }
+}
+
+/// T-5: an offscreen child runs with no `xvfb-run`, with `DISPLAY`, `WAYLAND_DISPLAY` and
+/// `MESA_VK_WSI_DEBUG` removed, and with the driver, the lock and the test-display flag.
+#[test]
+fn an_offscreen_child_has_no_display_and_no_software_present() {
+    for driver in [GpuDriver::Radv, GpuDriver::Lavapipe] {
+        let command = GpuCommand::renderer(
+            Path::new("/fixture/child"),
+            &ChildDisplay::None,
+            &fixture_selection(driver),
+        );
+        assert_eq!(
+            command.command_line(),
+            [
+                "timeout".to_owned(),
+                format!("--kill-after={}", gpu_run::KILL_GRACE_SECS),
+                driver.run_limit_secs().to_string(),
+                "/fixture/child".to_owned(),
+            ],
+            "{driver}"
+        );
+        for removed in ["DISPLAY", "WAYLAND_DISPLAY", "MESA_VK_WSI_DEBUG"] {
+            assert_eq!(
+                variable(&command, removed),
+                Setting::Removed,
+                "{driver}: {removed}"
+            );
+        }
+        for (key, value) in [
+            ("SPACE_SCUFFLE_VIRTUAL_GPU", "1"),
+            ("WGPU_BACKEND", "vulkan"),
+            ("VK_ICD_FILENAMES", "/fixture/icd.json"),
+            ("WGPU_ADAPTER_NAME", driver.adapter_driver()),
+        ] {
+            assert_eq!(
+                variable(&command, key),
+                Setting::Set(value.to_owned()),
+                "{driver}: {key}"
+            );
+        }
+        assert_eq!(
+            variable(&command, "WINIT_UNIX_BACKEND"),
+            Setting::Inherited,
+            "{driver}"
+        );
+        assert_eq!(command.display_name(), "offscreen");
+        assert_eq!(command.driver(), Some(driver));
+    }
+}
+
+/// T-5: a windowed child keeps its virtual display, and radv's software present, as before the
+/// offscreen path existed; the display name says which.
+#[test]
+fn a_windowed_child_keeps_its_virtual_display() {
+    let display = ChildDisplay::Virtual {
+        screen: Some("1600x900x24".into()),
+    };
+    let radv = GpuCommand::renderer(
+        Path::new("/fixture/child"),
+        &display,
+        &fixture_selection(GpuDriver::Radv),
+    );
+    let lavapipe = GpuCommand::renderer(
+        Path::new("/fixture/child"),
+        &display,
+        &fixture_selection(GpuDriver::Lavapipe),
+    );
+    assert_eq!(
+        variable(&radv, "MESA_VK_WSI_DEBUG"),
+        Setting::Set("sw".into())
+    );
+    assert_eq!(variable(&lavapipe, "MESA_VK_WSI_DEBUG"), Setting::Removed);
+    for command in [&radv, &lavapipe] {
+        assert_eq!(
+            variable(command, "DISPLAY"),
+            Setting::Inherited,
+            "the display is the wrapper's"
+        );
+        assert_eq!(variable(command, "WAYLAND_DISPLAY"), Setting::Removed);
+        assert_eq!(
+            variable(command, "WINIT_UNIX_BACKEND"),
+            Setting::Set("x11".into())
+        );
+    }
+    if Path::new("/usr/bin/xvfb-run").exists() {
+        let line = radv.command_line();
+        assert_eq!(line.get(3).map(String::as_str), Some("/usr/bin/xvfb-run"));
+        assert!(line.contains(&"-screen 0 1600x900x24 +extension GLX".to_owned()));
+        assert_eq!(line.last().map(String::as_str), Some("/fixture/child"));
+        assert_eq!(radv.display_name(), "xvfb-sw");
+        assert_eq!(lavapipe.display_name(), "xvfb");
+    } else {
+        assert_eq!(
+            radv.command_line().len(),
+            4,
+            "no wrapper on the host display"
+        );
+        assert_eq!(radv.display_name(), "host");
+        assert_eq!(lavapipe.display_name(), "host");
+    }
+}
+
+/// T-5: the ledger line names the display; a lock self-test has none.
+#[test]
+fn the_ledger_line_names_the_display() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let lock = directory.path().join("gpu.lock");
+    let mut command = GpuCommand::lock_probe(Path::new("/bin/sh"), &lock, Duration::from_secs(5));
+    command.args(["-c", "true"]);
+    assert_eq!(command.display_name(), "none");
+    let run = command.run("display probe");
+    assert!(
+        run.ledger
+            .starts_with("label=display probe\tdriver=none\tdisplay=none\tlock=private lock\t"),
+        "{}",
+        run.ledger
+    );
+    assert!(run.ledger.ends_with('\n'));
+    Ok(())
+}
+
+/// T-5: an offscreen child logs no window, so its timeline has no app-build phase and that time
+/// counts toward "startup and frames".
+#[test]
+fn an_offscreen_timeline_has_no_window_phase() {
+    let spawned = gpu_run::log_record_time("2026-11-17T10:00:00.000000Z").expect("spawn time");
+    let log = "2026-11-17T10:00:01.000000Z INFO bevy_diagnostic: SystemInfo { os: \"Linux\" }\n\
+               2026-11-17T10:00:03.000000Z INFO bevy_render::renderer: AdapterInfo { name: \"AMD\" }\n\
+               2026-11-17T10:00:09.500000Z INFO client::effects: effect lab done\n";
+    let timeline = gpu_run::ChildTimeline::read(log, spawned, Duration::from_secs(10));
+    assert_eq!(
+        timeline.phases,
+        [
+            ("launch", Duration::from_secs(1)),
+            ("render device", Duration::from_secs(2)),
+            ("startup and frames", Duration::from_millis(6_500)),
+            ("after the last log record", Duration::from_millis(500)),
+        ]
+    );
 }

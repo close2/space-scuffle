@@ -97,6 +97,9 @@ SuiteCatalog(
         // binaries whose in-process apps and children together passed 6 GiB (Amendment 4).
         "client/battle_hud_window_tests": (class: Gpu),
         "client/battle_result_window_tests": (class: Gpu),
+        // The capture path (plan 2026-11-17-gpu-test-readback T-1): one lab program as a window
+        // child and as an offscreen child, compared pixel for pixel.
+        "client/capture_path_gpu_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/concealment_gpu_tests": (class: Gpu),
         // Mode atlases in a real battle (plan 2026-11-09-effect-visualization WP13): one child,

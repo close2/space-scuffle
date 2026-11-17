@@ -6,7 +6,8 @@
 //! lock, or lavapipe; charter C21). The child runs Bevy's real renderer with the production
 //! `client::effects::EffectsPlugin`, the shipped effect shaders and a test-only vocabulary over
 //! the fixture texture set written into a temporary directory (charter §1.2: never under
-//! `assets/`). It renders one capture per shot; the parent measures them:
+//! `assets/`). It renders offscreen into a canvas of the capture size (`client::offscreen`; no
+//! window, no display) and captures it once per shot; the parent measures the captures:
 //! - **soft depth**: a camera-facing card crossing the ground fades into it: no step above
 //!   [`MAX_SOFT_STEP`] levels between vertically adjacent pixels along the intersection, where
 //!   the same card with no soft depth shows a hard step (the control);
@@ -54,7 +55,7 @@ use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 use bevy::render::camera::CameraProjection;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::ScreenshotCaptured;
 use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::Binding;
 use client::effects::catalog::EffectCatalog;
@@ -62,6 +63,7 @@ use client::effects::placement::WorldLine;
 use client::effects::runtime::{EffectRuntime, SpawnRequest};
 use client::effects::systems::EffectCatalogSource;
 use client::effects::EffectsPlugin;
+use client::offscreen::{windowless_plugins, CaptureTarget, OffscreenCanvas};
 use client::render_compatibility::{run_render_app, RenderCompatibilityPlugin};
 use client::ResolvedAssetsRoot;
 use std::path::{Path, PathBuf};
@@ -419,7 +421,7 @@ fn run_shots(
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     shot_entities: Query<'_, '_, Entity, With<ShotEntity>>,
     mut cameras: Query<'_, '_, &mut Transform, With<Camera3d>>,
-    mut exit: EventWriter<'_, AppExit>,
+    (mut exit, capture): (EventWriter<'_, AppExit>, Res<'_, CaptureTarget>),
 ) {
     let (Some(catalog), Some(mut runtime)) = (catalog, runtime) else {
         return;
@@ -461,7 +463,7 @@ fn run_shots(
     }
     stage.capture_pending = true;
     let path = stage.directory.join(format!("{}.png", shot.name()));
-    commands.spawn(Screenshot::primary_window()).observe(
+    commands.spawn(capture.screenshot()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>, mut stage: ResMut<'_, Stage>| {
             let image = trigger
                 .event()
@@ -482,10 +484,15 @@ fn run_shots(
     );
 }
 
-/// Spawns the camera.
-fn setup_camera(mut commands: Commands<'_, '_>) {
+/// Spawns the camera, rendering into the capture target.
+#[allow(clippy::needless_pass_by_value)]
+fn setup_camera(mut commands: Commands<'_, '_>, capture: Res<'_, CaptureTarget>) {
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            target: capture.camera_target(),
+            ..default()
+        },
         Projection::Perspective(projection()),
         Tonemapping::None,
         DepthPrepass,
@@ -493,7 +500,8 @@ fn setup_camera(mut commands: Commands<'_, '_>) {
     ));
 }
 
-/// The child app: the real renderer, an invisible window and the production effect plugin.
+/// The child app: the real renderer drawing into an offscreen canvas and the production effect
+/// plugin.
 fn child_app(directory: PathBuf) -> TestResult<App> {
     let root = ResolvedAssetsRoot::resolve()?;
     let manifest = effect_fixtures::write_fixture_set(&directory);
@@ -503,47 +511,36 @@ fn child_app(directory: PathBuf) -> TestResult<App> {
         &vocabulary,
         effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", EFFECTS),
     )?;
-    let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
-    window_backend.run_on_any_thread = true;
     let mut app = App::new();
-    app.add_plugins(
-        client::presentation::GamePresentationPlugins
-            .set(AssetPlugin {
-                file_path: root.bevy_file_path()?.to_owned(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    resolution: (WIDTH as f32, HEIGHT as f32).into(),
-                    visible: false,
-                    ..default()
-                }),
-                ..default()
-            })
-            .set(window_backend),
-    )
-    .add_plugins((RenderCompatibilityPlugin, EffectsPlugin))
-    .add_event::<client::CombatVisualEvent>()
-    .insert_resource(root)
-    .insert_resource(EffectCatalogSource(vocabulary))
-    .insert_resource(ClearColor(Color::BLACK))
-    .insert_resource(Stage {
-        directory,
-        shot: 0,
-        settled: 0,
-        first_attempts: 0,
-        capture_pending: false,
-        captured: None,
-        set_up: false,
-    })
-    .add_systems(Startup, setup_camera)
-    .add_systems(Update, run_shots);
+    app.add_plugins(windowless_plugins(
+        client::presentation::GamePresentationPlugins.set(AssetPlugin {
+            file_path: root.bevy_file_path()?.to_owned(),
+            ..default()
+        }),
+    ));
+    OffscreenCanvas::install(&mut app, UVec2::new(WIDTH, HEIGHT))?;
+    app.add_plugins((RenderCompatibilityPlugin, EffectsPlugin))
+        .add_event::<client::CombatVisualEvent>()
+        .insert_resource(root)
+        .insert_resource(EffectCatalogSource(vocabulary))
+        .insert_resource(ClearColor(Color::BLACK))
+        .insert_resource(Stage {
+            directory,
+            shot: 0,
+            settled: 0,
+            first_attempts: 0,
+            capture_pending: false,
+            captured: None,
+            set_up: false,
+        })
+        .add_systems(Startup, setup_camera)
+        .add_systems(Update, run_shots);
     Ok(app)
 }
 
 /// The child of [`effect_blocks_render_on_the_gpu`].
 #[test]
-#[ignore = "launched by effect_blocks_render_on_the_gpu on a virtual display"]
+#[ignore = "launched by effect_blocks_render_on_the_gpu through gpu_run, offscreen"]
 fn effect_gpu_child() {
     let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent names the directory");
     let mut app = child_app(directory.into()).expect("the child app builds");
@@ -905,7 +902,7 @@ fn effect_blocks_render_on_the_gpu() -> TestResult {
         return Ok(());
     }
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, directory.path());
     let driver = command.driver();

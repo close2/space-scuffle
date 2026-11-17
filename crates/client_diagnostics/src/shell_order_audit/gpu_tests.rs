@@ -6,7 +6,8 @@
 //! Both tests build a real render device, so each runs as a GPU child of this test binary
 //! through the client's GPU test harness, on the selected driver and under the shared GPU lock
 //! (`docs/plans/2026-11-03-gpu-test-harness.md`, section 11). The `#[test]` entries only launch
-//! their `#[ignore]`d child.
+//! their `#[ignore]`d child. Neither child has a winit backend, so neither creates a surface,
+//! and both run with no display (`gpu_run::run_offscreen_test_child`).
 
 use bevy::prelude::*;
 use bevy::render::{
@@ -29,7 +30,7 @@ fn run_child(name: &str) {
     let module = module_path!()
         .split_once("::")
         .map_or(module_path!(), |(_, inside)| inside);
-    gpu_run::run_test_child(&format!("{module}::{name}"), name);
+    gpu_run::run_offscreen_test_child(&format!("{module}::{name}"), name);
 }
 
 #[test]

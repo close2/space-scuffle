@@ -5,7 +5,8 @@
 //! layer of the first terrain theme (albedo, normal and occlusion-roughness-metallic textures
 //! from the theme's baked directory, tiled at the theme's ground rate), lit by that theme's sun
 //! and ambient light; the battle camera ([`crate::camera::RtsCamera`] at the battle pitch, with
-//! the depth prepass the effect shaders read); and the reference overlay (a 1-unit grid and the
+//! the depth prepass the effect shaders read, rendering into the lab's capture target); and the
+//! reference overlay (a 1-unit grid and the
 //! bound radii or line, drawn with gizmos only in the frames that ask for it).
 //!
 //! # How it fits
@@ -25,6 +26,7 @@ use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
 use bevy::prelude::*;
+use bevy::render::camera::RenderTarget;
 use std::path::Path;
 
 /// Path of the theme catalog below the assets root.
@@ -163,16 +165,17 @@ fn ground_material(
     }
 }
 
-/// Spawns the stage for `subject` and returns its handles.
+/// Spawns the stage and returns its handles. The camera renders into `target`: the primary
+/// window or the lab's offscreen canvas.
 ///
 /// # Errors
 /// [`LabSceneError`] when the theme or its albedos cannot be read.
 pub fn spawn_scene(
     commands: &mut Commands<'_, '_>,
     server: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    (meshes, materials): (&mut Assets<Mesh>, &mut Assets<StandardMaterial>),
     root: &ResolvedAssetsRoot,
+    target: RenderTarget,
 ) -> Result<LabScene, LabSceneError> {
     let theme = lab_theme(root.as_path())?;
     let layers = ground_layers(&theme, root.as_path())?;
@@ -196,7 +199,15 @@ pub fn spawn_scene(
         .id();
     crate::terrain::theme_gpu::setup_theme_lighting(commands, &theme);
     let camera = commands
-        .spawn((Camera3d::default(), DepthPrepass, Transform::default()))
+        .spawn((
+            Camera3d::default(),
+            Camera {
+                target,
+                ..default()
+            },
+            DepthPrepass,
+            Transform::default(),
+        ))
         .id();
     Ok(LabScene {
         ground,

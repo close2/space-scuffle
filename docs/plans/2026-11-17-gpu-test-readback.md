@@ -589,3 +589,127 @@ children, so the text must change, and that change belongs to the owner.
   not part of this plan.
 - The frame-budget measurement itself: it is unchanged and already uses headless KWin (Q0019).
 - Bevy default-feature trimming (setup evaluation item 10).
+
+---
+
+## Amendment 1: WP2 as built (2026-11-17, short note, charter §6)
+
+WP2 is on branch `gpu-readback`, made from `main` at `7bf4b7ff`. It follows D-1 to D-3, D-6, D-7 (offscreen part)
+and D-8 with WP1's settlements: the canvas is `Bgra8UnormSrgb` (D-3), the windowless app loops with
+`ScheduleRunnerPlugin::run_loop(Duration::ZERO)` (D-1), D-2 stands (no readback code of our own), and D-5 is not
+needed. Nothing from WP3 onwards is touched: windowed children still run under `xvfb-run` with
+`MESA_VK_WSI_DEBUG=sw`, and `docs/guides/gpu-and-disk.md` waits for Q0086. Per Q0086's default, the branch merges to
+`main` only together with WP3 and the approved text.
+
+**As built.**
+
+- **`client::offscreen`** (`crates/client/src/offscreen.rs`): `CANVAS_FORMAT`, `CANVAS_USAGES`,
+  `OffscreenCanvas { image, size }` with `image(size)`, `create(images, size)` and `install(app, size)` (the last
+  inserts the canvas and `CaptureTarget::Image` of it), `CaptureTarget { PrimaryWindow, Image }` with
+  `screenshot()` and `camera_target()`, `windowless_plugins(group)`, and the typed `OffscreenError`
+  (`NoImageAssets`, `EmptyCanvas`). Choices the plan left open: `windowless_plugins` takes and returns a
+  `PluginGroupBuilder` and also sets `close_when_requested: false`; `CaptureTarget` is a resource that the program's
+  camera spawn and its screenshots read, so a program names its target once.
+- **`lab_app(root, program, vocabulary, size, surface)`** with `LabSurface { Window, Offscreen }`. The stage camera
+  is spawned with `Camera { target: capture.camera_target(), .. }` (for `Window` this equals `Camera::default()`),
+  and the driver spawns `capture.screenshot()`. `LabAppError` gains `Canvas`. The effect GPU tests and
+  `client_diagnostics::effect_lab` (the contact sheets of `battle_capture --effect-lab`) use `Offscreen`.
+- **Harness (D-7).** `ChildDisplay { None, Virtual { screen } }`; `GpuCommand::renderer(binary, &display,
+  selection)` is public so the unit tests can build a command for a fixed selection; `offscreen_gpu_command` and
+  `run_offscreen_test_child`. An offscreen child has no `xvfb-run`, has `DISPLAY`, `WAYLAND_DISPLAY` and
+  `MESA_VK_WSI_DEBUG` removed, inherits `WINIT_UNIX_BACKEND`, and keeps `SPACE_SCUFFLE_VIRTUAL_GPU=1`, the driver
+  variables, the lock and the adapter check. The ledger line gains `display=` after `driver=`, with two values beyond
+  the plan's list: `host` (no `xvfb-run`, the test process's own display) and `none` (a lock self-test). `GpuRun`
+  keeps its ledger line (`ledger`), and `GpuCommand` gains the read-only `display_name`, `command_line` and
+  `environment`; it still offers no way to start a child except through the lock.
+- **Converted children (offscreen):** every child of `effect_slice_gpu_tests` (stills, sequence halves, masked line,
+  shots, looks: 92 children), `effect_gpu_tests`, `combat_fx_slot_gpu_tests` and `flipbook_clock_gpu_tests` (own
+  apps through `windowless_plugins` and `OffscreenCanvas::install`; the flipbook child no longer reads a window's
+  scale factor, because a canvas's is 1), and, through `run_offscreen_test_child`, the `runtime_battle_tests`
+  production-schedule child and both `client_diagnostics` `shell_order_audit::gpu_tests` children, which already had
+  no surface.
+- **D-8:** `RENDER_DEVICE_MARKERS` gains `lab_app` and `windowless_plugins`, with the planted-tree test T-6.
+- **Deviation from §5's file list:** `crates/gate/src/sources.rs` also changes. C22
+  (`suite_catalog_tests`) requires every `Gpu` target to call the harness, and `uses_gpu_harness` knew only
+  `run_test_child`, `GpuCommand` and `virtual_gpu_command`, so `client_diagnostics/lib` failed once its children
+  moved to `run_offscreen_test_child`. The markers `run_offscreen_test_child` and `offscreen_gpu_command` are added
+  with unit tests. `crates/gate/src/**` is in the catalog's `global` list, so WP2's `package` gate selects the
+  complete suite.
+- **Tests.** T-1 is `capture_path_gpu_tests` (new target, classed `Gpu`). WP3's display override does not exist
+  yet, so its window child uses `virtual_gpu_command`, which is the Xvfb path today; the test also checks the
+  ledger's `display=` of both children. T-5 lives in `gpu_validation_tests.rs`, with the harness's other tests:
+  `an_offscreen_child_has_no_display_and_no_software_present`, `a_windowed_child_keeps_its_virtual_display`,
+  `the_ledger_line_names_the_display` and `an_offscreen_timeline_has_no_window_phase`. T-7 is five unit tests in
+  `offscreen.rs`; the windowless-plugins test builds `GamePresentationPlugins` with `backends: None`, so it creates
+  no render device (C21).
+
+**Evidence** (raw data in `~/scratch/gpu-readback/`; scratch files that may be cleaned, so the tables below are the
+record). Before-binaries were built from `7bf4b7ff` in a detached worktree, after-binaries from the branch, both
+debug, both run directly as the gate runs them (`--test-threads` from `suites.ron`), one target at a time under
+`flock ~/scratch/gate.lock`; GPU children took the lock through the harness.
+
+- **Pictures (D-6, stop rule): no difference anywhere.**
+  - T-1 on radv and on lavapipe: 6 of 6 captures bit-identical between the window child and the offscreen child.
+  - Every capture of the converted targets, before against after, byte-compared (both builds use the same PNG
+    encoder, so equal bytes mean equal pixels): on radv the 924 slice PNGs that `SPACE_SCUFFLE_EFFECT_SLICE_KEEP`
+    keeps (31 effects: the splash children's and the look children's captures; the shot and masked-line children
+    keep none and passed their pixel checks on both paths) and the 11 PNGs of `effect_gpu_tests` are byte-identical in both after-rounds against the first
+    before-round; the `combat_fx_slot` child's three PNGs and slot report and the `flipbook_clock` child's report
+    (the centre pixels of 64 shots) are identical when the children run by hand on both paths. On lavapipe (one
+    round of each), the same 924 slice PNGs and 11 effect-block PNGs are byte-identical before against after, and
+    so are the `combat_fx_slot` and `flipbook_clock` outputs.
+  - T-3: the per-driver effect goldens pass unchanged in every run (no golden re-recorded, no threshold changed).
+- **Timing on radv**, interleaved as before r1, after r1, after r2, before r2 (2026-11-17 06:28 to 08:17 UTC; one-minute
+  load 12 to 187 on 16 vCPUs, `anon` below 0.5 GiB; another user's GPU work made some children wait for the lock,
+  which the ledger separates). Wall is the test executable's whole run; run_s and lock wait are ledger sums.
+  Round 1's before-arm walls come from the start stamps and log times (1 s resolution), because the script's wall
+  field failed in that arm.
+
+| Target | Arm | Wall s | Children | Sum run_s | Max run_s | Sum lock_wait_s |
+|---|---|---:|---:|---:|---:|---:|
+| `client/effect_slice_gpu_tests` | before r1 | 2116 | 92 | 1843.7 | 56.0 | 103.8 |
+| | after r1 | 866.3 | 92 | 713.4 | 27.4 | 0.0 |
+| | after r2 | 856.7 | 92 | 666.1 | 28.9 | 37.1 |
+| | before r2 | 2235.5 | 92 | 1924.5 | 75.5 | 126.9 |
+| `client/effect_gpu_tests` | before r1 | 124 | 1 | 4.5 | 4.5 | 118.6 |
+| | after r1 | 5.4 | 1 | 3.4 | 3.4 | 0.0 |
+| | after r2 | 83.0 | 1 | 3.3 | 3.3 | 78.4 |
+| | before r2 | 4.1 | 1 | 3.5 | 3.5 | 0.0 |
+| `client/combat_fx_slot_gpu_tests` | before r1 | 1 | 1 | 1.5 | 1.5 | 0.0 |
+| | after r1 | 1.8 | 1 | 1.5 | 1.5 | 0.0 |
+| | after r2 | 8.5 | 1 | 2.1 | 2.1 | 6.2 |
+| | before r2 | 1.6 | 1 | 1.4 | 1.4 | 0.0 |
+| `client/flipbook_clock_gpu_tests` | before r1 | 5 | 1 | 4.8 | 4.8 | 0.0 |
+| | after r1 | 6.5 | 1 | 6.4 | 6.4 | 0.0 |
+| | after r2 | 4.3 | 1 | 4.2 | 4.2 | 0.0 |
+| | before r2 | 4.5 | 1 | 4.5 | 4.5 | 0.0 |
+| `client/runtime_battle_tests` | before r1 | 29 | 1 | 13.7 | 13.7 | 0.0 |
+| | after r1 | 34.0 | 1 | 18.2 | 18.2 | 0.0 |
+| | after r2 | 39.4 | 1 | 15.9 | 15.9 | 0.0 |
+| | before r2 | 27.5 | 1 | 12.8 | 12.8 | 0.0 |
+| `client_diagnostics/lib` | before r1 | 14 | 2 | 12.4 | 11.8 | 0.8 |
+| | after r1 | 11.6 | 2 | 10.3 | 10.1 | 10.3 |
+| | after r2 | 17.8 | 2 | 17.4 | 17.1 | 0.3 |
+| | before r2 | 12.3 | 2 | 10.8 | 10.4 | 10.7 |
+| **Converted targets** | before r1 / r2 | 2289 / 2286 | 98 | 1880.5 / 1957.6 | | 223.2 / 137.6 |
+| | after r1 / r2 | 925.6 / 1009.7 | 98 | 753.2 / 709.0 | | 10.3 / 121.9 |
+
+  - `effect_slice_gpu_tests` falls from 2,116 to 2,236 s to 857 to 866 s (0.38 to 0.41 of its time), and its child time
+    from 1,844 to 1,925 s to 666 to 713 s (0.35 to 0.39). The slowest child falls from 56 to 76 s to 27 to 29 s, so the
+    radv run limit of 120 s has more room. This is less than WP1's 0.16 to 0.3 for the stills child alone: the
+    sequence, shot and look children spend more of their time in start-up, which the display never cost.
+  - The other converted targets render a few frames each; their differences are within the noise of the shared
+    host (the `runtime_battle_tests` binary's wall is mostly its 17 headless tests, and those two children never
+    presented). They gain nothing measurable, as WP1 predicted for children that present few frames.
+  - The converted targets together: about 2,290 s before and 925 to 1,010 s after, wall; 1,880 to 1,960 s of child
+    time before and 709 to 753 s after.
+- **On lavapipe** (forced, one round, before then after, 08:17 to 09:20 UTC, load 31 to 71; information only, not
+  interleaved): `effect_slice_gpu_tests` 1,780 s before and 1,840 s after (child time 1,639 and 1,691 s); the small
+  targets were 1.4 to 28 s before and 4.7 to 37 s after, including the two children whose launch only lost
+  `xvfb-run`, so the spread is the host's. As WP1 found, a lavapipe child is bound by rasterising, which no display
+  change helps; CI keeps lavapipe and gains nothing measurable from WP2. Every target passed, the goldens included.
+
+**Not done here (Q0061):** the `package` gate, which WP2's change runs over the complete suite (gate source) and the
+whole GPU lane (`gpu_run.rs`), is the verifier's. WP2's own check ran `cargo gate quick`, the converted targets
+above on both drivers, `capture_path_gpu_tests` on both drivers, `gpu_validation_tests` on radv, the `offscreen`
+unit tests, `workspace_checks` and the `gate` crate's tests.

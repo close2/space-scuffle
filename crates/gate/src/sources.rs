@@ -4,8 +4,8 @@
 //! Maps every test target to the files compiled into it ([`SourceIndex`]), so that a change to a
 //! target's own file, or to a support file it includes with `#[path = "..."] mod x;`, can select
 //! it. It also scans code, with comments and string literals blanked out, for the markers the
-//! catalog test relies on: the GPU harness (`run_test_child`, `GpuCommand`,
-//! `virtual_gpu_command`), a valgrind invocation, and paths into a given crate (`sim_fixtures::`).
+//! catalog test relies on: the GPU harness (`run_test_child`, `run_offscreen_test_child`,
+//! `GpuCommand`, `virtual_gpu_command`, `offscreen_gpu_command`), a valgrind invocation, and paths into a given crate (`sim_fixtures::`).
 //! From those paths it records, per workspace crate, the targets of other crates that call it
 //! ([`SourceIndex::callers_of`]).
 //!
@@ -196,16 +196,23 @@ fn token_starts(code: &[char], word: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Whether `source` calls into the client's GPU test harness: `run_test_child`, `GpuCommand`,
-/// or a `virtual_gpu_command*` function, in code (not comments or strings).
+/// Whether `source` calls into the client's GPU test harness: `run_test_child`,
+/// `run_offscreen_test_child`, `GpuCommand`, a `virtual_gpu_command*` function or
+/// `offscreen_gpu_command`, in code (not comments or strings).
 #[must_use]
 pub fn uses_gpu_harness(source: &str) -> bool {
     let code: Vec<char> = blank(source, Blanking::CommentsAndLiterals)
         .chars()
         .collect();
-    ["run_test_child", "GpuCommand", "virtual_gpu_command"]
-        .iter()
-        .any(|marker| !token_starts(&code, marker).is_empty())
+    [
+        "run_test_child",
+        "run_offscreen_test_child",
+        "GpuCommand",
+        "virtual_gpu_command",
+        "offscreen_gpu_command",
+    ]
+    .iter()
+    .any(|marker| !token_starts(&code, marker).is_empty())
 }
 
 /// Whether `source` starts valgrind as a process: `Command::new("valgrind")` in code.
@@ -642,6 +649,12 @@ mod tests {
             "let c = gpu_run::virtual_gpu_command_on_screen(x);"
         ));
         assert!(uses_gpu_harness("use x::GpuCommand;"));
+        assert!(uses_gpu_harness(
+            "fn t() { gpu_run::run_offscreen_test_child(\"a\", \"b\"); }"
+        ));
+        assert!(uses_gpu_harness(
+            "let c = gpu_run::offscreen_gpu_command(&exe);"
+        ));
         assert!(!uses_gpu_harness(
             "// run_test_child\nlet s = \"GpuCommand\";"
         ));

@@ -17,14 +17,18 @@
 //!
 //! # How a child runs
 //! 1. [`virtual_gpu_command`] builds a [`GpuCommand`]: GNU `timeout`, then `xvfb-run`, then the
-//!    binary, with the selected driver's environment. Callers add arguments and variables.
+//!    binary, with the selected driver's environment. [`offscreen_gpu_command`] builds one with
+//!    no display at all, for a child that renders into an image and reads only its own pictures
+//!    (`client::offscreen`; plan `docs/plans/2026-11-17-gpu-test-readback.md`, D-7). Callers add
+//!    arguments and variables.
 //! 2. [`GpuCommand::run`], [`GpuCommand::run_validated`] or [`GpuCommand::assert_passes_validation`]
 //!    is the only way to start it. A `GpuCommand` exposes no `output`, `spawn` or `status`, so no
 //!    caller can run a GPU child without the lock.
 //! 3. The run reads the child's executable into the page cache ([`preload_executable`]), takes
 //!    the lock (radv only), spawns the child, waits for it, releases the lock, then
 //!    checks the exit status and the adapter line, and appends a line to the ledger if
-//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The child's own log timestamps split its run
+//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The line names the child's display
+//!    (`display=offscreen`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log timestamps split its run
 //!    into phases ([`ChildTimeline`]); the ledger records them, and a timeout names the slowest.
 //!    `SPACE_SCUFFLE_GPU_RUN_LOG_DIR` keeps each child's whole log for a timing investigation.
 //!
@@ -54,8 +58,9 @@
 //! - On `lavapipe` before Mesa 25.1, the runs that draw hex-tiled ground render without
 //!   anisotropic filtering, because that driver's sampler does not finish such a frame (see
 //!   [`GpuCommand::allow_for_hex_tiling_driver_defect`]). `radv` always uses the production sampler.
-//! - On `radv`, presentation uses `MESA_VK_WSI_DEBUG=sw`, because Xvfb has no DRI3. The GPU
-//!   renders every frame, but the DRI3 present path a desktop uses is not exercised.
+//! - On `radv`, windowed children present with `MESA_VK_WSI_DEBUG=sw`, because Xvfb has no
+//!   DRI3. The GPU renders every frame, but the DRI3 present path a desktop uses is not
+//!   exercised. Offscreen children present nothing, so they exercise no present path at all.
 //! - If the test process itself is killed with `SIGKILL`, its child keeps running without the
 //!   lock for at most the run limit plus the kill grace ([`GpuDriver::run_limit_secs`],
 //!   [`KILL_GRACE_SECS`]).
@@ -1060,6 +1065,21 @@ enum ChildKind {
     LockProbe,
 }
 
+/// Where a renderer child shows its frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChildDisplay {
+    /// No display: the child renders into an image (`client::offscreen`) and presents nothing.
+    /// `DISPLAY` and `WAYLAND_DISPLAY` are removed, so a window opened by mistake fails loudly
+    /// instead of reaching a desktop.
+    None,
+    /// A virtual X display from `xvfb-run`, of `screen` (such as `1600x900x24`) when given, or
+    /// the existing display where `xvfb-run` is missing.
+    Virtual {
+        /// The screen `xvfb-run` starts, or `None` for its default.
+        screen: Option<String>,
+    },
+}
+
 /// A GPU child under construction: binary, display, driver environment, run limit and lock.
 ///
 /// It deliberately offers no way to start the child except through the lock: [`Self::run`],
@@ -1076,6 +1096,8 @@ pub struct GpuCommand {
     run_limit_secs: u32,
     /// The executable the child runs, which [`preload_executable`] reads before the lock.
     program: PathBuf,
+    /// The ledger's name of the child's display ([`GpuCommand::display_name`]).
+    display: &'static str,
 }
 
 /// Builds a [`GpuCommand`] that runs `binary` on a virtual display with the selected driver.
@@ -1108,58 +1130,82 @@ pub fn run_test_child(test_name: &str, label: &str) -> GpuRun {
     command.run(label)
 }
 
+/// Builds a [`GpuCommand`] that runs `binary` with the selected driver and no display: GNU
+/// `timeout`, then the binary. The child must render into an image and read only its own
+/// pictures (`client::offscreen`); it keeps `SPACE_SCUFFLE_VIRTUAL_GPU=1`, the driver, the lock
+/// and the adapter check of a windowed child.
+///
+/// # Panics
+/// Panics when no driver can be selected.
+pub fn offscreen_gpu_command(binary: &Path) -> GpuCommand {
+    GpuCommand::renderer(binary, &ChildDisplay::None, selected_driver())
+}
+
+/// As [`run_test_child`], for a child that renders offscreen ([`offscreen_gpu_command`]).
+///
+/// # Panics
+/// As [`run_test_child`].
+pub fn run_offscreen_test_child(test_name: &str, label: &str) -> GpuRun {
+    let binary = std::env::current_exe()
+        .unwrap_or_else(|error| panic!("{label}: this test binary's path is unknown: {error}"));
+    let mut command = offscreen_gpu_command(&binary);
+    command.args(["--ignored", "--exact", "--nocapture", test_name]);
+    command.run(label)
+}
+
 /// Builds a [`virtual_gpu_command`] whose display has the size `screen`, such as `1600x900x24`.
 ///
 /// # Panics
 /// As [`virtual_gpu_command`].
 pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> GpuCommand {
-    GpuCommand::renderer(binary, screen, selected_driver())
+    let display = ChildDisplay::Virtual {
+        screen: screen.map(str::to_owned),
+    };
+    GpuCommand::renderer(binary, &display, selected_driver())
 }
 
 impl GpuCommand {
-    /// Builds a renderer child for `selection`. GNU `timeout` wraps the run, because
-    /// [`Command::output`] has no deadline and a client that loses its display can spin forever.
-    /// It signals the whole process group, including the client under `xvfb-run`, and exits with
-    /// [`TIMEOUT_EXIT_CODE`]. The lock is taken before `timeout` starts, so waiting for it never
-    /// eats the run limit.
-    fn renderer(binary: &Path, screen: Option<&str>, selection: &GpuSelection) -> Self {
+    /// Builds a renderer child of `binary` on `display` for `selection`. GNU `timeout` wraps the
+    /// run, because [`Command::output`] has no deadline and a client that loses its display can
+    /// spin forever. It signals the whole process group, including the client under `xvfb-run`,
+    /// and exits with [`TIMEOUT_EXIT_CODE`]. The lock is taken before `timeout` starts, so
+    /// waiting for it never eats the run limit.
+    ///
+    /// # Panics
+    /// Panics when `display` is virtual and neither `xvfb-run` nor a display exists.
+    pub fn renderer(binary: &Path, display: &ChildDisplay, selection: &GpuSelection) -> Self {
         let driver = selection.driver;
         let run_limit_secs = driver.run_limit_secs();
         let mut command = timeout_command(run_limit_secs);
-        let xvfb_run = Path::new("/usr/bin/xvfb-run");
-        if xvfb_run.exists() {
-            // `-n` must precede `-a`, which reads the starting number as it is parsed.
-            command
-                .arg(xvfb_run)
-                .arg("-n")
-                .arg(display_search_start().to_string())
-                .arg("-a");
-            if let Some(screen) = screen {
-                command
-                    .arg("-s")
-                    .arg(format!("-screen 0 {screen} +extension GLX"));
+        let shown_on = match display {
+            ChildDisplay::None => DisplayKind::Offscreen,
+            ChildDisplay::Virtual { screen } => {
+                add_virtual_display(&mut command, screen.as_deref())
             }
-        } else {
-            assert!(
-                !(std::env::var_os("WAYLAND_DISPLAY").is_none()
-                    && std::env::var_os("DISPLAY").is_none()),
-                "CRITICAL: No graphical display detected and /usr/bin/xvfb-run is missing! \
-                 GPU tests require a display or xvfb-run. Set SPACE_SCUFFLE_SKIP_GPU_TESTS=1 to bypass."
-            );
-        }
+        };
         command.arg(binary);
-        // The test must stay on the virtual display and never appear on the user's desktop.
+        // The test must stay on the virtual display, or on none, and never appear on the
+        // user's desktop.
         command.env_remove("WAYLAND_DISPLAY");
-        command.env("WINIT_UNIX_BACKEND", "x11");
+        if shown_on == DisplayKind::Offscreen {
+            command.env_remove("DISPLAY");
+        } else {
+            command.env("WINIT_UNIX_BACKEND", "x11");
+        }
         command.env("WGPU_BACKEND", "vulkan");
         command.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
         command.env("VK_ICD_FILENAMES", &selection.manifest);
         command.env("WGPU_ADAPTER_NAME", driver.adapter_driver());
         let lock = match driver {
             GpuDriver::Radv => {
-                // Xvfb has no DRI3, and radv's X11 presentation needs it unless `sw` selects the
-                // software present path. Rendering stays on the GPU (plan section 3.1).
-                command.env("MESA_VK_WSI_DEBUG", "sw");
+                if shown_on == DisplayKind::Offscreen {
+                    // Nothing is presented, so no present path is selected.
+                    command.env_remove("MESA_VK_WSI_DEBUG");
+                } else {
+                    // Xvfb has no DRI3, and radv's X11 presentation needs it unless `sw` selects
+                    // the software present path. Rendering stays on the GPU (plan section 3.1).
+                    command.env("MESA_VK_WSI_DEBUG", "sw");
+                }
                 command.env_remove("LIBGL_ALWAYS_SOFTWARE");
                 LockPolicy::Shared
             }
@@ -1175,6 +1221,7 @@ impl GpuCommand {
             lock,
             run_limit_secs,
             program: binary.to_owned(),
+            display: shown_on.ledger_name(driver),
         }
     }
 
@@ -1192,6 +1239,7 @@ impl GpuCommand {
             lock: LockPolicy::Private(lock.to_owned(), wait),
             run_limit_secs: LOCK_PROBE_RUN_LIMIT_SECS,
             program: program.to_owned(),
+            display: DisplayKind::NoChild.ledger_name(GpuDriver::Lavapipe),
         }
     }
 
@@ -1215,6 +1263,36 @@ impl GpuCommand {
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
         self.command.env(key, value);
         self
+    }
+
+    /// The ledger's name of this child's display: `offscreen` (no display), `xvfb-sw` (`xvfb-run`
+    /// with radv's software present), `xvfb` (`xvfb-run` on lavapipe), `host` (the display this
+    /// process has, where `xvfb-run` is missing) or `none` (a lock self-test).
+    pub fn display_name(&self) -> &'static str {
+        self.display
+    }
+
+    /// The command line the run executes: `timeout` and its arguments, the display wrapper if
+    /// any, the program and its arguments.
+    pub fn command_line(&self) -> Vec<String> {
+        std::iter::once(self.command.get_program())
+            .chain(self.command.get_args())
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Every variable the command sets (`Some`) or removes (`None`) for the child, in the order
+    /// the command lists them; variables it leaves alone are inherited.
+    pub fn environment(&self) -> Vec<(String, Option<String>)> {
+        self.command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
     }
 
     /// The driver this child renders on, or `None` for a lock self-test.
@@ -1290,7 +1368,7 @@ impl GpuCommand {
         let log = captured_log(&output);
         let adapter = AdapterEvidence::parse(&log);
         let timeline = ChildTimeline::read(&log, spawned, run_time);
-        let run = GpuRun {
+        let mut run = GpuRun {
             output,
             driver,
             adapter,
@@ -1298,8 +1376,10 @@ impl GpuCommand {
             lock_wait,
             run_time,
             timeline,
+            ledger: String::new(),
         };
-        append_to_ledger(&run.ledger_line(label, self.lock.name()));
+        run.ledger = run.ledger_line(label, self.lock.name(), self.display);
+        append_to_ledger(&run.ledger);
         keep_run_log(label, &log);
         run.assert_completed(label, self.run_limit_secs);
         Ok(run)
@@ -1362,6 +1442,63 @@ impl GpuCommand {
                     .env("RUST_LOG", format!("{filter},{ADAPTER_LOG_DIRECTIVE}"));
             }
         }
+    }
+}
+
+/// What a child shows its frames on, as the ledger names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayKind {
+    /// No display ([`ChildDisplay::None`]).
+    Offscreen,
+    /// A server `xvfb-run` starts.
+    Xvfb,
+    /// The display this test process has, where `xvfb-run` is missing.
+    Host,
+    /// A lock self-test, which renders nothing.
+    NoChild,
+}
+
+impl DisplayKind {
+    /// The ledger's `display=` value for a child on `driver`.
+    fn ledger_name(self, driver: GpuDriver) -> &'static str {
+        match (self, driver) {
+            (Self::Offscreen, _) => "offscreen",
+            (Self::Xvfb, GpuDriver::Radv) => "xvfb-sw",
+            (Self::Xvfb, GpuDriver::Lavapipe) => "xvfb",
+            (Self::Host, _) => "host",
+            (Self::NoChild, _) => "none",
+        }
+    }
+}
+
+/// Adds `xvfb-run` with a display number of its own (and `screen`, if given) to `command`, or,
+/// where `xvfb-run` is missing, checks that this process has a display the child can use.
+///
+/// # Panics
+/// Panics when neither `xvfb-run` nor a display exists: a GPU test must not pass without running.
+fn add_virtual_display(command: &mut Command, screen: Option<&str>) -> DisplayKind {
+    let xvfb_run = Path::new("/usr/bin/xvfb-run");
+    if xvfb_run.exists() {
+        // `-n` must precede `-a`, which reads the starting number as it is parsed.
+        command
+            .arg(xvfb_run)
+            .arg("-n")
+            .arg(display_search_start().to_string())
+            .arg("-a");
+        if let Some(screen) = screen {
+            command
+                .arg("-s")
+                .arg(format!("-screen 0 {screen} +extension GLX"));
+        }
+        DisplayKind::Xvfb
+    } else {
+        assert!(
+            !(std::env::var_os("WAYLAND_DISPLAY").is_none()
+                && std::env::var_os("DISPLAY").is_none()),
+            "CRITICAL: No graphical display detected and /usr/bin/xvfb-run is missing! \
+             GPU tests require a display or xvfb-run. Set SPACE_SCUFFLE_SKIP_GPU_TESTS=1 to bypass."
+        );
+        DisplayKind::Host
     }
 }
 
@@ -1497,6 +1634,9 @@ pub struct GpuRun {
     pub run_time: Duration,
     /// Where that time went, by phase.
     pub timeline: ChildTimeline,
+    /// The line this run appended to the ledger, or would have appended had
+    /// [`LEDGER_VAR`] named a file.
+    pub ledger: String,
 }
 
 impl GpuRun {
@@ -1548,9 +1688,10 @@ impl GpuRun {
         }
     }
 
-    /// One tab-separated ledger line: label, driver, lock, adapter, `driver_info`, executable
-    /// preload, lock wait and run time in seconds, exit status, and the [`ChildTimeline`].
-    fn ledger_line(&self, label: &str, lock: &str) -> String {
+    /// One tab-separated ledger line: label, driver, display, lock, adapter, `driver_info`,
+    /// executable preload, lock wait and run time in seconds, exit status, and the
+    /// [`ChildTimeline`].
+    fn ledger_line(&self, label: &str, lock: &str, display: &str) -> String {
         let (adapter, driver_info) = self.adapter.as_ref().map_or(("-", "-"), |adapter| {
             (adapter.name.as_str(), adapter.driver_info.as_str())
         });
@@ -1564,7 +1705,8 @@ impl GpuRun {
             .code()
             .map_or_else(|| "signal".to_owned(), |code| code.to_string());
         format!(
-            "label={label}\tdriver={}\tlock={lock}\tadapter={adapter}\tdriver_info={driver_info}\t\
+            "label={label}\tdriver={}\tdisplay={display}\tlock={lock}\tadapter={adapter}\t\
+             driver_info={driver_info}\t\
              preload_s={:.2}\tlock_wait_s={lock_wait}\trun_s={:.2}\texit={exit}\tphases={}\n",
             self.driver.map_or("none", GpuDriver::name),
             self.preload.as_secs_f64(),
@@ -1652,7 +1794,8 @@ const TAIL_PHASE: &str = "after the last log record";
 /// Phases are consecutive and end at milestones: the first timestamped record, the adapter line
 /// (render device created), a window being created (windowed children only), the last timestamped
 /// record, and the exit the harness observed. A milestone the log does not show is skipped, and
-/// its time counts toward the next phase.
+/// its time counts toward the next phase: an offscreen child creates no window, so its app
+/// build counts toward "startup and frames".
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChildTimeline {
     /// Each phase with its duration, in order.
