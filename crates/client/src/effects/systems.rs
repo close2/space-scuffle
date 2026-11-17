@@ -9,12 +9,14 @@
 //!   sized by its zones; a tracer, beam, projectile or melee event spawns its weapon's `impact`
 //!   effect where it lands; a `BubbleShatter` spawns the dead unit's `death` effect, sized by
 //!   its radius, where it stood (plan WP9), and the legacy glass shatter is then left out
-//!   ([`replaces_shatter`]). A tracer, beam or projectile also spawns its weapon's `travel`
+//!   ([`replaces_shatter`]); a `SpellImpact` lays its ability's missile impact where the
+//!   simulation ran it (`effects::areas::lay_spell_impact`). A tracer, beam or projectile also spawns its weapon's `travel`
 //!   effect along the shot's line from the muzzle to where it lands ([`travel_request`], plan
 //!   WP11), and the legacy combat card of an event whose unit names its weapon's looks is left
-//!   out ([`replaces_legacy`]). An instant hit's or a blow's point is first moved from the
-//!   struck unit's centre to its bubble's near surface (`effects::struck`), so the slug, the
-//!   beam and the impact meet the glass instead of being drawn inside it.
+//!   out ([`replaces_legacy`]). An instant hit's, a blow's or a projectile's point is first
+//!   moved from the struck unit's centre to its bubble's near surface (`effects::struck`, the
+//!   bubble found by the struck entity's id), so the slug, the beam, the projectile and the
+//!   impact meet the glass instead of being drawn inside it or below a flyer.
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -303,6 +305,10 @@ pub fn spawn_request_struck(
             line: None,
             delay: 0.0,
         }),
+        // A spell missile's impact is the impact of its ability's missile look, laid by
+        // `effects::areas::lay_spell_impact`, not by a weapon's tables: it asks for no weapon
+        // spawn (plan `2026-11-17-effect-snapshot-identity` D-6).
+        CombatEventVisual::SpellImpact { .. } => None,
     }
 }
 
@@ -357,7 +363,8 @@ pub fn travel_request(
         }
         CombatEventVisual::MeleeSlashVisual { .. }
         | CombatEventVisual::SplashVisual { .. }
-        | CombatEventVisual::BubbleShatter { .. } => return None,
+        | CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SpellImpact { .. } => return None,
     };
     let effect = tables.travel(*source)?;
     catalog.effect(effect)?;
@@ -455,7 +462,7 @@ pub fn replaces_legacy(tables: Option<&UnitEffectTables>, event: &CombatEventVis
         | CombatEventVisual::MeleeSlashVisual { source, .. } => {
             tables.is_some_and(|tables| tables.names_weapon(*source))
         }
-        CombatEventVisual::SplashVisual { .. } => false,
+        CombatEventVisual::SplashVisual { .. } | CombatEventVisual::SpellImpact { .. } => false,
     }
 }
 
@@ -472,7 +479,8 @@ pub fn replaces_shatter(
 }
 
 /// What the event wiring reads to put a hit on the struck bubble's glass: the battle (its
-/// presented bubbles), the struck-bubble index, and the battle camera (its view direction).
+/// presented frame and previous snapshot), the last frame's bubbles, and the battle camera (its
+/// view direction).
 type StruckContext<'w, 's> = (
     Option<Res<'w, crate::battle_pipeline::session::BattleSession>>,
     Option<ResMut<'w, super::struck::StruckBubbles>>,
@@ -493,33 +501,44 @@ pub fn spawn_effects_from_events(
     time: Res<'_, Time<Virtual>>,
     (session, mut struck, cameras): StruckContext<'_, '_>,
 ) {
+    // The last frame's bubbles name entities of the session they were kept for; a new
+    // session's ids restart (plan `2026-11-17-effect-snapshot-identity` Amendment 3).
+    if let Some(struck) = struck.as_deref_mut() {
+        struck.follow(
+            session
+                .as_deref()
+                .and_then(|session| session.frames.generation()),
+        );
+    }
     let (Some(catalog), Some(tables), Some(mut runtime)) = (catalog, tables, runtime) else {
         events.clear();
         return;
     };
     let now = time.elapsed_secs_f64();
     let mut lines = LineAssembly::default();
-    if !events.is_empty() {
-        if let (Some(struck), Some(session)) = (struck.as_deref_mut(), session.as_deref()) {
-            struck.rebuild(&session.frames.presented().bubbles);
-        }
-    }
     // The battle camera's view direction: a shot's end and hit are drawn on the struck
     // bubble's outline as it sees it.
     let view = cameras
         .get_single()
         .ok()
         .map(|transform| transform.forward().as_vec3());
+    let frames = session.as_deref().map(|session| &session.frames);
+    let presented = frames.map_or(&[][..], |frames| frames.presented().bubbles.as_slice());
+    let previous = frames
+        .and_then(|frames| frames.previous())
+        .map(|snapshot| snapshot.bubbles.as_slice());
     for event in events.read() {
-        // An instant hit or a blow shows on the struck bubble's glass, where the shot's slug
-        // ends (reviews 2 and 3, A2-1, A3-1, A3-2).
-        let (event, struck_radius) = match (struck.as_deref(), session.is_some()) {
-            (Some(struck), true) => super::struck::at_struck_surface(
+        // An instant hit, a blow or a projectile shows on the struck bubble's glass, where the
+        // shot's slug ends (reviews 2 and 3, A2-1, A3-1, A3-2), the bubble found by the struck
+        // entity's id (plan `2026-11-17-effect-snapshot-identity` D-3, B-125; Amendment 3,
+        // B-128).
+        let (event, struck_radius) = match struck.as_deref_mut() {
+            Some(struck) => super::struck::at_struck_surface(
                 &event.0,
-                |x, y, z, plane| struck.struck_at(x, y, z, plane),
+                |id| struck.find(presented, previous, id),
                 view,
             ),
-            _ => super::struck::at_struck_surface(&event.0, |_, _, _, _| None, view),
+            None => super::struck::at_struck_surface(&event.0, |_| None, view),
         };
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
@@ -545,9 +564,26 @@ pub fn spawn_effects_from_events(
         {
             runtime.spawn(&catalog, &ready, now);
         }
+        // A spell missile's impact, where and when the simulation ran it (plan
+        // `2026-11-17-effect-snapshot-identity` D-6, B-124), cut by the fog as an area.
+        if matches!(event, CombatEventVisual::SpellImpact { .. }) {
+            let mut keep = super::areas::Keep {
+                catalog: &catalog,
+                tables: &tables,
+                runtime: &mut runtime,
+                now,
+                delta: time.delta_secs_f64(),
+            };
+            super::areas::lay_spell_impact(&event, fog.as_deref(), &mut keep);
+        }
     }
     if let Some(ready) = lines.finish() {
         runtime.spawn(&catalog, &ready, now);
+    }
+    // A later frame's killing hit finds its target among this frame's bubbles (plan
+    // `2026-11-17-effect-snapshot-identity` Amendment 2).
+    if let Some(struck) = struck.as_deref_mut() {
+        struck.remember(presented);
     }
 }
 
@@ -726,8 +762,142 @@ pub fn apply_effect_lights(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
+    use crate::battle_pipeline::commands::SessionGeneration;
+    use crate::battle_pipeline::session::BattleSession;
+    use crate::effects::struck::{StruckBubbles, StruckFrom};
+    use sim_types::{
+        AnimState, BubbleRenderInstance, Concealment, EntityId, PlayerId, ShapeKind,
+        SilhouetteClass, StanceView, StatusFlags, StrikeEnds, Tick, UnitTypeId, WeaponVisualKind,
+    };
+
+    /// A presented unit bubble of entity `id` at map `at`, standing `altitude` up.
+    fn bubble(id: u32, at: [f32; 2], altitude: f32, radius: f32) -> BubbleRenderInstance {
+        BubbleRenderInstance {
+            entity_id: EntityId(id),
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::HeavyHex,
+            unit_type: UnitTypeId::default(),
+            owner: PlayerId(1),
+            world_pos: [at[0], at[1], altitude],
+            ground_z: 0.0,
+            radius,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: Concealment::None,
+            speed_boosted: false,
+            stance: StanceView::default(),
+            status: StatusFlags::default(),
+            barrier_ratio: 0.0,
+        }
+    }
+
+    /// An app that runs [`spawn_effects_from_events`] alone, on the shipped vocabulary and
+    /// units' tables, with a battle session in `frames`' first generation.
+    fn spawn_app() -> App {
+        let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+        let catalog =
+            EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+                .expect("the shipped vocabulary loads");
+        let units = sim_fixtures::shipped_catalogs().units;
+        let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
+        let mut app = App::new();
+        app.add_event::<CombatVisualEvent>()
+            .init_resource::<Time<Virtual>>()
+            .init_resource::<StruckBubbles>()
+            .insert_resource(EffectRuntime::new(&catalog))
+            .insert_resource(tables)
+            .insert_resource(catalog)
+            .insert_resource(BattleSession::default())
+            .add_systems(Update, spawn_effects_from_events);
+        app
+    }
+
+    /// Review condition 1 (plan `2026-11-17-effect-snapshot-identity` Amendment 3): the system
+    /// remembers the presented bubbles only after the frame's lookups. A killing hit's target
+    /// is reaped on the hit's tick; on the frame its event is shown, while the presentation
+    /// interpolates from that tick, neither snapshot lists it, and only the bubbles remembered
+    /// on the frame before do. Remembering this frame's bubbles first would lose it.
+    #[test]
+    fn the_presented_bubbles_are_remembered_only_after_the_frames_lookups() {
+        let mut app = spawn_app();
+        let target = bubble(30, [4.0, 4.0], 2.5, 0.7);
+        let shooter = bubble(31, [1.0, 4.0], 0.0, 0.4);
+        let hit = CombatEventVisual::HitscanTracer {
+            from: [1.0, 4.0, 0.5],
+            to: [4.0, 4.0, 0.5],
+            owner: PlayerId(0),
+            source: EffectSource::default(),
+            ends: Some(StrikeEnds {
+                attacker: EntityId(31),
+                target: EntityId(30),
+            }),
+        };
+        {
+            let mut session = app.world_mut().resource_mut::<BattleSession>();
+            let frames = &mut session.frames;
+            let initial = frames.initialize(SessionGeneration::FIRST).expect("fresh");
+            initial.bubbles = vec![target, shooter.clone()];
+            frames.finish_initialization().expect("initialized");
+            // Tick 1: the hit kills the target, which is reaped on that tick.
+            let tick = frames.begin_tick().expect("ready");
+            tick.tick = Tick(1);
+            tick.bubbles = vec![shooter.clone()];
+            tick.combat_events = vec![hit];
+            frames.finish_tick().expect("published");
+            // This frame shows tick 0 interpolated towards tick 1: the target is presented.
+            frames.present(0.5).expect("presented");
+            assert!(frames.pop_presented_event().is_none(), "not yet shown");
+        }
+        app.update();
+        let event = {
+            let mut session = app.world_mut().resource_mut::<BattleSession>();
+            let frames = &mut session.frames;
+            // The next frame shows tick 1 interpolated towards tick 2: the hit pops.
+            let tick = frames.begin_tick().expect("ready");
+            tick.tick = Tick(2);
+            tick.bubbles = vec![shooter];
+            frames.finish_tick().expect("published");
+            frames.present(0.25).expect("presented");
+            frames
+                .pop_presented_event()
+                .expect("the hit is shown")
+                .event
+        };
+        app.world_mut().send_event(CombatVisualEvent(event.clone()));
+        app.update();
+        let struck = app.world().resource::<StruckBubbles>();
+        assert_eq!(
+            StruckFrom::ALL.map(|from| struck.found_in(from)),
+            [0, 0, 1, 0],
+            "found among the bubbles remembered on the frame before"
+        );
+        // This frame's bubbles were remembered after its lookup: a frame later the target is
+        // gone from them too.
+        app.world_mut().send_event(CombatVisualEvent(event));
+        app.update();
+        let struck = app.world().resource::<StruckBubbles>();
+        assert_eq!(struck.found_in(StruckFrom::Nowhere), 1);
+    }
 
     /// A shot along +x (map x) at map y = 5.5, from x = 1.5 to x = 9.5.
     fn shot() -> WorldLine {

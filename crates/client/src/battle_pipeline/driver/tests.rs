@@ -196,6 +196,7 @@ fn later_media_failure_retains_completed_ticks_outcomes_and_pending_events() -> 
             to: [1.0; 3],
             owner: PlayerId(0),
             source: sim_types::EffectSource::default(),
+            ends: None,
         });
     let result = session.advance(
         &mut world,
@@ -262,6 +263,7 @@ fn five_tick_budget_retains_time_and_delivers_delayed_combat_once() -> TestResul
             to: [1.0; 3],
             owner: PlayerId(0),
             source: sim_types::EffectSource::default(),
+            ends: None,
         });
     session.advance(
         &mut world,

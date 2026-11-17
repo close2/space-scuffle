@@ -5,8 +5,9 @@
 //! (plan `2026-11-09-effect-visualization` §5.4, D-1, D-3, D-8): how a bubble is concealed
 //! ([`Concealment`]), which stance it is in or channelling into ([`StanceView`]), which status
 //! effects are on it ([`StatusFlags`]), which unit and weapon caused a weapon event
-//! ([`EffectSource`], [`WeaponKey`]), the geometry of a line splash ([`LineView`]), and the
-//! persistent areas and tethers of a frame ([`AreaView`], [`LinkView`]).
+//! ([`EffectSource`], [`WeaponKey`]), which entities a strike joined ([`StrikeEnds`]), which
+//! catalog statuses an entity bears ([`StatusView`]), the geometry of a line splash
+//! ([`LineView`]), and the persistent areas and tethers of a frame ([`AreaView`], [`LinkView`]).
 //!
 //! # How it fits
 //! `sim_core`'s snapshot writer fills these after the tick, from state the tick already keeps;
@@ -19,6 +20,7 @@
 //! - Every record is `Copy` and fixed-size, so a warmed snapshot refills without allocating.
 //! - Fields added after the first release read their serde default, so older RON records load.
 
+use crate::effects::StatusId;
 use crate::ids::{EntityId, PlayerId, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
@@ -225,6 +227,43 @@ pub struct AbilitySource {
     pub ability: u8,
 }
 
+/// The two entities an instant strike joined: who struck and who was struck (plan
+/// `2026-11-17-effect-snapshot-identity` D-2).
+///
+/// Carried by the instant weapon events (a tracer, a beam, a blow) so a client can draw the
+/// strike on the struck entity's own bubble, and follow both ends of a held beam, without
+/// searching by position. Both are the entities' ids on the strike's tick; the struck entity may
+/// have died on that tick, in which case it is absent from that tick's bubbles.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrikeEnds {
+    /// The entity whose weapon struck.
+    pub attacker: EntityId,
+    /// The entity the strike hit.
+    pub target: EntityId,
+}
+
+/// One catalog status borne by one published entity (plan `2026-11-17-effect-snapshot-identity`
+/// D-5).
+///
+/// [`StatusFlags`] tells a status by its kind only; this tells it by identity, so a client can
+/// choose the look a status's name has (Fungal Growth's apart from Psionic Storm's, both
+/// damage-over-time statuses).
+///
+/// # Invariants
+/// - The derived order is `(entity, status)`: [`crate::RenderSnapshot::statuses`] is sorted by
+///   it and holds each pair at most once.
+/// - `status` is a dense index of the spell catalog the simulation runs (`statuses.ron` in name
+///   order); a client resolves names against the same catalog.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatusView {
+    /// The entity bearing the status; always one of the frame's bubbles.
+    pub entity: EntityId,
+    /// Which catalog status it bears.
+    pub status: StatusId,
+}
+
 /// The whole line a line splash searches along, carried by each of its points' events.
 ///
 /// Positions are `[x, y, altitude]` in world units.
@@ -312,6 +351,22 @@ mod tests {
         assert_eq!(read("false"), Concealment::None);
         assert_eq!(read("true"), Concealment::Cloaked);
         assert_eq!(read("Burrowed"), Concealment::Burrowed);
+    }
+
+    #[test]
+    fn status_views_order_by_entity_then_status() {
+        let view = |entity, status| StatusView {
+            entity: EntityId(entity),
+            status: StatusId(status),
+        };
+        let mut views = vec![view(4, 0), view(2, 7), view(4, 1), view(2, 3), view(9, 0)];
+        views.sort_unstable();
+        assert_eq!(
+            views,
+            vec![view(2, 3), view(2, 7), view(4, 0), view(4, 1), view(9, 0)],
+            "the entity orders first, the status within one entity"
+        );
+        assert!(view(1, 9) < view(2, 0));
     }
 
     #[test]

@@ -3,6 +3,9 @@
 //! twenty pulsing statuses allocate nothing in the engine. A second steady child does the same
 //! with the four shipped spells (Psionic Storm, Abduct, Fungal Growth and Blinding Cloud) recast
 //! throughout its window, so every shipped tree is live on every measured tick (plan WP6).
+//! Both children's snapshots publish the statuses of twenty units, and the shipped child's
+//! Fungal Growth missiles land in its window, so the snapshot writer's status list and spell
+//! impacts (plan `2026-11-17-effect-snapshot-identity` WP2) are measured with the engine.
 //!
 //! **How it counts.** The workspace forbids `unsafe_code`, so no counting `#[global_allocator]`
 //! can be installed (owner question Q0011; the plan's D-18 fallback). As
@@ -62,7 +65,7 @@ const GROWTH_PERSISTENTS: u32 = 100;
 const WINDOW_FUNCTION: &str = "measured_effect_ticks";
 /// Frames that belong to the engine: the module by path, its functions by name (inlined
 /// frames carry no path), and the snapshot's effect views (D-19).
-const ENGINE_FRAMES: [&str; 31] = [
+const ENGINE_FRAMES: [&str; 33] = [
     "sim_core::effects::",
     "run_effect_walk",
     "enter_node",
@@ -93,7 +96,9 @@ const ENGINE_FRAMES: [&str; 31] = [
     "write_effect_views",
     "write_areas",
     "push_link",
-    "raise_status_flags",
+    "publish_statuses",
+    "record_spell_impact",
+    "drain_spell_impacts",
 ];
 /// Call-stack depth DHAT records; a stack that reaches it is truncated and fails the test.
 const STACK_DEPTH: usize = 128;
@@ -238,13 +243,20 @@ fn measured_effect_ticks(
     bundle: &mut TickBundle,
     ticks: u32,
     (variant, units): (Variant, &[sim_types::EntityId]),
-) {
+) -> u32 {
+    let mut landed = 0;
     for tick in 0..ticks {
         if variant == Variant::ShippedSpells {
             cast_shipped(w, units, WARM_TICKS + tick);
         }
         bundle.tick = Tick(w.current_tick);
         w.step_into(bundle, output);
+        landed += u32::from(
+            output
+                .combat_events
+                .iter()
+                .any(|event| matches!(event, sim_types::CombatEventVisual::SpellImpact { .. })),
+        );
         match variant {
             Variant::Steady | Variant::ShippedSpells => {}
             Variant::PlantedOutside => drop(std::hint::black_box(Box::new(w.current_tick))),
@@ -256,6 +268,7 @@ fn measured_effect_ticks(
             }
         }
     }
+    landed
 }
 
 /// Runs one child: returns at once without [`TICKS_ENV`], otherwise warms the busy world and
@@ -290,9 +303,18 @@ fn run_child(variant: Variant) {
         bundle.tick = Tick(w.current_tick);
         w.step_into(&bundle, &mut output);
     }
-    measured_effect_ticks(&mut w, &mut output, &mut bundle, ticks, (variant, &units));
+    let landed = measured_effect_ticks(&mut w, &mut output, &mut bundle, ticks, (variant, &units));
     assert_eq!(w.diagnostics().len(), 0);
+    if ticks >= MEASURED {
+        assert!(
+            output.statuses.len() >= 20,
+            "twenty units' statuses are published"
+        );
+    }
     if variant == Variant::ShippedSpells {
+        if ticks >= MEASURED {
+            assert!(landed >= 2, "Fungal Growth lands in the window: {landed}");
+        }
         let spells = w.catalog.spells();
         for status in [
             "psionic_storm",

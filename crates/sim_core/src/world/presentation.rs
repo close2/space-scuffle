@@ -5,12 +5,14 @@
 //! Owns the rules that turn a unit's state into the effect contract of `sim_types::presentation`:
 //! its concealment, stance, status flags and barrier fraction, and the [`EffectSource`] of a
 //! weapon it fires. Also owns [`PresentationWorkspace`], the provenance the tick records for
-//! events that outlive their cause: the source of each projectile in flight and which
-//! barriers absorbed damage this tick.
+//! events that outlive their cause: the source of each projectile in flight, which barriers
+//! absorbed damage this tick, and where spell missiles landed this tick (plan
+//! `2026-11-17-effect-snapshot-identity` D-6).
 //!
 //! # How it fits
 //! Combat resolution asks [`weapon_source`] when a weapon releases and records projectile
-//! sources; the snapshot writer (tick phase 10) reads the rest.
+//! sources; the effect engine records each spell missile's landing; the snapshot writer (tick
+//! phase 10) reads the rest and drains the landings into events.
 //! Nothing here names a unit, mode or effect: modes and abilities are indices into the source
 //! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::burrowed`.
 //!
@@ -18,15 +20,31 @@
 //! - Presentation only: nothing here is hashed, consumes randomness or is read by a tick
 //!   decision, so recording or dropping it cannot move a checksum (plan D-1).
 //! - The workspace holds one entry per live projectile it was told about; entries leave
-//!   with their projectile.
+//!   with their projectile. Spell-missile landings are held in fixed point and only until the
+//!   next snapshot, which `step_into` writes every tick.
 //! - Its buffers keep their capacity, so a warmed workspace allocates nothing in steady state.
 
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, ATTACK_DASH_BUFF_ID, OVERCLOCK_BUFF_ID};
 use sim_types::{
-    AbilityEffectSpec, Concealment, EffectSource, EntityId, ModeTransitionView, ShapeKind,
-    SimScalar, StanceView, StatusFlags, WeaponKey, WeaponSlot, WeaponSpec,
+    AbilityEffectSpec, AbilitySource, Concealment, EffectSource, EntityId, ModeTransitionView,
+    PlayerId, ShapeKind, SimScalar, SimVec2, StanceView, StatusFlags, WeaponKey, WeaponSlot,
+    WeaponSpec,
 };
+
+/// Where a spell missile presented as a projectile landed on this tick: the provenance of a
+/// `CombatEventVisual::SpellImpact` (plan `2026-11-17-effect-snapshot-identity` D-6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpellImpactRecord {
+    /// The landed missile's identifier.
+    pub(crate) missile: u32,
+    /// Player whose cast launched it.
+    pub(crate) owner: PlayerId,
+    /// The contact point the impact ran at, in world units.
+    pub(crate) contact: SimVec2,
+    /// The caster type and ability that launched it.
+    pub(crate) source: AbilitySource,
+}
 
 // PERFORMANCE RATIONALE:
 // Why: Projectile provenance is needed when a projectile lands or a frame is written, but
@@ -42,6 +60,8 @@ pub(crate) struct PresentationWorkspace {
     projectile_sources: Vec<(u32, EffectSource)>,
     /// Entities whose barrier absorbed damage since the last snapshot, possibly repeated.
     barrier_hits: Vec<EntityId>,
+    /// Spell missiles that landed since the last snapshot, in the order their impacts ran.
+    spell_impacts: Vec<SpellImpactRecord>,
 }
 
 impl PresentationWorkspace {
@@ -79,6 +99,17 @@ impl PresentationWorkspace {
     /// Ends the frame: this tick's barrier hits have been published.
     pub(crate) fn clear_barrier_hits(&mut self) {
         self.barrier_hits.clear();
+    }
+
+    /// Notes that a spell missile presented as a projectile landed (its impact ran) this tick.
+    pub(crate) fn record_spell_impact(&mut self, record: SpellImpactRecord) {
+        self.spell_impacts.push(record);
+    }
+
+    /// Removes and yields this tick's landings in the order they ran, keeping the buffer's
+    /// capacity.
+    pub(crate) fn drain_spell_impacts(&mut self) -> std::vec::Drain<'_, SpellImpactRecord> {
+        self.spell_impacts.drain(..)
     }
 }
 

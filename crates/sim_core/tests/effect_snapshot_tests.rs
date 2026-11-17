@@ -6,6 +6,11 @@
 //! `SplashVisual` per splash search with the weapon's zones; the source unit type and weapon
 //! of every weapon event; and the open area spells (point persistents that search) as areas.
 //!
+//! Plan `2026-11-17-effect-snapshot-identity` WP2 adds the identities: the attacker and the
+//! struck entity of every instant hit and blow (`StrikeEnds`), the catalog statuses of every
+//! published bubble (`RenderSnapshot::statuses`), and a `SpellImpact` where a spell missile's
+//! impact ran (none for a missile that lost its target).
+//!
 //! These tests drive the shipped catalog (and scratch archetypes cloned from it) through
 //! `SimWorld::step` and `SimWorld::execute_ability`. Slugs are read from data; the simulation
 //! source names none of them.
@@ -26,8 +31,9 @@ use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, BubbleRenderInstance,
-    CombatEventVisual, Concealment, EffectSource, EntityId, MoverType, PlayerId, RenderSnapshot,
-    ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId, WeaponKey, WeaponSlot,
+    CombatEventVisual, Concealment, EffectContext, EffectSource, EffectTarget, EntityId, MoverType,
+    PlayerId, RenderSnapshot, ShapeKind, SimScalar, SimVec2, StatusView, StrikeEnds, Tick,
+    TickBundle, UnitOrder, UnitTypeId, WeaponKey, WeaponSlot, WeaponVisualKind,
 };
 
 const ATTACKER: PlayerId = PlayerId(0);
@@ -271,9 +277,16 @@ fn target_for(world: &SimWorld, weapon: &WeaponSpec, plane: MoverType) -> Option
         .map(|arch| arch.unit_type_id)
 }
 
+/// What a [`duel`] saw: `ATTACKER`'s weapon events, and the attacker and the target it fought
+/// (`None` when the catalog has no target for the weapon).
+struct Duel {
+    events: Vec<CombatEventVisual>,
+    ends: Option<StrikeEnds>,
+}
+
 /// The renderer events of `ATTACKER` while its one unit fires `shipped` at a sturdy target in a
 /// fresh world of `seed`, after entering the weapon's mode if it has one. See [`duel`].
-fn fire(shipped: &ShippedWeapon, seed: u64) -> Vec<CombatEventVisual> {
+fn fire(shipped: &ShippedWeapon, seed: u64) -> Duel {
     let mut world = flat_world(seed);
     let attacker = world
         .spawn_unit(shipped.arch.unit_type_id, ATTACKER, at(20.0, 20.0))
@@ -293,14 +306,14 @@ fn fire(shipped: &ShippedWeapon, seed: u64) -> Vec<CombatEventVisual> {
 /// Spawns a sturdy, holding target that `shipped` may strike within its range of `attacker`
 /// (which carries it, at (20, 20)), orders the attack and returns `ATTACKER`'s weapon events
 /// from the first one until the shot's splash has landed (or, without splash, that first tick),
-/// or 60 ticks later. Empty when the catalog has no such target or the attacker never fires.
-fn duel(
-    world: &mut SimWorld,
-    shipped: &ShippedWeapon,
-    attacker: EntityId,
-) -> Vec<CombatEventVisual> {
+/// or 60 ticks later. No events when the catalog has no such target or the attacker never
+/// fires.
+fn duel(world: &mut SimWorld, shipped: &ShippedWeapon, attacker: EntityId) -> Duel {
     let Some(target_type) = target_for(world, &shipped.weapon, shipped.plane) else {
-        return Vec::new();
+        return Duel {
+            events: Vec::new(),
+            ends: None,
+        };
     };
     let target_arch = world.catalog.get(target_type).expect("a target").clone();
     let min = f64::from(shipped.weapon.min_range.to_f32());
@@ -357,18 +370,58 @@ fn duel(
             break;
         }
     }
-    events
+    Duel {
+        events,
+        ends: Some(StrikeEnds { attacker, target }),
+    }
 }
 
+/// The event kind a weapon of this delivery publishes for its delivery, by its speed and
+/// `visual_kind`: an instant tracer, beam or blow, or a projectile; `None` for a weapon that
+/// publishes only its splash.
+fn delivery_event(weapon: &WeaponSpec) -> Option<&'static str> {
+    if weapon.projectile_speed.is_some() {
+        return Some("ProjectileVisual");
+    }
+    match weapon.visual_kind {
+        WeaponVisualKind::Hitscan => Some("HitscanTracer"),
+        WeaponVisualKind::LaserBeam | WeaponVisualKind::LightningArc => Some("BeamVisual"),
+        WeaponVisualKind::MeleeSlash => Some("MeleeSlashVisual"),
+        WeaponVisualKind::Projectile | WeaponVisualKind::None => None,
+    }
+}
+
+/// The variant name of `event`.
+const fn event_kind(event: &CombatEventVisual) -> &'static str {
+    match event {
+        CombatEventVisual::HitscanTracer { .. } => "HitscanTracer",
+        CombatEventVisual::ProjectileVisual { .. } => "ProjectileVisual",
+        CombatEventVisual::BeamVisual { .. } => "BeamVisual",
+        CombatEventVisual::MeleeSlashVisual { .. } => "MeleeSlashVisual",
+        CombatEventVisual::BubbleShatter { .. } => "BubbleShatter",
+        CombatEventVisual::SplashVisual { .. } => "SplashVisual",
+        CombatEventVisual::SpellImpact { .. } => "SpellImpact",
+    }
+}
+
+/// B-123 (plan `2026-11-17-effect-snapshot-identity` WP3; plan `2026-11-09-effect-visualization`
+/// Amendment 25, P1-4): every shipped weapon with a target fires at least one event in its
+/// duel, each event carries the weapon's source, and its delivery event is the one its data
+/// names: an instant `Hitscan` a tracer, a beam a beam, a blow a blow, a speed a projectile,
+/// and a weapon without a delivery (`None`) only its splash. No weapon is silent.
 #[test]
-fn every_weapon_event_carries_its_source() {
+fn every_shipped_weapon_publishes_its_delivery_or_splash() {
     let world = flat_world(0x0e_ff03);
-    let mut fired = 0;
     let mut silent = Vec::new();
+    let mut fired = 0;
     for (seed, shipped) in (1_u64..).zip(shipped_weapons(&world)) {
-        let events = fire(&shipped, seed);
+        if target_for(&world, &shipped.weapon, shipped.plane).is_none() {
+            continue;
+        }
+        let label = format!("{} {:?}", shipped.arch.slug, shipped.key);
+        let events = fire(&shipped, seed).events;
         if events.is_empty() {
-            silent.push(format!("{} {:?}", shipped.arch.slug, shipped.key));
+            silent.push(label);
             continue;
         }
         fired += 1;
@@ -377,19 +430,28 @@ fn every_weapon_event_carries_its_source() {
             weapon: shipped.key,
         };
         for event in &events {
-            assert_eq!(
-                event.source(),
-                Some(expected),
-                "{} {:?}: {event:?}",
-                shipped.arch.slug,
-                shipped.key
+            assert_eq!(event.source(), Some(expected), "{label}: {event:?}");
+        }
+        let kinds: Vec<_> = events
+            .iter()
+            .map(event_kind)
+            .filter(|kind| *kind != "SplashVisual")
+            .collect();
+        if let Some(kind) = delivery_event(&shipped.weapon) {
+            assert!(
+                !kinds.is_empty() && kinds.iter().all(|seen| *seen == kind),
+                "{label}: publishes {kind}, saw {kinds:?}"
+            );
+        } else {
+            assert_eq!(kinds, Vec::<&str>::new(), "{label}: only its splash");
+            assert!(
+                shipped.weapon.splash.is_some(),
+                "{label}: no delivery, no splash"
             );
         }
     }
-    assert!(
-        fired * 4 >= (fired + silent.len()) * 3,
-        "most shipped weapons fire in the duel; silent: {silent:?}"
-    );
+    assert!(fired > 0, "the shipped catalog has weapons");
+    assert_eq!(silent, Vec::<String>::new(), "weapons that fired no event");
 }
 
 /// The zones a `SplashVisual` of `splash` publishes: innermost, middle, outermost.
@@ -415,7 +477,7 @@ fn each_shipped_splash_weapon_publishes_its_zones() {
     );
     for (seed, shipped) in (100_u64..).zip(&splashers) {
         let splash = shipped.weapon.splash.as_ref().expect("filtered on splash");
-        let events = fire(shipped, seed);
+        let events = fire(shipped, seed).events;
         let searches: Vec<_> = events
             .iter()
             .filter_map(|event| match event {
@@ -509,7 +571,7 @@ fn line_splash_emits_one_event_per_offset(period_ticks: u16) {
     let attacker = world
         .spawn_unit(shipped.arch.unit_type_id, ATTACKER, at(20.0, 20.0))
         .expect("spawn the attacker");
-    let events = duel(&mut world, &shipped, attacker);
+    let events = duel(&mut world, &shipped, attacker).events;
     let searches: Vec<_> = events
         .iter()
         .filter_map(|event| match event {
@@ -681,13 +743,13 @@ fn status_flags_follow_buffs() {
     let position = world.entities[&unit].position;
     world.run_effect(
         slow,
-        sim_types::EffectContext {
+        EffectContext {
             owner: ATTACKER,
             caster: None,
             ability: AbilitySource::default(),
             origin: position,
             source_point: position,
-            target: sim_types::EffectTarget::Unit(unit),
+            target: EffectTarget::Unit(unit),
         },
     );
     let status = bubble(&step(&mut world), unit).status;
@@ -819,4 +881,332 @@ fn equal_worlds_publish_equal_records() {
     stepped.combat_events.clear();
     assert_eq!(rewritten, stepped);
     assert_eq!(rewritten.areas.len(), 1, "the storm is still open");
+}
+
+/// Whether `event` is an instant hit or a blow, the events that name their strike ends.
+const fn is_strike(event: &CombatEventVisual) -> bool {
+    matches!(
+        event,
+        CombatEventVisual::HitscanTracer { .. }
+            | CombatEventVisual::BeamVisual { .. }
+            | CombatEventVisual::MeleeSlashVisual { .. }
+    )
+}
+
+/// The strike ends `event` names; `None` for an event without them.
+const fn strike_ends(event: &CombatEventVisual) -> Option<StrikeEnds> {
+    match event {
+        CombatEventVisual::HitscanTracer { ends, .. }
+        | CombatEventVisual::BeamVisual { ends, .. }
+        | CombatEventVisual::MeleeSlashVisual { ends, .. }
+        | CombatEventVisual::ProjectileVisual { ends, .. } => *ends,
+        _ => None,
+    }
+}
+
+/// B-125, B-126 (plan `2026-11-17-effect-snapshot-identity` D-2): every instant hit and blow a
+/// shipped weapon fires names the attacker that fired it and the target it struck.
+#[test]
+fn every_instant_hit_and_blow_names_its_attacker_and_target() {
+    let world = flat_world(0x0e_ff0b);
+    let mut strikes = 0;
+    for (seed, shipped) in (200_u64..).zip(shipped_weapons(&world)) {
+        let duel = fire(&shipped, seed);
+        for event in duel.events.iter().filter(|event| is_strike(event)) {
+            strikes += 1;
+            assert_eq!(
+                strike_ends(event),
+                duel.ends,
+                "{} {:?}: {event:?}",
+                shipped.arch.slug,
+                shipped.key
+            );
+        }
+    }
+    assert!(strikes > 0, "the shipped catalog has instant weapons");
+}
+
+/// B-128 (plan `2026-11-17-effect-snapshot-identity` Amendment 3): every projectile a shipped
+/// weapon launches names the attacker that fired it and the target it was fired at, so the
+/// client can land it on that target's bubble.
+#[test]
+fn every_projectile_names_its_attacker_and_target() {
+    let world = flat_world(0x0e_ff0c);
+    let mut projectiles = 0;
+    for (seed, shipped) in (300_u64..).zip(shipped_weapons(&world)) {
+        let duel = fire(&shipped, seed);
+        for event in duel
+            .events
+            .iter()
+            .filter(|event| matches!(event, CombatEventVisual::ProjectileVisual { .. }))
+        {
+            projectiles += 1;
+            assert_eq!(
+                strike_ends(event),
+                duel.ends,
+                "{} {:?}: {event:?}",
+                shipped.arch.slug,
+                shipped.key
+            );
+        }
+    }
+    assert!(
+        projectiles > 0,
+        "the shipped catalog has projectile weapons"
+    );
+}
+
+/// Spawns the shipped unit `slug` for `owner` at `(x, y)` holding position.
+fn held(world: &mut SimWorld, slug: &str, owner: PlayerId, x: f64, y: f64) -> EntityId {
+    let kind = world.catalog.id_by_slug(slug).expect("a shipped unit");
+    let id = world
+        .spawn_unit(kind, owner, at(x, y))
+        .expect("a free spot");
+    world
+        .entities
+        .get_mut(&id)
+        .expect("spawned")
+        .issue_order(UnitOrder::HoldPosition, false)
+        .expect("hold admitted");
+    id
+}
+
+/// Index of the ability named `name` in the archetype of `caster`.
+fn ability_index(world: &SimWorld, caster: EntityId, name: &str) -> u8 {
+    let kind = world.entities[&caster].unit_type_id;
+    let arch = world.catalog.get(kind).expect("registered");
+    let index = arch
+        .abilities
+        .iter()
+        .position(|ability| ability.name == name)
+        .expect("the caster has the ability");
+    u8::try_from(index).expect("few abilities")
+}
+
+/// The id of the shipped status `name`.
+fn status_id(world: &SimWorld, name: &str) -> sim_types::StatusId {
+    world
+        .catalog
+        .spells()
+        .status_id(name)
+        .expect("a shipped status")
+}
+
+/// The statuses `snapshot` publishes for `entity`, in order.
+fn listed(snapshot: &RenderSnapshot, entity: EntityId) -> Vec<sim_types::StatusId> {
+    snapshot
+        .statuses
+        .iter()
+        .filter(|view| view.entity == entity)
+        .map(|view| view.status)
+        .collect()
+}
+
+/// B-122 (plan `2026-11-17-effect-snapshot-identity` D-5): the frame lists each catalog status
+/// of each published bubble, sorted by `(entity, status)`, and nothing for a unit carried in a
+/// transport. A frame without statuses has no `statuses` key.
+#[test]
+fn statuses_list_each_status_of_each_published_unit_in_order() {
+    let mut world = flat_world(0x0e_ff0c);
+    world
+        .research_upgrade(ATTACKER, "psionic_storm")
+        .expect("the shipped research exists");
+    let infestor = held(&mut world, "mycelium_shaman", ATTACKER, 7.5, 20.0);
+    let templar = held(&mut world, "cerebral_elder", ATTACKER, 7.5, 40.0);
+    for caster in [infestor, templar] {
+        world.entities.get_mut(&caster).expect("spawned").energy = SimScalar::from_i32(200);
+    }
+    let fungaled = held(&mut world, "shock_golem", DEFENDER, 16.0, 20.0);
+    let stormed = held(&mut world, "pulse_bot", DEFENDER, 16.0, 40.0);
+    let passenger = held(&mut world, "pulse_bot", DEFENDER, 16.5, 40.5);
+    let carrier = held(&mut world, "repair_shuttle", DEFENDER, 19.0, 44.0);
+
+    let quiet = step(&mut world);
+    assert_eq!(quiet.statuses, []);
+    assert!(
+        !ron::to_string(&quiet)
+            .expect("a frame serializes")
+            .contains("statuses"),
+        "a frame without statuses has no key"
+    );
+
+    let fungal = ability_index(&world, infestor, "Fungal Growth");
+    assert!(world.execute_ability(infestor, fungal, Some(at(16.0, 20.0)), None));
+    let fungal_growth = status_id(&world, "fungal_growth");
+    let mut expected = vec![fungal_growth, status_id(&world, "fungal_growth_slow")];
+    expected.sort_unstable();
+    (0..40)
+        .find(|_| !listed(&step(&mut world), fungaled).is_empty())
+        .expect("the missile lands within 40 ticks");
+    let storm = ability_index(&world, templar, "Psionic Storm");
+    assert!(world.execute_ability(templar, storm, Some(at(16.0, 40.0)), None));
+    let psionic_storm = status_id(&world, "psionic_storm");
+    (0..10)
+        .find(|_| {
+            step(&mut world);
+            world.effects().has_status(passenger, psionic_storm)
+        })
+        .expect("the storm takes the passenger");
+    world
+        .try_load_unit_into_transport(passenger, carrier)
+        .expect("the shuttle carries the stormed bot");
+    assert!(
+        !world.effects().statuses_of(passenger).is_empty(),
+        "the carried unit keeps its status"
+    );
+    let frame = world.build_render_snapshot();
+
+    assert_eq!(
+        listed(&frame, fungaled),
+        expected,
+        "both of Fungal's statuses"
+    );
+    assert_eq!(listed(&frame, stormed), [psionic_storm]);
+    assert_eq!(
+        listed(&frame, passenger),
+        [],
+        "a carried unit is published as nothing"
+    );
+    assert!(
+        frame.statuses.windows(2).all(|pair| pair[0] < pair[1]),
+        "sorted by (entity, status), each once: {:?}",
+        frame.statuses
+    );
+    for bubble in &frame.bubbles {
+        let carried: Vec<_> = world
+            .effects()
+            .statuses_of(bubble.entity_id)
+            .iter()
+            .map(|active| active.status)
+            .collect();
+        assert_eq!(listed(&frame, bubble.entity_id), carried, "{bubble:?}");
+    }
+    assert!(frame
+        .statuses
+        .iter()
+        .all(|view| frame.bubbles.iter().any(|b| b.entity_id == view.entity)));
+    assert!(
+        frame.statuses.contains(&StatusView {
+            entity: fungaled,
+            status: fungal_growth,
+        }),
+        "the identity tells Fungal Growth from Psionic Storm"
+    );
+}
+
+/// The caster type and ability the scratch missile is launched under.
+const SCRATCH_ABILITY: AbilitySource = AbilitySource {
+    unit_type: UnitTypeId(3),
+    ability: 1,
+};
+
+/// Installs spell tables adding a scratch unit-targeted missile presented as a projectile,
+/// whose impact deals 1, and returns its root. Its names start with `scratch_` so they never
+/// meet a shipped entry.
+fn install_scratch_missile(world: &mut SimWorld) -> sim_types::EffectId {
+    let statuses = "(statuses: [])";
+    let effects = r#"(effects: [
+        (name: "scratch_missile", node: LaunchMissile((to: TargetUnit, speed: 0.25,
+            view: Projectile, impact: Use("scratch_missile_hit")))),
+        (name: "scratch_missile_hit", node: Damage((amount: 1.0))),
+    ])"#;
+    let spells = sim_fixtures::spells_with(statuses, effects).expect("valid scratch tables");
+    world
+        .catalog
+        .set_spell_catalog(spells)
+        .expect("the shipped abilities resolve in the merged tables");
+    world
+        .catalog
+        .spells()
+        .effect_id("scratch_missile")
+        .expect("installed")
+}
+
+/// Launches the scratch missile `root` from `from` at `target` for `ATTACKER`, with no caster.
+fn launch_at(world: &mut SimWorld, root: sim_types::EffectId, from: SimVec2, target: EntityId) {
+    world.run_effect(
+        root,
+        EffectContext {
+            owner: ATTACKER,
+            caster: None,
+            ability: SCRATCH_ABILITY,
+            origin: from,
+            source_point: from,
+            target: EffectTarget::Unit(target),
+        },
+    );
+}
+
+/// One published spell impact: where, which missile, whose and from which ability.
+type Impact = ([f32; 3], u32, PlayerId, AbilitySource);
+
+/// The spell impacts of `snapshot`, in order.
+fn spell_impacts(snapshot: &RenderSnapshot) -> Vec<Impact> {
+    snapshot
+        .combat_events
+        .iter()
+        .filter_map(|event| match event {
+            CombatEventVisual::SpellImpact {
+                pos,
+                missile,
+                owner,
+                source,
+            } => Some((*pos, *missile, *owner, *source)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// B-124 (plan `2026-11-17-effect-snapshot-identity` D-6): a missile whose unit target dies in
+/// flight is dropped without an impact, so it publishes none; the same missile at a living
+/// target publishes one, on the tick it lands, at its contact point.
+#[test]
+fn a_missile_that_loses_its_target_publishes_no_impact() {
+    for dies in [true, false] {
+        let mut world = flat_world(0x0e_ff0d);
+        let root = install_scratch_missile(&mut world);
+        let target = held(&mut world, "shock_golem", DEFENDER, 26.0, 20.0);
+        launch_at(&mut world, root, at(20.0, 20.0), target);
+        assert_eq!(world.effects().missiles().len(), 1, "launched");
+        let missile = world.effects().missiles()[0].id;
+        step(&mut world);
+        if dies {
+            world.entities.get_mut(&target).expect("alive").hp = SimScalar::ZERO;
+        }
+        let mut impacts = Vec::new();
+        for _ in 0..60 {
+            let snapshot = step(&mut world);
+            for event in spell_impacts(&snapshot) {
+                impacts.push((snapshot.tick, event));
+            }
+            if world.effects().missiles().is_empty() {
+                break;
+            }
+        }
+        assert!(world.effects().missiles().is_empty(), "the missile is gone");
+        if dies {
+            assert_eq!(impacts, [], "a fizzled missile lays no impact");
+            continue;
+        }
+        assert_eq!(impacts.len(), 1, "exactly one impact: {impacts:?}");
+        let (tick, (pos, id, owner, source)) = impacts[0];
+        assert_eq!(
+            tick,
+            Tick(world.current_tick),
+            "published on the landing tick"
+        );
+        assert_eq!((id, owner, source), (missile, ATTACKER, SCRATCH_ABILITY));
+        let radius = world
+            .catalog
+            .get(world.entities[&target].unit_type_id)
+            .expect("registered")
+            .collision_radius
+            .to_f32();
+        assert!(
+            (pos[0] - (26.0 - radius)).abs() < 1e-4,
+            "at the contact point: {pos:?}"
+        );
+        assert!((pos[1] - 20.0).abs() < 1e-4, "{pos:?}");
+        assert!(pos[2].abs() < 1e-4, "on flat ground: {pos:?}");
+    }
 }

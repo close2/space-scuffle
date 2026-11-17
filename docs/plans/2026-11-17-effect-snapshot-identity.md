@@ -512,7 +512,7 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 | `RenderSnapshot::statuses` grows the client's per-frame work | Merge cursor over two id-ordered sequences, O(bubbles + statuses); steady-state and valgrind windows |
 | A held beam's fog clip recomputed every frame costs time | At most 64 beams; `shot_clip` samples are bounded by length and reach; frame budget measured in WP8's packet |
 | A beam lingers after its attacker stops firing | Deadline is the attacker's own period plus 0.12 s, shorter than today's 0.46 s fixed life |
-| `SpellImpact` admitted without a fog check leaks an unseen impact | The handler's `area_sight` returns `Hidden` and lays nothing; `battle_fog_tests` covers it |
+| `SpellImpact` admitted without a fog check leaks an unseen impact | The handler's `area_sight` returns `Hidden` and lays nothing; the unit test `effects::areas::tests::a_real_fog_hiding_the_whole_impact_lays_nothing` covers it through a real `BattleFog` (Amendment 3) |
 | RON cannot read `visual_kind: None` for an enum field | D-7 fallback (`rename`), recorded |
 | Review rejects the shown `fungal_affliction` or the held beam | Q0080 rounds; the facts and lookups ship regardless, only the data naming waits |
 | Changed `jet_jumper` / `void_goliath` looks are unseen in play (no media) | Lab and stand-in GPU coverage, as WP11 did; recorded |
@@ -521,9 +521,9 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 
 ## 10. Out of scope (recorded, Q0002)
 
-- **Proposed new register entry (B-128; B-127 went to a gate flake first):** a `ProjectileVisual` is published at
-  ground + 0.5 at both ends. An anti-air projectile therefore flies and lands below its flyer (the same cross-plane
-  fault as B-125, for projectiles). The fix publishes `ends` on `ProjectileVisual` and re-aims the arrival on the target's bubble. It is
+- **Proposed new register entry (B-128):** a `ProjectileVisual` is published at ground + 0.5 at both ends. An
+  anti-air projectile therefore flies and lands below its flyer (the same cross-plane fault as B-125, for
+  projectiles). The fix publishes `ends` on `ProjectileVisual` and re-aims the arrival on the target's bubble. It is
   a follow-up, not done here, so as not to publish a field nothing reads.
 - **Inverse kind mismatches:** `hive_matron` (`MeleeSlash` with a speed) and `tesla_sentinel_dome` (`LaserBeam` with
   a speed). `visual_kind` is hashed in `ActiveProjectile::weapon_spec`, so changing it re-records goldens; it
@@ -536,3 +536,234 @@ to WP7 may run two at a time after it (WP7 after WP4, which it reuses); WP8 last
 - **Steering a missile's last interpolation step into its impact** (D-6 residual).
 - **The unused `BubbleRenderInstance::attack_target_pos`** (always `None`): removal or use is a separate cleanup.
 - **The cleave's facing on `SplashVisual`** (Amendments 5 and 24): unchanged.
+
+---
+
+## Amendment 1: WP1 to WP3 as built, and the verify items (2026-11-16, short note, charter §6)
+
+The simulation package (WP1 `1f72b8f8`, WP2 `a2cf5c5a`, WP3 on branch `effects-identity`) was
+implemented as planned. This note records the **verify** items' outcomes and the small choices
+the plan left open.
+
+**Verify items.**
+
+| Item | Outcome |
+|---|---|
+| D-7: RON reads `visual_kind: None` for the non-`Option` `WeaponVisualKind` field | Yes. The shipped `units.ron` loads with `volatile_tick`'s `visual_kind: None` and the weapon reads `WeaponVisualKind::None` (it publishes only its splash in `every_shipped_weapon_publishes_its_delivery_or_splash`). No `rename` was needed |
+| D-7 / §8: no changed weapon reaches a hashed `WeaponSpec`; no golden or matrix result moves | Confirmed at WP2 and again at WP3 (data in place): `golden_replay_tests` in debug, release and on `wasm32-wasip1` under wasmtime, `sc2_who_wins_matchup_matrix_tests` (against `fixtures/matchup_matrix.ron`), `sc2_battle_benchmarks_tests`, `checksum_state_tests` and `determinism_lockstep_tests` pass unchanged; `git diff main -- crates/sim_core/src/checksum.rs crates/sim_core/src/checksum/ crates/sim_core/tests/fixtures/` is empty. Nothing was re-recorded |
+| D-1: the C7 ratchet | `crates/sim_types/src/snapshot.rs` 30 → 31 (`SpellImpact::pos`), reason unchanged. `presentation.rs` gains no float (`StrikeEnds` and `StatusView` hold ids). `crates/sim_core/src/world/snapshot.rs` needs no change: the conversion is `to_f32()` calls, which the ratchet does not count |
+| D-8: the writer changes no checksum | `world::snapshot::tests::writing_a_snapshot_changes_no_checksum`: on every tick of a world with a scratch status, a landing scratch missile and instant hits, `compute_checksum()` after the tick's snapshot equals the checksum the tick computed before writing it, and a second write moves nothing |
+
+**Choices made while building.**
+
+- **Statuses are written per bubble.** `raise_status_flags` became `publish_statuses`, which raises
+  the kind flags and appends the bubble's `StatusView`s from `EffectWorld::statuses_of` in the
+  same pass. Bubbles are written in entity order and the engine keeps its statuses sorted and
+  unique, so the list is sorted with no sort of its own, and a carried unit (no bubble) lists
+  nothing. A status the spell catalog cannot resolve is skipped for both, as before.
+- **The loader error's field** carries the slot prefix, as every weapon field does
+  (`weapon.visual_kind`, `ground_weapon.visual_kind`, `air_weapon.visual_kind`).
+- **WP3's coverage test** `every_shipped_weapon_publishes_its_delivery_or_splash` replaces
+  `every_weapon_event_carries_its_source` and keeps its source check. It covers every shipped
+  weapon for which the catalog has a target; none is silent.
+- **The allocation test** (`effect_tree_allocation_tests.rs`) counts the new writer frames
+  (`publish_statuses`, `record_spell_impact`, `drain_spell_impacts`) as engine frames, and its
+  children assert that twenty units' statuses are published and that Fungal Growth lands in the
+  shipped child's window. Both children allocate nothing in the engine.
+- **Abduct** gains a test of its own (`a_tether_missile_publishes_no_impact`) rather than a
+  change to an existing one.
+- **Plan row status.** `docs/plans/README.md` accepts no "In progress" status (C18); the row is
+  `Active`. The WP1 commit carried "In progress", corrected in WP2.
+- **Client.** Beyond compile fixes nothing reads the new facts yet (WP4 to WP7). The legacy
+  `vfx`, `effects::systems` and `effects::struck` pass `SpellImpact` through without a spawn.
+- **Throughput (D-8, deferred in part).** One release run of `cargo bench -p sim_core --bench
+  throughput` at WP3, at load average 39 to 56 on the shared server: 2598, 939, 134, 163 and 190
+  ticks/s on the flat rows, 112 on `showcase_canyon` and 163 with 67 casters, every row far above
+  the floor of 25. At that load the figures cannot show "within noise" against `DESIGN.md` §5, so
+  the alternated comparison with `main` (three runs each, as §5 measures) moves to WP8's
+  evidence packet. The writer's additions are one pass over the published bubbles' statuses and
+  one over the tick's landings, with no allocation in steady state.
+
+## Amendment 2: WP4 and WP6 as built (2026-11-16, short note, charter §6)
+
+WP4 (`29b978f3`) and WP6 (`593811ab`) are on branch `effects-identity-client`, made from
+`effects-identity` at WP3. They change the client only; no simulation crate, golden replay or
+checksum is touched. This note records the choices the plan left open, one correction to D-3
+and the evidence. The review packet is the section "Identity WP4/WP6" of
+`docs/evidence/effects/review/independent_review_packet.md`.
+
+**D-3 corrected: a third place to look for a killing hit's target.** §3.1 says the previous
+snapshot still holds a killing hit's target. That holds only when the presentation shows the
+hit's tick exactly (paused, or alpha 1). The event of tick T is popped once the presented tick
+reaches T. In play that happens on the frame that runs tick T+1, while the pose is interpolated
+from T towards T+1. Then `previous` is snapshot T, and the target was reaped on T, so neither
+snapshot lists it. `effects::struck::StruckBubbles` therefore keeps, refilled in place every
+frame, the id, radius, drawn height and dome flag of the bubbles presented on the frame before.
+The lookup order is: the presented frame, the previous snapshot, the last frame's bubbles, the
+default bubble (E3-5). Each lookup is a binary search over an id-ordered slice. Each place
+counts its finds (`StruckFrom`). The unit test
+`a_killing_hit_shown_while_interpolating_finds_its_target_in_the_last_frame` drives the real
+`BattleFrameState`: tick 1 kills, tick 2 runs, and the event pops with both snapshots lacking
+the target. The retained buffer is the one allocation the plan's "nothing is retained" did not
+foresee. It is sized by the presented bubbles and refilled without allocation in steady state:
+the valgrind effect stream's window difference is 0.
+
+**WP4: the cross-plane case and the published slot.** `sim_core::world::presentation::weapon_source`
+publishes a strike by the archetype's air weapon under `WeaponSlot::Air`, and
+`weapon_against(Air)` never returns the primary `weapon`. So a strike at a flyer from the
+shipped data is never a `Primary` strike. The removed rule preferred the flyer's plane for an
+`Air` slot, so it was not wrong in this exact staging. The register's `Primary` case (B-125)
+arises only for a synthetic or future event. The unit test
+`a_primary_shot_at_a_flyer_over_a_crowd_is_drawn_on_the_flyer` covers it. The GPU wave
+`cross_plane` proves the lookup by id on real pixels: the impact on the flyer and nothing on the
+ground units under it. It does not reproduce the old fault, which the shipped data could not
+produce.
+
+**WP4: the `cross_plane` wave.** The anti-air shooter (the first presentable unit whose block
+names looks for its `air_weapon`, found by data) fires at the largest presentable flyer. Three
+of the largest presentable ground units stand packed under the flyer, 0.05 apart, straight
+under it and either side up and down the screen. The flyer's impact must pass E4-1 beside the
+flyer's glass. Beside the ground units, outside the flyer's own zone, it may change at most
+its blank's count plus `UNDER_ALLOWANCE` (8 px).
+
+**WP4: two fixes to the staged battle's staging.** These were found while running it on the
+base branch, whose WP3 data changed the waves.
+- *Spots off the map's edge.* A wave staged `shock_golem` (radius 0.5625) at map x = 0.54. The
+  simulation stopped with "actor is outside its current full-radius movement domain", and the
+  child failed. This is not caused by WP4: the wave's subjects are planned as on the base
+  branch. `find_spots` now probes the ground `BODY_REACH` (0.5) beyond each end of the widest
+  pair, with the probe's own half unit round it, so a body of radius up to 1 stays on walkable
+  ground. On the skirmish's camera this finds 3 spots a wave instead of 5. The test then runs
+  9 waves instead of 6 (the approach subjects take two).
+- *The approach subjects were truncated to a wave's capacity.* With 3 spots, the `AtFlyer`
+  subject and one blow were silently dropped. They are now staged in as many waves as they
+  need (`approach_subjects`, chunked).
+
+**WP4: a lab family that no longer shows by the E4-1 bar (open, not changed).** In the
+re-planned waves, `needle_volley`+`needle_hit` (lent to `rhino_beetle`, a projectile) changes
+23 px beside the struck bubble against a blank of 7. The bar is 34. In WP11 round 5, in another
+wave and spot, it changed 43. The run is deterministic: two runs gave 23. Projectile impacts
+land at the struck unit's centre at ground + 0.5, inside its masked interior (the proposed
+B-128, §10). Only their spill beyond 0.8 of the radius counts, so they are the most sensitive to
+the spot and the target. The bar and the look are the review's (Q0080) and the owner's, not
+this WP's. The failure is handed back with the evidence (`identity_wp4_needle_volley_radv.png`),
+and no threshold was changed.
+
+**WP6: as planned.** `effects::areas::lay_spell_impact` (and `_seen`, which takes the fog's
+question) lays the `impact` of the `Missile` look the caster's block names for the event's
+`source`. It lays it at the event's `pos`, bound to `missile_extent`, with the area fog cut
+over the impact's whole reach, or not at all when the viewer sees none of it.
+`spawn_effects_from_events` calls it for each `SpellImpact`. `keep_missiles_seen` only holds and
+releases. `MissileSlot` lost `landing`, `step`, and `published`, `source`, `owner` and `effect`,
+which only the landing guess read. `BattleFog::reveals` returns true for `SpellImpact`.
+
+**WP6: measuring the impact's centre.** Once the viewer's impact is 0.18 s old (its ring is at
+the search's radius), the Fungal child stops `Time<Virtual>`. It pictures the `Critical` layers
+alone and then no effect layer. Along 32 ground rays out of the aimed point, each ray's reach is
+the mean distance of the samples the ring changes from 0.7 radii out (inside lie the victims'
+own looks). Opposite rays give the offset along their axis by least squares on the ground,
+projected to pixels. Two points of method:
+- A window point is read from the pixel whose square holds it (`floor`). The edge tests'
+  `changed_at` rounds, which shifts every sample half a pixel right and down.
+- The band's mean is steadier than the outermost sample, which the ring's eroded edge moves.
+
+With the outermost sample and rounding, the same picture measured 2.02 px. With the band's mean
+and `floor`, it measured 0.86 px.
+
+**Evidence (radv, the RX 580, debug build, Xvfb 1280x720).**
+
+| Check | Result |
+|---|---|
+| `struck` unit tests (11) | pass |
+| `cross_plane` wave | impact 271 px (272 in an earlier run) beside the flyer, its blank 24 (bar 68); beside the 3 ground units 7 px, its blank 7 (allowed 15) |
+| Fungal impact | laid 0.00000 world units from the aimed point; `Critical` ring centred 0.86 px from it over 16 ray pairs (tolerance 2 px) |
+| Fungal fog edge (E1-3) | 0 of 357 unseen ground samples changed; 488 of 619 seen ones |
+| Valgrind effect stream (hits with `ends`, impacts by event) | window difference 0, as its baseline; planted control 64 |
+| `areas` unit tests, `weapon_look_tests` (24), `battle_fog_tests` (10), `lab_scene_tests` | pass |
+| `area_link_gpu_tests` (3 measured tests) | pass |
+| `weapon_battle_gpu_tests` | red on `needle_volley` only, as above |
+
+## Amendment 3: B-128 brought into scope, and the WP4/WP6 review conditions (2026-11-16, short note, charter §6)
+
+The independent review of WP4/WP6 accepted the code with conditions. `weapon_battle_gpu_tests` is red on
+`needle_volley`+`needle_hit` (23 px beside the struck bubble against a bar of 34). WP4 does not touch the projectile
+path; the red comes from re-staging (WP3's data and the `find_spots` fix put the subject in another wave, spot,
+shooter and target). Its cause is the fault §10 listed as out of scope: a `ProjectileVisual` is published at
+ground + 0.5 and its impact is laid at the struck unit's centre, inside the bubble's masked interior, for ground
+targets as well as flyers. A red test is not merged, and a bar is not lowered to pass it (charter §1.1). The
+follow-up is therefore done here as WP4b.
+
+**Register.** The entry §10 proposed as B-127 is **B-128** (B-127 is now the radv test stall on `main`). DESIGN.md
+gains the B-128 row, worded for every target: *a projectile's flight and impact are not aimed at the struck
+bubble; the impact is laid at the target's centre at ground + 0.5, inside a ground bubble's masked interior and
+below a flyer.* Every "proposed B-127" in this plan and in the review packet becomes B-128.
+
+**WP4b (sim_types, sim_core, client).**
+- `CombatEventVisual::ProjectileVisual` gains `ends: Option<StrikeEnds>`, with the same serde attributes and
+  meaning as on `HitscanTracer` (`None` for synthetic events and old records). `sim_core`'s presentation writer
+  fills it from the projectile's source and target entity. This is presentation output only: no authoritative
+  state, no checksum field and no golden replay may change (stop rule §8; run the goldens in debug, release and on
+  `wasm32-wasip1`).
+- The client aims the projectile at the struck bubble by id through WP4's lookup (`effects::struck`): its arrival
+  point and impact lie on that bubble's surface facing the shooter, at its drawn height. This applies to ground and
+  air targets alike, as `at_struck_surface` already does for instant hits. If the lookup finds nothing, the current
+  behaviour stays, and it is counted under `Nowhere`.
+- Tests: a unit test per plane (ground target and flyer) shows the impact on the glass, not at the centre. The GPU
+  wave `cross_plane` gains a projectile subject if the data offers an anti-air projectile shooter; otherwise a unit
+  test covers it, and that is recorded. `weapon_battle_gpu_tests` must pass on radv with its bars unchanged.
+- The inverse kind mismatches of §10 (`hive_matron`, `tesla_sentinel_dome`) stay out of scope: they re-record
+  goldens.
+
+**Review conditions, also done here.**
+1. A system-level test proves that `spawn_effects_from_events` remembers the presented bubbles only after its
+   lookups. Swapping the order must fail it.
+2. A unit test of `lay_spell_impact_seen` with a real `BattleFog`, which hides the whole impact, shows that nothing
+   is laid. Alternatively, §9's risk row is corrected to name the test that covers it.
+3. `StruckBubbles` is cleared when the battle session changes, because entity ids restart in a new `SimWorld`.
+
+**As built (2026-11-17).** WP4b and the three review conditions are on branch `effects-identity-client`.
+- *Contract and writer.* `ProjectileVisual::ends` as specified; `launch_projectile` fills it from the prepared
+  shot's attacker and target. No float is added, so the C7 ratchet is unchanged. The sim_core test
+  `every_projectile_names_its_attacker_and_target` covers every shipped projectile weapon. Golden replays pass
+  unchanged in debug, release and on `wasm32-wasip1` (wasmtime); nothing was re-recorded.
+- *Client.* `effects::struck::at_struck_surface` re-aims a projectile with `ends` whose target bubble is found
+  (`projectile_onto_struck`). The simulation publishes the arrival at `target - direction * collision_radius`, and a
+  bubble's published radius is its collision radius, so the target's centre on the launch tick is the arrival moved
+  on by the found bubble's radius. From there the arrival goes onto the bubble's outline (or glass, without a
+  camera) towards the shooter, at its drawn height, at most `MOST_PULL` of the way back to the launch. The flight
+  time is kept and the velocity is recomputed, so the travel and the impact both end there. The struck radius is
+  returned for the impact's `UnitRadius`, as for instant hits. A projectile without `ends`, or whose bubble is
+  found nowhere (counted `Nowhere`), keeps its published flight. Unit tests:
+  `a_projectile_at_a_ground_unit_lands_on_its_glass`, `a_projectile_at_a_flyer_lands_on_its_glass_not_below_it`
+  and `a_projectile_whose_target_is_unknown_keeps_its_flight`.
+- *GPU wave.* The data offers an anti-air projectile shooter with looks on a presentable unit, so
+  `weapon_battle_gpu_tests` gains a second `cross_plane` wave. It is a wave of its own, because each subject packs
+  three ground units round its spot. The shooter is the first such unit by data, which fires `rocket_trail` and
+  `rocket_hit` today. The test now runs 10 waves.
+- *Condition 1.* `effects::systems::tests::the_presented_bubbles_are_remembered_only_after_the_frames_lookups`
+  runs `spawn_effects_from_events` in an `App` on the shipped vocabulary. A killing hit pops while neither snapshot
+  lists its target. The target must be found under `LastFrame`, which fails if `remember` runs before the lookups.
+  A frame later the same event finds it `Nowhere`, which shows that the remember did run.
+- *Condition 2.* `effects::areas::tests::a_real_fog_hiding_the_whole_impact_lays_nothing` refills a real
+  `BattleFog` from a `PlayerView`. An enemy impact whose whole reach is unseen lays nothing, while one whose edge is
+  seen, and the viewer's own, are laid. §9's risk row names this test.
+- *Condition 3.* `StruckBubbles::follow(Option<SessionGeneration>)` runs at the top of `spawn_effects_from_events`
+  with the presented session's generation. When the generation differs, or no session is presented, it forgets the
+  last frame's bubbles and keeps the buffer's capacity. Unit test:
+  `the_last_frame_is_forgotten_when_the_session_changes`.
+- *Clippy, found on the branch.* The test modules of `struck`, `areas` and `systems` (WP4/WP6) used `expect` without
+  the `allow` other test modules carry, and `sync_allocation_count_tests` had a manual `is_multiple_of`. Both
+  failed `clippy --all-targets -D warnings` and are fixed here.
+- *Evidence (radv, two runs, bars unchanged).* `needle_volley`+`needle_hit` changes 34 px beside the struck bubble
+  against its blank's 7 (needs 34; 23 before WP4b). It passes exactly at the bar in both runs, which are
+  deterministic. The projectile `cross_plane` subject shows 401 px beside the flyer (blank 1, needs 22) and 1 px
+  beside the ground units (blank 1, allowed 9). The other projectile subjects changed as follows (Amendment 2
+  → now): `acid_spit` 112 → 102, `grenade_lob` 188 → 254, `rocket_trail` 236 → 259, `plasma_bolt` 109 → 188 and
+  `spore_bolt` 135 → 139. All pass with room. The instant and melee subjects are within 1 px of Amendment 2. See
+  `docs/evidence/effects/review/identity_wp4b_measurements.txt`, `identity_wp4b_needle_volley_radv.png` and
+  `identity_wp4b_cross_plane_projectile_radv.png`.
+- *Open.* A projectile's *launch* is still published at the shooter's ground + 0.5. An anti-air flyer's
+  projectile therefore starts under its bubble; the cross-plane sheet shows this. Amendment 3 scoped only the
+  struck end. Aiming the launch from the shooter's bubble (the same lookup, by `ends.attacker`) is a follow-up. The
+  needle look's margin over its bar is 0 px: the look is faint, and the bar and the look remain the review's
+  (Q0080).

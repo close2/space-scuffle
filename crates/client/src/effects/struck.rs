@@ -1,17 +1,24 @@
-//! Where an instant or melee hit shows: on the struck unit's bubble, towards its attacker (plan
-//! `2026-11-09-effect-visualization` WP11, reviews 2 and 3: A2-1, A3-1, A3-2, E3-3, E3-5).
+//! Where a hit shows: on the struck unit's own bubble, towards its attacker (plan
+//! `2026-11-09-effect-visualization` WP11, reviews 2 to 4: A2-1, A3-1, A3-2, A4-1, E3-5; plan
+//! `2026-11-17-effect-snapshot-identity` D-3, Amendments 2 and 3, B-125 and B-128).
 //!
 //! # Responsibility
 //! The simulation publishes an instant hit (`HitscanTracer`, `BeamVisual`) and a melee strike
-//! (`MeleeSlashVisual`) at the struck unit's map position, half a unit above the ground: inside
-//! a ground unit's bubble, whose glass is drawn over anything there, and far below a flyer's.
-//! This module moves those points onto the struck bubble's glass, where the hit shows and where
-//! the shot's slug ends:
-//! - [`StruckBubbles`] indexes the presented bubbles once a frame in which events arrive, in a
-//!   uniform grid over the map kept in retained buffers: each bubble (a structure's dome
-//!   included) is entered in every cell its radius plus [`MATCH_SLACK`] covers, so a query
-//!   reads one cell;
-//! - [`at_struck_surface`] returns the event with its hit point on the struck bubble's surface:
+//! (`MeleeSlashVisual`) at the struck unit's map position, half a unit above the ground, and a
+//! projectile (`ProjectileVisual`) arriving at the edge of its target's collision circle
+//! towards the shooter, also half a unit above the ground. Each names the struck entity in the
+//! event's [`StrikeEnds`]. Those points lie inside a ground unit's bubble, whose glass is drawn
+//! over anything there, and far below a flyer's. This module moves them onto the struck
+//! bubble's glass, where the hit shows and where the shot's slug or projectile ends:
+//! - [`StruckBubbles::find`] finds the struck bubble **by the struck entity's id**, never by
+//!   position: in the presented frame, else in the previous snapshot, else among the bubbles
+//!   presented on the frame before this one, else nowhere. The third place serves a killing
+//!   hit: its target is reaped on the hit's tick, and the hit is shown once the presentation
+//!   reaches that tick, when usually neither snapshot it holds lists the target any more.
+//! - [`at_struck_surface`] returns the event with its hit point on the struck bubble's surface.
+//!   The horizontal position is the published point (the struck unit's centre on the hit's
+//!   tick; for a projectile, its target's centre on the launch tick, recovered from the
+//!   published arrival); the radius, drawn height and dome are the found bubble's. The point is moved
 //!   towards the attacker, raised [`HIT_ELEVATION`] above the bubble's drawn centre (so a hit on
 //!   the side of the bubble away from the camera is still in front of its glass: the camera
 //!   looks down at about 58 degrees, and a point 45 degrees up the far side faces it), at the
@@ -20,27 +27,33 @@
 //! # How it fits
 //! `effects::systems::spawn_effects_from_events` passes every admitted event through
 //! [`at_struck_surface`] before it asks for the event's travel and impact, so a slug, a beam,
-//! its burn and a blow all meet the struck bubble's glass, a flyer's included. Presentation
-//! only: the simulation's events and state are read, never changed (D-1).
+//! its burn and a blow all meet the struck bubble's glass, a flyer's included, whatever stands
+//! below or beside it. Presentation only: the simulation's events and state are read, never
+//! changed (D-1). The fog is not consulted here: the event was admitted by its published point
+//! (`BattleFog::reveals`), and the bubble's outline shows no more than that point shows.
 //!
 //! # Invariants
-//! - An event whose struck bubble is not found (none presented within [`MATCH_SLACK`] of its
-//!   radius, a synthetic event, an app without a battle) is moved as if it struck a bubble of
+//! - An instant hit or a blow without [`StrikeEnds`] (a synthetic event, a record older than
+//!   the field), or whose struck bubble is found nowhere, is moved as if it struck a bubble of
 //!   [`DEFAULT_STRUCK_RADIUS`] centred on its published point, the radius its impact binds, so a
-//!   look placed `Behind` the hit still lands on that bubble's centre (review 3, E3-5).
+//!   look placed `Behind` the hit still lands on that bubble's centre (review 3, E3-5). A
+//!   projectile in that case keeps its published flight, as before B-128 was fixed.
 //! - A shot's hit point never moves past [`MOST_PULL`] of the way back to its muzzle.
-//! - The index allocates nothing in steady state: its buffers are retained and refilled.
+//! - Every lookup is a binary search over an id-ordered slice: the snapshot writes its bubbles
+//!   in entity order and the presentation keeps that order. The one retained buffer, the last
+//!   frame's bubbles, is refilled in place, so steady state allocates nothing.
+//! - The last frame's bubbles belong to one battle session: entity ids restart in a new
+//!   `SimWorld`, so they are forgotten when the presented session changes or ends
+//!   ([`StruckBubbles::follow`], Amendment 3, review condition 3).
 
+use crate::battle_pipeline::commands::SessionGeneration;
 use bevy::prelude::*;
 use sim_types::snapshot::{BubbleRenderInstance, CombatEventVisual};
-use sim_types::{ShapeKind, WeaponSlot};
+use sim_types::{EntityId, ShapeKind, StrikeEnds};
 
 /// World units beyond the struck bubble's radius at which its hit shows, so it is drawn in
 /// front of the glass rather than on it.
 pub const SURFACE_MARGIN: f32 = 0.12;
-/// World units a presented bubble's centre may lie from a published hit point and still be the
-/// struck one, beyond its radius (it may have moved since the hit's tick, or be interpolated).
-pub const MATCH_SLACK: f32 = 0.35;
 /// Largest share of a shot's length its hit point is moved back towards its muzzle.
 pub const MOST_PULL: f32 = 0.8;
 /// The struck bubble's radius an impact binds (`UnitRadius`) when the bubble is not found.
@@ -49,28 +62,6 @@ pub const DEFAULT_STRUCK_RADIUS: f32 = 0.5;
 pub const DOME_RIM_LIFT: f32 = 0.1;
 /// How far up the struck bubble, from its drawn centre, its hit shows: 45 degrees, radians.
 pub const HIT_ELEVATION: f32 = std::f32::consts::FRAC_PI_4;
-/// Height above its ground at which a unit's bubble counts as flying, world units (air units
-/// fly 2.5 up; a ground unit's bubble stands on the ground).
-pub const AIR_ABOVE_GROUND: f32 = 1.0;
-/// Side of a cell of the index's grid, world units: about two unit radii.
-pub const CELL: f32 = 1.0;
-/// Most cells along either side of the grid; a larger map widens the cells instead.
-pub const MOST_CELLS_PER_SIDE: usize = 512;
-
-/// One indexed bubble.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Indexed {
-    /// Map `x, y`.
-    at: Vec2,
-    /// Height of the drawn sphere's centre (a dome's: its base), world units.
-    height: f32,
-    /// Glass radius.
-    radius: f32,
-    /// Whether it flies.
-    air: bool,
-    /// Whether it is a structure's dome (a half sphere standing on its base).
-    dome: bool,
-}
 
 /// The bubble a hit struck.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,205 +75,154 @@ pub struct StruckBubble {
     pub dome: bool,
 }
 
-/// Which plane a weapon strikes, from its slot: an `Air` weapon a flyer, a `Ground` weapon a
-/// ground unit; a `Primary` weapon either.
-#[must_use]
-pub const fn struck_plane(slot: WeaponSlot) -> Option<bool> {
-    match slot {
-        WeaponSlot::Air => Some(true),
-        WeaponSlot::Ground => Some(false),
-        WeaponSlot::Primary => None,
+impl StruckBubble {
+    /// The struck bubble a presented `bubble` is: its radius, its drawn centre's height (a unit
+    /// sphere's centre is its radius above where it stands, a dome's is its base) and whether
+    /// it is a dome.
+    #[must_use]
+    pub fn of(bubble: &BubbleRenderInstance) -> Self {
+        let dome = matches!(bubble.shape, ShapeKind::BuildingDome { .. });
+        Self {
+            radius: bubble.radius,
+            height: bubble.world_pos[2] + if dome { 0.0 } else { bubble.radius },
+            dome,
+        }
     }
 }
 
-/// The presented bubbles, in a uniform grid over the area they cover.
-#[derive(Resource, Debug, Default)]
+/// The struck bubble of entity `id` among `bubbles`, which are in entity id order (a
+/// snapshot's, or a presented frame's), by binary search.
+#[must_use]
+pub fn struck_by_id(bubbles: &[BubbleRenderInstance], id: EntityId) -> Option<StruckBubble> {
+    bubbles
+        .binary_search_by_key(&id, |bubble| bubble.entity_id)
+        .ok()
+        .and_then(|index| bubbles.get(index))
+        .map(StruckBubble::of)
+}
+
+/// Where [`StruckBubbles::find`] found a struck bubble, in the order it looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StruckFrom {
+    /// The presented frame.
+    Presented,
+    /// The previous snapshot of the presentation (`BattleFrameState::previous`).
+    Previous,
+    /// The bubbles presented on the frame before this one.
+    LastFrame,
+    /// Nowhere: the default bubble is used.
+    Nowhere,
+}
+
+impl StruckFrom {
+    /// Every place, in the order [`StruckBubbles::find`] looks.
+    pub const ALL: [Self; 4] = [
+        Self::Presented,
+        Self::Previous,
+        Self::LastFrame,
+        Self::Nowhere,
+    ];
+
+    /// Index of this place in [`Self::ALL`].
+    const fn index(self) -> usize {
+        match self {
+            Self::Presented => 0,
+            Self::Previous => 1,
+            Self::LastFrame => 2,
+            Self::Nowhere => 3,
+        }
+    }
+}
+
+/// The bubbles a hit's struck entity is looked up among beyond the presented frame (those
+/// presented on the frame before this one, retained), and a count of where each lookup found
+/// its bubble, for the steady-state tests and the evidence.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub struct StruckBubbles {
-    bubbles: Vec<Indexed>,
-    /// For each cell, the start of its run in `entries`; one more than the cells.
-    starts: Vec<u32>,
-    /// Indices into `bubbles`, cell by cell.
-    entries: Vec<u32>,
-    /// Map point of the grid's lower corner.
-    origin: Vec2,
-    /// Side of a cell, world units.
-    cell: f32,
-    /// Cells along `x` and `y`.
-    size: (usize, usize),
+    /// The last presented frame's bubbles: entity id and struck bubble, in entity id order.
+    last: Vec<(EntityId, StruckBubble)>,
+    /// Lookups per [`StruckFrom`], in the order of [`StruckFrom::ALL`].
+    found: [u64; 4],
+    /// The battle session `last` was kept for; `None` when none is presented.
+    session: Option<SessionGeneration>,
 }
 
 impl StruckBubbles {
-    /// Refills the index from `bubbles`.
-    pub fn rebuild(&mut self, bubbles: &[BubbleRenderInstance]) {
-        self.bubbles.clear();
-        self.bubbles.extend(bubbles.iter().map(|bubble| {
-            let dome = matches!(bubble.shape, ShapeKind::BuildingDome { .. });
-            Indexed {
-                at: Vec2::new(bubble.world_pos[0], bubble.world_pos[1]),
-                height: bubble.world_pos[2] + if dome { 0.0 } else { bubble.radius },
-                radius: bubble.radius,
-                air: !dome && bubble.world_pos[2] - bubble.ground_z > AIR_ABOVE_GROUND,
-                dome,
-            }
-        }));
-        self.fill();
-    }
-
-    /// Refills the index from `(map x, y, drawn centre height, radius, flies)` entries of unit
-    /// bubbles (spheres).
-    pub fn rebuild_from(&mut self, bubbles: impl IntoIterator<Item = (Vec2, f32, f32, bool)>) {
-        self.bubbles.clear();
-        self.bubbles.extend(
-            bubbles
-                .into_iter()
-                .map(|(at, height, radius, air)| Indexed {
-                    at,
-                    height,
-                    radius,
-                    air,
-                    dome: false,
-                }),
-        );
-        self.fill();
-    }
-
-    /// The grid cell of map point `at`, if it lies on the grid.
-    fn cell_of(&self, at: Vec2) -> Option<(usize, usize)> {
-        let local = (at - self.origin) / self.cell;
-        if local.x < 0.0 || local.y < 0.0 {
-            return None;
+    /// Follows the presented battle session (`None`: none is presented): when it is not the
+    /// one the last frame's bubbles were kept for, they are forgotten, because entity ids
+    /// restart in a new session's `SimWorld` and an old id would name another unit. Call once
+    /// a frame, before that frame's lookups. The buffer keeps its capacity.
+    pub fn follow(&mut self, session: Option<SessionGeneration>) {
+        if self.session != session {
+            self.session = session;
+            self.last.clear();
         }
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a non-negative cell coordinate, compared with the grid's size below"
-        )]
-        let (x, y) = (local.x as usize, local.y as usize);
-        (x < self.size.0 && y < self.size.1).then_some((x, y))
     }
 
-    /// The cells (inclusive ranges) a disc of `reach` round `at` covers, clamped to the grid.
-    fn cells_of(&self, at: Vec2, reach: f32) -> ((usize, usize), (usize, usize)) {
-        let clamp = |value: f32, size: usize| {
-            #[expect(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "a cell coordinate clamped to the grid, at most a few hundred"
-            )]
-            let cell = (value.max(0.0) as usize).min(size.saturating_sub(1));
-            cell
+    /// The struck bubble of entity `id`: in `presented` (the presented frame), else in
+    /// `previous` (the previous snapshot, when the presentation holds one), else among the
+    /// bubbles last given to [`Self::remember`], else nowhere. Each slice is in entity id
+    /// order. Counts where it was found.
+    pub fn find(
+        &mut self,
+        presented: &[BubbleRenderInstance],
+        previous: Option<&[BubbleRenderInstance]>,
+        id: EntityId,
+    ) -> Option<StruckBubble> {
+        let (found, from) = if let Some(found) = struck_by_id(presented, id) {
+            (Some(found), StruckFrom::Presented)
+        } else if let Some(found) = previous.and_then(|previous| struck_by_id(previous, id)) {
+            (Some(found), StruckFrom::Previous)
+        } else if let Some((_, found)) = self
+            .last
+            .binary_search_by_key(&id, |(entity, _)| *entity)
+            .ok()
+            .and_then(|index| self.last.get(index))
+        {
+            (Some(*found), StruckFrom::LastFrame)
+        } else {
+            (None, StruckFrom::Nowhere)
         };
-        let low = (at - Vec2::splat(reach) - self.origin) / self.cell;
-        let high = (at + Vec2::splat(reach) - self.origin) / self.cell;
-        (
-            (clamp(low.x, self.size.0), clamp(high.x, self.size.0)),
-            (clamp(low.y, self.size.1), clamp(high.y, self.size.1)),
-        )
+        self.found[from.index()] += 1;
+        found
     }
 
-    /// Lays out the grid over the indexed bubbles and fills it.
-    fn fill(&mut self) {
-        // PERFORMANCE RATIONALE:
-        // Why: each instant or melee event asks for the bubble it struck, and a battle publishes
-        // dozens of hits a tick among hundreds of bubbles, some of them wide structures; a scan
-        // per event is O(events x bubbles).
-        // What: a uniform grid, rebuilt once per frame with events by counting sort into
-        // retained buffers; each bubble is entered in every cell its reach covers, so a query
-        // reads one cell's short run.
-        // Trade-off: a wide dome is entered in a few dozen cells, and the grid is rebuilt
-        // whole each such frame, in exchange for a bounded query and no allocation.
-        let (low, high) = self.bubbles.iter().fold(
-            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
-            |(low, high), bubble| {
-                let reach = Vec2::splat(bubble.radius + MATCH_SLACK);
-                (low.min(bubble.at - reach), high.max(bubble.at + reach))
-            },
+    /// Keeps `presented` (this frame's presented bubbles, in entity id order) as the bubbles a
+    /// later frame's hit may have struck; call once a frame, after this frame's lookups.
+    pub fn remember(&mut self, presented: &[BubbleRenderInstance]) {
+        self.last.clear();
+        self.last.extend(
+            presented
+                .iter()
+                .map(|bubble| (bubble.entity_id, StruckBubble::of(bubble))),
         );
-        self.starts.clear();
-        self.entries.clear();
-        if self.bubbles.is_empty() {
-            self.size = (0, 0);
-            return;
-        }
-        let span = (high - low).max(Vec2::splat(CELL));
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "the cell cap is a few hundred, exact in f32"
-        )]
-        let most = MOST_CELLS_PER_SIDE as f32;
-        self.cell = CELL.max(span.x / most).max(span.y / most);
-        self.origin = low;
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "at most MOST_CELLS_PER_SIDE cells per side"
-        )]
-        let cells =
-            |extent: f32| ((extent / self.cell).ceil() as usize).clamp(1, MOST_CELLS_PER_SIDE);
-        self.size = (cells(span.x), cells(span.y));
-        let total = self.size.0 * self.size.1;
-        self.starts.resize(total + 1, 0);
-        for index in 0..self.bubbles.len() {
-            let bubble = self.bubbles[index];
-            let ((x0, x1), (y0, y1)) = self.cells_of(bubble.at, bubble.radius + MATCH_SLACK);
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    self.starts[y * self.size.0 + x + 1] += 1;
-                }
-            }
-        }
-        for cell in 1..=total {
-            self.starts[cell] += self.starts[cell - 1];
-        }
-        let filled = self.starts[total] as usize;
-        self.entries.resize(filled, 0);
-        // `starts[cell]` serves as the fill cursor of `cell - 1`'s run, then is restored.
-        for index in 0..self.bubbles.len() {
-            let bubble = self.bubbles[index];
-            let ((x0, x1), (y0, y1)) = self.cells_of(bubble.at, bubble.radius + MATCH_SLACK);
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let cell = y * self.size.0 + x;
-                    let slot = self.starts[cell] as usize;
-                    self.entries[slot] = u32::try_from(index).unwrap_or(u32::MAX);
-                    self.starts[cell] += 1;
-                }
-            }
-        }
-        for cell in (1..=total).rev() {
-            self.starts[cell] = self.starts[cell - 1];
-        }
-        self.starts[0] = 0;
     }
 
-    /// The bubble struck at map point `(x, y)`, published at height `z`, by a weapon striking
-    /// `plane` (`Some(true)` a flyer, `Some(false)` a ground unit, `None` either): among the
-    /// presented bubbles whose centre lies within their radius plus [`MATCH_SLACK`] of the
-    /// point in plan, one of the struck plane if any, the nearest in plan, ties broken by height.
+    /// How many lookups found their bubble in `from`.
     #[must_use]
-    pub fn struck_at(&self, x: f32, y: f32, z: f32, plane: Option<bool>) -> Option<StruckBubble> {
-        let at = Vec2::new(x, y);
-        let (cx, cy) = self.cell_of(at)?;
-        let cell = cy * self.size.0 + cx;
-        let run = self.starts[cell] as usize..self.starts[cell + 1] as usize;
-        self.entries[run]
-            .iter()
-            .filter_map(|index| self.bubbles.get(*index as usize))
-            .map(|bubble| (bubble, bubble.at.distance(at)))
-            .filter(|(bubble, distance)| *distance <= bubble.radius + MATCH_SLACK)
-            .min_by(|a, b| {
-                let key = |(bubble, distance): &(&Indexed, f32)| {
-                    let wrong_plane = plane.is_some_and(|air| air != bubble.air);
-                    (wrong_plane, distance + 0.05 * (bubble.height - z).abs())
-                };
-                let (first, second) = (key(a), key(b));
-                first.0.cmp(&second.0).then(first.1.total_cmp(&second.1))
-            })
-            .map(|(bubble, _)| StruckBubble {
-                radius: bubble.radius,
-                height: bubble.height,
-                dome: bubble.dome,
-            })
+    pub const fn found_in(&self, from: StruckFrom) -> u64 {
+        self.found[from.index()]
+    }
+
+    /// Address and capacity of the retained buffer, which an allocation would move or grow.
+    #[must_use]
+    pub fn buffer(&self) -> (usize, usize) {
+        (self.last.as_ptr() as usize, self.last.capacity())
+    }
+}
+
+/// The attacker and the struck entity of an instant hit, a blow or a projectile, when the
+/// event names them.
+#[must_use]
+pub const fn strike_ends(event: &CombatEventVisual) -> Option<StrikeEnds> {
+    match event {
+        CombatEventVisual::HitscanTracer { ends, .. }
+        | CombatEventVisual::BeamVisual { ends, .. }
+        | CombatEventVisual::MeleeSlashVisual { ends, .. }
+        | CombatEventVisual::ProjectileVisual { ends, .. } => *ends,
+        CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::SpellImpact { .. } => None,
     }
 }
 
@@ -333,17 +273,19 @@ fn onto_outline(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most:
 
 /// `event` with its hit point on the struck bubble's glass: a tracer's or a beam's `to` moved
 /// back along the shot, a melee strike's `pos` along its published `angle_rad` (the direction
-/// from the struck unit towards its attacker), and raised onto the bubble (see
-/// [`onto_glass`]; onto the bubble's outline as the camera looking along `view` sees it, when
-/// there is one, see [`onto_outline`]). `struck_at(x, y, z, plane)` gives the bubble struck at map point `(x, y)`,
-/// published at height `z`, by a weapon striking `plane` (see [`StruckBubbles::struck_at`]).
-/// Every other event is returned as it is. The struck bubble's radius is returned with the
-/// event, when it was found, for the impact to bind (`UnitRadius`); an unfound bubble counts as
-/// one of [`DEFAULT_STRUCK_RADIUS`] centred on the published point.
+/// from the struck unit towards its attacker), a projectile's arrival back along its flight
+/// (see [`projectile_onto_struck`]), and raised onto the bubble (see [`onto_glass`]; onto the
+/// bubble's outline as the camera looking along `view` sees it, when there is one, see
+/// [`onto_outline`]). `struck_by_id(id)` gives the bubble of the struck entity `id` the event
+/// names in its [`StrikeEnds`] (see [`StruckBubbles::find`]); it is not asked for an event that
+/// names none. Every other event is returned as it is. The struck bubble's radius is returned
+/// with the event, when it was found, for the impact to bind (`UnitRadius`); for an instant hit
+/// or a blow an unfound bubble counts as one of [`DEFAULT_STRUCK_RADIUS`] centred on the
+/// published point, and a projectile whose bubble is unfound keeps its published flight.
 #[must_use]
 pub fn at_struck_surface(
     event: &CombatEventVisual,
-    struck_at: impl Fn(f32, f32, f32, Option<bool>) -> Option<StruckBubble>,
+    mut struck_by_id: impl FnMut(EntityId) -> Option<StruckBubble>,
     view: Option<Vec3>,
 ) -> (CombatEventVisual, Option<f32>) {
     let mut moved = event.clone();
@@ -352,14 +294,10 @@ pub fn at_struck_surface(
         height: point[2],
         dome: false,
     };
-    let radius = match &mut moved {
-        CombatEventVisual::HitscanTracer {
-            from, to, source, ..
-        }
-        | CombatEventVisual::BeamVisual {
-            from, to, source, ..
-        } => {
-            let found = struck_at(to[0], to[1], to[2], struck_plane(source.weapon.slot));
+    let found = strike_ends(event).and_then(|ends| struck_by_id(ends.target));
+    match &mut moved {
+        CombatEventVisual::HitscanTracer { from, to, .. }
+        | CombatEventVisual::BeamVisual { from, to, .. } => {
             let back = Vec2::new(from[0] - to[0], from[1] - to[1]);
             let length = back.length();
             if length > f32::EPSILON {
@@ -369,28 +307,76 @@ pub fn at_struck_surface(
                     None => onto_glass(to, bubble, back / length, length * MOST_PULL),
                 }
             }
-            found.map(|bubble| bubble.radius)
         }
-        CombatEventVisual::MeleeSlashVisual {
-            pos,
-            angle_rad,
-            source,
-            ..
-        } => {
-            let found = struck_at(pos[0], pos[1], pos[2], struck_plane(source.weapon.slot));
+        CombatEventVisual::MeleeSlashVisual { pos, angle_rad, .. } => {
             let bubble = found.unwrap_or_else(|| assumed(pos));
             let towards = Vec2::from_angle(*angle_rad);
             match view {
                 Some(view) => onto_outline(pos, bubble, towards, f32::MAX, view),
                 None => onto_glass(pos, bubble, towards, f32::MAX),
             }
-            found.map(|bubble| bubble.radius)
         }
-        CombatEventVisual::ProjectileVisual { .. }
-        | CombatEventVisual::BubbleShatter { .. }
-        | CombatEventVisual::SplashVisual { .. } => None,
-    };
-    (moved, radius)
+        CombatEventVisual::ProjectileVisual {
+            pos,
+            vel,
+            duration_secs,
+            ..
+        } => {
+            let Some(bubble) = found else {
+                return (moved, None);
+            };
+            if !projectile_onto_struck(pos, vel, *duration_secs, bubble, view) {
+                return (moved, None);
+            }
+        }
+        CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::SpellImpact { .. } => return (moved, None),
+    }
+    (moved, found.map(|bubble| bubble.radius))
+}
+
+/// Re-aims a projectile launched at `pos` with velocity `vel` (world units per second) for
+/// `duration_secs` so that it arrives on the glass of `struck`, its target's bubble (plan
+/// `2026-11-17-effect-snapshot-identity` Amendment 3, B-128). Returns whether it was re-aimed;
+/// a projectile without a positive flight time is left as it is.
+///
+/// The simulation publishes the arrival at the edge of the target's collision circle towards
+/// the shooter, `target - direction * collision_radius`, at ground + 0.5 (`sim_core`'s
+/// `launch_projectile`). A bubble's radius is its collision radius, so the target's centre on
+/// the launch tick is the arrival moved on by `struck.radius` along the flight's horizontal
+/// direction. From that centre the arrival is put on the bubble's glass (its outline as the
+/// camera looking along `view` sees it, when there is one) towards the shooter, at the bubble's
+/// drawn height, as an instant hit's end is, at most [`MOST_PULL`] of the way back to the
+/// launch point. The flight time stays; the velocity is recomputed to reach the new arrival, so
+/// the travel and the impact (both derived from `pos + vel * duration_secs`) meet there.
+fn projectile_onto_struck(
+    pos: &[f32; 3],
+    vel: &mut [f32; 3],
+    duration_secs: Option<f32>,
+    struck: StruckBubble,
+    view: Option<Vec3>,
+) -> bool {
+    let flight = duration_secs.unwrap_or(0.0);
+    if flight <= f32::EPSILON {
+        return false;
+    }
+    let launch = Vec2::new(pos[0], pos[1]);
+    let arrival = launch + Vec2::new(vel[0], vel[1]) * flight;
+    let direction = (arrival - launch).normalize_or_zero();
+    let centre = arrival + direction * struck.radius;
+    let back = launch - centre;
+    let length = back.length();
+    let towards = back.normalize_or_zero();
+    let mut point = [centre.x, centre.y, pos[2] + vel[2] * flight];
+    match view {
+        Some(view) => onto_outline(&mut point, struck, towards, length * MOST_PULL, view),
+        None => onto_glass(&mut point, struck, towards, length * MOST_PULL),
+    }
+    for (axis, velocity) in vel.iter_mut().enumerate() {
+        *velocity = (point[axis] - pos[axis]) / flight;
+    }
+    true
 }
 
 /// The direction an instant or melee hit came from, in radians in the ground plane (Bevy
@@ -405,14 +391,28 @@ pub fn hit_facing(event: &CombatEventVisual) -> Option<f32> {
         }
         CombatEventVisual::MeleeSlashVisual { angle_rad, .. } => Some(*angle_rad),
         CombatEventVisual::ProjectileVisual { vel, .. } => Some((-vel[1]).atan2(-vel[0])),
-        CombatEventVisual::BubbleShatter { .. } | CombatEventVisual::SplashVisual { .. } => None,
+        CombatEventVisual::BubbleShatter { .. }
+        | CombatEventVisual::SplashVisual { .. }
+        | CombatEventVisual::SpellImpact { .. } => None,
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
-    use sim_types::{EffectSource, PlayerId, WeaponKey};
+    use crate::battle_pipeline::timeline::BattleFrameState;
+    use sim_types::{
+        AnimState, Concealment, EffectSource, PlayerId, SilhouetteClass, StanceView, StatusFlags,
+        Tick, UnitTypeId, WeaponKey, WeaponSlot, WeaponVisualKind,
+    };
+
+    /// The attacker of every test event.
+    const ATTACKER: EntityId = EntityId(1);
 
     /// The hit point of an instant hit or a blow; NaN for anything else, which fails every
     /// comparison below.
@@ -431,17 +431,75 @@ mod tests {
         }
     }
 
-    fn tracer(from: [f32; 3], to: [f32; 3], slot: WeaponSlot) -> CombatEventVisual {
+    /// A tracer from `from` to `to` that struck `target` (`None`: a synthetic event).
+    fn tracer(
+        from: [f32; 3],
+        to: [f32; 3],
+        slot: WeaponSlot,
+        target: Option<EntityId>,
+    ) -> CombatEventVisual {
         CombatEventVisual::HitscanTracer {
             from,
             to,
             owner: PlayerId(0),
             source: source(slot),
+            ends: target.map(|target| StrikeEnds {
+                attacker: ATTACKER,
+                target,
+            }),
+        }
+    }
+
+    /// A presented unit bubble of entity `id` at map `at` on ground at 0, standing `altitude`
+    /// up (a flyer's 2.5).
+    fn bubble(id: u32, at: [f32; 2], altitude: f32, radius: f32) -> BubbleRenderInstance {
+        BubbleRenderInstance {
+            entity_id: EntityId(id),
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::HeavyHex,
+            unit_type: UnitTypeId::default(),
+            owner: PlayerId(1),
+            world_pos: [at[0], at[1], altitude],
+            ground_z: 0.0,
+            radius,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: Concealment::None,
+            speed_boosted: false,
+            stance: StanceView::default(),
+            status: StatusFlags::default(),
+            barrier_ratio: 0.0,
         }
     }
 
     fn near(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    /// The hit point of `event` moved by the lookup of `struck` over `presented` and
+    /// `previous`, without a camera.
+    fn moved_by(
+        event: &CombatEventVisual,
+        struck: &mut StruckBubbles,
+        presented: &[BubbleRenderInstance],
+        previous: Option<&[BubbleRenderInstance]>,
+    ) -> ([f32; 3], Option<f32>) {
+        let (moved, radius) =
+            at_struck_surface(event, |id| struck.find(presented, previous, id), None);
+        (hit_point(&moved), radius)
     }
 
     #[test]
@@ -451,14 +509,204 @@ mod tests {
             height: 0.5,
             dome: false,
         };
-        let shot = tracer([0.0, 0.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Primary);
-        let (moved, radius) = at_struck_surface(&shot, |_, _, _, _| Some(bubble), None);
+        let shot = tracer(
+            [0.0, 0.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            Some(EntityId(2)),
+        );
+        let (moved, radius) = at_struck_surface(&shot, |_| Some(bubble), None);
         assert_eq!(radius, Some(0.5));
         let to = hit_point(&moved);
         let reach = 0.5 + SURFACE_MARGIN;
         assert!(near(to[0], 4.0 - reach * HIT_ELEVATION.cos()), "{to:?}");
         assert!(near(to[1], 0.0) && near(to[2], 0.5 + reach * HIT_ELEVATION.sin()));
-        assert_eq!(moved, tracer([0.0, 0.0, 0.5], to, WeaponSlot::Primary));
+        assert_eq!(
+            moved,
+            tracer([0.0, 0.0, 0.5], to, WeaponSlot::Primary, Some(EntityId(2)))
+        );
+    }
+
+    #[test]
+    fn a_hit_takes_its_targets_bubble_by_id_not_its_neighbours() {
+        // The target (id 4, radius 0.4) stood at (5, 0) on the hit's tick; it has since moved
+        // 0.3 on, and a bigger neighbour (id 3, radius 0.9) now stands nearer the published
+        // point. The hit takes the target's own radius and height.
+        let presented = [
+            bubble(3, [5.05, 0.0], 0.0, 0.9),
+            bubble(4, [5.3, 0.0], 0.0, 0.4),
+        ];
+        let shot = tracer(
+            [0.0, 0.0, 0.5],
+            [5.0, 0.0, 0.5],
+            WeaponSlot::Ground,
+            Some(EntityId(4)),
+        );
+        let mut struck = StruckBubbles::default();
+        let (to, radius) = moved_by(&shot, &mut struck, &presented, None);
+        assert_eq!(radius, Some(0.4), "the target's own radius");
+        let reach = 0.4 + SURFACE_MARGIN;
+        assert!(near(to[0], 5.0 - reach * HIT_ELEVATION.cos()), "{to:?}");
+        assert!(near(to[2], 0.4 + reach * HIT_ELEVATION.sin()), "{to:?}");
+        assert_eq!(struck.found_in(StruckFrom::Presented), 1);
+    }
+
+    /// B-125: a `Primary` weapon's shot at a flyer hovering over a packed ground group. The
+    /// published point is the flyer's centre at ground + 0.5, inside the ground unit under it;
+    /// the hit is drawn on the flyer's glass, 2.5 units above the ground units' glass.
+    #[test]
+    fn a_primary_shot_at_a_flyer_over_a_crowd_is_drawn_on_the_flyer() {
+        let presented = [
+            bubble(10, [8.0, 8.0], 0.0, 0.5),
+            bubble(11, [8.9, 8.0], 0.0, 0.5),
+            bubble(12, [7.1, 8.0], 0.0, 0.5),
+            bubble(13, [8.0, 8.0], 2.5, 0.5),
+        ];
+        let shot = tracer(
+            [2.0, 8.0, 0.5],
+            [8.0, 8.0, 0.5],
+            WeaponSlot::Primary,
+            Some(EntityId(13)),
+        );
+        let mut struck = StruckBubbles::default();
+        let (to, radius) = moved_by(&shot, &mut struck, &presented, None);
+        assert_eq!(radius, Some(0.5));
+        let glass = (0.5 + SURFACE_MARGIN) * HIT_ELEVATION.sin();
+        assert!(
+            near(to[2], 2.5 + 0.5 + glass),
+            "on the flyer's glass: {to:?}"
+        );
+        // The ground unit under it would have put the hit 2.5 units lower.
+        let under = moved_by(
+            &tracer(
+                [2.0, 8.0, 0.5],
+                [8.0, 8.0, 0.5],
+                WeaponSlot::Primary,
+                Some(EntityId(10)),
+            ),
+            &mut struck,
+            &presented,
+            None,
+        )
+        .0;
+        assert!(near(to[2] - under[2], 2.5), "{to:?} over {under:?}");
+    }
+
+    /// A killing hit: its target was reaped on the hit's tick. When the presentation shows that
+    /// tick exactly, the previous snapshot still lists the target.
+    #[test]
+    fn a_killing_hit_finds_its_target_in_the_previous_frame() {
+        let previous = [
+            bubble(20, [3.0, 3.0], 0.0, 0.6),
+            bubble(21, [6.0, 3.0], 0.0, 0.3),
+        ];
+        let presented = [bubble(21, [6.0, 3.0], 0.0, 0.3)];
+        let blow = CombatEventVisual::MeleeSlashVisual {
+            pos: [3.0, 3.0, 0.5],
+            angle_rad: 0.0,
+            radius: 0.5,
+            owner: PlayerId(0),
+            source: EffectSource::default(),
+            ends: Some(StrikeEnds {
+                attacker: EntityId(21),
+                target: EntityId(20),
+            }),
+        };
+        let mut struck = StruckBubbles::default();
+        let (pos, radius) = moved_by(&blow, &mut struck, &presented, Some(&previous));
+        assert_eq!(radius, Some(0.6));
+        let reach = 0.6 + SURFACE_MARGIN;
+        assert!(near(pos[0], 3.0 + reach * HIT_ELEVATION.cos()), "{pos:?}");
+        assert_eq!(struck.found_in(StruckFrom::Previous), 1);
+    }
+
+    /// Amendment 2: the common case of a killing hit. Its event is shown once the presentation
+    /// reaches the hit's tick, which it does while interpolating from that tick towards the
+    /// next: both snapshots it holds then lack the target. The bubbles presented on the frame
+    /// before, interpolated towards the hit's tick, still hold it.
+    #[test]
+    fn a_killing_hit_shown_while_interpolating_finds_its_target_in_the_last_frame() {
+        let mut frames = BattleFrameState::default();
+        let target = bubble(30, [4.0, 4.0], 2.5, 0.7);
+        let shooter = bubble(31, [1.0, 4.0], 0.0, 0.4);
+        let initial = frames.initialize(SessionGeneration::FIRST).expect("fresh");
+        initial.bubbles = vec![target.clone(), shooter.clone()];
+        frames.finish_initialization().expect("initialized");
+        let hit = tracer(
+            [1.0, 4.0, 0.5],
+            [4.0, 4.0, 0.5],
+            WeaponSlot::Air,
+            Some(EntityId(30)),
+        );
+        // Tick 1: the hit kills the target, which is reaped on that tick.
+        let tick = frames.begin_tick().expect("ready");
+        tick.tick = Tick(1);
+        tick.bubbles = vec![shooter.clone()];
+        tick.combat_events = vec![hit];
+        frames.finish_tick().expect("published");
+        let mut struck = StruckBubbles::default();
+        // The frame that ran tick 1 shows tick 0 interpolated towards it, the target present.
+        frames.present(0.5).expect("presented");
+        assert!(frames.pop_presented_event().is_none(), "not yet shown");
+        struck.remember(&frames.presented().bubbles);
+        // The next frame runs tick 2 and shows tick 1 interpolated towards it: the hit pops.
+        let tick = frames.begin_tick().expect("ready");
+        tick.tick = Tick(2);
+        tick.bubbles = vec![shooter];
+        frames.finish_tick().expect("published");
+        frames.present(0.25).expect("presented");
+        let event = frames
+            .pop_presented_event()
+            .expect("the hit is shown")
+            .event;
+        let presented = &frames.presented().bubbles;
+        let previous = frames
+            .previous()
+            .map(|snapshot| snapshot.bubbles.as_slice());
+        assert!(struck_by_id(presented, EntityId(30)).is_none());
+        assert!(previous.is_some_and(|previous| struck_by_id(previous, EntityId(30)).is_none()));
+        let (to, radius) = moved_by(&event, &mut struck, presented, previous);
+        assert_eq!(radius, Some(0.7), "the flyer's own bubble");
+        assert!(to[2] > 2.5 + 0.7, "on the flyer's glass: {to:?}");
+        assert_eq!(struck.found_in(StruckFrom::LastFrame), 1);
+    }
+
+    #[test]
+    fn an_event_without_ends_counts_as_the_default_bubble() {
+        let presented = [bubble(40, [2.0, 2.0], 2.5, 0.9)];
+        let mut struck = StruckBubbles::default();
+        let blow = CombatEventVisual::MeleeSlashVisual {
+            pos: [2.0, 2.0, 0.5],
+            angle_rad: std::f32::consts::FRAC_PI_2,
+            radius: 0.5,
+            owner: PlayerId(1),
+            source: EffectSource::default(),
+            ends: None,
+        };
+        let (pos, radius) = moved_by(&blow, &mut struck, &presented, None);
+        assert_eq!(radius, None);
+        let reach = DEFAULT_STRUCK_RADIUS + SURFACE_MARGIN;
+        assert!(
+            near(pos[0], 2.0) && near(pos[1], 2.0 + reach * HIT_ELEVATION.cos()),
+            "the default bubble's surface: {pos:?}"
+        );
+        assert!(near(pos[2], 0.5 + reach * HIT_ELEVATION.sin()), "{pos:?}");
+        assert_eq!(
+            StruckFrom::ALL.map(|from| struck.found_in(from)),
+            [0; 4],
+            "no lookup is asked for"
+        );
+        // A struck entity found nowhere is counted and counts as the default too.
+        let shot = tracer(
+            [0.0, 2.0, 0.5],
+            [2.0, 2.0, 0.5],
+            WeaponSlot::Primary,
+            Some(EntityId(99)),
+        );
+        let (_, radius) = moved_by(&shot, &mut struck, &presented, None);
+        assert_eq!(radius, None);
+        assert_eq!(struck.found_in(StruckFrom::Nowhere), 1);
+        assert_eq!(hit_facing(&blow), Some(std::f32::consts::FRAC_PI_2));
     }
 
     #[test]
@@ -468,8 +716,13 @@ mod tests {
             height: 3.1,
             dome: false,
         };
-        let shot = tracer([0.0, 0.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Air);
-        let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(flyer), None).0);
+        let shot = tracer(
+            [0.0, 0.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Air,
+            Some(EntityId(2)),
+        );
+        let to = hit_point(&at_struck_surface(&shot, |_| Some(flyer), None).0);
         assert!(
             near(to[2], 3.1 + (0.6 + SURFACE_MARGIN) * HIT_ELEVATION.sin()),
             "{to:?}"
@@ -483,28 +736,44 @@ mod tests {
             height: 0.5,
             dome: false,
         };
+        let target = Some(EntityId(2));
         // A camera looking down at 58 degrees towards +z (the map's +y).
         let pitch = 58.0_f32.to_radians();
         let view = Vec3::new(0.0, -pitch.sin(), pitch.cos());
         // Shot from the camera's side (map -y): its end on the lower outline, towards the
         // camera and down; from the far side: on the upper outline, away and up.
-        let near = tracer([4.0, -4.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Primary);
-        let to = hit_point(&at_struck_surface(&near, |_, _, _, _| Some(bubble), Some(view)).0);
+        let below = tracer(
+            [4.0, -4.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            target,
+        );
+        let to = hit_point(&at_struck_surface(&below, |_| Some(bubble), Some(view)).0);
         let reach = 0.5 + SURFACE_MARGIN;
         assert!(
-            near_eq(to[1], -reach * pitch.sin()) && near_eq(to[2], 0.5 - reach * pitch.cos()),
+            near(to[1], -reach * pitch.sin()) && near(to[2], 0.5 - reach * pitch.cos()),
             "{to:?}"
         );
-        let far = tracer([4.0, 4.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Primary);
-        let to = hit_point(&at_struck_surface(&far, |_, _, _, _| Some(bubble), Some(view)).0);
+        let far = tracer(
+            [4.0, 4.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            target,
+        );
+        let to = hit_point(&at_struck_surface(&far, |_| Some(bubble), Some(view)).0);
         assert!(
-            near_eq(to[1], reach * pitch.sin()) && near_eq(to[2], 0.5 + reach * pitch.cos()),
+            near(to[1], reach * pitch.sin()) && near(to[2], 0.5 + reach * pitch.cos()),
             "{to:?}"
         );
         // Across the view: the outline's side, level with the centre.
-        let across = tracer([0.0, 0.0, 0.5], [4.0, 0.0, 0.5], WeaponSlot::Primary);
-        let to = hit_point(&at_struck_surface(&across, |_, _, _, _| Some(bubble), Some(view)).0);
-        assert!(near_eq(to[0], 4.0 - reach) && near_eq(to[2], 0.5), "{to:?}");
+        let across = tracer(
+            [0.0, 0.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            target,
+        );
+        let to = hit_point(&at_struck_surface(&across, |_| Some(bubble), Some(view)).0);
+        assert!(near(to[0], 4.0 - reach) && near(to[2], 0.5), "{to:?}");
     }
 
     #[test]
@@ -515,6 +784,7 @@ mod tests {
             height: 0.0,
             dome: true,
         };
+        let target = Some(EntityId(2));
         let pitch = 58.0_f32.to_radians();
         let view = Vec3::new(0.0, -pitch.sin(), pitch.cos());
         // From below on screen (the camera's side), across, and from above.
@@ -523,8 +793,8 @@ mod tests {
             ([0.0, 0.0, 0.5], "across"),
             ([10.0, 10.0, 0.5], "from above"),
         ] {
-            let shot = tracer(from, [10.0, 0.0, 0.5], WeaponSlot::Primary);
-            let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(dome), Some(view)).0);
+            let shot = tracer(from, [10.0, 0.0, 0.5], WeaponSlot::Primary, target);
+            let to = hit_point(&at_struck_surface(&shot, |_| Some(dome), Some(view)).0);
             let flat = (to[0] - 10.0).hypot(to[1]);
             assert!(to[2] >= 0.0, "{name}: at or above the base: {to:?}");
             // On the outline: as far out as the dome's radius in plan, or up its far side.
@@ -534,16 +804,31 @@ mod tests {
             );
         }
         // From below: on the base rim, towards the camera, lifted off the floor.
-        let shot = tracer([10.0, -10.0, 0.5], [10.0, 0.0, 0.5], WeaponSlot::Primary);
-        let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(dome), Some(view)).0);
+        let shot = tracer(
+            [10.0, -10.0, 0.5],
+            [10.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            target,
+        );
+        let to = hit_point(&at_struck_surface(&shot, |_| Some(dome), Some(view)).0);
         assert!(
-            near_eq(to[2], DOME_RIM_LIFT) && near_eq(to[1], -(2.0 + SURFACE_MARGIN)),
+            near(to[2], DOME_RIM_LIFT) && near(to[1], -(2.0 + SURFACE_MARGIN)),
             "{to:?}"
         );
-    }
-
-    fn near_eq(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-4
+        // A presented dome's struck bubble stands on its base.
+        let mut presented = bubble(50, [10.0, 0.0], 0.3, 2.0);
+        presented.shape = ShapeKind::BuildingDome {
+            footprint_w: 3,
+            footprint_h: 3,
+        };
+        assert_eq!(
+            StruckBubble::of(&presented),
+            StruckBubble {
+                radius: 2.0,
+                height: 0.3,
+                dome: true,
+            }
+        );
     }
 
     #[test]
@@ -553,78 +838,204 @@ mod tests {
             height: 0.5,
             dome: false,
         };
-        let shot = tracer([0.0, 0.0, 0.5], [0.5, 0.0, 0.5], WeaponSlot::Primary);
-        let to = hit_point(&at_struck_surface(&shot, |_, _, _, _| Some(bubble), None).0);
+        let shot = tracer(
+            [0.0, 0.0, 0.5],
+            [0.5, 0.0, 0.5],
+            WeaponSlot::Primary,
+            Some(EntityId(2)),
+        );
+        let to = hit_point(&at_struck_surface(&shot, |_| Some(bubble), None).0);
         assert!(near(to[0], 0.5 * (1.0 - MOST_PULL)), "{to:?}");
     }
 
+    /// A projectile launched at `from` that the simulation published arriving at `to` after
+    /// one second, fired at `target` (`None`: a synthetic event).
+    fn projectile(from: [f32; 3], to: [f32; 3], target: Option<EntityId>) -> CombatEventVisual {
+        CombatEventVisual::ProjectileVisual {
+            pos: from,
+            vel: [to[0] - from[0], to[1] - from[1], to[2] - from[2]],
+            owner: PlayerId(0),
+            duration_secs: Some(1.0),
+            source: source(WeaponSlot::Ground),
+            ends: target.map(|target| StrikeEnds {
+                attacker: ATTACKER,
+                target,
+            }),
+        }
+    }
+
+    /// Where a projectile arrives: its launch point plus its velocity over its flight.
+    fn arrival(event: &CombatEventVisual) -> [f32; 3] {
+        match event {
+            CombatEventVisual::ProjectileVisual {
+                pos,
+                vel,
+                duration_secs: Some(flight),
+                ..
+            } => [
+                pos[0] + vel[0] * flight,
+                pos[1] + vel[1] * flight,
+                pos[2] + vel[2] * flight,
+            ],
+            _ => [f32::NAN; 3],
+        }
+    }
+
+    /// Distance from `point` to the drawn centre of a unit bubble at map `at`, standing
+    /// `altitude` up with `radius`.
+    fn from_centre(point: [f32; 3], at: [f32; 2], altitude: f32, radius: f32) -> f32 {
+        Vec3::new(
+            point[0] - at[0],
+            point[1] - at[1],
+            point[2] - (altitude + radius),
+        )
+        .length()
+    }
+
+    /// B-128 (Amendment 3), a ground target: the simulation publishes the arrival at the edge
+    /// of the target's collision circle at ground + 0.5, inside its bubble. The projectile is
+    /// re-aimed onto the bubble's glass towards the shooter, never at its centre.
     #[test]
-    fn a_blow_moves_towards_its_attacker_and_an_unknown_bubble_counts_as_the_default() {
-        let blow = CombatEventVisual::MeleeSlashVisual {
-            pos: [2.0, 2.0, 0.5],
-            angle_rad: std::f32::consts::FRAC_PI_2,
-            radius: 0.5,
-            owner: PlayerId(1),
-            source: EffectSource::default(),
-        };
-        let bubble = StruckBubble {
-            radius: 0.4,
-            height: 0.4,
-            dome: false,
-        };
-        let pos = hit_point(&at_struck_surface(&blow, |_, _, _, _| Some(bubble), None).0);
-        let across = (0.4 + SURFACE_MARGIN) * HIT_ELEVATION.cos();
-        assert!(near(pos[0], 2.0) && near(pos[1], 2.0 + across), "{pos:?}");
-        let (moved, radius) = at_struck_surface(&blow, |_, _, _, _| None, None);
-        assert_eq!(radius, None);
-        let pos = hit_point(&moved);
-        let across = (DEFAULT_STRUCK_RADIUS + SURFACE_MARGIN) * HIT_ELEVATION.cos();
+    fn a_projectile_at_a_ground_unit_lands_on_its_glass() {
+        let presented = [bubble(2, [5.0, 0.0], 0.0, 0.5)];
+        let shot = projectile([1.0, 0.0, 0.5], [4.5, 0.0, 0.5], Some(EntityId(2)));
+        let mut struck = StruckBubbles::default();
+        let (moved, radius) =
+            at_struck_surface(&shot, |id| struck.find(&presented, None, id), None);
+        assert_eq!(radius, Some(0.5), "the target's own radius");
+        assert_eq!(struck.found_in(StruckFrom::Presented), 1);
+        let to = arrival(&moved);
+        let reach = 0.5 + SURFACE_MARGIN;
+        assert!(near(to[0], 5.0 - reach * HIT_ELEVATION.cos()), "{to:?}");
+        assert!(near(to[1], 0.0), "{to:?}");
+        assert!(near(to[2], 0.5 + reach * HIT_ELEVATION.sin()), "{to:?}");
         assert!(
-            near(pos[1], 2.0 + across),
-            "the default bubble's surface: {pos:?}"
+            near(from_centre(to, [5.0, 0.0], 0.0, 0.5), reach),
+            "on the glass, outside the interior: {to:?}"
         );
-        assert_eq!(hit_facing(&blow), Some(std::f32::consts::FRAC_PI_2));
+        assert!(
+            from_centre(arrival(&shot), [5.0, 0.0], 0.0, 0.5) <= 0.5 + 1e-4,
+            "the published arrival lies within the bubble's radius, short of its glass"
+        );
+        // The launch, the owner, the source and the flight time are kept.
+        let CombatEventVisual::ProjectileVisual {
+            pos, duration_secs, ..
+        } = &moved
+        else {
+            panic!("still a projectile: {moved:?}");
+        };
+        assert_eq!((*pos, *duration_secs), ([1.0, 0.0, 0.5], Some(1.0)));
+        assert_eq!(moved.owner(), shot.owner());
+        assert_eq!(moved.source(), shot.source());
+    }
+
+    /// B-128 (Amendment 3), a flyer over a ground unit: the projectile lands on the flyer's
+    /// glass, 2.5 units above the ground unit's, not at its published point below it.
+    #[test]
+    fn a_projectile_at_a_flyer_lands_on_its_glass_not_below_it() {
+        let presented = [
+            bubble(3, [6.0, 2.0], 0.0, 0.6),
+            bubble(4, [6.0, 2.0], 2.5, 0.6),
+        ];
+        // Fired from (2, 2) along +x: the arrival is published 0.6 short of the flyer's centre.
+        let shot = projectile([2.0, 2.0, 0.5], [5.4, 2.0, 0.5], Some(EntityId(4)));
+        let mut struck = StruckBubbles::default();
+        let view = {
+            let pitch = 58.0_f32.to_radians();
+            Vec3::new(0.0, -pitch.sin(), pitch.cos())
+        };
+        let (moved, radius) =
+            at_struck_surface(&shot, |id| struck.find(&presented, None, id), Some(view));
+        assert_eq!(radius, Some(0.6));
+        let to = arrival(&moved);
+        let reach = 0.6 + SURFACE_MARGIN;
+        // Across the view: on the outline's side towards the shooter, level with the flyer's
+        // drawn centre.
+        assert!(
+            near(to[0], 6.0 - reach) && near(to[1], 2.0) && near(to[2], 2.5 + 0.6),
+            "{to:?}"
+        );
+        assert!(near(from_centre(to, [6.0, 2.0], 2.5, 0.6), reach), "{to:?}");
+        // The same shot at the ground unit under it lands 2.5 units lower.
+        let under = arrival(
+            &at_struck_surface(
+                &projectile([2.0, 2.0, 0.5], [5.4, 2.0, 0.5], Some(EntityId(3))),
+                |id| struck.find(&presented, None, id),
+                Some(view),
+            )
+            .0,
+        );
+        assert!(near(to[2] - under[2], 2.5), "{to:?} over {under:?}");
+    }
+
+    /// A projectile whose target is found nowhere, or which names none, keeps its published
+    /// flight (Amendment 3); the miss is counted under `Nowhere`.
+    #[test]
+    fn a_projectile_whose_target_is_unknown_keeps_its_flight() {
+        let presented = [bubble(5, [3.0, 3.0], 0.0, 0.5)];
+        let mut struck = StruckBubbles::default();
+        let lost = projectile([0.0, 3.0, 0.5], [2.5, 3.0, 0.5], Some(EntityId(77)));
+        let (moved, radius) =
+            at_struck_surface(&lost, |id| struck.find(&presented, None, id), None);
+        assert_eq!((moved, radius), (lost, None));
+        assert_eq!(struck.found_in(StruckFrom::Nowhere), 1);
+        let synthetic = projectile([0.0, 3.0, 0.5], [2.5, 3.0, 0.5], None);
+        let (moved, radius) =
+            at_struck_surface(&synthetic, |id| struck.find(&presented, None, id), None);
+        assert_eq!((moved, radius), (synthetic, None));
+        assert_eq!(
+            StruckFrom::ALL.map(|from| struck.found_in(from)),
+            [0, 0, 0, 1],
+            "an event without ends asks for no lookup"
+        );
+    }
+
+    /// Review condition 3 (Amendment 3): the last frame's bubbles are forgotten when the
+    /// presented session changes or ends, so an id of an old session never finds a bubble.
+    #[test]
+    fn the_last_frame_is_forgotten_when_the_session_changes() {
+        let presented = [bubble(6, [1.0, 1.0], 2.5, 0.7)];
+        let first = Some(SessionGeneration::FIRST);
+        let mut struck = StruckBubbles::default();
+        struck.follow(first);
+        struck.remember(&presented);
+        let kept = struck.buffer();
+        struck.follow(first);
+        assert!(
+            struck.find(&[], None, EntityId(6)).is_some(),
+            "same session"
+        );
+        let next = SessionGeneration::FIRST.next().ok();
+        struck.follow(next);
+        assert_eq!(struck.find(&[], None, EntityId(6)), None, "a new session");
+        struck.follow(next);
+        struck.remember(&presented);
+        struck.follow(None);
+        assert_eq!(struck.find(&[], None, EntityId(6)), None, "no session");
+        assert_eq!(struck.buffer().1, kept.1, "the buffer keeps its capacity");
+        assert_eq!(struck.found_in(StruckFrom::LastFrame), 1);
+        assert_eq!(struck.found_in(StruckFrom::Nowhere), 2);
     }
 
     #[test]
-    fn the_grid_finds_the_nearest_bubble_within_its_radius_and_slack() {
-        let mut index = StruckBubbles::default();
-        index.rebuild_from([
-            (Vec2::new(5.0, 0.0), 0.4, 0.4, false),
-            (Vec2::new(0.0, 0.0), 0.6, 0.6, false),
-            (Vec2::new(0.9, 0.0), 0.3, 0.3, false),
-            // A wide dome far off, and a flyer over the first unit.
-            (Vec2::new(30.0, 30.0), 0.0, 4.0, false),
-            (Vec2::new(5.1, 0.1), 3.1, 0.6, true),
-        ]);
-        let radius = |x, y, plane| {
-            index
-                .struck_at(x, y, 0.5, plane)
-                .map(|bubble| bubble.radius)
-        };
-        assert_eq!(radius(0.1, 0.0, None), Some(0.6));
-        assert_eq!(radius(0.85, 0.05, None), Some(0.3));
-        assert_eq!(radius(3.0, 3.0, None), None, "nothing within reach");
-        assert_eq!(
-            radius(28.0, 31.0, None),
-            Some(4.0),
-            "the dome from any cell it covers"
-        );
-        assert_eq!(
-            radius(5.0, 0.0, Some(false)),
-            Some(0.4),
-            "a ground weapon, the ground unit"
-        );
-        assert_eq!(
-            radius(5.0, 0.0, Some(true)),
-            Some(0.6),
-            "an anti-air weapon, the flyer"
-        );
-        assert_eq!(radius(-5.0, -5.0, None), None, "off the grid");
+    fn the_last_frame_is_kept_in_place() {
+        let presented = [
+            bubble(1, [0.0, 0.0], 0.0, 0.5),
+            bubble(2, [1.0, 0.0], 0.0, 0.5),
+        ];
+        let mut struck = StruckBubbles::default();
+        struck.remember(&presented);
+        let kept = struck.buffer();
+        for _ in 0..8 {
+            struck.remember(&presented);
+            struck.remember(&presented[..1]);
+        }
+        assert_eq!(struck.buffer(), kept, "refilled in place");
         let facing = hit_facing(&tracer(
             [0.0, 0.0, 0.5],
             [0.0, 3.0, 0.5],
             WeaponSlot::Primary,
+            None,
         ))
         .unwrap_or(f32::NAN);
         assert!(

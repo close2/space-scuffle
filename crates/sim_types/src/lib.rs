@@ -62,7 +62,8 @@ pub use player_view::{
 };
 pub use presentation::{
     AbilitySource, AreaView, Concealment, EffectSource, LineView, LinkView, ModeTransitionView,
-    SpellMissileView, StanceView, StatusFlags, StatusKind, WeaponKey, WeaponSlot,
+    SpellMissileView, StanceView, StatusFlags, StatusKind, StatusView, StrikeEnds, WeaponKey,
+    WeaponSlot,
 };
 pub use snapshot::{
     AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,

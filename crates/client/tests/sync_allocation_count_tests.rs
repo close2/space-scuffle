@@ -225,8 +225,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
 }
 
 /// Sends one splash event per frame, its centre walking over a 9 by 7 grid, and an instant hit
-/// and a blow at one of the presented bubbles in turn (WP11 review 3, E3-3: the struck-bubble
-/// index and the move onto the glass are in the counted path).
+/// and a blow at one of the presented bubbles in turn, naming it as the struck entity (WP11
+/// review 3, E3-3; plan `2026-11-17-effect-snapshot-identity` WP4: the struck bubble's lookup
+/// by id, the last frame's bubbles kept, and the move onto the glass are in the counted path).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -245,12 +246,19 @@ fn send_splash(
         let index = usize::try_from(*counter).unwrap_or(0) % bubbles.len();
         let [bx, by, _] = bubbles[index].world_pos;
         let hit = [bx, by, 0.5];
+        // The struck entity is named, as the simulation names it (plan
+        // `2026-11-17-effect-snapshot-identity` WP4): the lookup by id is in the counted path.
+        let ends = Some(sim_types::StrikeEnds {
+            attacker: bubbles[(index + 1) % bubbles.len()].entity_id,
+            target: bubbles[index].entity_id,
+        });
         events.send(client::CombatVisualEvent(
             sim_types::snapshot::CombatEventVisual::HitscanTracer {
                 from: [bx - 3.0, by + 1.0, 0.5],
                 to: hit,
                 owner: sim_types::PlayerId(0),
                 source: source.0,
+                ends,
             },
         ));
         events.send(client::CombatVisualEvent(
@@ -260,6 +268,7 @@ fn send_splash(
                 radius: 0.5,
                 owner: sim_types::PlayerId(0),
                 source: source.0,
+                ends,
             },
         ));
     }
@@ -616,6 +625,20 @@ fn hold_area_and_link(
         Some(&views.fog),
         &mut keep,
     );
+    // The previous missile's impact, as the simulation's `SpellImpact` lays it (plan
+    // `2026-11-17-effect-snapshot-identity` WP6), where it flew to.
+    if *frame >= 8 && frame.is_multiple_of(8) {
+        client::effects::areas::lay_spell_impact(
+            &sim_types::snapshot::CombatEventVisual::SpellImpact {
+                pos: [x + 0.8, y, z],
+                missile: *frame / 8 - 1,
+                owner,
+                source,
+            },
+            Some(&views.fog),
+            &mut keep,
+        );
+    }
 }
 
 // PERFORMANCE RATIONALE:
@@ -702,7 +725,7 @@ fn run_child(variant: Variant) -> TestResult {
 }
 
 /// The effect stream's own checks after its window: the held areas and tether, the spawns,
-/// the hits and blows, and the struck-bubble index.
+/// the hits and blows, and their struck bubbles found by id.
 fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResult {
     let held = app
         .world()
@@ -731,23 +754,33 @@ fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResul
     if hits < frames {
         return Err(format!("the effect stream struck {hits} hits in {frames} frames").into());
     }
-    // The index built from the presented bubbles finds each of them where it stands, so
-    // the hits were put on a found bubble, not on the default one (review 4, E4-3).
-    let struck = world.resource::<client::effects::struck::StruckBubbles>();
+    // The lookup by id finds every presented bubble, and every hit and blow of the stream found
+    // its struck bubble in the presented frame, none fell back to the default one (review 4,
+    // E4-3; plan `2026-11-17-effect-snapshot-identity` WP4).
     let bubbles = &world.resource::<BattleSession>().frames.presented().bubbles;
     let lost = bubbles
         .iter()
         .filter(|bubble| {
-            let [x, y, _] = bubble.world_pos;
-            struck
-                .struck_at(x, y, 0.5, None)
+            client::effects::struck::struck_by_id(bubbles, bubble.entity_id)
                 .is_none_or(|found| (found.radius - bubble.radius).abs() > 1e-6)
         })
         .count();
     if bubbles.is_empty() || lost > 0 {
         return Err(format!(
-            "the struck-bubble index lost {lost} of {} presented bubbles",
+            "the lookup by id lost {lost} of {} presented bubbles",
             bubbles.len()
+        )
+        .into());
+    }
+    let struck = world.resource::<client::effects::struck::StruckBubbles>();
+    let (presented, nowhere) = (
+        struck.found_in(client::effects::struck::StruckFrom::Presented),
+        struck.found_in(client::effects::struck::StruckFrom::Nowhere),
+    );
+    if presented < 2 * u64::from(frames) || nowhere > 0 {
+        return Err(format!(
+            "the stream's hits and blows found {presented} struck bubbles in the presented \
+             frame and {nowhere} nowhere in {frames} frames"
         )
         .into());
     }

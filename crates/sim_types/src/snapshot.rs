@@ -3,8 +3,8 @@
 use crate::enums::{AnimState, ResourceKind, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId, MAX_PLAYERS};
 use crate::presentation::{
-    AreaView, Concealment, EffectSource, LineView, LinkView, SpellMissileView, StanceView,
-    StatusFlags,
+    AbilitySource, AreaView, Concealment, EffectSource, LineView, LinkView, SpellMissileView,
+    StanceView, StatusFlags, StatusView, StrikeEnds,
 };
 use serde::{Deserialize, Serialize};
 
@@ -110,8 +110,11 @@ pub struct AttackSwing {
 /// Instantaneous transient visual combat event (tracers, beams, slashes, explosions).
 ///
 /// Every weapon event carries its [`EffectSource`] and a shatter its unit type, so the client
-/// can choose the effect the source unit's presentation block names. Records written before
-/// those fields existed read their defaults.
+/// can choose the effect the source unit's presentation block names. A strike (tracer, beam,
+/// blow, projectile) also names its [`StrikeEnds`], and a spell missile's landing is a
+/// [`CombatEventVisual::SpellImpact`]. Records written before those fields existed read their
+/// defaults, and a field left at its default is left out of the serialized event, so events
+/// without the newer facts keep their bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CombatEventVisual {
@@ -126,6 +129,10 @@ pub enum CombatEventVisual {
         /// Archetype and weapon that fired.
         #[serde(default)]
         source: EffectSource,
+        /// The attacker and the struck entity; `None` for a synthetic event (a lab, a test) and
+        /// for records written before the field existed. The simulation always fills it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ends: Option<StrikeEnds>,
     },
     /// Traveling plasma or kinetic missile bolt.
     ProjectileVisual {
@@ -141,6 +148,12 @@ pub enum CombatEventVisual {
         /// Archetype and weapon that fired.
         #[serde(default)]
         source: EffectSource,
+        /// The attacker and the entity the projectile was fired at; `None` for a synthetic
+        /// event (a lab, a test) and for records written before the field existed. The
+        /// simulation always fills it (plan `2026-11-17-effect-snapshot-identity` Amendment 3,
+        /// B-128).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ends: Option<StrikeEnds>,
     },
     /// Continuous laser beam or jagged lightning arc.
     BeamVisual {
@@ -155,6 +168,10 @@ pub enum CombatEventVisual {
         /// Archetype and weapon that fired.
         #[serde(default)]
         source: EffectSource,
+        /// The attacker and the struck entity; `None` for a synthetic event (a lab, a test) and
+        /// for records written before the field existed. The simulation always fills it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ends: Option<StrikeEnds>,
     },
     /// Close-quarters melee blade shockwave.
     MeleeSlashVisual {
@@ -169,6 +186,10 @@ pub enum CombatEventVisual {
         /// Archetype and weapon that fired.
         #[serde(default)]
         source: EffectSource,
+        /// The attacker and the struck entity; `None` for a synthetic event (a lab, a test) and
+        /// for records written before the field existed. The simulation always fills it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ends: Option<StrikeEnds>,
     },
     /// Bubble glass fracture and explosive collapse upon entity death.
     BubbleShatter {
@@ -199,6 +220,22 @@ pub enum CombatEventVisual {
         /// Actual attacking owner, retained after its source disappears.
         owner: PlayerId,
     },
+    /// A spell missile's impact, emitted on the tick the impact ran (plan
+    /// `2026-11-17-effect-snapshot-identity` D-6). A missile that fizzles (its target died or
+    /// became untargetable in flight) emits none, and a tether missile emits none: its landing
+    /// is a displacement with its own presentation.
+    SpellImpact {
+        /// Where the impact ran, `[x, y, terrain altitude]` in world units: the aimed point for
+        /// a point-targeted missile.
+        pos: [f32; 3],
+        /// The landed missile's identifier, as [`crate::SpellMissileView::id`] published it
+        /// while it flew.
+        missile: u32,
+        /// Player whose cast launched it.
+        owner: PlayerId,
+        /// The caster type and ability that launched it.
+        source: AbilitySource,
+    },
 }
 
 impl CombatEventVisual {
@@ -212,12 +249,13 @@ impl CombatEventVisual {
             | Self::BeamVisual { owner, .. }
             | Self::MeleeSlashVisual { owner, .. }
             | Self::BubbleShatter { owner, .. }
-            | Self::SplashVisual { owner, .. } => *owner,
+            | Self::SplashVisual { owner, .. }
+            | Self::SpellImpact { owner, .. } => *owner,
         }
     }
 
-    /// The archetype and weapon a weapon event came from; `None` for a shatter, which is no
-    /// weapon's.
+    /// The archetype and weapon a weapon event came from; `None` for a shatter and a spell
+    /// impact, which are no weapon's.
     #[must_use]
     pub const fn source(&self) -> Option<EffectSource> {
         match self {
@@ -226,14 +264,15 @@ impl CombatEventVisual {
             | Self::BeamVisual { source, .. }
             | Self::MeleeSlashVisual { source, .. }
             | Self::SplashVisual { source, .. } => Some(*source),
-            Self::BubbleShatter { .. } => None,
+            Self::BubbleShatter { .. } | Self::SpellImpact { .. } => None,
         }
     }
 
     /// Returns where this event lands on the map plane, `[x, y]` in world units.
     ///
-    /// That is the impact of a tracer or beam, the expected arrival of a timed projectile, and the
-    /// position of anything else (a splash's search centre). A client judges whether a viewer may see an event by this point.
+    /// That is the impact of a tracer or beam, the expected arrival of a timed projectile, where
+    /// a spell missile landed, and the position of anything else (a splash's search centre). A
+    /// client judges whether a viewer may see an event by this point.
     /// Every event position is `[x, y, altitude]`, so the first two components are the map plane.
     /// Derived from visual data only, so it takes no part in the simulation.
     #[must_use]
@@ -251,7 +290,8 @@ impl CombatEventVisual {
             }
             Self::MeleeSlashVisual { pos, .. }
             | Self::BubbleShatter { pos, .. }
-            | Self::SplashVisual { center: pos, .. } => [pos[0], pos[1]],
+            | Self::SplashVisual { center: pos, .. }
+            | Self::SpellImpact { pos, .. } => [pos[0], pos[1]],
         }
     }
 }
@@ -342,6 +382,12 @@ pub struct RenderSnapshot {
     /// left out of the serialized frame so frames without spells keep their bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spell_missiles: Vec<SpellMissileView>,
+    /// The catalog statuses each published bubble bears, sorted by `(entity, status)` (plan
+    /// `2026-11-17-effect-snapshot-identity` D-5). Lists only entities among `bubbles`; empty
+    /// when no published bubble bears a status, and then left out of the serialized frame, so
+    /// frames without statuses keep their bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statuses: Vec<StatusView>,
 }
 
 impl RenderSnapshot {
@@ -378,6 +424,7 @@ mod tests {
             to: [4.0, 5.0, 6.0],
             owner: OWNER,
             source: SOURCE,
+            ends: None,
         };
         let beam = CombatEventVisual::BeamVisual {
             from: [1.0, 2.0, 3.0],
@@ -385,6 +432,7 @@ mod tests {
             is_lightning: true,
             owner: OWNER,
             source: SOURCE,
+            ends: None,
         };
         assert_eq!(tracer.anchor(), [4.0, 5.0]);
         assert_eq!(beam.anchor(), [7.0, 8.0]);
@@ -398,6 +446,7 @@ mod tests {
             radius: 2.0,
             owner: OWNER,
             source: SOURCE,
+            ends: None,
         };
         let shatter = CombatEventVisual::BubbleShatter {
             pos: [7.0, 8.0, 9.0],
@@ -433,6 +482,23 @@ mod tests {
     }
 
     #[test]
+    fn a_spell_impact_is_anchored_where_it_landed_and_is_no_weapons() {
+        let source = AbilitySource {
+            unit_type: UnitTypeId(12),
+            ability: 2,
+        };
+        let impact = CombatEventVisual::SpellImpact {
+            pos: [6.5, 9.25, 1.5],
+            missile: 41,
+            owner: OWNER,
+            source,
+        };
+        assert_eq!(impact.anchor(), [6.5, 9.25]);
+        assert_eq!(impact.owner(), OWNER);
+        assert_eq!(impact.source(), None, "an ability's impact is no weapon's");
+    }
+
+    #[test]
     fn a_timed_projectile_is_anchored_where_it_arrives() {
         let shot = |duration_secs| CombatEventVisual::ProjectileVisual {
             pos: [1.0, 2.0, 3.0],
@@ -440,6 +506,7 @@ mod tests {
             owner: OWNER,
             duration_secs,
             source: SOURCE,
+            ends: None,
         };
         assert_eq!(shot(Some(0.5)).anchor(), [3.0, 1.0]);
         assert_eq!(
@@ -491,6 +558,7 @@ mod tests {
             to: [15.0, 20.0, 0.5],
             owner: PlayerId(1),
             source: SOURCE,
+            ends: None,
         };
 
         let snapshot = RenderSnapshot {

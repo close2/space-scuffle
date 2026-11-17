@@ -72,15 +72,20 @@ impl SimWorld {
 
     /// (a) Advances each missile in id order ([`missile_step`]); one whose step reaches contact
     /// runs its impact with the contact point as the source and is removed, one whose unit
-    /// target is no longer valid is dropped.
+    /// target is no longer valid is dropped. The landing of a missile presented as a projectile
+    /// is recorded for the render snapshot; a dropped missile records none.
     pub(crate) fn step_effect_missiles(&mut self) {
         let spells = self.catalog.spells_handle();
         let count = self.effects.missiles.len();
         self.effect_scratch.finished.clear();
         for index in 0..count {
             let missile = self.effects.missiles[index];
-            let Some(EffectNode::LaunchMissile { speed, impact, .. }) =
-                spells.node(missile.node).map(|node| node.kind)
+            let Some(EffectNode::LaunchMissile {
+                speed,
+                impact,
+                view,
+                ..
+            }) = spells.node(missile.node).map(|node| node.kind)
             else {
                 self.effect_scratch.finished.push(missile.id);
                 continue;
@@ -92,6 +97,18 @@ impl SimWorld {
             match missile_step(missile.position, aim, radius, speed) {
                 MissileStep::Impact(contact) => {
                     self.effect_scratch.finished.push(missile.id);
+                    // Presentation only (plan `2026-11-17-effect-snapshot-identity` D-6): a
+                    // tether's landing is its displacement, which has its own presentation.
+                    if matches!(view, sim_types::MissileView::Projectile) {
+                        self.presentation.record_spell_impact(
+                            crate::world::presentation::SpellImpactRecord {
+                                missile: missile.id,
+                                owner: missile.context.owner,
+                                contact,
+                                source: missile.context.ability,
+                            },
+                        );
+                    }
                     let context = missile.context.retarget(missile.target, contact);
                     self.run_effect_walk(impact, context);
                 }

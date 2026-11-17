@@ -205,8 +205,16 @@ impl BattleFog {
     }
 
     /// Whether `event` may be delivered to the visual layer, judged where it lands.
+    ///
+    /// A spell missile's impact (`SpellImpact`) is always delivered: it is drawn as an area
+    /// and its handler cuts it by the fog over its whole reach, laying nothing the viewer sees
+    /// none of (`effects::areas::lay_spell_impact`; plan `2026-11-17-effect-snapshot-identity`
+    /// D-6). A rule at its centre would drop an impact centred in fog whose edge the viewer sees.
     #[must_use]
     pub fn reveals(&self, event: &CombatEventVisual) -> bool {
+        if matches!(event, CombatEventVisual::SpellImpact { .. }) {
+            return true;
+        }
         let [x, y] = event.anchor();
         self.shows(event.owner(), x, y)
     }
@@ -328,6 +336,7 @@ mod tests {
             to: [to[0], to[1], 0.5],
             owner,
             source: sim_types::EffectSource::default(),
+            ends: None,
         }
     }
 

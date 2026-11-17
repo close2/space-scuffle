@@ -25,7 +25,12 @@
 //! - **Fungal Growth** (plan WP11, F1): a third child casts the shipped missile spell on enemies
 //!   in sight and, from an enemy in the fog, at the edge of the viewer's sight, and pictures
 //!   every frame; [`fungal_growth_flies_lands_and_afflicts`] checks the missile looks, the
-//!   impacts and the affliction.
+//!   impacts and the affliction. Once the viewer's impact is [`IMPACT_AGE`] old the child stops
+//!   `Time<Virtual>` and pictures it with its `Critical` layers only and with no effect layer;
+//!   the parent fits the `Critical` ring's centre from rays out of the aimed point and checks
+//!   it lies within [`IMPACT_CENTRE_TOLERANCE_PX`] of the projected aimed point (plan
+//!   `2026-11-17-effect-snapshot-identity` WP6, B-124: the impact is laid where the simulation
+//!   ran it, no longer up to half a step off).
 //!
 //! With `SPACE_SCUFFLE_AREA_EVIDENCE_DIR` set, the parent copies its pictures and sheets there.
 //!
@@ -303,6 +308,28 @@ struct Report {
     /// Window pixel of the top left corner of the `fungal_fog` crops.
     #[serde(default)]
     fungal_fog_crop: Option<[u32; 2]>,
+    /// The viewer's Fungal Growth impact, pictured with the clock stopped (plan
+    /// `2026-11-17-effect-snapshot-identity` WP6, B-124).
+    #[serde(default)]
+    fungal_impact: Option<ImpactShot>,
+}
+
+/// The viewer's Fungal Growth impact as pictured (WP6): its `Critical` ring against no effect
+/// layer, sampled along rays out of the aimed point on the ground.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ImpactShot {
+    /// The aimed point, map `x, y`, and its window pixel.
+    aimed: [f32; 2],
+    aimed_px: [f32; 2],
+    /// The impact's `AreaRadius`, world units, and its age at the shots, seconds.
+    radius: f32,
+    age: f32,
+    /// Where the impact was laid (its anchor), map `x, y`.
+    anchor: [f32; 2],
+    /// Window pixels per world unit along the map's `x` and `y` at the aimed point.
+    axes_px: [[f32; 2]; 2],
+    /// Per ray, the window pixel of each sample from [`IMPACT_RAY_FROM`] to [`RAY_TO`] radii.
+    rays: Vec<Vec<[f32; 2]>>,
 }
 
 /// How the effect layers are drawn for a shot.
@@ -352,6 +379,14 @@ enum Phase {
         frame: u32,
         since: f64,
     },
+    /// The Fungal Growth child's impact pictured with `Time<Virtual>` stopped (WP6): its
+    /// `Critical` layers (`bare` false), then no effect layer, each after `frames` frames.
+    ImpactShot {
+        bare: bool,
+        frames: u32,
+    },
+    /// Waiting for an impact shot to be written.
+    ImpactCapturing,
     Draining,
     Done,
 }
@@ -399,6 +434,9 @@ struct Staging {
     fungal: bool,
     /// The Fungal Growth child's fog edge, where the enemy's missile lands.
     fungal_edge: Option<Vec2>,
+    /// The Fungal Growth child's sequence frame and start, kept while its impact is pictured
+    /// with the clock stopped (WP6).
+    resume: Option<(u32, f64)>,
 }
 
 /// An area or the tether the evidence child pictures (V1-1).
@@ -1327,6 +1365,10 @@ fn stage(
     looks: Res<'_, AreaLooks>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
     idle: Res<'_, LabRenderIdle>,
+    effects: (
+        Option<Res<'_, EffectRuntime>>,
+        Option<Res<'_, EffectCatalog>>,
+    ),
 ) {
     let fog = fog.expect("the skirmish presents a player, so it keeps a fog");
     if !session.is_ready() {
@@ -1338,6 +1380,15 @@ fn stage(
     let tick = published_tick(&session);
     let now = time.elapsed_secs_f64();
     let before = std::mem::discriminant(&staging.phase);
+    // The viewer's Fungal Growth impact, once grown, is pictured once with the clock stopped.
+    let impact = match (&staging.phase, effects.0.as_deref(), effects.1.as_deref()) {
+        (Phase::Sequence { .. }, Some(runtime), Some(catalog))
+            if staging.fungal && staging.report.fungal_impact.is_none() =>
+        {
+            viewer_impact(&staging, runtime, catalog, now)
+        }
+        _ => None,
+    };
     staging.phase = match staging.phase {
         Phase::Boot if tick < 2 => Phase::Boot,
         Phase::Boot => Phase::Booting {
@@ -1452,6 +1503,49 @@ fn stage(
             Phase::Capturing
         }
         Phase::Capturing => Phase::Capturing,
+        Phase::ImpactShot { bare, frames }
+            if frames < SETTLE_FRAMES || idle.0.load(Ordering::Acquire) < IDLE_FRAMES =>
+        {
+            Phase::ImpactShot {
+                bare,
+                frames: frames + 1,
+            }
+        }
+        Phase::ImpactShot { bare, .. } => {
+            let file = if bare {
+                IMPACT_BARE_FILE
+            } else {
+                IMPACT_CRITICAL_FILE
+            };
+            capture(
+                &mut commands,
+                staging.directory.join(file),
+                move |world: &mut World| after_impact_shot(world, bare),
+            );
+            Phase::ImpactCapturing
+        }
+        Phase::ImpactCapturing => Phase::ImpactCapturing,
+        Phase::Sequence { frame, since } if impact.is_some() => {
+            let shot = impact.expect("invariant: the guard found the impact");
+            let sim = session.world().expect("a ready session has a world");
+            staging.report.fungal_impact = Some(impact_shot(
+                sim,
+                (camera, transform),
+                staging.spots[0],
+                shot,
+            ));
+            staging.resume = Some((frame, since));
+            commands.queue(|world: &mut World| {
+                world.resource_mut::<Time<Virtual>>().pause();
+                if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
+                    runtime.only = Some(Priority::Critical);
+                }
+            });
+            Phase::ImpactShot {
+                bare: false,
+                frames: 0,
+            }
+        }
         Phase::Sequence { frame, since }
             if now - since
                 < if staging.fungal {
@@ -2723,6 +2817,226 @@ fn record_fungal(
         .push((at, looks.missiles().0, impacts, afflictions));
 }
 
+/// Age, in seconds, at which the viewer's Fungal Growth impact is pictured with the clock
+/// stopped (WP6): its `Critical` ring has reached the search's radius (its `front` curve gets
+/// there at 0.18 s of 0.45) and is still at nine tenths of its strength.
+const IMPACT_AGE: f64 = 0.18;
+/// World units from the aimed point within which a laid impact counts as the viewer's.
+const IMPACT_NEAR: f32 = 1.0;
+/// Nearest sample of an impact's ray, in radii (the ring starts at 0.35 radii).
+const IMPACT_RAY_FROM: f32 = 0.2;
+/// Radii from which a ray's samples count towards the ring's band: beyond the victims' own
+/// looks, which reach about 0.62 radii (0.9 out plus a body of 0.5, over 2.25).
+const IMPACT_BAND_FROM: f32 = 0.7;
+/// The plan's tolerance on the impact's centre, window pixels (WP6).
+const IMPACT_CENTRE_TOLERANCE_PX: f32 = 2.0;
+/// The impact shots' files.
+const IMPACT_CRITICAL_FILE: &str = "shot_fungal_impact_critical.png";
+const IMPACT_BARE_FILE: &str = "shot_fungal_impact_bare.png";
+
+/// The viewer's Fungal Growth impact once it is [`IMPACT_AGE`] old: where it was laid (map
+/// `x, y`), its `AreaRadius` and its age.
+fn viewer_impact(
+    staging: &Staging,
+    runtime: &EffectRuntime,
+    catalog: &EffectCatalog,
+    now: f64,
+) -> Option<(Vec2, f32, f32)> {
+    let aimed = *staging.spots.first()?;
+    let impacts: Vec<_> = catalog
+        .effects
+        .iter()
+        .filter_map(|effect| effect.impact)
+        .collect();
+    runtime.pool.iter().find_map(|(_, instance)| {
+        let at = Vec2::new(instance.anchor.x, instance.anchor.z);
+        let age = now - instance.birth;
+        (impacts.contains(&instance.effect)
+            && at.distance(aimed) <= IMPACT_NEAR
+            && age >= IMPACT_AGE)
+            .then(|| {
+                (
+                    at,
+                    instance
+                        .bound
+                        .get(client::effects::catalog::schema::Binding::AreaRadius),
+                    age as f32,
+                )
+            })
+    })
+}
+
+/// The impact's picture through `camera`: rays out of the aimed point `aimed` on the ground.
+fn impact_shot(
+    world: &SimWorld,
+    camera: (&Camera, &GlobalTransform),
+    aimed: Vec2,
+    (anchor, radius, age): (Vec2, f32, f32),
+) -> ImpactShot {
+    let rays = (0..RAYS)
+        .map(|ray| {
+            let direction = Vec2::from_angle(ray as f32 * std::f32::consts::TAU / RAYS as f32);
+            (0..RAY_SAMPLES)
+                .map(|sample| {
+                    let share = IMPACT_RAY_FROM
+                        + (RAY_TO - IMPACT_RAY_FROM) * sample as f32 / (RAY_SAMPLES - 1) as f32;
+                    project(world, camera, aimed + direction * radius * share)
+                })
+                .collect()
+        })
+        .collect();
+    let at = project(world, camera, aimed);
+    let axis = |step: Vec2| {
+        let [x, y] = project(world, camera, aimed + step);
+        [x - at[0], y - at[1]]
+    };
+    ImpactShot {
+        aimed: aimed.to_array(),
+        aimed_px: at,
+        radius,
+        age,
+        anchor: anchor.to_array(),
+        axes_px: [axis(Vec2::X), axis(Vec2::Y)],
+        rays,
+    }
+}
+
+/// Moves on once an impact shot is written: to the bare shot, or back to the sequence with
+/// the clock running.
+fn after_impact_shot(world: &mut World, bare: bool) {
+    if bare {
+        world.resource_mut::<EffectView>().bare = false;
+        world.resource_mut::<Time<Virtual>>().unpause();
+        world.resource_scope(|_, mut staging: Mut<'_, Staging>| {
+            let (frame, since) = staging
+                .resume
+                .take()
+                .expect("invariant: the sequence was kept when the impact shots began");
+            staging.phase = Phase::Sequence { frame, since };
+        });
+        return;
+    }
+    world.resource_mut::<EffectView>().bare = true;
+    if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
+        runtime.only = None;
+    }
+    world.resource_mut::<Staging>().phase = Phase::ImpactShot {
+        bare: true,
+        frames: 0,
+    };
+}
+
+/// The offset of the impact's `Critical` ring from the aimed point, in window pixels, from its
+/// shots (WP6): along each ray the mean distance of the samples the ring changes in its band,
+/// then, for each pair of opposite rays both reaching the ring, half the difference of their
+/// reaches along the pair's axis, fitted to one offset on the ground and projected. Returns
+/// the offset and the pairs used.
+fn impact_offset(
+    shot: &ImpactShot,
+    critical: &image::RgbImage,
+    bare: &image::RgbImage,
+) -> (Vec2, usize) {
+    // The pixel a window point lies in is the one whose square holds it (`floor`; the edge
+    // tests' `changed_at` rounds, which shifts every sample half a pixel right and down).
+    let changed = |at: [f32; 2]| {
+        let (x, y) = (at[0].floor(), at[1].floor());
+        x >= 0.0
+            && y >= 0.0
+            && x < critical.width() as f32
+            && y < critical.height() as f32
+            && change(
+                critical.get_pixel(x as u32, y as u32).0,
+                bare.get_pixel(x as u32, y as u32).0,
+            ) >= CHANGE_LEVEL
+    };
+    // A ray's reach to the ring: the mean distance of the samples it changes in the ring's
+    // band, from IMPACT_BAND_FROM radii out (inside lie the victims' own looks), which the
+    // ring's eroded, broken edge moves less than its outermost sample.
+    let reach = |ray: &Vec<[f32; 2]>| {
+        let (sum, count) = ray
+            .iter()
+            .enumerate()
+            .map(|(index, at)| {
+                (
+                    IMPACT_RAY_FROM
+                        + (RAY_TO - IMPACT_RAY_FROM) * index as f32 / (RAY_SAMPLES - 1) as f32,
+                    *at,
+                )
+            })
+            .filter(|(share, at)| *share >= IMPACT_BAND_FROM && changed(*at))
+            .fold((0.0, 0_u32), |(sum, count), (share, _)| {
+                (sum + share, count + 1)
+            });
+        (count > 0).then(|| shot.radius * sum / count as f32)
+    };
+    let reaches: Vec<Option<f32>> = shot.rays.iter().map(reach).collect();
+    // Least squares over the pairs: the offset `d` with `d . axis = (near - far) / 2` for each.
+    let half = RAYS / 2;
+    let (mut normal, mut sum) = (Mat2::ZERO, Vec2::ZERO);
+    let mut pairs = 0;
+    for ray in 0..half {
+        if let (Some(near), Some(far)) = (reaches[ray], reaches[ray + half]) {
+            let axis = Vec2::from_angle(ray as f32 * std::f32::consts::TAU / RAYS as f32);
+            normal += Mat2::from_cols(axis * axis.x, axis * axis.y);
+            sum += axis * (near - far) / 2.0;
+            pairs += 1;
+        }
+    }
+    if normal.determinant().abs() < 1e-3 {
+        return (Vec2::splat(f32::INFINITY), pairs);
+    }
+    let ground = normal.inverse() * sum;
+    let [x, y] = shot.axes_px;
+    (
+        Vec2::from_array(x) * ground.x + Vec2::from_array(y) * ground.y,
+        pairs,
+    )
+}
+
+/// Window pixels of the impact sheet's crop round the aimed point.
+const IMPACT_CROP: [u32; 2] = [220, 150];
+
+/// Writes the impact's evidence sheet: its `Critical` shot round the aimed point at 1:1 and
+/// 2x, the aimed point marked by a white cross and the fitted ring centre by a cyan one.
+fn impact_sheet(
+    directory: &Path,
+    shot: &ImpactShot,
+    critical: &image::RgbImage,
+    offset: Vec2,
+    driver: &str,
+) -> TestResult {
+    let [x, y] = shot.aimed_px;
+    let left = (x - IMPACT_CROP[0] as f32 / 2.0).max(0.0) as u32;
+    let top = (y - IMPACT_CROP[1] as f32 / 2.0).max(0.0) as u32;
+    let mut crop =
+        image::imageops::crop_imm(critical, left, top, IMPACT_CROP[0], IMPACT_CROP[1]).to_image();
+    let local = [x - left as f32, y - top as f32];
+    let mark = |picture: &mut image::RgbImage, at: [f32; 2], colour: [u8; 3]| {
+        draw_line(picture, [at[0] - 4.0, at[1]], [at[0] + 4.0, at[1]], colour);
+        draw_line(picture, [at[0], at[1] - 4.0], [at[0], at[1] + 4.0], colour);
+    };
+    mark(&mut crop, local, [255, 255, 255]);
+    if offset.is_finite() {
+        mark(
+            &mut crop,
+            [local[0] + offset.x, local[1] + offset.y],
+            [0, 230, 255],
+        );
+    }
+    let (width, height) = (crop.width(), crop.height());
+    let mut sheet = image::RgbImage::new(width * 3, height * 2);
+    image::imageops::replace(&mut sheet, &crop, 0, 0);
+    let doubled = image::imageops::resize(
+        &crop,
+        width * 2,
+        height * 2,
+        image::imageops::FilterType::Nearest,
+    );
+    image::imageops::replace(&mut sheet, &doubled, i64::from(width), 0);
+    sheet.save(directory.join(format!("sheet_fungal_impact_{driver}.png")))?;
+    Ok(())
+}
+
 /// The Fungal Growth child.
 #[test]
 #[ignore = "launched by the test below on a virtual display"]
@@ -2747,7 +3061,46 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
     let directory = tempfile::tempdir()?;
     let report = run_gpu_child("area_link_fungal_child", directory.path())?;
     let fog_change = fungal_fog_change(directory.path(), &report, &driver.to_string())?;
+    // WP6 (plan `2026-11-17-effect-snapshot-identity`, B-124): the impact is laid where the
+    // simulation ran it, the aimed point, so its `Critical` ring is centred there.
+    let shot = report
+        .fungal_impact
+        .as_ref()
+        .ok_or("the viewer's impact was pictured with the clock stopped")?;
+    let critical = image::open(directory.path().join(IMPACT_CRITICAL_FILE))?.to_rgb8();
+    let bare = image::open(directory.path().join(IMPACT_BARE_FILE))?.to_rgb8();
+    let (offset, pairs) = impact_offset(shot, &critical, &bare);
+    impact_sheet(
+        directory.path(),
+        shot,
+        &critical,
+        offset,
+        &driver.to_string(),
+    )?;
     keep_evidence(directory.path(), &report, &driver.to_string())?;
+    eprintln!(
+        "driver {driver}: Fungal Growth impact at age {:.2} s, radius {:.3}: laid at {:?} for the \
+         aimed point {:?} ({:.5} world units apart); its Critical ring centred {:.2} px from the \
+         projected aimed point ({:.2}, {:.2}) over {pairs} ray pairs",
+        shot.age,
+        shot.radius,
+        shot.anchor,
+        shot.aimed,
+        Vec2::from_array(shot.anchor).distance(Vec2::from_array(shot.aimed)),
+        offset.length(),
+        offset.x,
+        offset.y
+    );
+    assert!(
+        pairs >= RAYS / 4,
+        "the ring is found on {pairs} of {} ray pairs",
+        RAYS / 2
+    );
+    assert!(
+        offset.length() <= IMPACT_CENTRE_TOLERANCE_PX,
+        "the impact's Critical ring is centred within {IMPACT_CENTRE_TOLERANCE_PX} px of the \
+         aimed point: {offset:?}"
+    );
     let flying = report.fungal.iter().filter(|frame| frame.1 > 0).count();
     let landed = report.fungal.last().map_or(0, |frame| frame.2);
     let afflicted = report.fungal.last().map_or(0, |frame| frame.3);
