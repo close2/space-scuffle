@@ -914,8 +914,8 @@ mod tests {
             "on the glass, outside the interior: {to:?}"
         );
         assert!(
-            from_centre(arrival(&shot), [5.0, 0.0], 0.0, 0.5) < 0.5,
-            "the published arrival lies inside the bubble"
+            from_centre(arrival(&shot), [5.0, 0.0], 0.0, 0.5) <= 0.5 + 1e-4,
+            "the published arrival lies within the bubble's radius, short of its glass"
         );
         // The launch, the owner, the source and the flight time are kept.
         let CombatEventVisual::ProjectileVisual {

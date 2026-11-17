@@ -7,6 +7,26 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## Identity WP4b (plan `2026-11-17-effect-snapshot-identity` Amendment 3, B-128, and the WP4/WP6 conditions)
+
+A projectile now names its attacker and target (`ProjectileVisual::ends`), and the client lands its flight and
+impact on the struck bubble's outline, towards the shooter, at its drawn height. The struck bubble is found by id
+through `effects::struck`, for ground targets and flyers alike. The goldens are unchanged (debug, release,
+`wasm32-wasip1`). The as-built note is at the end of Amendment 3.
+
+| Material | What it shows |
+|---|---|
+| [identity_wp4b_needle_volley_radv.png](identity_wp4b_needle_volley_radv.png) | `needle_volley`+`needle_hit` lent to a projectile shooter: the hit is now on the target's glass edge. Was it seen at 1:1? |
+| [identity_wp4b_cross_plane_projectile_radv.png](identity_wp4b_cross_plane_projectile_radv.png) | The new projectile `cross_plane` wave: an anti-air projectile (`rocket_trail`+`rocket_hit`) at a flyer over three ground units. The impact should be on the flyer's glass and nothing should be on the ground units |
+| [identity_wp4b_measurements.txt](identity_wp4b_measurements.txt) | Every subject against its blank in two radv runs, with the bars unchanged |
+
+**Points to look at.**
+
+1. `needle_volley`+`needle_hit` now passes at exactly its bar (34 px against 34, deterministic). Is the look strong
+   enough, or is the margin a look problem for Q0080?
+2. The projectile still leaves from the shooter's ground + 0.5. For a flying shooter that is under its bubble (the
+   cross-plane sheet, its first frames). That end is out of Amendment 3's scope and is recorded as open.
+
 ## Identity WP4/WP6 (plan `2026-11-17-effect-snapshot-identity`, B-125 and B-124)
 
 Plan: [`docs/plans/2026-11-17-effect-snapshot-identity.md`](../../../plans/2026-11-17-effect-snapshot-identity.md)

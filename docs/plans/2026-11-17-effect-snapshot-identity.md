@@ -720,3 +720,50 @@ below a flyer.* Every "proposed B-127" in this plan and in the review packet bec
 2. A unit test of `lay_spell_impact_seen` with a real `BattleFog`, which hides the whole impact, shows that nothing
    is laid. Alternatively, §9's risk row is corrected to name the test that covers it.
 3. `StruckBubbles` is cleared when the battle session changes, because entity ids restart in a new `SimWorld`.
+
+**As built (2026-11-17).** WP4b and the three review conditions are on branch `effects-identity-client`.
+- *Contract and writer.* `ProjectileVisual::ends` as specified; `launch_projectile` fills it from the prepared
+  shot's attacker and target. No float is added, so the C7 ratchet is unchanged. The sim_core test
+  `every_projectile_names_its_attacker_and_target` covers every shipped projectile weapon. Golden replays pass
+  unchanged in debug, release and on `wasm32-wasip1` (wasmtime); nothing was re-recorded.
+- *Client.* `effects::struck::at_struck_surface` re-aims a projectile with `ends` whose target bubble is found
+  (`projectile_onto_struck`). The simulation publishes the arrival at `target - direction * collision_radius`, and a
+  bubble's published radius is its collision radius, so the target's centre on the launch tick is the arrival moved
+  on by the found bubble's radius. From there the arrival goes onto the bubble's outline (or glass, without a
+  camera) towards the shooter, at its drawn height, at most `MOST_PULL` of the way back to the launch. The flight
+  time is kept and the velocity is recomputed, so the travel and the impact both end there. The struck radius is
+  returned for the impact's `UnitRadius`, as for instant hits. A projectile without `ends`, or whose bubble is
+  found nowhere (counted `Nowhere`), keeps its published flight. Unit tests:
+  `a_projectile_at_a_ground_unit_lands_on_its_glass`, `a_projectile_at_a_flyer_lands_on_its_glass_not_below_it`
+  and `a_projectile_whose_target_is_unknown_keeps_its_flight`.
+- *GPU wave.* The data offers an anti-air projectile shooter with looks on a presentable unit, so
+  `weapon_battle_gpu_tests` gains a second `cross_plane` wave. It is a wave of its own, because each subject packs
+  three ground units round its spot. The shooter is the first such unit by data, which fires `rocket_trail` and
+  `rocket_hit` today. The test now runs 10 waves.
+- *Condition 1.* `effects::systems::tests::the_presented_bubbles_are_remembered_only_after_the_frames_lookups`
+  runs `spawn_effects_from_events` in an `App` on the shipped vocabulary. A killing hit pops while neither snapshot
+  lists its target. The target must be found under `LastFrame`, which fails if `remember` runs before the lookups.
+  A frame later the same event finds it `Nowhere`, which shows that the remember did run.
+- *Condition 2.* `effects::areas::tests::a_real_fog_hiding_the_whole_impact_lays_nothing` refills a real
+  `BattleFog` from a `PlayerView`. An enemy impact whose whole reach is unseen lays nothing, while one whose edge is
+  seen, and the viewer's own, are laid. §9's risk row names this test.
+- *Condition 3.* `StruckBubbles::follow(Option<SessionGeneration>)` runs at the top of `spawn_effects_from_events`
+  with the presented session's generation. When the generation differs, or no session is presented, it forgets the
+  last frame's bubbles and keeps the buffer's capacity. Unit test:
+  `the_last_frame_is_forgotten_when_the_session_changes`.
+- *Clippy, found on the branch.* The test modules of `struck`, `areas` and `systems` (WP4/WP6) used `expect` without
+  the `allow` other test modules carry, and `sync_allocation_count_tests` had a manual `is_multiple_of`. Both
+  failed `clippy --all-targets -D warnings` and are fixed here.
+- *Evidence (radv, two runs, bars unchanged).* `needle_volley`+`needle_hit` changes 34 px beside the struck bubble
+  against its blank's 7 (needs 34; 23 before WP4b). It passes exactly at the bar in both runs, which are
+  deterministic. The projectile `cross_plane` subject shows 401 px beside the flyer (blank 1, needs 22) and 1 px
+  beside the ground units (blank 1, allowed 9). The other projectile subjects changed as follows (Amendment 2
+  → now): `acid_spit` 112 → 102, `grenade_lob` 188 → 254, `rocket_trail` 236 → 259, `plasma_bolt` 109 → 188 and
+  `spore_bolt` 135 → 139. All pass with room. The instant and melee subjects are within 1 px of Amendment 2. See
+  `docs/evidence/effects/review/identity_wp4b_measurements.txt`, `identity_wp4b_needle_volley_radv.png` and
+  `identity_wp4b_cross_plane_projectile_radv.png`.
+- *Open.* A projectile's *launch* is still published at the shooter's ground + 0.5. An anti-air flyer's
+  projectile therefore starts under its bubble; the cross-plane sheet shows this. Amendment 3 scoped only the
+  struck end. Aiming the launch from the shooter's bubble (the same lookup, by `ends.attacker`) is a follow-up. The
+  needle look's margin over its bar is 0 px: the look is faint, and the bar and the look remain the review's
+  (Q0080).
