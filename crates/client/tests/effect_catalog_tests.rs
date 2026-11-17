@@ -845,6 +845,113 @@ fn presentation_blocks_resolve_into_dense_tables_and_name_their_errors() {
     );
 }
 
+/// Plan `2026-11-17-effect-snapshot-identity` WP5 (D-5, B-122): `defaults.status_by_name`
+/// keys looks by the spell catalog's status names. They resolve to the catalog's status ids;
+/// an unknown status name and a look made for another event kind are each refused with their
+/// typed error. The status names are read from the shipped spell catalog, never written here.
+#[test]
+fn named_status_looks_resolve_against_the_spell_catalog() {
+    let (dir, manifest) = fixture();
+    let units = sim_fixtures::shipped_catalogs().units;
+    let spells = units.spells();
+    let names: Vec<(sim_types::StatusId, String)> = (0..spells.status_count())
+        .filter_map(|index| {
+            let id = sim_types::StatusId(u16::try_from(index).ok()?);
+            Some((id, spells.status(id)?.spec.name.clone()))
+        })
+        .collect();
+    let [(first, first_name), (second, second_name), ..] = names.as_slice() else {
+        panic!("the shipped spell catalog has at least two statuses");
+    };
+    let shell = r"(block: Shell(rim: (1.0, 0.3, 0.2, 0.6)), duration: 0.3, held: true)";
+    let point = SPRITE.replace("bind: SplashReach, ", "");
+    let effects = format!(
+        r#""look": (class: Minor, event: Status, layers: [ {shell} ]),
+           "hit": (class: Minor, event: Point, layers: [ {point} ])"#
+    );
+    let with_names = |defaults: &str| {
+        load(dir.path(), &vocabulary(&manifest, "", &effects, defaults))
+            .expect("the vocabulary resolves its effect names")
+    };
+    let catalog = with_names(&format!(r#"status_by_name: {{ "{first_name}": "look" }}"#));
+    let look = catalog.effect_id("look").expect("defined");
+    assert_eq!(
+        catalog.defaults.status_by_name.get(first_name),
+        Some(&look),
+        "the vocabulary resolves the effect name"
+    );
+    let (units, _) = units_with_block(ArchetypeEffects::default());
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the status name resolves");
+    assert_eq!(tables.named_status(*first), Some(look));
+    assert_eq!(tables.named_status(*second), None, "only the named status");
+
+    // An unknown effect name is the vocabulary's error.
+    let error = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &effects,
+            &format!(r#"status_by_name: {{ "{first_name}": "no_such_look" }}"#),
+        ),
+    )
+    .expect_err("unknown effect");
+    assert!(
+        matches!(&error, EffectCatalogError::UnknownName { name, kind: NameKind::Effect, .. }
+            if name == "no_such_look"),
+        "{error}"
+    );
+    // An unknown status name.
+    let catalog = with_names(r#"status_by_name: { "no_such_status": "look" }"#);
+    let error = UnitEffectTables::build(&units, &catalog).expect_err("unknown status");
+    assert!(
+        matches!(&error, EffectCatalogError::UnknownStatus { name, .. } if name == "no_such_status"),
+        "{error}"
+    );
+    assert_names(&error, &["vocabulary.ron", "no_such_status"]);
+    // A look made for another event kind.
+    let catalog = with_names(&format!(r#"status_by_name: {{ "{second_name}": "hit" }}"#));
+    let error = UnitEffectTables::build(&units, &catalog).expect_err("wrong kind");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::WrongEventKind {
+                found: EventKind::Point,
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+/// The shipped `defaults.status_by_name` resolves against the shipped spell catalog, and each
+/// named look is a `Status` effect that holds a `Critical` layer (plan
+/// `2026-11-17-effect-snapshot-identity` WP5).
+#[test]
+fn shipped_named_status_looks_hold_a_critical_layer() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let units = sim_fixtures::shipped_catalogs().units;
+    let tables = UnitEffectTables::build(&units, &catalog).expect("the shipped blocks resolve");
+    assert!(
+        !catalog.defaults.status_by_name.is_empty(),
+        "the vocabulary names a status look (B-122)"
+    );
+    for (name, look) in &catalog.defaults.status_by_name {
+        let status = units.spells().status_id(name).expect("a catalog status");
+        assert_eq!(tables.named_status(status), Some(*look), "{name}");
+        let effect = catalog.effect(*look).expect("loaded");
+        assert_eq!(effect.event, EventKind::Status, "{name}");
+        assert!(
+            effect.layers.iter().any(|layer| layer.held
+                && layer.priority == client::effects::catalog::schema::Priority::Critical),
+            "{name}: {} holds a Critical layer",
+            effect.name
+        );
+    }
+}
+
 #[test]
 fn an_edited_copy_of_the_shipped_vocabulary_loads_a_different_effect_without_a_rebuild() {
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");

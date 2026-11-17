@@ -3279,8 +3279,8 @@
                 ),
             ],
         ),
-        // The status of a unit eaten by something over time (`DamageOverTime`; plan WP11, F1):
-        // a sickly yellow-green light along its outline beating fast over a faintly green
+        // The status of a unit eaten by Fungal Growth (plan WP11, F1; named by its status in
+        // `defaults.status_by_name`, B-122): a sickly yellow-green light along its outline beating fast over a faintly green
         // body, and glowing motes rising off it. A slowed body reads grey and dull instead
         // (`concussive_daze`), so a unit both fungaled and slowed shows both.
         "fungal_affliction": (
@@ -3350,9 +3350,16 @@
             Slowed: "concussive_daze",
             Dash: "charge_streak",
             Barrier: "barrier_shell",
-            // WP11, F1: no `DamageOverTime` default. The snapshot publishes the status kind only,
-            // so a look keyed on it would show Fungal Growth's spores on a storm's victims too
-            // (B-122). `fungal_affliction` stays defined, for when the source is published.
+            // WP11, F1: no `DamageOverTime` default: a look keyed on the kind would show Fungal
+            // Growth's spores on a storm's victims too. Fungal Growth's look is named by its
+            // status below instead.
+        },
+        // Plan `2026-11-17-effect-snapshot-identity` D-5 (B-122): looks of single catalog
+        // statuses, by their `statuses.ron` names, held in addition to the kind's look. A
+        // fungaled unit also bears `fungal_growth_slow` (`Slowed`) and so shows
+        // `concussive_daze` with it; a storm's victims show nothing named.
+        status_by_name: {
+            "fungal_growth": "fungal_affliction",
         },
         concealment: (
             burrow_enter: "burrow_dig",

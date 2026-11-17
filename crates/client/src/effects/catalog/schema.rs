@@ -1147,6 +1147,12 @@ pub struct DefaultsDef {
     /// A status, by kind.
     #[serde(default)]
     pub status: BTreeMap<StatusKind, String>,
+    /// A look held on a unit bearing one catalog status, keyed by its name in `statuses.ron`
+    /// (plan `2026-11-17-effect-snapshot-identity` D-5): held in addition to the kind's look
+    /// above, so two statuses of one kind (Fungal Growth and Psionic Storm, both
+    /// `DamageOverTime`) can look different. Each value names a `Status` effect.
+    #[serde(default)]
+    pub status_by_name: BTreeMap<String, String>,
     /// How concealed units look (plan §5.2 `defaults.concealment`, D-5).
     #[serde(default)]
     pub concealment: ConcealmentDefaultsDef,

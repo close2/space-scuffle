@@ -312,6 +312,29 @@ struct Report {
     /// `2026-11-17-effect-snapshot-identity` WP6, B-124).
     #[serde(default)]
     fungal_impact: Option<ImpactShot>,
+    /// The Fungal Growth child (plan `2026-11-17-effect-snapshot-identity` WP5, B-122), per
+    /// frame: seconds since the casts and, per victim (the viewer's Fungal Growth victims, then
+    /// the storm stand-in's), the shell its bubble material draws.
+    #[serde(default)]
+    victim_shells: Vec<(f32, Vec<VictimShell>)>,
+    /// The rim colour and strength of the look the vocabulary names for Fungal Growth's status.
+    #[serde(default)]
+    named_rim: [f32; 4],
+}
+
+/// One victim's bubble in one frame of the Fungal Growth child (WP5).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+struct VictimShell {
+    /// Whether it is one of the viewer's Fungal Growth victims (else a storm stand-in's).
+    fungal: bool,
+    /// Whether the presented frame publishes a status on it the vocabulary names a look for.
+    named: bool,
+    /// Whether the presented frame publishes any catalog status on it.
+    any_status: bool,
+    /// Its bubble material's shell rim, colour and strength.
+    rim: [f32; 4],
+    /// Named looks its stance track holds.
+    held: usize,
 }
 
 /// The viewer's Fungal Growth impact as pictured (WP6): its `Critical` ring against no effect
@@ -434,6 +457,9 @@ struct Staging {
     fungal: bool,
     /// The Fungal Growth child's fog edge, where the enemy's missile lands.
     fungal_edge: Option<Vec2>,
+    /// The viewer's Fungal Growth victims and the storm stand-in's victims (WP5).
+    fungal_victims: Vec<EntityId>,
+    storm_victims: Vec<EntityId>,
     /// The Fungal Growth child's sequence frame and start, kept while its impact is pictured
     /// with the clock stopped (WP6).
     resume: Option<(u32, f64)>,
@@ -2514,10 +2540,104 @@ const FUNGAL_SECONDS: f64 = 3.6;
 const FUNGAL_BATTLE_EVERY: u32 = 10;
 /// Enemy stand-ins round the viewer's Fungal Growth target.
 const FUNGAL_VICTIMS: usize = 4;
+/// Enemy stand-ins round the storm stand-in's target (WP5).
+const STORM_VICTIMS: usize = 2;
+/// Seconds after a victim first bears its named status by which its look has come in (the
+/// slow's own onset flash is over by then, WP5).
+const NAMED_COME_IN: f32 = 0.4;
+/// Least rim strength of a victim wearing the named look, pulsing (a beat's trough is half
+/// its strength, WP5).
+const NAMED_RIM_FLOOR: f32 = 0.2;
+/// Largest difference per colour channel between a victim's rim and the named look's rim.
+const NAMED_RIM_TOLERANCE: f32 = 0.02;
+
+/// The statuses the effect tree of ability `spec` applies, walking sets, searches,
+/// persistents, missiles and displacements (at most a few hundred nodes).
+fn applied_statuses(
+    spells: &sim_core::catalog::SpellCatalog,
+    spec: &sim_types::AbilitySpec,
+) -> Vec<sim_types::StatusId> {
+    use sim_core::catalog::EffectNode;
+    let sim_types::AbilityEffectSpec::Effect(name) = &spec.effect else {
+        return Vec::new();
+    };
+    let mut stack: Vec<_> = spells.effect_id(name).into_iter().collect();
+    let mut statuses = Vec::new();
+    let mut visited = 0;
+    while let Some(id) = stack.pop() {
+        visited += 1;
+        let Some(node) = spells.node(id).filter(|_| visited <= 256) else {
+            continue;
+        };
+        match node.kind {
+            EffectNode::Set { first, len } => {
+                stack.extend((0..len).filter_map(|index| spells.set_child(first, index)));
+            }
+            EffectNode::Search { child, .. } => stack.push(child),
+            EffectNode::Persistent {
+                initial, periodic, ..
+            } => stack.extend(initial.into_iter().chain(periodic)),
+            EffectNode::LaunchMissile { impact, .. } => stack.push(impact),
+            EffectNode::Displace { on_land, .. } => stack.extend(on_land),
+            EffectNode::ApplyStatus { status } => statuses.push(status),
+            _ => {}
+        }
+    }
+    statuses
+}
+
+/// The storm stand-in of the Fungal Growth child (WP5, B-122): a shipped ability whose caster's
+/// block names an `Area` look and whose tree applies a status published as a kind the named
+/// status (`defaults.status_by_name`) is also published as, with no named look of its own (the
+/// Psionic Storm analogue beside Fungal Growth). Found by data, never by name (C5).
+fn storm_stand_in(world: &SimWorld, looks: &EffectCatalog) -> Option<sim_types::AbilitySpec> {
+    let spells = world.catalog.spells();
+    let named: Vec<sim_types::StatusId> = looks
+        .defaults
+        .status_by_name
+        .keys()
+        .filter_map(|name| spells.status_id(name))
+        .collect();
+    let kinds: Vec<sim_types::StatusKind> = named
+        .iter()
+        .filter_map(|id| spells.status(*id))
+        .flat_map(|status| status.spec.presentation.iter().copied())
+        .collect();
+    let area = |look: &str| {
+        looks
+            .effect_id(look)
+            .and_then(|id| looks.effect(id))
+            .is_some_and(|effect| effect.event == client::effects::catalog::schema::EventKind::Area)
+    };
+    world.catalog.archetypes().find_map(|arch| {
+        arch.effects
+            .abilities
+            .iter()
+            .filter(|(_, look)| area(look))
+            .filter_map(|(name, _)| arch.abilities.iter().find(|spec| spec.name == *name))
+            .find(|spec| {
+                let applied = applied_statuses(spells, spec);
+                !applied.is_empty()
+                    && applied.iter().all(|id| !named.contains(id))
+                    && applied.iter().any(|id| {
+                        spells.status(*id).is_some_and(|status| {
+                            status
+                                .spec
+                                .presentation
+                                .iter()
+                                .any(|kind| kinds.contains(kind))
+                        })
+                    })
+            })
+            .cloned()
+    })
+}
 
 /// Gives a presentable ground unit type copies of every ability a shipped block names a
-/// `Missile` look for, with those looks; returns it and the copied abilities' indices.
-fn missile_caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<u8>) {
+/// `Missile` look for, with those looks, and of the [`storm_stand_in`] without its look (its
+/// victims are what is measured); returns it, the missile abilities' indices and the storm
+/// stand-in's.
+fn missile_caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<u8>, u8) {
     let root = client::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
     let looks = EffectCatalog::load(
         &root
@@ -2552,6 +2672,8 @@ fn missile_caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<u8>) {
         })
         .collect();
     assert!(!copied.is_empty(), "a shipped block names a missile look");
+    let storm = storm_stand_in(world, &looks)
+        .expect("a shipped area applies a status of the named status's kind");
     let id = world
         .catalog
         .archetypes()
@@ -2579,7 +2701,9 @@ fn missile_caster_type(world: &mut SimWorld) -> (UnitTypeId, Vec<u8>) {
         archetype.effects.abilities.insert(spec.name.clone(), look);
         archetype.abilities.push(spec);
     }
-    (id, indices)
+    let storm_index = u8::try_from(archetype.abilities.len()).expect("a few abilities");
+    archetype.abilities.push(storm);
+    (id, indices, storm_index)
 }
 
 /// Sets the Fungal Growth child up once the camera is still, and orders both casts.
@@ -2591,7 +2715,7 @@ fn set_up_fungal(
     target: Vec2,
 ) {
     let sim = session.world_mut().expect("a ready session has a world");
-    let (kind, indices) = missile_caster_type(sim);
+    let (kind, indices, storm) = missile_caster_type(sim);
     let ability = indices[0];
     staging.caster_type = Some(kind);
     let visible = on_screen(sim, camera);
@@ -2601,9 +2725,17 @@ fn set_up_fungal(
     let caster = spawn_still(sim, kind, VIEWER, spots[2]);
     for index in 0..FUNGAL_VICTIMS {
         let angle = index as f32 * std::f32::consts::TAU / FUNGAL_VICTIMS as f32;
-        spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
+        let victim = spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
+        staging.fungal_victims.push(victim);
     }
-    let cast = |sim: &mut SimWorld, unit: EntityId, at: Vec2| {
+    // WP5: the storm stand-in's victims, cast on by a second caster of the viewer at once.
+    let storm_caster = spawn_still(sim, kind, VIEWER, spots[3]);
+    for index in 0..STORM_VICTIMS {
+        let angle = index as f32 * std::f32::consts::TAU / STORM_VICTIMS as f32;
+        let victim = spawn_still(sim, kind, ENEMY, spots[1] + Vec2::from_angle(angle) * 0.6);
+        staging.storm_victims.push(victim);
+    }
+    let cast_at = |sim: &mut SimWorld, unit: EntityId, ability: u8, at: Vec2| {
         sim.entities
             .get_mut(&unit)
             .expect("the caster stands")
@@ -2617,7 +2749,9 @@ fn set_up_fungal(
             )
             .expect("the cast is admitted");
     };
+    let cast = |sim: &mut SimWorld, unit: EntityId, at: Vec2| cast_at(sim, unit, ability, at);
     cast(sim, caster, spots[0]);
+    cast_at(sim, storm_caster, storm, spots[1]);
     if let Some((edge, enemy_at, _)) = edge {
         let enemy = spawn_still(sim, kind, ENEMY, enemy_at);
         cast(sim, enemy, edge);
@@ -2782,7 +2916,8 @@ fn fungal_frame(
 }
 
 /// Records, every frame of the Fungal Growth child's sequence, the missile looks held, the
-/// missile impacts laid and the `DamageOverTime` looks held so far.
+/// missile impacts laid and the `DamageOverTime` looks held so far, and each victim's shell
+/// (WP5).
 fn record_fungal(
     mut staging: ResMut<'_, Staging>,
     looks: Res<'_, AreaLooks>,
@@ -2790,6 +2925,7 @@ fn record_fungal(
     catalog: Option<Res<'_, EffectCatalog>>,
     tables: Option<Res<'_, UnitEffectTables>>,
     time: Res<'_, Time<Virtual>>,
+    shells: VictimShells<'_, '_>,
 ) {
     let Phase::Sequence { since, .. } = staging.phase else {
         return;
@@ -2815,6 +2951,82 @@ fn record_fungal(
         .report
         .fungal
         .push((at, looks.missiles().0, impacts, afflictions));
+    if let Some(rim) = catalog
+        .defaults
+        .status_by_name
+        .values()
+        .next()
+        .and_then(|look| catalog.effect(*look))
+        .and_then(|effect| {
+            effect.layers.iter().find_map(|layer| match &layer.block {
+                client::effects::catalog::Block::Shell(look) if layer.held => Some(look.rim),
+                _ => None,
+            })
+        })
+    {
+        staging.report.named_rim = rim.to_array();
+    }
+    let victims: Vec<(bool, EntityId)> = staging
+        .fungal_victims
+        .iter()
+        .map(|id| (true, *id))
+        .chain(staging.storm_victims.iter().map(|id| (false, *id)))
+        .collect();
+    let frame = victims
+        .into_iter()
+        .map(|(fungal, id)| shells.of(id, fungal, &tables))
+        .collect();
+    staging.report.victim_shells.push((at, frame));
+}
+
+/// What [`record_fungal`] reads of a victim's bubble (WP5).
+#[derive(bevy::ecs::system::SystemParam)]
+struct VictimShells<'w, 's> {
+    session: Option<Res<'w, BattleSession>>,
+    entities: Option<Res<'w, client::scene_controller::RenderEntityMap>>,
+    bubbles: Query<
+        'w,
+        's,
+        (
+            &'static MeshMaterial3d<client::bubble_shader::BubbleDomeMaterial>,
+            Option<&'static client::effects::stance::StanceTrack>,
+        ),
+    >,
+    materials: Option<Res<'w, Assets<client::bubble_shader::BubbleDomeMaterial>>>,
+}
+
+impl VictimShells<'_, '_> {
+    /// The shell victim `id` draws now, and what the presented frame publishes on it.
+    fn of(&self, id: EntityId, fungal: bool, tables: &UnitEffectTables) -> VictimShell {
+        let statuses = self
+            .session
+            .as_deref()
+            .map_or(&[][..], |session| session.frames.presented_statuses());
+        let borne: Vec<_> = statuses.iter().filter(|view| view.entity == id).collect();
+        let bubble = self
+            .entities
+            .as_deref()
+            .and_then(|map| map.get(&id))
+            .and_then(|entity| self.bubbles.get(*entity).ok());
+        let rim = bubble
+            .and_then(|(material, _)| {
+                self.materials
+                    .as_deref()
+                    .and_then(|materials| materials.get(&material.0))
+            })
+            .map_or([0.0; 4], |material| material.shell.rim.to_array());
+        VictimShell {
+            fungal,
+            named: borne
+                .iter()
+                .any(|view| tables.named_status(view.status).is_some()),
+            any_status: !borne.is_empty(),
+            rim,
+            held: bubble
+                .and_then(|(_, track)| track)
+                .map_or(0, |track| track.named.iter().flatten().count()),
+        }
+    }
 }
 
 /// Age, in seconds, at which the viewer's Fungal Growth impact is pictured with the clock
@@ -3037,6 +3249,84 @@ fn impact_sheet(
     Ok(())
 }
 
+/// WP5 (B-122): each of the viewer's Fungal Growth victims, once it has borne the named status
+/// for [`NAMED_COME_IN`], holds the named look and its bubble's rim is the look's rim, pulsing at
+/// [`NAMED_RIM_FLOOR`] or more; each storm stand-in victim bears its status, holds no named
+/// look, and its rim is never the named look's.
+fn check_named_shells(report: &Report, driver: &str) {
+    let named = report.named_rim;
+    assert!(named[3] > 0.0, "the named look has a rim");
+    let is_named = |rim: [f32; 4]| {
+        rim[3] >= NAMED_RIM_FLOOR
+            && (0..3).all(|channel| (rim[channel] - named[channel]).abs() <= NAMED_RIM_TOLERANCE)
+    };
+    let victims = report
+        .victim_shells
+        .first()
+        .map_or(0, |(_, frame)| frame.len());
+    assert!(victims > 0, "victims were recorded");
+    for victim in 0..victims {
+        let frames: Vec<(f32, VictimShell)> = report
+            .victim_shells
+            .iter()
+            .filter_map(|(at, frame)| frame.get(victim).map(|shell| (*at, *shell)))
+            .collect();
+        let fungal = frames.first().is_some_and(|(_, shell)| shell.fungal);
+        let bearing: Vec<&(f32, VictimShell)> = frames
+            .iter()
+            .filter(|(_, shell)| {
+                if fungal {
+                    shell.named
+                } else {
+                    shell.any_status
+                }
+            })
+            .collect();
+        let first = bearing.first().map(|(at, _)| *at);
+        let worn = bearing
+            .iter()
+            .filter(|(at, _)| first.is_some_and(|first| *at >= first + NAMED_COME_IN))
+            .filter(|(_, shell)| shell.held > 0 && is_named(shell.rim))
+            .count();
+        let rims: Vec<f32> = bearing.iter().map(|(_, shell)| shell.rim[3]).collect();
+        let (low, high) = rims.iter().fold((f32::MAX, 0.0_f32), |(low, high), rim| {
+            (low.min(*rim), high.max(*rim))
+        });
+        eprintln!(
+            "driver {driver}: victim {victim} ({}): bears its status on {} frames from {first:?} \
+             s, wears the named look on {worn}, rim strength {low:.3} to {high:.3}",
+            if fungal {
+                "Fungal Growth"
+            } else {
+                "storm stand-in"
+            },
+            bearing.len(),
+        );
+        assert!(!bearing.is_empty(), "victim {victim} bears its status");
+        if fungal {
+            let settled = bearing
+                .iter()
+                .filter(|(at, _)| first.is_some_and(|first| *at >= first + NAMED_COME_IN))
+                .count();
+            assert!(
+                settled > 0,
+                "victim {victim} bears Fungal Growth long enough"
+            );
+            assert_eq!(
+                worn, settled,
+                "victim {victim} wears the named look on every frame it bears the status"
+            );
+        } else {
+            assert!(
+                frames
+                    .iter()
+                    .all(|(_, shell)| shell.held == 0 && !is_named(shell.rim) && !shell.named),
+                "storm stand-in victim {victim} wears no named look"
+            );
+        }
+    }
+}
+
 /// The Fungal Growth child.
 #[test]
 #[ignore = "launched by the test below on a virtual display"]
@@ -3141,24 +3431,14 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
         landed as usize, expected,
         "each missile lands one impact, the enemy's where the viewer sees it"
     );
-    // B-122: the snapshot does not say which spell a damage-over-time status came from, so
-    // no `DamageOverTime` look is shipped yet; when the vocabulary names one, it is held.
-    let catalog_names_one = {
-        let root = client::ResolvedAssetsRoot::resolve()?;
-        EffectCatalog::load(
-            &root
-                .as_path()
-                .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
-            root.as_path(),
-        )?
-        .defaults
-        .status
-        .contains_key(&sim_types::StatusKind::DamageOverTime)
-    };
+    // B-122 (plan `2026-11-17-effect-snapshot-identity` WP5): no look is keyed on the
+    // `DamageOverTime` kind; Fungal Growth's victims wear the look the vocabulary names for its
+    // status, and the storm stand-in's victims, whose status is published as the same kind, do
+    // not.
     assert_eq!(
-        afflicted > 0,
-        catalog_names_one,
-        "the struck units wear the affliction exactly when the vocabulary names one"
+        afflicted, 0,
+        "no look is keyed on the damage-over-time kind"
     );
+    check_named_shells(&report, &driver.to_string());
     Ok(())
 }

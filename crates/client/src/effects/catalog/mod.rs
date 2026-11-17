@@ -564,6 +564,9 @@ pub struct Defaults {
     pub death: Option<EffectId>,
     /// Statuses, by `StatusKind`.
     pub status: BTreeMap<sim_types::StatusKind, EffectId>,
+    /// Looks of single catalog statuses, by the status's name in `statuses.ron`; resolved
+    /// against the spell catalog by [`UnitEffectTables::build`].
+    pub status_by_name: BTreeMap<String, EffectId>,
     /// How concealed units look.
     pub concealment: ConcealmentDefaults,
     /// Channel into a mode that anchors its unit and is not burrowed.

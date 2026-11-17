@@ -1374,3 +1374,190 @@ fn the_sandbox_profile_still_draws_everything() {
         "the developer view shows the truth, wherever it is"
     );
 }
+
+// --- Named status looks (plan `2026-11-17-effect-snapshot-identity` WP5, D-5) -----------------
+
+/// A mobile ground unit type nothing on the field uses, given (in the test world's catalog
+/// only) copies of every ability a shipped block names a `Missile` look for, unarmed so it
+/// fights nothing; returns it and the first copied ability's index. Found by data (C5).
+fn missile_caster(harness: &mut Harness) -> (UnitTypeId, u8) {
+    let catalog = harness.app.world().resource::<EffectCatalog>();
+    let missile = |look: &str| {
+        catalog
+            .effect_id(look)
+            .and_then(|id| catalog.effect(id))
+            .is_some_and(|effect| {
+                effect.event == client::effects::catalog::schema::EventKind::Missile
+            })
+    };
+    let world = harness.world();
+    let copied: Vec<sim_types::AbilitySpec> = world
+        .catalog
+        .archetypes()
+        .flat_map(|arch| {
+            arch.effects
+                .abilities
+                .iter()
+                .filter(|(_, look)| missile(look))
+                .filter_map(|(name, _)| arch.abilities.iter().find(|spec| spec.name == *name))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(!copied.is_empty(), "a shipped block names a missile look");
+    let id = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.max_speed > SimScalar::ZERO
+                && arch.mover_type == sim_types::MoverType::Ground
+                && arch.modes.is_empty()
+                && arch.abilities.is_empty()
+                && !arch.is_detector
+                && !world
+                    .entities
+                    .values()
+                    .any(|unit| unit.unit_type_id == arch.unit_type_id)
+        })
+        .map(|arch| arch.unit_type_id)
+        .next()
+        .expect("the catalog ships an unused mobile ground unit");
+    let archetype = harness
+        .world_mut()
+        .catalog
+        .get_mut(id)
+        .expect("invariant: the type was just found in this catalog");
+    archetype.max_energy = SimScalar::from_num(1000);
+    archetype.weapon = None;
+    archetype.ground_weapon = None;
+    archetype.air_weapon = None;
+    let first = u8::try_from(archetype.abilities.len()).expect("a few abilities");
+    archetype.abilities.extend(copied);
+    (id, first)
+}
+
+/// Spawns a unit of `kind` for `owner` at `place` that stands where it is put, full of energy.
+fn spawn_still(harness: &mut Harness, kind: UnitTypeId, owner: PlayerId, place: Vec2) -> EntityId {
+    let world = harness.world_mut();
+    let id = world
+        .spawn_unit(kind, owner, sim_position(place))
+        .expect("open ground");
+    let unit = world.entities.get_mut(&id).expect("just spawned");
+    unit.unpushable = true;
+    unit.energy = SimScalar::from_num(1000);
+    unit.issue_order(UnitOrder::HoldPosition, false)
+        .expect("hold admitted");
+    id
+}
+
+/// The catalog statuses the presented frame publishes on unit `id` that the vocabulary names a
+/// look for.
+fn named_statuses_on(harness: &Harness, id: EntityId) -> Vec<sim_types::StatusId> {
+    let world = harness.app.world();
+    let tables = world.resource::<client::effects::catalog::UnitEffectTables>();
+    world
+        .resource::<BattleSession>()
+        .frames
+        .presented_statuses()
+        .iter()
+        .filter(|view| view.entity == id && tables.named_status(view.status).is_some())
+        .map(|view| view.status)
+        .collect()
+}
+
+/// The named status looks held on unit `id`'s bubble.
+fn named_looks_on(harness: &Harness, id: EntityId) -> usize {
+    harness
+        .app
+        .world()
+        .get::<StanceTrack>(bubble(harness, id))
+        .map_or(0, |track| track.named.iter().flatten().count())
+}
+
+/// D-5: a status's named look follows the bubble's fog rule. An enemy the viewer sees bears
+/// its Fungal-Growth-like status's look; cloaked while it bears it, it is revealed by the
+/// status (`reveal`, the game's `SuppressCloak`) and still bears it; out of the viewer's sight
+/// it shows no look although the status is still published. The look and the status are found
+/// by data: the vocabulary's `status_by_name` and the abilities the shipped blocks name a
+/// missile look for.
+#[test]
+fn a_named_status_look_shows_only_on_a_unit_the_viewer_sees() {
+    let mut harness = skirmish();
+    let own = mobile(&harness, LOCAL_PLAYER);
+    submit(&mut harness, LOCAL_PLAYER, &own, UnitOrder::HoldPosition);
+    let (kind, ability) = missile_caster(&mut harness);
+    let target = harness.open_ground(home(&harness), 5.0);
+    let victim = spawn_still(&mut harness, kind, ENEMY, target);
+    let beside = harness.open_ground(target, 3.0);
+    let caster = spawn_still(&mut harness, kind, LOCAL_PLAYER, beside);
+    run_ticks(&mut harness, 2);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&caster)
+        .expect("the caster stands")
+        .issue_order(
+            UnitOrder::CastAbility {
+                ability_index: ability,
+                target_pos: Some(sim_position(target)),
+                target_entity: None,
+            },
+            false,
+        )
+        .expect("the cast is admitted");
+    harness.look_at(target);
+    run_until(&mut harness, "the victim bears a named status", |harness| {
+        !named_statuses_on(harness, victim).is_empty()
+    });
+    run_ticks(&mut harness, 1);
+    assert!(
+        drawn(&harness, victim),
+        "the control: the victim is in sight"
+    );
+    assert_eq!(
+        named_looks_on(&harness, victim),
+        named_statuses_on(&harness, victim).len(),
+        "a seen victim bears its named status's look"
+    );
+    assert!(named_looks_on(&harness, victim) > 0);
+
+    // Cloaked while it bears the status: the status reveals it, so it is drawn and keeps the look.
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&victim)
+        .expect("it stands")
+        .is_cloaked = true;
+    run_ticks(&mut harness, 2);
+    assert!(!named_statuses_on(&harness, victim).is_empty());
+    assert_eq!(
+        harness.published_concealment(victim),
+        Concealment::None,
+        "the status reveals the cloaked victim"
+    );
+    assert!(drawn(&harness, victim));
+    assert!(
+        named_looks_on(&harness, victim) > 0,
+        "a revealed victim keeps its look"
+    );
+
+    // Out of the viewer's sight while the status lasts: no look at all.
+    let far = harness.open_ground(home(&harness), 2.0 * OUT_OF_SIGHT);
+    let unit = harness
+        .world_mut()
+        .entities
+        .get_mut(&victim)
+        .expect("it stands");
+    unit.position = sim_position(far);
+    run_ticks(&mut harness, 2);
+    assert!(
+        !named_statuses_on(&harness, victim).is_empty(),
+        "the staging must still publish the status under test"
+    );
+    assert!(!drawn(&harness, victim), "the victim is out of sight");
+    assert_eq!(
+        named_looks_on(&harness, victim),
+        0,
+        "an unseen enemy shows no named status look"
+    );
+}

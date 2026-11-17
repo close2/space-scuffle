@@ -1801,12 +1801,18 @@ impl Resolver<'_> {
         for (kind, name) in &file.defaults.status {
             status.insert(*kind, EffectId(self.id(NameKind::Effect, name, &at)?));
         }
+        let mut status_by_name = BTreeMap::new();
+        for (status_name, name) in &file.defaults.status_by_name {
+            let id = EffectId(self.id(NameKind::Effect, name, &at)?);
+            status_by_name.insert(status_name.clone(), id);
+        }
         let concealment = &file.defaults.concealment;
         Ok(Defaults {
             impact: one(file.defaults.impact.as_ref())?,
             splash: one(file.defaults.splash.as_ref())?,
             death: one(file.defaults.death.as_ref())?,
             status,
+            status_by_name,
             concealment: super::ConcealmentDefaults {
                 burrow_enter: one(concealment.burrow_enter.as_ref())?,
                 burrow_leave: one(concealment.burrow_leave.as_ref())?,

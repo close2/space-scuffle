@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use bevy::prelude::Resource;
 use sim_types::{
     AreaView, BubbleRenderInstance, CombatEventVisual, LinkView, RenderSnapshot, SpellMissileView,
-    Tick,
+    StatusView, Tick,
 };
 
 use super::commands::SessionGeneration;
@@ -234,7 +234,23 @@ impl BattleFrameState {
     /// they change only at the displayed tick; read in place, never copied.
     #[must_use]
     pub fn presented_effect_views(&self) -> (&[AreaView], &[LinkView]) {
-        let source = if self.presented_valid
+        let source = self.discrete_source();
+        (&source.areas, &source.links)
+    }
+
+    /// The catalog statuses the presented bubbles bear (plan
+    /// `2026-11-17-effect-snapshot-identity` D-5), sorted by `(entity, status)`: those of the
+    /// previous snapshot while the pose is interpolated from it, else those of the current one,
+    /// so they follow the presented bubbles' membership. Read in place, never copied.
+    #[must_use]
+    pub fn presented_statuses(&self) -> &[StatusView] {
+        &self.discrete_source().statuses
+    }
+
+    /// The snapshot whose discrete records (membership, areas, tethers, statuses) the presented
+    /// pose shows: the previous one while the pose is interpolated from it, else the current.
+    fn discrete_source(&self) -> &RenderSnapshot {
+        if self.presented_valid
             && self.previous_valid
             && self.presented.tick == self.previous.tick
             && self.presented.tick != self.current.tick
@@ -242,8 +258,7 @@ impl BattleFrameState {
             &self.previous
         } else {
             &self.current
-        };
-        (&source.areas, &source.links)
+        }
     }
 
     /// The spell missiles of the presented instant (plan `2026-11-09-effect-visualization`

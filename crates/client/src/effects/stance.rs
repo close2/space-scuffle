@@ -17,7 +17,11 @@
 //! - while a status is published on a unit ([`status_shown`]), that status's look
 //!   ([`UnitEffectTables::status`]), which may lay another effect at the unit's foot at a beat of
 //!   its own (a charge's dust, [`emit_due`]) and spawn one on a published hit (a barrier's absorb
-//!   flash, [`hit_due`]).
+//!   flash, [`hit_due`]);
+//! - while a catalog status the vocabulary names a look for (`defaults.status_by_name`) is
+//!   published on a unit (`RenderSnapshot::statuses`), that look, in addition to its kind's
+//!   ([`UnitEffectTables::named_status`], plan `2026-11-17-effect-snapshot-identity` D-5): the
+//!   kind alone cannot tell Fungal Growth from Psionic Storm (B-122).
 //!
 //! # How it fits
 //! The simulation publishes facts only (`concealment`, `stance` with the channel's remaining
@@ -49,6 +53,7 @@ use super::catalog::{
 use super::pool::{EffectHandle, EffectInstance};
 use super::runtime::{layer_clock, layer_strength, EffectRuntime, SpawnRequest};
 use crate::battle_pipeline::fog::{presence_of, BattleFog, Presence};
+use crate::battle_pipeline::session::BattleSession;
 use crate::bubble_shader::FlipbookRegistry;
 use crate::bubble_shader::{
     sync_bubble_shell, BubbleDomeMaterial, BubbleInstance, ShellUniformGpu,
@@ -59,7 +64,8 @@ use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use bevy::render::batching::NoAutomaticBatching;
 use sim_types::{
-    BubbleRenderInstance, Concealment, ModeTransitionView, ShapeKind, StatusFlags, StatusKind,
+    BubbleRenderInstance, Concealment, EntityId, ModeTransitionView, ShapeKind, StatusFlags,
+    StatusId, StatusKind, StatusView,
 };
 
 /// Seconds of one simulation tick.
@@ -249,24 +255,48 @@ pub struct StanceTrack {
     pub hit_seen: [bool; STATUS_ORDER.len()],
     /// When the last hit effect spawned, seconds of `Time<Virtual>`, by [`status_index`].
     pub last_hit: [Option<f64>; STATUS_ORDER.len()],
+    /// The looks of single catalog statuses the unit bears ([`UnitEffectTables::named_status`]),
+    /// each with its status; free slots are `None`.
+    pub named: [Option<(StatusId, HeldLook)>; MAX_NAMED_STATUSES],
+    /// Frames on which a named status's look found no free slot in `named` and was not held.
+    pub named_refused: u32,
 }
+
+/// Named status looks one unit holds at once: Fungal Growth's is the only one shipped, and a
+/// unit rarely bears more than two named statuses together.
+pub const MAX_NAMED_STATUSES: usize = 4;
 
 /// Looks a track remembers while they erode out: a unit can drop its stance, its morph, its
 /// cover and a few statuses on one frame (a stim and a slow running out together).
 pub const RELEASING_SLOTS: usize = 6;
 
-/// Looks a track holds at once: stance, morph, cover and one per status kind.
-const HELD_SLOTS: usize = 3 + STATUS_ORDER.len();
+/// Looks a track holds at once: stance, morph, cover, one per status kind and the named
+/// statuses.
+const HELD_SLOTS: usize = 3 + STATUS_ORDER.len() + MAX_NAMED_STATUSES;
 
 impl StanceTrack {
-    /// The looks held now: stance, morph, cover and the statuses.
+    /// The looks held now: stance, morph, cover, the statuses and the named statuses.
     fn looks(&self) -> [Option<HeldLook>; HELD_SLOTS] {
         let mut looks = [None; HELD_SLOTS];
         looks[0] = self.stance;
         looks[1] = self.morph.map(|morph| morph.look);
         looks[2] = self.cover;
-        looks[3..].copy_from_slice(&self.status);
+        let named = 3 + STATUS_ORDER.len();
+        looks[3..named].copy_from_slice(&self.status);
+        for (slot, held) in looks[named..].iter_mut().zip(self.named) {
+            *slot = held.map(|(_, look)| look);
+        }
         looks
+    }
+
+    /// The named status look held for `status`, if any.
+    #[must_use]
+    pub fn named_look(&self, status: StatusId) -> Option<HeldLook> {
+        self.named
+            .iter()
+            .flatten()
+            .find(|(held, _)| *held == status)
+            .map(|(_, look)| *look)
     }
 
     /// Remembers `look`, just released, while it erodes out (the oldest remembered one is
@@ -371,12 +401,23 @@ pub(crate) fn anchors(bubble: &BubbleRenderInstance) -> (Vec3, Vec3) {
     (ground, Vec3::new(x, altitude + lift, y))
 }
 
+/// The statuses of `entity` in `statuses` (a frame's list, sorted by `(entity, status)`): a
+/// binary search for the bubble's run, so no list is copied.
+#[must_use]
+pub fn statuses_of(statuses: &[StatusView], entity: EntityId) -> &[StatusView] {
+    let start = statuses.partition_point(|view| view.entity < entity);
+    let end = start + statuses[start..].partition_point(|view| view.entity <= entity);
+    &statuses[start..end]
+}
+
 /// Brings `track` up to `bubble` as the viewer sees it (`presence`, `own`) and returns the
 /// shell its looks give the bubble; `clip` says whether the unit shows its own clip for the
-/// mode its stance or switch is about (WP13 media), which keeps its sink shallow.
+/// mode its stance or switch is about (WP13 media), which keeps its sink shallow; `statuses`
+/// are the catalog statuses the bubble bears ([`statuses_of`] the presented frame's list).
 pub fn present_looks(
     track: &mut StanceTrack,
     bubble: &BubbleRenderInstance,
+    statuses: &[StatusView],
     presence: Presence,
     own: bool,
     clip: bool,
@@ -392,6 +433,9 @@ pub fn present_looks(
         context.release(track.morph.take().map(|morph| morph.look));
         for slot in &mut track.status {
             context.release(slot.take());
+        }
+        for slot in &mut track.named {
+            context.release(slot.take().map(|(_, look)| look));
         }
         track.hit_seen = [false; STATUS_ORDER.len()];
         context.keep(&mut track.cover, cover, body, unit, !track.seen);
@@ -414,6 +458,7 @@ pub fn present_looks(
     }
     context.keep(&mut track.cover, cover, body, unit, settled);
     keep_statuses(track, bubble, (ground, body), unit, settled, context);
+    keep_named_statuses(track, bubble, statuses, (ground, body), settled, context);
     track.seen = true;
     let now_held = track.looks();
     for look in before.into_iter().flatten() {
@@ -425,6 +470,10 @@ pub fn present_looks(
     let morph_progress = track.morph.map_or(0.0, |morph| morph.progress);
     let released = track.releasing.iter().map(|look| (*look, 1.0));
     let statuses = track.status.iter().map(|look| (*look, 1.0));
+    let named = track
+        .named
+        .iter()
+        .map(|held| (held.map(|(_, look)| look), 1.0));
     for (look, progress) in [
         (track.stance, 1.0),
         (track.morph.map(|morph| morph.look), morph_progress),
@@ -432,6 +481,7 @@ pub fn present_looks(
     ]
     .into_iter()
     .chain(statuses)
+    .chain(named)
     .chain(released)
     {
         let instance = look.and_then(|look| context.runtime.held(look.handle));
@@ -488,6 +538,74 @@ fn keep_statuses(
                 context.spawn(on_hit.effect, body, bound);
                 track.last_hit[index] = Some(context.now);
             }
+        }
+    }
+}
+
+/// Keeps the looks of `bubble`'s named catalog statuses (`statuses`, its run of the frame's
+/// list) held at its body, as [`keep_statuses`] keeps the kinds' looks: a slot whose status
+/// left (or whose look the vocabulary no longer names) is released; a status newly borne takes
+/// a free slot, held `settled` when the unit was first seen already bearing it, or is refused
+/// and counted when all [`MAX_NAMED_STATUSES`] are taken. A named look lays its `emit` effect
+/// as a kind look does; hits are published per kind only (a barrier's), so it spawns none.
+fn keep_named_statuses(
+    track: &mut StanceTrack,
+    bubble: &BubbleRenderInstance,
+    statuses: &[StatusView],
+    (ground, body): (Vec3, Vec3),
+    settled: bool,
+    context: &mut LookContext<'_>,
+) {
+    let bound = BoundValues::default()
+        .with(Binding::UnitRadius, bubble.radius)
+        .with(Binding::UnitHeight, bubble.radius * 2.0)
+        .with(Binding::BarrierRatio, bubble.barrier_ratio);
+    for slot in &mut track.named {
+        let Some((status, look)) = *slot else {
+            continue;
+        };
+        let borne = statuses.iter().any(|view| view.status == status);
+        if !borne || context.tables.named_status(status) != Some(look.effect) {
+            context.release(Some(look));
+            *slot = None;
+        }
+    }
+    let moving = bubble.velocity[0].hypot(bubble.velocity[1]) >= MOVING_SPEED;
+    let phase =
+        super::placement::unit_float(super::placement::hash3(bubble.entity_id.0, 0x57A7, 1));
+    for view in statuses {
+        let Some(effect) = context.tables.named_status(view.status) else {
+            continue;
+        };
+        let index = match track
+            .named
+            .iter()
+            .position(|slot| slot.is_some_and(|(status, _)| status == view.status))
+        {
+            Some(index) => index,
+            None => {
+                let Some(index) = track.named.iter().position(Option::is_none) else {
+                    track.named_refused = track.named_refused.saturating_add(1);
+                    continue;
+                };
+                index
+            }
+        };
+        let mut held = track.named[index].map(|(_, look)| look);
+        context.keep(&mut held, Some(effect), body, bound, settled);
+        track.named[index] = held.map(|look| (view.status, look));
+        let Some(emit) = context
+            .catalog
+            .effect(effect)
+            .and_then(|effect| effect.emit)
+        else {
+            continue;
+        };
+        if held.is_some()
+            && (moving || !emit.moving)
+            && emit_due(context.now, context.delta, emit.every, phase)
+        {
+            context.spawn(emit.effect, ground, bound);
         }
     }
 }
@@ -757,6 +875,7 @@ pub fn present_stances(
     registry: Option<Res<'_, FlipbookRegistry>>,
     time: Res<'_, Time<Virtual>>,
     materials: Option<ResMut<'_, Assets<BubbleDomeMaterial>>>,
+    session: Option<Res<'_, BattleSession>>,
     mut bubbles: StanceQuery<'_, '_>,
 ) {
     // Apps without bubbles (the effect lab) have no bubble materials and nothing to present.
@@ -767,6 +886,9 @@ pub fn present_stances(
     };
     let fog = fog.as_deref();
     let registry = registry.as_deref();
+    let statuses = session
+        .as_deref()
+        .map_or(&[][..], |session| session.frames.presented_statuses());
     let mut context = LookContext {
         catalog: &catalog,
         tables: &tables,
@@ -785,11 +907,28 @@ pub fn present_stances(
         let presence = presence_of(fog, &bubble.0);
         let own = fog.is_none_or(|fog| fog.viewer() == Some(bubble.0.owner));
         let clip = shows_mode_clip(registry, &bubble.0);
+        let borne = statuses_of(statuses, bubble.0.entity_id);
         let shell = if let Some(mut track) = track {
-            present_looks(&mut track, &bubble.0, presence, own, clip, &mut context)
+            present_looks(
+                &mut track,
+                &bubble.0,
+                borne,
+                presence,
+                own,
+                clip,
+                &mut context,
+            )
         } else {
             let mut track = StanceTrack::default();
-            let shell = present_looks(&mut track, &bubble.0, presence, own, clip, &mut context);
+            let shell = present_looks(
+                &mut track,
+                &bubble.0,
+                borne,
+                presence,
+                own,
+                clip,
+                &mut context,
+            );
             commands.entity(entity).insert(track);
             shell
         };
@@ -853,6 +992,264 @@ mod tests {
             status,
             barrier_ratio,
         }
+    }
+
+    /// The shipped vocabulary, the shipped units' tables and their spell catalog.
+    fn shipped() -> (
+        EffectCatalog,
+        UnitEffectTables,
+        sim_core::catalog::SpellCatalog,
+    ) {
+        let root = crate::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+        let catalog = EffectCatalog::load(
+            &root
+                .as_path()
+                .join(super::super::catalog::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )
+        .expect("the shipped vocabulary loads");
+        let units = sim_fixtures::shipped_catalogs().units;
+        let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
+        (catalog, tables, units.spells().clone())
+    }
+
+    /// Every status of `spells` with its id, in id order.
+    fn every_status(
+        spells: &sim_core::catalog::SpellCatalog,
+    ) -> Vec<(StatusId, &sim_types::StatusSpec)> {
+        (0..spells.status_count())
+            .filter_map(|index| {
+                let id = StatusId(u16::try_from(index).ok()?);
+                Some((id, &spells.status(id)?.spec))
+            })
+            .collect()
+    }
+
+    /// The statuses `ids` borne by `bubble`'s entity.
+    fn borne(ids: &[StatusId]) -> Vec<StatusView> {
+        ids.iter()
+            .map(|status| StatusView {
+                entity: EntityId(1),
+                status: *status,
+            })
+            .collect()
+    }
+
+    /// Presents `bubble` bearing `statuses`, shown as it is, at `now`.
+    fn present_at(
+        track: &mut StanceTrack,
+        statuses: &[StatusView],
+        presence: Presence,
+        now: f64,
+        (catalog, tables, runtime): (&EffectCatalog, &UnitEffectTables, &mut EffectRuntime),
+    ) {
+        let mut context = LookContext {
+            catalog,
+            tables,
+            runtime,
+            now,
+            delta: 0.04,
+        };
+        let unit = bubble(StatusFlags::default(), 0.0);
+        present_looks(track, &unit, statuses, presence, true, false, &mut context);
+    }
+
+    #[test]
+    fn a_bubble_bearing_a_named_status_holds_its_look_until_the_status_leaves() {
+        let (catalog, tables, spells) = shipped();
+        let (name, look) = catalog
+            .defaults
+            .status_by_name
+            .iter()
+            .next()
+            .expect("the vocabulary names a status look");
+        let status = spells.status_id(name).expect("a catalog status");
+        assert_eq!(tables.named_status(status), Some(*look));
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut track = StanceTrack::default();
+        let statuses = borne(&[status]);
+        present_at(
+            &mut track,
+            &statuses,
+            Presence::Shown,
+            1.0,
+            (&catalog, &tables, &mut runtime),
+        );
+        let held = track.named_look(status).expect("the named look is held");
+        assert_eq!(held.effect, *look);
+        assert!(runtime.held(held.handle).is_some());
+        // Held across frames, not re-spawned.
+        present_at(
+            &mut track,
+            &statuses,
+            Presence::Shown,
+            1.04,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert_eq!(track.named_look(status), Some(held));
+        assert_eq!(runtime.spawned_of(*look), 1);
+        // The status leaves: the look is released and erodes out.
+        present_at(
+            &mut track,
+            &[],
+            Presence::Shown,
+            1.08,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert_eq!(track.named, [None; MAX_NAMED_STATUSES]);
+        let instance = runtime.held(held.handle).expect("eroding out");
+        assert!(instance.released_at.is_some(), "released");
+        assert!(
+            track.releasing.contains(&Some(held)),
+            "remembered while it erodes"
+        );
+    }
+
+    #[test]
+    fn a_status_of_the_same_kind_without_a_named_look_holds_nothing_named() {
+        let (catalog, tables, spells) = shipped();
+        let statuses = every_status(&spells);
+        let (named, named_spec) = statuses
+            .iter()
+            .find(|(id, _)| tables.named_status(*id).is_some())
+            .expect("a status has a named look");
+        // Another status published as the same kind (Psionic Storm beside Fungal Growth).
+        let (other, _) = statuses
+            .iter()
+            .find(|(id, spec)| {
+                id != named
+                    && tables.named_status(*id).is_none()
+                    && spec
+                        .presentation
+                        .iter()
+                        .any(|kind| named_spec.presentation.contains(kind))
+            })
+            .expect("another status of the named one's kind");
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut track = StanceTrack::default();
+        present_at(
+            &mut track,
+            &borne(&[*other]),
+            Presence::Shown,
+            1.0,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert_eq!(track.named, [None; MAX_NAMED_STATUSES]);
+        assert_eq!(track.named_refused, 0);
+    }
+
+    #[test]
+    fn a_fifth_named_status_is_refused_and_counted() {
+        let (mut catalog, _, spells) = shipped();
+        let look = *catalog
+            .defaults
+            .status_by_name
+            .values()
+            .next()
+            .expect("the vocabulary names a status look");
+        let statuses = every_status(&spells);
+        assert!(
+            statuses.len() > MAX_NAMED_STATUSES,
+            "enough catalog statuses"
+        );
+        let five: Vec<StatusId> = statuses
+            .iter()
+            .take(MAX_NAMED_STATUSES + 1)
+            .map(|(id, _)| *id)
+            .collect();
+        for (_, spec) in statuses.iter().take(MAX_NAMED_STATUSES + 1) {
+            catalog
+                .defaults
+                .status_by_name
+                .insert(spec.name.clone(), look);
+        }
+        let units = sim_fixtures::shipped_catalogs().units;
+        let tables = UnitEffectTables::build(&units, &catalog).expect("the names resolve");
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut track = StanceTrack::default();
+        let all = borne(&five);
+        present_at(
+            &mut track,
+            &all,
+            Presence::Shown,
+            1.0,
+            (&catalog, &tables, &mut runtime),
+        );
+        for status in &five[..MAX_NAMED_STATUSES] {
+            assert!(track.named_look(*status).is_some(), "{status:?} held");
+        }
+        assert!(track.named_look(five[MAX_NAMED_STATUSES]).is_none());
+        assert_eq!(track.named_refused, 1);
+        present_at(
+            &mut track,
+            &all,
+            Presence::Shown,
+            1.04,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert_eq!(
+            track.named_refused, 2,
+            "counted on every frame it is refused"
+        );
+        // One of the four leaves: the fifth takes its slot.
+        present_at(
+            &mut track,
+            &all[1..],
+            Presence::Shown,
+            1.08,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert!(track.named_look(five[0]).is_none());
+        assert!(track.named_look(five[MAX_NAMED_STATUSES]).is_some());
+        assert_eq!(track.named_refused, 2);
+    }
+
+    #[test]
+    fn a_unit_the_viewer_does_not_see_as_it_is_holds_no_named_look() {
+        let (catalog, tables, spells) = shipped();
+        let name = catalog
+            .defaults
+            .status_by_name
+            .keys()
+            .next()
+            .expect("the vocabulary names a status look");
+        let status = spells.status_id(name).expect("a catalog status");
+        let statuses = borne(&[status]);
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut track = StanceTrack::default();
+        present_at(
+            &mut track,
+            &statuses,
+            Presence::Shown,
+            1.0,
+            (&catalog, &tables, &mut runtime),
+        );
+        assert!(track.named_look(status).is_some());
+        for presence in [Presence::Shimmer, Presence::Hidden] {
+            present_at(
+                &mut track,
+                &statuses,
+                presence,
+                1.04,
+                (&catalog, &tables, &mut runtime),
+            );
+            assert_eq!(track.named, [None; MAX_NAMED_STATUSES], "{presence:?}");
+        }
+    }
+
+    #[test]
+    fn a_bubbles_statuses_are_its_run_of_the_frames_list() {
+        let view = |entity: u32, status: u16| StatusView {
+            entity: EntityId(entity),
+            status: StatusId(status),
+        };
+        let list = [view(1, 0), view(3, 2), view(3, 5), view(7, 1)];
+        assert_eq!(statuses_of(&list, EntityId(3)), &list[1..3]);
+        assert_eq!(statuses_of(&list, EntityId(1)), &list[..1]);
+        assert_eq!(statuses_of(&list, EntityId(7)), &list[3..]);
+        assert!(statuses_of(&list, EntityId(2)).is_empty());
+        assert!(statuses_of(&list, EntityId(9)).is_empty());
+        assert!(statuses_of(&[], EntityId(1)).is_empty());
     }
 
     #[test]
