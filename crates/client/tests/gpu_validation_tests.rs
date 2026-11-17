@@ -35,8 +35,8 @@ mod shader_ir;
 
 use gpu_run::{
     AdapterEvidence, AllowedValidationId, ChildDisplay, DriverRequest, DriverSelectionError,
-    FindingSeverity, GpuCommand, GpuDriver, GpuLock, GpuLockError, GpuSelection, HostGpu,
-    MissingPrerequisite, RenderNode, ValidationReport, VALIDATION_ALLOWLIST,
+    FindingSeverity, GpuCommand, GpuDriver, GpuLock, GpuLockError, HostGpu, MissingPrerequisite,
+    RenderNode, ValidationReport, VALIDATION_ALLOWLIST,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -893,13 +893,17 @@ fn the_executable_is_read_before_the_lock_and_recorded() -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// A fixed driver selection, so the command tests do not depend on the host.
-fn fixture_selection(driver: GpuDriver) -> GpuSelection {
-    GpuSelection {
-        driver,
-        manifest: PathBuf::from("/fixture/icd.json"),
-        reason: "fixture".into(),
-    }
+/// F2 of the WP2 review: a command built for inspection never runs, so the command tests'
+/// fixed driver cannot become a child with the wrong lock.
+#[test]
+#[should_panic(expected = "for inspection and never runs")]
+fn an_inspected_command_never_runs() {
+    let command = GpuCommand::inspect(
+        Path::new("/bin/true"),
+        &ChildDisplay::None,
+        GpuDriver::Lavapipe,
+    );
+    command.run("inspected command");
 }
 
 /// What a command does with one variable of the child's environment.
@@ -931,11 +935,7 @@ fn variable(command: &GpuCommand, key: &str) -> Setting {
 #[test]
 fn an_offscreen_child_has_no_display_and_no_software_present() {
     for driver in [GpuDriver::Radv, GpuDriver::Lavapipe] {
-        let command = GpuCommand::renderer(
-            Path::new("/fixture/child"),
-            &ChildDisplay::None,
-            &fixture_selection(driver),
-        );
+        let command = GpuCommand::inspect(Path::new("/fixture/child"), &ChildDisplay::None, driver);
         assert_eq!(
             command.command_line(),
             [
@@ -956,7 +956,7 @@ fn an_offscreen_child_has_no_display_and_no_software_present() {
         for (key, value) in [
             ("SPACE_SCUFFLE_VIRTUAL_GPU", "1"),
             ("WGPU_BACKEND", "vulkan"),
-            ("VK_ICD_FILENAMES", "/fixture/icd.json"),
+            ("VK_ICD_FILENAMES", gpu_run::INSPECTION_MANIFEST),
             ("WGPU_ADAPTER_NAME", driver.adapter_driver()),
         ] {
             assert_eq!(
@@ -982,16 +982,8 @@ fn a_windowed_child_keeps_its_virtual_display() {
     let display = ChildDisplay::Virtual {
         screen: Some("1600x900x24".into()),
     };
-    let radv = GpuCommand::renderer(
-        Path::new("/fixture/child"),
-        &display,
-        &fixture_selection(GpuDriver::Radv),
-    );
-    let lavapipe = GpuCommand::renderer(
-        Path::new("/fixture/child"),
-        &display,
-        &fixture_selection(GpuDriver::Lavapipe),
-    );
+    let radv = GpuCommand::inspect(Path::new("/fixture/child"), &display, GpuDriver::Radv);
+    let lavapipe = GpuCommand::inspect(Path::new("/fixture/child"), &display, GpuDriver::Lavapipe);
     assert_eq!(
         variable(&radv, "MESA_VK_WSI_DEBUG"),
         Setting::Set("sw".into())

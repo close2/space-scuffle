@@ -1102,7 +1102,13 @@ pub struct GpuCommand {
     program: PathBuf,
     /// The ledger's name of the child's display ([`GpuCommand::display_name`]).
     display: &'static str,
+    /// `false` for a command built by [`GpuCommand::inspect`], which never runs.
+    runnable: bool,
 }
+
+/// The manifest an inspected command names ([`GpuCommand::inspect`]); no driver is installed
+/// there, so even a command that escaped the check in [`GpuCommand::try_run`] loads no driver.
+pub const INSPECTION_MANIFEST: &str = "/nonexistent/space-scuffle-inspection/icd.json";
 
 /// Builds a [`GpuCommand`] that runs `binary` on a virtual display with the selected driver.
 ///
@@ -1169,6 +1175,24 @@ pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> Gpu
 }
 
 impl GpuCommand {
+    /// Builds a command of `binary` on `display` for `driver` that can be inspected
+    /// ([`Self::command_line`], [`Self::environment`], [`Self::display_name`]) but never run:
+    /// [`Self::try_run`] refuses it. Its manifest is [`INSPECTION_MANIFEST`].
+    ///
+    /// The tests of the command builder use it, so they need no host driver. A runnable renderer
+    /// comes only from [`selected_driver`], which pairs the driver with its own manifest and so
+    /// with its lock: a caller cannot pair `lavapipe`'s missing lock with `radv`'s manifest.
+    pub fn inspect(binary: &Path, display: &ChildDisplay, driver: GpuDriver) -> Self {
+        let selection = GpuSelection {
+            driver,
+            manifest: PathBuf::from(INSPECTION_MANIFEST),
+            reason: "inspection only".to_owned(),
+        };
+        let mut command = Self::renderer(binary, display, &selection);
+        command.runnable = false;
+        command
+    }
+
     /// Builds a renderer child of `binary` on `display` for `selection`. GNU `timeout` wraps the
     /// run, because [`Command::output`] has no deadline and a client that loses its display can
     /// spin forever. It signals the whole process group, including the client under `xvfb-run`,
@@ -1177,7 +1201,7 @@ impl GpuCommand {
     ///
     /// # Panics
     /// Panics when `display` is virtual and neither `xvfb-run` nor a display exists.
-    pub fn renderer(binary: &Path, display: &ChildDisplay, selection: &GpuSelection) -> Self {
+    fn renderer(binary: &Path, display: &ChildDisplay, selection: &GpuSelection) -> Self {
         let driver = selection.driver;
         let run_limit_secs = driver.run_limit_secs();
         let mut command = timeout_command(run_limit_secs);
@@ -1226,6 +1250,7 @@ impl GpuCommand {
             run_limit_secs,
             program: binary.to_owned(),
             display: shown_on.ledger_name(driver),
+            runnable: true,
         }
     }
 
@@ -1244,6 +1269,7 @@ impl GpuCommand {
             run_limit_secs: LOCK_PROBE_RUN_LIMIT_SECS,
             program: program.to_owned(),
             display: DisplayKind::NoChild.ledger_name(GpuDriver::Lavapipe),
+            runnable: true,
         }
     }
 
@@ -1342,8 +1368,13 @@ impl GpuCommand {
     /// [`GpuLockError`] when the lock could not be taken.
     ///
     /// # Panics
-    /// As [`Self::run`] for everything after the lock.
+    /// When the command was built by [`Self::inspect`], and as [`Self::run`] for everything
+    /// after the lock.
     pub fn try_run(mut self, label: &str) -> Result<GpuRun, GpuLockError> {
+        assert!(
+            self.runnable,
+            "{label}: a command built by GpuCommand::inspect is for inspection and never runs"
+        );
         self.keep_adapter_line();
         let preload = preload_executable(&self.program).unwrap_or_else(|error| {
             panic!("{label}: cannot read {}: {error}", self.program.display())
