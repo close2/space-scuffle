@@ -713,3 +713,108 @@ debug, both run directly as the gate runs them (`--test-threads` from `suites.ro
 whole GPU lane (`gpu_run.rs`), is the verifier's. WP2's own check ran `cargo gate quick`, the converted targets
 above on both drivers, `capture_path_gpu_tests` on both drivers, `gpu_validation_tests` on radv, the `offscreen`
 unit tests, `workspace_checks` and the `gate` crate's tests.
+
+---
+
+## Amendment 2: WP3 as built, WP2 review fixes, Q0086 applied (2026-11-17, short note, charter §6)
+
+WP3 is on branch `gpu-readback` after `main` at `345da93f` was merged in (Q0086 answered). It follows D-4 (the
+session variant with the status shim, as P-K chose), D-7 (KWin) and the WP1 findings. **Status: code and
+lavapipe/unit checks done; the radv checks are not.** After the server's reboot the RX 580 has no render node
+(`/dev/dri` holds only `card0`), so the harness selects `lavapipe` by itself. Per the owner, no lavapipe result
+stands in for radv: the radv list at the end of this amendment is still to run before the branch merges.
+
+**As built (`crates/client/tests/support/gpu_run.rs`).**
+
+- **Display selection.** `SPACE_SCUFFLE_GPU_TEST_DISPLAY = auto | kwin | xvfb`, read once per test process by
+  `selected_display()` and decided by the pure `select_display(request, driver, &HostDisplay)`:
+  - `auto`: KWin on radv where `kwin_wayland` and `Xwayland` are on `PATH` and `XDG_RUNTIME_DIR` is a directory;
+    otherwise `xvfb-run` (radv with `MESA_VK_WSI_DEBUG=sw`), with a `WARNING:` selection line naming what is
+    missing; otherwise the process's own display (`host`); otherwise an error.
+  - lavapipe never uses KWin (`auto` keeps it on Xvfb; `kwin` with lavapipe is an error), so no compositor runs on
+    the physical GPU without the lock.
+  - A forced `kwin` or `xvfb` never falls back. `virtual_gpu_command_with(binary, screen, request)` forces a display
+    for one command (T-1, T-2, T-8).
+- **Command.** `ChildDisplay { None, Xvfb { screen }, Kwin { screen, runtime_dir }, Host }`. `GpuCommand` now keeps
+  the program, its arguments and variables, and builds the launch line at run time (`launch_command`): `timeout
+  --kill-after=10 <limit>`, then `kwin_wayland --virtual --xwayland --no-lockscreen --no-global-shortcuts --width W
+  --height H --socket ss-gpu-<pid>-<n> --exit-with-session "<shim> <status> <program> <args>"`, W×H from the screen
+  (1280×720 by default, 1600×900 for the editor). A KWin child gets `DISPLAY`, `WAYLAND_DISPLAY` and
+  `MESA_VK_WSI_DEBUG` removed (KWin sets the display variables for its session), `XDG_RUNTIME_DIR` set explicitly,
+  `WINIT_UNIX_BACKEND=x11` (as in WP1's M4), and the driver, lock and adapter check of every child.
+- **Status shim.** Per run, `try_run` writes `session.sh` into `<XDG_RUNTIME_DIR>/ss-gpu-<pid>-<n>.session/` before
+  the lock and removes the directory afterwards (a drop guard, also on panic). The shim runs the program and writes
+  its exit status through a temporary name. `kwin_session_verdict` is the rule: `timeout`'s 124 is a timeout;
+  otherwise the status file's code replaces KWin's; a missing or unreadable file fails the run, naming KWin's own
+  code. The directory is not named like the socket: the first radv attempt used the socket's name, and KWin
+  could not create its socket there (exit 1, no status), which this rule correctly reported as a failure.
+- **Session words.** KWin splits the session string like a shell, so `session_word` refuses (panics naming it)
+  any path or argument with a character outside ASCII letters, digits and `-_./=,:+@%`, a strict superset of the
+  plan's "whitespace". The children's binaries, test names and temporary directories pass.
+- **Ledger.** `display=kwin`. KWin's own start counts toward the `launch` phase; its and Xwayland's log lines have
+  no `tracing` timestamp, so neither the validation parser nor the timeline reads them.
+- **Self-test limit.** `set_run_limit_for_self_test(secs)`, used only by T-8.
+- **D-5 is not built.** WP1 found no windowed child reaching KWin's 60 Hz (20 to 25 fps), so present mode stays
+  `AutoVsync`; no production file changed in WP3.
+- **`frame_budget_tests`** declares `--display-path` from the harness's choice (`kwin` → `kwin-virtual`, `xvfb-sw`
+  or `xvfb` → `xvfb-software-present`, `host` → `desktop`) and checks `WAYLAND_DISPLAY` accordingly.
+- **Module docs** of `gpu_run.rs` describe display selection, the session and the new limits; `suites.ron` needs
+  no change (no target added; every change is in files the targets already own).
+
+**T-2 deviation: the witness.** The plan named the `concealment_gpu_tests` child. Checked first, on radv before the
+reboot: two Xvfb runs of `concealment_pose_child` differ in 7,906 to 10,442 pixels by up to 76/255 (KWin against
+KWin about the same), so it cannot witness bit-identity. Its own patch checks still run on every display, unchanged.
+The witness is the lab window child of `capture_path_gpu_tests` (fixed time steps): by hand on radv, two Xvfb runs,
+two KWin runs and Xvfb against KWin were pixel-identical in 6 of 6 captures in every pair (Xvfb 25.1 to 25.8 s,
+KWin 5.7 to 5.9 s). `a_kwin_capture_equals_its_xvfb_capture` runs that child forced on Xvfb and forced on KWin and
+requires identical pixels; on a process without KWin (lavapipe, or radv without KWin) it states why and, on
+lavapipe, that the display is Xvfb. The production skirmish children, `status_pose_child` and the editor keep
+exactly the checks they have; no tolerance, bar, golden or reference changed.
+
+**Tests (T-5, T-8) in `gpu_validation_tests.rs`.** `an_xvfb_child_keeps_its_virtual_display`,
+`a_kwin_child_runs_its_session_under_timeout` (order and words of the launch line, variables, `display=kwin`),
+`kwin_sockets_are_unique_per_run`, `a_kwin_argument_with_whitespace_is_refused`, `session_words_are_plain`,
+`kwin_session_verdicts` (a missing status file fails), `kwin_screens_are_parsed`, `display_selection_matrix`, and
+the radv self-tests `a_failing_kwin_session_fails_the_run` (exit 3 reaches the verdict and the program's output is
+captured) and `a_timed_out_kwin_session_leaves_nothing_running` (20 s limit). The latter finds the run's processes
+by a variable only it sets on `timeout`, plus all of `timeout`'s descendants by `/proc/<pid>/stat`, because
+Debian's `kwin_wayland` has file capabilities and its `environ` is unreadable; and its session first connects
+`xdpyinfo`, because KWin starts Xwayland only when an X client connects (seen by hand: a session running only
+`sleep` has no Xwayland). After the run none of the sampled processes (same PID and start time) may remain.
+
+**WP2 review (accepted with conditions), fixed in their own commits except where noted.**
+
+- F1: the "GPU renderer" rule covers `crates/client/src/offscreen.rs`; no `client_diagnostics` GPU target uses it.
+- F2: `GpuCommand::renderer` is private; runnable renderers come only from `selected_driver()`. The command tests
+  use `GpuCommand::inspect`, whose commands name a nonexistent manifest and are refused by `try_run`.
+- F3 (in the WP3 commit, same test functions): the lab program gains an empty-ground capture; every capture must
+  not be one colour, and each still must change at least 500 pixels of the ground by more than 8/255. On lavapipe
+  the effect captures change 13,698 to 20,280 pixels.
+- F5: `client::offscreen` states that a canvas keeps a skipped frame and why a capture cannot show it (Bevy
+  0.15.3's screenshot redirects that frame's output into its own texture).
+- F6: `#[expect(.., reason)]` in `effect_gpu_tests`; long doc lines wrapped; T-1's window child is forced onto
+  Xvfb and refuses `display=host` (in the WP3 commit).
+
+**Q0086** is answered (option 1, plus the owner's standing delegation of GPU-rule edits) and closed. The guide's
+bullet carries the approved text plus two sentences matching what was built: lavapipe stays on Xvfb, and the
+display variable forces a choice without fallback.
+
+**Checks run (no radv).** `cargo gate quick`; the non-GPU harness tests; on lavapipe (selected automatically,
+no render node): T-1 (7 of 7 captures identical, F3 sanity passed), T-2 and T-8 (each reports "no KWin run" and
+checks the lavapipe display is Xvfb), and all 19 windowed GPU targets listed below (19 of 19 pass; 52 children: 48 on Xvfb, 1 offscreen, 3 without a display; no KWin, no leftover Xvfb or KWin processes; `weapon_battle_gpu_tests` alone took 15 min on lavapipe under a host load near 120). These are lavapipe results and say nothing about radv. Before the reboot, on radv:
+`a_failing_kwin_session_fails_the_run` passed; the timeout self-test failed twice, on its own process search (fixed
+as described above), never on leftovers: `pgrep` showed no `kwin_wayland` or `Xwayland` after either run.
+
+**Still to do on radv (the RX 580 must be back; nothing here was measured on lavapipe in its place):**
+
+1. `gpu_validation_tests` on radv: `a_timed_out_kwin_session_leaves_nothing_running` (never passed yet in its final
+   form), `a_failing_kwin_session_fails_the_run` again, and the validated `client` runs under KWin (new DRI3 path:
+   any finding is fixed or allowlisted with its cause).
+2. T-2 `a_kwin_capture_equals_its_xvfb_capture` and T-1 on radv.
+3. T-4: every windowed GPU target on radv through KWin (the 19 targets of the ledger below), including
+   `battle_hud_window_tests` (1280×720 at scale 1 under KWin), `editor_app_tests` (1600×900), `frame_budget_tests`
+   (declares `kwin-virtual`) and `showcase_tests`. If a child's existing checks fail under KWin, stop and report.
+4. Interleaved before/after radv timings of those targets, before = the same binaries with
+   `SPACE_SCUFFLE_GPU_TEST_DISPLAY=xvfb` (exactly the pre-WP3 path), in the order xvfb r1, kwin r1, kwin r2, xvfb r2,
+   with `~/scratch/gpu-readback/wp3/bin/arm.sh <xvfb|kwin> <round>`, summarised in Amendment 1's ledger format.
+5. The verifier's `cargo gate package` (Q0061).
