@@ -785,7 +785,7 @@ Sizes: S ≤ 1 day, M 2–3 days, L ≥ 4 days. At most two building agents at o
 | WP10 | Areas and links: `psionic_storm`-style area from a test-only ability, `abduct_tether` from a test-only snapshot; `abilities` map in presentation blocks | Area edge at `AreaRadius` ±2 px; fog per frame; tether ends on both bubbles ±2 px; steady-state window with a live area and tether | Reviewed | M |
 | WP11 | Migrate every existing weapon look (tracers, beams, lightning, slashes, plasma orbs, shatter) into effect definitions and presentation blocks for all shipped units and structures; retire the matching `combat_fx` kinds | Coverage test over the whole catalog with no defaults left for splash weapons; existing visual tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) green or re-baselined with that cause only | Every unit chooses its effects in data | M |
 | **Integration, media, showcase, bookkeeping** | | | | |
-| WP12 | Mode-command integration (after plan `2026-11-09-client-mode-commands` lands): skirmish headless test burrows and sieges through input, checks stance and the fog rule end to end | `skirmish_match_tests.rs` extension | Green | S |
+| WP12 | Mode-command integration (after plan `2026-11-09-client-mode-commands` lands): skirmish headless test burrows and sieges through input, checks stance and the fog rule end to end | `skirmish_match_tests.rs` extension | Green — **done** (Amendment 29) | S |
 | WP13 | Morph and mode unit clips (only if Q0075 = yes): atlas slices keyed by `(AnimState, mode)`; ≈ 12 clips | `asset_baker` prompt validation; `runtime_media_tests.rs` admission of mode slices | Clips accepted in review — **done** (Amendment 10: 8 clips, $4.40) | M + ≤ $6.80 |
 | WP14 | Remaining texture sets (`fx_energy`, variants), showcase beats (tank sieges and fires, Hellion flame, Baneling burst and Lurker spines once those identities have media), frame budget with every effect | `showcase_tests.rs`: the take contains each showcase effect at least once; frame-budget evidence (§10.3) | CI showcase renders on lavapipe within its budget | M + ≤ $8.80 Veo (+ ≤ $20 images if allowed) |
 | WP15 | Bookkeeping: evidence `docs/evidence/2026-11-09-effect-visualization.md` (bit-identity, captures, pixel statistics, frame budget, spend), `DESIGN.md` presentation row, register entries closed, `crates/gate/suites.ron` rules and GPU classes for every new test (C22), plan row → Done | `workspace_checks`, `suite_catalog_tests.rs` | Green | S |
@@ -2817,3 +2817,56 @@ minor items E4-1 to E4-3. D-1 holds: no simulation crate, golden replay or check
 - **E4-3.** The valgrind effect stream checks, after its window, that the index built from the presented bubbles
   finds every one of them where it stands with its own radius, so a broken lookup falling back to the default bubble
   fails the stream.
+
+## Amendment 29: WP12, mode commands and their looks end to end (2026-11-16, short note, charter §6)
+
+**Decision note (charter §6, short note: client tests, one re-export and gate catalog rules).** WP12 of §9 lands
+as three headless tests in `crates/client/tests/skirmish_match_tests.rs`, where the row puts them, on the production
+client and the shipped skirmish through `support/battle_harness.rs`. They do not repeat
+`battle_mode_tests.rs` (which asserts what the simulation did) or `battle_fog_tests.rs` (whose concealed units are
+staged through the world): here every switch is the local player's key, and what is asserted is what the client
+publishes and presents. No simulation state, golden replay, checksum or look changes (D-1 holds).
+
+- **`burrow_and_siege_by_key_publish_their_stance_and_hold_their_looks`.** A burrowing unit and an anchoring unit
+  (chosen by their modes' `burrowed` and `is_immobile`, never by name) are burrowed and unburrowed, sieged and
+  unsieged by their card keys. On every frame: the presented `RenderSnapshot` publishes the switch with the entered
+  mode, the mode left standing until the channel ends, and a channel progress that starts below 0.1, never runs back
+  and reaches above 0.85; the owner's `PlayerView::mode_states` lists the unit as channelling exactly while the
+  latest snapshot of the same tick publishes the switch, with the settled mode that the switch enters; after the
+  channel the new mode and concealment (`Burrowed` for the burrow) are published. The effect system holds the
+  switch's morph (`burrow_dig`, `burrow_emerge`, `mode_seal_sweep` both ways) from the first published frame with a
+  presented progress that never runs back, keeps it after the channel when its span is longer (D-6: the dig's 1.8 s
+  over the 33-tick channel), then releases it and holds the stance look (`burrow_mound`, `siege_anchor`), with no
+  cover look on the owner's burrowed unit (Amendment 11); back in the default stance nothing is held. The expected
+  looks are read from `UnitEffectTables` (the burrow's also checked against `defaults.concealment`), so the test
+  follows the data.
+- **`the_opponent_sees_nothing_of_switches_under_its_fog`.** Both switches are keyed, then the battle is shown to the
+  opponent, who has no sight there: on every frame of the switches neither bubble is drawn and no look is held on
+  either unit; shown to the owner again, both stand with their stance looks (the control).
+- **`the_opponent_sees_a_burrowed_unit_only_where_it_detects_it`.** An enemy spotter (an unarmed, non-detecting
+  flyer) watches the burrow: the dig is held while the unit is still in plain sight; from the tick its concealment
+  flips it is neither drawn nor holds a look. An enemy detector brings it back drawn, in its mound, settled (the dig
+  not replayed), with no cover look, and listed in the opponent's `revealed`; when the detector dies it is hidden
+  again with every look released. A tank sieged by key in the spotter's sight shows the opponent the same morph,
+  progress and anchor as its owner.
+
+**Decisions (Q0002, reversible).**
+
+- **The opponent's view is the production client shown to the opponent.** The tests set
+  `BattlePresentation::controlled`, as the developer view's participant choice does; the HUD then writes the
+  opponent's `PlayerView`, the fog refills from it and `present_stances` presents to it. The orders under test are
+  still the local player's keys (given while the local player is shown). The module invariants say so.
+- **The `PlayerView` is compared with the latest snapshot, not the presented one.** The timeline presents up to a
+  tick behind the latest executed tick (it interpolates towards it), so on most frames the presented snapshot and
+  the view describe different ticks; the first run of the test failed on exactly that offset, which is by design,
+  not a bug.
+- **"The detected look" of a burrowed enemy is its stance.** Per Amendment 11, `detected_mark` marks detected
+  cloaked enemies only; a detected burrowed enemy is shown sunk in its mound, as to its owner. The test asserts that.
+- `client::effects::catalog` re-exports `ModeEffectIds` (the per-mode look ids `UnitEffectTables::mode` already
+  returned publicly), so the test can name what it compares.
+- Gate catalog: `client/skirmish_match_tests` is added to the "HUD windows" rule (the fog is applied in
+  `battle_hud/fog.rs`) and to the "catalog" rule (the looks come from `effects.ron` and the presentation blocks); it
+  was already selected by the GPU renderer and live-sync rules.
+
+**Findings.** No gap or bug: the stance is published, every look is requested at its moment, and nothing leaks
+through the fog. No register entry, no evidence file (the tests are the evidence).

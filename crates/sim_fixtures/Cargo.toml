@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 description = "Test-only Space Scuffle worlds and catalogs built from the shipped data, embedded at compile time"
 publish = false
 

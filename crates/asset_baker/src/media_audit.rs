@@ -315,8 +315,7 @@ pub fn audit_media(
     let concept_digest = concept.as_ref().ok().map(|media| media.png_digest.as_str());
     let concept_frames: BTreeSet<[u8; 32]> = concept
         .as_ref()
-        .map(|media| frame_hashes(media).into_iter().collect())
-        .unwrap_or_default();
+        .map_or_default(|media| frame_hashes(media).into_iter().collect());
     let mut entries: Vec<_> = catalog
         .archetypes()
         .map(|archetype| {

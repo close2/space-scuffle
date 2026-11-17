@@ -342,8 +342,7 @@ pub fn failed_tests(log: &str) -> Vec<String> {
 #[must_use]
 pub fn test_arguments(job: &Job) -> Vec<String> {
     job.test_threads
-        .map(|threads| vec![format!("--test-threads={threads}")])
-        .unwrap_or_default()
+        .map_or_default(|threads| vec![format!("--test-threads={threads}")])
 }
 
 /// The file name of a target's log.
@@ -513,8 +512,7 @@ impl Running<'_> {
         };
         let mut library_path = exe
             .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default()
+            .map_or_default(Path::to_path_buf)
             .into_os_string();
         if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH") {
             library_path.push(":");

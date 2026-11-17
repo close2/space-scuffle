@@ -34,7 +34,8 @@ use std::fmt::Write as _;
 pub struct LoggedBinary {
     /// The source Cargo names (`src/lib.rs`, `tests/x.rs`), or `None` for a doc-test run.
     pub source: Option<String>,
-    /// The executable's crate name (`sim_types` from `deps/sim_types-0123abcd`), or for a
+    /// The executable's crate name (`sim_types` from `deps/sim_types-0123abcd` or
+    /// `build/sim_types/0123abcd/out/sim_types-0123abcd`), or for a
     /// doc-test run the crate Cargo names.
     pub stem: String,
     /// The time libtest reports (`finished in 1.23s`), in milliseconds, if the block has a
@@ -106,7 +107,8 @@ fn crate_name(id: &TargetId) -> String {
     }
 }
 
-/// The crate name in an executable path: `…/deps/foo_tests-0123abcd(.exe)` gives `foo_tests`.
+/// The crate name in an executable path: `…/deps/foo_tests-0123abcd(.exe)` (Cargo up to 1.99)
+/// or `…/build/<crate>/0123abcd/out/foo_tests-0123abcd` (Cargo 1.100) gives `foo_tests`.
 fn executable_stem(path: &str) -> String {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let file = file.strip_suffix(".exe").unwrap_or(file);
@@ -115,8 +117,8 @@ fn executable_stem(path: &str) -> String {
         .to_string()
 }
 
-/// Parses a `Running …` line's rest: `unittests src/lib.rs (…/deps/x-hash)` or
-/// `tests/x.rs (…/deps/x-hash)`.
+/// Parses a `Running …` line's rest: `unittests src/lib.rs (…/x-hash)` or `tests/x.rs (…/x-hash)`,
+/// whichever directory layout Cargo put the executable in (see [`executable_stem`]).
 fn running(rest: &str) -> Option<LoggedBinary> {
     let rest = rest.strip_prefix("unittests ").unwrap_or(rest);
     let open = rest.rfind(" (")?;
@@ -393,6 +395,40 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
             Vec::new()
         );
         assert_eq!(executable_stem("deps/a-b_tests-0f"), "a-b_tests");
+    }
+
+    #[test]
+    fn executables_in_cargo_1_100_build_directories_lose_their_hash_too() {
+        let log = "\
+     Running tests/battle_fog_tests.rs (/t/debug/build/client/5c19db82bc9232c8/out/battle_fog_tests-5c19db82bc9232c8)
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 158.80s
+
+     Running unittests src/lib.rs (target/debug/build/sim-core/0a1b/out/sim_core-0a1b)
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+";
+        assert_eq!(
+            parse_test_log(log),
+            vec![
+                LoggedBinary {
+                    source: Some("tests/battle_fog_tests.rs".into()),
+                    stem: "battle_fog_tests".into(),
+                    millis: Some(158_800),
+                    passed: Some(true),
+                },
+                LoggedBinary {
+                    source: Some("src/lib.rs".into()),
+                    stem: "sim_core".into(),
+                    millis: Some(100),
+                    passed: Some(true),
+                },
+            ]
+        );
+        assert_eq!(
+            executable_stem(r"target\debug\build\gate\77\out\crash-77.exe"),
+            "crash"
+        );
     }
 
     #[test]

@@ -309,9 +309,7 @@ impl UnitEffectTables {
     /// default extent for an ability without a look or without a search.
     #[must_use]
     pub fn missile_extent(&self, source: AbilitySource) -> MissileExtent {
-        self.ability_look(source)
-            .map(|look| look.extent)
-            .unwrap_or_default()
+        self.ability_look(source).map_or_default(|look| look.extent)
     }
 
     /// The look `source`'s ability names, if any.

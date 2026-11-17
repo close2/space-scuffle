@@ -140,8 +140,7 @@ impl FileRecord {
         Ok(Self {
             name: path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+                .map_or_default(|name| name.to_string_lossy().into_owned()),
             bytes: bytes.len() as u64,
             sha256: hex(&digest),
         })

@@ -11,6 +11,16 @@
 //!
 //! Neither alone meets the criterion, and neither claims to.
 //!
+//! It also owns the end-to-end check of mode commands and their looks (plan
+//! `2026-11-09-effect-visualization` WP12): a burrow and a siege ordered by key publish their
+//! stance in the `RenderSnapshot` and the owner's `PlayerView` over the channel, the effect
+//! system holds each switch's morph and then its stance look at the right moments, and the
+//! opponent's presentation obeys the fog rule (D-5): nothing of a unit under its fog, nothing of
+//! an undetected burrowed unit, and the burrowed stance where its detector covers the unit. The
+//! opponent's presentation is the production client shown to the opponent
+//! (`BattlePresentation::controlled`, the developer view's participant choice); the orders under
+//! test are still the local player's keys.
+//!
 //! # How it fits
 //! The windowed test re-executes this binary as its child, so no scripted-play code ships in the
 //! client. A debug build on the test GPU cannot play minutes of the match in the run limit, so the
@@ -28,6 +38,10 @@
 //! - The headless run fails on any battle failure, simulation diagnostic, client refusal or
 //!   revalidation rejection, and the pilot fails past its tick limit, printing its stage.
 //! - The pilot's source names no session world accessor and no catalog identity.
+//! - The mode tests choose archetypes by capability (a burrowed or anchored mode, detection, an
+//!   unarmed flyer) among those the client can present, never by name. Their setup may spawn
+//!   units, kill the detector and choose the presented participant; every mode switch under test
+//!   arrives through a key event.
 
 #![allow(
     clippy::expect_used,
@@ -60,20 +74,29 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::PrimaryWindow;
+use client::battle_hud::card::{CardAction, CommandCard};
 use client::battle_hud::feed::BattleFeed;
 use client::battle_hud::model::HudModel;
 use client::battle_hud::result::{ResultScreen, ViewerResult};
 use client::battle_hud::HudGeometry;
+use client::battle_pipeline::commands::{is_armed, mode_of_ability, ModeDirection};
 use client::battle_pipeline::driver::AdmissionOutcome;
+use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_pipeline::BattleSet;
+use client::battle_presentation::BattlePresentation;
 use client::bubble_shader::BubbleInstance;
+use client::effects::catalog::{EffectCatalog, EffectId, ModeEffectIds, UnitEffectTables};
+use client::effects::stance::{channel_progress, StanceTrack};
 use client::input_policy::UiGeometry;
 use client::runtime_battle::SKIRMISH_SCENARIO;
-use client::scene_controller::LiveBattleBubble;
+use client::scene_controller::{LiveBattleBubble, RenderEntityMap};
 use client::{ClientMode, LabState, RtsCamera};
 use serde::{Deserialize, Serialize};
-use sim_types::{AnimState, MatchResult};
+use sim_types::{
+    AnimState, Concealment, EntityId, MatchResult, ModeStateView, MoverType, PlayerId, SimScalar,
+    StanceView, UnitTypeId,
+};
 use skirmish_pilot::{Pilot, PilotGoal, SkirmishPilotPlugin, Stage};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -753,4 +776,745 @@ fn windowed_skirmish_child() {
             .in_set(BattleSet::Present),
     );
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Mode commands and their looks (plan 2026-11-09-effect-visualization WP12)
+// ---------------------------------------------------------------------------------------------
+
+/// The opponent of the viewer in the shipped skirmish.
+const OPPONENT: PlayerId = PlayerId(1);
+/// Frames a mode switch, its channel's random extra and the look's settle may take.
+const SWITCH_FRAME_LIMIT: u32 = 400;
+/// Frames run after a switch's looks settle, so the held stance is seen standing.
+const STANDING_FRAMES: u32 = 10;
+
+/// Which mode a [`mode_unit`] is chosen for, by the mode's catalog properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModeKind {
+    /// A burrowed mode (`burrowed: true`, the Lurker analogue's).
+    Burrow,
+    /// An anchored mode that is not burrowed (`is_immobile`, the Siege Tank analogue's).
+    Siege,
+}
+
+/// What one frame published and presented of one unit.
+#[derive(Debug, Clone, Copy)]
+struct StanceFrame {
+    /// The simulation tick presented.
+    tick: u32,
+    /// The stance in the presented `RenderSnapshot`.
+    stance: StanceView,
+    /// The concealment in the presented `RenderSnapshot`.
+    concealment: Concealment,
+    /// The unit's entry in the viewer's `PlayerView::mode_states` (the viewer's own units only).
+    state: Option<ModeStateView>,
+    /// The tick of that `PlayerView`, written for the latest executed tick.
+    view_tick: u32,
+    /// The latest authoritative snapshot's tick and the unit's stance in it. The presented
+    /// snapshot runs up to a tick behind (the timeline interpolates towards the latest), so the
+    /// `PlayerView` is compared with this one.
+    latest: (u32, StanceView),
+    /// The morph the effect system holds on the unit, with its presented progress.
+    morph: Option<(EffectId, f32)>,
+    /// The stance look held on the unit.
+    stance_look: Option<EffectId>,
+    /// The concealment look held on the unit.
+    cover: Option<EffectId>,
+    /// Whether Bevy would draw the unit's bubble.
+    drawn: bool,
+}
+
+impl StanceFrame {
+    /// Whether the effect system holds any look on the unit.
+    const fn holds_a_look(&self) -> bool {
+        self.morph.is_some() || self.stance_look.is_some() || self.cover.is_some()
+    }
+}
+
+/// The skirmish, paused, with the camera on the local player's first worker, and that worker's
+/// position (open ground in view).
+fn skirmish_at_home() -> (Harness, Vec2) {
+    let mut harness = Harness::boot_scenario(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    let world = harness.world();
+    let worker = world
+        .entities
+        .values()
+        .find(|unit| {
+            unit.owner == LOCAL_PLAYER
+                && world
+                    .catalog
+                    .get(unit.unit_type_id)
+                    .is_ok_and(|archetype| archetype.capabilities.can_construct)
+        })
+        .map(|unit| unit.id)
+        .expect("the skirmish starts with workers");
+    let home = harness.simulated_position(worker);
+    harness.look_at(home);
+    (harness, home)
+}
+
+/// Whether the client can present `unit_type`: the HUD catalog records why it cannot.
+fn presentable_type(harness: &Harness, unit_type: UnitTypeId) -> bool {
+    harness
+        .app
+        .world()
+        .resource::<HudModel>()
+        .catalog
+        .archetype(unit_type)
+        .is_some_and(|commands| commands.unpresentable.is_none())
+}
+
+/// A presentable mobile archetype whose mode ability switches into a mode of `kind`, and that
+/// mode's index in its `modes`. Chosen by capability, never by name (charter §3.3).
+fn mode_unit(harness: &Harness, kind: ModeKind) -> (UnitTypeId, u8) {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && presentable_type(harness, archetype.unit_type_id)
+        })
+        .find_map(|archetype| {
+            let mode = archetype
+                .abilities
+                .iter()
+                .find_map(|ability| mode_of_ability(archetype, ability))?;
+            let index = archetype
+                .modes
+                .iter()
+                .position(|candidate| candidate.mode_name == mode)?;
+            let spec = &archetype.modes[index];
+            let fits = match kind {
+                ModeKind::Burrow => spec.burrowed,
+                ModeKind::Siege => !spec.burrowed && spec.is_immobile,
+            };
+            fits.then(|| {
+                let index = u8::try_from(index).expect("invariant: a catalog has few modes");
+                (archetype.unit_type_id, index)
+            })
+        })
+        .unwrap_or_else(|| panic!("the catalog ships a presentable {kind:?} unit"))
+}
+
+/// A presentable, unarmed, mobile air archetype that does not detect: an enemy that sees
+/// without detecting, and that the local units cannot shoot down while it looks.
+fn spotter_type(harness: &Harness) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && archetype.mover_type == MoverType::Air
+                && !archetype.is_detector
+                && !is_armed(archetype)
+                && presentable_type(harness, archetype.unit_type_id)
+        })
+        .expect("the catalog ships a presentable unarmed air unit that does not detect")
+        .unit_type_id
+}
+
+/// A presentable mobile detector.
+fn detector_type(harness: &Harness) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && archetype.is_detector
+                && presentable_type(harness, archetype.unit_type_id)
+        })
+        .expect("the catalog ships a presentable mobile detector")
+        .unit_type_id
+}
+
+/// Spawns a unit of `unit_type` for `owner` on open ground `distance` from `near`, and runs the
+/// ticks that present it.
+fn spawn_near(
+    harness: &mut Harness,
+    near: Vec2,
+    distance: f32,
+    unit_type: UnitTypeId,
+    owner: PlayerId,
+) -> EntityId {
+    let at = harness.open_ground(near, distance);
+    let unit = harness
+        .world_mut()
+        .spawn_unit(unit_type, owner, battle_harness::sim_position(at))
+        .expect("open ground");
+    run_mode_ticks(harness, 2);
+    unit
+}
+
+/// Fails on any simulation diagnostic.
+fn assert_no_diagnostics(harness: &Harness) {
+    let session = harness.app.world().resource::<BattleSession>();
+    assert_eq!(session.diagnostics, [], "simulation diagnostics");
+}
+
+/// Runs `ticks` simulation ticks, then stops the clock.
+fn run_mode_ticks(harness: &mut Harness, ticks: u32) {
+    let goal = harness.world().current_tick + ticks;
+    harness.resume();
+    let mut frames = 0;
+    while harness.world().current_tick < goal {
+        harness.step(1);
+        frames += 1;
+        assert!(frames < 10_000, "the battle stopped ticking");
+    }
+    harness.pause();
+    assert_no_diagnostics(harness);
+}
+
+/// Taps the key of the command card's mode entry in `direction` for the selection.
+fn tap_mode_key(harness: &mut Harness, direction: ModeDirection) {
+    harness.step(1);
+    let card = harness.app.world().resource::<CommandCard>();
+    let key = card
+        .slots
+        .iter()
+        .flatten()
+        .find(|slot| {
+            matches!(slot.action, CardAction::SwitchMode { direction: d, .. } if d == direction)
+        })
+        .map_or_else(
+            || panic!("no {direction:?} entry: {:?}", card.slots),
+            |slot| slot.key,
+        );
+    harness.tap_key(key);
+    assert_eq!(
+        harness.pending_orders(),
+        1,
+        "the key queued the switch: {}",
+        harness.status()
+    );
+}
+
+/// Shows the battle to `viewer` from now on, as the developer view's participant choice does.
+fn present_to(harness: &mut Harness, viewer: PlayerId) {
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<BattlePresentation>()
+        .controlled = Some(viewer);
+    harness.step(2);
+    assert_eq!(
+        harness.app.world().resource::<BattleFog>().viewer(),
+        Some(viewer),
+        "the fog follows the viewer"
+    );
+}
+
+/// What the current frame published and presented of `unit`.
+fn stance_frame(harness: &Harness, unit: EntityId) -> StanceFrame {
+    let world = harness.app.world();
+    let session = world.resource::<BattleSession>();
+    let snapshot = session.frames.presented();
+    let bubble = snapshot
+        .bubbles
+        .iter()
+        .find(|bubble| bubble.entity_id == unit)
+        .expect("the snapshot publishes the unit");
+    let entity = *world
+        .resource::<RenderEntityMap>()
+        .0
+        .get(&unit)
+        .expect("the unit has a bubble");
+    let track = world
+        .get::<StanceTrack>(entity)
+        .copied()
+        .unwrap_or_default();
+    StanceFrame {
+        tick: snapshot.tick.0,
+        stance: bubble.stance,
+        concealment: bubble.concealment,
+        state: world
+            .resource::<HudModel>()
+            .view
+            .mode_states
+            .iter()
+            .find(|state| state.entity == unit)
+            .copied(),
+        view_tick: world.resource::<HudModel>().view.tick.0,
+        latest: {
+            let latest = session.frames.current();
+            let stance = latest
+                .bubbles
+                .iter()
+                .find(|bubble| bubble.entity_id == unit)
+                .map_or_else(StanceView::default, |bubble| bubble.stance);
+            (latest.tick.0, stance)
+        },
+        morph: track.morph.map(|morph| (morph.look.effect, morph.progress)),
+        stance_look: track.stance.map(|look| look.effect),
+        cover: track.cover.map(|look| look.effect),
+        drawn: world
+            .get::<InheritedVisibility>(entity)
+            .is_some_and(|visibility| visibility.get()),
+    }
+}
+
+/// Runs the clock frame by frame from a switch just ordered until `unit` stands in its new
+/// stance with its morph released (or, when `hidden`, until the switch is over), and returns
+/// every frame's record.
+fn watch_switch(harness: &mut Harness, unit: EntityId, hidden: bool) -> Vec<StanceFrame> {
+    let mut frames = Vec::new();
+    let mut standing = 0;
+    let mut began = false;
+    harness.resume();
+    for _ in 0..SWITCH_FRAME_LIMIT {
+        harness.step(1);
+        let frame = stance_frame(harness, unit);
+        began |= frame.stance.transition.is_some();
+        frames.push(frame);
+        let over = began && frame.stance.transition.is_none();
+        if over && (hidden || frame.morph.is_none()) {
+            standing += 1;
+        }
+        if standing > STANDING_FRAMES {
+            harness.pause();
+            assert_no_diagnostics(harness);
+            return frames;
+        }
+    }
+    panic!("the switch never settled: {frames:#?}");
+}
+
+/// The name of effect `id` in the vocabulary.
+fn effect_name(harness: &Harness, id: EffectId) -> String {
+    harness
+        .app
+        .world()
+        .resource::<EffectCatalog>()
+        .effect(id)
+        .map_or_else(|| format!("{id:?}"), |effect| effect.name.clone())
+}
+
+/// Seconds the vocabulary gives effect `id` on screen, if it states its own span.
+fn effect_span(harness: &Harness, id: EffectId) -> Option<f32> {
+    harness
+        .app
+        .world()
+        .resource::<EffectCatalog>()
+        .effect(id)
+        .and_then(|effect| effect.span)
+}
+
+/// The looks `unit_type`'s presentation block, with the vocabulary's defaults, gives its mode
+/// `mode`.
+fn mode_looks(harness: &Harness, unit_type: UnitTypeId, mode: u8) -> ModeEffectIds {
+    harness
+        .app
+        .world()
+        .resource::<UnitEffectTables>()
+        .mode(unit_type, mode)
+        .expect("every mode of every archetype has looks")
+}
+
+/// What one switch is expected to publish and present.
+struct ExpectedSwitch {
+    /// The mode entered (`None`: back to the default stance).
+    entering: Option<u8>,
+    /// The mode the unit stands in before the switch.
+    from: Option<u8>,
+    /// The morph held while the switch runs.
+    morph: EffectId,
+    /// The stance look held once it stands in the new stance.
+    stance: Option<EffectId>,
+    /// The concealment published once the switch is over.
+    concealment: Concealment,
+    /// Whether the viewer owns the unit, so its `PlayerView` lists the unit's mode state.
+    own: bool,
+}
+
+/// Asserts the frames of the channel of a switch `expected`: the published stance and mode
+/// state follow it, the published progress runs forward from near 0 to near 1, and the morph is
+/// held on every frame with its presented progress never running back. Returns the last
+/// presented progress.
+fn assert_channel(harness: &Harness, channel: &[StanceFrame], expected: &ExpectedSwitch) -> f32 {
+    let mut last_progress = 0.0_f32;
+    let mut last_channel = 0.0_f32;
+    for frame in channel {
+        let tick = frame.tick;
+        let transition = frame.stance.transition.expect("inside the channel");
+        assert_eq!(transition.entering, expected.entering, "tick {tick}");
+        assert_eq!(frame.stance.mode, expected.from, "tick {tick}");
+        let published = channel_progress(&transition);
+        assert!(
+            published >= last_channel,
+            "the published channel runs forward: {published} after {last_channel}"
+        );
+        last_channel = published;
+        assert!(frame.drawn, "tick {tick}: the switching unit is drawn");
+        let (morph, progress) = frame
+            .morph
+            .unwrap_or_else(|| panic!("tick {tick}: no morph held: {frame:?}"));
+        assert_eq!(
+            morph,
+            expected.morph,
+            "tick {tick}: {} held",
+            effect_name(harness, morph)
+        );
+        assert!(
+            progress >= last_progress,
+            "the morph never runs back: {progress} after {last_progress}"
+        );
+        last_progress = progress;
+        assert_eq!(frame.stance_look, None, "no stance look while it switches");
+    }
+    let first = channel[0].stance.transition.expect("in the channel");
+    assert!(
+        channel_progress(&first) < 0.1,
+        "the channel is first published near its start"
+    );
+    assert!(
+        last_channel > 0.85,
+        "the channel is published to near its end: {last_channel}"
+    );
+    last_progress
+}
+
+/// Asserts that the owner's `PlayerView::mode_states` follows the switch into `entering` in
+/// `frames`: on every frame whose view and latest snapshot describe the same tick, the unit is
+/// listed as channelling exactly while the snapshot publishes the switch, and its settled mode is
+/// the mode it enters while it channels and the mode it stands in otherwise. Both halves are
+/// seen.
+fn assert_mode_states(frames: &[StanceFrame], entering: Option<u8>) {
+    let (mut channelling, mut standing) = (0, 0);
+    for frame in frames {
+        let (tick, stance) = frame.latest;
+        if frame.view_tick != tick {
+            continue;
+        }
+        let state = frame.state.expect("the viewer's mode unit is listed");
+        assert_eq!(
+            state.channeling,
+            stance.transition.is_some(),
+            "tick {tick}: {state:?} against {stance:?}"
+        );
+        let settled = stance
+            .transition
+            .map_or(stance.mode, |switch| switch.entering);
+        assert_eq!(state.settled_mode, settled, "tick {tick}");
+        if state.channeling {
+            assert_eq!(state.settled_mode, entering, "tick {tick}");
+            channelling += 1;
+        } else {
+            standing += 1;
+        }
+    }
+    assert!(
+        channelling > 0 && standing > 0,
+        "the view is seen in and after the channel: {channelling} and {standing} frames"
+    );
+}
+
+/// Asserts that `frames`, recorded by [`watch_switch`] while the viewer sees the unit, publish
+/// and present the switch `expected`: the channel as [`assert_channel`] checks it; then the new
+/// stance and concealment are published, the morph finishes on the client after the channel
+/// when its span is longer (D-6), and it hands over to the stance look.
+fn assert_switch(harness: &Harness, frames: &[StanceFrame], expected: &ExpectedSwitch) {
+    let first = frames
+        .iter()
+        .position(|frame| frame.stance.transition.is_some())
+        .expect("the switch is published");
+    let end = first
+        + frames[first..]
+            .iter()
+            .position(|frame| frame.stance.transition.is_none())
+            .expect("the switch ends");
+    let channel = &frames[first..end];
+    let mut last_progress = assert_channel(harness, channel, expected);
+    if expected.own {
+        assert_mode_states(frames, expected.entering);
+    }
+
+    let after = &frames[end..];
+    for frame in after {
+        let tick = frame.tick;
+        assert_eq!(frame.stance.mode, expected.entering, "tick {tick}");
+        assert_eq!(frame.concealment, expected.concealment, "tick {tick}");
+        if let Some((morph, progress)) = frame.morph {
+            assert_eq!(morph, expected.morph, "the same morph settles");
+            assert!(progress >= last_progress, "the settle never runs back");
+            last_progress = progress;
+            assert_eq!(frame.stance_look, None, "no stance look while it settles");
+        }
+    }
+    let nominal = channel[0]
+        .stance
+        .transition
+        .expect("in the channel")
+        .nominal_ticks;
+    let channel_seconds = f32::from(nominal) / f32::from(sim_types::TICKS_PER_SECOND);
+    if effect_span(harness, expected.morph).is_some_and(|span| span > channel_seconds + 0.1) {
+        assert!(
+            after[0].morph.is_some(),
+            "a morph longer than its channel settles on after it (D-6)"
+        );
+    }
+    let last = after.last().expect("frames after the switch");
+    assert_eq!(last.morph, None, "the morph is released once complete");
+    assert_eq!(
+        last.stance_look,
+        expected.stance,
+        "the stance look: {:?}",
+        last.stance_look.map(|look| effect_name(harness, look))
+    );
+    assert!(last.drawn, "the unit is drawn in its new stance");
+}
+
+/// The morph, the stance look and the morph back of `unit_type`'s mode `mode` of `kind`, and the
+/// concealment it publishes standing in it.
+fn switch_looks(
+    harness: &Harness,
+    kind: ModeKind,
+    unit_type: UnitTypeId,
+    mode: u8,
+) -> (EffectId, Option<EffectId>, EffectId, Concealment) {
+    let looks = mode_looks(harness, unit_type, mode);
+    let concealment = match kind {
+        ModeKind::Burrow => {
+            // The burrowed defaults (plan WP8, Amendment 11) reach the unit's mode.
+            let defaults = harness
+                .app
+                .world()
+                .resource::<UnitEffectTables>()
+                .concealment();
+            assert_eq!(looks.enter, defaults.burrow_enter);
+            assert_eq!(looks.leave, defaults.burrow_leave);
+            assert_eq!(looks.stance, defaults.burrowed);
+            Concealment::Burrowed
+        }
+        ModeKind::Siege => Concealment::None,
+    };
+    let enter = looks
+        .enter
+        .or(looks.transition)
+        .expect("entering the mode has a look");
+    let leave = looks
+        .leave
+        .or(looks.transition)
+        .expect("leaving the mode has a look");
+    let stance = looks.stance.expect("standing in the mode has a look");
+    eprintln!(
+        "{kind:?}: enter {}, stance {}, leave {}",
+        effect_name(harness, enter),
+        effect_name(harness, stance),
+        effect_name(harness, leave)
+    );
+    (enter, Some(stance), leave, concealment)
+}
+
+/// Q0070 and WP12: a unit burrowed and unburrowed, and a tank sieged and unsieged, by their keys
+/// alone, publish their stance and mode state over the channel, and the effect system holds the
+/// burrow's dig, mound and emerge and the siege's seal sweep and anchor at the right moments.
+#[test]
+fn burrow_and_siege_by_key_publish_their_stance_and_hold_their_looks() {
+    let (mut harness, home) = skirmish_at_home();
+    for (kind, distance) in [(ModeKind::Burrow, 4.0), (ModeKind::Siege, 7.0)] {
+        let (unit_type, mode) = mode_unit(&harness, kind);
+        let (enter, stance, leave, concealment) = switch_looks(&harness, kind, unit_type, mode);
+        let unit = spawn_near(&mut harness, home, distance, unit_type, LOCAL_PLAYER);
+        harness.select(unit);
+
+        tap_mode_key(&mut harness, ModeDirection::Enter);
+        let frames = watch_switch(&mut harness, unit, false);
+        assert_switch(
+            &harness,
+            &frames,
+            &ExpectedSwitch {
+                entering: Some(mode),
+                from: None,
+                morph: enter,
+                stance,
+                concealment,
+                own: true,
+            },
+        );
+        assert_eq!(
+            frames.last().expect("frames").cover,
+            None,
+            "{kind:?}: its owner sees it by its stance, with no cover look (Amendment 11)"
+        );
+
+        tap_mode_key(&mut harness, ModeDirection::Leave);
+        let frames = watch_switch(&mut harness, unit, false);
+        assert_switch(
+            &harness,
+            &frames,
+            &ExpectedSwitch {
+                entering: None,
+                from: Some(mode),
+                morph: leave,
+                stance: None,
+                concealment: Concealment::None,
+                own: true,
+            },
+        );
+        assert!(
+            !frames.last().expect("frames").holds_a_look(),
+            "{kind:?}: back in its default stance, nothing is held"
+        );
+    }
+}
+
+/// D-5 end to end: while the local player burrows and sieges by key where the opponent has no
+/// sight, the opponent's presentation draws neither unit and holds none of their looks on any
+/// frame; the local player's own presentation of the same units holds them (the control).
+#[test]
+fn the_opponent_sees_nothing_of_switches_under_its_fog() {
+    let (mut harness, home) = skirmish_at_home();
+    let (burrower_type, _) = mode_unit(&harness, ModeKind::Burrow);
+    let (tank_type, _) = mode_unit(&harness, ModeKind::Siege);
+    let burrower = spawn_near(&mut harness, home, 4.0, burrower_type, LOCAL_PLAYER);
+    let tank = spawn_near(&mut harness, home, 7.0, tank_type, LOCAL_PLAYER);
+
+    // Both switches are ordered by key, then the battle is shown to the opponent.
+    harness.select(burrower);
+    tap_mode_key(&mut harness, ModeDirection::Enter);
+    run_mode_ticks(&mut harness, 1);
+    harness.select(tank);
+    tap_mode_key(&mut harness, ModeDirection::Enter);
+    present_to(&mut harness, OPPONENT);
+    for unit in [burrower, tank] {
+        let frame = stance_frame(&harness, unit);
+        assert!(!frame.drawn, "the opponent has no sight here: {frame:?}");
+    }
+
+    let frames = watch_switch(&mut harness, tank, true);
+    let burrowed = stance_frame(&harness, burrower);
+    assert_eq!(burrowed.concealment, Concealment::Burrowed, "{burrowed:?}");
+    for frame in &frames {
+        let tick = frame.tick;
+        assert!(!frame.drawn, "tick {tick}: the tank under fog is drawn");
+        assert!(
+            !frame.holds_a_look(),
+            "tick {tick}: a look is held on a unit under fog: {frame:?}"
+        );
+        assert_eq!(
+            frame.state, None,
+            "the opponent's view lists no foreign mode"
+        );
+    }
+    assert!(
+        frames.iter().any(|frame| frame.stance.transition.is_some()),
+        "the switch ran while the opponent watched"
+    );
+    assert!(!burrowed.drawn && !burrowed.holds_a_look(), "{burrowed:?}");
+
+    // The control: shown to its owner again, both stand in their modes with their looks.
+    present_to(&mut harness, LOCAL_PLAYER);
+    for unit in [burrower, tank] {
+        let frame = stance_frame(&harness, unit);
+        assert!(frame.drawn && frame.stance_look.is_some(), "{frame:?}");
+    }
+}
+
+/// D-5 end to end, the opponent's side: an enemy spotter sees the burrow begin (the dig is held
+/// while the digging unit is still in plain sight), loses the unit with all its looks when its
+/// concealment flips, and a detector brings it back settled in its mound, with no cover look,
+/// until the detector dies. A tank sieged by key in the spotter's sight shows the opponent its
+/// seal sweep and anchor as it shows its owner.
+#[test]
+fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
+    let (mut harness, home) = skirmish_at_home();
+    let (burrower_type, burrowed_mode) = mode_unit(&harness, ModeKind::Burrow);
+    let (tank_type, siege_mode) = mode_unit(&harness, ModeKind::Siege);
+    let burrower = spawn_near(&mut harness, home, 4.0, burrower_type, LOCAL_PLAYER);
+    let tank = spawn_near(&mut harness, home, 7.0, tank_type, LOCAL_PLAYER);
+    let at = harness.simulated_position(burrower);
+    let spotter_type = spotter_type(&harness);
+    let spotter = spawn_near(&mut harness, at, 3.0, spotter_type, OPPONENT);
+
+    // The burrow, ordered by key and watched by the opponent.
+    harness.select(burrower);
+    tap_mode_key(&mut harness, ModeDirection::Enter);
+    present_to(&mut harness, OPPONENT);
+    let frames = watch_switch(&mut harness, burrower, true);
+    let flip = frames
+        .iter()
+        .position(|frame| frame.concealment == Concealment::Burrowed)
+        .expect("the burrow conceals the unit");
+    let looks = mode_looks(&harness, burrower_type, burrowed_mode);
+    let dig = looks.enter.expect("the burrow has a dig");
+    let digging = &frames[..flip];
+    assert!(
+        digging
+            .iter()
+            .any(|frame| frame.drawn && frame.morph.map(|(look, _)| look) == Some(dig)),
+        "the spotter sees the dig while the unit is in plain sight: {digging:#?}"
+    );
+    for frame in &frames[flip..] {
+        let tick = frame.tick;
+        assert!(!frame.drawn, "tick {tick}: undetected, yet drawn");
+        assert!(
+            !frame.holds_a_look(),
+            "tick {tick}: a look is held on an undetected burrowed enemy: {frame:?}"
+        );
+    }
+    assert!(
+        harness.world().entities.contains_key(&spotter),
+        "the spotter still stands"
+    );
+
+    // A detector of the opponent's brings it back, settled in its mound.
+    let detector_type = detector_type(&harness);
+    let detector = spawn_near(&mut harness, at, 3.0, detector_type, OPPONENT);
+    harness.step(2);
+    let seen = stance_frame(&harness, burrower);
+    assert!(seen.drawn, "detected, it is drawn: {seen:?}");
+    assert_eq!(seen.stance_look, looks.stance, "and shown in its mound");
+    assert_eq!(seen.morph, None, "settled: the dig is not replayed");
+    assert_eq!(
+        seen.cover, None,
+        "a detected burrowed unit has no cover look"
+    );
+    assert!(
+        harness
+            .app
+            .world()
+            .resource::<HudModel>()
+            .view
+            .revealed
+            .contains(&burrower),
+        "the opponent's view lists it as revealed"
+    );
+
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&detector)
+        .expect("the detector stands")
+        .hp = SimScalar::ZERO;
+    run_mode_ticks(&mut harness, 3);
+    let lost = stance_frame(&harness, burrower);
+    assert!(
+        !lost.drawn && !lost.holds_a_look(),
+        "undetected again: {lost:?}"
+    );
+
+    // The siege, ordered by key, in the spotter's sight.
+    present_to(&mut harness, LOCAL_PLAYER);
+    harness.select(tank);
+    tap_mode_key(&mut harness, ModeDirection::Enter);
+    present_to(&mut harness, OPPONENT);
+    let frames = watch_switch(&mut harness, tank, false);
+    let (enter, stance, _, concealment) =
+        switch_looks(&harness, ModeKind::Siege, tank_type, siege_mode);
+    assert_switch(
+        &harness,
+        &frames,
+        &ExpectedSwitch {
+            entering: Some(siege_mode),
+            from: None,
+            morph: enter,
+            stance,
+            concealment,
+            own: false,
+        },
+    );
 }

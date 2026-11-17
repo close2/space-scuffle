@@ -24,7 +24,7 @@ mod units;
 
 pub use error::{EffectCatalogError, NameKind, Site};
 pub use textures::{AtlasElement, TextureAtlas};
-pub use units::{status_index, UnitEffectTables, WeaponEffectIds, STATUS_ORDER};
+pub use units::{status_index, ModeEffectIds, UnitEffectTables, WeaponEffectIds, STATUS_ORDER};
 
 use super::curve::{Curve, Ramp};
 use bevy::prelude::*;
