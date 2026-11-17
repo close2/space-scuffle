@@ -53,3 +53,6 @@ Options:
 
 ## Answer
 
+**Option 1 — Approved (merge the `docs/guides/gpu-and-disk.md` diff alongside WP2 and WP3).**
+
+**Standing governance delegation on GPU operational rules:** In addition to approving this diff, note that the GPU rules in `AGENTS.md` §7 and `docs/guides/gpu-and-disk.md` exist as practical guardrails so agents do not overlook shared-VM hazards (such as forgetting `with-gpu-lock` on the physical RX 580 or accidentally picking the wrong driver) — **not** to force human approval on well-engineered test/display/driver improvements. Going forward, **agents may update the GPU operational rules in `docs/guides/gpu-and-disk.md` (and `AGENTS.md` §7 if needed, including adopting `Q0083` Option 2 or refining display/readback paths) directly without opening an owner question, provided the change is well-reasoned, preserves shared-host GPU lock safety whenever touching the physical GPU, and is documented in the plan/commit.**
