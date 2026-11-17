@@ -417,3 +417,92 @@ pub fn keep_beams(
     };
     beams.keep(presented, fog.as_deref(), view, &mut context);
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
+mod tests {
+    use super::*;
+    use sim_types::{
+        AnimState, Concealment, ShapeKind, SilhouetteClass, StanceView, StatusFlags, UnitTypeId,
+        WeaponVisualKind,
+    };
+
+    /// A unit bubble of entity `id` at map `(x, y)` standing at altitude `altitude`.
+    fn bubble(id: u32, x: f32, y: f32, altitude: f32, radius: f32) -> BubbleRenderInstance {
+        BubbleRenderInstance {
+            entity_id: EntityId(id),
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::HeavyHex,
+            unit_type: UnitTypeId::default(),
+            owner: PlayerId(0),
+            world_pos: [x, y, altitude],
+            ground_z: 0.0,
+            radius,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: true,
+            weapon_visual: WeaponVisualKind::LaserBeam,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: Concealment::None,
+            speed_boosted: false,
+            stance: StanceView::default(),
+            status: StatusFlags::default(),
+            barrier_ratio: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_flyers_beam_leaves_its_own_bubble_and_ends_on_the_targets_glass() {
+        // A flyer hovering 2.5 above the ground beams at a ground unit 6 units away.
+        let flyer = bubble(1, 0.0, 0.0, 2.5, 0.6);
+        let ground = bubble(2, 6.0, 0.0, 0.0, 0.5);
+        let line = beam_line(&flyer, &ground, 0.6, None);
+        let centre = Vec3::new(0.0, 3.1, 0.0);
+        assert!(
+            (line.from.distance(centre) - 0.6).abs() < 1e-4,
+            "the muzzle is on the flyer's own glass, not below it: {:?}",
+            line.from
+        );
+        let target = Vec3::new(6.0, 0.5, 0.0);
+        let reach = 0.5 + super::super::struck::SURFACE_MARGIN;
+        assert!(
+            (line.to.distance(target) - reach).abs() < 1e-4,
+            "{:?}",
+            line.to
+        );
+        assert!(line.to.x < 6.0, "the end faces the attacker");
+        assert_eq!(line.seen, u64::MAX, "a beam is drawn whole");
+    }
+
+    #[test]
+    fn the_muzzle_never_passes_four_fifths_of_a_short_beam() {
+        let attacker = bubble(1, 0.0, 0.0, 0.0, 0.5);
+        let target = bubble(2, 0.9, 0.0, 0.0, 0.5);
+        let line = beam_line(&attacker, &target, 5.0, None);
+        let start = Vec3::new(0.0, 0.5, 0.0);
+        let span = start.distance(line.to);
+        assert!((line.from.distance(start) - 0.8 * span).abs() < 1e-4);
+    }
+
+    #[test]
+    fn units_standing_on_one_point_still_give_a_line() {
+        let attacker = bubble(1, 2.0, 2.0, 0.0, 0.5);
+        let target = bubble(2, 2.0, 2.0, 0.0, 0.5);
+        let line = beam_line(&attacker, &target, 0.5, None);
+        assert!(line.from.is_finite() && line.to.is_finite());
+    }
+}

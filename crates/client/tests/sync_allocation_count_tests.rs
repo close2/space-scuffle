@@ -282,7 +282,7 @@ fn send_splash(
             };
             let target = 1 + usize::try_from(*counter / 4).unwrap_or(0) % (bubbles.len() - 1);
             events.send(beam(0, bubbles[target].entity_id));
-            if *counter % 7 == 0 {
+            if counter.is_multiple_of(7) {
                 events.send(beam(1, sim_types::EntityId(u32::MAX - *counter % 64)));
             }
         }

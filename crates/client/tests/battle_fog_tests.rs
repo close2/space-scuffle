@@ -1529,7 +1529,11 @@ fn a_named_status_look_shows_only_on_a_unit_the_viewer_sees() {
         .expect("it stands")
         .is_cloaked = true;
     run_ticks(&mut harness, 2);
-    assert!(!named_statuses_on(&harness, victim).is_empty());
+    assert_ne!(
+        named_statuses_on(&harness, victim).len(),
+        0,
+        "it still bears it"
+    );
     assert_eq!(
         harness.published_concealment(victim),
         Concealment::None,

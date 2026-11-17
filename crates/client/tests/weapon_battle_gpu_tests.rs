@@ -1678,3 +1678,688 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
     );
     Ok(())
 }
+
+// --- Held beam (plan `2026-11-17-effect-snapshot-identity` WP7, D-4, B-126) --------------------
+//
+// A presentable shooter whose block names a sustained travel look (a held beam) fires at an
+// unarmed target walking across the screen in front of it; the target is killed after
+// [`BEAM_STREAM_FRAMES`]. Every 40 ms frame the child records where the held beam's line ends
+// and where the target's drawn bubble's outline point towards the shooter is, both projected
+// to the window, and how many beams of the look are held and live; at [`BEAM_SAMPLE_FRAME`],
+// and once the beam's exit and one frame are over after the target's death, it stops the clock
+// and pictures the window with and without effect layers. The parent checks that one beam is
+// held through the stream, that its end lies within [`BEAM_END_TOLERANCE_PX`] of the target's
+// outline point on every frame, that the paired pictures show the beam reaching that point
+// while the target lives, and that after its death no beam instance is live and no pixel of
+// its path changes.
+
+/// Environment variable naming the held-beam child's output directory.
+const BEAM_CHILD_OUT_VAR: &str = "SPACE_SCUFFLE_HELD_BEAM_CHILD_OUT";
+/// Frames the beam streams at the walking target before it is killed.
+const BEAM_STREAM_FRAMES: u32 = 40;
+/// Frame of the stream at which the paired pictures are taken.
+const BEAM_SAMPLE_FRAME: u32 = 24;
+/// Frames recorded after the kill.
+const BEAM_AFTER_FRAMES: u32 = 12;
+/// The plan's tolerance on the beam's end, window pixels.
+const BEAM_END_TOLERANCE_PX: f32 = 3.0;
+/// World units the target walks across the screen, and the shooter stands in front of its path.
+const BEAM_WALK: f32 = 3.0;
+/// Channel change, 0 to 255, at which a pixel of the paired pictures counts as changed.
+const BEAM_CHANGE_LEVEL: u8 = 8;
+/// Window pixels either side of the beam's path sampled in the paired pictures.
+const BEAM_PATH_HALF_PX: f32 = 3.0;
+/// Shares of the path from the muzzle sampled after the death: clear of both bubbles and of
+/// the death's look round the target.
+const BEAM_PATH_SPAN: (f32, f32) = (0.2, 0.6);
+
+/// One recorded frame of the held-beam child.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+struct BeamFrame {
+    /// Frame since the attack was ordered.
+    frame: u32,
+    /// Whether the presented frame shows the target.
+    target_shown: bool,
+    /// Beams [`client::effects::beams::HeldBeams`] holds, and live instances of the look.
+    held: usize,
+    live: usize,
+    /// The held beam's line, muzzle and end, projected (window pixels), when one is held.
+    muzzle_px: Option<[f32; 2]>,
+    end_px: Option<[f32; 2]>,
+    /// The target's drawn bubble's outline point towards the shooter, projected.
+    outline_px: Option<[f32; 2]>,
+}
+
+/// What the held-beam child reports.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct BeamReport {
+    look: String,
+    shooter: String,
+    frames: Vec<BeamFrame>,
+    /// The paired pictures at the sample frame and after the death: `(drawn, bare)` files, and
+    /// the beam's projected muzzle and end (after the death, as last held).
+    sample: Option<(String, String, [f32; 2], [f32; 2])>,
+    after: Option<(String, String, [f32; 2], [f32; 2])>,
+    /// The look's exit, seconds.
+    exit: f32,
+    /// Frame the target was killed on.
+    kill_frame: u32,
+}
+
+/// What the held-beam child is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum BeamPhase {
+    #[default]
+    Boot,
+    Booting {
+        still: u32,
+        height: f32,
+    },
+    Framing {
+        frames: u32,
+    },
+    Running {
+        frame: u32,
+    },
+    /// The clock is stopped for a paired picture: `bare` once the drawn one is taken; `after`
+    /// for the picture after the death.
+    Picturing {
+        frame: u32,
+        bare: bool,
+        settle: u32,
+        after: bool,
+    },
+    Finishing,
+}
+
+/// The held-beam child's staging.
+#[derive(Resource, Default)]
+struct BeamStaging {
+    directory: PathBuf,
+    phase: BeamPhase,
+    shooter: Option<EntityId>,
+    target: Option<EntityId>,
+    look: Option<client::effects::catalog::EffectId>,
+    /// The last held beam's projected muzzle and end.
+    last_line: Option<([f32; 2], [f32; 2])>,
+    /// The frame the target was first missing from the presented frame.
+    gone: Option<u32>,
+    outstanding: Arc<AtomicU32>,
+    report: BeamReport,
+}
+
+/// Whether the effect layers are drawn: cleared for the bare picture of a pair.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct BeamView {
+    bare: bool,
+}
+
+/// Clears the frame's effect instances for a bare picture.
+fn apply_beam_view(view: Res<'_, BeamView>, runtime: Option<ResMut<'_, EffectRuntime>>) {
+    let Some(mut runtime) = runtime else {
+        return;
+    };
+    if view.bare {
+        runtime.frame.sorted.clear();
+        runtime.frame.decals.clear();
+        runtime.frame.decal_owners.clear();
+        runtime.frame.distortions.clear();
+        runtime.frame.lights.clear();
+    }
+}
+
+/// The first presentable unit whose block names a sustained travel look for one of its
+/// weapons, that weapon's slot and the look's name. Found by data (C5).
+fn beam_shooter(
+    world: &SimWorld,
+    catalog: &EffectCatalog,
+) -> Option<(UnitTypeId, WeaponSlot, String)> {
+    world.catalog.archetypes().find_map(|arch| {
+        if arch.max_speed <= SimScalar::ZERO || !presentable(&assets(), &arch.slug) {
+            return None;
+        }
+        arch.effects.weapons.iter().find_map(|entry| {
+            let travel = entry.travel.as_ref()?;
+            let sustained = catalog
+                .effect_id(travel)
+                .and_then(|id| catalog.effect(id))
+                .is_some_and(|effect| effect.sustain.is_some());
+            (sustained && entry.mode.is_none() && slot_weapon(arch, entry.weapon).is_some())
+                .then(|| (arch.unit_type_id, entry.weapon, travel.clone()))
+        })
+    })
+}
+
+/// Stages the held beam: the shooter in front of the target's walk across the screen, the
+/// target walking, the attack ordered.
+fn stage_beam(
+    staging: &mut BeamStaging,
+    session: &mut BattleSession,
+    catalog: &EffectCatalog,
+    spot: Vec2,
+    up: Vec2,
+) {
+    let world = session.world_mut().expect("a ready session has a world");
+    let (shooter_type, slot, look) =
+        beam_shooter(world, catalog).expect("a presentable unit names a held beam");
+    let air = slot == WeaponSlot::Air;
+    let range = world
+        .catalog
+        .get(shooter_type)
+        .ok()
+        .and_then(|arch| slot_weapon(arch, slot))
+        .map_or(3.0_f32, |weapon| weapon.max_range.to_f32());
+    let target_type = target_type(world, &[], air);
+    let reach = (range * 0.6).clamp(1.5, 2.5);
+    let shooter = spawn_still(world, shooter_type, VIEWER, spot - up * reach);
+    let across = Vec2::new(up.y, -up.x);
+    let target = world
+        .spawn_unit(
+            target_type,
+            ENEMY,
+            sim_position(spot - across * BEAM_WALK * 0.5),
+        )
+        .expect("open ground");
+    world
+        .entities
+        .get_mut(&target)
+        .expect("just spawned")
+        .issue_order(
+            UnitOrder::Move {
+                target: sim_position(spot + across * BEAM_WALK * 0.5),
+            },
+            false,
+        )
+        .expect("the walk is admitted");
+    staging.report.shooter = world
+        .catalog
+        .get(shooter_type)
+        .map_or_else(|_| String::new(), |arch| arch.slug.clone());
+    staging.report.look.clone_from(&look);
+    staging.report.exit = catalog
+        .effect_id(&look)
+        .and_then(|id| catalog.effect(id))
+        .map_or(0.0, |effect| effect.held_exit);
+    staging.look = catalog.effect_id(&look);
+    staging.shooter = Some(shooter);
+    staging.target = Some(target);
+    let (world, queue) = session.world_and_commands();
+    queue
+        .submit_selection(
+            world.expect("a ready session has a world"),
+            VIEWER,
+            &[shooter],
+            UnitOrder::attack(target),
+            false,
+        )
+        .expect("the client admits an attack by the viewer's own unit");
+}
+
+/// The outline point of the drawn bubble at `centre` (Bevy world) of `radius` towards
+/// `towards` (a Bevy world point), as the camera sees it, at the struck surface's margin:
+/// its silhouette's point on the side of `towards`.
+fn outline_point(
+    camera: (&Camera, &GlobalTransform),
+    centre: Vec3,
+    radius: f32,
+    towards: Vec3,
+) -> [f32; 2] {
+    let view = camera.1.forward().as_vec3();
+    let across = Vec3::new(towards.x - centre.x, 0.0, towards.z - centre.z).normalize_or_zero();
+    let side = (across - view * across.dot(view)).normalize_or_zero();
+    project3(
+        camera,
+        centre + side * (radius + client::effects::struck::SURFACE_MARGIN),
+    )
+}
+
+/// Records one frame of the held-beam child.
+fn record_beam(
+    staging: &mut BeamStaging,
+    frame: u32,
+    camera: (&Camera, &GlobalTransform),
+    drawn: &[(EntityId, Vec3, f32)],
+    beams: &client::effects::beams::HeldBeams,
+    runtime: &EffectRuntime,
+) {
+    let (Some(shooter), Some(target), Some(look)) = (staging.shooter, staging.target, staging.look)
+    else {
+        return;
+    };
+    let find = |id: EntityId| drawn.iter().find(|(entity, ..)| *entity == id);
+    let slot = beams.slots().iter().find(|slot| slot.attacker == shooter);
+    let line = slot
+        .and_then(|slot| runtime.held(slot.handle))
+        .and_then(|instance| instance.line);
+    let (muzzle_px, end_px) = line.map_or((None, None), |line| {
+        (
+            Some(project3(camera, line.from)),
+            Some(project3(camera, line.to)),
+        )
+    });
+    if let (Some(muzzle), Some(end)) = (muzzle_px, end_px) {
+        staging.last_line = Some((muzzle, end));
+    }
+    let outline_px = find(target)
+        .zip(find(shooter))
+        .map(|(target, shooter)| outline_point(camera, target.1, target.2, shooter.1));
+    let target_shown = find(target).is_some();
+    if !target_shown && staging.gone.is_none() {
+        staging.gone = Some(frame);
+    }
+    staging.report.frames.push(BeamFrame {
+        frame,
+        target_shown,
+        held: beams.slots().len(),
+        live: runtime
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.effect == look)
+            .count(),
+        muzzle_px,
+        end_px,
+        outline_px,
+    });
+}
+
+/// Advances the held-beam child by one frame.
+fn stage_beam_child(
+    mut commands: Commands<'_, '_>,
+    mut staging: ResMut<'_, BeamStaging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    mut time: ResMut<'_, Time<Virtual>>,
+    mut view: ResMut<'_, BeamView>,
+    fog: Option<Res<'_, BattleFog>>,
+    effects: (
+        Option<Res<'_, EffectRuntime>>,
+        Option<Res<'_, EffectCatalog>>,
+        Option<Res<'_, client::effects::beams::HeldBeams>>,
+    ),
+    (cameras, bubbles): (
+        Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
+        Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
+    ),
+    idle: Res<'_, LabRenderIdle>,
+) {
+    let fog = fog.expect("the skirmish presents a player, so it keeps a fog");
+    if !session.is_ready() {
+        return;
+    }
+    let Ok((camera, transform, rts)) = cameras.get_single() else {
+        return;
+    };
+    let tick = session.published().map_or(0, |published| published.tick);
+    let idle_long = idle.0.load(Ordering::Acquire) >= IDLE_FRAMES;
+    let drawn: Vec<(EntityId, Vec3, f32)> = bubbles
+        .iter()
+        .map(|(bubble, global)| (bubble.0.entity_id, global.translation(), bubble.0.radius))
+        .collect();
+    staging.phase = match staging.phase {
+        BeamPhase::Boot if tick < 2 => BeamPhase::Boot,
+        BeamPhase::Boot => BeamPhase::Booting {
+            still: 0,
+            height: rts.look_at_y,
+        },
+        BeamPhase::Booting { still, height } if still < STILL_CAMERA_FRAMES || !idle_long => {
+            let still = if (rts.look_at_y - height).abs() < 1e-4 {
+                still + 1
+            } else {
+                0
+            };
+            BeamPhase::Booting {
+                still,
+                height: rts.look_at_y,
+            }
+        }
+        BeamPhase::Booting { .. } => BeamPhase::Framing { frames: 0 },
+        BeamPhase::Framing { frames } if frames < FRAMING_FRAMES || !idle_long => {
+            BeamPhase::Framing { frames: frames + 1 }
+        }
+        BeamPhase::Framing { .. } => {
+            let catalog = effects
+                .1
+                .as_deref()
+                .expect("the effect system is loaded before the staging");
+            let world = session.world().expect("a ready session has a world");
+            let spot = *find_spots(
+                world,
+                &fog,
+                rts.target,
+                1,
+                on_screen(world, (camera, transform)),
+            )
+            .first()
+            .expect("the start area has an open spot on screen");
+            let up = {
+                let [_, y0] = project(world, (camera, transform), rts.target);
+                let [_, y1] = project(world, (camera, transform), rts.target + Vec2::Y);
+                if y1 < y0 {
+                    Vec2::Y
+                } else {
+                    -Vec2::Y
+                }
+            };
+            hold_own_units(&mut session);
+            stage_beam(&mut staging, &mut session, catalog, spot, up);
+            lab.battle_paused = false;
+            BeamPhase::Running { frame: 0 }
+        }
+        BeamPhase::Running { frame } => {
+            if let (Some(runtime), Some(beams)) = (effects.0.as_deref(), effects.2.as_deref()) {
+                record_beam(
+                    &mut staging,
+                    frame,
+                    (camera, transform),
+                    &drawn,
+                    beams,
+                    runtime,
+                );
+            }
+            let world = session.world_mut().expect("a ready session has a world");
+            if frame < BEAM_STREAM_FRAMES {
+                // The target stands at full health while the beam streams.
+                if let Some(unit) = staging.target.and_then(|id| world.entities.get_mut(&id)) {
+                    unit.hp = SimScalar::from_num(10_000);
+                }
+            } else if frame == BEAM_STREAM_FRAMES {
+                staging.report.kill_frame = frame;
+                if let Some(unit) = staging.target.and_then(|id| world.entities.get_mut(&id)) {
+                    unit.hp = SimScalar::ZERO;
+                }
+            }
+            let exit_frames = (staging.report.exit / 0.04).ceil() as u32;
+            let after_due = staging
+                .gone
+                .is_some_and(|gone| frame == gone + exit_frames + 1)
+                && staging.report.after.is_none();
+            if frame == BEAM_SAMPLE_FRAME || after_due {
+                time.pause();
+                BeamPhase::Picturing {
+                    frame,
+                    bare: false,
+                    settle: 0,
+                    after: after_due,
+                }
+            } else if frame >= BEAM_STREAM_FRAMES + BEAM_AFTER_FRAMES
+                && staging.report.after.is_some()
+            {
+                lab.battle_paused = true;
+                BeamPhase::Finishing
+            } else {
+                BeamPhase::Running { frame: frame + 1 }
+            }
+        }
+        BeamPhase::Picturing {
+            frame,
+            bare,
+            settle,
+            after,
+        } if settle < 3 || !idle_long => BeamPhase::Picturing {
+            frame,
+            bare,
+            settle: settle + 1,
+            after,
+        },
+        BeamPhase::Picturing {
+            frame, bare, after, ..
+        } => {
+            let name = if after { "after" } else { "sample" };
+            let file = format!("beam_{name}_{}.png", if bare { "bare" } else { "drawn" });
+            capture_frame(
+                &mut commands,
+                vec![(
+                    staging.directory.join(&file),
+                    [0, 0, u32::MAX / 4, u32::MAX / 4],
+                )],
+                &staging.outstanding,
+            );
+            if bare {
+                let (muzzle, end) = staging.last_line.unwrap_or(([0.0; 2], [0.0; 2]));
+                let drawn_file = format!("beam_{name}_drawn.png");
+                let pair = Some((drawn_file, file, muzzle, end));
+                if after {
+                    staging.report.after = pair;
+                } else {
+                    staging.report.sample = pair;
+                }
+                view.bare = false;
+                time.unpause();
+                BeamPhase::Running { frame: frame + 1 }
+            } else {
+                view.bare = true;
+                BeamPhase::Picturing {
+                    frame,
+                    bare: true,
+                    settle: 0,
+                    after,
+                }
+            }
+        }
+        BeamPhase::Finishing if staging.outstanding.load(Ordering::SeqCst) > 0 => {
+            BeamPhase::Finishing
+        }
+        BeamPhase::Finishing => {
+            let text = ron::to_string(&staging.report).expect("plain data");
+            std::fs::write(staging.directory.join(REPORT_FILE), text)
+                .expect("the parent's directory is writable");
+            commands.send_event(AppExit::Success);
+            BeamPhase::Finishing
+        }
+    };
+}
+
+/// The held-beam child: boots the production client on the skirmish and stages the beam.
+#[test]
+#[ignore = "launched by the test below on a virtual display"]
+fn held_beam_child() {
+    let directory = std::env::var_os(BEAM_CHILD_OUT_VAR).expect("the parent names a directory");
+    let mut app = client::build_graphical_app_off_main_thread(
+        ClientMode::Skirmish,
+        Some(CHILD_FRAME_LIMIT),
+        SKIRMISH_SCENARIO.as_ref(),
+    )
+    .expect("the shipped assets must start the client");
+    let idle = LabRenderIdle::default();
+    if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        render
+            .insert_resource(idle.clone())
+            .add_systems(bevy::render::Render, track_render_idle);
+    }
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(FRAME_STEP))
+        .insert_resource(idle)
+        .insert_resource(BeamStaging {
+            directory: PathBuf::from(directory),
+            ..BeamStaging::default()
+        })
+        .init_resource::<BeamView>()
+        .add_systems(
+            Update,
+            stage_beam_child
+                .in_set(BattleSet::Present)
+                .after(client::effects::beams::keep_beams),
+        )
+        .add_systems(
+            PostUpdate,
+            apply_beam_view.after(client::effects::systems::build_effect_frame),
+        );
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+/// Changed pixels of `drawn` against `bare` within `half` window pixels of the segment from
+/// `from` to `to`, between shares `span` of its length.
+fn changed_along(
+    drawn: &image::RgbImage,
+    bare: &image::RgbImage,
+    (from, to): ([f32; 2], [f32; 2]),
+    span: (f32, f32),
+    half: f32,
+) -> usize {
+    let (from, to) = (Vec2::from_array(from), Vec2::from_array(to));
+    let axis = to - from;
+    let length = axis.length().max(1e-3);
+    let (low, high) = (from.min(to) - half - 1.0, from.max(to) + half + 1.0);
+    let mut count = 0;
+    for y in low.y.max(0.0) as u32..(high.y as u32).min(drawn.height()) {
+        for x in low.x.max(0.0) as u32..(high.x as u32).min(drawn.width()) {
+            let point = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - from;
+            let along = point.dot(axis) / (length * length);
+            let off = (point - axis * along).length();
+            if along >= span.0 && along <= span.1 && off <= half {
+                let moved = drawn
+                    .get_pixel(x, y)
+                    .0
+                    .iter()
+                    .zip(bare.get_pixel(x, y).0.iter())
+                    .any(|(a, b)| a.abs_diff(*b) >= BEAM_CHANGE_LEVEL);
+                count += usize::from(moved);
+            }
+        }
+    }
+    count
+}
+
+/// Plan `2026-11-17-effect-snapshot-identity` WP7 (B-126): a held beam follows a walking target
+/// with its end on the target's outline on every frame, one beam for the whole stream, and
+/// nothing of it remains its exit and one frame after the target's death.
+#[test]
+fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let driver = gpu_run::selected_driver().driver.to_string();
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args(["--ignored", "--exact", "--nocapture", "held_beam_child"]);
+    command.env(BEAM_CHILD_OUT_VAR, directory.path());
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("held beam");
+    let report: BeamReport = ron::from_str(&std::fs::read_to_string(
+        directory.path().join(REPORT_FILE),
+    )?)?;
+    if let Some(target) = std::env::var_os(EVIDENCE_VAR).map(PathBuf::from) {
+        std::fs::create_dir_all(&target)?;
+        for pair in [&report.sample, &report.after].into_iter().flatten() {
+            for file in [&pair.0, &pair.1] {
+                std::fs::copy(
+                    directory.path().join(file),
+                    target.join(format!("held_beam_{driver}_{file}")),
+                )?;
+            }
+        }
+    }
+    // The stream: from the first frame a beam is held until the kill, one beam, its end on the
+    // target's outline point.
+    let stream: Vec<&BeamFrame> = report
+        .frames
+        .iter()
+        .filter(|frame| frame.frame < report.kill_frame && frame.held > 0)
+        .collect();
+    let first = stream.first().map_or(u32::MAX, |frame| frame.frame);
+    let errors: Vec<f32> = stream
+        .iter()
+        .filter_map(|frame| {
+            let end = Vec2::from_array(frame.end_px?);
+            Some(end.distance(Vec2::from_array(frame.outline_px?)))
+        })
+        .collect();
+    let worst = errors.iter().copied().fold(0.0_f32, f32::max);
+    let travel = stream
+        .first()
+        .zip(stream.last())
+        .and_then(|(a, b)| Some(Vec2::from_array(a.end_px?).distance(Vec2::from_array(b.end_px?))))
+        .unwrap_or(0.0);
+    eprintln!(
+        "driver {driver}: {} ({}) holds its beam from frame {first} on {} frames to the kill at \
+         {}; at most {} held and {} live; its end lies at most {worst:.2} px from the target's \
+         outline point over {} frames (mean {:.2} px) and travelled {travel:.1} px",
+        report.shooter,
+        report.look,
+        stream.len(),
+        report.kill_frame,
+        stream.iter().map(|frame| frame.held).max().unwrap_or(0),
+        stream.iter().map(|frame| frame.live).max().unwrap_or(0),
+        errors.len(),
+        errors.iter().sum::<f32>() / errors.len().max(1) as f32,
+    );
+    assert!(
+        stream.len() >= 20,
+        "the beam is held on most of the stream ({} frames)",
+        stream.len()
+    );
+    assert!(
+        stream
+            .iter()
+            .all(|frame| frame.held == 1 && frame.live == 1),
+        "one beam, one live instance, for the whole stream"
+    );
+    assert_eq!(errors.len(), stream.len(), "every frame measured its end");
+    assert!(
+        worst <= BEAM_END_TOLERANCE_PX,
+        "the beam's end lies within {BEAM_END_TOLERANCE_PX} px of the target's outline point"
+    );
+    assert!(
+        travel > 20.0,
+        "the target walked across the screen ({travel:.1} px)"
+    );
+    // The sample pair: the beam is drawn along its path and at its end.
+    let (drawn, bare, muzzle, end) = report.sample.as_ref().ok_or("the sample was pictured")?;
+    let drawn_image = image::open(directory.path().join(drawn))?.to_rgb8();
+    let bare_image = image::open(directory.path().join(bare))?.to_rgb8();
+    let along = changed_along(
+        &drawn_image,
+        &bare_image,
+        (*muzzle, *end),
+        (0.0, 1.0),
+        BEAM_PATH_HALF_PX,
+    );
+    let at_end = changed_along(
+        &drawn_image,
+        &bare_image,
+        (*muzzle, *end),
+        (0.97, 1.0),
+        BEAM_END_TOLERANCE_PX,
+    );
+    eprintln!(
+        "driver {driver}: sample frame {BEAM_SAMPLE_FRAME}: {along} px of the path and {at_end} \
+         px within {BEAM_END_TOLERANCE_PX} px of its end changed"
+    );
+    assert!(along > 20, "the beam is drawn along its path");
+    assert!(
+        at_end > 0,
+        "the beam's end is drawn at the target's outline"
+    );
+    // After the death: nothing of the beam is live or drawn its exit and a frame later.
+    let gone = report
+        .frames
+        .iter()
+        .find(|frame| frame.frame >= report.kill_frame && !frame.target_shown)
+        .map(|frame| frame.frame)
+        .ok_or("the target died")?;
+    let exit_frames = (report.exit / 0.04).ceil() as u32;
+    let lingering: Vec<u32> = report
+        .frames
+        .iter()
+        .filter(|frame| frame.frame > gone + exit_frames && frame.live > 0)
+        .map(|frame| frame.frame)
+        .collect();
+    let (drawn, bare, muzzle, end) = report.after.as_ref().ok_or("the after pair was pictured")?;
+    let drawn_image = image::open(directory.path().join(drawn))?.to_rgb8();
+    let bare_image = image::open(directory.path().join(bare))?.to_rgb8();
+    let remains = changed_along(
+        &drawn_image,
+        &bare_image,
+        (*muzzle, *end),
+        BEAM_PATH_SPAN,
+        BEAM_PATH_HALF_PX,
+    );
+    eprintln!(
+        "driver {driver}: the target left the presented frame on frame {gone}; exit {:.2} s \
+         ({exit_frames} frames); frames with the beam live after that and a frame: \
+         {lingering:?}; {remains} px of its former path changed",
+        report.exit
+    );
+    assert!(lingering.is_empty(), "the beam outlives its exit");
+    assert_eq!(remains, 0, "no pixel of the beam remains after its exit");
+    Ok(())
+}

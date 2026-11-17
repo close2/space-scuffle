@@ -754,7 +754,7 @@ fn the_beam_follows_both_bubbles() {
             &mut beams,
             &presented,
             (&catalog, &tables, &mut runtime),
-            0.04 * (frame as f64 + 1.0),
+            0.04 * f64::from(u8::try_from(frame).expect("three frames") + 1),
         );
         let line = held_line(&runtime, handle);
         let expected = beam_line(&attacker, &target, muzzle, None);
@@ -851,7 +851,7 @@ fn the_beam_ends_when_the_target_is_gone() {
     // The target died: its bubble is no longer presented, although the deadline is ahead.
     keep_at(
         &mut beams,
-        &[attacker.clone()],
+        std::slice::from_ref(&attacker),
         (&catalog, &tables, &mut runtime),
         0.08,
     );

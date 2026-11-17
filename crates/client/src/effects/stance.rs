@@ -577,19 +577,13 @@ fn keep_named_statuses(
         let Some(effect) = context.tables.named_status(view.status) else {
             continue;
         };
-        let index = match track
+        let existing = track
             .named
             .iter()
-            .position(|slot| slot.is_some_and(|(status, _)| status == view.status))
-        {
-            Some(index) => index,
-            None => {
-                let Some(index) = track.named.iter().position(Option::is_none) else {
-                    track.named_refused = track.named_refused.saturating_add(1);
-                    continue;
-                };
-                index
-            }
+            .position(|slot| slot.is_some_and(|(status, _)| status == view.status));
+        let Some(index) = existing.or_else(|| track.named.iter().position(Option::is_none)) else {
+            track.named_refused = track.named_refused.saturating_add(1);
+            continue;
         };
         let mut held = track.named[index].map(|(_, look)| look);
         context.keep(&mut held, Some(effect), body, bound, settled);
@@ -946,6 +940,11 @@ pub fn present_stances(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a failed test is a panic"
+)]
 mod tests {
     use super::*;
 
@@ -1247,9 +1246,9 @@ mod tests {
         assert_eq!(statuses_of(&list, EntityId(3)), &list[1..3]);
         assert_eq!(statuses_of(&list, EntityId(1)), &list[..1]);
         assert_eq!(statuses_of(&list, EntityId(7)), &list[3..]);
-        assert!(statuses_of(&list, EntityId(2)).is_empty());
-        assert!(statuses_of(&list, EntityId(9)).is_empty());
-        assert!(statuses_of(&[], EntityId(1)).is_empty());
+        assert_eq!(statuses_of(&list, EntityId(2)).len(), 0);
+        assert_eq!(statuses_of(&list, EntityId(9)).len(), 0);
+        assert_eq!(statuses_of(&[], EntityId(1)).len(), 0);
     }
 
     #[test]
