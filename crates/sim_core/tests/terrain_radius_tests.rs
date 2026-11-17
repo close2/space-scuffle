@@ -103,8 +103,8 @@ fn register(
         .expect("invariant: a free unit type id");
     let mut arch = base;
     arch.unit_type_id = free;
-    arch.slug = slug.to_owned();
-    arch.name = slug.to_owned();
+    slug.clone_into(&mut arch.slug);
+    slug.clone_into(&mut arch.name);
     arch.collision_radius = s(collision);
     arch.terrain_radius = s(terrain);
     arch.max_speed = s(0.2);
@@ -461,7 +461,7 @@ fn a_body_at_its_terrain_radius_from_a_site_does_not_block_it() {
                 footprint_w,
                 footprint_h,
             } => Some((a.unit_type_id, footprint_w, footprint_h)),
-            _ => None,
+            ShapeKind::UnitSphere => None,
         })
         .expect("invariant: the builder raises a supply structure with no prerequisite");
     let (cell_x, cell_y) = (24_u32, 20_u32);
