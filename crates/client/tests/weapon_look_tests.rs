@@ -551,3 +551,411 @@ fn an_instant_shots_impact_waits_for_its_slug() {
     );
     eprintln!("instant travels (arrival frame / first impact frame, 10 ms): {checked:?}");
 }
+
+// --- Held beams (plan `2026-11-17-effect-snapshot-identity` WP7, D-4, B-126) -----------------
+
+use client::effects::beams::{beam_line, BeamContext, HeldBeams, HELD_BEAMS};
+use sim_types::{BubbleRenderInstance, EntityId, StrikeEnds};
+
+/// The attack period of the test's beam attacker, ticks (the Void-Ray analogue's).
+const BEAM_PERIOD_TICKS: u16 = 9;
+
+/// A presented unit bubble of `unit` for entity `id` at map `(x, y)`, standing on the ground,
+/// with an attack swing of [`BEAM_PERIOD_TICKS`].
+fn beam_bubble(id: u32, unit: UnitTypeId, x: f32, y: f32) -> BubbleRenderInstance {
+    use sim_types::{
+        AnimState, AttackSwing, Concealment, ShapeKind, SilhouetteClass, StanceView, StatusFlags,
+        WeaponVisualKind,
+    };
+    BubbleRenderInstance {
+        entity_id: EntityId(id),
+        shape: ShapeKind::UnitSphere,
+        silhouette: SilhouetteClass::HeavyHex,
+        unit_type: unit,
+        owner: PlayerId(u8::from(id >= 100)),
+        world_pos: [x, y, 0.0],
+        ground_z: 0.0,
+        radius: 0.5,
+        velocity: [0.0; 2],
+        heading_angle_rad: 0.0,
+        aim_angle_rad: 0.0,
+        is_attacking: true,
+        weapon_visual: WeaponVisualKind::LaserBeam,
+        attack_target_pos: None,
+        anim_state: AnimState::Idle,
+        attack_swing: Some(AttackSwing {
+            elapsed_ticks: 0,
+            damage_point_ticks: 0,
+            period_ticks: BEAM_PERIOD_TICKS,
+        }),
+        hp_ratio: 1.0,
+        shield_ratio: 1.0,
+        shield_hit_flash: 0.0,
+        hull_hit_angle_rad: 0.0,
+        hull_hit_flash: 0.0,
+        build_or_queue_progress: None,
+        selected: false,
+        concealment: Concealment::None,
+        speed_boosted: false,
+        stance: StanceView::default(),
+        status: StatusFlags::default(),
+        barrier_ratio: 1.0,
+    }
+}
+
+/// The first shipped unit whose primary weapon's travel look is sustained, its source and
+/// that look. Found by data (C5).
+fn beam_unit(catalog: &EffectCatalog, units: &UnitCatalog) -> (EffectSource, EffectId) {
+    let (unit, _, effect) = unit_with_travel(catalog, units, |effect| effect.sustain.is_some());
+    (primary(unit), effect)
+}
+
+/// One strike of `source` by `attacker` on `target`, as the simulation publishes it.
+fn beam_strike(
+    source: EffectSource,
+    attacker: &BubbleRenderInstance,
+    target: &BubbleRenderInstance,
+) -> CombatEventVisual {
+    let [ax, ay, _] = attacker.world_pos;
+    let [tx, ty, _] = target.world_pos;
+    CombatEventVisual::BeamVisual {
+        from: [ax, ay, 0.5],
+        to: [tx, ty, 0.5],
+        is_lightning: false,
+        owner: attacker.owner,
+        source,
+        ends: Some(StrikeEnds {
+            attacker: attacker.entity_id,
+            target: target.entity_id,
+        }),
+    }
+}
+
+/// Strikes `event` into `beams` at `now`, its line from its travel request.
+fn strike_at(
+    beams: &mut HeldBeams,
+    event: &CombatEventVisual,
+    presented: &[BubbleRenderInstance],
+    (catalog, tables, runtime): (&EffectCatalog, &UnitEffectTables, &mut EffectRuntime),
+    now: f64,
+) -> bool {
+    let line = travel_request(event, tables, catalog).and_then(|shot| shot.line);
+    let mut context = BeamContext {
+        catalog,
+        tables,
+        runtime,
+        now,
+    };
+    beams.strike(event, line, presented, &mut context)
+}
+
+/// Keeps `beams` on `presented` at `now`, without fog or camera.
+fn keep_at(
+    beams: &mut HeldBeams,
+    presented: &[BubbleRenderInstance],
+    (catalog, tables, runtime): (&EffectCatalog, &UnitEffectTables, &mut EffectRuntime),
+    now: f64,
+) {
+    let mut context = BeamContext {
+        catalog,
+        tables,
+        runtime,
+        now,
+    };
+    beams.keep(presented, None, None, &mut context);
+}
+
+/// The live line of the held beam `handle`.
+fn held_line(
+    runtime: &EffectRuntime,
+    handle: client::effects::pool::EffectHandle,
+) -> client::effects::placement::WorldLine {
+    runtime
+        .held(handle)
+        .and_then(|instance| instance.line)
+        .expect("a held beam has its line")
+}
+
+#[test]
+fn a_stream_of_strikes_holds_one_beam() {
+    let (catalog, units, tables) = shipped();
+    let (source, effect) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let presented = [attacker.clone(), target.clone()];
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let event = beam_strike(source, &attacker, &target);
+    for strike in 0..10_u32 {
+        let now = f64::from(strike) * 0.36;
+        assert!(
+            strike_at(
+                &mut beams,
+                &event,
+                &presented,
+                (&catalog, &tables, &mut runtime),
+                now
+            ),
+            "a sustained beam's strike is taken"
+        );
+        keep_at(
+            &mut beams,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            now + 0.01,
+        );
+    }
+    assert_eq!(beams.slots().len(), 1, "one beam for the stream");
+    assert_eq!(runtime.spawned_of(effect), 1, "held once, never re-spawned");
+    let slot = beams.slots()[0];
+    assert!(runtime
+        .held(slot.handle)
+        .is_some_and(|i| i.released_at.is_none()));
+    // A strike of a look that is not sustained, or without ends, is not taken.
+    let mut no_ends = event.clone();
+    if let CombatEventVisual::BeamVisual { ends, .. } = &mut no_ends {
+        *ends = None;
+    }
+    assert!(!strike_at(
+        &mut beams,
+        &no_ends,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        4.0
+    ));
+}
+
+#[test]
+fn the_beam_follows_both_bubbles() {
+    let (catalog, units, tables) = shipped();
+    let (source, _) = beam_unit(&catalog, &units);
+    let mut attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let mut target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let presented = [attacker.clone(), target.clone()];
+    strike_at(
+        &mut beams,
+        &beam_strike(source, &attacker, &target),
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.0,
+    );
+    let handle = beams.slots()[0].handle;
+    let muzzle = tables.muzzle(source.unit_type);
+    for (frame, (ax, tx, ty)) in [(4.5, 9.4, 4.6), (5.0, 9.8, 5.3), (5.2, 10.1, 6.0)]
+        .into_iter()
+        .enumerate()
+    {
+        attacker.world_pos = [ax, 4.0, 0.0];
+        target.world_pos = [tx, ty, 0.0];
+        let presented = [attacker.clone(), target.clone()];
+        keep_at(
+            &mut beams,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            0.04 * (frame as f64 + 1.0),
+        );
+        let line = held_line(&runtime, handle);
+        let expected = beam_line(&attacker, &target, muzzle, None);
+        assert!(
+            line.from.distance(expected.from) < 1e-3,
+            "frame {frame}: muzzle"
+        );
+        assert!(
+            line.to.distance(expected.to) < 1e-3,
+            "frame {frame}: target end"
+        );
+        // The ends lie on the bubbles: the muzzle on the attacker's glass, the end beyond the
+        // target's, both at the bubbles' drawn heights.
+        let centre = |bubble: &BubbleRenderInstance| {
+            Vec3::new(bubble.world_pos[0], bubble.radius, bubble.world_pos[1])
+        };
+        assert!((line.from.distance(centre(&attacker)) - muzzle).abs() < 1e-3);
+        let reach = target.radius + client::effects::struck::SURFACE_MARGIN;
+        assert!((line.to.distance(centre(&target)) - reach).abs() < 1e-3);
+    }
+}
+
+#[test]
+fn a_retarget_moves_the_end_without_a_second_beam() {
+    let (catalog, units, tables) = shipped();
+    let (source, effect) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let first = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let second = beam_bubble(101, source.unit_type, 4.0, 9.0);
+    let presented = [attacker.clone(), first.clone(), second.clone()];
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    strike_at(
+        &mut beams,
+        &beam_strike(source, &attacker, &first),
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.0,
+    );
+    keep_at(
+        &mut beams,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.04,
+    );
+    strike_at(
+        &mut beams,
+        &beam_strike(source, &attacker, &second),
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.36,
+    );
+    keep_at(
+        &mut beams,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.4,
+    );
+    assert_eq!(beams.slots().len(), 1);
+    assert_eq!(beams.slots()[0].target, second.entity_id);
+    assert_eq!(runtime.spawned_of(effect), 1, "no second beam");
+    let line = held_line(&runtime, beams.slots()[0].handle);
+    let expected = beam_line(&attacker, &second, tables.muzzle(source.unit_type), None);
+    assert!(
+        line.to.distance(expected.to) < 1e-3,
+        "the end moved to the new target"
+    );
+}
+
+#[test]
+fn the_beam_ends_when_the_target_is_gone() {
+    let (catalog, units, tables) = shipped();
+    let (source, _) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let presented = [attacker.clone(), target.clone()];
+    strike_at(
+        &mut beams,
+        &beam_strike(source, &attacker, &target),
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.0,
+    );
+    let handle = beams.slots()[0].handle;
+    keep_at(
+        &mut beams,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        0.04,
+    );
+    assert_eq!(beams.slots().len(), 1);
+    // The target died: its bubble is no longer presented, although the deadline is ahead.
+    keep_at(
+        &mut beams,
+        &[attacker.clone()],
+        (&catalog, &tables, &mut runtime),
+        0.08,
+    );
+    assert!(beams.slots().is_empty(), "released at once");
+    let instance = runtime.held(handle).expect("eroding out");
+    assert_eq!(instance.released_at, Some(0.08));
+    let exit = catalog.effect(instance.effect).expect("loaded").held_exit;
+    assert!(exit <= client::effects::catalog::MAX_SUSTAIN_EXIT);
+    // Nothing of it is drawn once its exit is over, its onset's pulses included: the next
+    // frame's keep ends it.
+    let after = 0.08 + f64::from(exit) + 0.01;
+    keep_at(
+        &mut beams,
+        &[attacker],
+        (&catalog, &tables, &mut runtime),
+        after,
+    );
+    assert!(runtime.held(handle).is_none(), "ended after its exit");
+    runtime.build_frame(&catalog, after, None);
+    assert!(!draws(&runtime), "no beam pixel after its exit");
+}
+
+#[test]
+fn the_beam_ends_a_period_and_grace_after_the_last_strike() {
+    let (catalog, units, tables) = shipped();
+    let (source, effect) = beam_unit(&catalog, &units);
+    let grace = f64::from(
+        catalog
+            .effect(effect)
+            .and_then(|look| look.sustain)
+            .expect("sustained")
+            .grace,
+    );
+    let period = f64::from(BEAM_PERIOD_TICKS) / f64::from(sim_types::TICKS_PER_SECOND);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let presented = [attacker.clone(), target.clone()];
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let last = 1.0;
+    strike_at(
+        &mut beams,
+        &beam_strike(source, &attacker, &target),
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        last,
+    );
+    let deadline = beams.slots()[0].deadline;
+    assert!(
+        (deadline - (last + period + grace)).abs() < 1e-6,
+        "{deadline}"
+    );
+    keep_at(
+        &mut beams,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        deadline - 0.001,
+    );
+    assert_eq!(beams.slots().len(), 1, "held until the deadline");
+    keep_at(
+        &mut beams,
+        &presented,
+        (&catalog, &tables, &mut runtime),
+        deadline + 0.001,
+    );
+    assert!(beams.slots().is_empty(), "released once strikes stopped");
+}
+
+#[test]
+fn a_full_table_refuses_and_counts() {
+    let (catalog, units, tables) = shipped();
+    let (source, _) = beam_unit(&catalog, &units);
+    let target = beam_bubble(1000, source.unit_type, 30.0, 30.0);
+    let attackers: Vec<BubbleRenderInstance> = (0..=HELD_BEAMS)
+        .map(|index| {
+            let id = u32::try_from(index).expect("small") + 1;
+            #[allow(clippy::cast_precision_loss)]
+            let at = 2.0 + index as f32 * 0.4;
+            beam_bubble(id, source.unit_type, at, 4.0)
+        })
+        .collect();
+    let mut presented = attackers.clone();
+    presented.push(target.clone());
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    for attacker in &attackers {
+        assert!(strike_at(
+            &mut beams,
+            &beam_strike(source, attacker, &target),
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            0.0,
+        ));
+    }
+    assert_eq!(beams.slots().len(), HELD_BEAMS);
+    assert_eq!(
+        beams.refused, 1,
+        "the beam past the table's capacity is refused"
+    );
+    assert!(
+        beams
+            .buffers()
+            .iter()
+            .all(|(_, _, capacity)| *capacity == HELD_BEAMS),
+        "the table never grows"
+    );
+}

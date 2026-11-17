@@ -2317,6 +2317,20 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
             }
             if let Some(travel) = travel {
                 assert_eq!(travel.event, EventKind::Shot, "{label}: travel kind");
+                // Plan `2026-11-17-effect-snapshot-identity` D-4: only a beam is held while its
+                // attacker keeps striking; its strikes are instant lines published as beams.
+                if travel.sustain.is_some() {
+                    assert!(
+                        delivery == Delivery::Line
+                            && matches!(
+                                spec.visual_kind,
+                                sim_types::WeaponVisualKind::LaserBeam
+                                    | sim_types::WeaponVisualKind::LightningArc
+                            ),
+                        "{label}: {} is sustained, but the weapon publishes no instant beam",
+                        travel.name
+                    );
+                }
             }
             if let Some(impact) = impact {
                 assert_eq!(impact.event, EventKind::Point, "{label}: impact kind");
@@ -2358,6 +2372,104 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
         Vec::<String>::new(),
         "weapons that publish no event"
     );
+}
+
+/// Plan `2026-11-17-effect-snapshot-identity` WP7 (D-4): a `Shot` effect may be sustained
+/// (held while its attacker keeps striking) and then hold layers that erode out within 0.1 s;
+/// `sustain` is refused on any other kind of effect, with a grace that is not a positive number
+/// of seconds, and on a look whose held layers take longer to go; a `Shot` that is not
+/// sustained may hold no layer; and every shipped sustained look is held by beams only.
+#[test]
+fn a_sustained_shot_holds_layers_that_go_within_a_tenth_of_a_second() {
+    let (dir, manifest) = fixture();
+    let ribbon = |extra: &str| {
+        format!(
+            r#"(block: Ribbon(texture: "solid", ramp: "white", shape: Radial),
+                size: (scale: 0.1), duration: 0.05{extra}, priority: Critical)"#
+        )
+    };
+    let shot = |sustain: &str, layer: &str| {
+        format!(r#""beam": (class: Minor, event: Shot{sustain}, layers: [ {layer} ])"#)
+    };
+    let held = ribbon(", held: true, exit: 0.08");
+    let catalog = load(
+        dir.path(),
+        &vocabulary(
+            &manifest,
+            "",
+            &shot(", sustain: Some((grace: 0.12))", &held),
+            "",
+        ),
+    )
+    .expect("a sustained beam whose held layers go within 0.1 s resolves");
+    let beam = catalog
+        .effect(catalog.effect_id("beam").expect("defined"))
+        .expect("loaded");
+    assert_eq!(beam.sustain.map(|sustain| sustain.grace), Some(0.12));
+    assert!(beam.layers[0].held && beam.held_exit <= 0.1);
+
+    let refused = |effects: String, field: &str| {
+        let error =
+            load(dir.path(), &vocabulary(&manifest, "", &effects, "")).expect_err("refused");
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+        assert_names(&error, &["vocabulary.ron", "beam"]);
+    };
+    // Sustain on another kind of effect.
+    refused(
+        format!(
+            r#""beam": (class: Minor, event: Point, sustain: Some((grace: 0.12)), layers: [ {} ])"#,
+            SPRITE.replace("bind: SplashReach, ", "")
+        ),
+        "sustain",
+    );
+    // A grace that is not positive.
+    refused(shot(", sustain: Some((grace: 0.0))", &held), "grace");
+    // Held layers that take longer than 0.1 s to go.
+    refused(
+        shot(
+            ", sustain: Some((grace: 0.12))",
+            &ribbon(", held: true, exit: 0.2"),
+        ),
+        "exit",
+    );
+    // A shot that is not sustained holds nothing.
+    refused(shot("", &held), "held");
+
+    // Every shipped sustained look is a held beam's.
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let shipped = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let sustained: Vec<&str> = shipped
+        .effects
+        .iter()
+        .filter(|effect| effect.sustain.is_some())
+        .map(|effect| effect.name.as_str())
+        .collect();
+    assert!(
+        !sustained.is_empty(),
+        "the shipped beams are sustained (B-126)"
+    );
+    for effect in shipped
+        .effects
+        .iter()
+        .filter(|effect| effect.sustain.is_some())
+    {
+        assert_eq!(effect.event, EventKind::Shot, "{}", effect.name);
+        assert!(
+            effect.held_exit <= client::effects::catalog::MAX_SUSTAIN_EXIT,
+            "{}",
+            effect.name
+        );
+        assert!(
+            effect.layers.iter().any(|layer| layer.held
+                && layer.priority == client::effects::catalog::schema::Priority::Critical),
+            "{} holds a Critical layer",
+            effect.name
+        );
+    }
 }
 
 /// Plan WP11: a `Shot` effect binds its line and flight; a card may ride the line and be drawn

@@ -237,6 +237,24 @@ fn onto_glass(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f
     point[2] = struck.height + reach * HIT_ELEVATION.sin();
 }
 
+/// `point` (map `x, y`, height) moved onto the outline of a bubble of `struck` centred on it,
+/// as the camera looking along `view` sees it ([`onto_outline`]), or onto its glass without a
+/// camera ([`onto_glass`]): towards `towards` (a unit map direction), the horizontal move at
+/// most `most`. A held beam's end follows its target this way every frame (plan
+/// `2026-11-17-effect-snapshot-identity` D-4).
+pub fn onto_struck_outline(
+    point: &mut [f32; 3],
+    struck: StruckBubble,
+    towards: Vec2,
+    most: f32,
+    view: Option<Vec3>,
+) {
+    match view {
+        Some(view) => onto_outline(point, struck, towards, most, view),
+        None => onto_glass(point, struck, towards, most),
+    }
+}
+
 /// `point` (map `x, y`, height) moved onto the outline of a bubble of `struck` centred on it in
 /// plan, as the camera looking along `view` (Bevy world, unit) sees it: the point of the
 /// bubble's silhouette, at its radius plus [`SURFACE_MARGIN`], on the side of `towards` (a unit
