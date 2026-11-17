@@ -1,7 +1,9 @@
 //! Authored movement layers, atomic order admission and destination placement.
 //!
 //! Ground and conservative cliff movers share terrain navigation; Air only uses
-//! full-radius map bounds and other Air colliders. Policies are derived from the
+//! map bounds and other Air colliders. A body meets terrain, structures and the map edge at its
+//! terrain radius (`StarCraft` II `min(InnerRadius, Radius)`) and other bodies at its collision
+//! radius; for Air the two are equal. Policies are derived from the
 //! current catalog, never duplicated in authoritative state. Outcomes and scratch
 //! buffers are derived evidence: consumers must drain outcomes after each tick and
 //! surface invariant diagnostics before advancing an unhealthy match.
@@ -120,8 +122,9 @@ pub enum MovementAdmissionError {
     /// Selected actor is destroyed.
     #[error("movement recipient {0:?} is destroyed")]
     DeadRecipient(EntityId),
-    /// The destination cannot contain this actor's full radius.
-    #[error("movement destination lies outside the full-radius map domain of {0:?}")]
+    /// The destination cannot contain this actor's terrain radius
+    /// ([`crate::catalog::UnitArchetype::terrain_radius`]) inside the map.
+    #[error("movement destination lies outside the terrain-radius map domain of {0:?}")]
     OutsideDomain(EntityId),
     /// This API only admits `Move` and `AttackMove` orders.
     #[error("movement admission requires Move or AttackMove")]
@@ -208,7 +211,7 @@ pub enum DisplacementAdmissionError {
     /// A destroyed actor cannot be placed.
     #[error("placement actor {0:?} is destroyed")]
     DeadEntity(EntityId),
-    /// Full radius crosses a map boundary.
+    /// The actor's terrain radius crosses a map boundary.
     #[error("placement for {0:?} crosses map bounds")]
     OutsideDomain(EntityId),
     /// Ground footprint contains disconnected terrain or occupied structure cells.
@@ -251,7 +254,11 @@ pub(crate) struct MovementWorkspace {
 #[derive(Clone, Copy)]
 pub(crate) struct MotionPolicy {
     pub layer: MovementLayer,
+    /// The body's size against other bodies (`collision_radius`), in world units.
     pub radius: SimScalar,
+    /// The body's disc against terrain, structures and the map edge (`terrain_radius`), in world
+    /// units; `0 < terrain_radius <= radius`. Read through [`Self::terrain_radius`].
+    pub terrain: SimScalar,
     /// The body is burrowed ([`Entity::is_burrowed`]): it touches only burrowed bodies.
     pub burrowed: bool,
 }
@@ -274,18 +281,27 @@ impl MotionPolicy {
                 reason: "collision radius must be positive and fit inside the map",
             });
         }
+        let terrain = arch.terrain_radius;
+        if terrain <= SimScalar::ZERO || terrain > radius {
+            return Err(MovementInvariant::InvalidState {
+                entity: entity.id,
+                reason: "terrain radius must be positive and at most the collision radius",
+            });
+        }
         Ok(Self {
             layer: MovementLayer::from_mover(arch.mover_type),
             radius,
+            terrain,
             burrowed: entity.is_burrowed(arch),
         })
     }
 
-    /// The radius of the body's disc against terrain and structures, in world units (plan
-    /// `2026-11-11-contact-and-missiles` D-1). `StarCraft` II separates it from the unit radius
-    /// (`InnerRadius`); ours is the collision radius until B-116 adds the second radius.
+    /// The radius of the body's disc against terrain, structures and the map edge, in world
+    /// units (plan `2026-11-11-contact-and-missiles` D-1, plan `2026-11-18-inner-radius` D-5):
+    /// the archetype's `terrain_radius`, `StarCraft` II's `min(InnerRadius, Radius)`. Bodies
+    /// meet each other at [`Self::radius`].
     pub const fn terrain_radius(self) -> SimScalar {
-        self.radius
+        self.terrain
     }
 
     /// Which bodies this one touches: two bodies steer around, push and block each other only
@@ -305,7 +321,7 @@ impl MotionPolicy {
         if !self.contains(map, actor.position) {
             return Err(MovementInvariant::InvalidState {
                 entity: actor.id,
-                reason: "actor is outside its current full-radius movement domain",
+                reason: "actor is outside its current terrain-radius movement domain",
             });
         }
         if self.layer == MovementLayer::Ground
@@ -319,8 +335,11 @@ impl MotionPolicy {
         Ok(())
     }
 
+    /// Whether the body's terrain disc at `point` lies inside the map: the map edge is a wall,
+    /// so the domain uses the same radius as the routes and the contact rule (plan
+    /// `2026-11-18-inner-radius` D-7).
     pub fn contains(self, map: &GameMap, point: SimVec2) -> bool {
-        let r = i128::from(self.radius.raw());
+        let r = i128::from(self.terrain_radius().raw());
         let x = i128::from(point.x.raw());
         let y = i128::from(point.y.raw());
         x - r >= 0
@@ -539,7 +558,13 @@ impl SimWorld {
             return Err(DisplacementAdmissionError::OutsideDomain(id));
         }
         if policy.layer == MovementLayer::Ground
-            && !geometry::ground_footprint_connected(&self.map, point, point, policy.radius, None)
+            && !geometry::ground_footprint_connected(
+                &self.map,
+                point,
+                point,
+                policy.terrain_radius(),
+                None,
+            )
         {
             return Err(DisplacementAdmissionError::Terrain(id));
         }
@@ -604,6 +629,57 @@ fn integer_sqrt(value: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-12 (plan `2026-11-18-inner-radius` D-2): an archetype built past the loader with a
+    /// terrain radius above its collision radius, or not positive, is a movement invariant; one
+    /// at or below it resolves to a policy that reports it.
+    #[test]
+    fn a_terrain_radius_above_the_collision_radius_is_an_invariant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 46);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| a.mover_type == MoverType::Ground && !a.is_immobile_by_default())
+            .map(|a| a.unit_type_id)
+            .ok_or("Ground actor")?;
+        let id = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        let radius = world.catalog.get(kind)?.collision_radius;
+        let half = SimScalar::from_raw(radius.raw() / 2);
+        for (terrain, valid) in [
+            (radius, true),
+            (half, true),
+            (radius + SimScalar::from_raw(1), false),
+            (SimScalar::ZERO, false),
+            (-half, false),
+        ] {
+            world.catalog.get_mut(kind)?.terrain_radius = terrain;
+            let resolved = MotionPolicy::resolve(&world.catalog, &world.map, &world.entities[&id]);
+            if valid {
+                let policy = resolved.map_err(|e| format!("{terrain:?}: {e}"))?;
+                assert_eq!(policy.terrain_radius(), terrain);
+                assert_eq!(policy.radius, radius);
+            } else {
+                assert!(
+                    matches!(
+                        resolved,
+                        Err(MovementInvariant::InvalidState {
+                            reason:
+                                "terrain radius must be positive and at most the collision radius",
+                            ..
+                        })
+                    ),
+                    "{terrain:?}"
+                );
+            }
+        }
+        Ok(())
+    }
     #[test]
     fn retained_movement_workspaces_keep_capacity_after_population_warmup(
     ) -> Result<(), Box<dyn std::error::Error>> {

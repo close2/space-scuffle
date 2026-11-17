@@ -599,6 +599,7 @@ fn g8_a_member_too_large_for_the_lane_keeps_its_own_route() -> TestResult {
     ] {
         let arch = catalogs.units.get_mut(kind)?;
         arch.collision_radius = radius;
+        arch.terrain_radius = radius;
         arch.weapon = None;
         arch.ground_weapon = None;
         arch.air_weapon = None;

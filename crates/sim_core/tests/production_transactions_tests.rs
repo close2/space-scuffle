@@ -42,6 +42,7 @@ impl Fixture {
         a.supply_provided = 0;
         a.build_time_ticks = 1;
         a.collision_radius = SimScalar::from_num(0.375);
+        a.terrain_radius = SimScalar::from_num(0.375);
         a.weapon = None;
         a.ground_weapon = None;
         a.air_weapon = None;
@@ -424,7 +425,11 @@ fn mutated_producer_definition_fails_before_countdown_changes() -> TestResult {
                 .get_mut(f.producer_type)?
                 .trains_units
                 .clear(),
-            2 => f.world.catalog.get_mut(f.producer_type)?.collision_radius = SimScalar::ZERO,
+            2 => {
+                let arch = f.world.catalog.get_mut(f.producer_type)?;
+                arch.collision_radius = SimScalar::ZERO;
+                arch.terrain_radius = SimScalar::ZERO;
+            }
             _ => {
                 f.world.catalog.get_mut(f.producer_type)?.shape = ShapeKind::BuildingDome {
                     footprint_w: 0,
@@ -452,7 +457,11 @@ fn mutated_producer_definition_fails_before_countdown_changes() -> TestResult {
 fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
     for radius in [SimScalar::from_num(0.375), SimScalar::from_num(1.125)] {
         let mut f = Fixture::new()?;
-        f.world.catalog.get_mut(f.product)?.collision_radius = radius;
+        {
+            let arch = f.world.catalog.get_mut(f.product)?;
+            arch.collision_radius = radius;
+            arch.terrain_radius = radius;
+        }
         let blocker_type = f
             .world
             .catalog
@@ -470,6 +479,7 @@ fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
         };
         arch.supply_provided = 0;
         arch.collision_radius = SimScalar::from_num(0.4);
+        arch.terrain_radius = SimScalar::from_num(0.4);
         let placed = f.world.map.structures()[&f.producer].clone();
         let min_x = placed.top_left.0 - 1;
         let min_y = placed.top_left.1 - 1;
@@ -523,6 +533,7 @@ fn two_mobile_producers_contend_for_one_exit_in_stable_id_order() -> TestResult 
     let slug = f.world.catalog.get(f.product)?.slug.clone();
     let source = f.world.catalog.get_mut(source_type)?;
     source.collision_radius = SimScalar::from_num(0.1);
+    source.terrain_radius = SimScalar::from_num(0.1);
     source.supply_provided = 20;
     source.supply_cost = 0;
     source.trains_units = vec![slug];
@@ -794,6 +805,7 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     let slug = f.world.catalog.get(f.product)?.slug.clone();
     let source = f.world.catalog.get_mut(source_type)?;
     source.collision_radius = SimScalar::from_num(0.1);
+    source.terrain_radius = SimScalar::from_num(0.1);
     source.supply_cost = 0;
     source.supply_provided = 10;
     source.trains_units = vec![slug];
@@ -804,6 +816,7 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     };
     wall.supply_provided = 0;
     wall.collision_radius = SimScalar::from_num(0.4);
+    wall.terrain_radius = SimScalar::from_num(0.4);
     let blocker = f.world.spawn_structure(wall_type, PlayerId(0), 2, 2)?;
     let origin = SimVec2::new(SimScalar::from_num(3.1), SimScalar::from_num(2.5));
     let producer = f.world.spawn_unit(source_type, PlayerId(0), origin)?;
@@ -856,11 +869,16 @@ fn extreme_mobile_source_radius_rejects_before_perimeter_enumeration() -> TestRe
     let slug = f.world.catalog.get(f.product)?.slug.clone();
     let source = f.world.catalog.get_mut(source_type)?;
     source.collision_radius = SimScalar::from_num(0.1);
+    source.terrain_radius = SimScalar::from_num(0.1);
     source.supply_cost = 0;
     source.supply_provided = 10;
     source.trains_units = vec![slug];
     let producer = f.world.spawn_unit(source_type, PlayerId(0), point(3, 3))?;
-    f.world.catalog.get_mut(source_type)?.collision_radius = SimScalar::from_raw(i64::MAX);
+    {
+        let arch = f.world.catalog.get_mut(source_type)?;
+        arch.collision_radius = SimScalar::from_raw(i64::MAX);
+        arch.terrain_radius = SimScalar::from_raw(i64::MAX);
+    }
     let before = f.world.compute_checksum();
     assert!(matches!(
         f.world
@@ -871,11 +889,19 @@ fn extreme_mobile_source_radius_rejects_before_perimeter_enumeration() -> TestRe
         }))
     ));
     assert_eq!(f.world.compute_checksum(), before);
-    f.world.catalog.get_mut(source_type)?.collision_radius = SimScalar::from_num(0.1);
+    {
+        let arch = f.world.catalog.get_mut(source_type)?;
+        arch.collision_radius = SimScalar::from_num(0.1);
+        arch.terrain_radius = SimScalar::from_num(0.1);
+    }
     f.world.catalog.get_mut(f.product)?.build_time_ticks = 10;
     f.world
         .try_queue_production(PlayerId(0), &[producer], f.product)?;
-    f.world.catalog.get_mut(source_type)?.collision_radius = SimScalar::from_raw(i64::MAX);
+    {
+        let arch = f.world.catalog.get_mut(source_type)?;
+        arch.collision_radius = SimScalar::from_raw(i64::MAX);
+        arch.terrain_radius = SimScalar::from_raw(i64::MAX);
+    }
     let next = f.world.next_entity_id;
     let economy = f.world.player_resources[PlayerSlot::ALL[0]];
     f.world.update_production_and_buffs();

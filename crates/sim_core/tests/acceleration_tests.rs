@@ -417,6 +417,7 @@ fn pursuit_world(
     chaser.unit_type_id = chaser_type;
     chaser.slug = "braking_chaser".to_string();
     chaser.collision_radius = SimScalar::from_num(0.5);
+    chaser.terrain_radius = SimScalar::from_num(0.5);
     chaser.max_speed = SimScalar::from_num(0.1);
     chaser.acceleration = SimScalar::from_num(0.1);
     chaser.deceleration = SimScalar::from_f32_lossy(deceleration);
@@ -437,6 +438,7 @@ fn pursuit_world(
     target.unit_type_id = target_type;
     target.slug = "braking_target".to_string();
     target.collision_radius = SimScalar::from_num(0.5);
+    target.terrain_radius = SimScalar::from_num(0.5);
     target.weapon = None;
     target.ground_weapon = None;
     target.air_weapon = None;

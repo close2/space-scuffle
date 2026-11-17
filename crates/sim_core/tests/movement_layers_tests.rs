@@ -42,6 +42,7 @@ impl Fixture {
             let a = catalog.get_mut(id)?;
             a.max_speed = SimScalar::from_num(0.25);
             a.collision_radius = SimScalar::from_num(0.375);
+            a.terrain_radius = SimScalar::from_num(0.375);
             a.weapon = None;
             a.ground_weapon = None;
             a.air_weapon = None;
@@ -118,7 +119,11 @@ fn command_rejection_is_atomic_and_duplicate_queue_recipients_commit_once() -> T
     let mut f = Fixture::new()?;
     let small = f.spawn(f.ground, 0, 5.0, 5.0)?;
     let large = f.spawn(f.air, 0, 8.0, 8.0)?;
-    f.world.catalog.get_mut(f.air)?.collision_radius = SimScalar::from_num(2);
+    {
+        let arch = f.world.catalog.get_mut(f.air)?;
+        arch.collision_radius = SimScalar::from_num(2);
+        arch.terrain_radius = SimScalar::from_num(2);
+    }
     let before = f.world.entities.clone();
     let checksum = f.world.compute_checksum();
     let invalid = UnitOrder::Move {
@@ -188,9 +193,17 @@ fn different_layers_overlap_without_push_but_unequal_same_layer_radii_are_found(
         let before = f.world.entities.clone();
         f.world.resolve_collisions_and_push();
         assert_eq!(f.world.entities, before);
-        f.world.catalog.get_mut(f.ground)?.collision_radius = SimScalar::from_num(0.2);
+        {
+            let arch = f.world.catalog.get_mut(f.ground)?;
+            arch.collision_radius = SimScalar::from_num(0.2);
+            arch.terrain_radius = SimScalar::from_num(0.2);
+        }
         f.world.catalog.get_mut(f.air)?.mover_type = MoverType::Ground;
-        f.world.catalog.get_mut(f.air)?.collision_radius = SimScalar::from_num(2.1);
+        {
+            let arch = f.world.catalog.get_mut(f.air)?;
+            arch.collision_radius = SimScalar::from_num(2.1);
+            arch.terrain_radius = SimScalar::from_num(2.1);
+        }
         f.world.entities.get_mut(&ground).ok_or("ground")?.position =
             point(if reverse { 8.01 } else { 5.99 }, 8.0);
         f.world.entities.get_mut(&air).ok_or("air")?.position =
@@ -312,7 +325,11 @@ fn policy_mutation_clears_air_routes_and_invalid_radius_is_diagnosed() -> TestRe
     assert_eq!(f.world.entities[&id].current_funnel_waypoints, []);
     assert!(f.world.entities[&id].position.x > SimScalar::from_num(5));
     assert_eq!(f.world.entities[&id].position.y, SimScalar::from_num(5));
-    f.world.catalog.get_mut(f.ground)?.collision_radius = SimScalar::ZERO;
+    {
+        let arch = f.world.catalog.get_mut(f.ground)?;
+        arch.collision_radius = SimScalar::ZERO;
+        arch.terrain_radius = SimScalar::ZERO;
+    }
     let position = f.world.entities[&id].position;
     f.world.step_movement_and_steering();
     assert_eq!(f.world.entities[&id].position, position);
@@ -335,7 +352,11 @@ fn ground_origin_domain_mutation_is_diagnosed_before_move_or_flee() -> TestResul
         if terrain {
             f.world.map.cell_mut(1, 5)?.flags = CellFlags::UNPASSABLE_CLIFF;
         } else {
-            f.world.catalog.get_mut(f.air)?.collision_radius = SimScalar::from_num(2);
+            {
+                let arch = f.world.catalog.get_mut(f.air)?;
+                arch.collision_radius = SimScalar::from_num(2);
+                arch.terrain_radius = SimScalar::from_num(2);
+            }
         }
         let before = f.world.entities[&id].position;
         f.world.step_movement_and_steering();

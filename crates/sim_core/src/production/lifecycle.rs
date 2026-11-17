@@ -372,7 +372,9 @@ pub(super) fn validate_job_source(
             }
         }
     } else {
-        let r = i128::from(source.collision_radius.raw());
+        // The map edge meets a body at its terrain radius, as the movement domain does (plan
+        // `2026-11-18-inner-radius` T9).
+        let r = i128::from(source.terrain_radius.raw());
         for (position, extent) in [
             (entity.position.x, map.width()),
             (entity.position.y, map.height()),

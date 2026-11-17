@@ -47,6 +47,7 @@ impl Fixture {
             a.acceleration = a.max_speed;
             a.deceleration = a.max_speed;
             a.collision_radius = SimScalar::from_num(0.375);
+            a.terrain_radius = SimScalar::from_num(0.375);
             a.weapon = None;
             a.ground_weapon = None;
             a.air_weapon = None;

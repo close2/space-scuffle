@@ -149,7 +149,7 @@ impl SimWorld {
         let request = PathRequestWithVision {
             start: entity.position,
             goal,
-            radius: arch.collision_radius,
+            radius: arch.terrain_radius,
             vision: knowledge.map(|(vision, _)| vision),
             block_unexplored_ramps: false,
             known_structures: knowledge.map(|(_, known)| known.as_slice()),

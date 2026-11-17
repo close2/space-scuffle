@@ -4,7 +4,8 @@
 //!
 //! # Responsibility
 //! After each tick, for every walking ground body, asks `Pathfinder::wall_contact` for the
-//! nearest wall within the body's collision radius under its physical request (true terrain,
+//! nearest wall within the body's terrain radius (`UnitArchetype::terrain_radius`, plan
+//! `2026-11-18-inner-radius` T10) under its physical request (true terrain,
 //! every structure, no vision) and records its depth, `radius − distance`. Per owner it counts
 //! the unit-ticks with a depth above zero, the deepest overlap with its entity, tick and
 //! position, and the unit-ticks on which a body's depth rose above its depth at the tick's start
@@ -88,7 +89,7 @@ impl OverlapMeter {
                 continue;
             };
             if arch.mover_type == MoverType::Ground {
-                bodies.push((*id, entity.owner.0, entity.position, arch.collision_radius));
+                bodies.push((*id, entity.owner.0, entity.position, arch.terrain_radius));
             }
         }
         let mut seen = BTreeMap::new();
