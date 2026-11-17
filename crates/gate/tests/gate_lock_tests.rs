@@ -568,8 +568,16 @@ fn stop_writes_a_request_naming_the_holder_and_the_holder_ends_red_without_a_sta
         rest.iter().any(|line| line.contains("RED (stopped")),
         "{rest:#?}"
     );
-    let written = std::fs::read_dir(&stamps).map_or(0, Iterator::count);
+    let written = std::fs::read_dir(&stamps).map_or(0, |entries| {
+        entries
+            .map_while(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ron"))
+            .count()
+    });
     assert_eq!(written, 0, "a stopped run writes no stamp");
+    // It does record what it reached, for `--resume` (plan 2026-11-11-faster-gates Amendment 1).
+    let records = std::fs::read_dir(stamps.join("results")).map_or(0, Iterator::count);
+    assert_eq!(records, 1, "a stopped run leaves its result record");
     assert!(
         !stop_path(&lock).exists(),
         "the answered request is removed"

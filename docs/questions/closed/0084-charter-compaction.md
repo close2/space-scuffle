@@ -34,4 +34,4 @@ Options:
 
 ## Resolution
 
-Option 2 carried out: the lossless compaction is prepared on branch `charter-compaction` (`281fd0e4`; AGENTS.md 23,914 → 20,357 bytes, about 15 %; §7 and the §4.3 tier mechanics moved word for word to `docs/guides/`). Its exact AGENTS.md diff is in [Q0085](../open/0085-charter-compaction-diff.md) for approval; nothing is merged before that answer.
+Option 2 carried out: the lossless compaction is prepared on branch `charter-compaction` (`281fd0e4`; AGENTS.md 23,914 → 20,357 bytes, about 15 %; §7 and the §4.3 tier mechanics moved word for word to `docs/guides/`). Its exact AGENTS.md diff is in [Q0085](0085-charter-compaction-diff.md) for approval; nothing is merged before that answer.

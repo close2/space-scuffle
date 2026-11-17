@@ -11,8 +11,8 @@
 //!
 //! # How it fits
 //! `tests/charter.rs` passes the real constant, so this library stays independent of the
-//! simulation crates; only the test target depends on `sim_types`, which charter §5 draws as a
-//! dev edge. Whether the prose is accurate otherwise is a reviewer's judgement.
+//! simulation crates; only the test target depends on `sim_types`, which `DESIGN.md` §2 draws
+//! as a dev edge. Whether the prose is accurate otherwise is a reviewer's judgement.
 //!
 //! # Invariants
 //! - A tick rate is a number followed by `Hz` or `ticks/sec`; throughput figures are written

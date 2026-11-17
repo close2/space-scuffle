@@ -34,14 +34,57 @@ for third-party bots running headless matches. Nothing of these exists beyond th
 
 ## 2. Architecture
 
-The workspace has eight crates. Charter §5 draws their dependency graph, and check C1 keeps the drawing equal to
-Cargo's.
+The workspace has nine crates. Charter §5 states the layering rule; the graph below draws every
+workspace-internal dependency, and check C1 keeps the drawing equal to Cargo's and Cargo's edges within the rule. An
+arrow points from a dependency to its dependent; a dashed arrow is a dev-dependency.
+
+```mermaid
+flowchart TD
+    ST["crates/sim_types<br/>(fixed-point math, IDs, commands, RenderSnapshot, PlayerView)"]
+    SM["crates/sim_map<br/>(cliffs, ramps, vision, clearance field, navigation mesh, triangle A* + radius funnel, map format)"]
+    SC["crates/sim_core<br/>(deterministic tick, combat, movement, economy, catalogs)"]
+    AB["crates/asset_baker<br/>(Veo and ffmpeg flipbook baking, terrain textures)"]
+    CL["crates/client<br/>(Bevy renderer, HUD, input, map editor)"]
+    CD["crates/client_diagnostics<br/>(capture, audit and probe tools)"]
+    FX["crates/sim_fixtures<br/>(test-only shipped-data fixtures)"]
+    WC["crates/workspace_checks<br/>(charter checks)"]
+    GT["crates/gate<br/>(tiered test gates)"]
+
+    ST --> SM
+    ST --> SC
+    SM --> SC
+    ST --> AB
+    SC --> AB
+    ST --> CL
+    SM --> CL
+    SC --> CL
+    AB --> CL
+    ST --> CD
+    SM --> CD
+    SC --> CD
+    AB --> CD
+    CL --> CD
+    ST --> FX
+    SM --> FX
+    SC --> FX
+    FX -.-> SC
+    FX -.-> AB
+    FX -.-> CL
+    FX -.-> CD
+    ST -.-> WC
+```
+
+`asset_baker` depends on `sim_core` for the unit catalog it discovers archetypes from. `sim_fixtures` embeds the
+shipped catalogs for tests only; `sim_core` uses it in its integration tests, and its own unit tests embed the same
+files through `sim_core::test_support`, because a dev-dependency cycle would link a second copy of `sim_core`.
+`gate` depends on no workspace crate: it reads `cargo metadata`, Git and the sources as data, so a broken crate
+cannot break the tool that selects its tests.
 
 - **`sim_types`** — the shared contract: fixed-point math (`SimScalar`, `SimVec2`, `SimAngle`), IDs, player
   commands (`PlayerCommand`, `TickBundle`), and the presentation outputs `RenderSnapshot` and `PlayerView`. It also
   owns the tick rate, `sim_types::TICKS_PER_SECOND`.
 - **`sim_map`** — terrain: cliff levels, ramps, the map file format, line of sight with high ground, the
-  clearance field, A* corridors and the funnel.
+  clearance field, and pathfinding on a constrained Delaunay navigation mesh with triangle A* and the radius funnel.
 - **`sim_core`** — the deterministic tick (`SimWorld`): commands, economy, production and research,
   construction, transport, abilities, vision, targeting, movement, collision and push, weapons, the match result,
   the checksum and the catalogs.
@@ -58,7 +101,7 @@ Cargo's.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
   it.
 - **`sim_fixtures`** — test-only worlds and catalogs embedded from the shipped data.
-- **`workspace_checks`** — the executable charter checks (C1 to C21, and C23).
+- **`workspace_checks`** — the executable charter checks (C1 to C21, C23 and C24).
 - **`gate`** — `cargo gate`: selects the tests a change can break from the catalog `crates/gate/suites.ron`
   and runs them in the tiers of charter §4.3 (`quick`, `package`, `merge`, `full`), with stamps, flake reruns,
   the red rule's suspect list and the CI timing summary; its catalog check is C22. It depends on no other
@@ -224,6 +267,8 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-126 | A sustained beam (the Void-Ray analogue's) is drawn as a series of 0.46 s shots, each a line fixed at its spawn: against a moving target consecutive beams splay apart for about 0.1 s, and the last one outlives a dead target by up to 0.46 s. Suggested fix: a held beam look keyed on source and target, released when either is gone (plan Amendment 26, P2-2) | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP11 follow-up; open |
 | B-127 | Under the gate's lanes, `client/stance_gpu_tests` (`a_burrow_settles_after_its_channel_and_stances_follow_their_switches`, the siege child) once ran out of the harness's 120 s child limit on radv (Mesa 25.0.7): the child sat 119.3 s after its last log record, and the target passed on the immediate rerun (package gate of `effects-wp12` at tree `814e0172`, 2026-11-16; log `~/scratch/logs/gate/814e01727f067dfd97017d0d4ea83b1ecfefff50/package/client__stance_gpu_tests.log`). WP12 did not change the test; it was selected by a catalog-rule edit. Suspected cause: a GPU or driver stall, not the stance code. The run used Vulkan loader `libvulkan1` 1.4.309, which has the upstream loader use-after-free race between `loader_get_icd_and_device` and concurrent `vkCreateDevice`/`vkDestroyDevice` (KhronosGroup/Vulkan-Loader #2018, PR #1866, fixed in 1.4.345; owner, Q0082); the loader was updated to 1.4.363 the same day, so a recurrence after that would point elsewhere | [`2026-11-11-faster-gates`](docs/plans/2026-11-11-faster-gates.md) lane runtime; open, a second flake within a week makes it a bug to fix (tiered-gates blueprint §3.5) |
 | B-128 | A projectile's flight and impact are not aimed at the struck bubble; the impact is laid at the target's centre at ground + 0.5, inside a ground bubble's masked interior and below a flyer. The simulation publishes a `ProjectileVisual` at ground + 0.5 at both ends, its arrival at the edge of the target's collision circle, so an impact look shows only where it spills past the struck bubble's glass, and an anti-air projectile flies and lands about 2.5 units under its flyer (the same cross-plane fault as B-125, for projectiles) | plan [`2026-11-17-effect-snapshot-identity`](docs/plans/2026-11-17-effect-snapshot-identity.md) §10, Amendment 3, WP4b; fixed in branch `effects-identity-client` (`ProjectileVisual` names its `ends`; the client lands the projectile on the struck bubble's glass, found by id through `effects::struck`), review pending (WP8) |
+| B-129 | `client/gpu_validation_tests` flaked on CI's lavapipe in 3 of the last 30 runs (2026-11-13 twice, 2026-11-16), each time passing on its rerun; the logs were lost because the repeated full run hit the job's time limit and a cancelled job uploaded nothing. Reproduced on this server with lavapipe pinned to four CPUs (1 of 3 runs): `the_selected_driver_is_the_one_that_rendered` runs `client --lab --max-frames 10`, and the client failed with "Render verification reached its frame limit before valid GPU pipelines and battle assets were ready". Cause: `frame_limit_system` treated the frame count as a deadline, but pipelines compile and assets load asynchronously, so the frame at which they are ready depends on the host's speed; on lavapipe with four CPUs and no validation layer, `--lab` became ready at frames 3 to 10 (6.4 to 12.3 s) and `--skirmish` at frames 3 to 14 (9.7 to 12.9 s), so ten frames had no margin | [`2026-11-11-faster-gates`](docs/plans/2026-11-11-faster-gates.md) Amendment 1; fixed in `gate-resume`: the frame limit counts frames and, once reached, waits for a loading render up to `FRAME_LIMIT_READINESS_GRACE` (90 s of real time) before failing (`crates/client/src/lib.rs`, `frame_limit_verdict`); a failed pipeline or battle still fails at once. 15 of 15 lavapipe runs on four CPUs pass after the fix, 2 of them after waiting at frame 10 (ready at frame 11, 0.5 s later), which the old rule failed; CI now uploads the gate's logs of a cancelled run, and the full tier's repeat logs under `repeat/` instead of over the first attempt |
+| B-130 | `client/concealment_gpu_tests` failed once on CI's lavapipe (run 42998586929, 2026-11-11, 38.0 s, a normal run's length, so an assertion or the child's exit and not a stall) and passed on its rerun; its log was lost with the cancelled run. Not reproduced in 35 lavapipe runs on this server (15 pinned to four CPUs, 20 pinned to two) nor in one run on radv; CI's runner (Ubuntu 26.04) has Mesa 26.0.8, this server 25.0.7 | [`2026-11-11-faster-gates`](docs/plans/2026-11-11-faster-gates.md) Amendment 1; open: the next occurrence keeps its log (CI uploads a cancelled run's logs, the repeat no longer overwrites the first attempt), which names the failing assertion |
 
 ---
 
@@ -314,6 +359,8 @@ machine, not figures of record:
 
 - [`README.md`](README.md) — the front page: the pitch and the CI showcase video.
 - [`AGENTS.md`](AGENTS.md) — the engineering charter and how each rule is checked.
+- [`docs/guides/`](docs/guides/) — the charter's binding guides: test subjects and gate tiers, the charter
+  checks, GPU and disk use on the shared server, and the `PERFORMANCE RATIONALE` example.
 - [`docs/plans/README.md`](docs/plans/README.md) — every implementation plan and what became of it.
 - [`docs/reviews/`](docs/reviews/) — independent reviews and findings.
 - [`docs/questions/`](docs/questions/) — decisions waiting for the owner.

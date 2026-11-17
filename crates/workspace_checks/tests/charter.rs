@@ -2,8 +2,8 @@
 //!
 //! # Responsibility
 //! One `#[test]` per check, named after its ID (`c01_...`, `c02_...`); C1, C15 to C20 and C24
-//! judge the documentation (the charter's own statements, `DESIGN.md`, the plan index, notebook
-//! paths, `README.md`) rather than code. Each runs the check from
+//! judge the documentation (the charter's own statements and its guides, `DESIGN.md`, the plan
+//! index, notebook paths, `README.md`) rather than code. Each runs the check from
 //! the `workspace_checks` library on the repository root and fails with every finding, one
 //! `path:line: message` per line, so a single run shows all the work to do.
 //!

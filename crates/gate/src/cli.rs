@@ -26,6 +26,7 @@ usage:
                                   print the selection and the rule behind each target; run nothing
   cargo gate quick                optional inner loop: fmt, clippy on changed crates, their fast tests
   cargo gate package              required once before hand-back; writes a stamp
+                                  (every tier also takes --resume after a red run)
   cargo gate merge <branch>       orchestrator, on main after `git merge --no-ff <branch>`
   cargo gate full                 the complete suite and the golden replays; writes a stamp
   cargo gate timings [--from-log <file>]
@@ -47,7 +48,10 @@ options:
   --memory-ceiling-gib <x>  most the slice's live anon plus a starting target's peak may reach
                       (default: the cgroup limit minus 10 GiB)
   --no-reuse          test even when a green stamp of this tree exists
-  --log-dir <dir>     logs (default ~/scratch/logs/gate/<tree-hash>/)
+  --resume            reuse the passes of this tier's last runs on this tree (same rustc and
+                      suites.ron) and run only the targets and steps that did not pass
+  --log-dir <dir>     logs (default ~/scratch/logs/gate/<tree-hash>/<tier>/, a resumed run's in
+                      resume-<unix time>/ and the repeat of a full run's in repeat/ below it)
   --stamp-dir <dir>   stamps (default ~/scratch/gate-stamps/)
   --no-run            select and build only
   --from-log <file>   timings and suspects only: read a `cargo test` log";
@@ -88,6 +92,9 @@ pub struct RunOptions {
     pub memory_ceiling_mib: Option<u64>,
     /// Test even when a green stamp of the same tree could be reused.
     pub no_reuse: bool,
+    /// Reuse the passed targets and steps of this tier's recorded runs on the same tree, and
+    /// run only the rest (plan 2026-11-11-faster-gates Amendment 1).
+    pub resume: bool,
     /// The stop request file the gate polls; set by `main.rs` once it holds the gate lock.
     pub stop_file: Option<PathBuf>,
 }
@@ -104,6 +111,7 @@ impl Default for RunOptions {
             memory_budget_mib: None,
             memory_ceiling_mib: None,
             no_reuse: false,
+            resume: false,
             stop_file: None,
         }
     }
@@ -229,6 +237,7 @@ fn parse_flags(rest: &[String]) -> Result<Flags, GateError> {
                 options.memory_ceiling_mib = Some(gib_option("--memory-ceiling-gib", &text)?);
             }
             "--no-reuse" => options.no_reuse = true,
+            "--resume" => options.resume = true,
             "--log-dir" => options.log_dir = Some(PathBuf::from(value("--log-dir")?)),
             "--stamp-dir" => options.stamp_dir = Some(PathBuf::from(value("--stamp-dir")?)),
             "--no-run" => options.no_run = true,
@@ -400,6 +409,22 @@ mod tests {
             assert!(parse(&format!("full --memory-budget-gib {bad}")).is_err());
             assert!(parse(&format!("full --memory-ceiling-gib {bad}")).is_err());
         }
+    }
+
+    #[test]
+    fn resume_parses_for_every_tier() -> Result<(), GateError> {
+        for line in ["quick --resume", "package --resume", "full --resume"] {
+            assert_eq!(
+                options_of(parse(line)).map(|o| o.resume),
+                Some(true),
+                "{line}"
+            );
+        }
+        assert!(
+            matches!(parse("merge feature --resume")?, Command::Merge { options, .. } if options.resume)
+        );
+        assert_eq!(options_of(parse("package")).map(|o| o.resume), Some(false));
+        Ok(())
     }
 
     #[test]

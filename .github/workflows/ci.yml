@@ -183,8 +183,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload the gate's logs of a red run
-        if: failure()
+      # Also when the job is cancelled at its time limit: a full run red only by a flake repeats once
+      # (blueprint §3.5), and the 150-minute limit used to cancel the repeat, which lost the logs
+      # of the flake (register B-129). The repeat logs under repeat/, beside the first attempt.
+      - name: Upload the gate's logs of a red or cancelled run
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: gate-logs
