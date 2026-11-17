@@ -5,7 +5,8 @@
 //! target's own file, or to a support file it includes with `#[path = "..."] mod x;`, can select
 //! it. It also scans code, with comments and string literals blanked out, for the markers the
 //! catalog test relies on: the GPU harness (`run_test_child`, `run_offscreen_test_child`,
-//! `GpuCommand`, `virtual_gpu_command`, `offscreen_gpu_command`), a valgrind invocation, and paths into a given crate (`sim_fixtures::`).
+//! `GpuCommand`, `virtual_gpu_command`, `offscreen_gpu_command`), a valgrind invocation, and
+//! paths into a given crate (`sim_fixtures::`).
 //! From those paths it records, per workspace crate, the targets of other crates that call it
 //! ([`SourceIndex::callers_of`]).
 //!

@@ -176,8 +176,11 @@ SuiteCatalog(
             targets: ["workspace_checks/@fast"],
         ),
         (
+            // `offscreen.rs` is the canvas and capture target of every offscreen child (plan
+            // 2026-11-17-gpu-test-readback D-1). No `client_diagnostics` GPU target uses it: its
+            // one user there, `effect_lab`, is a review tool with no GPU test of its own.
             name: "GPU renderer",
-            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,effects/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],
+            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,effects/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**,offscreen.rs}"],
             targets: ["client/@gpu"],
         ),
         (

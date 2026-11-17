@@ -18,18 +18,20 @@
 //! # How a child runs
 //! 1. [`virtual_gpu_command`] builds a [`GpuCommand`]: GNU `timeout`, then `xvfb-run`, then the
 //!    binary, with the selected driver's environment. [`offscreen_gpu_command`] builds one with
-//!    no display at all, for a child that renders into an image and reads only its own pictures
-//!    (`client::offscreen`; plan `docs/plans/2026-11-17-gpu-test-readback.md`, D-7). Callers add
-//!    arguments and variables.
-//! 2. [`GpuCommand::run`], [`GpuCommand::run_validated`] or [`GpuCommand::assert_passes_validation`]
-//!    is the only way to start it. A `GpuCommand` exposes no `output`, `spawn` or `status`, so no
-//!    caller can run a GPU child without the lock.
+//!    no display at all, for a child that renders into an image and reads only its own
+//!    pictures (`client::offscreen`; plan `docs/plans/2026-11-17-gpu-test-readback.md`, D-7).
+//!    Callers add arguments and variables.
+//! 2. [`GpuCommand::run`], [`GpuCommand::run_validated`] or
+//!    [`GpuCommand::assert_passes_validation`] is the only way to start it. A `GpuCommand`
+//!    exposes no `output`, `spawn` or `status`, so no caller can run a GPU child without the
+//!    lock.
 //! 3. The run reads the child's executable into the page cache ([`preload_executable`]), takes
 //!    the lock (radv only), spawns the child, waits for it, releases the lock, then
 //!    checks the exit status and the adapter line, and appends a line to the ledger if
 //!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The line names the child's display
-//!    (`display=offscreen`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log timestamps split its run
-//!    into phases ([`ChildTimeline`]); the ledger records them, and a timeout names the slowest.
+//!    (`display=offscreen`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log
+//!    timestamps split its run into phases ([`ChildTimeline`]); the ledger records them, and a
+//!    timeout names the slowest.
 //!    `SPACE_SCUFFLE_GPU_RUN_LOG_DIR` keeps each child's whole log for a timing investigation.
 //!
 //! `SPACE_SCUFFLE_VIRTUAL_GPU=1`, which every child receives, means "a test display": the client
@@ -50,14 +52,16 @@
 //! log output is the only interface here that needs no production change.
 //!
 //! # Limits of the gate
-//! - `wgpu_hal` drops three message IDs before logging them: `VUID-VkSwapchainCreateInfoKHR-pNext-07781`,
+//! - `wgpu_hal` drops three message IDs before logging them:
+//!   `VUID-VkSwapchainCreateInfoKHR-pNext-07781`,
 //!   `VUID-vkCmdEndDebugUtilsLabelEXT-commandBuffer-01912` on layers 1.3.240 to 1.3.250, and
 //!   `VUID-VkRenderPassBeginInfo-framebuffer-04627` when the OBS layer is present. This gate
 //!   cannot see them.
 //! - Only code paths the binary reaches during the run are validated.
 //! - On `lavapipe` before Mesa 25.1, the runs that draw hex-tiled ground render without
 //!   anisotropic filtering, because that driver's sampler does not finish such a frame (see
-//!   [`GpuCommand::allow_for_hex_tiling_driver_defect`]). `radv` always uses the production sampler.
+//!   [`GpuCommand::allow_for_hex_tiling_driver_defect`]). `radv` always uses the production
+//!   sampler.
 //! - On `radv`, windowed children present with `MESA_VK_WSI_DEBUG=sw`, because Xvfb has no
 //!   DRI3. The GPU renders every frame, but the DRI3 present path a desktop uses is not
 //!   exercised. Offscreen children present nothing, so they exercise no present path at all.

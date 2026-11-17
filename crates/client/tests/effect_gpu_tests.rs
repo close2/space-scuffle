@@ -485,7 +485,10 @@ fn run_shots(
 }
 
 /// Spawns the camera, rendering into the capture target.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "a Bevy system takes its resources by value"
+)]
 fn setup_camera(mut commands: Commands<'_, '_>, capture: Res<'_, CaptureTarget>) {
     commands.spawn((
         Camera3d::default(),

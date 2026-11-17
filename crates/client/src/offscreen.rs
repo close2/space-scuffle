@@ -26,6 +26,16 @@
 //!   output texture format and the pictures are bit-identical to a window capture.
 //! - A windowless app has no `PrimaryWindow` and no `WinitPlugin`; it stops only on
 //!   [`AppExit`], which the program sends.
+//! - A canvas is one persistent texture. A frame in which no camera renders leaves the previous
+//!   frame in it: nothing clears it between frames. A window's swapchain hands out a texture
+//!   per frame, and the clear on a surface's initialisation covers only those textures.
+//! - That cannot leak an old frame into a capture. In Bevy 0.15.3 a [`Screenshot`] redirects the
+//!   output of the frame it is taken on into a new texture of its own and copies that texture
+//!   (`bevy_render::view::window::screenshot`, the `NormalizedRenderTarget::Image` branches), so
+//!   it holds what that frame's camera wrote, never what the canvas held before; a new wgpu
+//!   texture starts zeroed, so a frame with no camera would capture black, not a stale frame.
+//!   The programs' cameras render every frame, and they ask for a capture only after their
+//!   settle frames (the lab driver's `settled`), so each capture shows the settled scene.
 
 use bevy::app::{PluginGroupBuilder, ScheduleRunnerPlugin};
 use bevy::prelude::*;
