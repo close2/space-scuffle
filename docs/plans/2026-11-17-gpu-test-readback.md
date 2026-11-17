@@ -818,3 +818,15 @@ as described above), never on leftovers: `pgrep` showed no `kwin_wayland` or `Xw
    `SPACE_SCUFFLE_GPU_TEST_DISPLAY=xvfb` (exactly the pre-WP3 path), in the order xvfb r1, kwin r1, kwin r2, xvfb r2,
    with `~/scratch/gpu-readback/wp3/bin/arm.sh <xvfb|kwin> <round>`, summarised in Amendment 1's ledger format.
 5. The verifier's `cargo gate package` (Q0061).
+
+### Amendment 2, radv results (2026-11-17, after the RX 580 returned)
+
+Radv POLARIS10, Mesa 25.0.7, built from `63566e1b`; the build after the server's restart was clean. Logs are in
+`~/scratch/gpu-readback/wp3/radv/`.
+
+1. **`gpu_validation_tests` on radv** (`--test-threads=1`, as the gate runs it): 46 passed, 0 failed, 2 ignored
+   (the lock children). `a_failing_kwin_session_fails_the_run`: the exit-3 session reaches the verdict in 0.97 s.
+   `a_timed_out_kwin_session_leaves_nothing_running` passes in its final form: `timeout` ends the session at 20.17 s
+   (exit 124), and no sampled process, KWin and Xwayland included, remains. The validated runs under KWin find
+   nothing: `client --battle` 24.2 s, `--skirmish` 21.3 s, `--lab` 19.2 s, and the best-practices control 19.3 s.
+   KWin's log lines about missing decoration and overview plugins are harmless and are not validation findings.
