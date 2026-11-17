@@ -830,3 +830,7 @@ Radv POLARIS10, Mesa 25.0.7, built from `63566e1b`; the build after the server's
    (exit 124), and no sampled process, KWin and Xwayland included, remains. The validated runs under KWin find
    nothing: `client --battle` 24.2 s, `--skirmish` 21.3 s, `--lab` 19.2 s, and the best-practices control 19.3 s.
    KWin's log lines about missing decoration and overview plugins are harmless and are not validation findings.
+2. **T-1 and T-2 on radv** (`capture_path_gpu_tests`): both pass. T-1: the window child (forced onto Xvfb) against
+   the offscreen child, 7 captures compared, 0 differ. T-2: the same window child forced onto Xvfb and forced onto
+   KWin, 7 captures compared, 0 differ. F3: each effect capture changes 13,691 to 20,280 pixels of the empty ground.
+   Child times: window on Xvfb 30.2 and 35.5 s, window on KWin 13.3 s, offscreen 9.9 s.
