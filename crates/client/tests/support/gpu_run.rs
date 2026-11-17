@@ -6,6 +6,12 @@
 //! - **Driver selection.** [`select_driver`] chooses `radv` (the physical GPU) or `lavapipe`
 //!   (software Vulkan) once per test process from `SPACE_SCUFFLE_GPU_TEST_DRIVER` and the host's
 //!   prerequisites, and never falls back from a forced choice.
+//! - **Display selection.** [`select_display`] chooses where windowed children present, once per
+//!   test process, from `SPACE_SCUFFLE_GPU_TEST_DISPLAY` (`auto`, `kwin`, `xvfb`): a headless
+//!   `KWin` on `radv` where the host has `kwin_wayland`, `Xwayland` and `XDG_RUNTIME_DIR`;
+//!   otherwise `xvfb-run` with `MESA_VK_WSI_DEBUG=sw`, said on the selection line and in the
+//!   ledger. `lavapipe` always stays on Xvfb, because `KWin` would composite on the physical GPU
+//!   without the lock. A forced choice never falls back.
 //! - **The shared GPU lock.** On `radv`, [`GpuLock`] takes `/run/lock/gpu.lock`, the file
 //!   `with-gpu-lock` locks, immediately before the child starts and releases it when the child
 //!   exits. Nothing else holds it, so other users of the server get the GPU between children.
@@ -16,8 +22,15 @@
 //! (sections 3 and 4, decisions D1 to D9).
 //!
 //! # How a child runs
-//! 1. [`virtual_gpu_command`] builds a [`GpuCommand`]: GNU `timeout`, then `xvfb-run`, then the
-//!    binary, with the selected driver's environment. [`offscreen_gpu_command`] builds one with
+//! 1. [`virtual_gpu_command`] builds a [`GpuCommand`] on the selected display, with the selected
+//!    driver's environment: GNU `timeout`, then `xvfb-run`, then the binary; or GNU `timeout`,
+//!    then `kwin_wayland --virtual --xwayland ... --exit-with-session "<shim> <status file>
+//!    <binary> <args>"` (plan `docs/plans/2026-11-17-gpu-test-readback.md`, D-4). `KWin` runs the
+//!    binary through a status shim, because the status file, not `KWin`'s exit code, is the
+//!    child's verdict ([`kwin_session_verdict`]); and it splits the session string like a shell,
+//!    so a path or argument it cannot carry as one word is refused ([`session_word`]).
+//!    [`virtual_gpu_command_with`] forces a display for one command. [`offscreen_gpu_command`]
+//!    builds one with
 //!    no display at all, for a child that renders into an image and reads only its own
 //!    pictures (`client::offscreen`; plan `docs/plans/2026-11-17-gpu-test-readback.md`, D-7).
 //!    Callers add arguments and variables.
@@ -29,7 +42,7 @@
 //!    the lock (radv only), spawns the child, waits for it, releases the lock, then
 //!    checks the exit status and the adapter line, and appends a line to the ledger if
 //!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The line names the child's display
-//!    (`display=offscreen`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log
+//!    (`display=offscreen`, `kwin`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log
 //!    timestamps split its run into phases ([`ChildTimeline`]); the ledger records them, and a
 //!    timeout names the slowest.
 //!    `SPACE_SCUFFLE_GPU_RUN_LOG_DIR` keeps each child's whole log for a timing investigation.
@@ -62,9 +75,15 @@
 //!   anisotropic filtering, because that driver's sampler does not finish such a frame (see
 //!   [`GpuCommand::allow_for_hex_tiling_driver_defect`]). `radv` always uses the production
 //!   sampler.
-//! - On `radv`, windowed children present with `MESA_VK_WSI_DEBUG=sw`, because Xvfb has no
-//!   DRI3. The GPU renders every frame, but the DRI3 present path a desktop uses is not
-//!   exercised. Offscreen children present nothing, so they exercise no present path at all.
+//! - On `radv` under the headless `KWin`, windowed children present through DRI3 to `KWin`'s
+//!   Xwayland, as on a desktop, and `KWin` composites on the same GPU inside the child's lock.
+//!   Where `KWin` is missing, they present with `MESA_VK_WSI_DEBUG=sw` under Xvfb, which has no
+//!   DRI3, so the GPU renders every frame but the DRI3 present path is not exercised. On
+//!   `lavapipe` the software present is the only one. Offscreen children present nothing, so
+//!   they exercise no present path at all.
+//! - A `KWin` child's output includes `KWin`'s and Xwayland's own messages. They have no
+//!   `tracing` timestamp, so neither the validation parser nor the timeline reads them, and
+//!   `KWin`'s start (about 1 s) counts toward the launch phase.
 //! - If the test process itself is killed with `SIGKILL`, its child keeps running without the
 //!   lock for at most the run limit plus the kill grace ([`GpuDriver::run_limit_secs`],
 //!   [`KILL_GRACE_SECS`]).
@@ -1035,6 +1054,325 @@ fn display_search_start() -> u32 {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Display selection (plan `2026-11-17-gpu-test-readback`, decision D-4)
+// ---------------------------------------------------------------------------------------------
+
+/// Variable that chooses the display of windowed children: `kwin`, `xvfb` or `auto`. Unset
+/// means `auto`.
+pub const DISPLAY_VAR: &str = "SPACE_SCUFFLE_GPU_TEST_DISPLAY";
+
+/// The `xvfb-run` wrapper, which starts a virtual X server for one command.
+const XVFB_RUN: &str = "/usr/bin/xvfb-run";
+
+/// The compositor of the headless display: `kwin_wayland --virtual --xwayland`.
+const KWIN: &str = "kwin_wayland";
+
+/// The X server `KWin` starts for X11 clients; the children's windows use it.
+const XWAYLAND: &str = "Xwayland";
+
+/// The per-user runtime directory, which `KWin` needs for its Wayland socket. The session files of
+/// a `KWin` child are written there too.
+const RUNTIME_DIR_VAR: &str = "XDG_RUNTIME_DIR";
+
+/// Width and height of `KWin`'s virtual output when the caller names no screen: the 1280×720 of
+/// the children's windows.
+const DEFAULT_KWIN_SCREEN: (u32, u32) = (1280, 720);
+
+/// What `SPACE_SCUFFLE_GPU_TEST_DISPLAY` asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayRequest {
+    /// `KWin` on `radv` where the host has it, otherwise Xvfb; the choice and its reason are
+    /// printed and recorded in the ledger.
+    Auto,
+    /// The headless `KWin`, or an error; never a fallback.
+    Kwin,
+    /// `xvfb-run` (on `radv` with `MESA_VK_WSI_DEBUG=sw`), or an error.
+    Xvfb,
+}
+
+impl DisplayRequest {
+    /// Parses the variable's value; `None` (unset) means [`Self::Auto`].
+    ///
+    /// # Errors
+    /// [`DisplaySelectionError::InvalidRequest`] for any value but `auto`, `kwin` and `xvfb`.
+    pub fn parse(value: Option<&str>) -> Result<Self, DisplaySelectionError> {
+        match value {
+            None | Some("auto") => Ok(Self::Auto),
+            Some("kwin") => Ok(Self::Kwin),
+            Some("xvfb") => Ok(Self::Xvfb),
+            Some(other) => Err(DisplaySelectionError::InvalidRequest(other.to_owned())),
+        }
+    }
+}
+
+/// The display server windowed children of a test process use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayServer {
+    /// A headless `KWin` per child (`kwin_wayland --virtual --xwayland`): `radv` presents through
+    /// DRI3, and `KWin` composites on the same GPU inside the child's lock.
+    Kwin,
+    /// An Xvfb server per child from `xvfb-run`; `radv` needs `MESA_VK_WSI_DEBUG=sw` there.
+    Xvfb,
+    /// The display this test process has, where `xvfb-run` is missing.
+    Host,
+}
+
+/// What the host offers a windowed child, as found by [`HostDisplay::probe`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostDisplay {
+    /// `kwin_wayland` on `PATH`, if found.
+    pub kwin: Option<PathBuf>,
+    /// `Xwayland` on `PATH`, if found.
+    pub xwayland: Option<PathBuf>,
+    /// `XDG_RUNTIME_DIR`, if set to an existing directory.
+    pub runtime_dir: Option<PathBuf>,
+    /// `/usr/bin/xvfb-run`, if installed.
+    pub xvfb_run: Option<PathBuf>,
+    /// Whether this process has a display of its own (`DISPLAY` or `WAYLAND_DISPLAY`).
+    pub desktop: bool,
+}
+
+/// A prerequisite of the `KWin` display that the host lacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingDisplayTool {
+    /// `kwin_wayland` is not on `PATH`.
+    Kwin,
+    /// `Xwayland` is not on `PATH`, so `KWin` cannot serve the children's X11 windows.
+    Xwayland,
+    /// `XDG_RUNTIME_DIR` is unset or not a directory, so `KWin` has nowhere for its socket.
+    RuntimeDir,
+}
+
+impl fmt::Display for MissingDisplayTool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Kwin => write!(formatter, "{KWIN} is not on PATH"),
+            Self::Xwayland => write!(formatter, "{XWAYLAND} is not on PATH"),
+            Self::RuntimeDir => write!(formatter, "{RUNTIME_DIR_VAR} is not an existing directory"),
+        }
+    }
+}
+
+impl HostDisplay {
+    /// Inspects the real host: `PATH`, `XDG_RUNTIME_DIR`, `xvfb-run` and this process's display.
+    pub fn probe() -> Self {
+        let set = |key: &str| std::env::var_os(key).is_some_and(|value| !value.is_empty());
+        Self {
+            kwin: find_on_path(KWIN),
+            xwayland: find_on_path(XWAYLAND),
+            runtime_dir: std::env::var_os(RUNTIME_DIR_VAR)
+                .map(PathBuf::from)
+                .filter(|directory| directory.is_dir()),
+            xvfb_run: Some(PathBuf::from(XVFB_RUN)).filter(|path| path.exists()),
+            desktop: set("DISPLAY") || set("WAYLAND_DISPLAY"),
+        }
+    }
+
+    /// Lists every `KWin` prerequisite this host lacks. Empty means `KWin` can run.
+    pub fn missing_kwin_prerequisites(&self) -> Vec<MissingDisplayTool> {
+        let mut missing = Vec::new();
+        if self.kwin.is_none() {
+            missing.push(MissingDisplayTool::Kwin);
+        }
+        if self.xwayland.is_none() {
+            missing.push(MissingDisplayTool::Xwayland);
+        }
+        if self.runtime_dir.is_none() {
+            missing.push(MissingDisplayTool::RuntimeDir);
+        }
+        missing
+    }
+}
+
+/// The display windowed children use, with why it was chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplaySelection {
+    /// The chosen server.
+    pub server: DisplayServer,
+    /// The runtime directory `KWin`'s socket and session files go in; `Some` exactly for
+    /// [`DisplayServer::Kwin`].
+    pub runtime_dir: Option<PathBuf>,
+    /// How the choice was made, such as `forced` or the `auto` evidence.
+    pub reason: String,
+    /// Whether `auto` fell back from `KWin` on `radv`; the selection line then starts with a
+    /// warning.
+    pub fell_back: bool,
+}
+
+impl fmt::Display for DisplaySelection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let server = match self.server {
+            DisplayServer::Kwin => "kwin",
+            DisplayServer::Xvfb => "xvfb",
+            DisplayServer::Host => "host",
+        };
+        write!(formatter, "display {server} ({})", self.reason)
+    }
+}
+
+/// Why no display could be selected. Each variant fails the test; a forced choice never falls
+/// back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplaySelectionError {
+    /// The variable holds a value other than `auto`, `kwin` and `xvfb`.
+    InvalidRequest(String),
+    /// `kwin` was forced with `lavapipe`: `KWin` would composite on the physical GPU, and a
+    /// `lavapipe` child takes no lock.
+    KwinOnLavapipe,
+    /// `kwin` was forced, and these prerequisites are missing.
+    KwinUnavailable(Vec<MissingDisplayTool>),
+    /// `xvfb` was forced, and `xvfb-run` is not installed.
+    XvfbUnavailable,
+    /// Neither `KWin`, nor `xvfb-run`, nor a display of this process exists.
+    NoDisplay,
+}
+
+impl fmt::Display for DisplaySelectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRequest(value) => write!(
+                formatter,
+                "{DISPLAY_VAR}={value:?} is not a display; use kwin, xvfb or auto"
+            ),
+            Self::KwinOnLavapipe => write!(
+                formatter,
+                "{DISPLAY_VAR}=kwin with lavapipe: KWin would composite on the physical GPU, and \
+                 a lavapipe child takes no lock. Use xvfb or auto with lavapipe."
+            ),
+            Self::KwinUnavailable(missing) => write!(
+                formatter,
+                "{DISPLAY_VAR}=kwin, but this host cannot start a headless KWin: {}. The \
+                 harness never falls back to another display.",
+                missing
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            Self::XvfbUnavailable => {
+                write!(formatter, "{DISPLAY_VAR}=xvfb, but {XVFB_RUN} is missing")
+            }
+            Self::NoDisplay => write!(
+                formatter,
+                "CRITICAL: no display for a windowed GPU child: no headless KWin, {XVFB_RUN} is \
+                 missing, and this process has no DISPLAY or WAYLAND_DISPLAY. Install xvfb, or set \
+                 SPACE_SCUFFLE_SKIP_GPU_TESTS=1 locally."
+            ),
+        }
+    }
+}
+
+/// Chooses the display of windowed children for `request`, `driver` and `host`. A pure function.
+///
+/// - `kwin`: `KWin`, refused on `lavapipe` and where a prerequisite is missing.
+/// - `xvfb`: `xvfb-run`, refused where it is missing.
+/// - `auto`: `KWin` on `radv` with every prerequisite; otherwise `xvfb-run` (on `lavapipe` always,
+///   because `KWin` would composite on the physical GPU without the lock); otherwise this process's
+///   own display.
+///
+/// # Errors
+/// [`DisplaySelectionError`] when the requested display is not available.
+pub fn select_display(
+    request: DisplayRequest,
+    driver: GpuDriver,
+    host: &HostDisplay,
+) -> Result<DisplaySelection, DisplaySelectionError> {
+    let missing = host.missing_kwin_prerequisites();
+    let selection = |server, reason: String, fell_back| DisplaySelection {
+        server,
+        runtime_dir: (server == DisplayServer::Kwin)
+            .then(|| host.runtime_dir.clone())
+            .flatten(),
+        reason,
+        fell_back,
+    };
+    match request {
+        DisplayRequest::Kwin if driver == GpuDriver::Lavapipe => {
+            Err(DisplaySelectionError::KwinOnLavapipe)
+        }
+        DisplayRequest::Kwin if missing.is_empty() => {
+            Ok(selection(DisplayServer::Kwin, "forced".to_owned(), false))
+        }
+        DisplayRequest::Kwin => Err(DisplaySelectionError::KwinUnavailable(missing)),
+        DisplayRequest::Xvfb if host.xvfb_run.is_some() => {
+            Ok(selection(DisplayServer::Xvfb, "forced".to_owned(), false))
+        }
+        DisplayRequest::Xvfb => Err(DisplaySelectionError::XvfbUnavailable),
+        DisplayRequest::Auto if driver == GpuDriver::Radv && missing.is_empty() => Ok(selection(
+            DisplayServer::Kwin,
+            format!("auto: {KWIN}, {XWAYLAND} and {RUNTIME_DIR_VAR} present"),
+            false,
+        )),
+        DisplayRequest::Auto => {
+            let why = if driver == GpuDriver::Lavapipe {
+                "lavapipe stays off KWin, which would composite on the physical GPU without the \
+                 lock"
+                    .to_owned()
+            } else {
+                format!(
+                    "no headless KWin ({})",
+                    missing
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            };
+            let fell_back = driver == GpuDriver::Radv;
+            if host.xvfb_run.is_some() {
+                let present = if fell_back {
+                    ", so radv presents with MESA_VK_WSI_DEBUG=sw"
+                } else {
+                    ""
+                };
+                Ok(selection(
+                    DisplayServer::Xvfb,
+                    format!("auto: {why}{present}"),
+                    fell_back,
+                ))
+            } else if host.desktop {
+                Ok(selection(
+                    DisplayServer::Host,
+                    format!("auto: {why}, and {XVFB_RUN} is missing; this process's display"),
+                    fell_back,
+                ))
+            } else {
+                Err(DisplaySelectionError::NoDisplay)
+            }
+        }
+    }
+}
+
+/// The display of this test process's windowed children, chosen once from [`DISPLAY_VAR`], the
+/// selected driver and [`HostDisplay::probe`].
+///
+/// Prints one line naming the choice to stderr the first time, starting with `WARNING:` when
+/// `auto` fell back from `KWin` on `radv`.
+///
+/// # Panics
+/// Panics with the [`DisplaySelectionError`] when no display can be selected, or when no driver
+/// can.
+pub fn selected_display() -> &'static DisplaySelection {
+    static SELECTION: OnceLock<Result<DisplaySelection, DisplaySelectionError>> = OnceLock::new();
+    let driver = selected_driver().driver;
+    let selection = SELECTION.get_or_init(|| {
+        let value = std::env::var(DISPLAY_VAR).ok();
+        let selection = DisplayRequest::parse(value.as_deref())
+            .and_then(|request| select_display(request, driver, &HostDisplay::probe()));
+        match &selection {
+            Ok(selection) if selection.fell_back => eprintln!("WARNING: gpu_run: {selection}"),
+            Ok(selection) => eprintln!("gpu_run: {selection}"),
+            Err(_) => {}
+        }
+        selection
+    });
+    match selection {
+        Ok(selection) => selection,
+        Err(error) => panic!("gpu_run: {error}"),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The child command (plan decisions D3 to D6)
 // ---------------------------------------------------------------------------------------------
 
@@ -1076,22 +1414,317 @@ pub enum ChildDisplay {
     /// `DISPLAY` and `WAYLAND_DISPLAY` are removed, so a window opened by mistake fails loudly
     /// instead of reaching a desktop.
     None,
-    /// A virtual X display from `xvfb-run`, of `screen` (such as `1600x900x24`) when given, or
-    /// the existing display where `xvfb-run` is missing.
-    Virtual {
+    /// An Xvfb server from `xvfb-run`, of `screen` (such as `1600x900x24`) when given.
+    Xvfb {
         /// The screen `xvfb-run` starts, or `None` for its default.
         screen: Option<String>,
     },
+    /// A headless `KWin` of `screen`'s width and height (1280×720 when `None`), whose session runs
+    /// the child; its socket and session files go in `runtime_dir`.
+    Kwin {
+        /// The screen, as for Xvfb; only its width and height are used.
+        screen: Option<String>,
+        /// `XDG_RUNTIME_DIR`, passed to `KWin`.
+        runtime_dir: PathBuf,
+    },
+    /// The display this test process has, where `xvfb-run` is missing.
+    Host,
+}
+
+impl ChildDisplay {
+    /// The display of a windowed child on `selection`, of `screen` when given.
+    ///
+    /// # Panics
+    /// Panics when a `KWin` selection carries no runtime directory, which [`select_display`]
+    /// never produces.
+    pub fn windowed(selection: &DisplaySelection, screen: Option<&str>) -> Self {
+        let screen = screen.map(str::to_owned);
+        match selection.server {
+            DisplayServer::Kwin => Self::Kwin {
+                screen,
+                runtime_dir: selection
+                    .runtime_dir
+                    .clone()
+                    .expect("invariant: select_display gives every KWin selection its directory"),
+            },
+            DisplayServer::Xvfb => Self::Xvfb { screen },
+            DisplayServer::Host => Self::Host,
+        }
+    }
+
+    /// The ledger's `display=` value for a child on `driver`.
+    fn ledger_name(&self, driver: GpuDriver) -> &'static str {
+        match (self, driver) {
+            (Self::None, _) => "offscreen",
+            (Self::Xvfb { .. }, GpuDriver::Radv) => "xvfb-sw",
+            (Self::Xvfb { .. }, GpuDriver::Lavapipe) => "xvfb",
+            (Self::Kwin { .. }, _) => "kwin",
+            (Self::Host, _) => "host",
+        }
+    }
+}
+
+/// The width and height of a screen such as `1600x900x24` or `1600x900`; `None` gives
+/// `KWin`'s default of 1280×720.
+///
+/// # Panics
+/// Panics when `screen` is not `<width>x<height>[x<depth>]` with positive whole numbers.
+pub fn kwin_screen(screen: Option<&str>) -> (u32, u32) {
+    let Some(screen) = screen else {
+        return DEFAULT_KWIN_SCREEN;
+    };
+    let mut sides = screen.split('x').map(str::parse::<u32>);
+    match (sides.next(), sides.next()) {
+        (Some(Ok(width)), Some(Ok(height))) if width > 0 && height > 0 => (width, height),
+        _ => panic!("the screen {screen:?} is not <width>x<height>[x<depth>]"),
+    }
+}
+
+/// The per-run files and names of one `KWin` child (plan `2026-11-17-gpu-test-readback`, D-4).
+///
+/// `KWin` exits with a status of its own, so the session runs the child through a shim that
+/// writes the child's exit status to a file; that file is the verdict, and a missing file is a
+/// failure ([`kwin_session_verdict`]).
+#[derive(Debug)]
+struct KwinSession {
+    /// `KWin`'s Wayland socket name, `ss-gpu-<pid>-<n>`, unique per run on the host.
+    socket: String,
+    /// The directory of the shim and the status file, `<runtime dir>/<socket>.session`.
+    directory: PathBuf,
+    /// Width of the virtual output, in pixels.
+    width: u32,
+    /// Height of the virtual output, in pixels.
+    height: u32,
+}
+
+/// The status shim a `KWin` session runs: `session.sh <status file> <program> [args...]`. It runs
+/// the program with `KWin`'s environment and output, then writes its exit status to the file
+/// (through a temporary name, so a half-written file is never read) and exits with it.
+const SESSION_SHIM: &str = "#!/bin/sh\n\
+# Written by crates/client/tests/support/gpu_run.rs for one GPU test child under KWin.\n\
+status_file=$1\n\
+shift\n\
+\"$@\"\n\
+code=$?\n\
+printf '%s\\n' \"$code\" > \"$status_file.part\" && mv \"$status_file.part\" \"$status_file\"\n\
+exit \"$code\"\n";
+
+impl KwinSession {
+    /// A session of `screen`'s size whose files go under `runtime_dir`, named uniquely for this
+    /// process and run.
+    fn new(runtime_dir: &Path, screen: Option<&str>) -> Self {
+        static NEXT_SESSION: AtomicU32 = AtomicU32::new(0);
+        let socket = format!(
+            "ss-gpu-{}-{}",
+            std::process::id(),
+            NEXT_SESSION.fetch_add(1, Ordering::Relaxed)
+        );
+        let (width, height) = kwin_screen(screen);
+        Self {
+            // Not the socket's own name: KWin creates its socket there.
+            directory: runtime_dir.join(format!("{socket}.session")),
+            socket,
+            width,
+            height,
+        }
+    }
+
+    /// The shim's path.
+    fn shim(&self) -> PathBuf {
+        self.directory.join("session.sh")
+    }
+
+    /// The status file's path.
+    fn status_file(&self) -> PathBuf {
+        self.directory.join("status")
+    }
+
+    /// `KWin`'s arguments for running `child`: the headless flags, the output size, the socket
+    /// and the session string.
+    ///
+    /// # Panics
+    /// As [`session_word`], for any path or argument of the session string.
+    fn arguments(&self, child: &Command) -> Vec<String> {
+        let mut words = vec![
+            session_word(&self.shim().to_string_lossy()),
+            session_word(&self.status_file().to_string_lossy()),
+            session_word(&child.get_program().to_string_lossy()),
+        ];
+        words.extend(
+            child
+                .get_args()
+                .map(|arg| session_word(&arg.to_string_lossy())),
+        );
+        [
+            "--virtual",
+            "--xwayland",
+            "--no-lockscreen",
+            "--no-global-shortcuts",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .chain([
+            "--width".to_owned(),
+            self.width.to_string(),
+            "--height".to_owned(),
+            self.height.to_string(),
+            "--socket".to_owned(),
+            self.socket.clone(),
+            "--exit-with-session".to_owned(),
+            words.join(" "),
+        ])
+        .collect()
+    }
+
+    /// Creates the session directory and writes the shim into it, executable. The returned
+    /// guard removes the directory when dropped.
+    fn prepare(&self) -> std::io::Result<SessionFiles> {
+        std::fs::create_dir_all(&self.directory)?;
+        let guard = SessionFiles {
+            directory: self.directory.clone(),
+        };
+        std::fs::write(self.shim(), SESSION_SHIM)?;
+        make_executable(&self.shim())?;
+        Ok(guard)
+    }
+
+    /// Replaces `KWin`'s exit status in `output` with the child's, from the status file.
+    ///
+    /// # Panics
+    /// Panics when the session left no status file and the run did not time out: the child's
+    /// verdict would be unknown.
+    fn settle(&self, output: Output, label: &str) -> Output {
+        let status = std::fs::read_to_string(self.status_file()).ok();
+        match kwin_session_verdict(output.status.code(), status.as_deref()) {
+            SessionVerdict::TimedOut => output,
+            SessionVerdict::Exited(code) => Output {
+                status: exit_status(code),
+                ..output
+            },
+            SessionVerdict::NoStatus => panic!(
+                "{label}: the KWin session left no status file, so the child's exit status is \
+                 unknown (KWin exited with {:?}). Last output:\n{}",
+                output.status.code(),
+                tail(&captured_log(&output))
+            ),
+        }
+    }
+}
+
+/// Removes a `KWin` session's directory when dropped, whatever the run's outcome.
+#[derive(Debug)]
+struct SessionFiles {
+    /// The directory to remove.
+    directory: PathBuf,
+}
+
+impl Drop for SessionFiles {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.directory) {
+            eprintln!(
+                "WARNING: gpu_run could not remove the KWin session directory {}: {error}",
+                self.directory.display()
+            );
+        }
+    }
+}
+
+/// Sets the execute bits of the file at `path`.
+#[cfg(unix)]
+fn make_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+/// Without Unix permissions every file is executable.
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// The exit status of a process that exited with `code`.
+#[cfg(unix)]
+fn exit_status(code: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt as _;
+    std::process::ExitStatus::from_raw((code & 0xff) << 8)
+}
+
+/// The exit status of a process that exited with `code`.
+#[cfg(windows)]
+fn exit_status(code: i32) -> std::process::ExitStatus {
+    use std::os::windows::process::ExitStatusExt as _;
+    std::process::ExitStatus::from_raw(code.unsigned_abs())
+}
+
+/// Returns `word` if `KWin`'s session string can carry it as one word.
+///
+/// `KWin` splits `--exit-with-session` like a shell command line, so a word with whitespace, a
+/// quote, a backslash or another shell metacharacter would be split or changed. Such a word is
+/// refused rather than escaped: the children's paths and arguments never need one.
+///
+/// # Panics
+/// Panics naming `word` when it holds any character other than ASCII letters, digits and
+/// `-_./=,:+@%`.
+pub fn session_word(word: &str) -> String {
+    let plain =
+        |character: char| character.is_ascii_alphanumeric() || "-_./=,:+@%".contains(character);
+    if let Some(bad) = word.chars().find(|character| !plain(*character)) {
+        panic!(
+            "the KWin session string cannot carry {word:?}: it holds {bad:?}, and KWin splits \
+             the session string like a shell command line"
+        );
+    }
+    assert!(
+        !word.is_empty(),
+        "the KWin session string cannot carry an empty word"
+    );
+    word.to_owned()
+}
+
+/// What a `KWin` child's run comes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionVerdict {
+    /// GNU `timeout` ended the run; the harness reports a timeout.
+    TimedOut,
+    /// The child exited with this status, as its status file says.
+    Exited(i32),
+    /// The session left no readable status: a failure, whatever `KWin`'s own status.
+    NoStatus,
+}
+
+/// The verdict of a `KWin` child from `KWin`'s exit code (`None` when killed by a signal) and the
+/// text of its status file (`None` when the file is missing). A pure function.
+///
+/// The status file is the source of truth; `KWin`'s own code counts only as `timeout`'s
+/// [`TIMEOUT_EXIT_CODE`]. `KWin` 6.3.6 happens to pass the session's code on, but earlier releases
+/// exited 0 after a failed session (readback evidence, P-K).
+pub fn kwin_session_verdict(kwin_exit: Option<i32>, status: Option<&str>) -> SessionVerdict {
+    if kwin_exit == Some(TIMEOUT_EXIT_CODE) {
+        return SessionVerdict::TimedOut;
+    }
+    status
+        .and_then(|text| text.trim().parse().ok())
+        .map_or(SessionVerdict::NoStatus, SessionVerdict::Exited)
 }
 
 /// A GPU child under construction: binary, display, driver environment, run limit and lock.
+///
+/// It runs as `timeout`, then the display wrapper (`xvfb-run`, or `kwin_wayland` whose session
+/// runs the child through a status shim), then the binary and its arguments.
 ///
 /// It deliberately offers no way to start the child except through the lock: [`Self::run`],
 /// [`Self::try_run`], [`Self::run_validated`] and [`Self::assert_passes_validation`].
 #[derive(Debug)]
 pub struct GpuCommand {
-    /// `timeout`, then `xvfb-run` (renderers only), then the program and its arguments.
+    /// The program, its arguments and the variables it gets. The command that runs wraps it in
+    /// `timeout` and the display ([`Self::launch_command`]).
     command: Command,
+    /// The display the child shows its frames on.
+    shown_on: ChildDisplay,
+    /// The display number `xvfb-run` searches from ([`display_search_start`]); unused elsewhere.
+    xvfb_start: u32,
+    /// The `KWin` session's names, for a child on [`ChildDisplay::Kwin`].
+    session: Option<KwinSession>,
     /// Renderer on a driver, or lock self-test.
     kind: ChildKind,
     /// The lock the run takes around the spawn.
@@ -1110,11 +1743,12 @@ pub struct GpuCommand {
 /// there, so even a command that escaped the check in [`GpuCommand::try_run`] loads no driver.
 pub const INSPECTION_MANIFEST: &str = "/nonexistent/space-scuffle-inspection/icd.json";
 
-/// Builds a [`GpuCommand`] that runs `binary` on a virtual display with the selected driver.
+/// Builds a [`GpuCommand`] that runs `binary` on a virtual display with the selected driver: the
+/// headless `KWin` or Xvfb, as [`selected_display`] chose.
 ///
 /// # Panics
-/// Panics when no driver can be selected, or when neither `xvfb-run` nor a display exists. A GPU
-/// test must not pass without running.
+/// Panics when no driver or no display can be selected. A GPU test must not pass without
+/// running.
 pub fn virtual_gpu_command(binary: &Path) -> GpuCommand {
     virtual_gpu_command_on_screen(binary, None)
 }
@@ -1168,10 +1802,26 @@ pub fn run_offscreen_test_child(test_name: &str, label: &str) -> GpuRun {
 /// # Panics
 /// As [`virtual_gpu_command`].
 pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> GpuCommand {
-    let display = ChildDisplay::Virtual {
-        screen: screen.map(str::to_owned),
-    };
+    let display = ChildDisplay::windowed(selected_display(), screen);
     GpuCommand::renderer(binary, &display, selected_driver())
+}
+
+/// Builds a windowed command as [`virtual_gpu_command_on_screen`] does, on the display `request`
+/// selects for this one command instead of the process's [`selected_display`]. The equivalence
+/// tests use it to run one child on Xvfb and on `KWin`.
+///
+/// # Panics
+/// Panics when no driver can be selected, or when `request` cannot be met
+/// ([`select_display`]): a forced display never falls back.
+pub fn virtual_gpu_command_with(
+    binary: &Path,
+    screen: Option<&str>,
+    request: DisplayRequest,
+) -> GpuCommand {
+    let selection = selected_driver();
+    let display = select_display(request, selection.driver, &HostDisplay::probe())
+        .unwrap_or_else(|error| panic!("gpu_run: {error}"));
+    GpuCommand::renderer(binary, &ChildDisplay::windowed(&display, screen), selection)
 }
 
 impl GpuCommand {
@@ -1203,22 +1853,28 @@ impl GpuCommand {
     /// Panics when `display` is virtual and neither `xvfb-run` nor a display exists.
     fn renderer(binary: &Path, display: &ChildDisplay, selection: &GpuSelection) -> Self {
         let driver = selection.driver;
-        let run_limit_secs = driver.run_limit_secs();
-        let mut command = timeout_command(run_limit_secs);
-        let shown_on = match display {
-            ChildDisplay::None => DisplayKind::Offscreen,
-            ChildDisplay::Virtual { screen } => {
-                add_virtual_display(&mut command, screen.as_deref())
-            }
-        };
-        command.arg(binary);
-        // The test must stay on the virtual display, or on none, and never appear on the
-        // user's desktop.
+        let kwin = matches!(display, ChildDisplay::Kwin { .. });
+        assert!(
+            !(kwin && driver == GpuDriver::Lavapipe),
+            "invariant: select_display never puts a lavapipe child on KWin, which would \
+             composite on the physical GPU without the lock"
+        );
+        let mut command = Command::new(binary);
+        // The test must stay on its own display, or on none, and never appear on the user's
+        // desktop. KWin sets both display variables for its session.
         command.env_remove("WAYLAND_DISPLAY");
-        if shown_on == DisplayKind::Offscreen {
-            command.env_remove("DISPLAY");
-        } else {
-            command.env("WINIT_UNIX_BACKEND", "x11");
+        match display {
+            ChildDisplay::None => {
+                command.env_remove("DISPLAY");
+            }
+            ChildDisplay::Kwin { runtime_dir, .. } => {
+                command.env_remove("DISPLAY");
+                command.env(RUNTIME_DIR_VAR, runtime_dir);
+                command.env("WINIT_UNIX_BACKEND", "x11");
+            }
+            ChildDisplay::Xvfb { .. } | ChildDisplay::Host => {
+                command.env("WINIT_UNIX_BACKEND", "x11");
+            }
         }
         command.env("WGPU_BACKEND", "vulkan");
         command.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
@@ -1226,13 +1882,14 @@ impl GpuCommand {
         command.env("WGPU_ADAPTER_NAME", driver.adapter_driver());
         let lock = match driver {
             GpuDriver::Radv => {
-                if shown_on == DisplayKind::Offscreen {
-                    // Nothing is presented, so no present path is selected.
-                    command.env_remove("MESA_VK_WSI_DEBUG");
-                } else {
+                if matches!(display, ChildDisplay::Xvfb { .. } | ChildDisplay::Host) {
                     // Xvfb has no DRI3, and radv's X11 presentation needs it unless `sw` selects
                     // the software present path. Rendering stays on the GPU (plan section 3.1).
                     command.env("MESA_VK_WSI_DEBUG", "sw");
+                } else {
+                    // Offscreen presents nothing; KWin's Xwayland offers DRI3, so radv presents
+                    // as on a desktop.
+                    command.env_remove("MESA_VK_WSI_DEBUG");
                 }
                 command.env_remove("LIBGL_ALWAYS_SOFTWARE");
                 LockPolicy::Shared
@@ -1243,13 +1900,27 @@ impl GpuCommand {
                 LockPolicy::None
             }
         };
+        let session = match display {
+            ChildDisplay::Kwin {
+                screen,
+                runtime_dir,
+            } => Some(KwinSession::new(runtime_dir, screen.as_deref())),
+            _ => None,
+        };
+        let xvfb_start = match display {
+            ChildDisplay::Xvfb { .. } => display_search_start(),
+            _ => 0,
+        };
         Self {
             command,
+            shown_on: display.clone(),
+            xvfb_start,
+            session,
             kind: ChildKind::Renderer(driver),
             lock,
-            run_limit_secs,
+            run_limit_secs: driver.run_limit_secs(),
             program: binary.to_owned(),
-            display: shown_on.ledger_name(driver),
+            display: display.ledger_name(driver),
             runnable: true,
         }
     }
@@ -1260,15 +1931,16 @@ impl GpuCommand {
     /// Only the harness's own lock tests use this, so they run on every host, CI included, and
     /// never touch [`GPU_LOCK_PATH`].
     pub fn lock_probe(program: &Path, lock: &Path, wait: Duration) -> Self {
-        let mut command = timeout_command(LOCK_PROBE_RUN_LIMIT_SECS);
-        command.arg(program);
         Self {
-            command,
+            command: Command::new(program),
+            shown_on: ChildDisplay::None,
+            xvfb_start: 0,
+            session: None,
             kind: ChildKind::LockProbe,
             lock: LockPolicy::Private(lock.to_owned(), wait),
             run_limit_secs: LOCK_PROBE_RUN_LIMIT_SECS,
             program: program.to_owned(),
-            display: DisplayKind::NoChild.ledger_name(GpuDriver::Lavapipe),
+            display: "none",
             runnable: true,
         }
     }
@@ -1295,18 +1967,23 @@ impl GpuCommand {
         self
     }
 
-    /// The ledger's name of this child's display: `offscreen` (no display), `xvfb-sw` (`xvfb-run`
-    /// with radv's software present), `xvfb` (`xvfb-run` on lavapipe), `host` (the display this
-    /// process has, where `xvfb-run` is missing) or `none` (a lock self-test).
+    /// The ledger's name of this child's display: `offscreen` (no display), `kwin` (a headless
+    /// `KWin`), `xvfb-sw` (`xvfb-run` with radv's software present), `xvfb` (`xvfb-run` on
+    /// lavapipe), `host` (the display this process has, where `xvfb-run` is missing) or `none`
+    /// (a lock self-test).
     pub fn display_name(&self) -> &'static str {
         self.display
     }
 
     /// The command line the run executes: `timeout` and its arguments, the display wrapper if
     /// any, the program and its arguments.
+    ///
+    /// # Panics
+    /// As [`session_word`], for a `KWin` child whose program or arguments `KWin` cannot carry.
     pub fn command_line(&self) -> Vec<String> {
-        std::iter::once(self.command.get_program())
-            .chain(self.command.get_args())
+        let launch = self.launch_command();
+        std::iter::once(launch.get_program())
+            .chain(launch.get_args())
             .map(|part| part.to_string_lossy().into_owned())
             .collect()
     }
@@ -1376,6 +2053,15 @@ impl GpuCommand {
             "{label}: a command built by GpuCommand::inspect is for inspection and never runs"
         );
         self.keep_adapter_line();
+        let mut launch = self.launch_command();
+        let session_files = self.session.as_ref().map(|session| {
+            session.prepare().unwrap_or_else(|error| {
+                panic!(
+                    "{label}: cannot write the KWin session files in {}: {error}",
+                    session.directory.display()
+                )
+            })
+        });
         let preload = preload_executable(&self.program).unwrap_or_else(|error| {
             panic!("{label}: cannot read {}: {error}", self.program.display())
         });
@@ -1393,12 +2079,16 @@ impl GpuCommand {
         };
         let spawned = SystemTime::now();
         let started = Instant::now();
-        let output = self.command.output();
+        let output = launch.output();
         let run_time = started.elapsed();
         drop(guard);
-        let output = output.unwrap_or_else(|error| {
-            panic!("{label}: failed to launch {:?}: {error}", self.command)
-        });
+        let output =
+            output.unwrap_or_else(|error| panic!("{label}: failed to launch {launch:?}: {error}"));
+        let output = match &self.session {
+            Some(session) => session.settle(output, label),
+            None => output,
+        };
+        drop(session_files);
         let driver = self.driver();
         let log = captured_log(&output);
         let adapter = AdapterEvidence::parse(&log);
@@ -1453,6 +2143,57 @@ impl GpuCommand {
         run
     }
 
+    /// Lowers the run limit to `secs` seconds, for the harness's own timeout self-tests only
+    /// (`a_timed_out_kwin_session_leaves_nothing_running`). No GPU test may use it: the limits of
+    /// [`GpuDriver::run_limit_secs`] are the gate's.
+    pub fn set_run_limit_for_self_test(&mut self, secs: u32) -> &mut Self {
+        self.run_limit_secs = secs;
+        self
+    }
+
+    /// The command that runs: `timeout --kill-after=<grace> <limit>`, then `xvfb-run` and its
+    /// arguments, or `kwin_wayland` with the session string, or nothing, then the program and
+    /// its arguments, with every variable of [`Self::environment`].
+    ///
+    /// # Panics
+    /// As [`session_word`], for a `KWin` child whose program or arguments `KWin` cannot carry.
+    fn launch_command(&self) -> Command {
+        let mut launch = timeout_command(self.run_limit_secs);
+        let child = || {
+            std::iter::once(self.command.get_program().to_os_string())
+                .chain(self.command.get_args().map(OsStr::to_os_string))
+        };
+        match (&self.shown_on, &self.session) {
+            (ChildDisplay::Kwin { .. }, Some(session)) => {
+                launch.arg(KWIN).args(session.arguments(&self.command));
+            }
+            (ChildDisplay::Xvfb { screen }, _) => {
+                // `-n` must precede `-a`, which reads the starting number as it is parsed.
+                launch
+                    .arg(XVFB_RUN)
+                    .arg("-n")
+                    .arg(self.xvfb_start.to_string())
+                    .arg("-a");
+                if let Some(screen) = screen {
+                    launch
+                        .arg("-s")
+                        .arg(format!("-screen 0 {screen} +extension GLX"));
+                }
+                launch.args(child());
+            }
+            _ => {
+                launch.args(child());
+            }
+        }
+        for (key, value) in self.command.get_envs() {
+            match value {
+                Some(value) => launch.env(key, value),
+                None => launch.env_remove(key),
+            };
+        }
+        launch
+    }
+
     /// Makes sure the child logs Bevy's adapter line under any `RUST_LOG` it will see.
     ///
     /// With `RUST_LOG` unset, Bevy's default `info` level already logs it. With a filter set on
@@ -1477,63 +2218,6 @@ impl GpuCommand {
                     .env("RUST_LOG", format!("{filter},{ADAPTER_LOG_DIRECTIVE}"));
             }
         }
-    }
-}
-
-/// What a child shows its frames on, as the ledger names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DisplayKind {
-    /// No display ([`ChildDisplay::None`]).
-    Offscreen,
-    /// A server `xvfb-run` starts.
-    Xvfb,
-    /// The display this test process has, where `xvfb-run` is missing.
-    Host,
-    /// A lock self-test, which renders nothing.
-    NoChild,
-}
-
-impl DisplayKind {
-    /// The ledger's `display=` value for a child on `driver`.
-    fn ledger_name(self, driver: GpuDriver) -> &'static str {
-        match (self, driver) {
-            (Self::Offscreen, _) => "offscreen",
-            (Self::Xvfb, GpuDriver::Radv) => "xvfb-sw",
-            (Self::Xvfb, GpuDriver::Lavapipe) => "xvfb",
-            (Self::Host, _) => "host",
-            (Self::NoChild, _) => "none",
-        }
-    }
-}
-
-/// Adds `xvfb-run` with a display number of its own (and `screen`, if given) to `command`, or,
-/// where `xvfb-run` is missing, checks that this process has a display the child can use.
-///
-/// # Panics
-/// Panics when neither `xvfb-run` nor a display exists: a GPU test must not pass without running.
-fn add_virtual_display(command: &mut Command, screen: Option<&str>) -> DisplayKind {
-    let xvfb_run = Path::new("/usr/bin/xvfb-run");
-    if xvfb_run.exists() {
-        // `-n` must precede `-a`, which reads the starting number as it is parsed.
-        command
-            .arg(xvfb_run)
-            .arg("-n")
-            .arg(display_search_start().to_string())
-            .arg("-a");
-        if let Some(screen) = screen {
-            command
-                .arg("-s")
-                .arg(format!("-screen 0 {screen} +extension GLX"));
-        }
-        DisplayKind::Xvfb
-    } else {
-        assert!(
-            !(std::env::var_os("WAYLAND_DISPLAY").is_none()
-                && std::env::var_os("DISPLAY").is_none()),
-            "CRITICAL: No graphical display detected and /usr/bin/xvfb-run is missing! \
-             GPU tests require a display or xvfb-run. Set SPACE_SCUFFLE_SKIP_GPU_TESTS=1 to bypass."
-        );
-        DisplayKind::Host
     }
 }
 
