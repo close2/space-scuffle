@@ -408,3 +408,37 @@ Branch `inner-radius`. Each package writes its tests first and shows them red on
 - crates/sim_core/src/production/exits.rs
 - assets/catalog/units.ron
 - crates/sim_core/tests/catalog_reference_values_tests.rs
+
+## Amendment 1 (orchestrator, 2026-11-18): the showcase's flip is accepted; unit–structure contact is B-131
+
+**Decision.** WP3's data (the 17 rows of §2.2) is accepted together with its consequences for the showcase:
+- **Default seed:** player 0 wins at tick 2,599. The base was player 1 at 2,218.
+- **Seeds 2 to 5, 7 and 8:** player 0 wins.
+- **Seed 6:** player 1 still wins, at 2,617.
+- **Seed 1:** does not end within 6,000 ticks.
+
+D-12, 4's stop applied, and this amendment is the decision it asks for. WP3 resumes from the saved patch (`~/scratch/inner-radius/wp3-uncommitted.patch`).
+
+**Reasons.**
+- **The rule is the game's.** A worker meets terrain and structures at 0.3125 (R1, the 5.0.13 notes), and the flip is a consequence of it. The trace (evidence, WP3) shows this:
+  - The first divergence is tick 9: player 1's welder drone 16 rests 0.0625 nearer the spawn wall face at y = 53. It stops exactly at its terrain radius and never goes deeper (0 deeper unit-ticks on every run).
+  - From tick 10, the pulse bots passing it take other paths.
+  - This is the risk R-1 named, classified as rule-caused, not a defect.
+- **The base outcome was fragile.** The showcase's lane fight is near-tied: plan `2026-11-11-contact-and-missiles` Amendment 1 flipped it the other way for the same class of reason. A winner that turns on a worker's 1/16 unit against a wall is not a property to preserve against the game's rule.
+- **Nothing else moved materially.** The matrix keeps every recorded outcome; the one moved seed, `35_12_vikings_vs_6_colossi` seed 8, is not of record, ends at 438 instead of 435 with the same result, and is traced in WP3. Battle 33 is byte-identical.
+
+**Seed 1 does not end.** Both armies destroy each other, and only each side's two idle welder drones remain. That is the match-end rule working as specified (a player with units left is not defeated), not a movement defect. WP3 records it. No end condition changes here. The storyboard uses the default seed.
+
+**Seed 6 reversals at base + 12** (the bound is + 10). Accepted and recorded. Reversals at the edge of crowds are B-103's subject, and this plan changes no steering rule.
+
+**WP3 continues as specified:**
+- re-record `golden_replay` with the traced cause the WP3 report gives: the zealots turn round the cliff corner (34, 34) at 0.375 + 0.05 from tick 40;
+- `golden_replay_orders` does not move, which is recorded as a finding;
+- re-derive the five `wall_contact_tests` cases at the terrain radius, never loosening an assertion;
+- trace battle 35, seed 8;
+- run the wasm debug golden once;
+- measure throughput.
+
+WP4 must re-check the showcase storyboard and captions against the new default-seed timeline, with a real render on the RX 580, because the winner changes.
+
+**B-131 (new register entry, out of scope here).** A registered structure is also a body: a circle of half its footprint width. Placement occupancy, the collision phase and steering obstacles meet it at the unit's collision radius (D-6). So at the middle of a structure face a ground unit stays at `Radius`; only off the face does the terrain radius apply (T-6 tests points off the face middle). The game's inner radius governs interaction with buildings (R1, R3), so unit–structure pairs should use the terrain radius. Fixing this changes the collision phase and steering for unit–structure pairs, and would move outcomes again. It gets its own short plan and measurement after this one merges, not a change folded into WP3. WP5 adds the B-131 row to `DESIGN.md` §4.
