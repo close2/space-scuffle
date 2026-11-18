@@ -403,3 +403,40 @@ The branch is `structure-contact`. Each package writes its tests first and shows
 - **`separation_radius` (B-49):** unchanged and still unread.
 - **The friendly-blocking trace's circle gap for structures** (`sim_fixtures` `blocking.rs`): tooling only, recorded in D-2.
 - **A footprint-aware wall test in steering** (R-3): only if measurement demands it, by amendment.
+
+---
+
+## Proposed Amendment 1 (implementation agent, 2026-11-18; for the orchestrator to decide): accept the showcase's flip under WP2
+
+**Not in force until the orchestrator adopts it.** WP0 to WP2 are committed on `structure-contact`; WP2 is held
+under D-12, 4, and WP3 and WP4 are not started.
+
+**What happened.** WP1 is bit-identical everywhere. WP2 keeps every structure-free world bit-identical: the matrix,
+battle 33 and `golden_replay_orders`. `golden_replay` does not move. The showcase's default seed flips, from player
+0 at 2,599 to player 1 at 2,193. The other acceptance items on that seed hold: 0 deeper unit-ticks, stall give-ups
+0 / 0, reversals 25 / 10 against 24 / 16, and the match ends. Seven of nine seeds now end for player 1. Seed 1 now
+ends. Seed 6's player 1 reversals (+13) and seed 8's player 0 reversals (+24) exceed base + 10. Evidence §2 has the
+table.
+
+**Cause (traced, control runs).** With B2 reverted, the run is byte-identical to WP1. With B1 reverted, it is
+identical to WP2 until tick 979, and the outcome is the same. So the steering exclusion moves the run.
+- At tick 21, player 1's rhino beetle 26 walks round its own hall's north face, 0.53 from it, toward its corner
+  waypoint.
+- The hall's 2.5 circle is within steering reach but not contact (3.21 from the centre). On the base it bent the
+  rhino north. On WP2 the rhino keeps its route.
+- The showcase spawns both armies on the south and east rings of their halls. Only player 1's east-ring units walk
+  past their hall's faces toward the enemy, so only player 1's lane changes at first.
+
+This is D-3's accepted consequence and the game's model (S1, S6). It is not a defect: no wedge, no stall at the
+divergence, no refused slide.
+
+**Proposed decision.**
+1. Accept the flip as rule-caused, as contact Amendment 1 and inner-radius Amendment 1 did. Also accept the two
+   reversal excesses on seeds 6 and 8, which are not the default seed. Or have them traced first, if the
+   orchestrator prefers.
+2. WP2 continues to its acceptance: `golden_replay` needs no re-recording.
+3. WP3 re-checks the storyboard (`assets/captures/showcase.ron`) for player 1's win at 2,193, with real renders on
+   the RX 580. It also takes the picture check.
+4. WP4 as planned.
+
+No tuning constant is proposed (D-12, 7).

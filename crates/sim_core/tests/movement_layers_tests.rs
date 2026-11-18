@@ -389,6 +389,10 @@ fn specialized_cliff_movers_do_not_acquire_air_traversal() -> TestResult {
     Ok(())
 }
 
+/// A registered structure given an `Air` mover (which exists only in tests) with an air unit on
+/// top of it: the collision phase moves neither the structure nor its footprint. A registered
+/// structure is no body for any class (plan `2026-11-18-structure-contact` D-7, B-131), so the
+/// invariant that a foundation never moves now holds by exclusion.
 #[test]
 fn air_foundation_collision_preserves_registered_footprint_position() -> TestResult {
     let mut f = Fixture::new()?;
