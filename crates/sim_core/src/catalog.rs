@@ -176,7 +176,11 @@ pub struct UnitArchetype {
     pub stationary_turn_rate: SimAngle,
     /// Hard circle-circle collision radius in world units: the body's size against other bodies
     /// (separation, pushes, steering, placement occupancy), in weapon, scan, cast and interaction
-    /// reach, and as the drawn bubble. `StarCraft` II `Radius`.
+    /// reach, and as the drawn bubble ([`Self::drawn_radius`]). `StarCraft` II `Radius`.
+    ///
+    /// For a structure, which is no body (B-131), this is only the edge its ranges measure to:
+    /// the 5.0.14 engine radius, authored as `radius` in `structures.ron` (plan
+    /// `2026-11-18-structure-radius`). Its dome is drawn at its footprint instead.
     pub collision_radius: SimScalar,
     /// Radius of the body's disc against terrain and structures, in world units: the contact
     /// rule, route widths and the radius funnel, group lanes, the Charge path, the map-edge
@@ -186,8 +190,12 @@ pub struct UnitArchetype {
     /// `StarCraft` II stores this as `InnerRadius` ("collision with terrain / structures", 5.0.13
     /// patch notes) and uses `min(InnerRadius, Radius)`. The catalog authors it as the optional
     /// `terrain_radius`, strictly smaller than `collision_radius` and on ground bodies only;
-    /// omitted, and on structures, it equals `collision_radius`. Always `0 < terrain_radius <=
-    /// collision_radius` (plan `2026-11-18-inner-radius` D-1).
+    /// omitted, it equals `collision_radius`. Always `0 < terrain_radius <= collision_radius`
+    /// (plan `2026-11-18-inner-radius` D-1).
+    ///
+    /// A structure's is half its footprint's smaller side. No rule reads it (units meet the
+    /// footprint, B-131); it keeps the per-tick map-edge domain check of a structure flush with
+    /// the border true (plan `2026-11-18-structure-radius` D-5).
     pub terrain_radius: SimScalar,
     /// Soft Boid repulsion boundary radius in world units.
     pub separation_radius: SimScalar,
@@ -264,6 +272,24 @@ impl UnitArchetype {
         self.capabilities.can_construct
             && self.faction == structure.faction
             && matches!(structure.shape, ShapeKind::BuildingDome { .. })
+    }
+
+    /// The radius this archetype's bubble is drawn at, in world units (plan
+    /// `2026-11-18-structure-radius` D-6): for a structure's dome, half its footprint's smaller
+    /// side, so the dome covers the footprint units meet (B-131) and not its engine radius,
+    /// which is a range edge and no drawing size; for a unit, its collision radius.
+    ///
+    /// Presentation only: the render snapshot's radius, a projectile visual's ends, the death
+    /// shatter and the client's muzzle read it; no rule does.
+    #[must_use]
+    pub fn drawn_radius(&self) -> SimScalar {
+        match self.shape {
+            ShapeKind::BuildingDome {
+                footprint_w,
+                footprint_h,
+            } => SimScalar::from_i32(i32::from(footprint_w.min(footprint_h))) * SimScalar::HALF,
+            ShapeKind::UnitSphere => self.collision_radius,
+        }
     }
 
     /// Returns whether this archetype is immobile by default (e.g. Building Dome or zero max speed).
@@ -1617,6 +1643,21 @@ struct StructureArchetypeDef {
     pub sc2_inspiration: Option<String>,
     /// Footprint width and height in grid cells.
     pub footprint: (u32, u32),
+    /// The structure's radius in world units: the edge its ranges measure to, never a body
+    /// size (a registered structure is no body, B-131). It is the analogue's `StarCraft` II
+    /// 5.0.14 engine radius `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)`, where `Radius` is the
+    /// `UnitData` field and `Shape.Radius` the bounding radius of its footprint's contour in
+    /// `FootprintData.xml`, floored at half the footprint's smaller side so a unit touching a
+    /// face is always within melee reach (plan `2026-11-18-structure-radius` §2.2, D-4).
+    ///
+    /// Read as the structure's `collision_radius` by every range: weapon and scan ranges to and
+    /// from it, the cast range, projectile flight time, spell missile contact, splash distance,
+    /// the Charge window, boarding reach and the pursuit band. Harvest, return and build reach,
+    /// contact and placement use the footprint instead, and the dome is drawn at the footprint
+    /// ([`UnitArchetype::drawn_radius`]). Required, so a catalog written before the field fails
+    /// to load; strictly positive, a multiple of 1/16 and at least half the footprint's smaller
+    /// side.
+    pub radius: f64,
     /// Mineral resource cost.
     pub mineral_cost: u32,
     /// Vespene gas resource cost.
@@ -1704,7 +1745,13 @@ impl StructureArchetypeDef {
     /// Converts a structure definition into a unified [`UnitArchetype`], resolving its faction
     /// and weapon classes against `factions`.
     pub fn into_archetype(self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
-        let radius = SimScalar::from_num(f64::from(self.footprint.0) * 0.5);
+        // Exact: validation admits only multiples of 1/16 (plan `2026-11-18-structure-radius` D-2).
+        let radius = SimScalar::from_num(self.radius);
+        // No rule reads a structure's terrain radius (units meet its footprint, B-131, and it
+        // never moves); half the footprint's smaller side keeps `motion_entry`'s map-edge domain
+        // check true for a footprint flush with the border, and is at most `radius` (D-5).
+        let terrain_radius =
+            SimScalar::from_num(f64::from(self.footprint.0.min(self.footprint.1)) * 0.5);
         let faction = factions.resolve_faction(&self.slug, &self.faction)?;
         let convert = |weapon: Option<WeaponSpecDef>| {
             weapon
@@ -1777,7 +1824,7 @@ impl StructureArchetypeDef {
             surround_walk: false,
             stationary_turn_rate: SimAngle::ZERO,
             collision_radius: radius,
-            terrain_radius: radius,
+            terrain_radius,
             separation_radius: radius,
             push_priority: 255,
             sight_radius: SimScalar::from_num(self.sight_radius),
@@ -1955,5 +2002,43 @@ mod tests {
         let idle_prompt = first.veo_prompt(AnimState::Idle);
         assert!(idle_prompt.is_some());
         assert_ne!(idle_prompt.unwrap(), "");
+    }
+
+    /// R-16 (plan `2026-11-18-structure-radius` D-6): a dome is drawn at half its footprint's
+    /// smaller side whatever its radius; a unit at its collision radius.
+    #[test]
+    fn drawn_radius_is_half_the_footprints_smaller_side_for_a_dome_and_the_radius_for_a_unit() {
+        let catalog = crate::test_support::shipped_catalogs().units;
+        let mut domes = 0;
+        for archetype in catalog.archetypes() {
+            let mut edited = archetype.clone();
+            edited.collision_radius = SimScalar::from_num(7.25);
+            match archetype.shape {
+                ShapeKind::BuildingDome {
+                    footprint_w,
+                    footprint_h,
+                } => {
+                    let half = SimScalar::from_num(f64::from(footprint_w.min(footprint_h)) / 2.0);
+                    assert_eq!(archetype.drawn_radius(), half, "{}", archetype.slug);
+                    assert_eq!(edited.drawn_radius(), half, "{}", archetype.slug);
+                    domes += 1;
+                }
+                ShapeKind::UnitSphere => {
+                    assert_eq!(archetype.drawn_radius(), archetype.collision_radius);
+                    assert_eq!(edited.drawn_radius(), SimScalar::from_num(7.25));
+                }
+            }
+        }
+        assert!(domes > 0);
+        let mut oblong = catalog
+            .archetypes()
+            .find(|archetype| matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+            .cloned()
+            .expect("the shipped catalog has a structure");
+        oblong.shape = ShapeKind::BuildingDome {
+            footprint_w: 6,
+            footprint_h: 5,
+        };
+        assert_eq!(oblong.drawn_radius(), SimScalar::from_num(2.5));
     }
 }

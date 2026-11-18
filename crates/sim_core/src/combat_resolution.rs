@@ -704,6 +704,25 @@ impl SimWorld {
         }
     }
 
+    /// The drawn radii of `shot`'s attacker and target ([`UnitArchetype::drawn_radius`]), world
+    /// units, looked up as [`Self::launch_projectile`] looks up their range radii.
+    fn drawn_radii(&self, shot: &PreparedShot) -> (SimScalar, SimScalar) {
+        let attacker = self
+            .catalog
+            .get(
+                self.entities
+                    .get(&shot.attacker)
+                    .map_or(UnitTypeId(0), |a| a.unit_type_id),
+            )
+            .map_or(SimScalar::HALF, UnitArchetype::drawn_radius);
+        let target = self
+            .entities
+            .get(&shot.target)
+            .and_then(|t| self.catalog.get(t.unit_type_id).ok())
+            .map_or(SimScalar::HALF, UnitArchetype::drawn_radius);
+        (attacker, target)
+    }
+
     /// Spawns the projectile for `shot` and emits its renderer event.
     fn launch_projectile(&mut self, shot: PreparedShot, speed: SimScalar) {
         let target_pos = self
@@ -746,9 +765,12 @@ impl SimWorld {
         let flight_duration_secs =
             (ticks_to_impact as f32) / f32::from(sim_types::TICKS_PER_SECOND);
 
-        // Emit visual projectile event for client VFX rendering
-        let spawn_pos_2d = shot.origin + dir * attacker_radius;
-        let impact_pos_2d = target_pos - dir * target_radius;
+        // Emit visual projectile event for client VFX rendering. The flight time above uses the
+        // range edges (a structure's engine radius); the visual's ends lie on the drawn bubbles,
+        // so a projectile lands on a dome's glass (plan `2026-11-18-structure-radius` D-6).
+        let (attacker_drawn, target_drawn) = self.drawn_radii(&shot);
+        let spawn_pos_2d = shot.origin + dir * attacker_drawn;
+        let impact_pos_2d = target_pos - dir * target_drawn;
         let z_spawn = self.map.terrain_altitude_at(spawn_pos_2d);
         let z_impact = self.map.terrain_altitude_at(impact_pos_2d);
 
@@ -1455,5 +1477,103 @@ mod tests {
         }
         assert!(projectile_step.is_some(), "the projectile impacts");
         assert_eq!(projectile_step, missile_step);
+    }
+
+    /// R-14 (plan `2026-11-18-structure-radius` D-6): a projectile fired at a 3×3 dome whose
+    /// radius is 1.8125 flies for the ticks its radius gives (`⌈max(d − R − r, 0.05) ÷ speed⌉`),
+    /// but its visual arrives on the drawn dome: `pos + vel · duration` lies half the footprint
+    /// (1.5) from the dome's centre, towards the shooter.
+    #[test]
+    fn a_projectile_visual_to_a_dome_arrives_on_its_drawn_dome() {
+        use sim_types::{CombatEventVisual, ShapeKind};
+        let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world = world(map, 0x0B_135);
+        let shooter_arch = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.mover_type == MoverType::Ground
+                    && arch
+                        .weapon_against(MoverType::Ground, None)
+                        .is_some_and(|weapon| weapon.projectile_speed.is_some())
+            })
+            .cloned()
+            .expect("the shipped catalog has a ground unit firing projectiles at ground");
+        let weapon = shooter_arch
+            .weapon_against(MoverType::Ground, None)
+            .cloned()
+            .expect("checked above");
+        let speed = weapon.projectile_speed.expect("checked above");
+        let dome = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(
+                    arch.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a 3x3 structure");
+        let radius = SimScalar::from_num(1.8125);
+        world
+            .catalog
+            .get_mut(dome)
+            .expect("the dome's archetype")
+            .collision_radius = radius;
+        // Cells 20 to 23: the centre is (21.5, 21.5).
+        let structure = world
+            .spawn_structure(dome, PlayerId(1), 20, 20)
+            .expect("open ground");
+        let origin = SimVec2::new(SimScalar::from_num(12), SimScalar::from_num(21.5));
+        let shooter = world
+            .spawn_unit(shooter_arch.unit_type_id, PlayerId(0), origin)
+            .expect("open ground");
+        let source = super::weapon_source(&shooter_arch, &world.entities[&shooter], &weapon);
+        world.pending_events.clear();
+        world.launch_projectile(
+            super::PreparedShot {
+                attacker: shooter,
+                target: structure,
+                weapon,
+                source_slug: shooter_arch.slug.clone(),
+                origin,
+                owner: PlayerId(0),
+                strikes: 1,
+                source,
+            },
+            speed,
+        );
+        let (pos, vel, duration) = world
+            .pending_events
+            .iter()
+            .find_map(|event| match event {
+                CombatEventVisual::ProjectileVisual {
+                    pos,
+                    vel,
+                    duration_secs: Some(duration),
+                    ..
+                } => Some((*pos, *vel, *duration)),
+                _ => None,
+            })
+            .expect("the launch publishes its visual");
+        let arrival = (pos[0] + vel[0] * duration, pos[1] + vel[1] * duration);
+        assert!((arrival.0 - 20.0).abs() < 1e-4, "{arrival:?}");
+        assert!((arrival.1 - 21.5).abs() < 1e-4, "{arrival:?}");
+        let gap = (SimScalar::from_num(9.5) - radius - shooter_arch.collision_radius)
+            .max(SimScalar::from_num(super::MIN_FLIGHT_DISTANCE));
+        let ticks = (gap / speed).saturating_ceil().saturating_to_u32().max(1);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a flight of a few dozen ticks, recovered from its published seconds"
+        )]
+        let published = (duration * f32::from(sim_types::TICKS_PER_SECOND)).round() as u32;
+        assert_eq!(published, ticks, "the flight time follows the radius");
     }
 }

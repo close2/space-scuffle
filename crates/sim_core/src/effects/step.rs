@@ -499,4 +499,55 @@ mod tests {
             "a gap of exactly the speed is reached on this step"
         );
     }
+
+    /// R-11 (plan `2026-11-18-structure-radius` §3 A7): a homing missile stops short of a
+    /// structure by its radius. Started its speed plus 1.8125 from the centre of a 3×3 whose
+    /// radius is 1.8125, it impacts on its first step, at the radius; at radius 1.5 (half the
+    /// footprint) it is still in flight.
+    #[test]
+    fn a_missile_stops_short_of_a_structure_by_its_radius() {
+        use sim_types::ShapeKind;
+        for (radius, impacts) in [(1.8125, true), (1.5, false)] {
+            let mut world = flat_world();
+            let dome = world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    matches!(
+                        arch.shape,
+                        ShapeKind::BuildingDome {
+                            footprint_w: 3,
+                            footprint_h: 3
+                        }
+                    )
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has a 3x3 structure");
+            world
+                .catalog
+                .get_mut(dome)
+                .expect("the dome's archetype")
+                .collision_radius = SimScalar::from_num(radius);
+            // Cells 15 to 18: the centre is (16.5, 16.5).
+            let structure = world
+                .spawn_structure(dome, PlayerId(0), 15, 15)
+                .expect("open ground");
+            let centre = world.entities[&structure].position;
+            let (node, speed) = launch_node(&world, EffectAnchor::TargetUnit);
+            let start = SimVec2::new(centre.x - SimScalar::from_num(1.8125) - speed, centre.y);
+            let target = EffectTarget::Unit(structure);
+            let context = missile(node, start, target).context;
+            assert_eq!(
+                world.missile_aim(&context, target),
+                Some((centre, SimScalar::from_num(radius)))
+            );
+            world.effects.missiles.push(missile(node, start, target));
+            world.step_effect_missiles();
+            assert_eq!(
+                world.effects.missiles.is_empty(),
+                impacts,
+                "radius {radius}"
+            );
+        }
+    }
 }

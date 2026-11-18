@@ -52,6 +52,11 @@
 // follows the enemy's first survivor, whom the fog hides until the viewer's base sees it; `assault`
 // shows the viewer's base falling at 2x; `closing` pauses before the result. Render-checked on radv:
 // scene ticks are in docs/evidence/2026-11-18-structure-contact.md §3.
+// Re-checked for plan 2026-11-18-structure-radius (B-135: ranges to a structure measure to its
+// 5.0.14 engine radius, 2.75 for the halls). The lane fight is unchanged; the enemy's survivors
+// acquire the viewer's hall two ticks sooner, kill its workers at ticks 1,160 and 1,200 and fire on
+// it until it falls at tick 2,191. Scene ticks of a radv render are to be recorded in
+// docs/evidence/2026-11-18-structure-radius.md §5.
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
 // Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall

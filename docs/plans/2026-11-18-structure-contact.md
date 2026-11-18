@@ -490,3 +490,10 @@ WP0 to WP4 are on branch `structure-contact`; the evidence is
   lists `structure_contact_tests.rs`; inner-radius Amendment 2 points here; this plan's row is `Done`.
 - No tuning constant was added. `CHECKSUM_SCHEMA_VERSION` stays 29. No test changed beyond S-2 and the
   air-foundation test's doc.
+
+## Amendment 2 (2026-11-18): ranges measure to the engine radius (plan `2026-11-18-structure-radius`)
+
+§2.2's bullet "The `Radius` remains what the game measures ranges to" is corrected: the game measures ranges to a
+structure's 5.0.14 engine radius `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)` (plan
+[`2026-11-18-structure-radius`](2026-11-18-structure-radius.md) §2.2), which B-135's fix authors as `radius` in
+`structures.ron`.

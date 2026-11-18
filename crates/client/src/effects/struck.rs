@@ -66,7 +66,8 @@ pub const HIT_ELEVATION: f32 = std::f32::consts::FRAC_PI_4;
 /// The bubble a hit struck.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StruckBubble {
-    /// Its glass radius, world units.
+    /// Its glass radius, world units: the snapshot's drawn radius (a dome's is half its
+    /// footprint, not the structure's range radius; plan `2026-11-18-structure-radius` D-6).
     pub radius: f32,
     /// Height of its drawn centre, world units (the event's height convention); a dome's base.
     pub height: f32,
@@ -359,11 +360,12 @@ pub fn at_struck_surface(
 /// `2026-11-17-effect-snapshot-identity` Amendment 3, B-128). Returns whether it was re-aimed;
 /// a projectile without a positive flight time is left as it is.
 ///
-/// The simulation publishes the arrival at the edge of the target's collision circle towards
-/// the shooter, `target - direction * collision_radius`, at ground + 0.5 (`sim_core`'s
-/// `launch_projectile`). A bubble's radius is its collision radius, so the target's centre on
-/// the launch tick is the arrival moved on by `struck.radius` along the flight's horizontal
-/// direction. From that centre the arrival is put on the bubble's glass (its outline as the
+/// The simulation publishes the arrival at the edge of the target's drawn bubble towards the
+/// shooter, `target - direction * drawn_radius`, at ground + 0.5 (`sim_core`'s
+/// `launch_projectile`; a structure's dome is drawn at half its footprint, not at its range
+/// radius, plan `2026-11-18-structure-radius` D-6). The bubble's radius in the snapshot is that
+/// same drawn radius, so the target's centre on the launch tick is the arrival moved on by
+/// `struck.radius` along the flight's horizontal direction. From that centre the arrival is put on the bubble's glass (its outline as the
 /// camera looking along `view` sees it, when there is one) towards the shooter, at the bubble's
 /// drawn height, as an instant hit's end is, at most [`MOST_PULL`] of the way back to the
 /// launch point. The flight time stays; the velocity is recomputed to reach the new arrival, so
