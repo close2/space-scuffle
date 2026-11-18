@@ -26,8 +26,8 @@ mod radii;
 use radii::{MEDIUM_RADIUS, SMALL_RADIUS};
 
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, MapError, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, CORNER_SAFETY_MARGIN,
+    CellFlags, CliffLevel, GameMap, LatticePoint, MapCell, MapError, MapFile, PathRequest,
+    PathRequestWithVision, Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -383,12 +383,7 @@ fn assert_mesh_route_matches_oracle(
     let turns: Vec<((f64, f64), i8)> = route
         .turns
         .iter()
-        .map(|&(p, side)| {
-            (
-                (f64::from(p.x), f64::from(p.y)),
-                if side == Side::Left { -1 } else { 1 },
-            )
-        })
+        .map(|&(p, side)| (f64_of(p.to_sim()), if side == Side::Left { -1 } else { 1 }))
         .collect();
     let smooth = oracle::smooth_length(f64_of(start), f64_of(goal), &turns, rho);
     assert!(
@@ -462,8 +457,14 @@ fn mesh_route_wraps_the_end_of_a_thin_wall_without_falling_back() {
             "leg {pair:?}"
         );
     }
-    let corners: Vec<(i32, i32, Side)> = route.turns.iter().map(|&(p, s)| (p.x, p.y, s)).collect();
-    assert_eq!(corners, [(35, 52, Side::Right), (38, 52, Side::Right)]);
+    let corners: Vec<(LatticePoint, Side)> = route.turns.clone();
+    assert_eq!(
+        corners,
+        [
+            (LatticePoint::cell_corner(35, 52), Side::Right),
+            (LatticePoint::cell_corner(38, 52), Side::Right)
+        ]
+    );
     let legal = oracle::Oracle::new(oracle::walls_of(&map), 0.5)
         .shortest(f64_of(start), f64_of(goal))
         .expect("the oracle finds a route");

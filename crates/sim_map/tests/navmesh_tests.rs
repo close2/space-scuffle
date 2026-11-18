@@ -37,7 +37,9 @@ mod arena;
 
 use proptest::collection::vec;
 use proptest::prelude::*;
-use sim_map::navmesh::predicates::{incircle, orient2d, LatticePoint, NAV_MESH_MAX_DIMENSION};
+use sim_map::navmesh::predicates::{
+    incircle, orient2d, LatticePoint, LATTICE_PER_CELL, NAV_MESH_MAX_DIMENSION,
+};
 use sim_map::{CellFlags, CliffLevel, EdgeKind, GameMap, MapCell, MapFile, NavMesh, TriangleKind};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -99,7 +101,9 @@ fn check_mesh_laws(mesh: &NavMesh) -> Result<(), String> {
             }
         }
     }
-    let expected = 2 * i64::from(mesh.width()) * i64::from(mesh.height());
+    // Doubled area in squared lattice units (quarter cells).
+    let per_cell = i64::from(LATTICE_PER_CELL);
+    let expected = 2 * per_cell * per_cell * i64::from(mesh.width()) * i64::from(mesh.height());
     if doubled_area != expected {
         return Err(format!(
             "triangles cover {doubled_area}/2, map is {expected}/2"
@@ -248,7 +252,7 @@ fn pathfinder_rebuilds_its_mesh_on_structure_change() {
 /// The showcase mesh digest, pinned. It must be identical on every target, including
 /// `wasm32-wasip1`; a change to the construction must re-pin it deliberately.
 ///
-/// Re-pinned for plan 2026-11-18-contour-footprints WP1a: the digest now eats world coordinates
+/// Re-pinned for plan `2026-11-18-contour-footprints` `WP1a`: the digest now eats world coordinates
 /// and reduced widths; the mesh is unchanged.
 const SHOWCASE_MESH_DIGEST: u64 = 0x4a14_9269_337f_3464;
 

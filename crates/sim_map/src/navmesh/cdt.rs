@@ -69,7 +69,7 @@ fn index(i: usize) -> u32 {
 }
 
 impl Triangulation {
-    /// Two triangles covering the rectangle `[0, width] x [0, height]` in lattice cells.
+    /// Two triangles covering the rectangle `[0, width] x [0, height]` in lattice units.
     #[must_use]
     pub fn rectangle(width: i32, height: i32) -> Self {
         let points = vec![

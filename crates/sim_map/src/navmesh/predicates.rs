@@ -2,8 +2,9 @@
 //!
 //! # Responsibility
 //! Owns every orientation, in-circle and distance comparison the mesh makes. Mesh vertices are
-//! lattice points in whole cells ([`LatticePoint`]); query points (unit positions, segment ends)
-//! are fixed-point world positions reduced to [`QPoint`], a Q16 grid of 1/65,536 cell.
+//! lattice points in quarter cells ([`LatticePoint`], plan `2026-11-18-contour-footprints` D-3);
+//! query points (unit positions, segment ends) are fixed-point world positions reduced to
+//! [`QPoint`], a Q16 grid of 1/65,536 cell.
 //!
 //! # How it fits
 //! The constrained Delaunay construction (`cdt.rs`) uses [`orient2d`] and [`incircle`] on lattice
@@ -11,15 +12,21 @@
 //! here uses a float, so every result is the same on every platform (charter §3.1).
 //!
 //! # Invariants and overflow margins
-//! - Lattice coordinates lie in `0..=NAV_MESH_MAX_DIMENSION` (2^12). Coordinate differences are
-//!   below 2^13, so an [`orient2d`] product is below 2^26 and fits `i64` with a margin of 2^37.
-//!   [`incircle`] multiplies a squared length (below 2^27) by a 2x2 determinant (below 2^27) and
-//!   sums three such terms: below 2^56, evaluated in `i128` with a margin above 2^70.
+//! - Lattice coordinates are quarter cells in `0..=4 * NAV_MESH_MAX_DIMENSION` (2^14). Coordinate
+//!   differences are below 2^15, so an [`orient2d`] product is below 2^30 and fits `i64` with a
+//!   margin of 2^33. [`incircle`] multiplies a squared length (below 2^31) by a 2x2 determinant
+//!   (below 2^31) and sums three such terms: below 2^64, evaluated in `i128` with a margin of
+//!   2^63.
 //! - Q16 coordinates are at most 2^12 * 2^16 = 2^28 in magnitude for points on the map, and the
 //!   map test rejects anything else first. Differences are below 2^30, cross and dot products
 //!   below 2^59, and a squared cross product below 2^118: every Q16 product is taken in `i128`.
-//! - A [`SquaredWidth`] keeps `num / den` in cells squared with `num < 2^54` and `den < 2^27`,
-//!   so a comparison of two widths multiplies below 2^81 in `u128`.
+//! - A [`SquaredWidth`] keeps `num / den` in cells squared. Widths of lattice geometry have
+//!   `num < 2^62` (a squared cross product of quarter-cell vectors below 2^31) and
+//!   `den < 2^35` (16 times a squared quarter-cell length below 2^31), so a comparison of two
+//!   widths multiplies below 2^97 in `u128`.
+//! - [`SquaredWidth::admits_diameter`] caps the radius at 2^12 world units (2^44 raw): no bounded
+//!   width on a map of at most 2^12 cells a side admits a larger disc, and below the cap
+//!   `4 r^2 den < 2^125` and `num 2^64 < 2^126`.
 
 use sim_types::{SimScalar, SimVec2};
 
@@ -30,35 +37,57 @@ pub const NAV_MESH_MAX_DIMENSION: u32 = 1 << 12;
 /// Bits of fraction in a [`QPoint`] coordinate.
 pub const Q_BITS: u32 = 16;
 
-/// A mesh vertex: a lattice point in whole cells. `(x, y)` is the corner shared by cells
-/// `(x - 1, y - 1)` to `(x, y)`.
+/// Bits of fraction in a [`LatticePoint`] coordinate: the lattice is quarter cells.
+pub const LATTICE_BITS: u32 = 2;
+
+/// Lattice units per cell, `2^LATTICE_BITS`.
+pub const LATTICE_PER_CELL: i32 = 1 << LATTICE_BITS;
+
+/// Squared lattice units per squared cell: a squared length in lattice units divided by this is
+/// in cells squared.
+const LATTICE_SQ_PER_CELL_SQ: u64 = 1 << (2 * LATTICE_BITS);
+
+/// A mesh vertex: a lattice point in quarter cells (plan `2026-11-18-contour-footprints` D-3).
+/// `(4x, 4y)` is the corner shared by cells `(x - 1, y - 1)` to `(x, y)`; the points between are
+/// the quarter points that footprint contours need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LatticePoint {
-    /// Column of the lattice line, in cells from the map's west edge.
+    /// Column of the lattice line, in quarter cells from the map's west edge.
     pub x: i32,
-    /// Row of the lattice line, in cells from the map's south edge.
+    /// Row of the lattice line, in quarter cells from the map's south edge.
     pub y: i32,
 }
 
 impl LatticePoint {
-    /// Creates a lattice point from whole-cell coordinates.
+    /// Creates a lattice point from quarter-cell coordinates.
     #[must_use]
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
 
-    /// The same point as a fixed-point world position.
+    /// The lattice point at the corner `(x, y)` of the cell grid, in whole cells: the corner
+    /// shared by cells `(x - 1, y - 1)` to `(x, y)`.
     #[must_use]
-    pub fn to_sim(self) -> SimVec2 {
-        SimVec2::from_i32(self.x, self.y)
+    pub const fn cell_corner(x: i32, y: i32) -> Self {
+        Self {
+            x: x * LATTICE_PER_CELL,
+            y: y * LATTICE_PER_CELL,
+        }
     }
 
-    /// The same point on the Q16 grid.
+    /// The same point as a fixed-point world position (exact: a quarter cell is 2^30 raw).
+    #[must_use]
+    pub fn to_sim(self) -> SimVec2 {
+        let raw = |v: i32| SimScalar::from_raw(i64::from(v) << (32 - LATTICE_BITS));
+        SimVec2::new(raw(self.x), raw(self.y))
+    }
+
+    /// The same point on the Q16 grid (exact).
     #[must_use]
     pub fn to_q(self) -> QPoint {
         QPoint {
-            x: i64::from(self.x) << Q_BITS,
-            y: i64::from(self.y) << Q_BITS,
+            x: i64::from(self.x) << (Q_BITS - LATTICE_BITS),
+            y: i64::from(self.y) << (Q_BITS - LATTICE_BITS),
         }
     }
 }
@@ -253,15 +282,16 @@ impl SquaredWidth {
 
     /// Whether a disc of `radius` world units passes: `(2 * radius)^2 <= self`.
     ///
-    /// `radius` is Q32.32; the comparison `4 r_raw^2 den <= num 2^64` stays below 2^120 for a
-    /// radius below 2^20 world units, and any larger radius never passes a bounded width.
+    /// `radius` is Q32.32; the comparison `4 r_raw^2 den <= num 2^64` stays below 2^126 for a
+    /// radius below 2^12 world units (module doc), and any larger radius never passes a bounded
+    /// width: the widest bounded width on the largest map is its diagonal, below 2^12.5 cells.
     #[must_use]
     pub fn admits_diameter(self, radius: SimScalar) -> bool {
         if self.is_unbounded() {
             return true;
         }
         let raw = u128::from(radius.raw().unsigned_abs());
-        if raw >= 1 << 52 {
+        if raw >= 1 << 44 {
             return false;
         }
         4 * raw * raw * u128::from(self.den) <= (u128::from(self.num) << 64)
@@ -296,7 +326,8 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
     a
 }
 
-/// Squared distance from the lattice point `c` to the segment `[a, b]`, in cells squared.
+/// Squared distance from the lattice point `c` to the segment `[a, b]`, in cells squared (the
+/// squared lattice distance over [`LATTICE_SQ_PER_CELL_SQ`]).
 #[must_use]
 pub fn lattice_point_segment_width(
     c: LatticePoint,
@@ -313,20 +344,23 @@ pub fn lattice_point_segment_width(
     );
     let length_sq = dx * dx + dy * dy;
     let along = wx * dx + wy * dy;
-    let square = |x: i64, y: i64| (x * x + y * y).unsigned_abs();
+    let square = |x: i64, y: i64| SquaredWidth {
+        num: (x * x + y * y).unsigned_abs(),
+        den: LATTICE_SQ_PER_CELL_SQ,
+    };
     if length_sq == 0 || along <= 0 {
-        return SquaredWidth::whole(square(wx, wy));
+        return square(wx, wy);
     }
     if along >= length_sq {
-        return SquaredWidth::whole(square(
+        return square(
             i64::from(c.x) - i64::from(b.x),
             i64::from(c.y) - i64::from(b.y),
-        ));
+        );
     }
     let cross = (dx * wy - dy * wx).unsigned_abs();
     SquaredWidth {
         num: cross * cross,
-        den: length_sq.unsigned_abs(),
+        den: length_sq.unsigned_abs() * LATTICE_SQ_PER_CELL_SQ,
     }
 }
 
@@ -335,7 +369,10 @@ pub fn lattice_point_segment_width(
 pub fn lattice_distance_sq(a: LatticePoint, b: LatticePoint) -> SquaredWidth {
     let dx = i64::from(b.x) - i64::from(a.x);
     let dy = i64::from(b.y) - i64::from(a.y);
-    SquaredWidth::whole((dx * dx + dy * dy).unsigned_abs())
+    SquaredWidth {
+        num: (dx * dx + dy * dy).unsigned_abs(),
+        den: LATTICE_SQ_PER_CELL_SQ,
+    }
 }
 
 /// Dot product `(a - o) . (b - o)` of lattice vectors.
@@ -370,15 +407,61 @@ mod tests {
 
     #[test]
     fn extremes_do_not_overflow() {
-        let m = i32::try_from(NAV_MESH_MAX_DIMENSION).unwrap_or(i32::MAX);
+        // The largest lattice coordinate: the map limit in quarter cells, 2^14.
+        let m = i32::try_from(NAV_MESH_MAX_DIMENSION).unwrap_or(i32::MAX) * LATTICE_PER_CELL;
+        assert_eq!(m, 1 << 14);
         let (a, b, c) = (p(0, 0), p(m, 0), p(m, m));
         assert_eq!(incircle(a, b, c, p(0, m)), 0);
         assert!(incircle(a, b, c, p(1, m - 1)) > 0);
         assert!(orient2d(a, b, c) > 0);
+        assert!(orient2d(p(0, 0), p(m, m - 1), p(m - 1, m - 2)) != 0);
+        // The widest width on the largest map compares and admits without overflow.
+        let diagonal = lattice_distance_sq(p(0, 0), p(m, m));
+        let across = lattice_point_segment_width(p(0, 0), p(m, 1), p(1, m));
+        assert!(across.less_than(diagonal));
+        let cap = SimScalar::from_i32(4096);
+        assert!(!diagonal.admits_diameter(cap));
+        assert!(diagonal.admits_diameter(SimScalar::from_i32(2896)));
+        assert!(!diagonal.admits_diameter(SimScalar::from_i32(2897)));
+    }
+
+    #[test]
+    fn lattice_points_are_quarter_cells() {
+        assert_eq!(
+            LatticePoint::cell_corner(3, 5).to_sim(),
+            SimVec2::from_i32(3, 5)
+        );
+        assert_eq!(
+            LatticePoint::new(13, 7).to_sim(),
+            SimVec2::new(SimScalar::from_raw(13 << 30), SimScalar::from_raw(7 << 30))
+        );
+        assert_eq!(
+            LatticePoint::new(13, 7).to_q(),
+            QPoint::from_sim(LatticePoint::new(13, 7).to_sim())
+        );
+    }
+
+    #[test]
+    fn squared_widths_are_in_cells_squared() {
+        // Two lattice points 4 apart are one cell apart: a disc of radius 0.5 passes between
+        // them, and one of 0.5 + 2^-32 does not.
+        let width = lattice_distance_sq(p(0, 0), p(4, 0));
+        assert!(width.admits_diameter(SimScalar::HALF));
+        assert!(!width.admits_diameter(SimScalar::HALF + SimScalar::EPSILON));
+        let same = |a: SquaredWidth, b: SquaredWidth| !a.less_than(b) && !b.less_than(a);
+        assert!(same(width, SquaredWidth::whole(1)), "{width:?}");
+        assert_eq!(width.reduced_parts(), (1, 1));
+        let perpendicular = lattice_point_segment_width(p(0, 0), p(-4, 4), p(4, 4));
+        assert!(
+            same(perpendicular, SquaredWidth::whole(1)),
+            "{perpendicular:?}"
+        );
+        assert_eq!(perpendicular.reduced_parts(), (1, 1));
     }
 
     #[test]
     fn widths_compare_exactly() {
+        let p = LatticePoint::cell_corner;
         let w = lattice_point_segment_width(p(0, 0), p(-1, 1), p(1, 1));
         let same = |a: SquaredWidth, b: SquaredWidth| !a.less_than(b) && !b.less_than(a);
         assert!(same(w, SquaredWidth::whole(1)), "{w:?}");
@@ -391,7 +474,7 @@ mod tests {
 
     #[test]
     fn q_distances() {
-        let q = |x: i32, y: i32| p(x, y).to_q();
+        let q = |x: i32, y: i32| LatticePoint::cell_corner(x, y).to_q();
         let d = point_segment_distance_sq(q(0, 1), q(-1, 0), q(1, 0));
         assert!(d.is_below(1 << 16 | 1));
         assert!(!d.is_below(1 << 16));

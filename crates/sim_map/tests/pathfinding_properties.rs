@@ -352,7 +352,10 @@ fn compare_with_oracle(
         .iter()
         .map(|&(p, side)| {
             (
-                (f64::from(p.x), f64::from(p.y)),
+                (
+                    f64::from(p.to_sim().x.to_f32()),
+                    f64::from(p.to_sim().y.to_f32()),
+                ),
                 if side == Side::Left { -1 } else { 1 },
             )
         })

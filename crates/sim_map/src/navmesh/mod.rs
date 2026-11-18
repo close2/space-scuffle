@@ -15,8 +15,9 @@
 //! derived, unhashed state, so results stay bit-identical.
 //!
 //! # Invariants
-//! - Every vertex is a lattice point and every constraint lies on cell edges, so construction
-//!   uses exact integer predicates only (`predicates.rs`) and no Steiner points.
+//! - Every vertex is a point of the quarter-cell lattice (`predicates.rs`, plan
+//!   `2026-11-18-contour-footprints` D-3) and every constraint lies on cell edges, so
+//!   construction uses exact integer predicates only and no Steiner points.
 //! - Constraints are the map border, every edge where terrain does not connect, every edge where
 //!   the `(cliff_level, ramp)` tag changes, and every edge of every structure cell. Each triangle
 //!   therefore lies in one region of uniform label, and a structure triangle in one cell.
@@ -46,7 +47,7 @@ use crate::pathfinding::PathRequestWithVision;
 use cdt::{Triangulation, NONE};
 use predicates::{
     lattice_distance_sq, lattice_dot, lattice_point_segment_width, orient_q, LatticePoint, QPoint,
-    SquaredWidth, NAV_MESH_MAX_DIMENSION,
+    SquaredWidth, LATTICE_PER_CELL, NAV_MESH_MAX_DIMENSION,
 };
 
 /// Why a navigation mesh could not be built.
@@ -352,7 +353,10 @@ impl NavMesh {
         }
         let edges = EdgeGrid::new(map);
         let (w, h) = (width as usize, height as usize);
-        let mut tri = Triangulation::rectangle(signed(width), signed(height));
+        let mut tri = Triangulation::rectangle(
+            signed(width) * LATTICE_PER_CELL,
+            signed(height) * LATTICE_PER_CELL,
+        );
         let mut lattice_vertex = vec![NONE; (w + 1) * (h + 1)];
         for (corner, (x, y)) in [(0, 0), (w, 0), (w, h), (0, h)].into_iter().enumerate() {
             lattice_vertex[y * (w + 1) + x] = u32::try_from(corner).unwrap_or(NONE);
@@ -364,7 +368,10 @@ impl NavMesh {
                     continue;
                 }
                 let before = tri.points.len();
-                hint = tri.insert_point(LatticePoint::new(signed_usize(x), signed_usize(y)), hint);
+                hint = tri.insert_point(
+                    LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
+                    hint,
+                );
                 if tri.points.len() > before {
                     lattice_vertex[y * (w + 1) + x] = u32::try_from(before).unwrap_or(NONE);
                 }
@@ -373,8 +380,8 @@ impl NavMesh {
         let runs = collect_runs(&edges);
         for run in &runs {
             let index_of = |p: LatticePoint| {
-                lattice_vertex[usize::try_from(p.y).unwrap_or(0) * (w + 1)
-                    + usize::try_from(p.x).unwrap_or(0)]
+                let cell = |v: i32| usize::try_from(v / LATTICE_PER_CELL).unwrap_or(0);
+                lattice_vertex[cell(p.y) * (w + 1) + cell(p.x)]
             };
             if !tri.insert_constraint(index_of(run.from), index_of(run.to), run.kind) {
                 return Err(NavMeshError::ConstraintRecovery {
@@ -436,10 +443,13 @@ impl NavMesh {
             i64::from(a.x) + i64::from(b.x) + i64::from(c.x),
             i64::from(a.y) + i64::from(b.y) + i64::from(c.y),
         );
-        let cx = u32::try_from(sx.div_euclid(3))
+        // The centroid is the sum over three, in lattice units: its cell is the sum over
+        // `3 * LATTICE_PER_CELL`, floored.
+        let per_cell = 3 * i64::from(LATTICE_PER_CELL);
+        let cx = u32::try_from(sx.div_euclid(per_cell))
             .unwrap_or(0)
             .min(self.width - 1);
-        let cy = u32::try_from(sy.div_euclid(3))
+        let cy = u32::try_from(sy.div_euclid(per_cell))
             .unwrap_or(0)
             .min(self.height - 1);
         let class = classify_cell(map, cx as usize, cy as usize);
@@ -815,8 +825,8 @@ fn collect_runs(edges: &EdgeGrid) -> Vec<ConstraintRun> {
                     end += 1;
                 }
                 runs.push(ConstraintRun {
-                    from: LatticePoint::new(signed_usize(x), signed_usize(y)),
-                    to: LatticePoint::new(signed_usize(end), signed_usize(y)),
+                    from: LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
+                    to: LatticePoint::cell_corner(signed_usize(end), signed_usize(y)),
                     kind,
                 });
             }
@@ -826,8 +836,8 @@ fn collect_runs(edges: &EdgeGrid) -> Vec<ConstraintRun> {
                     end += 1;
                 }
                 runs.push(ConstraintRun {
-                    from: LatticePoint::new(signed_usize(x), signed_usize(y)),
-                    to: LatticePoint::new(signed_usize(x), signed_usize(end)),
+                    from: LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
+                    to: LatticePoint::cell_corner(signed_usize(x), signed_usize(end)),
                     kind,
                 });
             }
@@ -906,11 +916,25 @@ impl<'a> Access<'a> {
         if label.ramp.is_none() && label.cliff_level <= self.start_level {
             return false;
         }
+        // The triangle's bounding box in lattice units, widened to whole cells: cells
+        // `min..max` cover it.
         let corners = self.mesh.triangles[t as usize].map(|v| self.mesh.vertices[v as usize]);
-        let min_x = corners.iter().map(|p| p.x).min().unwrap_or(0).max(0);
-        let max_x = corners.iter().map(|p| p.x).max().unwrap_or(0);
-        let min_y = corners.iter().map(|p| p.y).min().unwrap_or(0).max(0);
-        let max_y = corners.iter().map(|p| p.y).max().unwrap_or(0);
+        let floor_cell = |v: i32| v.div_euclid(LATTICE_PER_CELL);
+        let ceil_cell = |v: i32| (v + LATTICE_PER_CELL - 1).div_euclid(LATTICE_PER_CELL);
+        let min_x = corners
+            .iter()
+            .map(|p| floor_cell(p.x))
+            .min()
+            .unwrap_or(0)
+            .max(0);
+        let max_x = corners.iter().map(|p| ceil_cell(p.x)).max().unwrap_or(0);
+        let min_y = corners
+            .iter()
+            .map(|p| floor_cell(p.y))
+            .min()
+            .unwrap_or(0)
+            .max(0);
+        let max_y = corners.iter().map(|p| ceil_cell(p.y)).max().unwrap_or(0);
         for y in min_y..max_y {
             for x in min_x..max_x {
                 let cell = (x.unsigned_abs(), y.unsigned_abs());
