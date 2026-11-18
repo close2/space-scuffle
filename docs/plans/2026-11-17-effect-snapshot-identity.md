@@ -767,3 +767,58 @@ below a flyer.* Every "proposed B-127" in this plan and in the review packet bec
   struck end. Aiming the launch from the shooter's bubble (the same lookup, by `ends.attacker`) is a follow-up. The
   needle look's margin over its bar is 0 px: the look is faint, and the bar and the look remain the review's
   (Q0080).
+
+## Amendment 4: WP5 as built (2026-11-17, short note, charter §6)
+
+WP5 (B-122) is on branch `effects-identity-looks`, made from `main` at `345da93f` (commit `dc9e438b`; its clippy
+fixes landed with the WP7 commit `963b9a80`). Client and data only: no simulation crate is touched, and the golden
+replays pass unchanged.
+
+**As planned.** `effects.ron` gains `defaults.status_by_name: { "fungal_growth": "fungal_affliction" }`, which
+replaces the B-122 comment. The resolver reads the effect names (an unknown one is the vocabulary's `UnknownName`);
+`UnitEffectTables::build` resolves the status names against the unit catalog's spell catalog, refusing an unknown
+one with the new `EffectCatalogError::UnknownStatus { path, name }` and a look of another event kind with
+`WrongEventKind` (slot `status_by_name`). `UnitEffectTables::named_status(StatusId)` is a binary search over the
+pairs sorted by status id. `BattleFrameState::presented_statuses()` shares the source choice of
+`presented_effect_views` (a private `discrete_source`). `StanceTrack` gains `named: [Option<(StatusId, HeldLook)>;
+MAX_NAMED_STATUSES]` (4) and `named_refused`, counted per frame a named status finds no slot, as `AreaLooks::refused`
+counts. Named looks are held in addition to the kind looks, under the bubble's fog rule, lay their `emit` effect as
+kind looks do, and erode out through the track's `releasing` slots.
+
+**Choices made while building.**
+
+- *No merge cursor.* `present_stances` iterates a Bevy query, whose order is not the entity order, so a cursor merged
+  against id-ordered bubbles (D-5) does not apply. Each bubble takes its run of the presented list by binary search
+  (`stance::statuses_of`, two `partition_point`s): O(log n) a bubble, nothing copied or allocated.
+- *The fog test.* The plan's case "an undetected cloaked enemy under Fungal Growth" cannot be staged with the
+  shipped data: `fungal_growth` has `reveal: true` (the game's `SuppressCloak`), so a fungaled cloaked unit is not
+  concealed. `battle_fog_tests::a_named_status_look_shows_only_on_a_unit_the_viewer_sees` checks instead that a seen
+  victim wears the look; that a victim cloaked while it bears the status is revealed (published `Concealment::None`)
+  and keeps it; and that a victim moved out of the viewer's sight wears none while the status is still published.
+  The `Shimmer` and `Hidden` paths are also covered by the unit test
+  `a_unit_the_viewer_does_not_see_as_it_is_holds_no_named_look`.
+- *The rim measurement.* `area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts` reads each victim's bubble
+  material shell rim every frame (as `status_gpu_tests` reads the stim's rim), and pictures each frame for the
+  review. A Fungal victim must, from 0.4 s after it first bears the status (the slow's own onset flash is over by
+  then), hold the named look on every frame, with the look's rim colour (±0.02 a channel) at strength 0.2 or more.
+  The storm stand-in is found by data: an ability whose block names an `Area` look and whose effect tree applies a
+  status of a kind the named status is also published as, with no named look (the Psionic Storm analogue). It is
+  cast, without its look, by a second caster on two further enemy stand-ins; they must bear their status, hold no
+  named look and never show the named rim. The old "afflicted exactly when the vocabulary names a `DamageOverTime`
+  default" check is now "no look is keyed on the kind" (0 such spawns).
+- `status_gpu_tests` is unchanged: none of its subjects bears a named status.
+
+**Evidence** (radv, the RX 580, debug build, Xvfb 1280x720; `identity_wp5_wp7_measurements.txt` and the packet
+section "Identity WP5/WP7").
+
+| Check | Result |
+|---|---|
+| Fungal victims wearing the named look from 0.4 s after the status | 4 of 4 on every frame (41 each); rim strength 0.30 to 0.80 |
+| Storm stand-in victims (status borne on 41 frames each) | no named look, rim 0 |
+| Fungal impact centre (WP6) | 1.37 px from the aimed point (tolerance 2) |
+| Fungal fog edge (E1-3) | 0 of 357 unseen ground samples changed; 488 of 619 seen |
+| `effect_catalog_tests` (39), `battle_fog_tests` (25), stance and timeline unit tests | pass |
+
+The first radv run failed E1-3 (223 of 357 unseen samples changed): the storm stand-in's caster stood out of range and
+walked, moving the viewer's sight over the fog edge. It now stands within the ability's range; no bar was changed.
+
