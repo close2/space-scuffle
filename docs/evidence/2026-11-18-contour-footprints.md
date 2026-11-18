@@ -531,3 +531,58 @@ entity state unchanged through tick 1000, if it still holds), and WP6's measurem
 structures per side). Schema 30 changed it; WP2's runs did not cover `sim_fixtures`' tests. The same proof holds: a
 scratch build that does not encode the shape and keeps schema 29 reproduces the recorded `1_650_891_098_077_756_775`.
 Re-recorded as `13_611_770_232_129_032_728` with that header.
+
+## 6b. Amendment 2 traced: the stalled pursuit already asks the mesh, and the leash abandons it
+
+Amendment 2 asked for the pursuit band and stall counter to be traced before the change. The trace shows that its
+premise does not hold, so it was not implemented. The WP6 work is brought onto the branch head (which includes
+2dc77880 and Amendment 2) on the side branch `contour-footprints-wp6-wip2` (`4a176a35`).
+
+**The pursuit path** (`movement/locomotion.rs`, `chase`): each tick the chaser checks its progress
+(`check_pursuit_progress`: `PursuitAbandoned` after `STALL_ABANDON_TICKS` without progress), then steps
+(`step_toward`). When terrain or a structure refuses the step (`after_wall_slide` reports `refused`, a slide below
+half the step), a ground chaser off cooldown calls `reroute_pursuit`. That **already searches a mesh route to its
+target**, as Amendment 2 asked. It abandons the target when:
+
+- the search is `Blocked`;
+- a retargeted point is beyond the weapon's band; or
+- for an automatically acquired target, the route is longer than the leash: `scan_range ×
+  PURSUIT_LEASH_SCAN_RANGES` (2), a rule of plan `2026-11-09-friendly-blocking`.
+
+**The probe** (scratch `eprintln`s in `reroute_pursuit` and the stall abandon, not committed; WP6 data, default seed,
+1,100 ticks): the two workers' steps against the chamfer were refused 80 times. Every time the mesh **found** a route
+round the hall (length 11.15 to 12.17; for example tick 946, entity 3 at (7.109, 5.871), target at (16.090,
+11.346), route 11.2031). Every time it was longer than the leash of 10.0 (scan range 5), so the target was
+abandoned. The stall-abandon path never fired.
+
+| What happens | Square hall (WP5) | Contour hall (WP6) |
+|---|---|---|
+| Workers' direct heading at the hall corner | Meets the south face at about 45° | Meets the chamfer nearly head-on |
+| Wall slide | Large, so the step is not refused | A sliver, so the step is refused |
+| Leash check | Never runs: the direct chase follows the face east | Runs; the 11.2 route exceeds the 10.0 leash |
+| Outcome | Workers chase and are killed (ticks 1,160 and 1,200) | Pursuit abandoned, the next attacker re-acquired; repeats until the match ends |
+
+**Conclusion.** The give-ups are the leash rule meeting the contour, not a missing route. A direct chase that hugged a
+square face never had its route length checked. The same chase meeting a chamfer head-on has it checked, and the
+detour round a 5×5 hall from its cut corner is longer than two scan ranges. Implementing Amendment 2 as written would
+change nothing. C-9 as specified (a worker chasing past a 5×5's cut corner reaches it) passes already whenever the
+target is within the leash, and fails, by abandonment, when it is not.
+
+### Proposed Amendment 3 (for the orchestrator)
+
+**Decision asked.** What the automatic-chase leash measures. It now measures the route length after a refused step,
+while an unrefused direct chase is never measured. That asymmetry is what the contour exposes.
+
+- **(a) Recommended: the leash measures the target's distance, not the route's length.** An automatic chase is given
+  up when the target is farther than `scan_range × PURSUIT_LEASH_SCAN_RANGES` from the pursuer, whichever way it
+  walks; a route found after a refused step is adopted. Unrefused direct chases are unchanged. This needs a trace
+  of who else reaches the leash today (matrix, goldens) and C-9 with a target within leash distance but beyond leash
+  route length (red now).
+- **(b)** Leave the leash and accept the outcome as rule-caused. The workers now give up a chase that a square let
+  them continue; give-ups stay at about 450 per showcase, which D-15's acceptance (base + 1) forbids, so the bound
+  would need to change. Not recommended.
+- **(c)** Count a leash abandonment only once per target (no give-up re-counted on re-acquire). This hides the loop
+  rather than removing it. Not recommended.
+
+In StarCraft II, a unit chasing an automatically acquired target is leashed by distance from where it acquired it,
+not by its route's length (not sourced here; **verify** when the amendment is written).
