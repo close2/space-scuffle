@@ -112,6 +112,13 @@ pub struct FrameBudgetOptions {
     /// unit looks (statuses, stances, morphs, concealment) ([`effect_mix`]).
     #[arg(long, requires = "effect_stress")]
     pub effect_mix: bool,
+    /// With `--effect-mix`: shots and blows per second instead of the splash rate (0 measures the
+    /// plan's §10.3 stress alone: splashes, areas and statuses).
+    #[arg(long, value_name = "PER_SECOND", requires = "effect_mix")]
+    pub mix_shots: Option<u32>,
+    /// With `--effect-mix`: deaths per second instead of a tenth of the splash rate.
+    #[arg(long, value_name = "PER_SECOND", requires = "effect_mix")]
+    pub mix_deaths: Option<u32>,
     /// Screenshot (PNG) of the frame at the middle of the window (the first frame of a
     /// `--measure-frames` run), with the effect coverage of that frame in the report. The
     /// capture's readback adds work to one frame.
@@ -586,9 +593,14 @@ fn add_variant(
                 capture_tick: options.capture_tick.unwrap_or_else(|| {
                     options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0)
                 }),
-                mix: options
-                    .effect_mix
-                    .then(|| effect_mix::MixConfig::at_rate(options.effect_stress.unwrap_or(0))),
+                mix: options.effect_mix.then(|| {
+                    let plan = effect_mix::MixConfig::at_rate(options.effect_stress.unwrap_or(0));
+                    effect_mix::MixConfig {
+                        shots_per_second: options.mix_shots.unwrap_or(plan.shots_per_second),
+                        deaths_per_second: options.mix_deaths.unwrap_or(plan.deaths_per_second),
+                        ..plan
+                    }
+                }),
             },
         )
     })

@@ -402,6 +402,26 @@ pub fn strikes_plane(slot: WeaponSlot, height: f32) -> bool {
     }
 }
 
+/// Height above its ground, world units, at which the mix bursts an air weapon's splash when
+/// the battle has no flyer (the shipped flyers' bubbles float about this high).
+pub const STAND_IN_FLYER_HEIGHT: f32 = 2.5;
+
+/// Where an air weapon's splash bursts over a ground unit at `world_pos` on ground `ground_z`
+/// when the battle has no flyer: at [`STAND_IN_FLYER_HEIGHT`] above it. `None` for a weapon of
+/// another slot, which always finds a unit on its own plane.
+#[must_use]
+pub fn stand_in_air_burst(
+    slot: WeaponSlot,
+    world_pos: [f32; 3],
+    ground_z: f32,
+) -> Option<[f32; 3]> {
+    (slot == WeaponSlot::Air).then_some([
+        world_pos[0],
+        world_pos[1],
+        ground_z + STAND_IN_FLYER_HEIGHT,
+    ])
+}
+
 /// A 32-bit mix of `value` (`SplitMix64`'s finaliser), for choosing units and angles.
 #[must_use]
 pub const fn mix(value: u64) -> u64 {
@@ -534,12 +554,22 @@ fn spawn_stress_events(
         let hash = mix(sequence);
         let source = &sources[usize::try_from(sequence % sources.len() as u64).unwrap_or(0)];
         let start = usize::try_from(hash % bubbles.len() as u64).unwrap_or(0);
-        // The first live unit on the weapon's plane at or after the hashed index; a frame
-        // without one skips this source's event.
-        let Some(bubble) = (0..bubbles.len())
+        // The first live unit on the weapon's plane at or after the hashed index. A frame
+        // without one skips this source's event, except with the mix (every effect drawn), where
+        // an air weapon with no flyer in the battle bursts at a flyer's height over any live
+        // unit ([`stand_in_air_burst`]).
+        let slot = source.source.weapon.slot;
+        let on_plane = (0..bubbles.len())
             .map(|step| (start + step) % bubbles.len())
-            .find_map(|index| live(index, source.source.weapon.slot))
-        else {
+            .find_map(|index| live(index, slot))
+            .map(|bubble| bubble.world_pos);
+        let stand_in = || {
+            (0..bubbles.len())
+                .map(|step| (start + step) % bubbles.len())
+                .find_map(|index| live(index, WeaponSlot::Primary))
+                .and_then(|bubble| stand_in_air_burst(slot, bubble.world_pos, bubble.ground_z))
+        };
+        let Some(at) = on_plane.or_else(|| stress.config.mix.and_then(|_| stand_in())) else {
             continue;
         };
         #[allow(
@@ -548,12 +578,7 @@ fn spawn_stress_events(
         )]
         let angle = ((hash >> 32) & 0xFFFF) as f32 / 65_536.0 * std::f32::consts::TAU;
         for index in 0..stress_points(source) {
-            events.send(CombatVisualEvent(stress_event(
-                source,
-                bubble.world_pos,
-                angle,
-                index,
-            )));
+            events.send(CombatVisualEvent(stress_event(source, at, angle, index)));
         }
     }
 }
@@ -802,6 +827,22 @@ fn fill_quad(layers: &mut [u32], columns: u32, rows: u32, screen: &[Vec2]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_air_weapon_bursts_over_a_stand_in() {
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Air, [3.0, 4.0, 1.5], 1.0),
+            Some([3.0, 4.0, 1.0 + STAND_IN_FLYER_HEIGHT])
+        );
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Ground, [3.0, 4.0, 1.5], 1.0),
+            None
+        );
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Primary, [3.0, 4.0, 1.5], 1.0),
+            None
+        );
+    }
 
     #[allow(
         clippy::unnecessary_wraps,

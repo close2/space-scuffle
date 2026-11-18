@@ -253,7 +253,11 @@ fn the_mix_sources_cover_every_kind_of_look() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|effect| matches!(effect.event, EventKind::Status | EventKind::Mode))
         .count();
-    assert_eq!(mix.held.len(), held_kinds, "every unit look is held in turn");
+    assert_eq!(
+        mix.held.len(),
+        held_kinds,
+        "every unit look is held in turn"
+    );
     assert_ne!(held_kinds, 0);
     Ok(())
 }

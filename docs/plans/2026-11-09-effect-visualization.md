@@ -2894,3 +2894,66 @@ missing `DamageOverTime` look is superseded there:
 The looks changed there (the held beam and its burn flare, the shown `fungal_affliction`) were accepted in the
 independent reviews `independent_review_identity_2.md` and `_3.md` under Q0080. The evidence, on radv and lavapipe,
 is [`docs/evidence/2026-11-17-effect-snapshot-identity.md`](../evidence/2026-11-17-effect-snapshot-identity.md).
+
+## Amendment 31: WP14 as built (2026-11-18, short note, charter §6)
+
+**Decision note (charter §6, short note: a showcase take and its scenario, one scenario order, diagnostics and
+their tests).** WP14 of §9, read against what Amendments 9 to 30 built. The row's text predates the scale-out, so
+three of its parts are scoped here (Q0002, reversible); the rest is built as written. D-1 holds: the `battle`
+take's scenario, outcome and winner are unchanged, and every golden replay, checksum and matrix result is
+unchanged (`golden_replay_tests`, `sc2_who_wins_matchup_matrix_tests`, `determinism_lockstep_tests` green on the
+branch; the new scenario order is used by the new scenario only).
+
+**Scoping decisions.**
+
+- **`fx_energy` and the "variants" are not generated; nothing is spent.** §6.3 listed `fx_energy` (`psionic_arc`,
+  a fire jet flipbook, `burn_line`, `tongue_strand`, `hook`) for looks that the scale-out then built and had
+  accepted from the four shipped sets: the flame jet (`flame_line`, Amendment 9), the lance and beam burns
+  (Amendments 24 to 28, identity plan), the tether (`abduct_tether`, WP10), and every weapon look (WP11, "no new
+  texture"). No shipped weapon delivers lightning (Amendment 24), so `psionic_arc` has no user either. A texture
+  no look draws would be spend without a consumer and media without a review. The open polish of Amendment 9 that
+  might want a new texture (`shell_impact`'s streak fringe, `psionic_storm`'s pockets) belongs to a polish round
+  with its own review; the WP14 budget lines (≤ $8.80 Veo, ≤ $20 images) stay unspent and available to it.
+  Ledger on 2026-11-18: 269 clips ($107.60) and 55 paid images ($6.05), **$113.65 of the $230 cap** (the owner
+  raised the cap from $200 on 2026-11-18, Q0024).
+- **The Baneling beat waits for media.** The row's own condition ("once those identities have media"): the
+  Baneling analogue `volatile_tick` has no unit clips, so the client cannot present it in a battle. Its
+  `acid_burst` is shipped, reviewed, and drawn by the lab, the GPU tests and the frame-budget stress. It joins the
+  showcase when a media batch (Q0026 review) gives the unit clips; that batch is not this plan's.
+- **The beats are a second take with its own battle.** Adding siege crawlers, trikes and scorpions to the `battle`
+  take's loadout would change its fight and winner. The new take `effects` plays
+  `assets/scenarios/showcase_effects.ron`: player 0 (the viewer) fields a siege line (loadout
+  `showcase_siege_line`: three `railgun_crawler`, two `burrow_scorpion`, four `pulse_bot`) that anchors and burrows
+  at its base; player 1's raiders (`showcase_raiders`: six `napalm_wheeler`, six `pulse_bot`, two
+  `railgun_crawler`, two `rhino_beetle`) attack-move into it. Headless (`scenario_tests`): every mode settles by
+  tick 81 (burrows at 34 and 36, sieges at 76 to 81), the first shot is at tick 304, the sieged crawlers and the
+  burrowed scorpions fire their modes' splashes, the trikes their flame, and all 16 raiders and 4 defenders die by
+  tick 1,200. Scenes: `entrench` (1x, 100 frames: the dig, the mound, the seal sweep and the anchor), `approach`
+  (4x until the first shot), `siege` (1x, 240 frames, ticks 305 to 545: shells, cannon rounds, flame, spines, wrecks) and `closing`,
+  the status card, moved here from the `battle` take so it still ends the video.
+- **A new scenario order, `EnterModes { player_slot }`** (`sim_core::scenario`): every unit of the player with a
+  mode-switch ability casts its first one, queued behind the orders it already has (a cast at once for a unit
+  without orders), exactly as a player's queued cast; a player without one is the typed `NoModeSwitches`. It is a
+  starting order, not a tick rule: no scenario but the new one names it. The capability is read from the ability's
+  `ToggleMode` kind, never from an identity (C5).
+
+**Built.**
+
+- **Scene effects.** A storyboard scene may list `effects` (names in `effects.ron`; validation refuses an unknown
+  name, `StoryboardFault::UnknownEffect`). The take records, per scene, every effect the runtime spawned or held
+  for the viewer (`SceneRecord::effects`, from `EffectRuntime::spawned_per_effect`) and fails at the scene's end
+  when one it asks for is missing, as an `UntilCombat` scene fails without combat. `entrench` asks for
+  `burrow_dig`, `burrow_mound`, `mode_seal_sweep` and `siege_anchor`; `siege` for `shell_impact`, `cannon_tracer`,
+  `flame_line`, `spine_line` and `vehicle_wreck`.
+- **`showcase_tests.rs`** (`the_effects_take_shows_every_effect_its_scenes_ask_for`, GPU class, harness lock):
+  the shipped storyboard's take whose scenes ask for effects, cut to 480×270 with every moving scene at 4× over
+  the same ticks, is rendered and its manifest must list each asked-for effect in its scene. No name is written in
+  the test; they come from the storyboard.
+- **The frame budget with every effect (§10.3).** `frame_budget --effect-stress <rate> --effect-mix`
+  (`client_diagnostics::frame_budget::effect_mix`) adds to the splash stream: as many shots and blows a second
+  (round-robin over every weapon that names a travel or an impact, each the event its delivery publishes, between
+  two live units), a tenth as many deaths (one unit type per death look), 20 areas, 4 tethers and 2 spell missiles
+  kept through the production `keep_views`/`keep_missiles` in a held set of its own, and 50 unit looks held in turn
+  over every `Status` and `Mode` effect of the vocabulary. The report lists which effects of the vocabulary were
+  spawned or held at least once and which never were. The held unit looks' `Shell` layers write the bubble's own
+  material and are not applied by the mix (recorded: the measure is of the effect passes).

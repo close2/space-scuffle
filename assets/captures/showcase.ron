@@ -48,9 +48,11 @@
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are unchanged.
 // Player 0's siege line anchors and burrows at its base (`entrench`, 1x, ticks 0 to 100: the modes
 // settle by tick 81); the raiders' march is a 4x time-lapse until their first shot (about tick
-// 304); `siege` shows the fight at 1x. `closing` moved from the `battle` take to the end of this
-// one, so the status card still ends the video. A scene's `effects` must each be spawned for the
-// viewer during the scene, or the take fails (the manifest records what every scene showed).
+// 304); `siege` shows the fight at 1x for 240 frames (ticks 305 to 545; the raid is over before
+// its end). `closing` moved from the `battle` take to the end of this one, so the status card
+// still ends the video. A scene's `effects` must each be spawned for the viewer during the scene,
+// or the take fails (the manifest records what every scene showed). Render-checked on radv: the
+// `battle` take's scenes start on the ticks of the inner-radius evidence, its outcome unchanged.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -188,7 +190,7 @@
                 (
                     name: "siege",
                     speed: Speed(1),
-                    length: Frames(300),
+                    length: Frames(240),
                     camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
                     overlay: Caption(
                         title: "Splash effects",
@@ -220,7 +222,7 @@
             (scene: "advance", first: 0, frames: 25),
             (scene: "clash", first: 0, frames: 100),
             (scene: "assault", first: 0, frames: 75),
-            (scene: "siege", first: 25, frames: 100),
+            (scene: "siege", first: 25, frames: 50),
             (scene: "closing", first: 0, frames: 150),
         ],
     ),
