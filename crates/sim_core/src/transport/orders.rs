@@ -199,7 +199,7 @@ impl SimWorld {
         }
         let was_walking = actor.task.goal.is_some();
         let cell = self.map.world_to_cell(carrier_at).ok();
-        let goal = cell.and_then(|cell| self.approach_point(actor.position, Footprint::cell(cell)));
+        let goal = cell.and_then(|cell| self.approach_cell(actor.position, Footprint::cell(cell)));
         match goal {
             Some(goal) => {
                 self.set_task_goal(id, goal);

@@ -378,3 +378,39 @@ byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical
 seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release and `wasm32-wasip1` release. The `sim_core`,
 `sim_map`, `sim_types` and `workspace_checks` suites pass; the workspace builds and `cargo clippy --workspace
 --all-targets` is clean.
+
+## 5. WP5: consumer rules (full-square shapes)
+
+**Change.** D-8: the centre rule (`SimWorld::is_position_pathable`) refuses a segment in a structure's cell only if the
+segment meets the structure's closed shape; `ground_footprint_connected` (Blink, unload, Abduct, production egress)
+keeps the square envelope against terrain, treats the ground under structures as walkable (D-5), and refuses a
+segment whose disc of radius `t` meets a structure's open shape (`capsule_meets`, every distinct occupant of the
+swept box except the exempt producer). D-9: `approach_point` is split into `approach_cell` (the one-cell shortcut,
+for harvest targets and unload cells) and `approach_edge` (always the ring around the site, for construction's
+approach and `leave_footprint`).
+
+**Tests, red on WP4 first**:
+
+| Test | WP4 | WP5 |
+|---|---|---|
+| C-1 `contour_footprint_tests::a_centre_may_cross_a_cut_corner_cell` | Fails: the segment through the 5×5 contour's corner cell, outside the shape, is refused | Passes |
+| C-2 `contour_footprint_tests::a_worker_builds_a_one_cell_structure` | Fails for a builder **standing on** the one-cell site: `leave_footprint` sends it to the site's own centre, so it never gets off (H-1 reproduced). A builder walking from (12.5, 12.5) passes on WP4 too: it comes within reach before the centre, so the test checks both cases | Passes both |
+| S-9 rewritten `structure_contact_tests::no_placement_is_refused_except_by_the_disc_against_the_shape` (64 cases, full and contour shapes of the 2×2, 3×3 and 5×5, Spore-sized and geyser contours; points on the Q16 grid; an independent `i128` oracle) | Fails at a full square's corner, where the square envelope refuses a point the disc admits | Passes |
+
+Guards S-1 to S-8 and S-10 pass unchanged.
+
+**Audit (R-8)** of `grep -rn "OCCUPIED_BY_STRUCTURE\|occupying_structure\|GROUND_PATHABLE" crates/sim_core/src
+crates/client/src` (35 hits): Shape (C1, C2): `movement/flee.rs` 181–186, `movement/geometry.rs` 73 (both changed
+here). Place (P1): `economy/mod.rs` 509–510 (`cell_is_walkable`, the approach ring), `economy/harvest.rs` 51 (node
+cell's occupant), `production/lifecycle.rs` 263–266 and 363–364 (the producer's own foundation cells),
+`scenario.rs` 371–374, 451–454, 899–908 and `scenario/placement.rs` 164–168 (scenario start rings and placement),
+`world/vision.rs` 266 (`known_blocked_cells`), `client/src/battle_input/context_order.rs` 164 (picking a structure
+by its cell). Map construction and flags only, no reader: `scenario.rs` 973, `scenario/placement.rs` 346,
+`steering.rs` 1495 and 1576 (test maps), `checksum/encoding.rs` 630 (hashing), `client/src/editor/tools.rs`
+(painting), `client/src/terrain/fields.rs` 200–201 (terrain texture, structures excluded).
+
+**Exit (D-15, 4)**, WP4 tools against WP5 tools: matrix bit-identical (1,160 runs); battle 33 `seeds.csv`
+byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical at 1,800 ticks, to the end and on
+seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release and `wasm32-wasip1` release. No Blink, unload,
+Abduct or egress near a square corner occurred in these runs, so no difference needed a trace. The `sim_core`
+suite passes.

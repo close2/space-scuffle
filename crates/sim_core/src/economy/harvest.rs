@@ -163,7 +163,7 @@ impl SimWorld {
         if node.remaining == 0 {
             let (kind, cell) = (node.kind, node.cell);
             if !self.sees_cell(owner, cell) {
-                match self.approach_footprint(id, Footprint::cell(cell)) {
+                match self.approach_footprint(id, Footprint::cell(cell), Self::approach_cell) {
                     Approach::Walking => return,
                     Approach::Unreachable => {
                         self.end_task(id, Some(TaskEventKind::Unreachable));
@@ -197,7 +197,7 @@ impl SimWorld {
             .get(&id)
             .is_some_and(|actor| actor.task.gather_ticks > 0);
         if !gathering {
-            match self.approach_footprint(id, site) {
+            match self.approach_footprint(id, site, Self::approach_cell) {
                 Approach::Walking => {}
                 Approach::Unreachable => self.end_task(id, Some(TaskEventKind::Unreachable)),
                 Approach::Arrived => {
@@ -310,7 +310,7 @@ impl SimWorld {
         else {
             return false;
         };
-        match self.approach_footprint(id, site) {
+        match self.approach_footprint(id, site, Self::approach_cell) {
             Approach::Walking => false,
             Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));

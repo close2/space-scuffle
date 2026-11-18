@@ -11,7 +11,9 @@
 //!   fixed circle body;
 //! - S-8: a body wedged nearer than `t` is not thrown out, and walks away never deeper;
 //! - S-9 (property): no teleport or unload point is refused as occupied by a structure; the
-//!   footprint refuses it exactly when the point's square envelope at `t` meets it;
+//!   structure refuses it exactly when the disc of radius `t` meets its footprint shape (plan
+//!   `2026-11-18-contour-footprints` D-8; before, the point's square envelope at `t` and the
+//!   footprint's cells);
 //! - S-10 (property): the collision phase never corrects a lone body outside a structure's
 //!   footprint `t`-envelope.
 //!
@@ -127,21 +129,79 @@ const RADII: [f64; 4] = [0.375, 0.5, 0.625, 0.875];
 /// How far below the collision radius S-9 draws the terrain radius, world units.
 const TERRAIN_DROPS: [f64; 4] = [0.0, 0.0625, 0.125, 0.25];
 
+/// The footprint shapes S-9 draws from, by footprint size: the full box and the 5.0.14
+/// contours of that size (plan `2026-11-18-contour-footprints` §2.3), in quarter cells.
+fn shapes_of_size(size: u8) -> Vec<sim_types::FootprintShape> {
+    let shape = |half: u16, chamfer: u16| sim_types::FootprintShape {
+        half_width_q: half,
+        half_height_q: half,
+        chamfer_q: chamfer,
+    };
+    match size {
+        2 => vec![shape(4, 0), shape(4, 2), shape(2, 1)],
+        3 => vec![shape(6, 0), shape(6, 2), shape(6, 3)],
+        _ => vec![shape(10, 0), shape(10, 6)],
+    }
+}
+
+/// A point on the Q16 grid (raw coordinates rounded down to a multiple of 2⁻¹⁶).
+fn on_q16(point: SimVec2) -> SimVec2 {
+    let snap = |v: SimScalar| SimScalar::from_raw(v.raw() & !0xFFFF);
+    SimVec2::new(snap(point.x), snap(point.y))
+}
+
+/// Whether the Q16 point `p` lies closer than `t` (a multiple of 2⁻¹⁶) to the closed shape of
+/// `placed`, or inside it: an exact `i128` oracle written apart from `sim_map`'s predicates.
+fn disc_meets_shape(placed: &sim_map::PlacedStructure, p: SimVec2, t: SimScalar) -> bool {
+    let (vertices, count) = placed.contour();
+    // Lattice units are quarter cells: 2^14 Q16 units.
+    let q = |v: sim_map::LatticePoint| (i128::from(v.x) << 14, i128::from(v.y) << 14);
+    let (px, py) = (i128::from(p.x.raw() >> 16), i128::from(p.y.raw() >> 16));
+    let t_q = i128::from(t.raw() >> 16);
+    let mut inside = true;
+    let mut near = false;
+    for i in 0..count {
+        let ((ux, uy), (vx, vy)) = (q(vertices[i]), q(vertices[(i + 1) % count]));
+        let (dx, dy) = (vx - ux, vy - uy);
+        let (wx, wy) = (px - ux, py - uy);
+        // Counter-clockwise contour: the interior is on the left of every edge.
+        if dx * wy - dy * wx < 0 {
+            inside = false;
+        }
+        let length_sq = dx * dx + dy * dy;
+        let along = wx * dx + wy * dy;
+        let (num, den) = if along <= 0 {
+            (wx * wx + wy * wy, 1)
+        } else if along >= length_sq {
+            let (ex, ey) = (px - vx, py - vy);
+            (ex * ex + ey * ey, 1)
+        } else {
+            let cross = dx * wy - dy * wx;
+            (cross * cross, length_sq)
+        };
+        if num < t_q * t_q * den {
+            near = true;
+        }
+    }
+    inside || near
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
-    /// S-9: beside a seeded shipped structure of footprint 2, 3 or 5, a scratch body of
-    /// collision radius `r` and terrain radius `t ≤ r` is placed at 200 seeded points within
-    /// `h + r + 1` of the structure's centre (`h` its half-width). No point is refused as
-    /// `Occupied` by the structure, and a point is refused `Terrain` exactly when the open square
-    /// of half-side `t` around it meets the footprint's closed box, which is the envelope
-    /// `ground_footprint_connected` tests: the point is refused when it lies strictly inside the
-    /// footprint widened by `t` on every side (`segment_overlaps_open_box`), so a point exactly
-    /// `t` from a face is admitted. Every other point is admitted.
+    /// S-9, rewritten by plan `2026-11-18-contour-footprints` WP5 (D-8): beside a seeded scratch
+    /// structure of footprint 2, 3 or 5 with a full or a contour shape, a scratch body of
+    /// collision radius `r` and terrain radius `t ≤ r` is placed at 200 seeded points on the Q16
+    /// grid within `h + r + 1` of the structure's centre. No point is refused as `Occupied` by
+    /// the structure, and a point is refused `Terrain` exactly when the disc of radius `t` meets
+    /// the closed shape (an exact oracle: the point is inside the shape, or closer than `t` to
+    /// it); every other point is admitted. At a face the disc and the old square envelope
+    /// agree; they differ within `t(√2 − 1)` of a convex corner.
     #[test]
-    fn no_placement_is_refused_as_occupied_by_a_structure(
+    fn no_placement_is_refused_except_by_the_disc_against_the_shape(
         size_index in 0usize..3,
         pick in 0usize..64,
+        shape_index in 0usize..3,
         radius_index in 0usize..4,
         drop_index in 0usize..4,
         offsets in prop::collection::vec((-1.0f64..1.0, -1.0f64..1.0), 200),
@@ -153,37 +213,38 @@ proptest! {
         let size = [2_u8, 3, 5][size_index];
         let kinds = structures_of_size(&world, size);
         prop_assert!(!kinds.is_empty(), "the shipped catalog has a {size}x{size} structure");
-        let structure = kinds[pick % kinds.len()];
+        let shapes = shapes_of_size(size);
+        let shape = shapes[shape_index % shapes.len()];
+        let mut scratch = world
+            .catalog
+            .get(kinds[pick % kinds.len()])
+            .expect("invariant: chosen from the catalog")
+            .clone();
+        let free = (1..=u16::MAX)
+            .map(UnitTypeId)
+            .find(|id| world.catalog.get(*id).is_err())
+            .expect("invariant: a free unit type id");
+        scratch.unit_type_id = free;
+        "s9_scratch_structure".clone_into(&mut scratch.slug);
+        scratch.shape = ShapeKind::BuildingDome { footprint_w: size, footprint_h: size, shape };
+        world.catalog.register(scratch);
         let placed = world
-            .spawn_structure(structure, PlayerId(1), 18, 18)
+            .spawn_structure(free, PlayerId(1), 18, 18)
             .expect("open ground");
         let kind = register(&mut world, "structure_contact_scratch", r, t, |_| {});
         let body = world
             .spawn_unit(kind, PlayerId(0), at(3.0, 3.0))
             .expect("spawn");
-        let footprint = &world.map.structures()[&placed];
-        let (left, bottom) = (
-            i128::from(footprint.top_left.0) << 32,
-            i128::from(footprint.top_left.1) << 32,
-        );
-        let (right, top) = (
-            left + (i128::from(footprint.width) << 32),
-            bottom + (i128::from(footprint.height) << 32),
-        );
+        let footprint = world.map.structures()[&placed].clone();
         let half = f64::from(footprint.width) / 2.0;
         let centre = (
             f64::from(footprint.top_left.0) + half,
             f64::from(footprint.top_left.1) + f64::from(footprint.height) / 2.0,
         );
         let reach = half + r + 1.0;
-        let t_raw = i128::from(s(t).raw());
         for (dx, dy) in offsets {
-            let point = at(centre.0 + dx * reach, centre.1 + dy * reach);
-            let (px, py) = (i128::from(point.x.raw()), i128::from(point.y.raw()));
-            let inside = left - t_raw < px
-                && px < right + t_raw
-                && bottom - t_raw < py
-                && py < top + t_raw;
+            let point = on_q16(at(centre.0 + dx * reach, centre.1 + dy * reach));
+            let meets = disc_meets_shape(&footprint, point, s(t));
             let result = world.validate_displacement_destination(body, point);
             prop_assert!(
                 !matches!(result, Err(DisplacementAdmissionError::Occupied(id)) if id == placed),
@@ -191,17 +252,17 @@ proptest! {
                 point.x.to_f32(),
                 point.y.to_f32()
             );
-            if inside {
+            if meets {
                 prop_assert!(
                     matches!(result, Err(DisplacementAdmissionError::Terrain(id)) if id == body),
-                    "({}, {}) inside the footprint's t-envelope: {result:?}",
+                    "({}, {}) meets the shape {shape:?} at t {t}: {result:?}",
                     point.x.to_f32(),
                     point.y.to_f32()
                 );
             } else {
                 prop_assert!(
                     result.is_ok(),
-                    "({}, {}) outside the footprint's t-envelope (r {r}, t {t}): {result:?}",
+                    "({}, {}) clear of the shape {shape:?} (r {r}, t {t}): {result:?}",
                     point.x.to_f32(),
                     point.y.to_f32()
                 );

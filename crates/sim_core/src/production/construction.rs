@@ -525,7 +525,7 @@ impl SimWorld {
             self.leave_footprint(id, site);
             return;
         }
-        match self.approach_footprint(id, site) {
+        match self.approach_footprint(id, site, Self::approach_edge) {
             crate::economy::Approach::Walking => return,
             crate::economy::Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));
@@ -590,7 +590,7 @@ impl SimWorld {
             self.end_task(id, Some(TaskEventKind::FoundationLost));
             return;
         };
-        match self.approach_footprint(id, site) {
+        match self.approach_footprint(id, site, Self::approach_edge) {
             crate::economy::Approach::Walking => {}
             crate::economy::Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));
@@ -679,7 +679,7 @@ impl SimWorld {
         if actor.task.goal.is_some() {
             return;
         }
-        match self.approach_point(actor.position, site) {
+        match self.approach_edge(actor.position, site) {
             Some(goal) if actor.task.legs < crate::economy::MAX_TASK_LEGS => {
                 self.set_task_goal(id, goal);
             }
