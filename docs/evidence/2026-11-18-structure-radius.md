@@ -77,3 +77,48 @@ reads `TemplarArchive`). No amendment is needed.
 **Records.** `DESIGN.md` §4: B-135 restated with the engine rule and pointed to this plan (the dome sentence and
 "Command Center analogues match at 2.5" withdrawn, D-6 and §2.3); B-138 added for the footprint mismatches (B-137
 is taken by another branch). The plan's row in `docs/plans/README.md` is `Proposed`.
+
+## 1. WP1: the field and the loader, data unchanged
+
+**Change.** `StructureArchetypeDef::radius` (required, `f64`, world units) is read into `collision_radius` and
+`separation_radius`; the structure's `terrain_radius` is half the footprint's smaller side (D-5). `validate_radius`
+refuses a value that is not finite, not strictly positive, not a multiple of 1/16, or below half the footprint's
+smaller side, each as `CatalogInvalidValue` naming `radius`. Docs of `UnitArchetype::collision_radius` and
+`terrain_radius` say what they mean for a structure. All 49 rows of `structures.ron` carry
+`radius: <footprint.0 ÷ 2>` with the plan's comment.
+
+**Tests, red on WP0 first** (WP0 tree with WP1's tests; the field is ignored there):
+
+| Test | WP0 | WP1 |
+|---|---|---|
+| `a_structure_radius_is_read_into_the_collision_radius` | Fails: collision radius 1.5, expected 1.8125 | Passes |
+| `a_structures_terrain_radius_is_half_its_footprints_smaller_side` | Fails: collision radius 2.5, expected 2.75 | Passes (terrain radius 2.5) |
+| `a_structure_radius_is_required` | Fails: the row without `radius` loads | Passes: `RonDeserializationError` naming `radius` |
+| `a_structure_radius_must_be_positive_and_finite` (0, −0.5, NaN, inf) | Fails: loaded | Passes |
+| `a_structure_radius_must_be_a_multiple_of_a_sixteenth` (1.8 refused, 1.8125 admitted) | Fails: loaded | Passes |
+| `a_structure_radius_may_not_be_below_half_the_footprint` (1.4375 on 3×3, 0.75 on 2×2 refused; 1.5 admitted) | Fails: loaded | Passes |
+| R-12 `structure_radius_tests::a_structure_flush_with_the_map_edge_keeps_a_valid_motion_entry` | Fails: collision radius 2.5, expected 2.75 | Passes |
+
+**R-12 is written in WP1** (the plan's order is kept: WP1 sets D-5). **Shown red against the hazard:** on the WP1
+tree with `terrain_radius: radius` restored in `into_archetype` and the test's terrain-radius assertion removed,
+the first tick reports `MovementInvariant { tick: Tick(1), source: InvalidState { entity: EntityId(1), reason:
+"actor is outside its current terrain-radius movement domain" } }` for the 5×5 at cells (0, 0). With D-5 it passes.
+
+**Verified (inline structure RON in tests).** `grep -rn "footprint: (" crates --include=*.rs`: every hit is a map
+start location (`MapStartLocation`, map documents, the editor) or the catalog's own field; no test carries an inline
+structure catalog. Tests that edit structures read the shipped file (`weapon_catalog_rules_tests`,
+`faction_catalog_tests`, `catalog_serialization_compatibility`), and pass unchanged, as do `runtime_catalog_tests`
+(`sim_core` 31, `asset_baker` 2) and `catalog_reference_values_tests` (14).
+
+**Bit-identity** (D-11, 1), WP0 tools against WP1 tools:
+
+| What | Result |
+|---|---|
+| Matrix (`--compare` WP0) | Bit-identical (1,160 runs; expectation failures 0 on the seeds of record, 4 over all seeds) |
+| Battle 33 `seeds.csv` | Byte-identical |
+| Showcase `units.csv`, `summary.md`, `overlap.csv`: 1,800 ticks, to the end, seeds 1 to 8 | Byte-identical |
+| Goldens | Pass unchanged in debug and release native and in `wasm32-wasip1` release under wasmtime |
+
+The base reproduces structure-contact Amendment 1: the default seed ends with player 1 winning at tick 2,193
+(reversals 25 / 10, stall give-ups 0 / 0, deeper unit-ticks 0 / 0); seeds 1 to 6 and 8 player 1 (at 2,203, 2,187,
+1,880, 5,688, 1,593, 3,419 and 1,716), seed 7 player 0 at 2,554.
