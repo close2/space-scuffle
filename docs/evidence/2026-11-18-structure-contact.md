@@ -193,6 +193,45 @@ change therefore reaches player 1's lane first (the default seed's first diverge
 This is the third flip of the showcase's near-tied lane fight for a contact rule (contact Amendment 1, inner-radius
 Amendment 1). The orchestrator decides by amendment; a proposed amendment is in the plan.
 
+### 2a. Seeds 8 and 6 reversals by unit (Amendment 1, condition 2)
+
+**Instrument.** `BlockingMeter` now logs every reversal it counts as a `ReversalEvent` (tick, unit, owner, position,
+both steps; `BlockingMeter::reversal_events`), and `route_trace` writes them as `reversals.csv`. Tests:
+`trace::blocking::tests::every_counted_reversal_is_logged_with_its_unit_and_place` (the log agrees with the per-unit
+and per-owner counters) and `trace::route::tests::reversals_are_written_one_line_per_event`. The tool only reads
+the world. Seeds 6 and 8 were rerun on WP1's and WP2's simulation with the logging tool, and their `units.csv` are
+byte-identical to the runs of §2.
+
+| Seed, tree | Reversals P0 / P1 | Units with the most reversals (entity, owner, unit, count) |
+|---|---|---|
+| 8, WP1 | 16 / 24 | 26 P1 rhino beetle 13; 21 P1 pulse bot 6; 11 P0 pulse bot 4 |
+| 8, WP2 | 40 / 14 | **4 P0 pulse bot 19**; **5 P0 pulse bot 8**; 23 P1 pulse bot 5; 11 P0 pulse bot 4 |
+| 6, WP1 | 23 / 10 | 5, 9, 11 P0 pulse bots and 21 P1 pulse bot, 4 each |
+| 6, WP2 | 19 / 23 | **21 P1 pulse bot 10**; 11 P0 and 23 P1 pulse bots 4 each |
+
+**Seed 8, player 0 (+24).** Pulse bots 4 and 5 account for 27 of player 0's 40.
+- **Pulse bot 4** reverses 19 times from tick 361 to 444, 17 of them from tick 399. It stands at about
+  (25.2, 31.5) inside player 0's own army: pulse bots 9, 10 and 11 are 0.74 to 0.90 from it. No enemy is within
+  6, and it is about 25 from either hall. It holds its route to the corner waypoint (25.58, 35.00) at the foot of
+  a cliff. Every five ticks it steps about 0.11 toward the waypoint, then drifts back about 0.02 to 0.03 a tick as
+  the crowd presses on it: a sawtooth.
+- **Pulse bot 5** reverses 8 times from tick 383 to 404, at (23.7 to 24.7, 31.2 to 31.4), at the edge of the same
+  crowd.
+
+The base shows the same pattern, on player 1's side: in seed 8 on WP1, rhino beetle 26 reverses 13 times from tick
+343 to 415 at about (26.9, 39.2) and (26.4, 38.7), stepping and drifting back the same way.
+
+**Classification: not R-3, no defect of this plan.** No reversal of seed 8's excess is at or near a structure: the
+units stand in their own crowd in open ground and at a cliff corner. It is the crowd-edge back-and-forth already
+registered as B-103 ("a blocked unit at the edge of a crowd still steps back and forth now and then"). It now
+falls on player 0's units because the lane fight diverged (§2): a rule-caused change of where the armies meet, not
+a unit oscillating at a unit–building gap. So the WP continues.
+
+**Seed 6, player 1 (+13).** Pulse bot 21 accounts for 10 of player 1's 23, not more than 10, so it needs no
+classification (Amendment 1). For the record, its reversals (ticks 595 to 665) are at y = 35.375, sliding along
+the terrain face above it at x 26.0 to 27.1. On WP1 the same unit reverses 4 times at the same place (ticks 568 to
+587, x 26.6 to 26.9, y 35.375). No structure is involved.
+
 **Throughput** (WP1 and WP2, D-11): the `throughput` bench binaries of WP0 (`f63be82f`), WP1 (`de3b4e80`) and WP2
 (`826b3e14`), alternated in that order, three rounds, under the gate lock (each tree's sources checked out in turn
 and built with `cargo bench --no-run`, the binaries copied aside); ticks per second, each the bench's median of three

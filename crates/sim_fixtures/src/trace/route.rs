@@ -30,7 +30,7 @@
 //!   lies in the box (bounds inclusive). A unit that dies or leaves ends its pass.
 //! - A simulation diagnostic during the run is an error, as in the matrix tool.
 
-use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics};
+use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics, ReversalEvent};
 use super::cli::RunError;
 use super::route_groups::{groups_markdown, lanes_csv, GroupMeter};
 use super::route_overlap::{
@@ -70,8 +70,9 @@ pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--ass
                      \"AttackMoveToStart(player_slot: 1, target_player_slot: 0)\"; built in memory
   --lane-tolerance   group-routing tolerance in permille replacing the catalog's
   --seed <n>         the world's random seed replacing the scenario's
-  Always writes groups.md (route groups, their lanes and GroupLane events) and overlap.csv
-  (every unit-tick on which a ground body's disc overlaps a wall).";
+  Always writes groups.md (route groups, their lanes and GroupLane events), overlap.csv
+  (every unit-tick on which a ground body's disc overlaps a wall) and reversals.csv (every
+  counted reversal: tick, unit, position and both steps).";
 
 /// A named axis-aligned box of the map in world units, bounds inclusive.
 #[derive(Debug, Clone, PartialEq)]
@@ -420,6 +421,9 @@ pub struct RouteTraceOutput {
     pub overlap: Vec<(u8, OverlapMetrics)>,
     /// Every unit-tick on which a ground body's disc overlapped a wall.
     pub overlap_samples: Vec<OverlapSample>,
+    /// Every counted reversal, in tick then entity order (plan `2026-11-18-structure-contact`
+    /// Amendment 1).
+    pub reversals: Vec<ReversalEvent>,
 }
 
 /// Starts the scenario as [`sim_core::scenario::load_scenario_battle`] does, with the initial
@@ -521,6 +525,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
             .map(|&owner| (owner, overlap.of_owner(owner)))
             .collect(),
         overlap_samples: overlap.samples().to_vec(),
+        reversals: meter.reversal_events().to_vec(),
     };
     write_outputs(&args.out, &output)?;
     Ok(output)
@@ -615,6 +620,9 @@ fn write_outputs(out: &Path, output: &RouteTraceOutput) -> Result<(), RunError> 
     let overlap_path = out.join("overlap.csv");
     std::fs::write(&overlap_path, overlap_csv(&output.overlap_samples))
         .map_err(io(&overlap_path))?;
+    let reversals_path = out.join("reversals.csv");
+    std::fs::write(&reversals_path, reversals_csv(&output.reversals))
+        .map_err(io(&reversals_path))?;
     let groups_path = out.join("groups.md");
     let groups = groups_markdown(&output.groups.groups(), output.groups.events());
     std::fs::write(&groups_path, groups).map_err(io(&groups_path))?;
@@ -629,6 +637,28 @@ fn write_outputs(out: &Path, output: &RouteTraceOutput) -> Result<(), RunError> 
 /// Joins `rows` with a newline after each.
 fn lines(rows: &[String]) -> String {
     rows.iter().flat_map(|row| [row.as_str(), "\n"]).collect()
+}
+
+/// One line per counted reversal: the tick, the unit, its owner, its position and both steps
+/// (world units and world units per tick, four decimals).
+#[must_use]
+pub fn reversals_csv(events: &[ReversalEvent]) -> String {
+    let mut rows = vec!["tick,entity,owner,x,y,before_x,before_y,now_x,now_y".to_owned()];
+    rows.extend(events.iter().map(|e| {
+        format!(
+            "{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+            e.tick,
+            e.entity.0,
+            e.owner,
+            e.position.0,
+            e.position.1,
+            e.before.0,
+            e.before.1,
+            e.now.0,
+            e.now.1
+        )
+    }));
+    lines(&rows)
 }
 
 /// One line per box and unit pass.
@@ -835,5 +865,22 @@ mod tests {
         ] {
             assert!(parse_box(bad).is_none(), "{bad} must be refused");
         }
+    }
+
+    #[test]
+    fn reversals_are_written_one_line_per_event() {
+        let event = super::ReversalEvent {
+            tick: 12,
+            entity: sim_types::EntityId(7),
+            owner: 1,
+            position: (3.25, 4.5),
+            before: (0.1, 0.0),
+            now: (-0.1, 0.01),
+        };
+        assert_eq!(
+            super::reversals_csv(&[event]),
+            "tick,entity,owner,x,y,before_x,before_y,now_x,now_y\n\
+             12,7,1,3.2500,4.5000,0.1000,0.0000,-0.1000,0.0100\n"
+        );
     }
 }
