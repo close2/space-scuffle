@@ -192,3 +192,21 @@ change therefore reaches player 1's lane first (the default seed's first diverge
 
 This is the third flip of the showcase's near-tied lane fight for a contact rule (contact Amendment 1, inner-radius
 Amendment 1). The orchestrator decides by amendment; a proposed amendment is in the plan.
+
+**Throughput** (WP1 and WP2, D-11): the `throughput` bench binaries of WP0 (`f63be82f`), WP1 (`de3b4e80`) and WP2
+(`826b3e14`), alternated in that order, three rounds, under the gate lock (each tree's sources checked out in turn
+and built with `cargo bench --no-run`, the binaries copied aside); ticks per second, each the bench's median of three
+repeats; the host was shared:
+
+| Scenario | WP0 | WP1 | WP2 |
+|---|---|---|---|
+| 64×64, 0 units | 3,028 / 3,051 / 2,884 | 3,253 / 3,044 / 3,262 | 3,273 / 3,089 / 2,880 |
+| 64×64, 100 | 833 / 903 / 802 | 883 / 809 / 963 | 954 / 938 / 848 |
+| 64×64, 400 | 157 / 156 / 161 | 164 / 163 / 168 | 163 / 160 / 163 |
+| 128×128, 400 | 187 / 180 / 187 | 191 / 195 / 191 | 196 / 187 / 187 |
+| 256×256, 0 | 201 / 200 / 201 | 199 / 202 / 203 | 202 / 204 / 200 |
+| showcase canyon, 400 | 120 / 119 / 120 | 121 / 119 / 121 | 118 / 119 / 114 |
+| 64×64, 67 casters, 400 | 232 / 234 / 233 | 243 / 235 / 227 | 237 / 236 / 238 |
+
+Within noise (the bench scenarios spawn no structures, so WP1 and WP2 change no work in them); every scenario far
+above 25. `DESIGN.md` §5 is unchanged.
