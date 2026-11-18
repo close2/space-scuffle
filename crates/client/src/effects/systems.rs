@@ -16,7 +16,8 @@
 //!   out ([`replaces_legacy`]). An instant hit's, a blow's or a projectile's point is first
 //!   moved from the struck unit's centre to its bubble's near surface (`effects::struck`, the
 //!   bubble found by the struck entity's id), so the slug, the beam, the projectile and the
-//!   impact meet the glass instead of being drawn inside it or below a flyer.
+//!   impact meet the glass instead of being drawn inside it or below a flyer; a projectile's
+//!   start is moved onto its shooter's bubble the same way, found by the shooter's id (B-133).
 //! - [`spawn_mode_trails`] lays the `moving` effect of a unit that moves in a mode naming one
 //!   (a burrowed unit's ground-disturbance trail, plan Amendment 2, R5), where the viewer sees
 //!   the ground, at the effect's `repeat` period.
@@ -551,14 +552,9 @@ pub fn spawn_effects_from_events(
         // shot's slug ends (reviews 2 and 3, A2-1, A3-1, A3-2), the bubble found by the struck
         // entity's id (plan `2026-11-17-effect-snapshot-identity` D-3, B-125; Amendment 3,
         // B-128).
-        let (event, struck_radius) = match struck.as_deref_mut() {
-            Some(struck) => super::struck::at_struck_surface(
-                &event.0,
-                |id| struck.find(presented, previous, id),
-                view,
-            ),
-            None => super::struck::at_struck_surface(&event.0, |_| None, view),
-        };
+        // A projectile's flight also starts on its shooter's glass (Amendment 7, B-133).
+        let (event, struck_radius) =
+            super::struck::on_bubbles(&event.0, struck.as_deref_mut(), presented, previous, view);
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
         let shot = travel_request(&event, &tables, &catalog);

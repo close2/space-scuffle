@@ -23,7 +23,9 @@
 //!   shots fly (a projectile), when the data offers one with looks on a presentable shooter.
 //!   Each impact must show beside the **flyer's** glass by the rule below, and change beside the
 //!   ground units no more than its blank run does, plus [`UNDER_ALLOWANCE`]: the struck bubble
-//!   is found by the struck entity's id, never by where the hit was published.
+//!   is found by the struck entity's id, never by where the hit was published. The projectile's
+//!   flight must start within [`LAUNCH_TOLERANCE_PX`] of the shooter's drawn bubble outline
+//!   (Amendment 7, B-133: not below a flyer's bubble, where the simulation publishes it).
 //!
 //! The units first stand unarmed for [`SETTLE_SECONDS`] and are pictured: the baseline. Then
 //! they open fire. The parent checks that each staged family's looks were spawned while its
@@ -194,6 +196,9 @@ const UNDER_GAP: f32 = 0.05;
 /// as the removed position match could draw it, changes there what it changes beside the flyer
 /// (272 px on radv).
 const UNDER_ALLOWANCE: usize = 8;
+/// Window pixels within which a cross-plane projectile's flight starts from its shooter's drawn
+/// bubble outline (plan `2026-11-17-effect-snapshot-identity` Amendment 7, B-133).
+const LAUNCH_TOLERANCE_PX: f32 = 3.0;
 
 /// A family of looks: a `travel` and an `impact` look a block names for a weapon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,6 +479,10 @@ struct SubjectReport {
     /// radius]`, window pixels (plan `2026-11-17-effect-snapshot-identity` WP4).
     #[serde(default)]
     under_px: Vec<[f32; 3]>,
+    /// Where the first flight of the travel look started (its line's start, where the look is
+    /// drawn at its birth), projected to window pixels (Amendment 7, B-133).
+    #[serde(default)]
+    launch_px: Option<[f32; 2]>,
 }
 
 /// What a child saw.
@@ -1073,6 +1082,32 @@ fn count(staging: &mut Staging, runtime: &EffectRuntime, now: f64) {
     }
 }
 
+/// Records, for each subject whose travel look flew since `opened` (seconds of
+/// `Time<Virtual>`) and has no launch recorded yet, where its earliest flight started,
+/// projected through `camera` (Amendment 7, B-133).
+fn record_launch(
+    staging: &mut Staging,
+    runtime: &EffectRuntime,
+    camera: (&Camera, &GlobalTransform),
+    opened: f64,
+) {
+    for (subject, report) in staging.subjects.iter().zip(&mut staging.report.subjects) {
+        let Some((travel, _)) = subject.looks[0] else {
+            continue;
+        };
+        if report.launch_px.is_some() {
+            continue;
+        }
+        let first = runtime
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.effect == travel && instance.birth >= opened)
+            .filter_map(|(_, instance)| instance.line.map(|line| (instance.birth, line.from)))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        report.launch_px = first.map(|(_, from)| project3(camera, from));
+    }
+}
+
 /// Advances the child by one frame.
 fn stage_wave_child(
     mut commands: Commands<'_, '_>,
@@ -1198,6 +1233,7 @@ fn stage_wave_child(
             );
             if let Some(runtime) = effects.0.as_deref() {
                 count(&mut staging, runtime, now);
+                record_launch(&mut staging, runtime, (camera, transform), at);
             }
             Phase::Running {
                 at,
@@ -1556,6 +1592,34 @@ fn judge(
     Ok((failures, seen))
 }
 
+/// B-133 (plan `2026-11-17-effect-snapshot-identity` Amendment 7): whether `subject`'s first
+/// flight started within [`LAUNCH_TOLERANCE_PX`] of its shooter's drawn bubble outline, not
+/// below a flyer's bubble; prints the measure and returns the failure, if any.
+fn judge_launch(subject: &SubjectReport, wave: usize, driver: &str) -> Option<String> {
+    let [cx, cy, radius] = subject.shooter_px;
+    let Some([x, y]) = subject.launch_px else {
+        return Some(format!(
+            "{} (CrossPlane): no flight of its travel look was seen",
+            subject.family
+        ));
+    };
+    let from_centre = (x - cx).hypot(y - cy);
+    let off = (from_centre - radius).abs();
+    eprintln!(
+        "driver {driver}: wave {wave} {} (CrossPlane): its flight starts {from_centre:.2} px \
+         from the shooter's drawn centre, whose outline is {radius:.2} px out: {off:.2} px off \
+         the outline (tolerance {LAUNCH_TOLERANCE_PX})",
+        subject.family
+    );
+    (off > LAUNCH_TOLERANCE_PX).then(|| {
+        format!(
+            "{} (CrossPlane): its flight starts {off:.2} px off the shooter's drawn bubble \
+             outline (tolerance {LAUNCH_TOLERANCE_PX})",
+            subject.family
+        )
+    })
+}
+
 /// The impact look of `subject`'s family, if it has one.
 fn impact_of(subject: &SubjectReport) -> Option<&str> {
     subject
@@ -1605,6 +1669,9 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
             let (judged, seen) = judge(directory.path(), subject, wave, &driver)?;
             let impact_seen = seen.impact;
             failures.extend(judged);
+            if subject.approach == Approach::CrossPlane && subject.flies {
+                failures.extend(judge_launch(subject, wave, &driver));
+            }
             if impact_of(subject).is_some() {
                 let blank_subject = blank
                     .subjects
