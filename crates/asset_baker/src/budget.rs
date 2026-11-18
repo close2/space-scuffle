@@ -383,12 +383,13 @@ mod tests {
 
     #[test]
     fn the_shipped_budget_file_loads_with_the_owner_limit_and_the_price_table() {
-        // Owner, 2026-11-05: $200.00 in total (D-12); Veo 3.1 Fast at 720p with sound is 40 cents.
+        // Owner, 2026-11-05: $200.00 in total (D-12), raised to $230.00 on 2026-11-18 (chat);
+        // Veo 3.1 Fast at 720p with sound is 40 cents.
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets")
             .join(BUDGET_FILE);
         let config = BudgetConfig::load(&path).expect("shipped budget loads");
-        assert_eq!(config.total_budget_usd_cents, 20_000);
+        assert_eq!(config.total_budget_usd_cents, 23_000);
         assert_eq!(
             config
                 .price_cents(crate::DEFAULT_VEO_MODEL)

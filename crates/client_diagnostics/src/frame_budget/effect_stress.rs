@@ -17,8 +17,8 @@
 //!
 //! # How it fits
 //! Added by [`super::run`] only when `--effect-stress` or `--capture` is given; a plain run is
-//! unchanged. Statuses and areas are not streamed: the effect framework draws neither yet
-//! (plan WP9, WP10).
+//! unchanged. With `--effect-mix`, [`super::effect_mix`] adds shots, deaths, areas, tethers,
+//! missiles and held unit looks next to the splashes (plan WP14).
 //!
 //! # Invariants
 //! - No effect, unit or weapon is named here: the sources come from the catalogs.
@@ -70,7 +70,8 @@ pub struct StressSource {
 }
 
 /// The weapon of `archetype` in `key`'s slot, or the override of `key`'s mode.
-fn weapon_of(archetype: &UnitArchetype, key: WeaponKey) -> Option<&WeaponSpec> {
+#[must_use]
+pub fn weapon_of(archetype: &UnitArchetype, key: WeaponKey) -> Option<&WeaponSpec> {
     match (key.mode, key.slot) {
         (Some(mode), WeaponSlot::Air) => archetype
             .modes
@@ -171,6 +172,8 @@ pub struct StressConfig {
     pub capture_tick: u32,
     /// Consecutive frames captured from that frame on, at least 1.
     pub capture_frames: u32,
+    /// The "every effect" mix next to the splash stream (`--effect-mix`), if asked for.
+    pub mix: Option<super::effect_mix::MixConfig>,
 }
 
 /// What the stress mode did, for the report.
@@ -209,6 +212,16 @@ pub struct StressSummary {
     pub beams_capacity: u64,
     /// The captured frame, if any.
     pub capture: Option<CaptureSummary>,
+    /// What the "every effect" mix did (`--effect-mix`), if it ran.
+    #[serde(default)]
+    pub mix: Option<super::effect_mix::MixSummary>,
+    /// Every effect of the vocabulary, in id order (with `--effect-mix`).
+    #[serde(default)]
+    pub effect_names: Vec<String>,
+    /// Instances spawned or held per effect over the whole run, in id order (with
+    /// `--effect-mix`).
+    #[serde(default)]
+    pub spawned_per_effect: Vec<u32>,
 }
 
 /// The stressed frame that was captured.
@@ -314,12 +327,27 @@ impl EffectStress {
         self.handle.update(|summary| summary.sources = lines);
     }
 
-    /// Publishes the counters (no allocation).
+    /// Publishes the counters; with the mix, also its section and the spawn count of every
+    /// effect (in place, so no allocation once the lists have their size).
     fn publish_counters(
         &self,
         runtime: Option<&EffectRuntime>,
         beams: Option<&client::effects::beams::HeldBeams>,
+        mix: Option<&super::effect_mix::EffectMix>,
     ) {
+        if let Some(mix) = mix {
+            self.handle.update(|summary| {
+                match &mut summary.mix {
+                    Some(section) => section.clone_from(&mix.summary),
+                    None => summary.mix = Some(mix.summary.clone()),
+                }
+                if let Some(runtime) = runtime {
+                    summary
+                        .spawned_per_effect
+                        .clone_from(&runtime.spawned_per_effect);
+                }
+            });
+        }
         let stats = runtime.map_or_default(|runtime| runtime.stats);
         let (beams_refused, beams_capacity) = beams.map_or((0, 0), |beams| {
             (
@@ -345,6 +373,9 @@ impl EffectStress {
 
 /// Adds the stress mode to `app` and returns the handle its report section leaves through.
 pub fn install(app: &mut App, config: StressConfig) -> StressHandle {
+    if let Some(mix) = config.mix {
+        super::effect_mix::install(app, mix);
+    }
     let stress = EffectStress::new(config);
     let handle = stress.handle.clone();
     app.insert_resource(stress)
@@ -369,6 +400,26 @@ pub fn strikes_plane(slot: WeaponSlot, height: f32) -> bool {
         WeaponSlot::Ground => !airborne,
         WeaponSlot::Primary => true,
     }
+}
+
+/// Height above its ground, world units, at which the mix bursts an air weapon's splash when
+/// the battle has no flyer (the shipped flyers' bubbles float about this high).
+pub const STAND_IN_FLYER_HEIGHT: f32 = 2.5;
+
+/// Where an air weapon's splash bursts over a ground unit at `world_pos` on ground `ground_z`
+/// when the battle has no flyer: at [`STAND_IN_FLYER_HEIGHT`] above it. `None` for a weapon of
+/// another slot, which always finds a unit on its own plane.
+#[must_use]
+pub fn stand_in_air_burst(
+    slot: WeaponSlot,
+    world_pos: [f32; 3],
+    ground_z: f32,
+) -> Option<[f32; 3]> {
+    (slot == WeaponSlot::Air).then_some([
+        world_pos[0],
+        world_pos[1],
+        ground_z + STAND_IN_FLYER_HEIGHT,
+    ])
 }
 
 /// A 32-bit mix of `value` (`SplitMix64`'s finaliser), for choosing units and angles.
@@ -466,6 +517,14 @@ fn spawn_stress_events(
                 sources.len()
             );
             stress.publish_sources(&sources);
+            if stress.config.mix.is_some() {
+                let names = effects
+                    .effects
+                    .iter()
+                    .map(|effect| effect.name.clone())
+                    .collect();
+                stress.handle.update(|summary| summary.effect_names = names);
+            }
             stress.sources = Some(sources);
         }
     }
@@ -495,12 +554,22 @@ fn spawn_stress_events(
         let hash = mix(sequence);
         let source = &sources[usize::try_from(sequence % sources.len() as u64).unwrap_or(0)];
         let start = usize::try_from(hash % bubbles.len() as u64).unwrap_or(0);
-        // The first live unit on the weapon's plane at or after the hashed index; a frame
-        // without one skips this source's event.
-        let Some(bubble) = (0..bubbles.len())
+        // The first live unit on the weapon's plane at or after the hashed index. A frame
+        // without one skips this source's event, except with the mix (every effect drawn), where
+        // an air weapon with no flyer in the battle bursts at a flyer's height over any live
+        // unit ([`stand_in_air_burst`]).
+        let slot = source.source.weapon.slot;
+        let on_plane = (0..bubbles.len())
             .map(|step| (start + step) % bubbles.len())
-            .find_map(|index| live(index, source.source.weapon.slot))
-        else {
+            .find_map(|index| live(index, slot))
+            .map(|bubble| bubble.world_pos);
+        let stand_in = || {
+            (0..bubbles.len())
+                .map(|step| (start + step) % bubbles.len())
+                .find_map(|index| live(index, WeaponSlot::Primary))
+                .and_then(|bubble| stand_in_air_burst(slot, bubble.world_pos, bubble.ground_z))
+        };
+        let Some(at) = on_plane.or_else(|| stress.config.mix.and_then(|_| stand_in())) else {
             continue;
         };
         #[allow(
@@ -509,12 +578,7 @@ fn spawn_stress_events(
         )]
         let angle = ((hash >> 32) & 0xFFFF) as f32 / 65_536.0 * std::f32::consts::TAU;
         for index in 0..stress_points(source) {
-            events.send(CombatVisualEvent(stress_event(
-                source,
-                bubble.world_pos,
-                angle,
-                index,
-            )));
+            events.send(CombatVisualEvent(stress_event(source, at, angle, index)));
         }
     }
 }
@@ -531,8 +595,9 @@ fn capture_stressed_frame(
     runtime: Option<Res<'_, EffectRuntime>>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
     beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
+    mix: Option<Res<'_, super::effect_mix::EffectMix>>,
 ) {
-    stress.publish_counters(runtime.as_deref(), beams.as_deref());
+    stress.publish_counters(runtime.as_deref(), beams.as_deref(), mix.as_deref());
     let Some(path) = stress.config.capture.clone() else {
         return;
     };
@@ -762,6 +827,22 @@ fn fill_quad(layers: &mut [u32], columns: u32, rows: u32, screen: &[Vec2]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_air_weapon_bursts_over_a_stand_in() {
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Air, [3.0, 4.0, 1.5], 1.0),
+            Some([3.0, 4.0, 1.0 + STAND_IN_FLYER_HEIGHT])
+        );
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Ground, [3.0, 4.0, 1.5], 1.0),
+            None
+        );
+        assert_eq!(
+            stand_in_air_burst(WeaponSlot::Primary, [3.0, 4.0, 1.5], 1.0),
+            None
+        );
+    }
 
     #[allow(
         clippy::unnecessary_wraps,

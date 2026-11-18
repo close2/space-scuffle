@@ -214,6 +214,56 @@ fn the_stress_sources_are_the_catalogs_splash_weapons() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// The effect mix (plan `2026-11-09-effect-visualization` WP14) draws every kind of look: a shot
+/// for weapons with a travel or impact, every distinct death look, area, tether and missile
+/// abilities, and every `Status` and `Mode` effect of the vocabulary.
+#[test]
+fn the_mix_sources_cover_every_kind_of_look() -> Result<(), Box<dyn Error>> {
+    use client::effects::catalog::schema::EventKind;
+    let spec = spec()?;
+    let work = tempfile::tempdir()?;
+    let root = fixture::build_fixture_root(&spec, &assets(), work.path())?;
+    let effects = client::effects::catalog::EffectCatalog::load(
+        &root.join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        &root,
+    )?;
+    let units =
+        sim_core::catalog::RuntimeCatalogs::load_from_directory(root.join("catalog"))?.units;
+    let tables = client::effects::catalog::UnitEffectTables::build(&units, &effects)?;
+    let mix = client_diagnostics::frame_budget::effect_mix::mix_sources(&units, &tables, &effects);
+    assert!(!mix.shots.is_empty(), "weapons name travels and impacts");
+    assert!(mix
+        .shots
+        .iter()
+        .all(|shot| tables.travel(shot.source).is_some() || tables.impact(shot.source).is_some()));
+    let mut deaths: Vec<_> = units
+        .archetypes()
+        .filter_map(|archetype| tables.death(archetype.unit_type_id))
+        .collect();
+    deaths.sort_unstable();
+    deaths.dedup();
+    assert_eq!(mix.deaths.len(), deaths.len(), "one unit per death look");
+    for (kind, list) in [
+        ("area", &mix.areas),
+        ("tether", &mix.links),
+        ("missile", &mix.missiles),
+    ] {
+        assert!(!list.is_empty(), "the shipped units name a {kind} look");
+    }
+    let held_kinds = effects
+        .effects
+        .iter()
+        .filter(|effect| matches!(effect.event, EventKind::Status | EventKind::Mode))
+        .count();
+    assert_eq!(
+        mix.held.len(),
+        held_kinds,
+        "every unit look is held in turn"
+    );
+    assert_ne!(held_kinds, 0);
+    Ok(())
+}
+
 #[test]
 fn the_generated_map_passes_validation_without_warnings() -> Result<(), Box<dyn Error>> {
     let spec = spec()?;
