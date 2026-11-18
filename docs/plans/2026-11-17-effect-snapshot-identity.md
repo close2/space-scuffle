@@ -891,3 +891,4 @@ shows its pulses as it comes on and then holds steady, its core scrolling. This 
 | `weapon_look_tests` (14, six new), `effect_catalog_tests` (39), `beams` unit tests (3) | pass |
 | Valgrind effect stream with held beams, retargets and dead targets | window difference 0 (baseline 0) |
 | `sync_steady_state_tests` combat streams | pass |
+| Whole binaries on radv: `area_link_gpu_tests` (3), `status_gpu_tests` (3, not re-baselined), `weapon_battle_gpu_tests` (the family waves and the held beam) | pass; the waves' first run waited out the GPU lock (held 290 s by another user) and passed on the rerun with bars unchanged. In the waves `prism_beam` and `lance_beam` are lent to a hitscan shooter, so they are not held there: impact 94 px against a need of 46, and 136 against 44 |
