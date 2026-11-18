@@ -353,3 +353,28 @@ plan's 25 % bar). The output is in `~/scratch/contour-footprints/navmesh_measure
 end and on seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release, `wasm32-wasip1` release and once
 in `wasm32-wasip1` debug; every pre-existing `sim_map` golden is unchanged, and `sim_map`'s determinism and navmesh
 tests pass on `wasm32-wasip1`.
+
+## 4. WP4: the catalog field and wiring (full-square shapes)
+
+**Change.** `structures.ron` gains a required `footprint_shape: (half_width, half_height, chamfer)` on all 49 rows,
+each the full box of its cells for now, with the comment `// Replaced by the 5.0.14 Shape in plan
+2026-11-18-contour-footprints WP6.`. The loader checks it (`validate_footprint_shape`: finite multiples of 1/4, the
+box inside the cells, the chamfer shorter than the smaller half-extent) and resolves it exactly to quarter cells.
+`ShapeKind::BuildingDome` carries `shape: FootprintShape`. Every site that builds or destructures the variant was
+moved: patterns gain `..`, constructors use `FootprintShape::full`; `ShapeKind::footprint()` reads a dome's cells
+(used where adding a line would have pushed `validate_job_source` past 100 lines). `spawn_structure` and
+`place_foundation` place the catalog's shape. `drawn_radius` is the shape's smaller half-extent (D-11). Charter C7:
+the float allowlist of `catalog.rs` (67 → 71) and `catalog/validation.rs` (41 → 43) grows by the authored shape's
+decimals and their range checks (authoring boundary, as for `radius`).
+
+**Tests, red on WP3 first** (WP3 tree with WP4's tests): `a_footprint_shape_is_required`,
+`a_footprint_shape_must_be_on_the_quarter_lattice` and `a_footprint_shape_must_lie_in_its_cells` fail ("loaded":
+the field is ignored on WP3); `a_chamfer_must_leave_every_face` likewise; `a_footprint_shape_is_read_into_the_dome`,
+R-16 `drawn_radius_is_the_shapes_smaller_half_extent` and `structure_contact_tests::a_spawned_structure_places_its_catalog_shape`
+do not compile (no `shape` on the dome). All pass on WP4.
+
+**Exit (D-15, 3)**, WP3 tools against WP4 tools: matrix bit-identical (1,160 runs); battle 33 `seeds.csv`
+byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical at 1,800 ticks, to the end and on
+seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release and `wasm32-wasip1` release. The `sim_core`,
+`sim_map`, `sim_types` and `workspace_checks` suites pass; the workspace builds and `cargo clippy --workspace
+--all-targets` is clean.

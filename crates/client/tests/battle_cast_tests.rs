@@ -231,6 +231,7 @@ fn enemy_structure(harness: &mut Harness, unit: EntityId, distance: f32) -> Enti
             ShapeKind::BuildingDome {
                 footprint_w,
                 footprint_h,
+                ..
             } => u32::from(footprint_w) * u32::from(footprint_h),
             ShapeKind::UnitSphere => u32::MAX,
         })

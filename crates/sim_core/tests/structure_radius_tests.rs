@@ -578,6 +578,7 @@ fn every_shipped_structure_face_is_in_melee_reach() {
         let ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } = structure.shape
         else {
             continue;

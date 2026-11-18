@@ -2198,6 +2198,7 @@ fn only_ground_units_with_a_smaller_inner_radius_author_one() -> TestResult {
         if let sim_types::ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } = archetype.shape
         {
             assert!(
@@ -4022,6 +4023,7 @@ fn structure_radii_follow_the_engine_rule() -> TestResult {
         let sim_types::ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } = archetype.shape
         else {
             continue;

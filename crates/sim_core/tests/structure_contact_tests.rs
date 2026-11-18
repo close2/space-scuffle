@@ -114,7 +114,7 @@ fn structures_of_size(world: &SimWorld, size: u8) -> Vec<UnitTypeId> {
         .filter(|a| {
             matches!(
                 a.shape,
-                ShapeKind::BuildingDome { footprint_w, footprint_h }
+                ShapeKind::BuildingDome { footprint_w, footprint_h, .. }
                     if footprint_w == size && footprint_h == size
             )
         })
@@ -528,4 +528,58 @@ proptest! {
         prop_assert!(diagnostics.is_empty(), "{diagnostics:?}");
         prop_assert_eq!(world.entities[&body].position, point);
     }
+}
+
+/// Plan `2026-11-18-contour-footprints` WP4: a structure is placed with its catalog footprint
+/// shape. A scratch copy of a shipped 3×3 structure given a contour cut by 0.75 is spawned, and
+/// the map's placed structure carries exactly that shape on the same cells; the shipped
+/// structure places its own shape.
+#[test]
+fn a_spawned_structure_places_its_catalog_shape() {
+    let mut world = world_on(flat(40));
+    let shipped = unarmed_structure(&world, 3);
+    let mut scratch = world
+        .catalog
+        .get(shipped)
+        .expect("invariant: chosen from the catalog")
+        .clone();
+    let free = (1..=u16::MAX)
+        .map(UnitTypeId)
+        .find(|id| world.catalog.get(*id).is_err())
+        .expect("invariant: a free unit type id");
+    scratch.unit_type_id = free;
+    "scratch_contour".clone_into(&mut scratch.slug);
+    let contour = sim_types::FootprintShape {
+        half_width_q: 6,
+        half_height_q: 6,
+        chamfer_q: 3,
+    };
+    scratch.shape = ShapeKind::BuildingDome {
+        footprint_w: 3,
+        footprint_h: 3,
+        shape: contour,
+    };
+    world.catalog.register(scratch);
+    let placed = world
+        .spawn_structure(free, PlayerId(0), 10, 10)
+        .expect("open ground");
+    let on_map = &world.map.structures()[&placed];
+    assert_eq!(
+        (on_map.top_left, on_map.width, on_map.height),
+        ((10, 10), 3, 3)
+    );
+    assert_eq!(on_map.shape, contour);
+    let own = world
+        .spawn_structure(shipped, PlayerId(0), 20, 20)
+        .expect("open ground");
+    let shipped_shape = match world
+        .catalog
+        .get(shipped)
+        .expect("invariant: chosen from the catalog")
+        .shape
+    {
+        ShapeKind::BuildingDome { shape, .. } => Some(shape),
+        ShapeKind::UnitSphere => None,
+    };
+    assert_eq!(Some(world.map.structures()[&own].shape), shipped_shape);
 }

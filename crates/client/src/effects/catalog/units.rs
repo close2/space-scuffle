@@ -693,7 +693,8 @@ mod tests {
                     arch.shape,
                     ShapeKind::BuildingDome {
                         footprint_w: 2,
-                        footprint_h: 2
+                        footprint_h: 2,
+                        ..
                     }
                 ) && arch.weapon_against(MoverType::Ground, None).is_some()
             })

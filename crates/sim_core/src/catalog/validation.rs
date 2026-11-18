@@ -987,6 +987,34 @@ impl UnitModeSpecDef {
 }
 
 impl StructureArchetypeDef {
+    /// Checks the authored footprint shape (plan `2026-11-18-contour-footprints` D-2): every value
+    /// finite and a multiple of 1/4 world unit, so it is exact in quarter cells and every vertex
+    /// lies on the navigation mesh's lattice; `0 < half_width ≤ width / 2` and
+    /// `0 < half_height ≤ height / 2`, so the shape lies in its cells; and
+    /// `0 ≤ chamfer < min(half_width, half_height)`, so every face keeps a positive length. Runs
+    /// after the footprint is checked.
+    fn validate_footprint_shape(&self) -> SimResult<()> {
+        let shape = self.footprint_shape;
+        let refuse = |reason: &'static str| Err(invalid(&self.slug, "footprint_shape", reason));
+        for value in [shape.half_width, shape.half_height, shape.chamfer] {
+            if !value.is_finite() || (value * 4.0).fract() != 0.0 {
+                return refuse("every value must be a finite multiple of 1/4 world unit");
+            }
+        }
+        let (width, height) = (f64::from(self.footprint.0), f64::from(self.footprint.1));
+        if shape.half_width <= 0.0
+            || shape.half_height <= 0.0
+            || shape.half_width > width * 0.5
+            || shape.half_height > height * 0.5
+        {
+            return refuse("the shape must be a nonempty box inside the footprint's cells");
+        }
+        if shape.chamfer < 0.0 || shape.chamfer >= shape.half_width.min(shape.half_height) {
+            return refuse("the chamfer must be shorter than the smaller half-extent");
+        }
+        Ok(())
+    }
+
     /// Checks the authored structure radius (plan `2026-11-18-structure-radius` D-2): finite and
     /// strictly positive; a multiple of 1/16 world unit, as every 5.0.14 engine radius is, so it
     /// converts exactly; and at least half the footprint's smaller side, so a unit touching a
@@ -1065,6 +1093,7 @@ impl StructureArchetypeDef {
         ] {
             nonnegative(&self.slug, field, value)?;
         }
+        self.validate_footprint_shape()?;
         self.validate_radius()?;
         sight(&self.slug, "sight_radius", self.sight_radius)?;
         structure_scan_range(
@@ -2161,6 +2190,145 @@ mod structure_radius_tests {
         assert_eq!(rejected_field(load(&text)), "loaded");
         let (text, _) = structures_with_radius(2, Some("0.75"))?;
         assert_eq!(rejected_field(load(&text)), "radius");
+        Ok(())
+    }
+
+    /// The shipped structures with `footprint_shape` removed from every structure whose footprint
+    /// is `width` cells wide but the first, which gets `value` (or none), and every other set to
+    /// the full box of its cells. Returns the edited text and the first structure's slug, read
+    /// from the file (charter §3.3).
+    fn structures_with_shape(
+        width: u32,
+        value: Option<&str>,
+    ) -> Result<(String, String), Box<dyn std::error::Error>> {
+        let text = include_str!("../../../../assets/catalog/structures.ron");
+        let mut out = Vec::new();
+        let mut slug = None;
+        let mut chosen = None;
+        for line in text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("footprint_shape:"))
+        {
+            out.push(line.to_owned());
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("slug: ") {
+                slug = Some(rest.trim_end_matches(',').trim_matches('"').to_owned());
+            }
+            let Some(rest) = trimmed.strip_prefix("footprint: (") else {
+                continue;
+            };
+            let (w, h) = rest
+                .trim_end_matches("),")
+                .split_once(',')
+                .ok_or("a footprint is a pair")?;
+            let (w, h): (u32, u32) = (w.trim().parse()?, h.trim().parse()?);
+            let indent = &line[..line.len() - trimmed.len()];
+            if chosen.is_none() && w == width {
+                chosen = Some(slug.clone().ok_or("no slug before the footprint")?);
+                if let Some(value) = value {
+                    out.push(format!("{indent}footprint_shape: {value},"));
+                }
+            } else {
+                out.push(format!(
+                    "{indent}footprint_shape: (half_width: {}, half_height: {}, chamfer: 0.0),",
+                    f64::from(w) * 0.5,
+                    f64::from(h) * 0.5
+                ));
+            }
+        }
+        let slug = chosen.ok_or("no structure of that footprint width")?;
+        Ok((out.join("\n"), slug))
+    }
+
+    #[test]
+    fn a_footprint_shape_is_required() -> Result<(), Box<dyn std::error::Error>> {
+        let (text, slug) = structures_with_shape(3, None)?;
+        let result = load(&text);
+        assert!(
+            matches!(
+                &result,
+                Err(crate::error::SimCoreError::RonDeserializationError(message))
+                    if message.contains("footprint_shape")
+            ),
+            "{slug} without `footprint_shape` must fail to parse, naming the field, got {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_footprint_shape_must_be_on_the_quarter_lattice() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for value in [
+            "(half_width: 1.5, half_height: 1.5, chamfer: 0.3)",
+            "(half_width: 1.4, half_height: 1.5, chamfer: 0.5)",
+            "(half_width: 1.5, half_height: NaN, chamfer: 0.5)",
+        ] {
+            let (text, _) = structures_with_shape(3, Some(value))?;
+            assert_eq!(rejected_field(load(&text)), "footprint_shape", "{value}");
+        }
+        let (text, _) = structures_with_shape(
+            3,
+            Some("(half_width: 1.5, half_height: 1.5, chamfer: 0.75)"),
+        )?;
+        assert_eq!(rejected_field(load(&text)), "loaded");
+        Ok(())
+    }
+
+    #[test]
+    fn a_footprint_shape_must_lie_in_its_cells() -> Result<(), Box<dyn std::error::Error>> {
+        for value in [
+            "(half_width: 1.25, half_height: 1.0, chamfer: 0.0)",
+            "(half_width: 1.0, half_height: 0.0, chamfer: 0.0)",
+            "(half_width: -1.0, half_height: 1.0, chamfer: 0.0)",
+        ] {
+            let (text, _) = structures_with_shape(2, Some(value))?;
+            assert_eq!(rejected_field(load(&text)), "footprint_shape", "{value}");
+        }
+        let (text, _) = structures_with_shape(
+            2,
+            Some("(half_width: 0.5, half_height: 0.5, chamfer: 0.25)"),
+        )?;
+        assert_eq!(rejected_field(load(&text)), "loaded");
+        Ok(())
+    }
+
+    #[test]
+    fn a_chamfer_must_leave_every_face() -> Result<(), Box<dyn std::error::Error>> {
+        for value in [
+            "(half_width: 1.0, half_height: 1.0, chamfer: 1.0)",
+            "(half_width: 1.0, half_height: 1.0, chamfer: -0.25)",
+        ] {
+            let (text, _) = structures_with_shape(2, Some(value))?;
+            assert_eq!(rejected_field(load(&text)), "footprint_shape", "{value}");
+        }
+        let (text, _) = structures_with_shape(
+            2,
+            Some("(half_width: 1.0, half_height: 1.0, chamfer: 0.75)"),
+        )?;
+        assert_eq!(rejected_field(load(&text)), "loaded");
+        Ok(())
+    }
+
+    #[test]
+    fn a_footprint_shape_is_read_into_the_dome() -> Result<(), Box<dyn std::error::Error>> {
+        let (text, slug) = structures_with_shape(
+            3,
+            Some("(half_width: 1.5, half_height: 1.5, chamfer: 0.75)"),
+        )?;
+        let catalog = load(&text)?;
+        let structure = archetype(&catalog, &slug)?;
+        assert_eq!(
+            structure.shape,
+            sim_types::ShapeKind::BuildingDome {
+                footprint_w: 3,
+                footprint_h: 3,
+                shape: sim_types::FootprintShape {
+                    half_width_q: 6,
+                    half_height_q: 6,
+                    chamfer_q: 3,
+                },
+            }
+        );
         Ok(())
     }
 }

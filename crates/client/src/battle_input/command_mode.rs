@@ -185,6 +185,7 @@ pub const fn footprint(structure: &UnitArchetype) -> Option<(u32, u32)> {
         ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } => Some((footprint_w as u32, footprint_h as u32)),
         ShapeKind::UnitSphere => None,
     }
@@ -337,6 +338,7 @@ mod tests {
         sized.shape = ShapeKind::BuildingDome {
             footprint_w: width,
             footprint_h: height,
+            shape: sim_types::FootprintShape::full(width, height),
         };
         sized
     }

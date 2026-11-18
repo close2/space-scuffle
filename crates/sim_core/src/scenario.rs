@@ -736,6 +736,7 @@ fn resolve_loadout(
         ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } => (u32::from(footprint_w), u32::from(footprint_h)),
         ShapeKind::UnitSphere => {
             return Err(ScenarioError::TownHallNotADome(loadout.town_hall.clone()));
@@ -1003,7 +1004,7 @@ mod tests {
         let hall = catalog
             .archetypes()
             .find(|a| {
-                matches!(a.shape, ShapeKind::BuildingDome { footprint_w, footprint_h }
+                matches!(a.shape, ShapeKind::BuildingDome { footprint_w, footprint_h, .. }
                     if footprint_w <= 5 && footprint_h <= 5)
             })
             .ok_or_else(|| missing("a dome of at most 5x5 cells"))?;

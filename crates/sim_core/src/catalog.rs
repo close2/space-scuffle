@@ -25,8 +25,8 @@ use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId,
-    HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
+    FootprintShape, HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior,
+    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
     SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
     WeaponVisualKind,
 };
@@ -284,10 +284,7 @@ impl UnitArchetype {
     #[must_use]
     pub fn drawn_radius(&self) -> SimScalar {
         match self.shape {
-            ShapeKind::BuildingDome {
-                footprint_w,
-                footprint_h,
-            } => SimScalar::from_i32(i32::from(footprint_w.min(footprint_h))) * SimScalar::HALF,
+            ShapeKind::BuildingDome { shape, .. } => shape.inscribed_half_extent(),
             ShapeKind::UnitSphere => self.collision_radius,
         }
     }
@@ -1621,6 +1618,33 @@ impl UnitArchetypeDef {
     }
 }
 
+/// A structure's authored footprint shape (plan `2026-11-18-contour-footprints` D-2), in world
+/// units: half the box's width and height, and how far each corner is cut along each side.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct FootprintShapeDef {
+    /// Half the shape's east-west extent, world units.
+    half_width: f64,
+    /// Half the shape's north-south extent, world units.
+    half_height: f64,
+    /// How far each corner is cut along each of its sides, world units.
+    chamfer: f64,
+}
+
+impl FootprintShapeDef {
+    /// The shape in quarter cells. The loader has checked that every value is a finite multiple
+    /// of 1/4 in range, so the conversion is exact.
+    fn resolve(self) -> FootprintShape {
+        // A quarter cell is 2^30 raw units.
+        let quarters =
+            |value: f64| u16::try_from(SimScalar::from_num(value).raw() >> 30).unwrap_or(u16::MAX);
+        FootprintShape {
+            half_width_q: quarters(self.half_width),
+            half_height_q: quarters(self.half_height),
+            chamfer_q: quarters(self.chamfer),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct StructureCatalogFile {
     structures: Vec<StructureArchetypeDef>,
@@ -1658,6 +1682,13 @@ struct StructureArchetypeDef {
     /// to load; strictly positive, a multiple of 1/16 and at least half the footprint's smaller
     /// side.
     pub radius: f64,
+    /// The structure's pathing shape (5.0.14's footprint `Shape`, plan
+    /// `2026-11-18-contour-footprints` D-2): a box centred on the footprint cells with 45°
+    /// chamfered corners, in world units. It is what the structure cuts from the navigation mesh
+    /// and what ground units meet; the footprint cells stay its placement footprint. Required,
+    /// so a catalog written before the field fails to load; every value a multiple of 1/4, the
+    /// box inside the cells, and the chamfer shorter than the smaller half-extent.
+    pub footprint_shape: FootprintShapeDef,
     /// Mineral resource cost.
     pub mineral_cost: u32,
     /// Vespene gas resource cost.
@@ -1801,6 +1832,7 @@ impl StructureArchetypeDef {
             shape: ShapeKind::BuildingDome {
                 footprint_w: u8::try_from(self.footprint.0).unwrap_or(u8::MAX),
                 footprint_h: u8::try_from(self.footprint.1).unwrap_or(u8::MAX),
+                shape: self.footprint_shape.resolve(),
             },
             silhouette: SilhouetteClass::StructureBase,
             mover_type: MoverType::Ground,
@@ -2004,21 +2036,19 @@ mod tests {
         assert_ne!(idle_prompt.unwrap(), "");
     }
 
-    /// R-16 (plan `2026-11-18-structure-radius` D-6): a dome is drawn at half its footprint's
-    /// smaller side whatever its radius; a unit at its collision radius.
+    /// R-16, revised by plan `2026-11-18-contour-footprints` D-11: a dome is drawn at its
+    /// footprint shape's smaller half-extent whatever its radius (half the footprint's smaller
+    /// side for a full-box shape); a unit at its collision radius.
     #[test]
-    fn drawn_radius_is_half_the_footprints_smaller_side_for_a_dome_and_the_radius_for_a_unit() {
+    fn drawn_radius_is_the_shapes_smaller_half_extent() {
         let catalog = crate::test_support::shipped_catalogs().units;
         let mut domes = 0;
         for archetype in catalog.archetypes() {
             let mut edited = archetype.clone();
             edited.collision_radius = SimScalar::from_num(7.25);
             match archetype.shape {
-                ShapeKind::BuildingDome {
-                    footprint_w,
-                    footprint_h,
-                } => {
-                    let half = SimScalar::from_num(f64::from(footprint_w.min(footprint_h)) / 2.0);
+                ShapeKind::BuildingDome { shape, .. } => {
+                    let half = shape.inscribed_half_extent();
                     assert_eq!(archetype.drawn_radius(), half, "{}", archetype.slug);
                     assert_eq!(edited.drawn_radius(), half, "{}", archetype.slug);
                     domes += 1;
@@ -2030,15 +2060,27 @@ mod tests {
             }
         }
         assert!(domes > 0);
-        let mut oblong = catalog
+        let mut dome = catalog
             .archetypes()
             .find(|archetype| matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
             .cloned()
             .expect("the shipped catalog has a structure");
-        oblong.shape = ShapeKind::BuildingDome {
+        dome.shape = ShapeKind::BuildingDome {
             footprint_w: 6,
             footprint_h: 5,
+            shape: FootprintShape::full(6, 5),
         };
-        assert_eq!(oblong.drawn_radius(), SimScalar::from_num(2.5));
+        assert_eq!(dome.drawn_radius(), SimScalar::from_num(2.5));
+        // A 1×1 box cut by 0.25, centred in 2×2 cells, is drawn at 0.5, not at the cells' 1.0.
+        dome.shape = ShapeKind::BuildingDome {
+            footprint_w: 2,
+            footprint_h: 2,
+            shape: FootprintShape {
+                half_width_q: 2,
+                half_height_q: 2,
+                chamfer_q: 1,
+            },
+        };
+        assert_eq!(dome.drawn_radius(), SimScalar::HALF);
     }
 }

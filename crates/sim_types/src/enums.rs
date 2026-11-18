@@ -3,6 +3,8 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use crate::footprint::FootprintShape;
+
 /// Geometric shape category determining base model geometry and collision bounds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShapeKind {
@@ -10,11 +12,31 @@ pub enum ShapeKind {
     UnitSphere,
     /// Grounded hemisphere mounted on a foundation grid plate for structures.
     BuildingDome {
-        /// Foundation width in 1x1 map cells.
+        /// Foundation width in 1x1 map cells: the cells the structure takes from the placement
+        /// grid (5.0.14's `Place` layer).
         footprint_w: u8,
         /// Foundation height in 1x1 map cells.
         footprint_h: u8,
+        /// The pathing shape centred on those cells (5.0.14's `Shape`, plan
+        /// `2026-11-18-contour-footprints` D-2): what the structure cuts from the navigation
+        /// mesh and what ground units meet.
+        shape: FootprintShape,
     },
+}
+
+impl ShapeKind {
+    /// A dome's footprint cells, width and height; `None` for a unit sphere.
+    #[must_use]
+    pub const fn footprint(self) -> Option<(u8, u8)> {
+        match self {
+            Self::BuildingDome {
+                footprint_w,
+                footprint_h,
+                ..
+            } => Some((footprint_w, footprint_h)),
+            Self::UnitSphere => None,
+        }
+    }
 }
 
 /// Distinct geometric collar/attachment on the bubble rim for swarm readability.
@@ -182,6 +204,11 @@ mod tests {
         let shape = ShapeKind::BuildingDome {
             footprint_w: 3,
             footprint_h: 3,
+            shape: FootprintShape {
+                half_width_q: 6,
+                half_height_q: 6,
+                chamfer_q: 2,
+            },
         };
         let shape_ron = ron::to_string(&shape).expect("invariant: valid ron serialization");
         let shape_dec: ShapeKind =

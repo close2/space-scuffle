@@ -131,6 +131,7 @@ fn test_render_snapshot_full_serialization() {
         shape: ShapeKind::BuildingDome {
             footprint_w: 3,
             footprint_h: 3,
+            shape: sim_types::FootprintShape::full(3, 3),
         },
         silhouette: SilhouetteClass::StructureBase,
         unit_type: UnitTypeId(50),
@@ -165,6 +166,7 @@ fn test_render_snapshot_full_serialization() {
         shape: ShapeKind::BuildingDome {
             footprint_w: 2,
             footprint_h: 2,
+            shape: sim_types::FootprintShape::full(2, 2),
         },
         silhouette: SilhouetteClass::StructureBase,
         unit_type: UnitTypeId(51),

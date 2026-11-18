@@ -292,6 +292,7 @@ impl SimWorld {
         let ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            shape,
         } = archetype.shape
         else {
             return Err(crate::production::ProductionInvariant::InvalidDefinition {
@@ -319,7 +320,11 @@ impl SimWorld {
             .place_structure(
                 prepared.entity.id,
                 (cell_x, cell_y),
-                sim_map::StructureFootprint::square(footprint_w, footprint_h),
+                sim_map::StructureFootprint {
+                    width: footprint_w,
+                    height: footprint_h,
+                    shape,
+                },
             )
             .map_err(|_| SimCoreError::InvalidBuildingPlacement {
                 x: cell_x,
