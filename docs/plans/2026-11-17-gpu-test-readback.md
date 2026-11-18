@@ -886,3 +886,32 @@ quiet host. The display path is accepted on correctness: T-1, T-2, T-4, the KWin
 pictures. WP4's per-gate ledger then measures the real lane time on every gate run, which, over many runs, is a
 better figure than one quiet window. `showcase_tests`' one failure in KWin round 2 waited 290 s for a GPU lock
 another user held. It is not a display fault, and it is recorded.
+
+**Amendment 3, as built and tested (2026-11-18, `c3af042a`).**
+
+- **Fix.** `test_terrain_preview_renders` builds its child with `virtual_gpu_command_on_screen(..,
+  Some("1600x900x24"))`, the call `editor_app_tests` uses. The note named `virtual_gpu_command_with`, but that
+  forces one display for the command; the editor's call keeps the gate's own display choice, which is what "as
+  `editor_app_tests` does" asks.
+- **Refusal.** `GpuCommand::window(width, height)` declares the window a child asks for. `try_run` refuses the run
+  before the lock, panicking with the label and a `WindowTooLarge` message, when the window is larger than the output
+  of the stated screen under KWin (`window_fits_screen`: the stated size, or 1280×720). The message names the
+  `Some("<w>x<h>x24")` to state. The check applies on Xvfb too, so the lavapipe runs of CI catch a missing screen
+  that only KWin would show; offscreen and host children are not checked. `terrain_tests` and `editor_app_tests`
+  declare their 1600×900 windows. Limit: the harness cannot see a window size the test does not declare (Bevy logs
+  none at its default level), so a new oversized window is caught only once it is declared; review checks this.
+- **Unit tests** (`gpu_validation_tests`): `a_window_must_fit_the_stated_screen` (fits, each side too large,
+  stated and default screens, the message) and `an_oversized_window_is_refused_before_the_run` (an inspected
+  command on KWin and on Xvfb is refused with the window message ahead of every other check; a fitting window
+  reaches the inspection refusal).
+- **Audit.** Only two windowed children exceed 1280×720: `terrain_preview` and the editor, both 1600×900, both
+  now stating their screen and declaring their window. The client's window and the effect lab's are 1280×720;
+  the other canvases are smaller and offscreen.
+- **Results on radv** (logs in `~/scratch/gpu-readback/wp3/a3/` and `timing/kwin-a3/`; the GPU was shared with two
+  other agents). `cargo clippy -p client --tests -D warnings` is clean. `terrain_tests`: 14 of 14 pass under KWin
+  (`display=kwin`) and 14 of 14 under forced Xvfb (`display=xvfb-sw`). T-4 rerun under KWin: 17 of 19 targets
+  passed in the first pass (36 KWin children, 1,307 s of lock waits). The other two, `battle_result_window_tests`
+  and `weapon_battle_gpu_tests`, each waited 290 s for a GPU lock another agent's `weapon_battle_gpu_tests` held,
+  and never started a child. These were lock waits, not display faults. Rerun with `GPU_LOCK_TIMEOUT=2400`, both
+  pass under KWin (21 KWin children, 178 s of lock waits). So all 19 windowed targets pass on radv under KWin, and
+  no `kwin_wayland`, `Xwayland` or session directory remained. The timings are not rerun; they move to WP4.
