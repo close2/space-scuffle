@@ -954,3 +954,14 @@ conditions. Each finding and what it became:
    it is presented, so before `KWin` composites it. It therefore proves that rendering is identical with radv's DRI3
    present and with its software present, which is what D-6 asks. It does not compare `KWin`'s composited output,
    which no test reads.
+
+**Review fixes, tested on radv (2026-11-18, `f3911ff8`; the GPU was shared with other agents).**
+`cargo clippy -p client -p client_diagnostics --all-targets -D warnings` is clean, and the new
+`render_compatibility` unit test passes. `gpu_validation_tests` (one thread, as the gate runs it): 51 passed,
+0 failed. Both `KWin` probes return about 20 s after they start: the timeout probe (`timeout`, `session.sh`,
+`sleep`, Xwayland and `kwin_wayland` sampled during the run) and the probe whose session child ignores `SIGTERM`.
+Neither leaves a sampled process, a tagged process, a socket, a socket lock, a session directory or an X socket.
+T-4 under `KWin`, with the window size check active in every windowed child: 19 of 19 targets pass (51 `KWin`
+children), no child reports a window size mismatch, and nothing is left. After main `8662f22b` was merged, which
+changed `weapon_battle_gpu_tests` and `area_link_gpu_tests`, those two ran again under `KWin` and pass (2 of 2
+and 3 of 3 tests, 24 `KWin` children), and `cargo gate quick` on the merged tree is green.
