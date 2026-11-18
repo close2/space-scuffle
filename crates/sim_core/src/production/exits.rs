@@ -324,7 +324,8 @@ mod tests {
             .catalog
             .archetypes()
             .find(|a| !dome(&a.shape) && a.collision_radius > sim_types::SimScalar::ZERO)
-            .map(|a| (a.unit_type_id, a.collision_radius))
+            // The ring keeps the product's terrain radius off the footprint (D-8).
+            .map(|a| (a.unit_type_id, a.terrain_radius))
             .ok_or("catalog has no mobile unit")?;
         let producer = world.spawn_structure(producer_type, sim_types::PlayerId(0), 10, 10)?;
         let (left, bottom) = world.map.structures()[&producer].top_left;

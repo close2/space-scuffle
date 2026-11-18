@@ -3,8 +3,10 @@
 //! A ground body's disc never goes deeper into a wall, whether it walks or is pushed (plan D-1);
 //! a move that would press it in slides along the wall or round its corner instead (D-2). These
 //! tests play `SimWorld::step` on small synthetic maps and on the shipped showcase, and measure
-//! each body's depth (`radius − distance to the nearest wall`, `sim_map`'s
-//! `Pathfinder::wall_contact` under the physical request) after every tick:
+//! each body's depth (`terrain radius − distance to the nearest wall`, `sim_map`'s
+//! `Pathfinder::wall_contact` under the physical request) after every tick. The disc against
+//! walls is the terrain radius (`UnitArchetype::terrain_radius`, plan `2026-11-18-inner-radius`;
+//! the small body's collision radius is 0.375, its terrain radius what the catalog authors):
 //! - T-B1: a crowd rounding a corner never presses a body deeper;
 //! - T-B2: a hostile push at 45° into a straight wall slides the body along it;
 //! - T-B3: a body overlapping a wall walks past the wall's end without being thrown;
@@ -102,14 +104,29 @@ fn step(world: &mut SimWorld) {
     step_with(world, Vec::new());
 }
 
-/// The depth of `id`'s disc into the walls, in world units.
+/// The terrain radius of the small body, world units: the radius of its disc against walls
+/// (`UnitArchetype::terrain_radius`, plan `2026-11-18-inner-radius`), which the contact rule
+/// keeps. The body's collision radius is 0.375; its terrain radius is what the data authors.
+fn small_terrain_radius(world: &SimWorld) -> f64 {
+    let kind = small_body(world);
+    f64::from(
+        world
+            .catalog
+            .get(kind)
+            .expect("registered")
+            .terrain_radius
+            .to_f32(),
+    )
+}
+
+/// The depth of `id`'s terrain disc into the walls, in world units.
 fn depth(world: &mut SimWorld, id: EntityId) -> f64 {
     let entity = &world.entities[&id];
     let radius = world
         .catalog
         .get(entity.unit_type_id)
         .expect("registered")
-        .collision_radius;
+        .terrain_radius;
     let p = entity.position;
     let request = PathRequestWithVision {
         start: p,
@@ -186,12 +203,12 @@ fn a_crowd_never_presses_a_body_inside_its_radius_of_a_corner() {
 }
 
 /// T-B2: a hostile body overlapping a body that touches a straight wall pushes it at 45° into
-/// the wall. The body stays at its radius from the wall and moves by the push's part along it.
+/// the wall. The body stays at its terrain radius from the wall and moves by the push's part along it.
 #[test]
 fn a_push_into_a_straight_wall_slides_along_it() {
     let map = walled(20, |x, _| x >= 10);
     let mut world = sim_fixtures::world(map, 0xC0_4E6);
-    let radius = 0.375;
+    let radius = small_terrain_radius(&world);
     let pushed = spawn(&mut world, 0, at(10.0 - radius, 10.0));
     let pusher = spawn(&mut world, 1, at(10.0 - radius - 0.45, 10.45));
     world
@@ -210,13 +227,15 @@ fn a_push_into_a_straight_wall_slides_along_it() {
     assert!(end.y < start.y, "slid south along the wall: {end:?}");
 }
 
-/// T-B3 (variant F's regression): a body overlapping a straight wall by 0.355 walks along it past
-/// its end at (10, 12). It moves at most its speed a tick, and never deeper.
+/// T-B3 (variant F's regression): a body whose centre is 0.02 from a straight wall (its terrain
+/// disc overlapping it by all but 0.02 of its radius) walks along it past its end at (10, 12). It moves at most its speed a tick, and never
+/// deeper.
 #[test]
 fn a_body_passing_a_wall_end_is_never_thrown() {
     let map = walled(24, |x, y| x >= 10 && y < 12);
     let mut world = sim_fixtures::world(map, 0xC0_4E7);
-    let body = spawn(&mut world, 0, at(9.98, 6.0));
+    let x = 9.98;
+    let body = spawn(&mut world, 0, at(x, 6.0));
     let kind = world.entities[&body].unit_type_id;
     let speed = world.catalog.get(kind).expect("registered").max_speed;
     order(
@@ -224,7 +243,7 @@ fn a_body_passing_a_wall_end_is_never_thrown() {
         0,
         vec![body],
         UnitOrder::Move {
-            target: at(9.98, 18.0),
+            target: at(x, 18.0),
         },
     );
     let mut previous = world.entities[&body].position;
@@ -246,7 +265,7 @@ fn a_body_passing_a_wall_end_is_never_thrown() {
 fn a_wedged_spawn_leaves_but_never_goes_deeper() {
     let map = walled(24, |x, _| x >= 10);
     let mut world = sim_fixtures::world(map, 0xC0_4E8);
-    let radius = 0.375;
+    let radius = small_terrain_radius(&world);
     let wedged = spawn(&mut world, 0, at(10.0 - radius + 0.2, 6.0));
     let walker = spawn(&mut world, 1, at(6.0, 6.0));
     assert!((depth(&mut world, wedged) - 0.2).abs() < 1e-6);
@@ -276,7 +295,7 @@ fn a_wedged_spawn_leaves_but_never_goes_deeper() {
 /// player 0's pulse bots stood at that trace's tick 740 and attack-moving to player 1's base as
 /// they did. On the base the crowd pushed the second body (pulse bot 7) to 0.30 from the corner,
 /// inside its radius of 0.375, and it turned 454° stepping back and forth. What the rule
-/// guarantees is pinned: no body comes within its radius of the corner on any tick, and no body
+/// guarantees is pinned: no body comes within its terrain radius of the corner on any tick, and no body
 /// goes deeper into a wall; the crowd's front gets round. The showcase itself no longer reaches
 /// the episode: its lane fight now ends with player 0's army dead (Amendment 1). How long the
 /// second body queues at the corner is not pinned here (evidence §4: from tick 25 a friend
@@ -316,7 +335,7 @@ fn showcase_crowd_rounds_the_ramp_e_corner_without_wedging() {
                 .catalog
                 .get(entity.unit_type_id)
                 .expect("registered")
-                .collision_radius;
+                .terrain_radius;
             let gap = entity.position.distance(corner);
             assert!(
                 gap >= radius - s(TOLERANCE),
@@ -346,7 +365,7 @@ fn a_body_heading_past_a_wall_end_walks_round_it_without_stalling() {
     // The wall is every cell west of x = 10 and south of y = 12: its end is the vertex (10, 12).
     let map = walled(24, |x, y| x < 10 && y < 12);
     let mut world = sim_fixtures::world(map, 0xC0_4E9);
-    let radius = 0.375;
+    let radius = small_terrain_radius(&world);
     // Touching the vertex, 0.072 below the line y = 12 + radius + margin the route rounds it on.
     let start = at(10.126, 12.0 + (radius * radius - 0.126 * 0.126_f64).sqrt());
     let body = spawn(&mut world, 0, start);

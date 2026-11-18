@@ -125,3 +125,83 @@ per second, median of three repeats each; the host was shared and loaded):
 | showcase canyon, 400 | 109 / 100 / 112 | 114 / 94 / 109 |
 
 Within noise (the round-to-round spread of either tree exceeds any difference); every scenario above 25.
+
+## 3. WP3: the 5.0.14 values (held on the showcase's flip; Amendment 1)
+
+**Change.** The 17 rows of plan §2.2 in `assets/catalog/units.ron`, each with its layer and line; the ten ground
+units that omit the field say why (equal to `Radius`; the Roach's 0.625 above its 0.5; the Zergling's unset
+value, Q0087).
+
+**Tests, red on WP2 first.** `catalog_reference_values_tests::b116_unit_terrain_radii_follow_starcraft` (the
+table `SC2_UNIT_TERRAIN_RADIUS`, 27 ground analogues; air analogues equal their radius) failed with the SCV
+analogue at 0.375; `only_ground_units_with_a_smaller_inner_radius_author_one` found 0 of 17. Both pass with the
+data. The WP1 loader tests were made independent of authored data (they inserted a second `terrain_radius`).
+
+**Measurements** (WP2 tools and data against WP3; the release tools read the catalog at run time):
+
+| What | Result |
+|---|---|
+| Matrix (`--compare` WP2) | One battle moved: `35_12_vikings_vs_6_colossi`, jittered seed 8 (not of record), end tick 435 → 438, blue 12–0 in both. No recorded outcome changed; expectation failures 0 on the seeds of record, 4 over all seeds, as before |
+| Battle 33 `seeds.csv` | Byte-identical: the zealots never meet a wall on the flat arena |
+| Overlap meter | 0 deeper unit-ticks on every showcase run, both owners |
+
+**Battle 35, seed 8, traced** (`matchup_trace --battle 35_12_vikings_vs_6_colossi --seed 8`, WP2 catalog through
+`--catalog-dir`): positions are identical to tick 381. From tick 382 red's Colossus analogue (entity 18, at
+(5.07, 52.36)) walks west to the arena's border; its destination is clamped into the movement domain at its
+terrain radius, so it stops at x = 0.5625 instead of x = 1.0 (tick 420). The vikings finish it three ticks later.
+An affected archetype at the arena border (T5), outcome unchanged: accepted under D-12, 2.
+
+**Showcase** (`route_trace`, to the end of the match):
+
+| Seed | WP2 | WP3 | Reversals P0 / P1 (WP2 → WP3) | Stall give-ups P0 / P1 |
+|---|---|---|---|---|
+| Default | P1 at 2,218 | **P0 at 2,599** | 19 / 18 → 24 / 16 | 1 / 0 → 0 / 0 |
+| 1 | P0 at 2,152 | **no end within 6,000 ticks** | 14 / 26 → 21 / 15 | 0 / 0 → 0 / 0 |
+| 2 | P1 at 2,180 | **P0 at 3,417** | 20 / 34 → 15 / 35 | 1 / 0 → 0 / 0 |
+| 3 | P1 at 1,943 | **P0 at 1,615** | 21 / 30 → 24 / 22 | 1 / 0 → 0 / 0 |
+| 4 | P1 at 2,597 | **P0 at 1,727** | 17 / 28 → 17 / 12 | 1 / 0 → 0 / 0 |
+| 5 | P1 at 1,958 | **P0 at 2,156** | 22 / 25 → 15 / 23 | 1 / 0 → 0 / 0 |
+| 6 | P1 at 1,938 | P1 at 2,617 | 11 / 24 → **23** / 10 | 1 / 0 → 0 / 0 |
+| 7 | P1 at 2,603 | **P0 at 1,886** | 19 / 17 → 13 / 11 | 1 / 0 → 0 / 0 |
+| 8 | P1 at 1,927 | **P0 at 2,559** | 19 / 24 → 16 / 24 | 1 / 0 → 0 / 0 |
+
+The stop rule of D-12, 4 applied and WP3 was held. The trace from the spawn: positions are identical to tick 8;
+on tick 9 player 1's welder drone 16 at (53.39, 52.63), which the pulse bots passing it press against the spawn
+wall face y = 53, rests at its collision radius 0.375 below it on WP2 (y = 52.625) and moves on to its terrain
+radius 0.3125 on WP3 (y = 52.6875 by tick 13), never deeper. From tick 10 pulse bots 17, 18 and 19 walking past
+it take other paths, and the lane fight diverges. Classified as caused by the rule (R1, the workers' 5.0.13 inner
+radius), not a defect. On seed 1 both armies destroy each other and each side keeps two idle welder drones, so no
+player is defeated. Seed 6's player 0 reversals are base + 12 (bound + 10). Amendment 1 accepts all three.
+
+**Goldens.** `golden_replay` re-recorded: every checkpoint changed from checkpoint 1. Traced against the same tree
+with every terrain radius reset to the collision radius (WP2's behaviour): positions are identical until the tick
+that applies the order of tick 40, red's zealots' `AttackMove(32, 20)`. Their routes turn round the cliff corner
+(34, 34) at 0.375 + 0.05 instead of 0.5 + 0.05 (entity 21's corner waypoint (33.58, 34.05) instead of
+(33.45, 34.06)), so all 12 zealots step differently from that tick. **`golden_replay_orders` does not move**: its
+four zealots never touch a wall within their radius (a finding, plan D-12, 5); both its phase-order situations are
+still found. The re-recorded list passes in debug and release native, `wasm32-wasip1` release under wasmtime, and
+once in `wasm32-wasip1` debug.
+
+**Test edits explained by D-5.** `wall_contact_tests` T-B1 to T-B5 and T-B9 measured depth at the collision
+radius; they pick a 0.375 body by collision radius, which is now the SCV analogue with terrain radius 0.3125, so
+the contact rule keeps it 0.0625 nearer the wall than the meter allowed. Depth and every distance the tests derive
+from the body's radius (T-B2's touching start, T-B4's wedge, T-B9's start, T-B5's corner gap) now use the terrain
+radius; T-B3 keeps its start 0.02 from the wall. No bound was loosened. `exits.rs`'s
+`open_ground_exit_is_the_first_ring_cell_at_the_minimum_corner` now derives its margin from the terrain radius
+(unchanged for the worker: `ceil(0.3125 + 0.5)` = `ceil(0.375 + 0.5)` = 1). No production, construction,
+economy or `attack_dash_tests` test changed.
+
+**Throughput** (the WP2 `throughput` binary with the WP2 catalog through `SPACE_SCUFFLE_ASSETS` against the WP3
+catalog, alternated, three rounds, under the gate lock; ticks per second, median of three repeats each; the host
+was shared and loaded):
+
+| Scenario | WP2 data | WP3 data |
+|---|---|---|
+| 64×64, 0 units | 3,268 / 3,229 / 753 | 2,223 / 1,908 / 3,270 |
+| 64×64, 100 | 941 / 951 / 709 | 763 / 429 / 949 |
+| 64×64, 400 | 160 / 162 / 145 | 113 / 100 / 164 |
+| 128×128, 400 | 167 / 194 / 93 | 179 / 186 / 181 |
+| 256×256, 0 | 201 / 197 / 100 | 174 / 200 / 200 |
+| showcase canyon, 400 | 95 / 120 / 107 | 117 / 118 / 117 |
+
+Within noise (each tree's best round matches the other's); every scenario above 25. `DESIGN.md` §5 is unchanged.
