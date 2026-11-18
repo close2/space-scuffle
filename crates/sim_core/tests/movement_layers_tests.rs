@@ -92,7 +92,11 @@ fn real_move_and_attack_move_cross_ground_barriers_only_in_air() -> TestResult {
         for y in 0..32 {
             f.world.map.cell_mut(12, y)?.flags = CellFlags::UNPASSABLE_CLIFF;
         }
-        f.world.map.place_structure(EntityId(9999), 17, 10, 2, 2)?;
+        f.world.map.place_structure(
+            EntityId(9999),
+            (17, 10),
+            sim_map::StructureFootprint::square(2, 2),
+        )?;
         f.world.pathfinder.recompute_clearance(&f.world.map);
         let ground = f.spawn(f.ground, 0, 8.5, 10.5)?;
         let air = f.spawn(f.air, 0, 8.5, 10.5)?;
@@ -230,7 +234,11 @@ fn exact_unload_checks_footprint_layer_bounds_and_preserves_failed_state() -> Te
     let mut f = Fixture::new()?;
     let ground = f.spawn(f.ground, 0, 4.0, 4.0)?;
     let air = f.spawn(f.air, 0, 4.0, 4.0)?;
-    f.world.map.place_structure(EntityId(999), 10, 10, 1, 1)?;
+    f.world.map.place_structure(
+        EntityId(999),
+        (10, 10),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     assert!(f.world.load_unit_into_transport(ground, air));
     let before = f.world.entities[&ground].clone();
     let checksum = f.world.compute_checksum();
@@ -287,7 +295,11 @@ fn blink_rejection_is_before_energy_cooldown_and_all_entity_mutation() -> TestRe
         origin: None,
     }];
     f.world.entities.get_mut(&id).ok_or("actor")?.energy = SimScalar::from_num(20);
-    f.world.map.place_structure(EntityId(999), 10, 5, 1, 1)?;
+    f.world.map.place_structure(
+        EntityId(999),
+        (10, 5),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     let before = f.world.entities[&id].clone();
     let checksum = f.world.compute_checksum();
     assert!(!f

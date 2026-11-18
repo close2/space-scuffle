@@ -316,7 +316,11 @@ impl SimWorld {
         );
         let prepared = self.prepare_spawn(structure_type, owner, pos, 0)?;
         self.map
-            .place_structure(prepared.entity.id, cell_x, cell_y, footprint_w, footprint_h)
+            .place_structure(
+                prepared.entity.id,
+                (cell_x, cell_y),
+                sim_map::StructureFootprint::square(footprint_w, footprint_h),
+            )
             .map_err(|_| SimCoreError::InvalidBuildingPlacement {
                 x: cell_x,
                 y: cell_y,

@@ -296,8 +296,14 @@
 // routes then turn round the cliff corner (34, 34) at 0.375 + 0.05 from it instead of 0.5 + 0.05
 // (entity 21's corner waypoint (33.58, 34.05) instead of (33.45, 34.06)), so all 12 zealots
 // (entities 21 to 32) step differently from that tick.
+// Re-recorded for plan 2026-11-18-contour-footprints WP2 (checksum schema 29 -> 30): each
+// placed structure's footprint shape (half-width, half-height and chamfer in quarter cells) is
+// hashed, so every checkpoint changed. No behaviour did: a scratch build that does not encode the
+// shape and keeps schema 29 reproduces every checksum recorded before this change, and a scratch
+// digest of only the entities, projectiles, players and effects is identical on all 1000 ticks
+// with and without the shape encoded. Every shape is still the full square of its cells here.
 (
-    checksum_schema: 29,
+    checksum_schema: 30,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -323,25 +329,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x6d56a73b18c999ad,
-        0x87578a7773284030,
-        0x3cf79cf908bc6844,
-        0xd4d38462703e4ca0,
-        0x73a917cec951776b,
-        0x7b1322c62bd27c9d,
-        0x4e9fcf9a16374e55,
-        0x42a5d8db7b453c27,
-        0x754f2bd2c270b583,
-        0xa35568eb1ce75d53,
-        0x0aff1fcf49566c46,
-        0xaf75af2e82e95774,
-        0xc0441f033d6b6117,
-        0x8f68c8f56d40470e,
-        0x7708e95bc38c2a6f,
-        0xf68ba446d6ac0881,
-        0x3935ec5f008df0de,
-        0x40d7382ac1086b11,
-        0x01aad90904f8fe8a,
-        0x1335a3b536d79c11,
+        0xa228a1d73d29ef76,
+        0xf9498676218f5a82,
+        0x4c56d4353489c618,
+        0x06bd12bfa7a1364c,
+        0xcbf01d8deb071f20,
+        0xc53c0c422827d2d2,
+        0x68ab9e5e8e5f85d3,
+        0x8886bb40c567d037,
+        0x3e4a6dc20391cc15,
+        0x5989fd564819bb82,
+        0x72bda50b4f5e1450,
+        0xec70d041eabf5b06,
+        0x8b0f114577342d55,
+        0x9443c0e2aafcf728,
+        0xe2f959fd9e6df820,
+        0x312e646e2adf323f,
+        0x6fb5dad5637e5599,
+        0x917774d62a5b8d92,
+        0x727dc82636a9f30b,
+        0x1492dca13bd153ae,
     ],
 )

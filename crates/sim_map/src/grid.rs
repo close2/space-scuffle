@@ -6,10 +6,11 @@
 //! and continuous altitude queries.
 
 use crate::error::{MapError, PlacementFailureReason, Result};
+use crate::footprint::StructureFootprint;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 pub use sim_types::ResourceKind;
-use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
+use sim_types::{EntityId, FootprintShape, PlayerId, SimScalar, SimVec2};
 use std::collections::BTreeMap;
 
 /// Discrete cliff elevation plateau (0 to 3).
@@ -214,6 +215,11 @@ pub struct Watchtower {
 }
 
 /// Metadata tracking a building dome placed on the grid.
+///
+/// A structure has two layers (plan `2026-11-18-contour-footprints` D-1): its footprint cells
+/// (`top_left`, `width`, `height`), which it takes from the placement grid, and its pathing
+/// `shape`, centred on those cells, which the navigation mesh, the clearance field and ground
+/// movement read. Its geometry is in `footprint.rs`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlacedStructure {
     /// Structure entity ID.
@@ -226,6 +232,8 @@ pub struct PlacedStructure {
     pub height: u8,
     /// Row-major flags of the footprint cells from before placement, restored on removal.
     pub prior_flags: Vec<CellFlags>,
+    /// Pathing shape, centred on the footprint cells, in quarter cells; it lies in the cells.
+    pub shape: FootprintShape,
 }
 
 /// The authoritative game map representing terrain, cliffs, ramps, and obstacles.
@@ -542,7 +550,8 @@ impl GameMap {
     /// Returns `Err(MapError::InvalidFootprintDimensions)` if `w == 0` or `h == 0`.
     /// Returns `Err(MapError::PlacementBlocked)` if:
     /// - Footprint extends outside map bounds.
-    /// - Any cell is marked unbuildable or overlaps a ramp.
+    /// - Any cell is not walkable ground (plan `2026-11-18-contour-footprints` D-5), is marked
+    ///   unbuildable, or overlaps a ramp.
     /// - Any cell is already occupied by another structure.
     /// - Cells in the footprint straddle multiple cliff elevation plateaus.
     pub fn can_place_building(&self, cell_x: u32, cell_y: u32, w: u8, h: u8) -> Result<()> {
@@ -613,7 +622,15 @@ impl GameMap {
                     }
                 }
 
-                // `place_structure` clears BUILDABLE, so the flag says nothing under a structure.
+                // `place_structure` clears BUILDABLE and GROUND_PATHABLE, so the flags say nothing
+                // under a structure; the ground it was placed on passed both checks.
+                if !has_structure && !cell.flags.contains(CellFlags::GROUND_PATHABLE) {
+                    return Err(MapError::PlacementBlocked {
+                        cell_x,
+                        cell_y,
+                        reason: PlacementFailureReason::UnpathableTerrain,
+                    });
+                }
                 if !has_structure && !cell.flags.contains(CellFlags::BUILDABLE) {
                     return Err(MapError::PlacementBlocked {
                         cell_x,
@@ -639,18 +656,20 @@ impl GameMap {
         Ok(())
     }
 
-    /// Places a building foundation dome on the map, updating passability and occupancy flags.
+    /// Places a building foundation dome on the map with its footprint cells at `cell` (the
+    /// minimum cell) and its pathing shape, updating passability and occupancy flags.
     ///
     /// # Errors
-    /// Returns `Err(MapError::PlacementBlocked)` if the footprint cannot be placed.
+    /// Returns `Err(MapError::InvalidFootprintShape)` if the shape does not lie in its cells, and
+    /// `Err(MapError::PlacementBlocked)` if the footprint cannot be placed.
     pub fn place_structure(
         &mut self,
         id: EntityId,
-        cell_x: u32,
-        cell_y: u32,
-        w: u8,
-        h: u8,
+        cell: (u32, u32),
+        footprint: StructureFootprint,
     ) -> Result<()> {
+        let ((cell_x, cell_y), w, h) = (cell, footprint.width, footprint.height);
+        footprint.validate()?;
         self.can_place_building(cell_x, cell_y, w, h)?;
 
         let mut prior_flags = Vec::with_capacity(usize::from(w) * usize::from(h));
@@ -676,6 +695,7 @@ impl GameMap {
                 width: w,
                 height: h,
                 prior_flags,
+                shape: footprint.shape,
             },
         );
 

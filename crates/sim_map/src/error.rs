@@ -5,7 +5,7 @@
 //! placement, disconnected paths, or corrupted map serializations) are
 //! handled with explicit, descriptive error values rather than panics.
 
-use sim_types::{EntityId, SimVec2};
+use sim_types::{EntityId, FootprintShape, SimVec2};
 use thiserror::Error;
 
 /// Specific cause for why building placement failed.
@@ -30,6 +30,12 @@ pub enum PlacementFailureReason {
     /// Footprint extends beyond map boundaries.
     #[error("footprint extends beyond map boundaries")]
     OutOfBounds,
+
+    /// A footprint cell is not walkable ground: the ground under a structure must be walkable,
+    /// so the part of its cells its shape leaves open is open ground (plan
+    /// `2026-11-18-contour-footprints` D-5).
+    #[error("target cell is not walkable ground")]
+    UnpathableTerrain,
 }
 
 /// Comprehensive error type for all `sim_map` operations.
@@ -55,6 +61,18 @@ pub enum MapError {
         width: u8,
         /// Height in cells.
         height: u8,
+    },
+
+    /// A structure's pathing shape does not lie in its footprint cells or leaves a face of no
+    /// length (plan `2026-11-18-contour-footprints` D-2).
+    #[error("footprint shape {shape:?} does not fit a {width}x{height} footprint")]
+    InvalidFootprintShape {
+        /// Footprint width in cells.
+        width: u8,
+        /// Footprint height in cells.
+        height: u8,
+        /// The refused shape, in quarter cells.
+        shape: FootprintShape,
     },
 
     /// Building placement was blocked at the given cell.

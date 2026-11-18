@@ -113,8 +113,12 @@ fn at_a_concave_corner_the_nearer_of_two_walls_wins() {
 #[test]
 fn a_structures_edges_are_walls() {
     let mut map = walled(20, |_, _| false);
-    map.place_structure(EntityId(1), 10, 10, 2, 2)
-        .expect("a free 2 × 2 site");
+    map.place_structure(
+        EntityId(1),
+        (10, 10),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .expect("a free 2 × 2 site");
     let mut pathfinder = Pathfinder::new(&map);
     pathfinder.recompute_clearance(&map);
     let p = at(9.7, 11.0);
@@ -251,7 +255,11 @@ fn the_early_out_never_hides_a_wall_on_both_shipped_maps() {
                 for _ in 0..40 {
                     let (x, y) = (rng.gen_range(1..width - 3), rng.gen_range(1..height - 3));
                     if map
-                        .place_structure(EntityId(1_000 + placed), x, y, 2, 2)
+                        .place_structure(
+                            EntityId(1_000 + placed),
+                            (x, y),
+                            sim_map::StructureFootprint::square(2, 2),
+                        )
                         .is_ok()
                     {
                         placed += 1;

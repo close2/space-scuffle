@@ -205,17 +205,17 @@ fn structure_order_does_not_matter_and_removal_restores_the_terrain_mesh() {
     let (a, b) = (EntityId(9_001), EntityId(9_002));
     let mut forward = terrain.clone();
     forward
-        .place_structure(a, 10, 10, 3, 3)
+        .place_structure(a, (10, 10), sim_map::StructureFootprint::square(3, 3))
         .expect("invariant: open ground");
     forward
-        .place_structure(b, 13, 10, 2, 2)
+        .place_structure(b, (13, 10), sim_map::StructureFootprint::square(2, 2))
         .expect("invariant: open ground");
     let mut backward = terrain.clone();
     backward
-        .place_structure(b, 13, 10, 2, 2)
+        .place_structure(b, (13, 10), sim_map::StructureFootprint::square(2, 2))
         .expect("invariant: open ground");
     backward
-        .place_structure(a, 10, 10, 3, 3)
+        .place_structure(a, (10, 10), sim_map::StructureFootprint::square(3, 3))
         .expect("invariant: open ground");
     let with_both = mesh_of(&forward);
     assert_eq!(with_both, mesh_of(&backward));
@@ -238,8 +238,12 @@ fn pathfinder_rebuilds_its_mesh_on_structure_change() {
     let mut map = arena::default_arena();
     let mut pathfinder = sim_map::Pathfinder::new(&map);
     let before = pathfinder.navmesh().map(NavMesh::digest);
-    map.place_structure(EntityId(77), 20, 20, 2, 2)
-        .expect("invariant: open ground");
+    map.place_structure(
+        EntityId(77),
+        (20, 20),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .expect("invariant: open ground");
     pathfinder.recompute_clearance(&map);
     let placed = pathfinder.navmesh().map(NavMesh::digest);
     assert_ne!(before, placed);
@@ -315,7 +319,7 @@ proptest! {
     ) {
         let mut map = masked_map(20, &blocked);
         let fresh = mesh_of(&map);
-        if map.place_structure(EntityId(5), x, y, w, h).is_ok() {
+        if map.place_structure(EntityId(5), (x, y), sim_map::StructureFootprint::square(w, h)).is_ok() {
             let placed = mesh_of(&map);
             check_mesh_laws(&placed).map_err(TestCaseError::fail)?;
             check_labels(&map, &placed).map_err(TestCaseError::fail)?;
@@ -367,8 +371,12 @@ fn a_smaller_disc_routes_wherever_a_larger_one_does() {
                     let y = draw(&mut rng, 1.0, height - 3.0) as u32;
                     // A site on a cliff or ramp is refused; the others stand.
                     placed += u32::from(
-                        map.place_structure(EntityId(100 + index), x, y, 2, 2)
-                            .is_ok(),
+                        map.place_structure(
+                            EntityId(100 + index),
+                            (x, y),
+                            sim_map::StructureFootprint::square(2, 2),
+                        )
+                        .is_ok(),
                     );
                 }
                 assert!(placed >= 8, "{file}: only {placed} structures stand");

@@ -34,7 +34,11 @@ fn test_building_placement_invariants() {
     let building_2 = EntityId(202);
 
     // 1. Valid placement: 3x3 dome on flat low ground (Cliff 1)
-    let res = map.place_structure(building_1, 10, 10, 3, 3);
+    let res = map.place_structure(
+        building_1,
+        (10, 10),
+        sim_map::StructureFootprint::square(3, 3),
+    );
     assert!(
         res.is_ok(),
         "Placing 3x3 on flat Cliff 1 should succeed: {:?}",
@@ -42,7 +46,11 @@ fn test_building_placement_invariants() {
     );
 
     // 2. Overlapping existing structure: Placing 2x2 at (11, 11) overlaps building_1
-    let overlap_res = map.place_structure(building_2, 11, 11, 2, 2);
+    let overlap_res = map.place_structure(
+        building_2,
+        (11, 11),
+        sim_map::StructureFootprint::square(2, 2),
+    );
     assert!(matches!(
         overlap_res,
         Err(MapError::PlacementBlocked {
@@ -52,7 +60,11 @@ fn test_building_placement_invariants() {
     ));
 
     // 3. Overlapping a ramp: Ramp is at x in [30..34), y in [30..34)
-    let ramp_res = map.place_structure(building_2, 30, 31, 2, 2);
+    let ramp_res = map.place_structure(
+        building_2,
+        (30, 31),
+        sim_map::StructureFootprint::square(2, 2),
+    );
     assert!(matches!(
         ramp_res,
         Err(MapError::PlacementBlocked {
@@ -64,12 +76,19 @@ fn test_building_placement_invariants() {
     // 4. Cliff level mismatch: Straddling Cliff 1 (y < 30) and Cliff 2 (y >= 34)
     // Map cell (20, 29) is Cliff 1, (20, 34) is Cliff 2; on default_arena y=29 is Cliff 1, y=34 is Cliff 2.
     // Straddling y=29 to y=31 spans Cliff 1 and unpassable cliff boundary, or across cliff boundary
-    let cliff_res = map.place_structure(building_2, 10, 29, 3, 3);
+    let cliff_res = map.place_structure(
+        building_2,
+        (10, 29),
+        sim_map::StructureFootprint::square(3, 3),
+    );
+    // The cliff cells between the levels are not walkable ground, which placement checks first
+    // (plan `2026-11-18-contour-footprints` D-5).
     assert!(matches!(
         cliff_res,
         Err(MapError::PlacementBlocked {
             reason: PlacementFailureReason::CliffLevelMismatch
-                | PlacementFailureReason::UnbuildableTerrain,
+                | PlacementFailureReason::UnbuildableTerrain
+                | PlacementFailureReason::UnpathableTerrain,
             ..
         })
     ));
@@ -80,7 +99,11 @@ fn test_building_placement_invariants() {
     assert_eq!(removed.unwrap().id, building_1);
 
     // Can now place building_2 at the exact location previously occupied
-    let replace_res = map.place_structure(building_2, 10, 10, 3, 3);
+    let replace_res = map.place_structure(
+        building_2,
+        (10, 10),
+        sim_map::StructureFootprint::square(3, 3),
+    );
     assert!(replace_res.is_ok());
 }
 
@@ -133,8 +156,18 @@ fn test_ramp_wall_off_geometry() {
     // Ramp exit is x in 12..15 at y = 15.
     // Structure 1: 2x2 at (11, 15), covers x=11..13, y=15..17
     // Structure 2: 2x2 at (13, 15), covers x=13..15, y=15..17
-    map.place_structure(EntityId(1), 11, 15, 2, 2).unwrap();
-    map.place_structure(EntityId(2), 13, 15, 2, 2).unwrap();
+    map.place_structure(
+        EntityId(1),
+        (11, 15),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(2),
+        (13, 15),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .unwrap();
     pathfinder.recompute_clearance(&map);
 
     // Fully walled off: neither can path through
@@ -149,7 +182,12 @@ fn test_ramp_wall_off_geometry() {
 
     // Create a 1-cell diagonal choke gap by shifting Structure 2 to (14, 16)
     map.remove_structure(EntityId(2)).unwrap();
-    map.place_structure(EntityId(2), 14, 16, 2, 2).unwrap();
+    map.place_structure(
+        EntityId(2),
+        (14, 16),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .unwrap();
     pathfinder.recompute_clearance(&map);
 
     // Diagonal gap at (13, 15) allows Small unit (Marine) through
@@ -177,7 +215,7 @@ fn placement_map() -> (GameMap, EntityId) {
     let mut map = GameMap::from_cells(20, 20, cells, Vec::new(), Vec::new())
         .expect("a 20x20 grid has exactly 400 cells");
     let occupant = EntityId(7);
-    map.place_structure(occupant, 4, 4, 3, 3)
+    map.place_structure(occupant, (4, 4), sim_map::StructureFootprint::square(3, 3))
         .expect("open ground accepts the structure");
     (map, occupant)
 }
@@ -243,8 +281,12 @@ fn the_predicate_never_excuses_terrain() {
 #[test]
 fn the_terrain_beside_an_ignored_structure_still_counts() {
     let (mut map, _) = placement_map();
-    map.place_structure(EntityId(9), 14, 15, 1, 1)
-        .expect("flat ground beside the plateau accepts the structure");
+    map.place_structure(
+        EntityId(9),
+        (14, 15),
+        sim_map::StructureFootprint::square(1, 1),
+    )
+    .expect("flat ground beside the plateau accepts the structure");
     assert!(matches!(
         map.can_place_building_where(14, 15, 2, 1, |_, _, _| false),
         Err(MapError::PlacementBlocked {
@@ -252,4 +294,45 @@ fn the_terrain_beside_an_ignored_structure_still_counts() {
             ..
         })
     ));
+}
+
+/// Plan `2026-11-18-contour-footprints` D-5: the ground under a structure is walkable. A cell
+/// that is buildable but not walkable refuses the site as `UnpathableTerrain`, before the
+/// buildable check, and the predicate that ignores structures never excuses it.
+#[test]
+fn placement_refuses_unwalkable_ground() {
+    let mut cells = vec![MapCell::default_ground(CliffLevel(0)); 400];
+    cells[8 * 20 + 9].flags.remove(CellFlags::GROUND_PATHABLE);
+    cells[12 * 20 + 12]
+        .flags
+        .remove(CellFlags::GROUND_PATHABLE | CellFlags::BUILDABLE);
+    let mut map = GameMap::from_cells(20, 20, cells, Vec::new(), Vec::new())
+        .expect("a 20x20 grid has exactly 400 cells");
+    assert!(map.cell(9, 8).unwrap().flags.contains(CellFlags::BUILDABLE));
+    let refused =
+        |map: &GameMap, x, y| match map.can_place_building_where(x, y, 2, 2, |_, _, _| false) {
+            Err(MapError::PlacementBlocked { reason, .. }) => Some(reason),
+            _ => None,
+        };
+    assert_eq!(
+        refused(&map, 8, 7),
+        Some(PlacementFailureReason::UnpathableTerrain)
+    );
+    assert_eq!(
+        refused(&map, 11, 11),
+        Some(PlacementFailureReason::UnpathableTerrain)
+    );
+    assert_eq!(refused(&map, 2, 2), None);
+    assert!(matches!(
+        map.place_structure(
+            EntityId(5),
+            (9, 8),
+            sim_map::StructureFootprint::square(1, 1)
+        ),
+        Err(MapError::PlacementBlocked {
+            reason: PlacementFailureReason::UnpathableTerrain,
+            ..
+        })
+    ));
+    assert!(map.structures().is_empty());
 }

@@ -201,7 +201,11 @@ fn m8_units_fit_through_gaps_as_wide_as_their_real_diameter() -> TestResult {
 #[test]
 fn m8_known_structures_block_symmetrically() -> TestResult {
     let mut map = open_map()?;
-    map.place_structure(EntityId(1), 11, 4, 2, 16)?;
+    map.place_structure(
+        EntityId(1),
+        (11, 4),
+        sim_map::StructureFootprint::square(2, 16),
+    )?;
     // The structure occupies 11 <= x <= 13: a disc of radius 1 touches it at x = 10 and 14.
     let reach = |x: f64| route_between(&map, at(x, 1.5), at(x, 8.5), LARGE_RADIUS).is_ok();
     assert!(reach(10.0), "west face of the structure");
@@ -241,8 +245,16 @@ fn f7_no_tier_passes_between_structures_touching_at_a_corner() -> TestResult {
             block(&mut map, i + 1, i)?;
         }
     }
-    map.place_structure(EntityId(1), 10, 10, 2, 2)?;
-    map.place_structure(EntityId(2), 12, 12, 2, 2)?;
+    map.place_structure(
+        EntityId(1),
+        (10, 10),
+        sim_map::StructureFootprint::square(2, 2),
+    )?;
+    map.place_structure(
+        EntityId(2),
+        (12, 12),
+        sim_map::StructureFootprint::square(2, 2),
+    )?;
     for radius in [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS] {
         let request = PathRequest {
             start: centre(3, 18),
@@ -271,8 +283,16 @@ fn f7_small_units_keep_passing_real_one_cell_gaps() -> TestResult {
 #[test]
 fn f7_diagonal_segment_between_touching_structures_is_rejected() -> TestResult {
     let mut map = open_map()?;
-    map.place_structure(EntityId(1), 5, 6, 1, 1)?;
-    map.place_structure(EntityId(2), 6, 5, 1, 1)?;
+    map.place_structure(
+        EntityId(1),
+        (5, 6),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
+    map.place_structure(
+        EntityId(2),
+        (6, 5),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     let mut pathfinder = Pathfinder::new(&map);
     let request = PathRequest {
         start: centre(5, 5),

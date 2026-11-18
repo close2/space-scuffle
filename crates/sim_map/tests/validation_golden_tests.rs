@@ -72,8 +72,13 @@ const MUTATED_DOCUMENTS: usize = 200;
 /// Path requests issued on each shipped map.
 const PATH_REQUESTS_PER_MAP: usize = 250;
 
-/// Digest of every validation report over the corpus, recorded before the step 9.2 split.
-const VALIDATION_GOLDEN: u64 = 0xf028_1611_929c_52d1;
+/// Digest of every validation report over the corpus, recorded before the step 9.2 split
+/// (`0xf028_1611_929c_52d1`). Re-recorded for plan `2026-11-18-contour-footprints` WP2 (D-5:
+/// a footprint cell must be walkable ground): 17 start footprints the corpus already refused as
+/// `UnbuildableTerrain` (8 of start 30, 9 of start 31) are now refused as `UnpathableTerrain`;
+/// no start footprint is newly refused, and every other report is unchanged. A scratch build
+/// without the rule reproduces the old value.
+const VALIDATION_GOLDEN: u64 = 0xc8fc_3cbd_495d_5177;
 /// Digest of every decode result over the corpus, recorded before the step 9.2 split.
 const DECODE_GOLDEN: u64 = 0x56c4_3eea_8701_94bd;
 /// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
@@ -570,7 +575,11 @@ fn place_seeded_structures(map: &mut GameMap, rng: &mut ChaCha8Rng) {
         let w = rng.gen_range(2..=4);
         let h = rng.gen_range(2..=4);
         // Blocked placements are part of the seeded outcome and are simply skipped.
-        let _ = map.place_structure(EntityId(9_000 + index), x, y, w, h);
+        let _ = map.place_structure(
+            EntityId(9_000 + index),
+            (x, y),
+            sim_map::StructureFootprint::square(w, h),
+        );
     }
 }
 

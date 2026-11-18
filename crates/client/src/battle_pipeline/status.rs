@@ -161,6 +161,7 @@ fn write_production_reason(output: &mut String, error: &ProductionAdmissionError
 const fn placement_reason(reason: PlacementFailureReason) -> &'static str {
     match reason {
         PlacementFailureReason::UnbuildableTerrain => "the ground there cannot be built on",
+        PlacementFailureReason::UnpathableTerrain => "the ground there cannot be walked on",
         PlacementFailureReason::CliffLevelMismatch => "the site spans different cliff levels",
         PlacementFailureReason::OverlapsRamp => "the site overlaps a ramp",
         PlacementFailureReason::OccupiedByStructure(_) => "a structure is in the way",

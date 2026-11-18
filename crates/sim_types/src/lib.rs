@@ -23,6 +23,7 @@ pub mod commands;
 pub mod effects;
 pub mod enums;
 pub mod errors;
+pub mod footprint;
 pub mod ids;
 pub mod math;
 pub mod player_view;
@@ -50,6 +51,7 @@ pub use enums::{
     VisibilityState, WeaponVisualKind,
 };
 pub use errors::MathError;
+pub use footprint::{FootprintShape, FOOTPRINT_QUARTERS_PER_CELL};
 pub use ids::{
     ArmorClassId, EntityId, FactionId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError,
     ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,

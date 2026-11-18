@@ -71,7 +71,11 @@ fn build_row(name: &str, map: &GameMap, structures: u32) -> Result<(), Box<dyn E
         });
     for (x, y) in origins {
         if placed < structures && built.can_place_building(x, y, 3, 3).is_ok() {
-            built.place_structure(EntityId(50_000 + placed), x, y, 3, 3)?;
+            built.place_structure(
+                EntityId(50_000 + placed),
+                (x, y),
+                sim_map::StructureFootprint::square(3, 3),
+            )?;
             placed += 1;
         }
     }

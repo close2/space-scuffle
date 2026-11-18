@@ -464,10 +464,8 @@ impl SimWorld {
         self.map
             .place_structure(
                 prepared.entity.id,
-                site.left,
-                site.bottom,
-                site.width as u8,
-                site.height as u8,
+                (site.left, site.bottom),
+                sim_map::StructureFootprint::square(site.width as u8, site.height as u8),
             )
             .map_err(|_| BuildRejection::OutOfBounds)?;
         let id = self.commit_spawn(prepared);
