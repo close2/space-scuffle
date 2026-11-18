@@ -8,6 +8,13 @@
 //! [`mesa_release`] reads the Mesa release from `vulkaninfo --summary`, and
 //! [`lavapipe_anisotropy_override`] says whether `lavapipe` of that release needs the terrain
 //! anisotropy override. The GPU test harness and the showcase tool both call them.
+//!
+//! Under the GPU test harness (`SPACE_SCUFFLE_VIRTUAL_GPU` set), [`WindowSizeCheckPlugin`] fails
+//! the app when a display gives a window another physical size than it asked for: a headless
+//! `KWin` shrinks a window larger than its output, silently, and every picture of the run would
+//! then be taken at the wrong size (readback plan, Amendment 3 review). The harness's own refusal
+//! of a declared oversized window is the earlier, clearer message; this check covers every window,
+//! declared or not.
 
 use bevy::prelude::*;
 use bevy::render::graph::CameraDriverLabel;
@@ -57,7 +64,8 @@ pub struct RenderCompatibilityPlugin;
 impl Plugin for RenderCompatibilityPlugin {
     fn build(&self, app: &mut App) {
         let status = ShutdownStatus::default();
-        app.insert_resource(status.clone());
+        app.insert_resource(status.clone())
+            .add_plugins(WindowSizeCheckPlugin);
         let Some(render) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -70,6 +78,96 @@ impl Plugin for RenderCompatibilityPlugin {
         graph.add_node(InitializeAcquiredSurfaces, SurfaceInitializationNode);
         graph.add_node_edge(InitializeAcquiredSurfaces, CameraDriverLabel);
     }
+}
+
+/// Environment variable the GPU test harness sets for every child it runs.
+const VIRTUAL_GPU_VAR: &str = "SPACE_SCUFFLE_VIRTUAL_GPU";
+
+/// Fails the app, under the GPU test harness only, when a window's physical size differs from
+/// the size it asked for, from the first frame on.
+///
+/// The requested size is the window's logical size when it was spawned, times its current scale
+/// factor (1 on the harness's virtual displays). Outside the harness, a person may resize a window
+/// freely, so the plugin adds nothing. [`RenderCompatibilityPlugin`] installs it; apps without
+/// that plugin, such as the map editor, add it themselves.
+pub struct WindowSizeCheckPlugin;
+
+impl Plugin for WindowSizeCheckPlugin {
+    fn build(&self, app: &mut App) {
+        if std::env::var_os(VIRTUAL_GPU_VAR).is_none() {
+            return;
+        }
+        app.add_systems(First, record_requested_window_sizes)
+            .add_systems(Last, check_window_sizes);
+    }
+}
+
+/// The logical size, in logical pixels, a window had when it was spawned.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+struct RequestedWindowSize(Vec2);
+
+/// Records each new window's requested size.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn record_requested_window_sizes(
+    mut commands: Commands<'_, '_>,
+    added: Query<'_, '_, (Entity, &Window), Added<Window>>,
+) {
+    for (entity, window) in &added {
+        commands
+            .entity(entity)
+            .insert(RequestedWindowSize(Vec2::new(
+                window.resolution.width(),
+                window.resolution.height(),
+            )));
+    }
+}
+
+/// Sends an error exit, once, when a window's physical size is not the one it asked for.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn check_window_sizes(
+    windows: Query<'_, '_, (&Window, &RequestedWindowSize)>,
+    frames: Res<'_, bevy::core::FrameCount>,
+    mut exit: EventWriter<'_, AppExit>,
+    mut reported: Local<'_, bool>,
+) {
+    if *reported || frames.0 == 0 {
+        return;
+    }
+    for (window, requested) in &windows {
+        let actual = UVec2::new(window.physical_width(), window.physical_height());
+        if let Some(expected) = window_size_mismatch(requested.0, window.scale_factor(), actual) {
+            error!(
+                "the window {:?} is {}x{} physical pixels, but it asked for {}x{} ({}x{} logical \
+                 at scale factor {}): the display changed its size. Under the GPU test harness, \
+                 state a screen at least as large as the window.",
+                window.title,
+                actual.x,
+                actual.y,
+                expected.x,
+                expected.y,
+                requested.0.x,
+                requested.0.y,
+                window.scale_factor()
+            );
+            exit.send(AppExit::error());
+            *reported = true;
+            return;
+        }
+    }
+}
+
+/// The physical size a window of logical size `requested` should have at `scale_factor`, when
+/// `actual` differs from it; `None` when they match.
+#[must_use]
+pub fn window_size_mismatch(requested: Vec2, scale_factor: f32, actual: UVec2) -> Option<UVec2> {
+    let expected = (requested * scale_factor).round().as_uvec2();
+    (expected != actual).then_some(expected)
 }
 
 /// Runs a graphical app and retains its original error exit reason.
@@ -274,6 +372,28 @@ impl Node for SurfaceInitializationNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_of_another_size_than_requested_is_a_mismatch() {
+        let requested = Vec2::new(1600.0, 900.0);
+        assert_eq!(
+            window_size_mismatch(requested, 1.0, UVec2::new(1600, 900)),
+            None
+        );
+        assert_eq!(
+            window_size_mismatch(requested, 1.0, UVec2::new(1280, 720)),
+            Some(UVec2::new(1600, 900))
+        );
+        assert_eq!(
+            window_size_mismatch(requested, 1.0, UVec2::new(1600, 899)),
+            Some(UVec2::new(1600, 900))
+        );
+        // A display with scale factor 2 doubles the physical size and is no mismatch.
+        assert_eq!(
+            window_size_mismatch(requested, 2.0, UVec2::new(3200, 1800)),
+            None
+        );
+    }
 
     #[test]
     fn mesa_release_is_read_from_the_vulkaninfo_summary() {

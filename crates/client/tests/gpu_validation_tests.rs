@@ -13,6 +13,9 @@
 //!   private file and run on every host, CI included.
 //! - `radv` never lowers terrain anisotropy (decision D7), and every run proves the adapter it
 //!   rendered on (decision D6).
+//! - An offscreen child (plan `2026-11-17-gpu-test-readback`, D-7, T-5) starts with no display
+//!   wrapper and none of the display variables, keeps the driver, the lock and the test-display
+//!   flag, and is recorded as `display=offscreen`; a windowed child keeps its virtual display.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -31,9 +34,10 @@ mod gpu_run;
 mod shader_ir;
 
 use gpu_run::{
-    AdapterEvidence, AllowedValidationId, DriverRequest, DriverSelectionError, FindingSeverity,
-    GpuCommand, GpuDriver, GpuLock, GpuLockError, HostGpu, MissingPrerequisite, RenderNode,
-    ValidationReport, VALIDATION_ALLOWLIST,
+    AdapterEvidence, AllowedValidationId, ChildDisplay, DisplayRequest, DisplaySelectionError,
+    DisplayServer, DriverRequest, DriverSelectionError, FindingSeverity, GpuCommand, GpuDriver,
+    GpuLock, GpuLockError, HostDisplay, HostGpu, MissingDisplayTool, MissingPrerequisite,
+    RenderNode, ValidationReport, VALIDATION_ALLOWLIST,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -888,4 +892,1067 @@ fn the_executable_is_read_before_the_lock_and_recorded() -> Result<(), Box<dyn s
         run.preload
     );
     Ok(())
+}
+
+/// F2 of the WP2 review: a command built for inspection never runs, so the command tests'
+/// fixed driver cannot become a child with the wrong lock.
+#[test]
+#[should_panic(expected = "for inspection and never runs")]
+fn an_inspected_command_never_runs() {
+    let command = GpuCommand::inspect(
+        Path::new("/bin/true"),
+        &ChildDisplay::None,
+        GpuDriver::Lavapipe,
+    );
+    command.run("inspected command");
+}
+
+/// What a command does with one variable of the child's environment.
+#[derive(Debug, PartialEq, Eq)]
+enum Setting {
+    /// Sets it to this value.
+    Set(String),
+    /// Removes it.
+    Removed,
+    /// Leaves it as this process has it.
+    Inherited,
+}
+
+/// What `command` does with `key`.
+fn variable(command: &GpuCommand, key: &str) -> Setting {
+    match command
+        .environment()
+        .into_iter()
+        .find(|(name, _)| name == key)
+    {
+        Some((_, Some(value))) => Setting::Set(value),
+        Some((_, None)) => Setting::Removed,
+        None => Setting::Inherited,
+    }
+}
+
+/// T-5: an offscreen child runs with no `xvfb-run`, with `DISPLAY`, `WAYLAND_DISPLAY` and
+/// `MESA_VK_WSI_DEBUG` removed, and with the driver, the lock and the test-display flag.
+#[test]
+fn an_offscreen_child_has_no_display_and_no_software_present() {
+    for driver in [GpuDriver::Radv, GpuDriver::Lavapipe] {
+        let command = GpuCommand::inspect(Path::new("/fixture/child"), &ChildDisplay::None, driver);
+        assert_eq!(
+            command.command_line(),
+            [
+                "timeout".to_owned(),
+                format!("--kill-after={}", gpu_run::KILL_GRACE_SECS),
+                driver.run_limit_secs().to_string(),
+                "/fixture/child".to_owned(),
+            ],
+            "{driver}"
+        );
+        for removed in ["DISPLAY", "WAYLAND_DISPLAY", "MESA_VK_WSI_DEBUG"] {
+            assert_eq!(
+                variable(&command, removed),
+                Setting::Removed,
+                "{driver}: {removed}"
+            );
+        }
+        for (key, value) in [
+            ("SPACE_SCUFFLE_VIRTUAL_GPU", "1"),
+            ("WGPU_BACKEND", "vulkan"),
+            ("VK_ICD_FILENAMES", gpu_run::INSPECTION_MANIFEST),
+            ("WGPU_ADAPTER_NAME", driver.adapter_driver()),
+        ] {
+            assert_eq!(
+                variable(&command, key),
+                Setting::Set(value.to_owned()),
+                "{driver}: {key}"
+            );
+        }
+        assert_eq!(
+            variable(&command, "WINIT_UNIX_BACKEND"),
+            Setting::Inherited,
+            "{driver}"
+        );
+        assert_eq!(command.display_name(), "offscreen");
+        assert_eq!(command.driver(), Some(driver));
+    }
+}
+
+/// T-5: an Xvfb child keeps `xvfb-run` and radv's software present, as before the `KWin`
+/// display existed; the display name says which. A host child has no wrapper.
+#[test]
+fn an_xvfb_child_keeps_its_virtual_display() {
+    let display = ChildDisplay::Xvfb {
+        screen: Some("1600x900x24".into()),
+    };
+    let radv = GpuCommand::inspect(Path::new("/fixture/child"), &display, GpuDriver::Radv);
+    let lavapipe = GpuCommand::inspect(Path::new("/fixture/child"), &display, GpuDriver::Lavapipe);
+    assert_eq!(
+        variable(&radv, "MESA_VK_WSI_DEBUG"),
+        Setting::Set("sw".into())
+    );
+    assert_eq!(variable(&lavapipe, "MESA_VK_WSI_DEBUG"), Setting::Removed);
+    for command in [&radv, &lavapipe] {
+        assert_eq!(
+            variable(command, "DISPLAY"),
+            Setting::Inherited,
+            "the display is the wrapper's"
+        );
+        assert_eq!(variable(command, "WAYLAND_DISPLAY"), Setting::Removed);
+        assert_eq!(
+            variable(command, "WINIT_UNIX_BACKEND"),
+            Setting::Set("x11".into())
+        );
+        let line = command.command_line();
+        assert_eq!(line.get(3).map(String::as_str), Some("/usr/bin/xvfb-run"));
+        assert!(line.contains(&"-screen 0 1600x900x24 +extension GLX".to_owned()));
+        assert_eq!(line.last().map(String::as_str), Some("/fixture/child"));
+    }
+    assert_eq!(radv.display_name(), "xvfb-sw");
+    assert_eq!(lavapipe.display_name(), "xvfb");
+    let host = GpuCommand::inspect(
+        Path::new("/fixture/child"),
+        &ChildDisplay::Host,
+        GpuDriver::Radv,
+    );
+    assert_eq!(
+        host.command_line().len(),
+        4,
+        "no wrapper on the host display"
+    );
+    assert_eq!(host.display_name(), "host");
+}
+
+/// The `KWin` display of the fixture commands, in a runtime directory nobody has.
+fn fixture_kwin(screen: Option<&str>) -> ChildDisplay {
+    ChildDisplay::Kwin {
+        screen: screen.map(str::to_owned),
+        runtime_dir: PathBuf::from("/fixture/run"),
+    }
+}
+
+/// T-5 (`KWin`): the command is `timeout`, then `kwin_wayland` with the headless flags, the
+/// screen, a socket and the session string, which runs the status shim, its status file, the
+/// program and its arguments. Both display variables, the session bus and radv's software present are removed.
+#[test]
+fn a_kwin_child_runs_its_session_under_timeout() {
+    let mut command = GpuCommand::inspect(
+        Path::new("/fixture/child"),
+        &fixture_kwin(Some("1600x900x24")),
+        GpuDriver::Radv,
+    );
+    command.args(["--ignored", "--exact", "a_child::name"]);
+    let line = command.command_line();
+    let socket = line[line
+        .iter()
+        .position(|part| part == "--socket")
+        .expect("a socket")
+        + 1]
+    .clone();
+    assert!(
+        socket.starts_with(&format!("ss-gpu-{}-", std::process::id())),
+        "{socket}"
+    );
+    let directory = format!("/fixture/run/{socket}.session");
+    assert_eq!(
+        line,
+        [
+            "timeout".to_owned(),
+            format!("--kill-after={}", gpu_run::KILL_GRACE_SECS),
+            GpuDriver::Radv.run_limit_secs().to_string(),
+            "kwin_wayland".to_owned(),
+            "--virtual".to_owned(),
+            "--xwayland".to_owned(),
+            "--no-lockscreen".to_owned(),
+            "--no-global-shortcuts".to_owned(),
+            "--width".to_owned(),
+            "1600".to_owned(),
+            "--height".to_owned(),
+            "900".to_owned(),
+            "--socket".to_owned(),
+            socket.clone(),
+            "--exit-with-session".to_owned(),
+            format!(
+                "{directory}/session.sh {directory}/status /fixture/child --ignored --exact \
+                 a_child::name"
+            ),
+        ]
+    );
+    for removed in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "MESA_VK_WSI_DEBUG",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ] {
+        assert_eq!(variable(&command, removed), Setting::Removed, "{removed}");
+    }
+    assert_eq!(
+        command.kwin_session_paths(),
+        Some((
+            PathBuf::from(format!("/fixture/run/{socket}")),
+            PathBuf::from(&directory)
+        ))
+    );
+    for (key, value) in [
+        ("XDG_RUNTIME_DIR", "/fixture/run"),
+        ("WINIT_UNIX_BACKEND", "x11"),
+        ("SPACE_SCUFFLE_VIRTUAL_GPU", "1"),
+        ("WGPU_ADAPTER_NAME", "radv"),
+    ] {
+        assert_eq!(
+            variable(&command, key),
+            Setting::Set(value.to_owned()),
+            "{key}"
+        );
+    }
+    assert_eq!(command.display_name(), "kwin");
+    let default = GpuCommand::inspect(Path::new("/c"), &fixture_kwin(None), GpuDriver::Radv);
+    let line = default.command_line();
+    assert_eq!(&line[8..12], ["--width", "1280", "--height", "720"]);
+}
+
+/// T-5 (`KWin`): every run has its own socket, so concurrent runs never share a server.
+#[test]
+fn kwin_sockets_are_unique_per_run() {
+    let socket = |command: &GpuCommand| {
+        let line = command.command_line();
+        line[line
+            .iter()
+            .position(|part| part == "--socket")
+            .expect("a socket")
+            + 1]
+        .clone()
+    };
+    let sockets: std::collections::BTreeSet<String> = (0..8)
+        .map(|_| {
+            socket(&GpuCommand::inspect(
+                Path::new("/c"),
+                &fixture_kwin(None),
+                GpuDriver::Radv,
+            ))
+        })
+        .collect();
+    assert_eq!(sockets.len(), 8, "{sockets:?}");
+}
+
+/// T-5 (`KWin`): `KWin` splits the session string like a shell, so an argument with whitespace is
+/// refused with its name instead of being split.
+#[test]
+#[should_panic(expected = "cannot carry \"two words\"")]
+fn a_kwin_argument_with_whitespace_is_refused() {
+    let mut command = GpuCommand::inspect(Path::new("/c"), &fixture_kwin(None), GpuDriver::Radv);
+    command.arg("two words");
+    command.command_line();
+}
+
+/// T-5 (`KWin`): quotes and other shell characters are refused too; plain paths and test names
+/// pass.
+#[test]
+fn session_words_are_plain() {
+    assert_eq!(
+        gpu_run::session_word("/tmp/.tmpAb12/x_y-z.ron"),
+        "/tmp/.tmpAb12/x_y-z.ron"
+    );
+    assert_eq!(gpu_run::session_word("mod::child"), "mod::child");
+    for bad in ["a'b", "a\"b", "a\\b", "a$b", "a;b", "a\tb", ""] {
+        assert!(
+            std::panic::catch_unwind(|| gpu_run::session_word(bad)).is_err(),
+            "{bad:?} must be refused"
+        );
+    }
+}
+
+/// T-5 (`KWin`): the status file is the verdict, a missing one is a failure, and `timeout`'s code
+/// is a timeout whatever the file says.
+#[test]
+fn kwin_session_verdicts() {
+    use gpu_run::SessionVerdict;
+    let verdict = gpu_run::kwin_session_verdict;
+    assert_eq!(verdict(Some(0), Some("0\n")), SessionVerdict::Exited(0));
+    assert_eq!(
+        verdict(Some(0), Some("3\n")),
+        SessionVerdict::Exited(3),
+        "KWin's 0 is ignored"
+    );
+    assert_eq!(verdict(Some(3), Some("3\n")), SessionVerdict::Exited(3));
+    assert_eq!(
+        verdict(Some(0), None),
+        SessionVerdict::NoStatus,
+        "a missing file fails"
+    );
+    assert_eq!(verdict(None, None), SessionVerdict::NoStatus);
+    assert_eq!(verdict(Some(0), Some("")), SessionVerdict::NoStatus);
+    assert_eq!(verdict(Some(124), Some("0\n")), SessionVerdict::TimedOut);
+    assert_eq!(verdict(Some(124), None), SessionVerdict::TimedOut);
+}
+
+/// `KWin`'s output size comes from the caller's screen.
+#[test]
+fn kwin_screens_are_parsed() {
+    assert_eq!(gpu_run::kwin_screen(None), (1280, 720));
+    assert_eq!(gpu_run::kwin_screen(Some("1600x900x24")), (1600, 900));
+    assert_eq!(gpu_run::kwin_screen(Some("1280x720")), (1280, 720));
+    for bad in ["1600", "0x900", "axb", "1600x"] {
+        assert!(
+            std::panic::catch_unwind(|| gpu_run::kwin_screen(Some(bad))).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+/// Amendment 3: a window fits the output of the screen its command states, and `KWin`'s default
+/// 1280×720 when it states none; a larger window is refused with the missing size named.
+#[test]
+fn a_window_must_fit_the_stated_screen() {
+    assert_eq!(gpu_run::window_fits_screen((1280, 720), None), Ok(()));
+    assert_eq!(
+        gpu_run::window_fits_screen((1600, 900), Some("1600x900x24")),
+        Ok(())
+    );
+    assert_eq!(
+        gpu_run::window_fits_screen((640, 360), Some("1600x900")),
+        Ok(())
+    );
+    let refused = gpu_run::window_fits_screen((1600, 900), None).expect_err("1600x900 > 1280x720");
+    assert_eq!(refused.window, (1600, 900));
+    assert_eq!(refused.output, (1280, 720));
+    let message = refused.to_string();
+    for part in [
+        "1600×900 window",
+        "states no screen",
+        "1280×720",
+        "Some(\"1600x900x24\")",
+    ] {
+        assert!(message.contains(part), "{part:?} missing from {message:?}");
+    }
+    // One side too large is enough.
+    assert!(gpu_run::window_fits_screen((1281, 720), None).is_err());
+    assert!(gpu_run::window_fits_screen((1280, 721), None).is_err());
+    let narrow = gpu_run::window_fits_screen((1600, 900), Some("1280x1024x24"))
+        .expect_err("1600 is wider than 1280");
+    assert!(narrow
+        .to_string()
+        .contains("states the screen \"1280x1024x24\""));
+}
+
+/// Amendment 3: the run itself refuses an oversized window before the lock, on `KWin` and on
+/// Xvfb, ahead of every other check (the inspected command would otherwise refuse to run).
+#[test]
+fn an_oversized_window_is_refused_before_the_run() {
+    for display in [fixture_kwin(None), ChildDisplay::Xvfb { screen: None }] {
+        let mut command = GpuCommand::inspect(Path::new("/bin/true"), &display, GpuDriver::Radv);
+        command.window(1600, 900);
+        let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            command.run("oversized window");
+        }))
+        .expect_err("the oversized window is refused");
+        let message = refusal
+            .downcast_ref::<String>()
+            .expect("invariant: the refusal formats its message");
+        assert!(
+            message.starts_with("oversized window: the child asks for a 1600×900 window"),
+            "{message}"
+        );
+    }
+    // A window that fits reaches the next check, the inspection refusal.
+    let mut fitting = GpuCommand::inspect(
+        Path::new("/bin/true"),
+        &fixture_kwin(Some("1600x900x24")),
+        GpuDriver::Radv,
+    );
+    fitting.window(1600, 900);
+    let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fitting.run("fitting window");
+    }))
+    .expect_err("an inspected command never runs");
+    let message = refusal
+        .downcast_ref::<String>()
+        .expect("invariant: the refusal formats its message");
+    assert!(
+        message.contains("for inspection and never runs"),
+        "{message}"
+    );
+}
+
+/// A host for display selection with the tools `has` names (`kwin`, `xwayland`, `runtime`,
+/// `xvfb`, `desktop`), at this server's paths.
+fn display_host(has: &[&str]) -> HostDisplay {
+    let path = |tool: &str, path: &str| has.contains(&tool).then(|| PathBuf::from(path));
+    HostDisplay {
+        kwin: path("kwin", "/usr/bin/kwin_wayland"),
+        xwayland: path("xwayland", "/usr/bin/Xwayland"),
+        runtime_dir: path("runtime", "/run/user/1002"),
+        xvfb_run: path("xvfb", "/usr/bin/xvfb-run"),
+        desktop: has.contains(&"desktop"),
+    }
+}
+
+/// D-4: `auto` picks `KWin` only on radv with every prerequisite, falls back to Xvfb (saying so)
+/// or the host display, keeps lavapipe on Xvfb, and a forced display never falls back.
+#[test]
+fn display_selection_matrix() {
+    use DisplayRequest::{Auto, Kwin, Xvfb};
+    use GpuDriver::{Lavapipe, Radv};
+    let full = display_host(&["kwin", "xwayland", "runtime", "xvfb"]);
+    let server = |request, driver, host: &HostDisplay| {
+        gpu_run::select_display(request, driver, host).map(|selection| selection.server)
+    };
+    assert_eq!(server(Auto, Radv, &full), Ok(DisplayServer::Kwin));
+    let kwin = gpu_run::select_display(Auto, Radv, &full).expect("KWin");
+    assert_eq!(kwin.runtime_dir, Some(PathBuf::from("/run/user/1002")));
+    assert!(!kwin.fell_back);
+    assert_eq!(server(Auto, Lavapipe, &full), Ok(DisplayServer::Xvfb));
+    let lavapipe = gpu_run::select_display(Auto, Lavapipe, &full).expect("Xvfb");
+    assert!(
+        !lavapipe.fell_back && lavapipe.runtime_dir.is_none(),
+        "{lavapipe:?}"
+    );
+    for (host, missing) in [
+        (
+            display_host(&["xwayland", "runtime", "xvfb"]),
+            MissingDisplayTool::Kwin,
+        ),
+        (
+            display_host(&["kwin", "runtime", "xvfb"]),
+            MissingDisplayTool::Xwayland,
+        ),
+        (
+            display_host(&["kwin", "xwayland", "xvfb"]),
+            MissingDisplayTool::RuntimeDir,
+        ),
+    ] {
+        let fallback = gpu_run::select_display(Auto, Radv, &host).expect("a fallback");
+        assert_eq!(fallback.server, DisplayServer::Xvfb);
+        assert!(fallback.fell_back);
+        assert!(
+            fallback.reason.contains(&missing.to_string()),
+            "{}",
+            fallback.reason
+        );
+        assert!(
+            fallback.reason.contains("MESA_VK_WSI_DEBUG=sw"),
+            "{}",
+            fallback.reason
+        );
+        assert_eq!(
+            server(Kwin, Radv, &host),
+            Err(DisplaySelectionError::KwinUnavailable(vec![missing]))
+        );
+    }
+    let bare_desktop = display_host(&["desktop"]);
+    assert_eq!(server(Auto, Radv, &bare_desktop), Ok(DisplayServer::Host));
+    assert_eq!(
+        server(Auto, Lavapipe, &bare_desktop),
+        Ok(DisplayServer::Host)
+    );
+    let nothing = display_host(&[]);
+    assert_eq!(
+        server(Auto, Radv, &nothing),
+        Err(DisplaySelectionError::NoDisplay)
+    );
+    assert_eq!(
+        server(Kwin, Lavapipe, &full),
+        Err(DisplaySelectionError::KwinOnLavapipe)
+    );
+    assert_eq!(server(Kwin, Radv, &full), Ok(DisplayServer::Kwin));
+    assert_eq!(server(Xvfb, Radv, &full), Ok(DisplayServer::Xvfb));
+    assert_eq!(server(Xvfb, Lavapipe, &full), Ok(DisplayServer::Xvfb));
+    assert_eq!(
+        server(Xvfb, Radv, &bare_desktop),
+        Err(DisplaySelectionError::XvfbUnavailable)
+    );
+    assert_eq!(DisplayRequest::parse(None), Ok(Auto));
+    assert_eq!(DisplayRequest::parse(Some("kwin")), Ok(Kwin));
+    assert_eq!(DisplayRequest::parse(Some("xvfb")), Ok(Xvfb));
+    assert_eq!(
+        DisplayRequest::parse(Some("weston")),
+        Err(DisplaySelectionError::InvalidRequest("weston".into()))
+    );
+}
+
+/// Whether this process's windowed children use `KWin`; when not, says why and checks that a
+/// lavapipe process never does.
+fn kwin_is_selected(test: &str) -> bool {
+    let display = gpu_run::selected_display();
+    if display.server == DisplayServer::Kwin {
+        return true;
+    }
+    eprintln!("{test}: no KWin run, because the {display}");
+    if gpu_run::selected_driver().driver == GpuDriver::Lavapipe {
+        assert_eq!(
+            display.server,
+            DisplayServer::Xvfb,
+            "lavapipe stays on Xvfb"
+        );
+    }
+    false
+}
+
+/// Writes an executable shell script `name` with `body` into `directory`.
+fn script(directory: &Path, name: &str, body: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = directory.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n"))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+    Ok(path)
+}
+
+/// The message of a caught panic.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+        })
+        .unwrap_or_default()
+}
+
+/// T-8: a `KWin` session whose program exits 3 fails the run with that status, through the
+/// status shim, on the real `KWin` and the shared lock.
+#[test]
+fn a_failing_kwin_session_fails_the_run() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out() || !kwin_is_selected("a_failing_kwin_session_fails_the_run") {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let program = script(directory.path(), "exit3.sh", "echo kwin-probe-ran; exit 3")?;
+    let command = gpu_run::virtual_gpu_command_with(&program, None, DisplayRequest::Kwin);
+    assert_eq!(command.display_name(), "kwin");
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        command.run("kwin exit 3 probe")
+    }));
+    let Err(payload) = caught else {
+        panic!("a session that exits 3 must fail the run");
+    };
+    let message = panic_text(payload.as_ref());
+    assert!(message.contains("exited with Some(3)"), "{message}");
+    assert!(
+        message.contains("kwin-probe-ran"),
+        "the program's output is captured: {message}"
+    );
+    Ok(())
+}
+
+/// A process as `/proc/<pid>/stat` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessEntry {
+    /// Process ID.
+    pid: u32,
+    /// Parent process ID.
+    parent: u32,
+    /// Command name, in parentheses in the stat line.
+    comm: String,
+    /// Start time in clock ticks after boot, which tells a reused PID from the original.
+    start: u64,
+    /// `true` for a zombie (state `Z`), which has exited and only waits to be reaped.
+    zombie: bool,
+}
+
+/// Every process of the host, from `/proc/<pid>/stat`, which is readable even for the
+/// non-dumpable `kwin_wayland` (Debian gives it file capabilities, so its `environ` is not).
+fn processes() -> Vec<ProcessEntry> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter_map(|pid| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            let (head, rest) = stat.rsplit_once(')')?;
+            let comm = head.split_once('(')?.1.to_owned();
+            let fields: Vec<&str> = rest.split_whitespace().collect();
+            Some(ProcessEntry {
+                pid,
+                parent: fields.get(1)?.parse().ok()?,
+                comm,
+                start: fields.get(19)?.parse().ok()?,
+                zombie: *fields.first()? == "Z",
+            })
+        })
+        .collect()
+}
+
+/// The live processes whose environment holds `tag`; the run's `timeout` is one of them.
+fn tagged_roots(tag: &str) -> Vec<u32> {
+    processes()
+        .into_iter()
+        .filter(|process| {
+            std::fs::read(format!("/proc/{}/environ", process.pid)).is_ok_and(|environ| {
+                environ
+                    .split(|byte| *byte == 0)
+                    .any(|entry| entry == tag.as_bytes())
+            })
+        })
+        .map(|process| process.pid)
+        .collect()
+}
+
+/// `roots` and every live descendant of them.
+fn process_tree(roots: &[u32]) -> Vec<ProcessEntry> {
+    let all = processes();
+    let mut tree: Vec<ProcessEntry> = all
+        .iter()
+        .filter(|process| roots.contains(&process.pid))
+        .cloned()
+        .collect();
+    let mut grown = true;
+    while grown {
+        grown = false;
+        for process in &all {
+            let known = tree.iter().any(|member| member.pid == process.pid);
+            if !known && tree.iter().any(|member| member.pid == process.parent) {
+                tree.push(process.clone());
+                grown = true;
+            }
+        }
+    }
+    tree.retain(|process| !process.zombie);
+    tree
+}
+
+/// The members of `sample` that still run: same PID, same start time, not a zombie.
+fn still_running(sample: &[ProcessEntry]) -> Vec<ProcessEntry> {
+    let now = processes();
+    sample
+        .iter()
+        .filter(|old| {
+            now.iter()
+                .any(|new| new.pid == old.pid && new.start == old.start && !new.zombie)
+        })
+        .cloned()
+        .collect()
+}
+
+/// What one `KWin` probe run ([`kwin_probe`]) showed and left.
+struct KwinProbe {
+    /// The run's panic message (every probe's run fails).
+    message: String,
+    /// The run's processes the sampler saw: `timeout` and its descendants.
+    during: Vec<ProcessEntry>,
+    /// From the sampler's first sight of the run's processes, after the lock, to the run's return.
+    run_seen_for: Duration,
+}
+
+/// Runs a `KWin` session whose program first connects `xdpyinfo` (so `KWin` starts Xwayland),
+/// then runs `body`, under a 20 s limit, and checks that the run leaves nothing behind:
+/// immediately after the run returns, none of the processes a sampler saw during it (same PID
+/// and start time) still runs, no process carries the run's tag in its environment (a
+/// re-parented or late Xwayland), `KWin`'s socket, socket lock and session directory are gone,
+/// and no X socket that appeared during the run remains with a lock naming one of its processes,
+/// or with no lock at all.
+///
+/// The sampler finds the run's `timeout` by a variable only this run sets, and records it with
+/// all its descendants until `expected` are all seen.
+fn kwin_probe(
+    label: &str,
+    body: &str,
+    expected: &[&str],
+) -> Result<KwinProbe, Box<dyn std::error::Error>> {
+    let tag = format!(
+        "SPACE_SCUFFLE_KWIN_PROBE={}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    let (key, value) = tag.split_once('=').expect("invariant: the tag has an =");
+    // `KWin` starts Xwayland only when an X client connects, and the probe must see it.
+    let x_client = gpu_run::find_on_path("xdpyinfo")
+        .ok_or("xdpyinfo is missing; the KWin probes need it to start Xwayland (x11-utils)")?;
+    let directory = tempfile::tempdir()?;
+    let program = script(
+        directory.path(),
+        "probe.sh",
+        &format!("{} > /dev/null\n{body}", x_client.display()),
+    )?;
+    let mut command = gpu_run::virtual_gpu_command_with(&program, None, DisplayRequest::Kwin);
+    command.env(key, value).set_run_limit_for_self_test(20);
+    let (socket, session_directory) = command
+        .kwin_session_paths()
+        .ok_or("a KWin command has a KWin session")?;
+    let x_sockets_before = x_sockets();
+    let run_returned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sampler = {
+        let tag = tag.clone();
+        let run_returned = std::sync::Arc::clone(&run_returned);
+        let expected: Vec<String> = expected.iter().map(|name| (*name).to_owned()).collect();
+        std::thread::spawn(move || {
+            // Until the run returns: the lock wait comes first, then the 20 s run, its grace
+            // and the drain.
+            let mut widest = Vec::new();
+            let mut first_seen = None;
+            while !run_returned.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(250));
+                let tree = process_tree(&tagged_roots(&tag));
+                if first_seen.is_none() && !tree.is_empty() {
+                    first_seen = Some(Instant::now());
+                }
+                let complete = expected
+                    .iter()
+                    .all(|name| tree.iter().any(|process| &process.comm == name));
+                if tree.len() > widest.len() || complete {
+                    widest = tree;
+                }
+                if complete {
+                    break;
+                }
+            }
+            (widest, first_seen)
+        })
+    };
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| command.run(label)));
+    let returned = Instant::now();
+    // Once, at once: every process of the run must be gone when the run returns.
+    let tagged_after = tagged_roots(&tag);
+    run_returned.store(true, std::sync::atomic::Ordering::Release);
+    let (during, first_seen) = sampler.join().map_err(|_| "the sampler panicked")?;
+    let left = still_running(&during);
+    let Err(payload) = caught else {
+        panic!("{label}: the probe's run must fail");
+    };
+    let message = panic_text(payload.as_ref());
+    let names: Vec<&str> = during.iter().map(|process| process.comm.as_str()).collect();
+    for name in expected {
+        assert!(
+            names.contains(name),
+            "{name} runs during the session: {names:?}"
+        );
+    }
+    assert!(left.is_empty(), "{label}: the run left {left:?}");
+    assert!(
+        tagged_after.is_empty(),
+        "{label}: processes with the run's tag still run: {tagged_after:?}"
+    );
+    let mut socket_lock = socket.clone().into_os_string();
+    socket_lock.push(".lock");
+    for file in [socket, PathBuf::from(socket_lock), session_directory] {
+        assert!(!file.exists(), "{label}: the run left {}", file.display());
+    }
+    let ours: Vec<u32> = during.iter().map(|process| process.pid).collect();
+    let left_x: Vec<String> = x_sockets()
+        .into_iter()
+        .filter(|name| !x_sockets_before.contains(name))
+        .filter(|name| {
+            let lock = format!("/tmp/.{name}-lock");
+            std::fs::read_to_string(lock).map_or(true, |pid| {
+                pid.trim()
+                    .parse::<u32>()
+                    .is_ok_and(|pid| ours.contains(&pid))
+            })
+        })
+        .collect();
+    assert!(
+        left_x.is_empty(),
+        "{label}: the run left X sockets {left_x:?}"
+    );
+    let first_seen = first_seen.ok_or("the sampler never saw the run")?;
+    Ok(KwinProbe {
+        message,
+        during,
+        run_seen_for: returned.saturating_duration_since(first_seen),
+    })
+}
+
+/// The names (`X<n>`) in `/tmp/.X11-unix`.
+fn x_sockets() -> Vec<String> {
+    std::fs::read_dir("/tmp/.X11-unix").map_or_else(
+        |_| Vec::new(),
+        |entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        },
+    )
+}
+
+/// T-8: a `KWin` session that outlives its run limit is ended by `timeout`, and nothing of the
+/// run remains the moment the run returns ([`kwin_probe`]): no `kwin_wayland`, `Xwayland` or
+/// program, no tagged process, no socket or session file, no X socket.
+#[test]
+fn a_timed_out_kwin_session_leaves_nothing_running() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out()
+        || !kwin_is_selected("a_timed_out_kwin_session_leaves_nothing_running")
+    {
+        return Ok(());
+    }
+    let probe = kwin_probe(
+        "kwin timeout probe",
+        "exec /bin/sleep 600",
+        &["timeout", "kwin_wayland", "sleep", "Xwayland"],
+    )?;
+    assert!(
+        probe.message.contains("did not finish within 20 s"),
+        "{}",
+        probe.message
+    );
+    eprintln!(
+        "kwin timeout probe: returned {:.1} s after it started; during the run {:?}; nothing left",
+        probe.run_seen_for.as_secs_f64(),
+        probe
+            .during
+            .iter()
+            .map(|process| &process.comm)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// Review item 3: a session program that ignores `SIGTERM` survives `timeout`'s signal after
+/// `KWin` has exited. The harness kills `timeout`'s whole group when `timeout` exits, so the run
+/// still returns within its limit, the kill grace and the drain (plus `KWin`'s start), and
+/// leaves nothing ([`kwin_probe`]). Without the group kill it would wait out the 600 s sleep.
+#[test]
+fn a_session_child_that_ignores_sigterm_cannot_outlive_the_run(
+) -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out()
+        || !kwin_is_selected("a_session_child_that_ignores_sigterm_cannot_outlive_the_run")
+    {
+        return Ok(());
+    }
+    let probe = kwin_probe(
+        "kwin SIGTERM-ignoring probe",
+        "trap '' TERM\nexec /bin/sleep 600",
+        &["timeout", "kwin_wayland", "sleep", "Xwayland"],
+    )?;
+    assert!(
+        probe.message.contains("did not finish within 20 s"),
+        "{}",
+        probe.message
+    );
+    // 20 s limit, the kill grace, the drain, and a margin for KWin's start and the sampler.
+    let bound = Duration::from_secs(
+        20 + u64::from(gpu_run::KILL_GRACE_SECS) + gpu_run::OUTPUT_DRAIN_SECS + 15,
+    );
+    assert!(
+        probe.run_seen_for <= bound,
+        "the run took {:.1} s after it started, more than {:.0} s",
+        probe.run_seen_for.as_secs_f64(),
+        bound.as_secs_f64()
+    );
+    eprintln!(
+        "kwin SIGTERM-ignoring probe: returned {:.1} s after it started; nothing left",
+        probe.run_seen_for.as_secs_f64()
+    );
+    Ok(())
+}
+
+/// Review item 3 and re-review item 2, on Linux: when the group leader exits, a process it left
+/// in its group, one that ignores `SIGTERM` and holds the output pipes, is killed after
+/// [`gpu_run::GROUP_EXIT_GRACE`], and the run returns only once it is gone, with the leader's
+/// status and output.
+#[test]
+fn a_leftover_group_member_cannot_hold_the_output() -> Result<(), Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "trap '' TERM; /bin/sleep 600 & echo \"$!\"; exit 7"]);
+    let output = gpu_run::run_to_end(&mut command)?;
+    let elapsed = started.elapsed();
+    assert_eq!(output.status.code(), Some(7));
+    let sleeper: u32 = String::from_utf8(output.stdout)?.trim().parse()?;
+    let bound = gpu_run::GROUP_EXIT_GRACE + Duration::from_secs(3);
+    assert!(
+        elapsed >= gpu_run::GROUP_EXIT_GRACE && elapsed < bound,
+        "the run took {:.1} s; the grace is {:.0} s",
+        elapsed.as_secs_f64(),
+        gpu_run::GROUP_EXIT_GRACE.as_secs_f64()
+    );
+    // At once, with no settle: run_to_end returns only after the group is empty.
+    let alive = processes()
+        .into_iter()
+        .any(|process| process.pid == sleeper && process.comm == "sleep" && !process.zombie);
+    assert!(!alive, "the leftover sleep {sleeper} still runs");
+    Ok(())
+}
+
+/// Re-review item 1, on Linux: a group member that finishes on its own within
+/// [`gpu_run::GROUP_EXIT_GRACE`] after the leader exits (as Xvfb does after `xvfb-run`'s
+/// `SIGTERM`, removing its lock file and socket) is not killed, and the run ends when it does.
+#[test]
+fn a_group_member_that_finishes_in_the_grace_is_not_killed(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mark = directory.path().join("finished");
+    let started = Instant::now();
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "( /bin/sleep 0.5; touch \"$MARK\" ) & exit 0"])
+        .env("MARK", &mark);
+    let output = gpu_run::run_to_end(&mut command)?;
+    let elapsed = started.elapsed();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        mark.exists(),
+        "the group member was killed before it finished"
+    );
+    assert!(
+        elapsed < gpu_run::GROUP_EXIT_GRACE,
+        "the run waited {:.1} s instead of ending with its last member",
+        elapsed.as_secs_f64()
+    );
+    Ok(())
+}
+
+/// The X server files in `/tmp` left without a live owner: a `/tmp/.X<n>-lock` whose PID no
+/// longer runs, or a socket `/tmp/.X11-unix/X<n>` with no lock, among those not in `before`.
+fn orphaned_x_files(before: &[String]) -> Vec<String> {
+    let mut orphans = Vec::new();
+    for name in x_sockets() {
+        if before.contains(&name) {
+            continue;
+        }
+        let lock = format!("/tmp/.{name}-lock");
+        let owner = std::fs::read_to_string(&lock)
+            .ok()
+            .and_then(|pid| pid.trim().parse::<u32>().ok());
+        let live = owner.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+        if !live {
+            orphans.push(format!("/tmp/.X11-unix/{name} (lock {lock}: {owner:?})"));
+        }
+    }
+    let Ok(entries) = std::fs::read_dir("/tmp") else {
+        return orphans;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(display) = name
+            .strip_prefix(".X")
+            .and_then(|rest| rest.strip_suffix("-lock"))
+        else {
+            continue;
+        };
+        if before.contains(&format!("X{display}")) {
+            continue;
+        }
+        let owner = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|pid| pid.trim().parse::<u32>().ok());
+        if !owner.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists()) {
+            orphans.push(format!("/tmp/{name}: {owner:?}"));
+        }
+    }
+    orphans
+}
+
+/// The display numbers' names (`X<n>`) with a lock file or a socket in `/tmp` now.
+fn x_displays() -> Vec<String> {
+    let mut names = x_sockets();
+    if let Ok(entries) = std::fs::read_dir("/tmp") {
+        for entry in entries.filter_map(Result::ok) {
+            if let Some(display) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix(".X"))
+                .and_then(|rest| rest.strip_suffix("-lock"))
+            {
+                names.push(format!("X{display}"));
+            }
+        }
+    }
+    names
+}
+
+/// Re-review item 1: a run under `xvfb-run` leaves no Xvfb lock file or socket behind, because
+/// the harness gives Xvfb its grace to clean up before it kills the group. Runs on the selected
+/// driver with the display forced to Xvfb; the program renders nothing, so the run fails on its
+/// missing adapter line, after the display is gone.
+#[test]
+fn an_xvfb_run_leaves_no_x_server_files() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let before = x_displays();
+    let command =
+        gpu_run::virtual_gpu_command_with(Path::new("/bin/true"), None, DisplayRequest::Xvfb);
+    assert!(
+        command.display_name().starts_with("xvfb"),
+        "{}",
+        command.display_name()
+    );
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        command.run("xvfb leftover probe")
+    }));
+    let Err(payload) = caught else {
+        panic!("a program that renders nothing must fail the adapter check");
+    };
+    let message = panic_text(payload.as_ref());
+    assert!(message.contains("no AdapterInfo line"), "{message}");
+    let orphans = orphaned_x_files(&before);
+    assert!(orphans.is_empty(), "the Xvfb run left {orphans:?}");
+}
+
+/// Review item 4: a session directory left by an earlier run, whose `status` says 0, cannot pass
+/// a failed run. The run refuses before the lock and the stale file stays untouched.
+#[test]
+fn a_stale_session_directory_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out() || !kwin_is_selected("a_stale_session_directory_is_refused") {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let program = script(directory.path(), "exit3.sh", "exit 3")?;
+    let command = gpu_run::virtual_gpu_command_with(&program, None, DisplayRequest::Kwin);
+    let (_, session_directory) = command
+        .kwin_session_paths()
+        .ok_or("a KWin command has a KWin session")?;
+    std::fs::create_dir(&session_directory)?;
+    let stale = session_directory.join("status");
+    std::fs::write(&stale, "0\n")?;
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        command.run("stale session probe")
+    }));
+    let still_there = std::fs::read_to_string(&stale);
+    std::fs::remove_dir_all(&session_directory)?;
+    let Err(payload) = caught else {
+        panic!("a stale session directory must refuse the run");
+    };
+    let message = panic_text(payload.as_ref());
+    assert!(
+        message.contains("cannot write the KWin session files"),
+        "{message}"
+    );
+    assert_eq!(still_there?, "0\n", "the stale file is left as it was");
+    Ok(())
+}
+
+/// T-5: the ledger line names the display; a lock self-test has none.
+#[test]
+fn the_ledger_line_names_the_display() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let lock = directory.path().join("gpu.lock");
+    let mut command = GpuCommand::lock_probe(Path::new("/bin/sh"), &lock, Duration::from_secs(5));
+    command.args(["-c", "true"]);
+    assert_eq!(command.display_name(), "none");
+    let run = command.run("display probe");
+    assert!(
+        run.ledger
+            .starts_with("label=display probe\tdriver=none\tdisplay=none\tlock=private lock\t"),
+        "{}",
+        run.ledger
+    );
+    assert!(run.ledger.ends_with('\n'));
+    Ok(())
+}
+
+/// T-5: an offscreen child logs no window, so its timeline has no app-build phase and that time
+/// counts toward "startup and frames".
+#[test]
+fn an_offscreen_timeline_has_no_window_phase() {
+    let spawned = gpu_run::log_record_time("2026-11-17T10:00:00.000000Z").expect("spawn time");
+    let log = "2026-11-17T10:00:01.000000Z INFO bevy_diagnostic: SystemInfo { os: \"Linux\" }\n\
+               2026-11-17T10:00:03.000000Z INFO bevy_render::renderer: AdapterInfo { name: \"AMD\" }\n\
+               2026-11-17T10:00:09.500000Z INFO client::effects: effect lab done\n";
+    let timeline = gpu_run::ChildTimeline::read(log, spawned, Duration::from_secs(10));
+    assert_eq!(
+        timeline.phases,
+        [
+            ("launch", Duration::from_secs(1)),
+            ("render device", Duration::from_secs(2)),
+            ("startup and frames", Duration::from_millis(6_500)),
+            ("after the last log record", Duration::from_millis(500)),
+        ]
+    );
 }

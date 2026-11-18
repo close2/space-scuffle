@@ -440,12 +440,13 @@ fn structured_terrain_sampling_preserves_uniform_layout() -> TestResult {
 
 /// The production plugin schedule builds a real render device, so it runs as a GPU child on the
 /// selected driver under the GPU lock (`docs/plans/2026-11-03-gpu-test-harness.md`, section 11).
+/// Its window has no winit backend, so no surface exists, and the child runs with no display.
 #[test]
 fn production_plugin_schedule_initializes_terrain_and_restores_tab_camera() {
     if gpu_run::gpu_tests_opted_out() {
         return;
     }
-    gpu_run::run_test_child(
+    gpu_run::run_offscreen_test_child(
         "production_plugin_schedule_child",
         "in-process production plugin schedule",
     );

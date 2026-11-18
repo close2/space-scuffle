@@ -6,7 +6,8 @@
 //! (`support/effect_subjects.rs`, sorted by name; one parent test per index, no effect named
 //! in Rust), three children of this binary run
 //! the production effect lab (`client::effects::lab`) through `support/gpu_run.rs` (radv with
-//! the shared lock, or lavapipe; charter C21) at 1280×720 under the battle camera's default
+//! the shared lock, or lavapipe; charter C21), offscreen (`LabSurface::Offscreen`: no window,
+//! no display), at 1280×720 under the battle camera's default
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
@@ -66,7 +67,8 @@ use client::effects::catalog::schema::{Binding, PlacementDef, Priority};
 use client::effects::catalog::{Block, Effect, EffectCatalog, EFFECTS_CATALOG_PATH};
 use client::effects::lab::program::{sequence_frames, sequence_take};
 use client::effects::lab::{
-    lab_app, LabGround, LabProgram, LabShot, LabSubject, LabTake, LabZoom, SEQUENCE_STEP,
+    lab_app, LabGround, LabProgram, LabShot, LabSubject, LabSurface, LabTake, LabZoom,
+    SEQUENCE_STEP,
 };
 use client::ResolvedAssetsRoot;
 use effect_subjects::SplashSubject;
@@ -351,27 +353,34 @@ fn run_child(part: u32) {
         .parse()
         .expect("the index is a number");
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
-    let mut app = lab_app(root, program(index, part, out), None, SIZE).expect("the lab app builds");
+    let mut app = lab_app(
+        root,
+        program(index, part, out),
+        None,
+        SIZE,
+        LabSurface::Offscreen,
+    )
+    .expect("the lab app builds");
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 
 /// The stills child.
 #[test]
-#[ignore = "launched by the slice effect tests on a virtual display"]
+#[ignore = "launched by the slice effect tests through gpu_run, offscreen"]
 fn effect_slice_stills_child() {
     run_child(0);
 }
 
 /// The first half of the sequence.
 #[test]
-#[ignore = "launched by the slice effect tests on a virtual display"]
+#[ignore = "launched by the slice effect tests through gpu_run, offscreen"]
 fn effect_slice_sequence_child() {
     run_child(1);
 }
 
 /// The second half of the sequence.
 #[test]
-#[ignore = "launched by the slice effect tests on a virtual display"]
+#[ignore = "launched by the slice effect tests through gpu_run, offscreen"]
 fn effect_slice_sequence_late_child() {
     run_child(2);
 }
@@ -960,7 +969,7 @@ fn check_subject(index: usize) -> TestResult {
             "slice sequence, second half",
         ),
     ] {
-        let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+        let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
         command.args(["--ignored", "--exact", "--nocapture", child]);
         command.env(OUT_VAR, directory.path());
         command.env(INDEX_VAR, index.to_string());
@@ -1111,7 +1120,7 @@ fn line_subjects() -> Vec<usize> {
 /// The masked child: the line subject named by [`INDEX_VAR`] seen only from point
 /// [`FIRST_SEEN_POINT`] on, and the background.
 #[test]
-#[ignore = "launched by the slice effect tests on a virtual display"]
+#[ignore = "launched by the slice effect tests through gpu_run, offscreen"]
 fn effect_slice_masked_line_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
     let index: usize = std::env::var(INDEX_VAR)
@@ -1132,7 +1141,8 @@ fn effect_slice_masked_line_child() {
         out,
     };
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
-    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    let mut app =
+        lab_app(root, program, None, SIZE, LabSurface::Offscreen).expect("the lab app builds");
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 
@@ -1155,7 +1165,7 @@ fn check_masked_line(index: usize) -> TestResult {
     let subjects = effect_subjects::splash_subjects();
     let subject = &subjects[index];
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
     command.args([
         "--ignored",
         "--exact",
@@ -1342,7 +1352,7 @@ fn shot_age(effect: &Effect, shot: &ShotSubject) -> f32 {
 /// quarter and at three quarters of its `Critical` layers' life (the body in the fog, then
 /// seen).
 #[test]
-#[ignore = "launched by the shot effect test on a virtual display"]
+#[ignore = "launched by the shot effect test through gpu_run, offscreen"]
 fn effect_shot_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
     let index: usize = std::env::var(INDEX_VAR)
@@ -1406,7 +1416,8 @@ fn effect_shot_child() {
         out,
     };
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
-    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    let mut app =
+        lab_app(root, program, None, SIZE, LabSurface::Offscreen).expect("the lab app builds");
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 
@@ -1456,7 +1467,7 @@ fn check_shot(index: usize) -> TestResult<String> {
         ("2", "shot beside the fog"),
         ("3", "shot beyond its reach of the fog"),
     ] {
-        let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+        let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
         command.args(["--ignored", "--exact", "--nocapture", "effect_shot_child"]);
         command.env(OUT_VAR, directory.path());
         command.env(INDEX_VAR, index.to_string());
@@ -1787,7 +1798,7 @@ fn look_lab(subject: &LookSubject) -> LabSubject {
 /// The look child: on each ground the background, then the whole look and its `Critical` layers
 /// at the sampled ages.
 #[test]
-#[ignore = "launched by the look visibility test on a virtual display"]
+#[ignore = "launched by the look visibility test through gpu_run, offscreen"]
 fn effect_look_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
     let index: usize = std::env::var(LOOK_INDEX_VAR)
@@ -1851,7 +1862,8 @@ fn effect_look_child() {
         out,
     };
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
-    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    let mut app =
+        lab_app(root, program, None, SIZE, LabSurface::Offscreen).expect("the lab app builds");
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
 
@@ -1883,7 +1895,7 @@ fn check_look(index: usize, keep: Option<&Path>) -> TestResult<String> {
     let subjects = look_subjects();
     let subject = &subjects[index];
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", "effect_look_child"]);
     command.env(OUT_VAR, directory.path());
     command.env(LOOK_INDEX_VAR, index.to_string());
