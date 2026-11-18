@@ -834,3 +834,30 @@ Radv POLARIS10, Mesa 25.0.7, built from `63566e1b`; the build after the server's
    the offscreen child, 7 captures compared, 0 differ. T-2: the same window child forced onto Xvfb and forced onto
    KWin, 7 captures compared, 0 differ. F3: each effect capture changes 13,691 to 20,280 pixels of the empty ground.
    Child times: window on Xvfb 30.2 and 35.5 s, window on KWin 13.3 s, offscreen 9.9 s.
+3. **T-4 on radv: stopped, one target fails under KWin.** In both KWin rounds, 18 of the 19 targets' checks pass
+   under KWin (50 and 48 KWin children; the 2 Xvfb children are T-1's and T-2's forced ones). `terrain_tests`
+   `test_terrain_preview_renders` fails in both KWin rounds and passes in both Xvfb rounds: `assertion left ==
+   right failed: Image width must be 1600 for overview, left: 1280` (`terrain_tests.rs:1142`). Cause:
+   the test builds its child with `virtual_gpu_command` and no screen, so KWin's virtual output is the default
+   1280×720 and KWin fits the 1600×900 `terrain_preview` window to it. Xvfb's default 1280×1024 screen never
+   resized an X window, which hid the missing screen. The fix is test-only: `virtual_gpu_command_with(...,
+   Some("1600x900x24"), ...)`, as `editor_app_tests` does. It is not made here; per the stop rule, the
+   orchestrator decides. `showcase_tests` failed once (KWin round 2) for a reason outside WP3: it waited 290 s for the
+   GPU lock, held by the other user's `corpus` test; it passed under KWin in round 1. No `kwin_wayland`, `Xwayland`
+   or `ss-gpu-*` session directory remained after any round.
+4. **Interleaved timings** (`~/scratch/gpu-readback/wp3/timing/<arm>-<round>/`, order xvfb 1, kwin 1, kwin 2,
+   xvfb 2; built from `63566e1b`). **The host was not quiet:** the other user ran a parallel build throughout, and
+   the 1-minute load at a target's start ranged from 7 to 270 on 16 cores (recorded per target in `meta.txt`).
+   Per-target wall times swing by up to 30× between rounds of the same arm (`battle_hud_window_tests` 21 s and
+   608 s on Xvfb), so they show no reliable per-target difference.
+
+   | round | targets passed | children (KWin / Xvfb / other) | wall s | children's run s | GPU-lock wait s |
+   |---|---|---|---|---|---|
+   | xvfb 1 | 19 / 19 | 0 / 48 / 4 | 2182 | 1472 | 278 |
+   | kwin 1 | 18 / 19 | 50 / 2 / 4 | 1717 | 1400 | 32 |
+   | kwin 2 | 17 / 19 | 48 / 2 / 4 | 2695 | 1125 | 65 |
+   | xvfb 2 | 19 / 19 | 0 / 48 / 4 | 4316 | 1591 | 96 |
+
+   The children's own run time, which excludes lock waits and cargo, is lower under KWin (1400 and 1125 s against
+   1472 and 1591 s, about 16 % less on average). That direction matches WP1, but the load makes the size
+   unreliable. A clean figure needs a rerun on a quiet host, after the terrain fix.
