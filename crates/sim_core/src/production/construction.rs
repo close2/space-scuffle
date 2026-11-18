@@ -139,6 +139,7 @@ impl SimWorld {
         let ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } = arch.shape
         else {
             return Err(BuildRejection::NotAStructure(structure_type));
@@ -457,18 +458,24 @@ impl SimWorld {
         site: Footprint,
     ) -> Result<EntityId, BuildRejection> {
         let prepared = self.prepare_foundation(structure_type, owner, site)?;
+        // The foundation takes the structure's cells and cuts its catalog shape (plan
+        // `2026-11-18-contour-footprints` D-2).
+        let Ok(ShapeKind::BuildingDome { shape, .. }) =
+            self.catalog.get(structure_type).map(|arch| arch.shape)
+        else {
+            return Err(BuildRejection::NotAStructure(structure_type));
+        };
         #[expect(
             clippy::cast_possible_truncation,
             reason = "footprint sides were read from u8 fields in site_of"
         )]
+        let footprint = sim_map::StructureFootprint {
+            width: site.width as u8,
+            height: site.height as u8,
+            shape,
+        };
         self.map
-            .place_structure(
-                prepared.entity.id,
-                site.left,
-                site.bottom,
-                site.width as u8,
-                site.height as u8,
-            )
+            .place_structure(prepared.entity.id, (site.left, site.bottom), footprint)
             .map_err(|_| BuildRejection::OutOfBounds)?;
         let id = self.commit_spawn(prepared);
         self.pathfinder.recompute_clearance(&self.map);
@@ -518,7 +525,7 @@ impl SimWorld {
             self.leave_footprint(id, site);
             return;
         }
-        match self.approach_footprint(id, site) {
+        match self.approach_footprint(id, site, Self::approach_edge) {
             crate::economy::Approach::Walking => return,
             crate::economy::Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));
@@ -583,7 +590,7 @@ impl SimWorld {
             self.end_task(id, Some(TaskEventKind::FoundationLost));
             return;
         };
-        match self.approach_footprint(id, site) {
+        match self.approach_footprint(id, site, Self::approach_edge) {
             crate::economy::Approach::Walking => {}
             crate::economy::Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));
@@ -672,7 +679,7 @@ impl SimWorld {
         if actor.task.goal.is_some() {
             return;
         }
-        match self.approach_point(actor.position, site) {
+        match self.approach_edge(actor.position, site) {
             Some(goal) if actor.task.legs < crate::economy::MAX_TASK_LEGS => {
                 self.set_task_goal(id, goal);
             }

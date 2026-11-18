@@ -158,7 +158,11 @@ fn mesh_nearest_reachable_point_is_none_from_the_best_cell() -> TestResult {
 fn structure_wall() -> Result<GameMap, Box<dyn std::error::Error>> {
     let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(0)))?;
     for y in 0..20 {
-        map.place_structure(sim_types::EntityId(100 + y), 10, y, 1, 1)?;
+        map.place_structure(
+            sim_types::EntityId(100 + y),
+            (10, y),
+            sim_map::StructureFootprint::square(1, 1),
+        )?;
     }
     Ok(map)
 }

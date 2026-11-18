@@ -14,7 +14,10 @@
 //! it is part of the simulation's checksum and of the map tools' diagnostics.
 //!
 //! # Invariants
-//! - `clearance_at` is zero exactly on cells no unit may enter.
+//! - `clearance_at` is zero on every cell no unit may enter; a cell cut by a structure's contour
+//!   may report zero although a disc reaches into it. Structures are rasterised conservatively
+//!   (plan `2026-11-18-contour-footprints` D-6): the field can only underestimate beside a
+//!   chamfer, never claim a disc that does not fit, and a full-box shape marks exactly its cells.
 //! - The mesh and the clearance field always describe the same map state, and `nav_version`
 //!   changes whenever either is rebuilt.
 //! - The lane cuts (plan `2026-11-10-group-routing`, D-2) are built once from the terrain and
@@ -22,7 +25,7 @@
 //!   with every mesh.
 
 use crate::error::{MapError, Result};
-use crate::grid::{CellFlags, GameMap};
+use crate::grid::GameMap;
 use crate::navmesh::lanes::{LaneCuts, LaneWord};
 use crate::navmesh::search::{LaneRestriction, MeshRoute, MeshSearch};
 use crate::navmesh::segment::WallContact;
@@ -178,17 +181,34 @@ impl ClearanceWorkspace {
         }
     }
 
-    /// Adds every structure footprint cell to the walls. Returns whether there were any.
+    /// Adds every structure's shape to the walls: the four corners of every half-cell whose open
+    /// interior meets the shape's open interior (D-6). For a full-box shape that is every lattice
+    /// point of its closed cells. Returns whether there were any structures.
     fn mark_structure_walls(&mut self, map: &GameMap) -> bool {
-        let mut found = false;
-        let width = map.width() as usize;
-        for (index, cell) in map.cells().iter().enumerate() {
-            if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) {
-                self.mark_cell_wall(index % width, index / width);
-                found = true;
+        for placed in map.structures().values() {
+            let (left, bottom) = (
+                i64::from(placed.top_left.0) * 2,
+                i64::from(placed.top_left.1) * 2,
+            );
+            let (right, top) = (
+                left + 2 * i64::from(placed.width),
+                bottom + 2 * i64::from(placed.height),
+            );
+            for hy in bottom..top {
+                for hx in left..right {
+                    if placed.meets_open_half_cell(hx, hy) {
+                        let (x, y) = (
+                            usize::try_from(hx).unwrap_or(0),
+                            usize::try_from(hy).unwrap_or(0),
+                        );
+                        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                            self.mark_wall(x + dx, y + dy);
+                        }
+                    }
+                }
             }
         }
-        found
+        !map.structures().is_empty()
     }
 
     /// Computes the exact squared Euclidean distance from every lattice point to a wall.

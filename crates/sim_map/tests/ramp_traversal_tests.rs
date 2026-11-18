@@ -67,7 +67,11 @@ fn ordinary_terrain_preserves_height_occupancy_and_cliff_boundaries() -> TestRes
     assert_symmetric(&map, (1, 1), (2, 1), false);
     map.cell_mut(2, 1)?.cliff_level = CliffLevel(1);
 
-    map.place_structure(EntityId(900), 2, 1, 1, 1)?;
+    map.place_structure(
+        EntityId(900),
+        (2, 1),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     assert_symmetric(&map, (1, 1), (2, 1), true);
     assert!(!segment(&map, center(1, 1), center(2, 1)));
     map.cell_mut(2, 1)?
@@ -178,7 +182,11 @@ fn continuous_segments_visit_intervening_cells_and_exact_boundaries() -> TestRes
     assert!(!segment(&map, center(1, 1), center(14, 1)));
     assert!(!segment(&map, center(14, 1), center(1, 1)));
     map.cell_mut(7, 1)?.cliff_level = CliffLevel(1);
-    map.place_structure(EntityId(1), 7, 1, 1, 1)?;
+    map.place_structure(
+        EntityId(1),
+        (7, 1),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     assert!(!segment(&map, center(1, 1), center(14, 1)));
     assert!(!segment(&map, center(7, 1), center(7, 1)));
     assert!(!segment(&map, center(1, 1), center(16, 1)));
@@ -275,10 +283,18 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
     // A wall closes every physical route. An observer who has not discovered it
     // must still plan the straight route through the underlying ground surface.
     for y in 0..16 {
-        map.place_structure(EntityId(y + 1), 8, y, 1, 1)?;
+        map.place_structure(
+            EntityId(y + 1),
+            (8, y),
+            sim_map::StructureFootprint::square(1, 1),
+        )?;
     }
     // Together with the wall this leaves cell (7, 7) one cell wide.
-    map.place_structure(EntityId(100), 6, 7, 1, 1)?;
+    map.place_structure(
+        EntityId(100),
+        (6, 7),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     let mut pathfinder = Pathfinder::new(&map);
     let unknown = vec![false; 256];
     let known = vec![true; 256];

@@ -13,9 +13,9 @@
 //! one defect. Tests run in debug and release because the historic failures differ by profile.
 
 use sim_map::{
-    validate_map, CellFlags, CliffLevel, GameMap, MapCell, MapDocument, MapEntityId, MapMetadata,
-    MapResource, MapStartLocation, MapValidationError, MapWatchtower, RampDir, ResourceKind,
-    Watchtower,
+    validate_map, CellFlags, CliffLevel, GameMap, MapCell, MapDocument, MapEntityId, MapError,
+    MapMetadata, MapResource, MapStartLocation, MapValidationError, MapWatchtower,
+    PlacementFailureReason, RampDir, ResourceKind, Watchtower,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -197,18 +197,38 @@ fn f12_watchtower_reveal_beyond_vision_is_rejected() -> TestResult {
 #[test]
 fn f10_removing_a_structure_restores_the_cell_flags_it_found() -> TestResult {
     let mut map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(1)))?;
-    // Buildable but not walkable, for example a pad over a chasm.
+    // Buildable but not walkable, for example a pad over a chasm: no structure may stand on it
+    // (plan `2026-11-18-contour-footprints` D-5), so it cannot be given pathability by a
+    // placement and a removal.
     map.cell_mut(5, 5)?.flags = CellFlags::BUILDABLE;
+    assert!(matches!(
+        map.place_structure(
+            EntityId(1),
+            (5, 5),
+            sim_map::StructureFootprint::square(2, 2)
+        ),
+        Err(MapError::PlacementBlocked {
+            reason: PlacementFailureReason::UnpathableTerrain,
+            ..
+        })
+    ));
+    assert_eq!(map.cell(5, 5)?.flags, CellFlags::BUILDABLE);
+    map.cell_mut(5, 5)?.flags =
+        CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE | CellFlags::LOS_BLOCKER;
     let speed = CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE | CellFlags::SPEED_ZONE;
     map.cell_mut(6, 5)?.flags = speed;
 
-    map.place_structure(EntityId(1), 5, 5, 2, 2)?;
+    map.place_structure(
+        EntityId(1),
+        (5, 5),
+        sim_map::StructureFootprint::square(2, 2),
+    )?;
     map.remove_structure(EntityId(1))?;
 
     assert_eq!(
         map.cell(5, 5)?.flags,
-        CellFlags::BUILDABLE,
-        "fabricated pathability"
+        CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE | CellFlags::LOS_BLOCKER,
+        "the flags it found"
     );
     assert_eq!(map.cell(6, 5)?.flags, speed);
     assert_eq!(map.cell(5, 6)?.occupying_structure, None);

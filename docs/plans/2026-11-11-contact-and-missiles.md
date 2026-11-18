@@ -574,3 +574,9 @@ wall end. Its own plan measures that.
   through the showcase's lane fight.
 - WP4 re-checks the storyboard (`assets/captures/showcase.ron`) with a real render for the new
   outcome (D-9, 4), as well as the goldens and the throughput.
+
+## Cross-reference (2026-11-18): the leash of an automatic chase
+
+An automatically acquired chase is now given up 21 world units from where it began (5.0.14's `AcquireLeashRadius`,
+`movement_rules.ron`), routed or direct alike, instead of when a route after a refused step exceeds twice the scan
+range: plan [`2026-11-18-contour-footprints`](2026-11-18-contour-footprints.md) Amendment 4, B-142.

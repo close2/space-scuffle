@@ -252,8 +252,12 @@ fn nested_obstacles_hang_their_cuts_on_the_obstacle_below() {
 fn structures_do_not_change_the_cuts() {
     let mut map = island_map(9);
     let before = Pathfinder::new(&map).lane_cuts().clone();
-    map.place_structure(sim_types::EntityId(900), 3, 3, 3, 3)
-        .expect("invariant: the open corner admits a 3x3 structure");
+    map.place_structure(
+        sim_types::EntityId(900),
+        (3, 3),
+        sim_map::StructureFootprint::square(3, 3),
+    )
+    .expect("invariant: the open corner admits a 3x3 structure");
     let mut pathfinder = Pathfinder::new(&map);
     assert_eq!(pathfinder.lane_cuts(), &before);
     map.remove_structure(sim_types::EntityId(900))

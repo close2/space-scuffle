@@ -278,6 +278,7 @@ fn order_onto_a_foundation_ends_beside_it_without_revealing_it() -> TestResult {
             arch.shape = ShapeKind::BuildingDome {
                 footprint_w: 1,
                 footprint_h: 1,
+                shape: sim_types::FootprintShape::full(1, 1),
             };
             arch.collision_radius = SimScalar::HALF;
             arch.terrain_radius = SimScalar::HALF;

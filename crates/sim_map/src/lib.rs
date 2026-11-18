@@ -18,6 +18,7 @@
 #![deny(clippy::unreachable)]
 
 pub mod error;
+pub mod footprint;
 pub mod grid;
 pub mod map_format;
 pub mod navmesh;
@@ -27,6 +28,7 @@ pub mod validation;
 pub mod vision;
 
 pub use error::{MapError, PlacementFailureReason, Result};
+pub use footprint::StructureFootprint;
 pub use grid::{
     CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
     ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,

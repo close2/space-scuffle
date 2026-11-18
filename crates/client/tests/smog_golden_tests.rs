@@ -809,6 +809,7 @@ fn hash_smog_inputs(h: &mut Fnv64, instance: &BubbleRenderInstance) {
         ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } => {
             h.u64(1);
             h.u64(u64::from(footprint_w));

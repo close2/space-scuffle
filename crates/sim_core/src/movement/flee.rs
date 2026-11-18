@@ -169,14 +169,22 @@ impl SimWorld {
 
     /// Checks the complete ground-motion segment in fixed-point world units.
     ///
-    /// Every crossed terrain edge must be connected and every entered cell must be
-    /// free of structures. This also applies to long flee candidates and collision pushes.
+    /// Every crossed terrain edge must be connected and every entered cell walkable. A cell
+    /// that holds a structure refuses the segment only if the segment meets the structure's
+    /// closed footprint shape (plan `2026-11-18-contour-footprints` D-8): the ground under a
+    /// structure is walkable (D-5), so a centre may cross the cut corner of a contour. This also
+    /// applies to long flee candidates and collision pushes.
     #[must_use]
     pub fn is_position_pathable(map: &SimMap, current_pos: SimVec2, target_pos: SimVec2) -> bool {
         map.ground_segment_is_connected(current_pos, target_pos, |_, next| {
             map.cell(next.0, next.1).is_ok_and(|cell| {
-                cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                    && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
+                if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) {
+                    cell.occupying_structure
+                        .and_then(|id| map.structures().get(&id))
+                        .is_some_and(|placed| !placed.segment_meets(current_pos, target_pos))
+                } else {
+                    cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                }
             })
         })
     }

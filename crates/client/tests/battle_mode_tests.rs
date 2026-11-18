@@ -218,6 +218,7 @@ fn frail_enemy(harness: &mut Harness, unit: EntityId, distance: f32) -> EntityId
             ShapeKind::BuildingDome {
                 footprint_w,
                 footprint_h,
+                ..
             } => u32::from(footprint_w) * u32::from(footprint_h),
             ShapeKind::UnitSphere => u32::MAX,
         })

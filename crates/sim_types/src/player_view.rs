@@ -267,7 +267,7 @@ pub enum SiteRefusal {
     InvalidRequest,
     /// The footprint leaves the map.
     OutOfBounds,
-    /// A cell of the footprint is not buildable ground.
+    /// A cell of the footprint is not buildable ground, or not walkable ground.
     UnbuildableTerrain,
     /// The footprint spans more than one cliff level.
     CliffLevelMismatch,

@@ -603,6 +603,7 @@ pub fn resolve_start_footprint(
         sim_types::enums::ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } => Ok((footprint_w, footprint_h)),
         sim_types::enums::ShapeKind::UnitSphere => Err(StartFootprintError::TownHallNotADome(
             loadout.town_hall.clone(),

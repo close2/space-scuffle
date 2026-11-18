@@ -181,7 +181,11 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
     // At x=4 the landing x=14 remains outside this unit's sight radius of 9.
     world
         .map
-        .place_structure(EntityId(10_000), 14, 9, 1, 3)
+        .place_structure(
+            EntityId(10_000),
+            (14, 9),
+            sim_map::StructureFootprint::square(1, 3),
+        )
         .expect("wall fits ordinary buildable lower landing");
     world.pathfinder.recompute_clearance(&world.map);
 

@@ -30,9 +30,12 @@ use std::collections::BinaryHeap;
 use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
-use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
+use super::funnel::{
+    portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side, ARC_CHORD_DIP,
+};
 use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
+use super::predicates::{lattice_distance_sq, lattice_point_segment_width, SquaredWidth};
 use super::segment::{
     nearest_blocking_point, nearest_blocking_point_exhaustive, segment_clear, SegmentScratch,
     WallContact,
@@ -450,13 +453,51 @@ impl MeshSearch {
             (query.start, query.goal),
             &self.portals,
             &[s[0], s[1], s[2], g[0], g[1], g[2]],
-            (query.radius + CORNER_SAFETY_MARGIN, PullStrategy::Pinned),
+            (
+                query.radius + CORNER_SAFETY_MARGIN,
+                ARC_CHORD_DIP,
+                PullStrategy::Pinned,
+            ),
         );
         if self.is_legal(query, &pinned) {
             (pinned, true)
         } else {
             (shrunk, false)
         }
+    }
+
+    /// Pulls the channel in `self.portals` once more, shrunk then pinned, with the corner margin
+    /// fitted to the channel (plan `2026-11-18-contour-footprints` Amendment 1) after the shrunk
+    /// and pinned pulls at the full margin both failed the segment predicate. Returns the first
+    /// legal route, else `failed`, and whether the returned route is legal. A channel with room
+    /// for the full margin, or none to spare, is not pulled again.
+    fn fitted_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        failed: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let width = channel_width(query, &self.portals);
+        let Some(margin) = fitted_margin(width, query.radius) else {
+            return (failed, false);
+        };
+        let (s, g) = (
+            query.mesh.triangle_vertices(start_triangle),
+            query.mesh.triangle_vertices(query.goal_triangle),
+        );
+        for strategy in [PullStrategy::Shrunk, PullStrategy::Pinned] {
+            let route = radius_funnel(
+                query.mesh,
+                (query.start, query.goal),
+                &self.portals,
+                &[s[0], s[1], s[2], g[0], g[1], g[2]],
+                (query.radius + margin, margin / 2, strategy),
+            );
+            if self.is_legal(query, &route) {
+                return (route, true);
+            }
+        }
+        (failed, false)
     }
 
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
@@ -527,7 +568,7 @@ impl MeshSearch {
                     (query.start, query.goal),
                     &self.portals,
                     &end_vertices,
-                    (rho, PullStrategy::Shrunk),
+                    (rho, ARC_CHORD_DIP, PullStrategy::Shrunk),
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
@@ -705,6 +746,11 @@ fn route(
     } else {
         search.pinned_retry(&query, start_triangle, route)
     };
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.fitted_retry(&query, start_triangle, route)
+    };
     let turns = route
         .anchors
         .iter()
@@ -730,6 +776,93 @@ fn route(
         fallback,
         expansions,
     })
+}
+
+/// The narrowest width of the channel `portals`, in cells squared: the least distance between
+/// an obstacle on its left and one on its right. Left obstacles are the portals' left vertices
+/// and the blocking edges of channel triangles on the left; right obstacles likewise. The
+/// triangle corner widths TA* tests (Demyen and Buro, D-4) can miss a pair that lies in two
+/// different triangles, such as a structure's face across from a long wall edge (plan
+/// `2026-11-18-contour-footprints` Amendment 1), so the retry measures the pairs themselves. The
+/// result can only be smaller than the room the channel has, which makes the fitted margin
+/// smaller, never larger. [`SquaredWidth::UNBOUNDED`] for a channel of at most one portal.
+// PERFORMANCE RATIONALE:
+// Why: The width is needed only after two funnel pulls have failed, which is rare.
+// What: Compare every left obstacle with every right one, and find each channel triangle by a
+// scan of the mesh, instead of keeping the search's triangle sequence.
+// Trade-off: Quadratic in the channel's length and linear in the mesh on that rare path, for no
+// extra state in the search.
+fn channel_width(query: &Query<'_>, portals: &[(u32, u32)]) -> SquaredWidth {
+    let mesh = query.mesh;
+    if portals.len() < 2 {
+        return SquaredWidth::UNBOUNDED;
+    }
+    let mut left_edges = Vec::new();
+    let mut right_edges = Vec::new();
+    for pair in portals.windows(2) {
+        let ((l1, r1), (l2, r2)) = (pair[0], pair[1]);
+        let shared_left = l1 == l2;
+        let shared = if shared_left { l1 } else { r1 };
+        let a = if shared_left { r1 } else { l1 };
+        let b = if shared_left { r2 } else { l2 };
+        let triangle = (0..mesh.triangle_count())
+            .map(|t| u32::try_from(t).unwrap_or(NONE))
+            .find(|&t| {
+                let v = mesh.triangle_vertices(t);
+                [shared, a, b].iter().all(|x| v.contains(x))
+            });
+        let Some(t) = triangle else {
+            continue;
+        };
+        let corner = mesh
+            .triangle_vertices(t)
+            .iter()
+            .position(|&v| v == shared)
+            .unwrap_or(0);
+        if mesh.edge_blocks(t, corner, |u| query.access.open(u)) {
+            // The edge opposite the shared vertex lies on the channel's other side.
+            let edge = (mesh.vertex(a), mesh.vertex(b));
+            if shared_left {
+                right_edges.push(edge);
+            } else {
+                left_edges.push(edge);
+            }
+        }
+    }
+    let left: Vec<LatticePoint> = portals.iter().map(|&(l, _)| mesh.vertex(l)).collect();
+    let right: Vec<LatticePoint> = portals.iter().map(|&(_, r)| mesh.vertex(r)).collect();
+    let mut width = SquaredWidth::UNBOUNDED;
+    for &l in &left {
+        for &r in &right {
+            width = width.min(lattice_distance_sq(l, r));
+        }
+        for &(u, v) in &right_edges {
+            width = width.min(lattice_point_segment_width(l, u, v));
+        }
+    }
+    for &r in &right {
+        for &(u, v) in &left_edges {
+            width = width.min(lattice_point_segment_width(r, u, v));
+        }
+    }
+    width
+}
+
+/// The corner margin a channel of squared width `width` has room for, around a disc of
+/// `radius`: `min(CORNER_SAFETY_MARGIN, (w - 2 radius) / 2)`, with `w` the width's square root
+/// rounded down to the raw grid, so the margin can only be smaller than the room. `None` when the
+/// full margin fits (the earlier pulls already used it) or no room is left.
+fn fitted_margin(width: SquaredWidth, radius: SimScalar) -> Option<SimScalar> {
+    if width.is_unbounded() {
+        return None;
+    }
+    let (num, den) = width.parts();
+    // `num < 2^62`, so `num * 2^64 < 2^126`: the width in raw units squared, floored.
+    let squared_raw = (u128::from(num) << 64) / u128::from(den.max(1));
+    let width_raw = i64::try_from(squared_raw.isqrt()).unwrap_or(i64::MAX);
+    let spare = SimScalar::from_raw(width_raw) - radius * 2;
+    let margin = spare / 2;
+    (margin > SimScalar::ZERO && margin < CORNER_SAFETY_MARGIN).then_some(margin)
 }
 
 /// Whether a disc of `request.radius` may sweep from `a` to `b` (D-7).
@@ -885,4 +1018,31 @@ pub fn nearest_reachable_point(
     }
     search.candidates = candidates;
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Amendment 1: the fitted margin is half the spare width, floored to the raw grid, and only
+    /// when it is positive and below the full margin.
+    #[test]
+    fn the_fitted_margin_is_half_the_spare_width() {
+        let cell = SquaredWidth::whole(1);
+        let spare = SimScalar::from_raw(CORNER_SAFETY_MARGIN.raw() / 4);
+        let radius = (SimScalar::ONE - spare) / 2;
+        let margin = fitted_margin(cell, radius);
+        assert_eq!(margin, Some((SimScalar::ONE - radius * 2) / 2));
+        // The radius was halved with rounding down, so the spare is at most one raw unit more.
+        assert!(margin.is_some_and(|m| m * 2 <= spare + SimScalar::EPSILON && m > SimScalar::ZERO));
+        // Room for the full margin: no retry.
+        let roomy = (SimScalar::ONE - CORNER_SAFETY_MARGIN * 2) / 2;
+        assert_eq!(fitted_margin(cell, roomy), None);
+        // No room at all, or an unbounded channel: no retry.
+        assert_eq!(fitted_margin(cell, SimScalar::HALF), None);
+        assert_eq!(
+            fitted_margin(SquaredWidth::UNBOUNDED, SimScalar::HALF),
+            None
+        );
+    }
 }

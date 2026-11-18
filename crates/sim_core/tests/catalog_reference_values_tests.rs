@@ -2188,22 +2188,19 @@ fn b116_unit_terrain_radii_follow_starcraft() -> TestResult {
 
 /// B-116: a unit whose terrain radius is below its collision radius is a ground unit with a row
 /// above that says so, so no unsourced value can be authored. A structure's terrain radius is not
-/// authored: it is half its footprint's smaller side, below its radius wherever the 5.0.14 engine
-/// radius exceeds that (plan `2026-11-18-structure-radius` D-5), and no rule reads it.
+/// authored: it is its footprint shape's smaller half-extent (half its footprint's smaller side
+/// for a full box, plan `2026-11-18-structure-radius` D-5; the Spore Crawler analogue's 0.5 on
+/// 2×2 cells, plan `2026-11-18-contour-footprints` WP6), below its radius, and no rule reads it.
 #[test]
 fn only_ground_units_with_a_smaller_inner_radius_author_one() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
     let mut smaller = 0;
     for archetype in catalogs.units.archetypes() {
-        if let sim_types::ShapeKind::BuildingDome {
-            footprint_w,
-            footprint_h,
-        } = archetype.shape
-        {
+        if let sim_types::ShapeKind::BuildingDome { shape, .. } = archetype.shape {
             assert!(
-                (f(archetype.terrain_radius) - f32::from(footprint_w.min(footprint_h)) / 2.0).abs()
-                    < 0.001,
-                "{}: a structure's terrain radius is half its footprint",
+                (f(archetype.terrain_radius) - f(shape.inscribed_half_extent())).abs() < 0.001
+                    && archetype.terrain_radius <= archetype.collision_radius,
+                "{}: a structure's terrain radius is its shape's smaller half-extent",
                 archetype.slug
             );
             continue;
@@ -3495,9 +3492,9 @@ fn blinding_cloud_values_follow_starcraft() -> TestResult {
 
 /// B-135: every structure's radius, the edge its ranges measure to: its analogue's 5.0.14 engine
 /// radius `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)` (liberty `UnitData`, `FootprintData.xml` at
-/// `5444e12f13`; the live value of BurnySc2/sc2-techtree `data.json`, `c2c90e9b56`), floored at
-/// half our footprint's smaller side where our footprint is larger than the game's (plan
-/// `2026-11-18-structure-radius` §2.3, D-4; B-138). Rows name analogues (charter §3.3).
+/// `5444e12f13`; the live value of BurnySc2/sc2-techtree `data.json`, `c2c90e9b56`; plan
+/// `2026-11-18-structure-radius` §2.3). The floor of that plan's D-4 is gone with B-138 (plan
+/// `2026-11-18-contour-footprints` D-10). Rows name analogues (charter §3.3).
 const SC2_STRUCTURE_RADIUS: [(&str, [f32; 1], &str); 49] = [
     (
         "Command Center",
@@ -3726,23 +3723,23 @@ const SC2_STRUCTURE_RADIUS: [(&str, [f32; 1], &str); 49] = [
     ),
     (
         "Spore Crawler",
-        [1.0],
-        "floor, D-4; B-138: half our footprint; the game's 0.875 (Radius 0.875, liberty UnitData:8749; Footprint2x2Contour2 Shape 0.559, Footprint:162)",
+        [0.875],
+        "liberty UnitData:8749 Radius 0.875; Footprint2x2Contour2 Shape 0.559, Footprint:162; engine 0.875 (sc2-techtree c2c90e9b56)",
     ),
     (
         "Sensor Tower",
-        [1.0],
-        "floor, D-4; B-138: half our footprint; the game's 0.75 (Radius 0.75, liberty UnitData:9452; Footprint1x1 Shape 0.7072, Footprint:1106)",
+        [0.75],
+        "liberty UnitData:9452 Radius 0.75; Footprint1x1 Shape 0.7072, Footprint:1106; engine 0.75 (sc2-techtree c2c90e9b56)",
     ),
     (
         "Spire",
-        [1.5],
-        "floor, D-4; B-138: half our footprint; the game's 1.125 (Radius 1.0, liberty UnitData:9011; Footprint2x2CreepContour Shape 1.1181, Footprint:2073)",
+        [1.125],
+        "liberty UnitData:9011 Radius 1.0; Footprint2x2CreepContour Shape 1.1181, Footprint:2073; engine 1.125 (sc2-techtree c2c90e9b56)",
     ),
     (
         "Greater Spire",
-        [1.5],
-        "floor, D-4; B-138: half our footprint; the game's 1.125 (Radius 1.0, liberty UnitData:9082; Footprint2x2IgnoreCreepContour Shape 1.1181, Footprint:1238)",
+        [1.125],
+        "liberty UnitData:9082 Radius 1.0; Footprint2x2IgnoreCreepContour Shape 1.1181, Footprint:1238; engine 1.125 (sc2-techtree c2c90e9b56)",
     ),
 ];
 
@@ -4003,10 +4000,11 @@ const SC2_STRUCTURE_ENGINE_RADIUS: [(&str, [f32; 3], &str); 49] = [
     ),
 ];
 
-/// The engine rule and the floor pin the data together (plan `2026-11-18-structure-radius`
-/// §2.2, D-4): every row's live radius `E` is `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)`, and every
-/// structure's authored radius is `max(E, min(w, h) ÷ 2)` of its own footprint, so no unsourced
-/// value can be authored.
+/// The engine rule pins the data (plan `2026-11-18-structure-radius` §2.2, plan
+/// `2026-11-18-contour-footprints` D-10): every row's live radius `E` is
+/// `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)`, every structure's authored radius is its `E`, and `E`
+/// covers its authored footprint shape (its farthest vertex is within `E` of the centre), so no
+/// unsourced value can be authored and a unit touching any point of the shape is within reach.
 #[test]
 fn structure_radii_follow_the_engine_rule() -> TestResult {
     for (analogue, [radius, shape, engine], source) in &SC2_STRUCTURE_ENGINE_RADIUS {
@@ -4019,11 +4017,7 @@ fn structure_radii_follow_the_engine_rule() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
     let mut checked = 0;
     for archetype in catalogs.units.archetypes() {
-        let sim_types::ShapeKind::BuildingDome {
-            footprint_w,
-            footprint_h,
-        } = archetype.shape
-        else {
+        let sim_types::ShapeKind::BuildingDome { shape, .. } = archetype.shape else {
             continue;
         };
         let name = analogue(archetype);
@@ -4031,15 +4025,301 @@ fn structure_radii_follow_the_engine_rule() -> TestResult {
             .iter()
             .find(|(row, ..)| *row == name)
             .ok_or_else(|| format!("{} ({name}): no engine radius row", archetype.slug))?;
-        let floor = f32::from(footprint_w.min(footprint_h)) / 2.0;
         let authored = f(archetype.collision_radius);
         assert!(
-            (authored - engine.max(floor)).abs() < 0.001,
-            "{} ({name}): radius {authored}, expected max({engine}, {floor}) ({source})",
+            (authored - engine).abs() < 0.001,
+            "{} ({name}): radius {authored}, expected the engine radius {engine} ({source})",
+            archetype.slug
+        );
+        let quarters = |q: u16| f32::from(q) / 4.0;
+        let (hw, hh, c) = (
+            quarters(shape.half_width_q),
+            quarters(shape.half_height_q),
+            quarters(shape.chamfer_q),
+        );
+        let farthest = (hw * hw + (hh - c) * (hh - c)).max((hw - c) * (hw - c) + hh * hh);
+        assert!(
+            engine * engine >= farthest,
+            "{} ({name}): engine radius {engine} does not cover the shape ({hw}, {hh}, {c})",
             archetype.slug
         );
         checked += 1;
     }
     assert_eq!(checked, SC2_STRUCTURE_ENGINE_RADIUS.len());
     Ok(())
+}
+
+/// B-134, B-138: every structure's footprint cells and 5.0.14 `Shape`, `[w, h, half-width,
+/// half-height, chamfer]` in cells and world units: the analogue's `Footprint` in liberty
+/// `UnitData` and its `Shape` `Offsets` in `FootprintData.xml` at `5444e12f13` (plan
+/// `2026-11-18-contour-footprints` §2.3). The Greater Spire's footprint inherits its 2×2 cells from
+/// `Footprint2x2` (Footprint:1226). Rows name analogues (charter §3.3).
+const SC2_FOOTPRINT_SHAPE: [(&str, [f32; 5], &str); 49] = [
+    (
+        "Command Center",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:10379 Footprint5x5Contour; Footprint:2016 Offsets",
+    ),
+    (
+        "Orbital Command",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:10525 Footprint5x5Contour; Footprint:2016 Offsets",
+    ),
+    (
+        "Planetary Fortress",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:10663 Footprint5x5Contour; Footprint:2016 Offsets",
+    ),
+    (
+        "Nexus",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:4186 Footprint5x5Contour; Footprint:2016 Offsets",
+    ),
+    (
+        "Hatchery",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:8210 Footprint6x5DropOffCreepSourceContour; Footprint:2262 Offsets",
+    ),
+    (
+        "Lair",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:8292 Footprint6x5DropOffCreepSourceContour; Footprint:2262 Offsets",
+    ),
+    (
+        "Hive",
+        [5.0, 5.0, 2.5, 2.5, 1.5],
+        "liberty UnitData:8372 Footprint6x5DropOffCreepSourceContour; Footprint:2262 Offsets",
+    ),
+    (
+        "Barracks",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:5840 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Engineering Bay",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:5972 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Bunker",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:6156 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Factory",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:6240 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Ghost Academy",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9775 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Starport",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:6373 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Armory",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:6508 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Fusion Core",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:10917 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Gateway",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:4396 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Forge",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:4538 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Cybernetics Core",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:10819 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Twilight Council",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:4606 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Stargate",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9642 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Robotics Facility",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9571 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Templar Archives",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:4669 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Robotics Bay",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9839 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Fleet Beacon",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9710 Footprint3x3Contour; Footprint:1936 Offsets",
+    ),
+    (
+        "Spawning Pool",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:8888 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Evolution Chamber",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:8446 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Roach Warren",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:11767 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Baneling Nest",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9968 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Hydralisk Den",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:8951 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Lurker Den",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:678 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Infestation Pit",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:2079 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Nydus Network",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9901 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Ultralisk Cavern",
+        [3.0, 3.0, 1.5, 1.5, 0.5],
+        "liberty UnitData:9217 Footprint3x3CreepContour; Footprint:2206 Offsets",
+    ),
+    (
+        "Refinery",
+        [3.0, 3.0, 1.5, 1.5, 0.75],
+        "liberty UnitData:5778 FootprintGeyserRoundedBuilt; Footprint:960 Offsets",
+    ),
+    (
+        "Assimilator",
+        [3.0, 3.0, 1.5, 1.5, 0.75],
+        "liberty UnitData:4124 FootprintGeyserRoundedBuilt; Footprint:960 Offsets",
+    ),
+    (
+        "Extractor",
+        [3.0, 3.0, 1.5, 1.5, 0.75],
+        "liberty UnitData:8151 FootprintGeyserRoundedBuilt; Footprint:960 Offsets",
+    ),
+    (
+        "Supply Depot",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:5665 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Missile Turret",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:6035 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Tech Lab",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:6644 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Reactor",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:6581 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Pylon",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:4337 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Photon Cannon",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:11054 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Shield Battery",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:1614 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Dark Shrine",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:9512 Footprint2x2Contour; Footprint:1951 Offsets",
+    ),
+    (
+        "Spine Crawler",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:8617 Footprint2x2ZergSpineCrawler; Footprint:5370 Offsets",
+    ),
+    (
+        "Spore Crawler",
+        [2.0, 2.0, 0.5, 0.5, 0.25],
+        "liberty UnitData:8751 Footprint2x2Contour2; Footprint:163 Offsets",
+    ),
+    (
+        "Sensor Tower",
+        [1.0, 1.0, 0.5, 0.5, 0.0],
+        "liberty UnitData:9454 Footprint1x1; Footprint:1107 Offsets",
+    ),
+    (
+        "Spire",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:9013 Footprint2x2CreepContour; Footprint:2074 Offsets",
+    ),
+    (
+        "Greater Spire",
+        [2.0, 2.0, 1.0, 1.0, 0.5],
+        "liberty UnitData:9084 Footprint2x2IgnoreCreepContour; Footprint:1239 Offsets",
+    ),
+];
+
+#[test]
+fn b134_footprint_shapes_follow_starcraft() -> TestResult {
+    check_table("footprint shape", true, &SC2_FOOTPRINT_SHAPE, &[], |a| {
+        let sim_types::ShapeKind::BuildingDome {
+            footprint_w,
+            footprint_h,
+            shape,
+        } = a.shape
+        else {
+            return [f32::NAN; 5];
+        };
+        let quarters = |q: u16| f32::from(q) / 4.0;
+        [
+            f32::from(footprint_w),
+            f32::from(footprint_h),
+            quarters(shape.half_width_q),
+            quarters(shape.half_height_q),
+            quarters(shape.chamfer_q),
+        ]
+    })
 }

@@ -1089,6 +1089,7 @@ mod tests {
         let dome = ShapeKind::BuildingDome {
             footprint_w: 2,
             footprint_h: 2,
+            shape: sim_types::FootprintShape::full(2, 2),
         };
         policy.overrides.insert(
             "one".to_string(),

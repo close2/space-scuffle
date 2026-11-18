@@ -185,6 +185,7 @@ pub const fn footprint(structure: &UnitArchetype) -> Option<(u32, u32)> {
         ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
+            ..
         } => Some((footprint_w as u32, footprint_h as u32)),
         ShapeKind::UnitSphere => None,
     }
@@ -337,6 +338,7 @@ mod tests {
         sized.shape = ShapeKind::BuildingDome {
             footprint_w: width,
             footprint_h: height,
+            shape: sim_types::FootprintShape::full(width, height),
         };
         sized
     }
@@ -365,6 +367,17 @@ mod tests {
             Some((19, 39)),
             "cell (20, 40) sits in the middle of a 3x3 at (19, 39)"
         );
+        Ok(())
+    }
+
+    /// Plan `2026-11-18-contour-footprints` WP7: the one-cell footprint (the Sensor Tower
+    /// analogue's, B-138) is the clicked cell itself.
+    #[test]
+    fn a_one_cell_footprint_centres_on_the_clicked_cell() -> TestResult {
+        let world = flat_world()?;
+        let dome = sized(&plain_dome(&world)?, 1, 1);
+        assert_eq!(placement_cell(&world, &dome, 20.5, 40.25), Some((20, 40)));
+        assert_eq!(placement_cell(&world, &dome, 0.25, 0.75), Some((0, 0)));
         Ok(())
     }
 

@@ -23,7 +23,7 @@
 
 use sim_types::{SimScalar, SimVec2};
 
-use super::predicates::{segments_within, LatticePoint, QPoint, Q_BITS};
+use super::predicates::{segments_within, LatticePoint, QPoint, LATTICE_BITS, Q_BITS};
 use super::{next, prev, Access, NavMesh};
 
 /// Reusable flood state for [`segment_clear`].
@@ -141,13 +141,16 @@ pub struct WallContact {
 /// The nearest point of the lattice segment `[u, v]` to the world point `p`, and its exact
 /// squared distance from `p` in raw Q32.32 units squared (see [`WallContact`]).
 fn nearest_on_lattice_segment(p: SimVec2, u: LatticePoint, v: LatticePoint) -> (SimVec2, i128) {
+    // A lattice unit is a quarter cell, 2^30 raw units.
+    const SHIFT: u32 = 32 - LATTICE_BITS;
     let (px, py) = (i128::from(p.x.raw()), i128::from(p.y.raw()));
-    let (ux, uy) = (i128::from(u.x) << 32, i128::from(u.y) << 32);
-    let (vx, vy) = (i128::from(v.x) << 32, i128::from(v.y) << 32);
+    let (ux, uy) = (i128::from(u.x) << SHIFT, i128::from(u.y) << SHIFT);
+    let (vx, vy) = (i128::from(v.x) << SHIFT, i128::from(v.y) << SHIFT);
     let (dx, dy) = (i128::from(v.x - u.x), i128::from(v.y - u.y));
     let length_sq = dx * dx + dy * dy;
-    // A lattice coordinate is below 2^12 cells and a map coordinate below 2^44 raw units, so
-    // `along` and `cross` stay below 2^58 and `cross²` below 2^116.
+    // A lattice coordinate is below 2^14 quarter cells and a map coordinate below 2^44 raw
+    // units, so `along` and `cross` stay below 2^60 and `cross²` below 2^120. `along` is the
+    // projection times `length_sq` in raw units over 2^SHIFT.
     let along = (px - ux) * dx + (py - uy) * dy;
     let squared = |x: i128, y: i128| x * x + y * y;
     let to_sim = |x: i128, y: i128| {
@@ -159,7 +162,7 @@ fn nearest_on_lattice_segment(p: SimVec2, u: LatticePoint, v: LatticePoint) -> (
     if length_sq == 0 || along <= 0 {
         return (to_sim(ux, uy), squared(px - ux, py - uy));
     }
-    if along >= length_sq << 32 {
+    if along >= length_sq << SHIFT {
         return (to_sim(vx, vy), squared(px - vx, py - vy));
     }
     let cross = (px - ux) * dy - (py - uy) * dx;
@@ -180,7 +183,19 @@ fn inward_normal(mesh: &NavMesh, t: u32, k: usize) -> SimVec2 {
     let (dx, dy) = (v.x - u.x, v.y - u.y);
     let side = i64::from(-dy) * i64::from(w.x - u.x) + i64::from(dx) * i64::from(w.y - u.y);
     let (nx, ny) = if side >= 0 { (-dy, dx) } else { (dy, -dx) };
-    SimVec2::from_i32(nx, ny).normalize_or_zero()
+    // The direction is reduced to lowest terms before it is normalised, so the normal depends
+    // on the edge's direction only, never on the lattice's unit or the edge's length.
+    let divisor = gcd(nx.unsigned_abs(), ny.unsigned_abs()).max(1);
+    let reduce = |v: i32| v / i32::try_from(divisor).unwrap_or(1);
+    SimVec2::from_i32(reduce(nx), reduce(ny)).normalize_or_zero()
+}
+
+/// Greatest common divisor by Euclid's algorithm; `gcd(0, 0)` is 0.
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 /// The squared radius in raw Q32.32 units squared, comparable with [`WallContact::distance_sq`].

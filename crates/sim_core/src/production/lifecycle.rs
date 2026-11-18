@@ -325,11 +325,7 @@ pub(super) fn validate_job_source(
             }
         }
     }
-    if let ShapeKind::BuildingDome {
-        footprint_w,
-        footprint_h,
-    } = source.shape
-    {
+    if let Some((footprint_w, footprint_h)) = source.shape.footprint() {
         let placed = map
             .structures()
             .get(&entity.id)

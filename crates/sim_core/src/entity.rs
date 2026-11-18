@@ -272,6 +272,11 @@ pub struct MovementMemory {
     /// The target the surround walk approaches; `None` for an attack-move without one. A walk
     /// for another goal starts afresh.
     pub flank_target: Option<EntityId>,
+    /// Where this unit stood when its current automatic chase began, in world units: the leash of
+    /// that chase is measured from here (5.0.14's `AcquireLeashRadius`, plan
+    /// `2026-11-18-contour-footprints` Amendment 4, B-142). `None` while it chases no automatically
+    /// acquired target; an ordered attack and a new order clear it.
+    pub leash_origin: Option<SimVec2>,
 }
 
 impl MovementMemory {

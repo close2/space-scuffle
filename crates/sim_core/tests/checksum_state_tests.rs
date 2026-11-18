@@ -618,7 +618,11 @@ fn player_world_map_and_rng_state_are_observable() {
         }),
         ("structure", |w| {
             w.map
-                .place_structure(EntityId(77), 10, 10, 1, 1)
+                .place_structure(
+                    EntityId(77),
+                    (10, 10),
+                    sim_map::StructureFootprint::square(1, 1),
+                )
                 .expect("clear fixture footprint");
         }),
         ("resource amount", |w| {
@@ -899,4 +903,34 @@ fn capability_selected_replay_matches_full_state_for_2000_ticks() {
         observed_movement,
         "replay must exercise queued movement and attack commands"
     );
+}
+
+/// Plan `2026-11-18-contour-footprints` D-13: a placed structure's footprint shape is
+/// authoritative map state. Two worlds whose only difference is the shape of one structure,
+/// placed on the same cells, have different checksums; the same shape gives the same checksum.
+#[test]
+fn a_placed_structures_shape_is_hashed() {
+    let place = |shape: sim_types::FootprintShape| {
+        let mut world = world();
+        world
+            .map
+            .place_structure(
+                EntityId(77),
+                (6, 6),
+                sim_map::StructureFootprint {
+                    width: 2,
+                    height: 2,
+                    shape,
+                },
+            )
+            .expect("clear fixture footprint");
+        world.compute_checksum()
+    };
+    let square = sim_types::FootprintShape::full(2, 2);
+    let contour = sim_types::FootprintShape {
+        chamfer_q: 2,
+        ..square
+    };
+    assert_eq!(place(square), place(square));
+    assert_ne!(place(square), place(contour));
 }
