@@ -111,3 +111,17 @@ larger one would route at the old size. No assertion changed.
 | Showcase `units.csv`, 1,800 ticks and to the end; seeds 1 to 8 | Byte-identical, and every `summary.md` (player 1 wins at 2,218; seeds 1 to 8 as the plan's base) |
 | Overlap meter (deeper unit-ticks) | 0 / 0 |
 | Goldens: debug and release native, `wasm32-wasip1 --release` under wasmtime | Pass unchanged |
+
+**Throughput** (`throughput` bench binaries of WP0 and WP2, alternated, three rounds, under the gate lock; ticks
+per second, median of three repeats each; the host was shared and loaded):
+
+| Scenario | WP0 | WP2 |
+|---|---|---|
+| 64×64, 0 units | 2,480 / 2,225 / 3,168 | 2,133 / 2,310 / 3,210 |
+| 64×64, 100 | 622 / 924 / 805 | 559 / 489 / 950 |
+| 64×64, 400 | 157 / 116 / 85 | 89 / 106 / 164 |
+| 128×128, 400 | 189 / 149 / 113 | 175 / 121 / 125 |
+| 256×256, 0 | 200 / 143 / 143 | 190 / 136 / 174 |
+| showcase canyon, 400 | 109 / 100 / 112 | 114 / 94 / 109 |
+
+Within noise (the round-to-round spread of either tree exceeds any difference); every scenario above 25.
