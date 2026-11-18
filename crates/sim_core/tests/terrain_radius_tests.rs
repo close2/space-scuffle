@@ -602,3 +602,50 @@ fn a_group_lane_is_searched_at_its_leaders_terrain_radius() {
         );
     }
 }
+
+/// Review F-2 (plan `2026-11-18-inner-radius` T5): an autonomous flee goal toward the map's west
+/// edge is clamped to the body's terrain radius from it, the domain it may walk.
+#[test]
+fn a_flee_goal_stops_at_the_terrain_radius_from_the_map_edge() {
+    let mut world = world_on(walled(20, |_, _| false));
+    let kind = slim(&mut world);
+    let body = world
+        .spawn_unit(kind, PlayerId(0), at(3.0, 10.0))
+        .expect("spawn");
+    let goal = world
+        .compute_entity_flee_destination(body, at(5.0, 10.0), s(6.0))
+        .expect("representable")
+        .expect("a flee goal");
+    assert_eq!(goal, at(T, 10.0));
+}
+
+/// Review F-2 (plan `2026-11-18-inner-radius` T9): a mobile producer whose terrain disc lies on
+/// the map, though its collision disc crosses the edge, may queue production.
+#[test]
+fn a_mobile_producer_is_bounded_by_its_terrain_radius() {
+    let mut world = world_on(walled(20, |_, _| false));
+    let product = world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == MoverType::Ground
+                && a.max_speed > SimScalar::ZERO
+                && !matches!(a.shape, ShapeKind::BuildingDome { .. })
+                && a.supply_cost > 0
+        })
+        .map(|a| (a.slug.clone(), a.unit_type_id))
+        .expect("invariant: the shipped catalog has a trainable unit");
+    let producer_type = register(&mut world, "terrain_radius_producer", R, T, |arch| {
+        arch.trains_units = vec![product.0.clone()];
+        arch.supply_cost = 0;
+        arch.supply_provided = 10;
+    });
+    let producer = world
+        .spawn_unit(producer_type, PlayerId(0), at(0.4, 10.0))
+        .expect("the terrain disc fits");
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 1000;
+    world
+        .try_queue_production(PlayerId(0), &[producer], product.1)
+        .expect("the producer's terrain disc lies on the map");
+}

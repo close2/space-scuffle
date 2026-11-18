@@ -404,6 +404,50 @@ mod tests {
         Ok(())
     }
 
+    /// Review F-2 (plan `2026-11-18-inner-radius` T7): at the map's corner the ring's corner
+    /// cell (0, 0) has its centre 0.5 from both edges. A product of radius 0.625 and terrain
+    /// radius 0.5 exits there: the map-bounds check and both egress checks use the terrain
+    /// radius, and either one at the radius 0.625 would refuse the cell.
+    #[test]
+    fn an_exit_cell_at_the_map_corner_admits_the_terrain_disc(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 2);
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .find(|a| dome(&a.shape))
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no structure")?;
+        let product = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                !dome(&a.shape)
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a ground unit")?;
+        let arch = world.catalog.get_mut(product)?;
+        arch.collision_radius = SimScalar::from_num(0.625);
+        arch.terrain_radius = SimScalar::from_num(0.5);
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 1, 1)?;
+        world.rebuild_production_occupancy()?;
+        let half = SimScalar::HALF;
+        assert_eq!(
+            world.production_exit(producer, product)?,
+            Some(SimVec2::new(half, half))
+        );
+        Ok(())
+    }
+
     #[test]
     fn swept_cell_intersection_includes_fractional_origin_and_rejects_tangency() {
         let bounds = (0, 0, 100, 100);

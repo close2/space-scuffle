@@ -288,8 +288,17 @@ impl MotionPolicy {
                 reason: "terrain radius must be positive and at most the collision radius",
             });
         }
+        let layer = MovementLayer::from_mover(arch.mover_type);
+        // Terrain does not touch an air body, and its domain (`contains`) reads the terrain
+        // radius, so an air body's must be its collision radius (plan D-2).
+        if layer == MovementLayer::Air && terrain != radius {
+            return Err(MovementInvariant::InvalidState {
+                entity: entity.id,
+                reason: "an air body's terrain radius must equal its collision radius",
+            });
+        }
         Ok(Self {
-            layer: MovementLayer::from_mover(arch.mover_type),
+            layer,
             radius,
             terrain,
             burrowed: entity.is_burrowed(arch),
@@ -629,6 +638,41 @@ fn integer_sqrt(value: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review F-1 (plan `2026-11-18-inner-radius` D-2): an air archetype built past the loader
+    /// with a terrain radius other than its collision radius is a movement invariant; its domain
+    /// reads the terrain radius, so it must be the radius the air body has.
+    #[test]
+    fn an_air_body_with_a_smaller_terrain_radius_is_an_invariant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 47);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| a.mover_type == MoverType::Air && !a.is_immobile_by_default())
+            .map(|a| a.unit_type_id)
+            .ok_or("Air actor")?;
+        let id = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(10, 10))?;
+        let radius = world.catalog.get(kind)?.collision_radius;
+        let resolve = |world: &SimWorld| {
+            MotionPolicy::resolve(&world.catalog, &world.map, &world.entities[&id])
+        };
+        assert_eq!(resolve(&world)?.terrain_radius(), radius);
+        world.catalog.get_mut(kind)?.terrain_radius = SimScalar::from_raw(radius.raw() / 2);
+        assert!(matches!(
+            resolve(&world),
+            Err(MovementInvariant::InvalidState {
+                reason: "an air body's terrain radius must equal its collision radius",
+                ..
+            })
+        ));
+        Ok(())
+    }
 
     /// T-12 (plan `2026-11-18-inner-radius` D-2): an archetype built past the loader with a
     /// terrain radius above its collision radius, or not positive, is a movement invariant; one
