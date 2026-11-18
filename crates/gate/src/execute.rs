@@ -430,6 +430,10 @@ pub struct LaneRun<'a> {
     /// Called with each result as its target finishes, before the run ends, so the runner can
     /// record it at once (`--resume`, plan 2026-11-11-faster-gates Amendment 1); `None` for none.
     pub on_finish: Option<&'a (dyn Fn(&TargetResult) + Sync)>,
+    /// The GPU run ledger every executable receives as `SPACE_SCUFFLE_GPU_RUN_LEDGER`
+    /// ([`crate::GpuLedger`], plan 2026-11-17-gpu-test-readback WP4); `None` passes the gate's
+    /// own environment on unchanged.
+    pub gpu_ledger: Option<&'a Path>,
 }
 
 /// What a lane run produced.
@@ -535,6 +539,9 @@ impl Running<'_> {
             .env("LD_LIBRARY_PATH", library_path)
             .stdout(file)
             .stderr(err);
+        if let Some(ledger) = self.run.gpu_ledger {
+            command.env(crate::gpu_ledger::LEDGER_VAR, ledger);
+        }
         Ok(command)
     }
 
