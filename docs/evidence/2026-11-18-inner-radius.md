@@ -205,3 +205,47 @@ was shared and loaded):
 | showcase canyon, 400 | 95 / 120 / 107 | 117 / 118 / 117 |
 
 Within noise (each tree's best round matches the other's); every scenario above 25. `DESIGN.md` §5 is unchanged.
+
+## 4. WP4: client and presentation check
+
+**No client code changed.** The client tests the catalog rule selects passed in `cargo gate quick` on the WP3 tree
+(`asset_baker` catalog targets, `client/effect_catalog_tests`, `client/effect_runtime_tests` and the others it lists).
+
+**Picture check** (RX 580, `showcase render --driver radv`, one `with-gpu-lock` per take; a scratch storyboard of
+one take in `LiveBattle` mode, so player 1's base is not fogged, camera on (53.4, 52.7); stills under
+`~/scratch/inner-radius/wp4/stills/`). Player 1's welder drone 16 is pressed against its hall's footprint from
+tick 9 and rests at its terrain radius from tick 13 (§3). Observation: the drone's bubble (drawn at its radius
+0.375) stands beside the dome without touching it; the point where it rests is near the footprint's corner, where the
+dome's circle (half the footprint's width) does not reach, so no overlap is visible (`p39.png`, `p89.png`). At a
+face's middle the structure's circle keeps the unit at its radius (B-131), so a bubble cannot overlap a dome there
+either. No `t < r` unit rests against a cliff in the showcase (player 0's affected units are its idle welder
+drones), so the cliff case was not captured; nothing reads as a fault, and no bug is registered.
+
+**Storyboard** (`assets/captures/showcase.ron`), retold for player 0's win. The lane fight runs from the first shot
+(tick 305) to tick 676, its last death; player 0 keeps three pulse bots, which walk to player 1's base, kill its
+workers (ticks 988 and 1,022) and fire on its hall until it falls at tick 2,599. `march` now follows one of the
+viewer's survivors (player 0) and its caption says so; `assault`'s caption is the viewer's siege of the enemy
+hall; `clash` is 375 frames (was 370), because the first render ended it on tick 674, two ticks before the fight's
+last death. Render 2 (take 1,422 frames in 237 s):
+
+| Scene | Speed | Frames | First frame | Start tick |
+|---|---|---:|---:|---:|
+| title | paused | 125 | 0 | 0 |
+| terrain | paused | 150 | 125 | 0 |
+| units | 1x | 150 | 275 | 1 |
+| smog | 1x | 100 | 425 | 151 |
+| advance | 1x until combat (25 to 500) | 54 | 525 | 251 |
+| clash | 1x | 375 | 579 | 305 |
+| march | 4x until combat (5 to 200) | 68 | 954 | 683 |
+| assault | 2x | 200 | 1,022 | 953 |
+| closing | paused | 200 | 1,222 | 1,351 |
+
+`clash` covers ticks 305 to 679, past the last death (676); `march` ends on combat at the enemy base after 68
+frames; `assault` covers ticks 953 to 1,351, with both workers' deaths; `closing` pauses with the enemy hall
+standing, so the video never shows the result. Stills (640 wide) under `~/scratch/inner-radius/wp4/show2/stills/`
+were looked at: `f800.png` (clash, both armies firing beside the west ramp), `f950.png` (the viewer's survivors after
+the fight), `f1100.png` (assault on the enemy hall, caption "Assault"), `f1300.png` (closing card). The first render
+(`show1`, clash 370) assembled its site within its budgets (video 14.1 MB, teaser 4.1 MB).
+`showcase_storyboard_tests` (7) pass.
+
+**Throughput** (WP3 §3): within noise; `DESIGN.md` §5 unchanged.

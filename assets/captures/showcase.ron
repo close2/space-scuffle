@@ -36,6 +36,14 @@
 // at 2x; `closing` pauses before the result. Render-checked on radv: `clash` runs from the first shot
 // (tick 305) to tick 677, past the fight's last death (650); `march` ends on combat at the viewer's
 // base (tick 968), above its minimum. Scene ticks are in docs/evidence/2026-11-11-contact-and-missiles.md §4c.
+// Retold for plan 2026-11-18-inner-radius (Amendment 1: ground units meet terrain at their terrain
+// radius, and the near-tied lane fight now goes to player 0). The lane fight runs from the first shot
+// (tick 305) to tick 676, its last death: the viewer keeps three pulse bots, which walk to the enemy
+// base, kill its workers (ticks 988 and 1,022) and fire on its hall until it falls at tick 2,599.
+// `clash` is 375 frames so that it covers the fight's last death; `march` follows one of the viewer's
+// survivors at 4x until it fires at the enemy base; `assault` shows the enemy base at 2x; `closing`
+// pauses before the result. Render-checked on radv: scene ticks are in
+// docs/evidence/2026-11-18-inner-radius.md §4.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -105,7 +113,7 @@
                 (
                     name: "clash",
                     speed: Speed(1),
-                    length: Frames(370),
+                    length: Frames(375),
                     camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
                     overlay: Caption(
                         title: "Combat",
@@ -118,10 +126,10 @@
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
                     length: UntilCombat(min: 5, max: 200),
-                    camera: FollowUnit(player: 1, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Pathfinding",
-                        body: "The enemy's survivors head for your base, each on its own route on a navigation mesh sized to its body; the fog hides them until your base sees them.",
+                        body: "Your survivors head for the enemy base, each on its own route on a navigation mesh sized to its body.",
                         subsystems: ["Movement and pathfinding"],
                     ),
                 ),
@@ -133,7 +141,7 @@
                     camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Assault",
-                        body: "The attackers cut down your workers and lay siege to your hall.",
+                        body: "Your survivors cut down the enemy's workers and lay siege to its hall.",
                         subsystems: ["Combat"],
                     ),
                 ),
