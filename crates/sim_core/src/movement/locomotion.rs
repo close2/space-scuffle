@@ -2348,14 +2348,14 @@ mod tests {
     /// moved into the body's terrain-radius domain, so a body of radius 0.5 and terrain radius
     /// 0.3125 is clamped to 0.3125 from each edge, not 0.5.
     #[test]
-    fn a_cast_goal_is_clamped_into_the_terrain_radius_domain() {
+    fn a_cast_goal_is_clamped_into_the_terrain_radius_domain(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         use super::{clamp_into_domain, MotionPolicy, MovementLayer};
         let map = sim_map::GameMap::new(
             20,
             16,
             sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
-        )
-        .expect("invariant: a valid size");
+        )?;
         let policy = MotionPolicy {
             layer: MovementLayer::Ground,
             radius: SimScalar::from_num(0.5),
@@ -2371,6 +2371,7 @@ mod tests {
             v(20.0 - 0.3125, 16.0 - 0.3125)
         );
         assert_eq!(clamp_into_domain(policy, &map, v(0.4, 9.0)), v(0.4, 9.0));
+        Ok(())
     }
 
     /// A slide along the wall that keeps most of the step is taken and is not refused.
