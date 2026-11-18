@@ -56,3 +56,17 @@ Options:
 **Option 1 — Approved (merge the `docs/guides/gpu-and-disk.md` diff alongside WP2 and WP3).**
 
 **Standing governance delegation on GPU operational rules:** In addition to approving this diff, note that the GPU rules in `AGENTS.md` §7 and `docs/guides/gpu-and-disk.md` exist as practical guardrails so agents do not overlook shared-VM hazards (such as forgetting `with-gpu-lock` on the physical RX 580 or accidentally picking the wrong driver) — **not** to force human approval on well-engineered test/display/driver improvements. Going forward, **agents may update the GPU operational rules in `docs/guides/gpu-and-disk.md` (and `AGENTS.md` §7 if needed, including adopting `Q0083` Option 2 or refining display/readback paths) directly without opening an owner question, provided the change is well-reasoned, preserves shared-host GPU lock safety whenever touching the physical GPU, and is documented in the plan/commit.**
+
+## Resolution
+
+Applied on branch `gpu-readback` (plan `docs/plans/2026-11-17-gpu-test-readback.md`, Amendment 2), to reach `main`
+together with WP2 and WP3 as the default said. The bullet "GPU tests lock the GPU themselves" in
+`docs/guides/gpu-and-disk.md` now says that offscreen children have no display, that windowed children present
+through a headless KWin inside the child's lock and fall back to `xvfb-run` with `MESA_VK_WSI_DEBUG=sw` where KWin
+is missing, and says so. Two sentences were added to the approved diff, matching what WP3 built: `lavapipe`
+children stay on Xvfb (stated in the question, now in the guide), and `SPACE_SCUFFLE_GPU_TEST_DISPLAY=kwin` or
+`=xvfb` forces the display and never falls back. `AGENTS.md` §7 does not change.
+
+The standing delegation is recorded: agents may change the GPU operational rules in `docs/guides/gpu-and-disk.md`
+and `AGENTS.md` §7 without an owner question when the change is well reasoned, keeps the shared lock safe whenever
+the physical GPU is used, and is documented in the plan or commit.

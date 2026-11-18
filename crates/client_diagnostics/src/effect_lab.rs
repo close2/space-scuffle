@@ -11,7 +11,8 @@
 //! # How it fits
 //! The capture is the production effect plugin and shaders on a lab stage, driven by the lab's
 //! own clock (`Time<Virtual>` in exact steps), so a sheet is reproducible on one driver. The
-//! effect GPU tests in `client` run the same lab code.
+//! effect GPU tests in `client` run the same lab code. It renders offscreen
+//! (`LabSurface::Offscreen`), so it needs no display and presents no frame.
 //!
 //! # Invariants
 //! - Bindings are named as the vocabulary names them (`SplashReach=1.25`); a line effect's
@@ -24,7 +25,8 @@ use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::{Binding, EventKind};
 use client::effects::catalog::{EffectCatalog, EFFECTS_CATALOG_PATH};
 use client::effects::lab::{
-    lab_app, LabGround, LabProgram, LabRepeat, LabSubject, LabZoom, CONTACT_AGES, SEQUENCE_STEP,
+    lab_app, LabGround, LabProgram, LabRepeat, LabSubject, LabSurface, LabZoom, CONTACT_AGES,
+    SEQUENCE_STEP,
 };
 use client::ResolvedAssetsRoot;
 use image::{imageops, RgbImage};
@@ -182,8 +184,14 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
         source,
     })?;
     let program = LabProgram::contact_sheet(subject, lifetime, options.out.clone());
-    let mut app = lab_app(root, program.clone(), None, CAPTURE_SIZE)
-        .map_err(|error| CaptureError::Verification(error.to_string()))?;
+    let mut app = lab_app(
+        root,
+        program.clone(),
+        None,
+        CAPTURE_SIZE,
+        LabSurface::Offscreen,
+    )
+    .map_err(|error| CaptureError::Verification(error.to_string()))?;
     if options.hdr_bloom {
         app.add_plugins(crate::hdr_bloom::HdrBloomPlugin);
     }

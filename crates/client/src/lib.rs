@@ -22,6 +22,7 @@
 //! - [`flipbook_clock`]: The shared flipbook clock, its GPU buffer and the integer frame function.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
 //! - [`effects`]: Data-defined layered effects (sprites, rings, decals, lights, particles).
+//! - [`offscreen`]: Windowless rendering into a canvas image for programs that read only their own pictures.
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
 //! - [`lab_ui`]: Tabbed `bevy_egui` dashboard (Visual Lab, Live Combat Sandbox, Swarm Stress Test).
 
@@ -47,6 +48,7 @@ pub mod input_policy;
 pub mod lab_stage;
 pub mod lab_ui;
 pub mod media;
+pub mod offscreen;
 pub mod player_presentation;
 pub mod presentation;
 pub mod render_compatibility;
