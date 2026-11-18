@@ -780,15 +780,15 @@ Sizes: S ≤ 1 day, M 2–3 days, L ≥ 4 days. At most two building agents at o
 | WP6c | HDR and bloom decision (D-11); quality review (§7) by the implementer and an independent reviewer; frame-budget measurement with the slice at 200 splashes per second | Review log; frame budget evidence | **Gate:** all checklist items pass. Two failed review rounds → stop and hand back to the orchestrator with the contact sheets before any scale-out | S |
 | **Scale-out** (after WP6c passes) | | | | |
 | WP7 | `Ribbon` and `Distortion` blocks; `flame_line`, `lance_sweep`; projectile travel and impact (`ProjectileVisual` arrival spawns the unit's `impact` effect) | Ribbon width and endpoints ±2 px; distortion displaces only inside its mask; GPU stills; review | Reviewed — **done** (Amendment 9; travel effects moved to WP11) | M |
-| WP8 | Concealment and stance: `Shell` hook (sink, rim, tint, refraction), `burrow_dig`/`burrow_emerge`/`burrow_mound`, `cloak_shimmer`/`cloak_own`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`; client-local settle (D-6) | Progress maths (hold during the random extra, clamp, leaving direction); GPU pose "burrow": above-ground pixel area of a burrowed bubble ≤ 35 % of the unburrowed one, mound decal inside its ring; "siege mid-transition": sweep arc within ±5 % of progress; enemy undetected cloaked: only distortion pixels, no tint | Reviewed | M |
-| WP9 | Status and death: `stim_surge`, `concussive_daze`, `charge_streak`, `barrier_shell` (absorb flash), death effects per presentation block (default stays the glass shatter) | Shell-flag unit tests; GPU pose "barrier": outer shell only while `barrier_ratio > 0` | Reviewed | S |
-| WP10 | Areas and links: `psionic_storm`-style area from a test-only ability, `abduct_tether` from a test-only snapshot; `abilities` map in presentation blocks | Area edge at `AreaRadius` ±2 px; fog per frame; tether ends on both bubbles ±2 px; steady-state window with a live area and tether | Reviewed | M |
-| WP11 | Migrate every existing weapon look (tracers, beams, lightning, slashes, plasma orbs, shatter) into effect definitions and presentation blocks for all shipped units and structures; retire the matching `combat_fx` kinds | Coverage test over the whole catalog with no defaults left for splash weapons; existing visual tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) green or re-baselined with that cause only | Every unit chooses its effects in data | M |
+| WP8 | Concealment and stance: `Shell` hook (sink, rim, tint, refraction), `burrow_dig`/`burrow_emerge`/`burrow_mound`, `cloak_shimmer`/`cloak_own`, `detected_mark`, `mode_seal_sweep`, `siege_anchor`; client-local settle (D-6) | Progress maths (hold during the random extra, clamp, leaving direction); GPU pose "burrow": above-ground pixel area of a burrowed bubble ≤ 35 % of the unburrowed one, mound decal inside its ring; "siege mid-transition": sweep arc within ±5 % of progress; enemy undetected cloaked: only distortion pixels, no tint | Reviewed — **done** (Amendments 11 to 15; merged `08766a43`) | M |
+| WP9 | Status and death: `stim_surge`, `concussive_daze`, `charge_streak`, `barrier_shell` (absorb flash), death effects per presentation block (default stays the glass shatter) | Shell-flag unit tests; GPU pose "barrier": outer shell only while `barrier_ratio > 0` | Reviewed — **done** (Amendments 17 to 19; merged `6398fb35`) | S |
+| WP10 | Areas and links: `psionic_storm`-style area from a test-only ability, `abduct_tether` from a test-only snapshot; `abilities` map in presentation blocks | Area edge at `AreaRadius` ±2 px; fog per frame; tether ends on both bubbles ±2 px; steady-state window with a live area and tether | Reviewed — **done** (Amendments 20 to 23; merged `6b79d525`) | M |
+| WP11 | Migrate every existing weapon look (tracers, beams, lightning, slashes, plasma orbs, shatter) into effect definitions and presentation blocks for all shipped units and structures; retire the matching `combat_fx` kinds | Coverage test over the whole catalog with no defaults left for splash weapons; existing visual tests (`round2_visual_tests.rs`, `combat_fx_slot_gpu_tests.rs`) green or re-baselined with that cause only | Every unit chooses its effects in data — **done** (Amendments 24 to 28; merged `3f5e898e`; follow-ups fixed, Amendment 30) | M |
 | **Integration, media, showcase, bookkeeping** | | | | |
-| WP12 | Mode-command integration (after plan `2026-11-09-client-mode-commands` lands): skirmish headless test burrows and sieges through input, checks stance and the fog rule end to end | `skirmish_match_tests.rs` extension | Green — **done** (Amendment 29) | S |
-| WP13 | Morph and mode unit clips (only if Q0075 = yes): atlas slices keyed by `(AnimState, mode)`; ≈ 12 clips | `asset_baker` prompt validation; `runtime_media_tests.rs` admission of mode slices | Clips accepted in review — **done** (Amendment 10: 8 clips, $4.40) | M + ≤ $6.80 |
-| WP14 | Remaining texture sets (`fx_energy`, variants), showcase beats (tank sieges and fires, Hellion flame, Baneling burst and Lurker spines once those identities have media), frame budget with every effect | `showcase_tests.rs`: the take contains each showcase effect at least once; frame-budget evidence (§10.3) | CI showcase renders on lavapipe within its budget | M + ≤ $8.80 Veo (+ ≤ $20 images if allowed) |
-| WP15 | Bookkeeping: evidence `docs/evidence/2026-11-09-effect-visualization.md` (bit-identity, captures, pixel statistics, frame budget, spend), `DESIGN.md` presentation row, register entries closed, `crates/gate/suites.ron` rules and GPU classes for every new test (C22), plan row → Done | `workspace_checks`, `suite_catalog_tests.rs` | Green | S |
+| WP12 | Mode-command integration (after plan `2026-11-09-client-mode-commands` lands): skirmish headless test burrows and sieges through input, checks stance and the fog rule end to end | `skirmish_match_tests.rs` extension | Green — **done** (Amendment 29; merged `5b503df5`) | S |
+| WP13 | Morph and mode unit clips (only if Q0075 = yes): atlas slices keyed by `(AnimState, mode)`; ≈ 12 clips | `asset_baker` prompt validation; `runtime_media_tests.rs` admission of mode slices | Clips accepted in review — **done** (Amendments 10 and 16: 8 clips, $7.20 with the reframe; merged `573a88cc`, `d9f9b0eb`) | M + ≤ $6.80 |
+| WP14 | Remaining texture sets (`fx_energy`, variants), showcase beats (tank sieges and fires, Hellion flame, Baneling burst and Lurker spines once those identities have media), frame budget with every effect | `showcase_tests.rs`: the take contains each showcase effect at least once; frame-budget evidence (§10.3) | CI showcase renders on lavapipe within its budget — **done** (Amendment 31; merged `477c740e`; the CI render estimated at about 35 min, its first measure pending, Amendment 32) | M + ≤ $8.80 Veo (+ ≤ $20 images if allowed) |
+| WP15 | Bookkeeping: evidence `docs/evidence/2026-11-09-effect-visualization.md` (bit-identity, captures, pixel statistics, frame budget, spend), `DESIGN.md` presentation row, register entries closed, `crates/gate/suites.ron` rules and GPU classes for every new test (C22), plan row → Done | `workspace_checks`, `suite_catalog_tests.rs` | Green — **done** (Amendment 32) | S |
 
 Parallelism: WP3 and WP4a may run beside WP2; WP4 and WP5 are independent; after WP6c, WP7 to WP10 are
 independent and run at most two at a time.
@@ -3010,3 +3010,59 @@ is triggered by the effect engine, `effects.ron`, `units.ron`, `start_loadouts.r
 the CI showcase render once it runs on `main`); `DESIGN.md`'s "Effect presentation" row names the showcase take and
 the frame-budget mix, its "Showcase video" row the second take; the plan row in `docs/plans/README.md` records WP8
 to WP14 done; B-107 and B-108 are reviewed for closing.
+
+## Amendment 32: WP15 as built; the plan is done (2026-11-18, short note, charter §6)
+
+**Decision note (charter §6, short note: documentation only).** WP15 of §9. No code, catalog data, test, golden,
+checksum or media changes; nothing spent.
+
+**Done.**
+
+- The evidence file [`docs/evidence/2026-11-09-effect-visualization.md`](../evidence/2026-11-09-effect-visualization.md):
+  per WP what shipped, its commits and merge, its review rounds and verdicts, its key measurements and pictures,
+  and the spend (this plan $17.25: 28 Veo clips and 55 image-model stills; ledger $113.65 of the $230 cap). The
+  bit-identity of D-1 is recorded there from WP2's commit and the amendments; this WP re-ran nothing.
+- `DESIGN.md` §4: B-107 (WP11's coverage test: every shipped splash weapon names its splash look, no default),
+  B-108 (WP8, WP12, WP13), B-109 (WP9) and B-110 (WP4's arrival wiring, WP11's coverage) marked fixed with their
+  commits and tests; the "Effect presentation" row is Working and names the showcase take, the frame-budget mix and
+  what stays open; the "Showcase video" row names the second take.
+- The WP table above: WP8 to WP15 marked done with their merges. The plan's row in `docs/plans/README.md` is Done.
+- C22: every test file this plan added is selected by `crates/gate/suites.ron`, the GPU ones classed `Gpu`
+  (`gate/tests/suite_catalog_tests.rs` green; no rule needed adding).
+
+**Not measured yet: the CI showcase render with both takes.** CI on `main` at `477c740e` was still running when
+WP15 was written, and the showcase workflow runs only after it passes. The last render before WP14 took 24 min 43 s
+(the `battle` take alone); WP14's estimate for both is about 35 of the 40 minutes. The evidence file's WP14 section
+says how to read the step's time from the first run; if it exceeds 35 min, shorten `siege`, then `closing`
+(Amendment 31).
+
+**What stays open (recorded, Q0002; none blocks the plan).**
+
+- Register entries (`DESIGN.md` §4): B-117, B-118 and B-127 (gate lane flakes, plan `2026-11-11-faster-gates`);
+  B-120 (the bubble's low-health glitch); B-121 (the Abduct tether over overlapping bubbles); B-130 (a lavapipe
+  flake of `concealment_gpu_tests` on CI); B-132 (a partly seen area cut along whole fog cells; with Amendment 9's
+  P1-1, the per-pixel fog mask, before any area larger than radius 2 ships); B-133 (a projectile's launch at the
+  shooter's ground + 0.5); B-137 (the splash stream's main-world update cost).
+- The Baneling beat of the showcase, when `volatile_tick` has unit media (Amendment 31); likewise every look of a
+  unit without media is seen only in the lab, the tests and the frame budget.
+- **Polish of Amendment 9** (each with its own review): `cleave_impact` (crest teeth, beaded outline, faintness on
+  bright ground, square clods, a second seed in the footprint test); `flame_line` (width floor at the far camera,
+  the jet rod's breakup, oxblood pockets, the fog-edge cut; billows in crowds); `lance_sweep` (groove width,
+  spatter, the airborne part); `flak_burst` (scalloped inner edge, drifting smoke, shrapnel); `shell_impact` (a
+  streak-fringe texture, ring width, a draw space keeping every blast mark); `acid_burst` (meniscus, inner rims,
+  glob shapes, crowd variation, dried crust); `spine_line` (torn clods, lighter clods, a detached scar piece); the
+  optional decal-ledger refinement; an annotated soft-retirement crop; `mode_seal_sweep` (P4-1) and `siege_anchor`
+  (P4-2, A4-2); `burrow_mound`'s lit crests; `status_gpu_tests`' frame-offset note and first-frame ring assertion
+  (E3-2; E3-1 was fixed in Amendment 24); `area_sight`'s sample reuse (P2-2); `psionic_storm`'s pockets, rim and
+  outline (P2-3, P3-1, P3-2) and `blinding_cloud`'s outline (P3-2); the WP10 crowd sheet (P2-5);
+  `abduct_tether`'s soft rim (P3-3).
+- **Deferred by Amendment 24:** deleting the legacy `combat_fx` module with a replacement for the runtime capture's
+  ownership audit; a lightning look (no shipped weapon delivers lightning); the cleave's direction (`SplashVisual`
+  carries no facing); team colour on weapon looks (not used, as in the reference game).
+- **Deferred by Amendment 25:** P1-4, a coverage test that fires each weapon kind through `SimWorld` instead of
+  keeping its own copy of the delivery rule (`effect_catalog_tests.rs` `delivery`); the bounded leak of a shot's
+  clip fixed at its spawn (E1-2 (c), at most one shot's life).
+- **Deferred by Amendment 27:** `glass_shatter`'s shards (P3-2) and `acid_hit`'s splash (P3-3); `impaler_strike`'s
+  pair of spikes recorded as a deviation of the look.
+- The WP14 budget lines (≤ $8.80 Veo, ≤ $20 images) stay unspent and available to a polish round that needs a new
+  texture.
