@@ -467,3 +467,26 @@ No tuning constant is proposed (D-12, 7).
 4. WP3 then retells the storyboard for the new default-seed timeline with real renders on the RX 580, one GPU
    lock per take with at least 60 s between consecutive holds (readback plan Amendment 4), and takes the picture
    check. WP4 as planned.
+
+## As built (2026-11-18)
+
+WP0 to WP4 are on branch `structure-contact`; the evidence is
+[`docs/evidence/2026-11-18-structure-contact.md`](../evidence/2026-11-18-structure-contact.md).
+- **WP0** `f63be82f`: B-131 restated; B-134 and B-135 registered. B-135 lists every structure analogue whose 5.0.14
+  `Radius` differs from half its footprint width, and the three footprint size mismatches.
+- **WP1** `de3b4e80`: placement and exit occupancy skip registered structures (B3, B4); S-2, S-5 and S-9 red first.
+  Bit-identical everywhere.
+- **WP2** `826b3e14`, throughput `985d44d9`: `MotionEntry::foundation`; no collision body (B1), no steering obstacle
+  (B2); S-1, S-3, S-4, S-8, S-10 and two unit tests red first; S-6 and S-7 guards. Structure-free worlds
+  bit-identical; `golden_replay` does not move, so it is not re-recorded (a finding, D-12, 5). The showcase flips to
+  player 1 at 2,193, caused by B2 alone (control runs); accepted by Amendment 1.
+- **Amendment 1, condition 2** `fe8d7f37`: `route_trace` writes `reversals.csv` (one line per counted reversal). Seed
+  8's +24 player 0 reversals are two pulse bots stepping and drifting back inside their own crowd, about 25 from
+  either hall (B-103's class), not R-3. Seed 6's +13 is spread, at most 10 on one unit along a terrain face.
+- **Merge of main** `eff819dc` (`bdfcffcc`).
+- **WP3** `fca5e0c1`: storyboard retold for player 1's win and render-checked on radv; picture check shows a worker's
+  bubble touching the dome's rim at a face middle (overlap r − t), no fault. No client code changed.
+- **WP4**: B-131 removed from the register as fixed; the Movement row says a registered structure is no body and
+  lists `structure_contact_tests.rs`; inner-radius Amendment 2 points here; this plan's row is `Done`.
+- No tuning constant was added. `CHECKSUM_SCHEMA_VERSION` stays 29. No test changed beyond S-2 and the
+  air-foundation test's doc.
