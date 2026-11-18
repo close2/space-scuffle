@@ -993,3 +993,33 @@ and 3 of 3 tests, 24 `KWin` children), and `cargo gate quick` on the merged tree
    display needs Linux anyway.
 5. **Window size message.** It now gives the physical size, the requested physical size, the logical size and the
    scale factor, and says the display changed the size, without assuming it shrank.
+
+## Amendment 4 (orchestrator, 2026-11-18): GPU lock starvation (B-136) joins WP4
+
+**Finding.** `client/weapon_battle_gpu_tests` failed twice this week because one child waited the harness's whole
+lock timeout (290 s) for `/run/lock/gpu.lock`: once during the effect identity WP7 runs, and once in the package
+gate of this branch's WP3 tree (`a6a4cd31`, test `weapon_looks_fire_in_a_staged_battle`, holder PID 2422378, not in
+`/run/lock/gpu-lock.log`, so a harness child, not a `with-gpu-lock` command). At the time another agent ran a series
+of `with-gpu-lock` frame-budget captures of about 75 s each with gaps of about 10 s. `flock` is not fair: a waiter
+that polls or blocks is not served before a holder that re-acquires, so a series of short holds can starve a test
+child for longer than its timeout. The gate passed on the rerun. Two flakes of one target in a week are a bug
+(gate blueprint §3.5), registered as **B-136**.
+
+**Decision.** WP4 is widened:
+
+1. Register B-136 in `DESIGN.md` §4 (the finding above, with the two runs).
+2. The GPU run ledger records, per child, the time it waited for the lock (`lock_wait_s`) next to `run_s`, and
+   the gate's slowest-children table shows it, so contention is visible in every gate log.
+3. Make waiting fair across every taker of the lock on this host: the harness and `with-gpu-lock` (both users).
+   The WP4 agent reads `with-gpu-lock` and the guide, and proposes the smallest sound design (for example a ticket
+   queue beside the lock, or a hand-over rule in `with-gpu-lock`), with its failure modes (a crashed holder, a
+   stale ticket, a taker that does not know the queue). Code under this repository (`gpu_run.rs`) may be changed
+   in WP4 with tests. A change to the shared `with-gpu-lock` script or the lock's location outside this
+   repository is **not** made by the agent: it is written as a proposal in this plan for the orchestrator, who
+   decides it under Q0086's delegation (`docs/guides/gpu-and-disk.md`, `AGENTS.md` §7) and records it.
+4. Until fairness lands, the guide asks agents to leave at least 60 s between consecutive `with-gpu-lock` holds
+   in a series, so a waiting test child gets the lock.
+
+Tests: T-9 as planned, extended to `lock_wait_s`; a unit test of any fairness logic added to `gpu_run.rs` with
+a fake lock; the guide change is checked by reading. B-136 closes when fairness is in place for both takers or
+the orchestrator records why not.
