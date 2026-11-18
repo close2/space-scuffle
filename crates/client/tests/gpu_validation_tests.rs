@@ -1186,6 +1186,80 @@ fn kwin_screens_are_parsed() {
     }
 }
 
+/// Amendment 3: a window fits the output of the screen its command states, and `KWin`'s default
+/// 1280×720 when it states none; a larger window is refused with the missing size named.
+#[test]
+fn a_window_must_fit_the_stated_screen() {
+    assert_eq!(gpu_run::window_fits_screen((1280, 720), None), Ok(()));
+    assert_eq!(
+        gpu_run::window_fits_screen((1600, 900), Some("1600x900x24")),
+        Ok(())
+    );
+    assert_eq!(
+        gpu_run::window_fits_screen((640, 360), Some("1600x900")),
+        Ok(())
+    );
+    let refused = gpu_run::window_fits_screen((1600, 900), None).expect_err("1600x900 > 1280x720");
+    assert_eq!(refused.window, (1600, 900));
+    assert_eq!(refused.output, (1280, 720));
+    let message = refused.to_string();
+    for part in [
+        "1600×900 window",
+        "states no screen",
+        "1280×720",
+        "Some(\"1600x900x24\")",
+    ] {
+        assert!(message.contains(part), "{part:?} missing from {message:?}");
+    }
+    // One side too large is enough.
+    assert!(gpu_run::window_fits_screen((1281, 720), None).is_err());
+    assert!(gpu_run::window_fits_screen((1280, 721), None).is_err());
+    let narrow = gpu_run::window_fits_screen((1600, 900), Some("1280x1024x24"))
+        .expect_err("1600 is wider than 1280");
+    assert!(narrow
+        .to_string()
+        .contains("states the screen \"1280x1024x24\""));
+}
+
+/// Amendment 3: the run itself refuses an oversized window before the lock, on `KWin` and on
+/// Xvfb, ahead of every other check (the inspected command would otherwise refuse to run).
+#[test]
+fn an_oversized_window_is_refused_before_the_run() {
+    for display in [fixture_kwin(None), ChildDisplay::Xvfb { screen: None }] {
+        let mut command = GpuCommand::inspect(Path::new("/bin/true"), &display, GpuDriver::Radv);
+        command.window(1600, 900);
+        let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            command.run("oversized window");
+        }))
+        .expect_err("the oversized window is refused");
+        let message = refusal
+            .downcast_ref::<String>()
+            .expect("invariant: the refusal formats its message");
+        assert!(
+            message.starts_with("oversized window: the child asks for a 1600×900 window"),
+            "{message}"
+        );
+    }
+    // A window that fits reaches the next check, the inspection refusal.
+    let mut fitting = GpuCommand::inspect(
+        Path::new("/bin/true"),
+        &fixture_kwin(Some("1600x900x24")),
+        GpuDriver::Radv,
+    );
+    fitting.window(1600, 900);
+    let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fitting.run("fitting window");
+    }))
+    .expect_err("an inspected command never runs");
+    let message = refusal
+        .downcast_ref::<String>()
+        .expect("invariant: the refusal formats its message");
+    assert!(
+        message.contains("for inspection and never runs"),
+        "{message}"
+    );
+}
+
 /// A host for display selection with the tools `has` names (`kwin`, `xwayland`, `runtime`,
 /// `xvfb`, `desktop`), at this server's paths.
 fn display_host(has: &[&str]) -> HostDisplay {

@@ -1119,7 +1119,13 @@ fn test_terrain_preview_renders() {
         tempfile::tempdir().expect("Failed to create temporary directory for terrain screenshots");
     let out_dir = temp_dir.path();
 
-    let mut cmd = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_terrain_preview")));
+    // The preview window is 1600x900, which must fit on the virtual screen: KWin's default
+    // 1280x720 output would shrink it (readback plan, Amendment 3).
+    let mut cmd = gpu_run::virtual_gpu_command_on_screen(
+        Path::new(env!("CARGO_BIN_EXE_terrain_preview")),
+        Some("1600x900x24"),
+    );
+    cmd.window(1600, 900);
     cmd.arg("--out").arg(out_dir);
     cmd.allow_for_hex_tiling_driver_defect();
     cmd.assert_passes_validation("terrain_preview");

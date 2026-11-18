@@ -1480,6 +1480,61 @@ pub fn kwin_screen(screen: Option<&str>) -> (u32, u32) {
     }
 }
 
+/// A window a GPU child asks for that is larger than the output its command states
+/// ([`window_fits_screen`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowTooLarge {
+    /// The window's width and height in physical pixels, as the test declared it.
+    pub window: (u32, u32),
+    /// The output's width and height ([`kwin_screen`] of the stated screen).
+    pub output: (u32, u32),
+    /// The screen the command states, or `None` when it states none.
+    pub screen: Option<String>,
+}
+
+impl fmt::Display for WindowTooLarge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (width, height) = self.window;
+        let (output_width, output_height) = self.output;
+        let stated = self.screen.as_deref().map_or_else(
+            || "states no screen".to_owned(),
+            |screen| format!("states the screen {screen:?}"),
+        );
+        write!(
+            formatter,
+            "the child asks for a {width}×{height} window, but its command {stated}, so KWin's \
+             output is {output_width}×{output_height} and KWin would shrink the window to fit. \
+             State the screen size, such as \
+             `virtual_gpu_command_on_screen(binary, Some(\"{width}x{height}x24\"))`"
+        )
+    }
+}
+
+/// Checks that a `window` of physical pixels fits the output of `screen` as `KWin` makes it
+/// ([`kwin_screen`]: the stated size, or 1280×720 when `None`).
+///
+/// `KWin` shrinks a window larger than its output to fit it, silently. Xvfb never resizes an X
+/// window, so the same missing screen passes there and only fails later under `KWin`. The
+/// harness therefore applies this check on every windowed display, Xvfb included, so the
+/// lavapipe runs of CI catch it too.
+///
+/// # Errors
+/// [`WindowTooLarge`] when the window is wider or taller than the output.
+///
+/// # Panics
+/// As [`kwin_screen`], when `screen` is malformed.
+pub fn window_fits_screen(window: (u32, u32), screen: Option<&str>) -> Result<(), WindowTooLarge> {
+    let output = kwin_screen(screen);
+    if window.0 > output.0 || window.1 > output.1 {
+        return Err(WindowTooLarge {
+            window,
+            output,
+            screen: screen.map(str::to_owned),
+        });
+    }
+    Ok(())
+}
+
 /// The per-run files and names of one `KWin` child (plan `2026-11-17-gpu-test-readback`, D-4).
 ///
 /// `KWin` exits with a status of its own, so the session runs the child through a shim that
@@ -1737,6 +1792,9 @@ pub struct GpuCommand {
     display: &'static str,
     /// `false` for a command built by [`GpuCommand::inspect`], which never runs.
     runnable: bool,
+    /// The window the child asks for, in physical pixels, when the test declares it
+    /// ([`GpuCommand::window`]).
+    window: Option<(u32, u32)>,
 }
 
 /// The manifest an inspected command names ([`GpuCommand::inspect`]); no driver is installed
@@ -1922,6 +1980,7 @@ impl GpuCommand {
             program: binary.to_owned(),
             display: display.ledger_name(driver),
             runnable: true,
+            window: None,
         }
     }
 
@@ -1942,6 +2001,7 @@ impl GpuCommand {
             program: program.to_owned(),
             display: "none",
             runnable: true,
+            window: None,
         }
     }
 
@@ -1958,6 +2018,29 @@ impl GpuCommand {
         S: AsRef<OsStr>,
     {
         self.command.args(args);
+        self
+    }
+
+    /// Panics, naming `label` and the missing screen size, when the declared window is larger
+    /// than the output of a windowed display's stated screen ([`window_fits_screen`]).
+    fn refuse_an_oversized_window(&self, label: &str) {
+        let screen = match &self.shown_on {
+            ChildDisplay::Kwin { screen, .. } | ChildDisplay::Xvfb { screen } => screen.as_deref(),
+            ChildDisplay::None | ChildDisplay::Host => return,
+        };
+        if let Some(window) = self.window {
+            if let Err(error) = window_fits_screen(window, screen) {
+                panic!("{label}: {error}");
+            }
+        }
+    }
+
+    /// Declares the window the child asks for, `width`×`height` physical pixels. [`Self::try_run`]
+    /// refuses the run, before the lock, when the window is larger than the output this
+    /// command's screen gives under `KWin` ([`window_fits_screen`]); offscreen children have no
+    /// window and are not checked.
+    pub fn window(&mut self, width: u32, height: u32) -> &mut Self {
+        self.window = Some((width, height));
         self
     }
 
@@ -2045,9 +2128,10 @@ impl GpuCommand {
     /// [`GpuLockError`] when the lock could not be taken.
     ///
     /// # Panics
-    /// When the command was built by [`Self::inspect`], and as [`Self::run`] for everything
-    /// after the lock.
+    /// When the declared window does not fit the stated screen ([`Self::window`]), when the
+    /// command was built by [`Self::inspect`], and as [`Self::run`] for everything after the lock.
     pub fn try_run(mut self, label: &str) -> Result<GpuRun, GpuLockError> {
+        self.refuse_an_oversized_window(label);
         assert!(
             self.runnable,
             "{label}: a command built by GpuCommand::inspect is for inspection and never runs"

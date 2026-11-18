@@ -329,6 +329,7 @@ fn test_render_verification_under_xvfb() {
         Path::new(env!("CARGO_BIN_EXE_map_editor")),
         Some("1600x900x24"),
     );
+    cmd.window(1600, 900);
     cmd.arg("--verify-render").arg(out_dir);
     cmd.arg("--map")
         .arg("assets/maps/showcase_canyon.scmap.ron");
