@@ -143,9 +143,17 @@ fn check_window_sizes(
         let actual = UVec2::new(window.physical_width(), window.physical_height());
         if let Some(expected) = window_size_mismatch(requested.0, window.scale_factor(), actual) {
             error!(
-                "the window {:?} is {}x{} physical pixels, but it asked for {}x{}: the display \
-                 is smaller than the window. State the screen size in the GPU test.",
-                window.title, actual.x, actual.y, expected.x, expected.y
+                "the window {:?} is {}x{} physical pixels, but it asked for {}x{} ({}x{} logical \
+                 at scale factor {}): the display changed its size. Under the GPU test harness, \
+                 state a screen at least as large as the window.",
+                window.title,
+                actual.x,
+                actual.y,
+                expected.x,
+                expected.y,
+                requested.0.x,
+                requested.0.y,
+                window.scale_factor()
             );
             exit.send(AppExit::error());
             *reported = true;

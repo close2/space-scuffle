@@ -87,10 +87,12 @@
 //! - If the test process itself is killed with `SIGKILL`, its child keeps running without the
 //!   lock for at most the run limit plus the kill grace ([`GpuDriver::run_limit_secs`],
 //!   [`KILL_GRACE_SECS`]).
-//! - `timeout` leads its own process group. When it exits, the harness kills that whole group
-//!   before it reads the output to its end and releases the lock ([`run_to_end`]), so a process
-//!   that outlives `KWin` or the program (one that ignores `SIGTERM`, a late Xwayland) can hold
-//!   neither the pipes nor the lock.
+//! - On Linux, `timeout` leads its own process group. When it exits, the harness gives the group
+//!   [`GROUP_EXIT_GRACE`] to empty on its own (Xvfb removing its lock file and socket), then kills
+//!   what remains and waits until every member is gone, before it reads the output to its end and
+//!   releases the lock ([`run_to_end`]). So a process that outlives `KWin` or the program (one
+//!   that ignores `SIGTERM`, a late Xwayland) can hold neither the pipes nor the lock. Elsewhere
+//!   the run waits for the pipes only, as `Command::output` does; the `KWin` display needs Linux.
 //!
 //! # Invariants
 //! - A run counts as validated only if the loader reported inserting the layer, so a missing layer
@@ -107,11 +109,11 @@
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{Read, Write as _};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{mpsc, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
 
 /// The lock file `with-gpu-lock` takes with `flock(1)`, shared by every user of the server's GPU.
@@ -170,7 +172,8 @@ const RENDER_NODE_PREFIX: &str = "renderD";
 
 /// Run limit on `radv`, in seconds: about three times the slowest child measured on the RX 580
 /// (39.8 s, the windowed skirmish; plan section 3.2), so a hung child holds the GPU at most
-/// 135 s with [`KILL_GRACE_SECS`] and [`OUTPUT_DRAIN_SECS`] ([`run_to_end`]).
+/// 142 s: the limit, [`KILL_GRACE_SECS`], [`GROUP_EXIT_GRACE`], [`GROUP_KILL_WAIT`] and
+/// [`OUTPUT_DRAIN_SECS`] ([`run_to_end`]).
 const RADV_RUN_LIMIT_SECS: u32 = 120;
 
 /// Run limit on `lavapipe`, in seconds.
@@ -186,11 +189,21 @@ const LOCK_PROBE_RUN_LIMIT_SECS: u32 = 60;
 /// Seconds GNU `timeout` waits after its signal before it kills the child outright.
 pub const KILL_GRACE_SECS: u32 = 10;
 
-/// Seconds the harness waits, after it killed the run's process group, for the child's output
-/// pipes to close ([`run_to_end`]). Only a process that left the group can hold them open.
+/// Seconds the harness waits, once the run's process group is gone, for the child's output pipes
+/// to close ([`run_to_end`]). Only a process that left the group can still hold them open.
 pub const OUTPUT_DRAIN_SECS: u64 = 5;
 
-/// How often [`run_to_end`] looks whether `timeout` has exited.
+/// How long the run's process group may take to empty on its own after `timeout` exits, before
+/// the harness kills it ([`run_to_end`]). `xvfb-run` signals Xvfb and exits without waiting, and
+/// Xvfb then removes its lock file and socket; a kill at once would leave both behind.
+pub const GROUP_EXIT_GRACE: Duration = Duration::from_secs(2);
+
+/// How long the harness waits, after its `SIGKILL`, for every process of the group to be gone
+/// before it releases the lock anyway and fails the run ([`run_to_end`]). Only a process stuck in
+/// the kernel (uninterruptible sleep in a driver) outlives a `SIGKILL` that long.
+pub const GROUP_KILL_WAIT: Duration = Duration::from_secs(5);
+
+/// How often [`run_to_end`] looks at `timeout` and at its process group.
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Terrain sampler override read by `client::terrain::theme_gpu`.
@@ -1553,7 +1566,7 @@ pub fn window_fits_screen(window: (u32, u32), screen: Option<&str>) -> Result<()
 /// failure ([`kwin_session_verdict`]).
 #[derive(Debug)]
 struct KwinSession {
-    /// `KWin`'s Wayland socket name, `ss-gpu-<pid>-<n>`, unique per run on the host.
+    /// `KWin`'s Wayland socket name, `ss-gpu-<pid>-<nanoseconds>-<n>`, unique per run on the host.
     socket: String,
     /// The directory of the shim and the status file, `<runtime dir>/<socket>.session`.
     directory: PathBuf,
@@ -1580,8 +1593,13 @@ impl KwinSession {
     /// process and run.
     fn new(runtime_dir: &Path, screen: Option<&str>) -> Self {
         static NEXT_SESSION: AtomicU32 = AtomicU32::new(0);
+        // The nonce keeps a stale directory of a long-dead process with a reused PID from
+        // colliding with this run's; an existing directory is still refused.
+        let nonce = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
         let socket = format!(
-            "ss-gpu-{}-{}",
+            "ss-gpu-{}-{nonce}-{}",
             std::process::id(),
             NEXT_SESSION.fetch_add(1, Ordering::Relaxed)
         );
@@ -2357,13 +2375,24 @@ impl GpuCommand {
 /// `Command::output` waits for both pipes to close, and any process holding one keeps it waiting:
 /// a session child that ignores `SIGTERM` survives `timeout`'s signal after `KWin` itself has
 /// exited, and `timeout` sends its `SIGKILL` only while its own child still runs. So when
-/// `timeout` exits, this kills the whole group, then reads the pipes, waiting at most
-/// [`OUTPUT_DRAIN_SECS`] for them to close. The group is killed while `timeout` is an unreaped
-/// zombie, which keeps its PID, and so the group's ID, from being reused.
+/// `timeout` exits:
+/// 1. the group gets [`GROUP_EXIT_GRACE`] to empty on its own, so a server that cleans up after
+///    its signal (Xvfb removing `/tmp/.X<n>-lock` and its socket) can finish;
+/// 2. what remains is killed with `SIGKILL`, and the run waits up to [`GROUP_KILL_WAIT`] until no
+///    member is left, because `kill(2)` returns once the signal is sent, not once the process is
+///    gone;
+/// 3. then `timeout` is reaped, and the pipes are read, waiting at most [`OUTPUT_DRAIN_SECS`].
+///
+/// `timeout` stays an unreaped zombie until step 3, which keeps its PID, and so the group's ID,
+/// from being reused while the group is watched and signalled. When the drain times out, the
+/// group is already empty: the pipe's holder left the group (`setsid`), the harness cannot name
+/// it, and the run fails with the lock released.
 ///
 /// # Errors
-/// When the command cannot start, its exit cannot be awaited, the group cannot be signalled, or
-/// a process outside the group still holds an output pipe after [`OUTPUT_DRAIN_SECS`].
+/// When the command cannot start, its exit cannot be awaited, the group cannot be signalled, a
+/// member survives [`GROUP_KILL_WAIT`] after its `SIGKILL`, or a process outside the group still
+/// holds an output pipe after [`OUTPUT_DRAIN_SECS`].
+#[cfg(target_os = "linux")]
 pub fn run_to_end(launch: &mut Command) -> std::io::Result<Output> {
     use std::os::unix::process::CommandExt as _;
     launch
@@ -2378,7 +2407,18 @@ pub fn run_to_end(launch: &mut Command) -> std::io::Result<Output> {
     while !has_exited(group) {
         std::thread::sleep(EXIT_POLL_INTERVAL);
     }
-    kill_process_group(group)?;
+    if !group_empties_within(group, GROUP_EXIT_GRACE) {
+        kill_process_group(group)?;
+        if !group_empties_within(group, GROUP_KILL_WAIT) {
+            let survivors = group_members(group);
+            // Reap `timeout` so it is not left a zombie; the survivors keep the group's ID.
+            child.wait()?;
+            return Err(std::io::Error::other(format!(
+                "processes {survivors:?} of the run's group survived SIGKILL for {} s",
+                GROUP_KILL_WAIT.as_secs()
+            )));
+        }
+    }
     let status: ExitStatus = child.wait()?;
     let deadline = Instant::now() + Duration::from_secs(OUTPUT_DRAIN_SECS);
     Ok(Output {
@@ -2388,10 +2428,24 @@ pub fn run_to_end(launch: &mut Command) -> std::io::Result<Output> {
     })
 }
 
+/// Runs `launch` as `Command::output` does: the output once both pipes close. Without `/proc`,
+/// the harness cannot watch a process group, so the bounds of the Linux version do not hold; the
+/// `KWin` display, whose leftovers they are for, runs only on Linux.
+///
+/// # Errors
+/// When the command cannot start or be awaited.
+#[cfg(not(target_os = "linux"))]
+pub fn run_to_end(launch: &mut Command) -> std::io::Result<Output> {
+    launch.stdin(Stdio::null()).output()
+}
+
 /// Reads `stream` to its end on a thread of its own and sends the bytes; a stream that was not
 /// captured sends nothing at once.
-fn drain(stream: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
-    let (sender, receiver) = mpsc::channel();
+#[cfg(target_os = "linux")]
+fn drain(
+    stream: Option<impl std::io::Read + Send + 'static>,
+) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
     let Some(mut stream) = stream else {
         drop(sender.send(Vec::new()));
         return receiver;
@@ -2413,27 +2467,77 @@ fn drain(stream: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> 
 ///
 /// # Errors
 /// [`std::io::ErrorKind::TimedOut`] when the pipe is still open at `deadline`.
-fn received_by(receiver: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> std::io::Result<Vec<u8>> {
+#[cfg(target_os = "linux")]
+fn received_by(
+    receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
+    deadline: Instant,
+) -> std::io::Result<Vec<u8>> {
     receiver
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 format!(
-                    "a process outside the run's process group still held its output {OUTPUT_DRAIN_SECS} s \
-                     after the group was killed"
+                    "a process outside the run's process group still held its output \
+                     {OUTPUT_DRAIN_SECS} s after the group was gone"
                 ),
             )
         })
 }
 
 /// Whether the child `pid` has exited: it is a zombie, or already gone.
+#[cfg(target_os = "linux")]
 fn has_exited(pid: u32) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
-        stat.rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().next())
+        stat_fields(&stat)
+            .and_then(|fields| fields.first().copied())
             .is_none_or(|state| state == "Z")
     })
+}
+
+/// The fields of a `/proc/<pid>/stat` line after the command name: state, parent PID, process
+/// group, and so on.
+#[cfg(target_os = "linux")]
+fn stat_fields(stat: &str) -> Option<Vec<&str>> {
+    stat.rsplit_once(')')
+        .map(|(_, rest)| rest.split_whitespace().collect())
+}
+
+/// The live members of process group `group` other than its leader, which stays an unreaped
+/// zombie while [`run_to_end`] watches the group. Zombies have exited and hold nothing.
+#[cfg(target_os = "linux")]
+pub fn group_members(group: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| *pid != group)
+        .filter(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                stat_fields(&stat).is_some_and(|fields| {
+                    fields.first() != Some(&"Z")
+                        && fields.get(2).and_then(|pgrp| pgrp.parse::<u32>().ok()) == Some(group)
+                })
+            })
+        })
+        .collect()
+}
+
+/// Whether process group `group` has no live member but its leader within `wait`.
+#[cfg(target_os = "linux")]
+fn group_empties_within(group: u32, wait: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    loop {
+        if group_members(group).is_empty() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(EXIT_POLL_INTERVAL);
+    }
 }
 
 /// Sends `SIGKILL` to every process of the group `group` with `kill(1)`; a group with no
@@ -2441,8 +2545,9 @@ fn has_exited(pid: u32) -> bool {
 ///
 /// # Errors
 /// When `kill` cannot be started.
+#[cfg(target_os = "linux")]
 fn kill_process_group(group: u32) -> std::io::Result<()> {
-    // `kill` exits 1 when no process is left in the group, which is the usual case.
+    // `kill` exits 1 when no process is left in the group.
     Command::new("kill")
         .args(["-s", "KILL", "--", &format!("-{group}")])
         .stdin(Stdio::null())

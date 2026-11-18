@@ -1739,9 +1739,10 @@ fn a_session_child_that_ignores_sigterm_cannot_outlive_the_run(
     Ok(())
 }
 
-/// Review item 3, on any host: when the group leader exits, a process it left in its group,
-/// one that ignores `SIGTERM` and holds the output pipes, is killed, and the run returns at once
-/// with the leader's status and output.
+/// Review item 3 and re-review item 2, on Linux: when the group leader exits, a process it left
+/// in its group, one that ignores `SIGTERM` and holds the output pipes, is killed after
+/// [`gpu_run::GROUP_EXIT_GRACE`], and the run returns only once it is gone, with the leader's
+/// status and output.
 #[test]
 fn a_leftover_group_member_cannot_hold_the_output() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
@@ -1751,16 +1752,137 @@ fn a_leftover_group_member_cannot_hold_the_output() -> Result<(), Box<dyn std::e
     let elapsed = started.elapsed();
     assert_eq!(output.status.code(), Some(7));
     let sleeper: u32 = String::from_utf8(output.stdout)?.trim().parse()?;
+    let bound = gpu_run::GROUP_EXIT_GRACE + Duration::from_secs(3);
     assert!(
-        elapsed < Duration::from_secs(gpu_run::OUTPUT_DRAIN_SECS),
-        "the run waited {:.1} s for its leftover",
-        elapsed.as_secs_f64()
+        elapsed >= gpu_run::GROUP_EXIT_GRACE && elapsed < bound,
+        "the run took {:.1} s; the grace is {:.0} s",
+        elapsed.as_secs_f64(),
+        gpu_run::GROUP_EXIT_GRACE.as_secs_f64()
     );
+    // At once, with no settle: run_to_end returns only after the group is empty.
     let alive = processes()
         .into_iter()
         .any(|process| process.pid == sleeper && process.comm == "sleep" && !process.zombie);
     assert!(!alive, "the leftover sleep {sleeper} still runs");
     Ok(())
+}
+
+/// Re-review item 1, on Linux: a group member that finishes on its own within
+/// [`gpu_run::GROUP_EXIT_GRACE`] after the leader exits (as Xvfb does after `xvfb-run`'s
+/// `SIGTERM`, removing its lock file and socket) is not killed, and the run ends when it does.
+#[test]
+fn a_group_member_that_finishes_in_the_grace_is_not_killed(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mark = directory.path().join("finished");
+    let started = Instant::now();
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "( /bin/sleep 0.5; touch \"$MARK\" ) & exit 0"])
+        .env("MARK", &mark);
+    let output = gpu_run::run_to_end(&mut command)?;
+    let elapsed = started.elapsed();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        mark.exists(),
+        "the group member was killed before it finished"
+    );
+    assert!(
+        elapsed < gpu_run::GROUP_EXIT_GRACE,
+        "the run waited {:.1} s instead of ending with its last member",
+        elapsed.as_secs_f64()
+    );
+    Ok(())
+}
+
+/// The X server files in `/tmp` left without a live owner: a `/tmp/.X<n>-lock` whose PID no
+/// longer runs, or a socket `/tmp/.X11-unix/X<n>` with no lock, among those not in `before`.
+fn orphaned_x_files(before: &[String]) -> Vec<String> {
+    let mut orphans = Vec::new();
+    for name in x_sockets() {
+        if before.contains(&name) {
+            continue;
+        }
+        let lock = format!("/tmp/.{name}-lock");
+        let owner = std::fs::read_to_string(&lock)
+            .ok()
+            .and_then(|pid| pid.trim().parse::<u32>().ok());
+        let live = owner.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+        if !live {
+            orphans.push(format!("/tmp/.X11-unix/{name} (lock {lock}: {owner:?})"));
+        }
+    }
+    let Ok(entries) = std::fs::read_dir("/tmp") else {
+        return orphans;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(display) = name
+            .strip_prefix(".X")
+            .and_then(|rest| rest.strip_suffix("-lock"))
+        else {
+            continue;
+        };
+        if before.contains(&format!("X{display}")) {
+            continue;
+        }
+        let owner = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|pid| pid.trim().parse::<u32>().ok());
+        if !owner.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists()) {
+            orphans.push(format!("/tmp/{name}: {owner:?}"));
+        }
+    }
+    orphans
+}
+
+/// The display numbers' names (`X<n>`) with a lock file or a socket in `/tmp` now.
+fn x_displays() -> Vec<String> {
+    let mut names = x_sockets();
+    if let Ok(entries) = std::fs::read_dir("/tmp") {
+        for entry in entries.filter_map(Result::ok) {
+            if let Some(display) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix(".X"))
+                .and_then(|rest| rest.strip_suffix("-lock"))
+            {
+                names.push(format!("X{display}"));
+            }
+        }
+    }
+    names
+}
+
+/// Re-review item 1: a run under `xvfb-run` leaves no Xvfb lock file or socket behind, because
+/// the harness gives Xvfb its grace to clean up before it kills the group. Runs on the selected
+/// driver with the display forced to Xvfb; the program renders nothing, so the run fails on its
+/// missing adapter line, after the display is gone.
+#[test]
+fn an_xvfb_run_leaves_no_x_server_files() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let before = x_displays();
+    let command =
+        gpu_run::virtual_gpu_command_with(Path::new("/bin/true"), None, DisplayRequest::Xvfb);
+    assert!(
+        command.display_name().starts_with("xvfb"),
+        "{}",
+        command.display_name()
+    );
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        command.run("xvfb leftover probe")
+    }));
+    let Err(payload) = caught else {
+        panic!("a program that renders nothing must fail the adapter check");
+    };
+    let message = panic_text(payload.as_ref());
+    assert!(message.contains("no AdapterInfo line"), "{message}");
+    let orphans = orphaned_x_files(&before);
+    assert!(orphans.is_empty(), "the Xvfb run left {orphans:?}");
 }
 
 /// Review item 4: a session directory left by an earlier run, whose `status` says 0, cannot pass

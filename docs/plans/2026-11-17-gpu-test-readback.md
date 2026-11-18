@@ -965,3 +965,31 @@ T-4 under `KWin`, with the window size check active in every windowed child: 19 
 children), no child reports a window size mismatch, and nothing is left. After main `8662f22b` was merged, which
 changed `weapon_battle_gpu_tests` and `area_link_gpu_tests`, those two ran again under `KWin` and pass (2 of 2
 and 3 of 3 tests, 24 `KWin` children), and `cargo gate quick` on the merged tree is green.
+
+**Amendment 3, re-review fixes (2026-11-18; the orchestrator's decision note after the independent re-review of
+`f3911ff8`).**
+
+1. **Xvfb's files (regression).** `xvfb-run` sends Xvfb `SIGTERM` and exits without waiting, so the group kill of
+   the review fixes, within about 50 ms of `timeout`'s exit, killed Xvfb before it removed its lock file `.X<n>-lock` and
+   its socket `X<n>` in the temporary directory (two stale pairs from 03:46 were found). `run_to_end` now gives the group
+   `GROUP_EXIT_GRACE` (2 s) to empty on its own after `timeout` exits, and kills only what remains. Tests:
+   `a_group_member_that_finishes_in_the_grace_is_not_killed` (any Linux host) and
+   `an_xvfb_run_leaves_no_x_server_files` (a run forced onto Xvfb leaves no lock or socket whose owner is dead).
+   Our five stale lock and socket pairs (displays 101, 102, 104, 30328, 30329: owned by this user, PIDs dead) were
+   removed; nothing of another user was touched.
+2. **The lock before the group is gone.** `kill(1)` returns once the signal is sent, and the output pipes do not
+   cover Xvfb (`>&3`) or Xwayland (pipes of its own). After its `SIGKILL`, `run_to_end` now waits until the group
+   has no live member but the zombie leader (`group_members`, read from `/proc`), up to `GROUP_KILL_WAIT` (5 s),
+   before it reaps `timeout`, reads the pipes and lets `try_run` release the lock. If a member survives that wait
+   (stuck in the kernel), the run fails, naming it. The drain's timeout comes only after the group is empty; its
+   holder has then left the group (`setsid`), cannot be named, and the run fails with the lock released, as the
+   function documents. Worst case on radv: 142 s (120 s limit, 10 s kill grace, 2 s exit grace, 5 s kill wait, 5 s
+   drain). `a_leftover_group_member_cannot_hold_the_output` now checks, with no settle, that the leftover is gone
+   when the run returns.
+3. **Session names.** `ss-gpu-<pid>-<nanoseconds>-<n>`, so a stale directory of a long-dead process with a reused
+   PID cannot collide; an existing directory is still refused.
+4. **Linux only.** `run_to_end`'s group handling and its helpers are `cfg(target_os = "linux")`. Elsewhere
+   `run_to_end` waits for the pipes as `Command::output` does, documented as without the bounds; the `KWin`
+   display needs Linux anyway.
+5. **Window size message.** It now gives the physical size, the requested physical size, the logical size and the
+   scale factor, and says the display changed the size, without assuming it shrank.
