@@ -194,3 +194,16 @@ on the seeds of record, 4 over all seeds); battle 33 `seeds.csv` byte-identical;
 and `overlap.csv` byte-identical at 1,800 ticks, to the end and on seeds 1 to 8.
 The whole `sim_core` suite passes on WP2 (949 tests, every target; no test changed beyond the new ones). Goldens pass
 unchanged in debug and release native and in `wasm32-wasip1` release under wasmtime.
+
+## 3. WP3: client
+
+**Change.** `UnitEffectTables`' muzzle is `drawn_radius()`; the docs of `projectile_onto_struck`, `StruckBubble::radius`
+and the muzzle field say the simulation publishes the arrival at the target's drawn radius (D-6). **Verified:**
+`grep -rn "collision_radius" crates/client/src` finds no other reader (only the new test).
+
+| Test | WP2 | WP3 |
+|---|---|---|
+| `effects::catalog::units::tests::a_structures_muzzle_is_its_drawn_dome` | Fails: an armed 2×2 at radius 1.125 has muzzle 1.125 | Passes: 1.0; a unit's muzzle is its collision radius |
+
+The client's `struck` unit tests and `sync_steady_state_tests` (8) pass; `cargo clippy -p client --lib --tests` is
+clean. The simulation is unchanged from WP2, so its matrix, battle 33, showcase and goldens are WP2's.
