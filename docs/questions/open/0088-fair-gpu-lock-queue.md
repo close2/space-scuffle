@@ -29,3 +29,9 @@ as ours.
   starts queueing by itself; the 60 s rule is then dropped and B-136 closed.
 - **(b)** Keep today's script and the 60 s rule (the default).
 - **(c)** Something else, such as a change to the proposal.
+
+## Answer
+
+**Option (a) — Approved.**
+
+The owner will deploy `~/scratch/gpu-ledger/proposal/with-gpu-lock` to `/usr/local/bin/with-gpu-lock` (along with a `tmpfiles.d` entry `d /run/lock/gpu.queue 1777 root root -` so `/run/lock/gpu.queue` is pre-created owned by `root` across reboots) via the `infrastructure` project (`quorra`'s owner is the same owner and `quorra` already calls `/usr/local/bin/with-gpu-lock` directly). It may take a short while until the `infrastructure` playbook run applies it: once `grep -q gpu.queue /usr/local/bin/with-gpu-lock` succeeds on this VM, drop the temporary 60 s spacing rule in `docs/guides/gpu-and-disk.md` and close `B-136` and `Q0088`.
