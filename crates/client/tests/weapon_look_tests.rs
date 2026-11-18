@@ -1080,38 +1080,122 @@ fn a_full_effect_pool_refuses_and_counts() {
 /// could hold if every player fielded only it.
 #[test]
 fn the_table_is_sized_from_the_catalog_and_the_budget() {
-    let (catalog, units, _) = shipped();
-    let capacity = HeldBeams::capacity_for(&units, &catalog);
-    let share = usize::try_from(catalog.budget.effects / 4).expect("small");
-    let cheapest = units
+    let (mut catalog, units, _) = shipped();
+    // The catalog bound, computed here on its own: per unit type, eight players fielding only
+    // it at the supply cap, times its sustained weapons; the largest over the catalog.
+    let sustained = |catalog: &EffectCatalog, name: &Option<String>| {
+        name.as_ref()
+            .and_then(|name| catalog.effect_id(name))
+            .and_then(|id| catalog.effect(id))
+            .is_some_and(|effect| effect.sustain.is_some())
+    };
+    let expected = units
         .archetypes()
-        .filter(|archetype| {
-            archetype.effects.weapons.iter().any(|entry| {
-                entry
-                    .travel
-                    .as_ref()
-                    .and_then(|name| catalog.effect_id(name))
-                    .and_then(|id| catalog.effect(id))
-                    .is_some_and(|effect| effect.sustain.is_some())
-            })
+        .map(|archetype| {
+            let weapons = archetype
+                .effects
+                .weapons
+                .iter()
+                .filter(|entry| sustained(&catalog, &entry.travel))
+                .count();
+            let per_player = usize::try_from(
+                sim_core::production::STANDARD_SUPPLY_CAP / archetype.supply_cost.max(1),
+            )
+            .expect("small");
+            sim_types::MAX_PLAYERS * per_player * weapons
         })
-        .map(|archetype| archetype.supply_cost.max(1))
-        .min()
-        .expect("a shipped unit holds a beam");
-    let bound = sim_types::MAX_PLAYERS
-        * usize::try_from(sim_core::production::STANDARD_SUPPLY_CAP / cheapest).expect("small");
-    eprintln!("held-beam table: {capacity} (pool share {share}, catalog bound at least {bound})");
-    assert!(capacity <= share, "within a quarter of the effect pool");
-    assert_eq!(
-        capacity,
-        share.min(bound.max(capacity)),
-        "the smaller of the two"
-    );
-    assert!(capacity >= 64, "at least the earlier fixed table");
+        .max()
+        .expect("the shipped catalog has units");
+    // The shipped data: the cheapest beam units cost 2 supply and hold one beam each.
+    assert_eq!(expected, 800, "8 players x 200 supply / 2 x 1 beam");
+    let share = usize::try_from(catalog.budget.effects / 4).expect("small");
+    let capacity = HeldBeams::capacity_for(&units, &catalog);
+    eprintln!("held-beam table: {capacity} (pool share {share}, catalog bound {expected})");
+    assert_eq!(capacity, share.min(expected), "the smaller of the two");
     let table = HeldBeams::with_capacity(capacity);
     assert_eq!(table.capacity(), capacity);
     assert!(table
         .buffers()
         .iter()
         .all(|(_, _, reserved)| *reserved >= capacity));
+    // A pool large enough: the catalog bound decides.
+    catalog.budget.effects = 1_000_000;
+    assert_eq!(HeldBeams::capacity_for(&units, &catalog), expected);
+    // No sustained look in the vocabulary: no beam is ever held, and the table is empty.
+    for effect in &mut catalog.effects {
+        effect.sustain = None;
+    }
+    assert_eq!(HeldBeams::capacity_for(&units, &catalog), 0);
+    assert_eq!(HeldBeams::with_capacity(0).capacity(), 0);
+}
+
+/// Review round 2, R3-1: the burn a held beam's strike lays follows the beam's end while the
+/// target moves, as do the previous strike's; the burn of a strike of no held beam stays.
+#[test]
+fn a_held_beams_burns_follow_its_end() {
+    let (catalog, units, tables) = shipped();
+    let (source, _) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let mut target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let mut burns = Vec::new();
+    for strike in 0..2_u32 {
+        let now = 1.0 + f64::from(strike) * 0.36;
+        let presented = [attacker.clone(), target.clone()];
+        let event = beam_strike(source, &attacker, &target);
+        assert!(strike_at(
+            &mut beams,
+            &event,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            now
+        ));
+        let impact = spawn_request(&event, &tables, &catalog).expect("the beam names a burn");
+        let burn = runtime
+            .spawn(&catalog, &impact, now)
+            .expect("the burn spawns");
+        beams.attach_burn(&event, burn);
+        burns.push(burn);
+        keep_at(
+            &mut beams,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            now,
+        );
+    }
+    assert_eq!(beams.slots()[0].burns, [Some(burns[1]), Some(burns[0])]);
+    // The target walks on: both burns stay on the beam's end.
+    for step in 1..=4_u8 {
+        target.world_pos = [
+            9.0 + f32::from(step) * 0.3,
+            4.0 + f32::from(step) * 0.2,
+            0.0,
+        ];
+        let presented = [attacker.clone(), target.clone()];
+        let now = 1.4 + f64::from(step) * 0.02;
+        keep_at(
+            &mut beams,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            now,
+        );
+        let end = held_line(&runtime, beams.slots()[0].handle).to;
+        for burn in &burns {
+            let anchor = runtime.pool.get(*burn).expect("the burn lives").anchor;
+            assert!(
+                anchor.distance(end) < 1e-4,
+                "step {step}: {anchor:?} vs {end:?}"
+            );
+        }
+    }
+    // A burn of a strike no beam holds is not attached.
+    let mut stray = HeldBeams::default();
+    let event = beam_strike(source, &attacker, &target);
+    let impact = spawn_request(&event, &tables, &catalog).expect("the beam names a burn");
+    let burn = runtime
+        .spawn(&catalog, &impact, 2.0)
+        .expect("the burn spawns");
+    stray.attach_burn(&event, burn);
+    assert_eq!(stray.slots().len(), 0);
 }

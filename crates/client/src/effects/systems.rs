@@ -601,7 +601,11 @@ pub fn spawn_effects_from_events(
         if let Some(ready) = spawn_request_struck(&event, struck_radius, &tables, &catalog)
             .and_then(|request| lines.push(request))
         {
-            runtime.spawn(&catalog, &ready, now);
+            let burn = runtime.spawn(&catalog, &ready, now);
+            // A held beam's burn follows the beam's end (review round 2, R3-1).
+            if let (true, Some(burn), Some(beams)) = (held, burn, beams.as_deref_mut()) {
+                beams.attach_burn(&event, burn);
+            }
         }
         // A spell missile's impact, where and when the simulation ran it (plan
         // `2026-11-17-effect-snapshot-identity` D-6, B-124), cut by the fog as an area.

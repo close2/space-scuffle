@@ -294,7 +294,7 @@ struct Report {
     /// Where the evidence child put the full-range victim, map `x, y`, if it found a place.
     far_place: Option<[f32; 2]>,
     /// The Fungal Growth child (plan WP11, F1), per frame: seconds since the casts, missile
-    /// looks held, missile impacts laid so far, and `DamageOverTime` looks held so far.
+    /// looks held, missile impacts laid so far, and named status looks (`defaults.status_by_name`) held so far.
     #[serde(default)]
     fungal: Vec<(f32, usize, u32, u32)>,
     /// Where the enemy's missile was aimed at the edge of the viewer's sight, map `x, y`.
@@ -2529,7 +2529,7 @@ fn every_shot_belongs_to_one_stage() {
 // stand-in standing in the fog casts it at the edge of the viewer's sight at the same moment.
 // The child pictures every 40 ms frame round both targets and the whole window every
 // [`FUNGAL_BATTLE_EVERY`] frames, and reports per frame the missile looks held, the impacts
-// laid and the `DamageOverTime` looks held. The parent checks that the viewer's missile held a
+// laid and the named status looks held. The parent checks that the viewer's missile held a
 // look in flight, that both missiles landed an impact (the enemy's seen in part), that the
 // struck units wore the affliction, and that no missile look was held before the casts.
 
@@ -2927,7 +2927,7 @@ fn fungal_frame(
 }
 
 /// Records, every frame of the Fungal Growth child's sequence, the missile looks held, the
-/// missile impacts laid and the `DamageOverTime` looks held so far, and each victim's shell
+/// missile impacts laid and the named status looks held so far, and each victim's shell
 /// (WP5).
 fn record_fungal(
     mut staging: ResMut<'_, Staging>,
@@ -2954,9 +2954,16 @@ fn record_fungal(
         .filter_map(|effect| effect.impact)
         .map(|impact| runtime.spawned_of(impact))
         .sum();
-    let afflictions = tables
+    // The named status looks held so far (WP5: Fungal Growth's look is named by its status).
+    let afflictions: u32 = catalog
+        .defaults
+        .status_by_name
+        .values()
+        .map(|look| runtime.spawned_of(*look))
+        .sum();
+    debug_assert!(tables
         .status(kind, sim_types::StatusKind::DamageOverTime)
-        .map_or(0, |look| runtime.spawned_of(look));
+        .is_none());
     let at = (time.elapsed_secs_f64() - since) as f32;
     staging
         .report
@@ -3417,8 +3424,8 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
         .map(|frame| frame.0);
     eprintln!(
         "driver {driver}: Fungal Growth: missile looks held on {flying} of {} frames (first at \
-         {first_flying:?} s), impacts laid {landed} (first at {first_landed:?} s), afflictions \
-         held {afflicted}; fog edge {:?}",
+         {first_flying:?} s), impacts laid {landed} (first at {first_landed:?} s), named \
+         status looks held {afflicted}; fog edge {:?}",
         report.fungal.len(),
         report.fungal_fog_edge
     );
@@ -3427,7 +3434,8 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
     // unseen ground sample round its target and change some seen ones.
     if let Some(change) = &fog_change {
         eprintln!(
-            "driver {driver}: Fungal Growth at the fog edge: at most {} of {} seen and {} of {}              unseen ground samples changed against the first frame (most seen on frame {})",
+            "driver {driver}: Fungal Growth at the fog edge: at most {} of {} seen and {} of {} \
+             unseen ground samples changed against the first frame (most seen on frame {})",
             change.seen, change.total.0, change.unseen, change.total.1, change.peak_frame
         );
         assert_eq!(change.unseen, 0, "no unseen ground sample changes");
@@ -3446,9 +3454,22 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
     // `DamageOverTime` kind; Fungal Growth's victims wear the look the vocabulary names for its
     // status, and the storm stand-in's victims, whose status is published as the same kind, do
     // not.
-    assert_eq!(
-        afflicted, 0,
-        "no look is keyed on the damage-over-time kind"
+    let kind_keyed = {
+        let root = client::ResolvedAssetsRoot::resolve()?;
+        EffectCatalog::load(
+            &root
+                .as_path()
+                .join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )?
+        .defaults
+        .status
+        .contains_key(&sim_types::StatusKind::DamageOverTime)
+    };
+    assert!(!kind_keyed, "no look is keyed on the damage-over-time kind");
+    assert!(
+        afflicted as usize >= FUNGAL_VICTIMS,
+        "each Fungal victim held the named look ({afflicted} held)"
     );
     check_named_shells(&report, &driver.to_string());
     Ok(())

@@ -1742,6 +1742,10 @@ struct BeamFrame {
     /// (review round 1, R2-1: the strike's flare on the target's rim).
     #[serde(default)]
     burn_age: Option<f32>,
+    /// That burn's centre (its anchor), projected (review round 2, R3-1: it follows the beam's
+    /// end).
+    #[serde(default)]
+    burn_px: Option<[f32; 2]>,
 }
 
 /// What the held-beam child reports.
@@ -2049,6 +2053,14 @@ fn record_beam(
     let outline_px = find(target)
         .zip(find(shooter))
         .map(|(target, shooter)| outline_point(camera, target.1, target.2, shooter.1));
+    let youngest = staging.burn.and_then(|burn| {
+        runtime
+            .pool
+            .iter()
+            .filter(|(_, instance)| instance.effect == burn && instance.birth <= now)
+            .map(|(_, instance)| ((now - instance.birth) as f32, instance.anchor))
+            .reduce(|a, b| if b.0 < a.0 { b } else { a })
+    });
     let target_shown = find(target).is_some();
     if !target_shown && staging.gone.is_none() {
         staging.gone = Some(frame);
@@ -2065,14 +2077,8 @@ fn record_beam(
         muzzle_px,
         end_px,
         outline_px,
-        burn_age: staging.burn.and_then(|burn| {
-            runtime
-                .pool
-                .iter()
-                .filter(|(_, instance)| instance.effect == burn && instance.birth <= now)
-                .map(|(_, instance)| (now - instance.birth) as f32)
-                .reduce(f32::min)
-        }),
+        burn_age: youngest.map(|(age, _)| age),
+        burn_px: youngest.map(|(_, anchor)| project3(camera, anchor)),
     });
 }
 
@@ -2515,6 +2521,27 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
     assert!(
         travel > 20.0,
         "the target walked across the screen ({travel:.1} px)"
+    );
+    // Review round 2, R3-1: the youngest burn's centre stays on the beam's end.
+    let burn_errors: Vec<f32> = stream
+        .iter()
+        .filter_map(|frame| {
+            Some(Vec2::from_array(frame.burn_px?).distance(Vec2::from_array(frame.end_px?)))
+        })
+        .collect();
+    let burn_worst = burn_errors.iter().copied().fold(0.0_f32, f32::max);
+    eprintln!(
+        "driver {driver}: the youngest burn's centre lies at most {burn_worst:.2} px from the \
+         beam's end over {} frames with a burn",
+        burn_errors.len()
+    );
+    assert!(
+        burn_errors.len() >= 20,
+        "burns are live on most of the stream"
+    );
+    assert!(
+        burn_worst <= BEAM_END_TOLERANCE_PX,
+        "the burn follows the beam's end within {BEAM_END_TOLERANCE_PX} px"
     );
     // The sample pair: the beam is drawn along its path and at its end.
     let (drawn, bare, muzzle, end) = report.sample.as_ref().ok_or("the sample was pictured")?;

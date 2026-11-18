@@ -24,7 +24,9 @@
 //!   the one-shot pulses of its onset do not outlive it.
 //!
 //! The per-strike impact (the burn on the target) is still laid once per strike by the event
-//! wiring, on the struck surface.
+//! wiring, on the struck surface; the beam keeps the burns of its last two strikes
+//! ([`HeldBeams::attach_burn`]) and moves them with its end every frame, so a moving target does
+//! not leave them behind (review round 2, R3-1).
 //!
 //! # How it fits
 //! `effects::systems::spawn_effects_from_events` hands every admitted strike to
@@ -83,6 +85,10 @@ pub struct BeamSlot {
     /// Seconds of the presented battle clock ([`battle_seconds`]) after which, with no further
     /// strike, it is released.
     pub deadline: f64,
+    /// The burns (per-strike impacts) of its last two strikes, newest first: they follow the
+    /// beam's end until they end, so a moving target does not leave them behind (review round
+    /// 2, R3-1). Two, because a burn (0.46 s shipped) outlives the next strike (0.36 s).
+    pub burns: [Option<EffectHandle>; 2],
 }
 
 /// The beams held now (see the module docs).
@@ -362,6 +368,7 @@ impl HeldBeams {
                             effect,
                             handle,
                             deadline,
+                            burns: [None; 2],
                         },
                     );
                 }
@@ -392,7 +399,7 @@ impl HeldBeams {
             !over
         });
         let fading = (&mut self.fading, self.limit);
-        self.slots.retain(|slot| {
+        self.slots.retain_mut(|slot| {
             let ends = bubble_of(presented, slot.attacker).zip(bubble_of(presented, slot.target));
             let Some((attacker, target)) = ends.filter(|_| battle_now <= slot.deadline) else {
                 fade((&mut *fading.0, fading.1), *slot, catalog, runtime, now);
@@ -413,8 +420,39 @@ impl HeldBeams {
                 _ => NO_CLIP,
             };
             runtime.set_fog_clip(slot.handle, clip);
+            // The strikes' burns stay on the beam's end, on the struck bubble's outline.
+            for burn in &mut slot.burns {
+                if let Some(handle) = *burn {
+                    if !runtime.move_anchor(handle, line.to) {
+                        *burn = None;
+                    }
+                }
+            }
             true
         });
+    }
+
+    /// Gives the beam that strike `event` refreshed or held its burn, `burn` (the strike's
+    /// impact, just spawned), so [`Self::keep`] moves it with the beam's end; the slot's older
+    /// burn is kept as its second, and the one before is left where it is (it has ended, or
+    /// ends within a frame or two). A strike of no held beam does nothing.
+    pub fn attach_burn(&mut self, event: &CombatEventVisual, burn: EffectHandle) {
+        let CombatEventVisual::BeamVisual {
+            source,
+            ends: Some(StrikeEnds { attacker, .. }),
+            ..
+        } = *event
+        else {
+            return;
+        };
+        if let Ok(index) = self
+            .slots
+            .binary_search_by_key(&(attacker, source), |slot| (slot.attacker, slot.source))
+        {
+            let burns = &mut self.slots[index].burns;
+            burns[1] = burns[0];
+            burns[0] = Some(burn);
+        }
     }
 
     /// The beams held now, sorted by attacker and weapon.
