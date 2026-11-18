@@ -409,7 +409,8 @@ mod tests {
                     a.shape,
                     ShapeKind::BuildingDome {
                         footprint_w: 3,
-                        footprint_h: 3
+                        footprint_h: 3,
+                        ..
                     }
                 )
             })

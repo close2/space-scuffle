@@ -280,9 +280,11 @@ fn site_refusal(rejection: &BuildRejection) -> SiteRefusal {
     match rejection {
         BuildRejection::OutOfBounds
         | BuildRejection::Blocked(PlacementFailureReason::OutOfBounds) => SiteRefusal::OutOfBounds,
-        BuildRejection::Blocked(PlacementFailureReason::UnbuildableTerrain) => {
-            SiteRefusal::UnbuildableTerrain
-        }
+        // Walkable ground is a condition of buildable ground (plan
+        // `2026-11-18-contour-footprints` D-5); the viewer hears one reason for both.
+        BuildRejection::Blocked(
+            PlacementFailureReason::UnbuildableTerrain | PlacementFailureReason::UnpathableTerrain,
+        ) => SiteRefusal::UnbuildableTerrain,
         BuildRejection::Blocked(PlacementFailureReason::CliffLevelMismatch) => {
             SiteRefusal::CliffLevelMismatch
         }

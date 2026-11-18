@@ -538,3 +538,10 @@ General rule, as in the contact, inner-radius and structure-contact plans: **a w
 - **Lifted structures** (flying Barracks and others): not modelled.
 - **`separation_radius` (B-49)**: set equal to `radius`, still unread.
 - **Placing spell-impact and splash visuals on the dome's glass** (R-7): presentation, registered only if it reads as a fault.
+
+## Cross-reference (2026-11-18): a structure's terrain radius
+
+A structure's terrain radius is its footprint shape's smaller half-extent, not half its footprint's smaller side
+(this plan's D-5): unchanged for every full-box shape, 0.5 for the Spore Crawler analogue on its 2×2 cells, so
+`terrain_radius ≤ collision_radius` holds. Its D-4 floor and D-2.3 radius rule are replaced by the cover rule of plan
+[`2026-11-18-contour-footprints`](2026-11-18-contour-footprints.md) D-10 (Amendment 2 there confirms the D-5 change).

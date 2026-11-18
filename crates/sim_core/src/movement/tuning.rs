@@ -74,8 +74,6 @@ pub(crate) const REPATH_COOLDOWN_TICKS: u16 = 12;
 pub(crate) const ROUTE_CHECK_PERIOD: u32 = 8;
 /// Distance a chased target may move from a route's end before the route is rebuilt.
 pub(crate) const PURSUIT_ROUTE_DRIFT: SimScalar = SimScalar::from_raw(2 << 32);
-/// Routes to an automatically chosen target may be this many times the unit's scan range.
-pub(crate) const PURSUIT_LEASH_SCAN_RANGES: SimScalar = SimScalar::from_raw(2 << 32);
 /// Ticks a unit ignores a target it gave up on, two seconds.
 pub(crate) const ABANDONED_TARGET_TICKS: u16 = 2 * TICKS_PER_SECOND;
 

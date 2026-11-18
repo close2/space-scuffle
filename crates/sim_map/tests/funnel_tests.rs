@@ -26,8 +26,8 @@ mod radii;
 use radii::{MEDIUM_RADIUS, SMALL_RADIUS};
 
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, MapError, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, CORNER_SAFETY_MARGIN,
+    CellFlags, CliffLevel, GameMap, LatticePoint, MapCell, MapError, MapFile, PathRequest,
+    PathRequestWithVision, Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -169,14 +169,44 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
     let mut map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).unwrap();
 
     // Blue structures
-    map.place_structure(EntityId(23), 5, 5, 5, 5).unwrap();
-    map.place_structure(EntityId(24), 12, 5, 2, 2).unwrap();
-    map.place_structure(EntityId(25), 16, 5, 3, 3).unwrap();
+    map.place_structure(
+        EntityId(23),
+        (5, 5),
+        sim_map::StructureFootprint::square(5, 5),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(24),
+        (12, 5),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(25),
+        (16, 5),
+        sim_map::StructureFootprint::square(3, 3),
+    )
+    .unwrap();
 
     // Red structures
-    map.place_structure(EntityId(26), 54, 54, 5, 5).unwrap();
-    map.place_structure(EntityId(27), 48, 54, 2, 2).unwrap();
-    map.place_structure(EntityId(28), 42, 54, 3, 3).unwrap();
+    map.place_structure(
+        EntityId(26),
+        (54, 54),
+        sim_map::StructureFootprint::square(5, 5),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(27),
+        (48, 54),
+        sim_map::StructureFootprint::square(2, 2),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(28),
+        (42, 54),
+        sim_map::StructureFootprint::square(3, 3),
+    )
+    .unwrap();
 
     let mut pathfinder = Pathfinder::new(&map);
     let goal = SimVec2::new(SimScalar::from_num(45), SimScalar::from_num(32));
@@ -383,12 +413,7 @@ fn assert_mesh_route_matches_oracle(
     let turns: Vec<((f64, f64), i8)> = route
         .turns
         .iter()
-        .map(|&(p, side)| {
-            (
-                (f64::from(p.x), f64::from(p.y)),
-                if side == Side::Left { -1 } else { 1 },
-            )
-        })
+        .map(|&(p, side)| (f64_of(p.to_sim()), if side == Side::Left { -1 } else { 1 }))
         .collect();
     let smooth = oracle::smooth_length(f64_of(start), f64_of(goal), &turns, rho);
     assert!(
@@ -462,8 +487,14 @@ fn mesh_route_wraps_the_end_of_a_thin_wall_without_falling_back() {
             "leg {pair:?}"
         );
     }
-    let corners: Vec<(i32, i32, Side)> = route.turns.iter().map(|&(p, s)| (p.x, p.y, s)).collect();
-    assert_eq!(corners, [(35, 52, Side::Right), (38, 52, Side::Right)]);
+    let corners: Vec<(LatticePoint, Side)> = route.turns.clone();
+    assert_eq!(
+        corners,
+        [
+            (LatticePoint::cell_corner(35, 52), Side::Right),
+            (LatticePoint::cell_corner(38, 52), Side::Right)
+        ]
+    );
     let legal = oracle::Oracle::new(oracle::walls_of(&map), 0.5)
         .shortest(f64_of(start), f64_of(goal))
         .expect("the oracle finds a route");
@@ -548,8 +579,18 @@ fn mesh_structures_touching_at_a_corner_block_every_radius_until_unknown() {
     for y in 0..7 {
         map.cell_mut(8, y).unwrap().flags = CellFlags::empty();
     }
-    map.place_structure(EntityId(1), 7, 8, 1, 1).unwrap();
-    map.place_structure(EntityId(2), 8, 7, 1, 1).unwrap();
+    map.place_structure(
+        EntityId(1),
+        (7, 8),
+        sim_map::StructureFootprint::square(1, 1),
+    )
+    .unwrap();
+    map.place_structure(
+        EntityId(2),
+        (8, 7),
+        sim_map::StructureFootprint::square(1, 1),
+    )
+    .unwrap();
     let mut pathfinder = Pathfinder::new(&map);
     let (start, goal) = (at(3.5, 7.5), at(14.5, 7.5));
     for radius in [0.05, 0.25, 0.375, 0.5] {

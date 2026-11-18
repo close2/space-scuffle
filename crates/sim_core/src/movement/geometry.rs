@@ -1,8 +1,11 @@
 //! Exact conservative ground footprint geometry shared by placement and production.
 //!
-//! Ordinary navigation retains its authored clearance classes. This stricter square
-//! envelope is used for production egress and endpoint-only placement; only producer
-//! egress may explicitly exempt its own foundation occupancy, never terrain.
+//! A ground body swept along a segment is checked against terrain by the open square envelope of
+//! half-side `t` (its terrain radius) and against each structure by its disc against the
+//! structure's footprint shape (plan `2026-11-18-contour-footprints` D-8): the disc is the body
+//! model of contact and routes, so a point placement admits is one the contact rule holds. It is
+//! used for production egress and endpoint-only placement; only producer egress may explicitly
+//! exempt its own foundation, never terrain.
 
 use sim_map::{CellFlags, GameMap};
 use sim_types::{EntityId, SimScalar, SimVec2};
@@ -37,8 +40,9 @@ pub(crate) fn ground_footprint_connected(
     // Why: Center-cell DDA alone misses footprint overlap from fractional origins.
     // What: Stream only the local swept bounding rectangle, testing exact rational
     // segment/cell intersection without sampling, division or temporary buffers.
-    // Trade-off: A conservative square map footprint covers the circular collider;
-    // its integer cell coverage is independent of movement step length or origin.
+    // Trade-off: Against terrain cells a conservative square envelope covers the circular
+    // collider, and its integer cell coverage is independent of step length or origin;
+    // structures are tested by the exact disc against their shape after the loop.
     let touches = |x: u32, y: u32| {
         let x0 = i128::from(x) << 32;
         let y0 = i128::from(y) << 32;
@@ -63,10 +67,10 @@ pub(crate) fn ground_footprint_connected(
             if !touches(cell.0, cell.1) {
                 continue;
             }
+            // The ground under a structure is walkable (D-5); structures are tested below.
             let allowed = map.cell(cell.0, cell.1).is_ok_and(|c| {
-                c.flags.contains(CellFlags::GROUND_PATHABLE)
-                    && !c.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
-                    || exempt.is_some() && c.occupying_structure == exempt
+                c.flags
+                    .intersects(CellFlags::GROUND_PATHABLE | CellFlags::OCCUPIED_BY_STRUCTURE)
             });
             if !allowed || !map.terrain_step_is_connected(cell, cell) {
                 return false;
@@ -83,7 +87,8 @@ pub(crate) fn ground_footprint_connected(
             }
         }
     }
-    true
+    !map.structure_occupants_touched(start, end, radius)
+        .any(|placed| Some(placed.id) != exempt && placed.capsule_meets(start, end, radius))
 }
 
 /// Exact open-interior slab intersection; mere tangency is not footprint overlap.

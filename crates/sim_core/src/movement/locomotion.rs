@@ -36,10 +36,10 @@ use super::math::{
     direction, distance, within_distance,
 };
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, FLANK_RETRY_TICKS, FLANK_REVERSE_TICKS, PURSUIT_LEASH_SCAN_RANGES,
-    PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE,
-    STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT,
-    STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, FLANK_RETRY_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
+    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
+    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD,
+    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
@@ -1184,7 +1184,7 @@ impl SimWorld {
             has_turret: weapon.has_turret,
             max,
             min,
-            scan_range: arch.scan_range,
+            leash: self.catalog.movement_rules().acquire_leash_radius(),
         }))
     }
 }
@@ -1201,8 +1201,9 @@ struct Pursuit {
     max: i128,
     /// Nearest centre separation the weapon reaches, in raw fixed-point units; 0 when unbounded.
     min: i128,
-    /// The pursuer's scan range in world units, which sizes the leash of an automatic chase.
-    scan_range: SimScalar,
+    /// The leash of an automatic chase, world units: 5.0.14's `AcquireLeashRadius`, measured
+    /// from where the chase began (B-142).
+    leash: SimScalar,
 }
 
 impl Pursuit {
@@ -1706,6 +1707,10 @@ impl MotionDraft<'_> {
         .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         let routes = &mut scene.movement.route_outcomes;
+        if self.beyond_leash(pursuit) {
+            self.abandon_pursuit(routes, pursuit.target);
+            return Ok(());
+        }
         if self.check_pursuit_progress(routes, pursuit)?.is_break() {
             return Ok(());
         }
@@ -1750,8 +1755,25 @@ impl MotionDraft<'_> {
         Ok(Stage::Continue(()))
     }
 
+    /// Whether an automatic chase has taken the pursuer beyond its leash: farther than the leash
+    /// radius from where the chase began, routed or direct alike (5.0.14's `AcquireLeashRadius`,
+    /// plan `2026-11-18-contour-footprints` Amendment 4, B-142). The first tick of a chase records
+    /// where it began; an ordered attack never has a leash and clears it.
+    fn beyond_leash(&mut self, pursuit: &Pursuit) -> bool {
+        if pursuit.origin != AttackOrigin::Acquired {
+            self.proposal.memory.leash_origin = None;
+            return false;
+        }
+        let origin = *self
+            .proposal
+            .memory
+            .leash_origin
+            .get_or_insert(self.actor.position);
+        !within_distance(self.actor.position, origin, i128::from(pursuit.leash.raw()))
+    }
+
     /// Searches a new route after terrain refused a chasing step, and gives the target up when
-    /// no route reaches firing range, or an automatic chase's route outruns its leash.
+    /// no route reaches firing range.
     fn reroute_pursuit(
         &mut self,
         scene: &mut MotionScene<'_>,
@@ -1774,14 +1796,8 @@ impl MotionDraft<'_> {
             }
             RouteSearch::Blocked => None,
         };
-        let leash = pursuit
-            .scan_range
-            .checked_mul(PURSUIT_LEASH_SCAN_RANGES)
-            .unwrap_or(SimScalar::MAX);
         match path {
-            Some(path)
-                if pursuit.origin == AttackOrigin::Explicit || path.total_length <= leash =>
-            {
+            Some(path) => {
                 if self.actor.current_funnel_waypoints.is_empty() {
                     // Leaving the straight line for a detour lengthens the way on purpose.
                     self.proposal.memory.progress_best = None;
@@ -1795,8 +1811,10 @@ impl MotionDraft<'_> {
         Ok(())
     }
 
-    /// Reports the chase of `target` as abandoned and leaves that target alone for a while.
+    /// Reports the chase of `target` as abandoned, leaves that target alone for a while, and ends
+    /// the chase's leash.
     fn abandon_pursuit(&mut self, outcomes: &mut Vec<RouteOutcome>, target: EntityId) {
+        self.proposal.memory.leash_origin = None;
         outcomes.push(RouteOutcome {
             tick: self.tick,
             entity: self.entry.id,
@@ -2374,7 +2392,8 @@ mod tests {
                     a.shape,
                     ShapeKind::BuildingDome {
                         footprint_w: 3,
-                        footprint_h: 3
+                        footprint_h: 3,
+                        ..
                     }
                 )
             })

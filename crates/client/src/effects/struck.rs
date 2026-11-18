@@ -986,6 +986,7 @@ mod tests {
         presented.shape = ShapeKind::BuildingDome {
             footprint_w: 3,
             footprint_h: 3,
+            shape: sim_types::FootprintShape::full(3, 3),
         };
         assert_eq!(
             StruckBubble::of(&presented),

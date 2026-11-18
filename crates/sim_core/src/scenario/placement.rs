@@ -312,7 +312,8 @@ mod tests {
                     a.shape,
                     ShapeKind::BuildingDome {
                         footprint_w: 5,
-                        footprint_h: 5
+                        footprint_h: 5,
+                        ..
                     }
                 )
             })

@@ -67,13 +67,22 @@ const DOCUMENT_SEED: u64 = 0x0009_2a11_da7e_5eed;
 const DECODE_SEED: u64 = 0x0009_2dec_0de5_eed5;
 /// Seed of the path request generator.
 const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
+/// Digest of every path result over a corpus with seeded 5.0.14 contour structures (plan
+/// `2026-11-18-contour-footprints` WP3), pinned when the contour cut landed. Its draws use only
+/// fixed-width integer ranges, so the same corpus is drawn on 32-bit and 64-bit targets.
+const CONTOUR_PATH_GOLDEN: u64 = 0x9069_95c7_29b7_3498;
 /// Number of mutated documents derived from the default arena.
 const MUTATED_DOCUMENTS: usize = 200;
 /// Path requests issued on each shipped map.
 const PATH_REQUESTS_PER_MAP: usize = 250;
 
-/// Digest of every validation report over the corpus, recorded before the step 9.2 split.
-const VALIDATION_GOLDEN: u64 = 0xf028_1611_929c_52d1;
+/// Digest of every validation report over the corpus, recorded before the step 9.2 split
+/// (`0xf028_1611_929c_52d1`). Re-recorded for plan `2026-11-18-contour-footprints` WP2 (D-5:
+/// a footprint cell must be walkable ground): 17 start footprints the corpus already refused as
+/// `UnbuildableTerrain` (8 of start 30, 9 of start 31) are now refused as `UnpathableTerrain`;
+/// no start footprint is newly refused, and every other report is unchanged. A scratch build
+/// without the rule reproduces the old value.
+const VALIDATION_GOLDEN: u64 = 0xc8fc_3cbd_495d_5177;
 /// Digest of every decode result over the corpus, recorded before the step 9.2 split.
 const DECODE_GOLDEN: u64 = 0x56c4_3eea_8701_94bd;
 /// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
@@ -570,7 +579,11 @@ fn place_seeded_structures(map: &mut GameMap, rng: &mut ChaCha8Rng) {
         let w = rng.gen_range(2..=4);
         let h = rng.gen_range(2..=4);
         // Blocked placements are part of the seeded outcome and are simply skipped.
-        let _ = map.place_structure(EntityId(9_000 + index), x, y, w, h);
+        let _ = map.place_structure(
+            EntityId(9_000 + index),
+            (x, y),
+            sim_map::StructureFootprint::square(w, h),
+        );
     }
 }
 
@@ -675,4 +688,86 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
     );
     assert!(failed > 0, "corpus must exercise error paths");
     assert_eq!(digest, PATH_GOLDEN, "path output changed");
+}
+
+/// The §2.3 contours as `(cells, half extent, chamfer)` in quarter cells.
+const CONTOURS: [(u8, u16, u16); 5] = [(5, 10, 6), (3, 6, 2), (3, 6, 3), (2, 4, 2), (2, 2, 1)];
+
+/// Places twelve seeded contour structures where they fit; every draw is a `u32` range.
+fn place_seeded_contours(map: &mut GameMap, rng: &mut ChaCha8Rng) -> u32 {
+    let mut placed_contours = 0;
+    for index in 0..12_u32 {
+        let pick = rng.gen_range(0..5_u32);
+        let (size, half, chamfer) = CONTOURS[usize::try_from(pick).unwrap_or(0)];
+        let x = rng.gen_range(0..map.width().saturating_sub(5));
+        let y = rng.gen_range(0..map.height().saturating_sub(5));
+        let footprint = sim_map::StructureFootprint {
+            width: size,
+            height: size,
+            shape: sim_types::FootprintShape {
+                half_width_q: half,
+                half_height_q: half,
+                chamfer_q: chamfer,
+            },
+        };
+        // A blocked placement is part of the seeded outcome and leaves the map as it was.
+        if map
+            .place_structure(EntityId(9_100 + index), (x, y), footprint)
+            .is_ok()
+        {
+            placed_contours += 1;
+        }
+    }
+    placed_contours
+}
+
+/// Plan `2026-11-18-contour-footprints` WP3: routes on both shipped maps among seeded contour
+/// structures, at the shipped terrain radii, with and without knowledge rules.
+#[test]
+fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
+    const RADII: [i64; 6] = [5, 6, 8, 10, 12, 16];
+    let mut rng = ChaCha8Rng::seed_from_u64(PATH_SEED ^ 0xc0_47_0e);
+    let mut hasher = Xxh64::new(0);
+    let mut cornered = 0usize;
+    let mut failed = 0usize;
+    for file in [arena::DEFAULT_ARENA_FILE, arena::SHOWCASE_CANYON_FILE] {
+        let mut map = arena::load_game_map(file);
+        assert!(place_seeded_contours(&mut map, &mut rng) > 0);
+        let known: Vec<bool> = map
+            .cells()
+            .iter()
+            .map(|cell| cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) && rng.gen_bool(0.5))
+            .collect();
+        let mut pathfinder = Pathfinder::new(&map);
+        for _ in 0..PATH_REQUESTS_PER_MAP {
+            let pick = rng.gen_range(0..6_u32);
+            let radius = SimScalar::from_raw(RADII[usize::try_from(pick).unwrap_or(0)] << 28);
+            let base = PathRequest {
+                start: random_point(&map, &mut rng),
+                goal: random_point(&map, &mut rng),
+                radius,
+            };
+            let outcome = if rng.gen_range(0..2_u32) == 0 {
+                pathfinder.find_path(&map, &base)
+            } else {
+                let mut request: PathRequestWithVision<'_> = base.into();
+                request.known_structures = Some(&known);
+                pathfinder.find_path_with_vision(&map, &request)
+            };
+            match &outcome {
+                Ok(path) if path.waypoints.len() > 2 => cornered += 1,
+                Ok(_) => {}
+                Err(_) => failed += 1,
+            }
+            hash_outcome(&mut hasher, &outcome);
+        }
+    }
+    let digest = hasher.digest();
+    eprintln!("contour path digest 0x{digest:016x}; {cornered} cornered paths; {failed} failures");
+    assert!(
+        cornered >= 50,
+        "corpus must exercise portals and the funnel"
+    );
+    assert!(failed > 0, "corpus must exercise error paths");
+    assert_eq!(digest, CONTOUR_PATH_GOLDEN, "contour path output changed");
 }

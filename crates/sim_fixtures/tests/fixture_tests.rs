@@ -62,7 +62,17 @@ use std::path::PathBuf;
 /// world's effect state (empty).
 /// Re-recorded for checksum schema 29 (the same plan, package 2b, D-12), which no longer encodes
 /// the hazard zones (none), the next hazard id or each unit's last storm damage tick (none).
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_650_891_098_077_756_775;
+/// Re-recorded for checksum schema 30 (plan `2026-11-18-contour-footprints` WP2), which encodes
+/// each placed structure's footprint shape; a scratch build that does not encode the shape and
+/// keeps schema 29 reproduces `1_650_891_098_077_756_775`.
+/// Re-recorded for plan `2026-11-18-contour-footprints` Amendment 4 (B-142), which hashes each
+/// unit's leash origin; a scratch build that leaves it unhashed reproduces
+/// `13_611_770_232_129_032_728`.
+/// Re-recorded for plan `2026-11-18-contour-footprints` WP6 (B-134, B-138): the sandbox's
+/// structures take their 5.0.14 footprint shapes, which are hashed and change their clearance.
+/// Every entity stands where it stood; a scratch run with the full-square catalog reproduces
+/// `17_544_490_958_066_995_222`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 15_355_001_956_314_655_944;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

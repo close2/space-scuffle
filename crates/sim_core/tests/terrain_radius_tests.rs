@@ -451,6 +451,7 @@ fn a_body_at_its_terrain_radius_from_a_site_does_not_block_it() {
             ShapeKind::BuildingDome {
                 footprint_w,
                 footprint_h,
+                ..
             } => Some((a.unit_type_id, footprint_w, footprint_h)),
             ShapeKind::UnitSphere => None,
         })

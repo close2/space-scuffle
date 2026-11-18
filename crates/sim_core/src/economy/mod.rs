@@ -511,11 +511,20 @@ impl SimWorld {
         })
     }
 
-    /// The walkable point nearest `from` at the edge of `site`, or the middle of a free cell.
-    pub(crate) fn approach_point(&self, from: SimVec2, site: Footprint) -> Option<SimVec2> {
+    /// Where to walk to reach a one-cell target such as a resource node's cell or an unload
+    /// cell: the middle of that cell when it is free, else [`Self::approach_edge`].
+    pub(crate) fn approach_cell(&self, from: SimVec2, site: Footprint) -> Option<SimVec2> {
         if site.width == 1 && site.height == 1 && self.cell_is_walkable(site.left, site.bottom) {
             return Some(site.centre());
         }
+        self.approach_edge(from, site)
+    }
+
+    /// The walkable point nearest `from` on the ring of cells around `site`: where a worker
+    /// stands to build on the site, and where it goes to get off it (plan
+    /// `2026-11-18-contour-footprints` D-9). Never a point of the site itself, even for a
+    /// one-cell site, so a builder is never sent onto the cell it is about to occupy.
+    pub(crate) fn approach_edge(&self, from: SimVec2, site: Footprint) -> Option<SimVec2> {
         let bound = |value: u32| i32::try_from(value).ok();
         let left = bound(site.left)?;
         let bottom = bound(site.bottom)?;
@@ -558,8 +567,15 @@ impl SimWorld {
         }
     }
 
-    /// Walks `id` to the edge of `site`, reporting how that stands this tick.
-    pub(crate) fn approach_footprint(&mut self, id: EntityId, site: Footprint) -> Approach {
+    /// Walks `id` to the edge of `site`, reporting how that stands this tick. `goal` chooses the
+    /// point walked to: [`Self::approach_cell`] for harvest targets, [`Self::approach_edge`]
+    /// for construction sites.
+    pub(crate) fn approach_footprint(
+        &mut self,
+        id: EntityId,
+        site: Footprint,
+        goal: fn(&Self, SimVec2, Footprint) -> Option<SimVec2>,
+    ) -> Approach {
         let Some(actor) = self.entities.get(&id) else {
             return Approach::Unreachable;
         };
@@ -573,9 +589,9 @@ impl SimWorld {
         if actor.task.legs >= MAX_TASK_LEGS {
             return Approach::Unreachable;
         }
-        match self.approach_point(actor.position, site) {
-            Some(goal) => {
-                self.set_task_goal(id, goal);
+        match goal(self, actor.position, site) {
+            Some(point) => {
+                self.set_task_goal(id, point);
                 Approach::Walking
             }
             None => Approach::Unreachable,

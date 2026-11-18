@@ -67,7 +67,9 @@ use std::collections::BTreeMap;
 /// Schema 29 removes the hazard zones the effect engine replaced (plan
 /// `2026-11-10-spellcaster-mechanics` D-12, D-13 item 2): the next hazard id, the hazard list
 /// and each unit's last storm damage tick.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 29;
+/// Schema 30 adds each placed structure's footprint shape: half-width, half-height and chamfer
+/// in quarter cells (plan `2026-11-18-contour-footprints`).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 30;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

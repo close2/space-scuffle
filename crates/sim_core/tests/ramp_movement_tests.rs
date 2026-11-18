@@ -47,7 +47,11 @@ fn physical_motion_rejects_ramp_side_exits_and_intermediate_obstacles() -> TestR
             center(7, 6)
         ));
     }
-    map.place_structure(EntityId(1), 4, 2, 1, 1)?;
+    map.place_structure(
+        EntityId(1),
+        (4, 2),
+        sim_map::StructureFootprint::square(1, 1),
+    )?;
     assert!(!SimWorld::is_position_pathable(
         &map,
         center(2, 2),

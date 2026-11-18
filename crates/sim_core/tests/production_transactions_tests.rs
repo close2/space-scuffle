@@ -434,6 +434,7 @@ fn mutated_producer_definition_fails_before_countdown_changes() -> TestResult {
                 f.world.catalog.get_mut(f.producer_type)?.shape = ShapeKind::BuildingDome {
                     footprint_w: 0,
                     footprint_h: 1,
+                    shape: sim_types::FootprintShape::full(0, 1),
                 }
             }
         }
@@ -476,6 +477,7 @@ fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
         arch.shape = ShapeKind::BuildingDome {
             footprint_w: 1,
             footprint_h: 1,
+            shape: sim_types::FootprintShape::full(1, 1),
         };
         arch.supply_provided = 0;
         arch.collision_radius = SimScalar::from_num(0.4);
@@ -813,6 +815,7 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     wall.shape = ShapeKind::BuildingDome {
         footprint_w: 1,
         footprint_h: 1,
+        shape: sim_types::FootprintShape::full(1, 1),
     };
     wall.supply_provided = 0;
     wall.collision_radius = SimScalar::from_num(0.4);

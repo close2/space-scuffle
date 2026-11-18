@@ -334,13 +334,19 @@ fn g11_movement_rules_fail_loudly_with_the_path() -> TestResult {
 
     let bundle = Bundle::new("g11")?;
     let path = bundle.rules_path();
-    std::fs::write(&path, "(group_routing: (lane_tolerance_permille: 1001))")?;
+    std::fs::write(
+        &path,
+        "(group_routing: (lane_tolerance_permille: 1001), pursuit: (acquire_leash_radius: 21))",
+    )?;
     assert!(matches!(
         RuntimeCatalogs::load_from_directory(&bundle.directory),
         Err(CatalogLoadError::Invalid { path: failed, source: SimCoreError::CatalogInvalidValue { .. } })
             if failed == path
     ));
-    std::fs::write(&path, "(group_routing: (lane_tolerance_permille: 1000))")?;
+    std::fs::write(
+        &path,
+        "(group_routing: (lane_tolerance_permille: 1000), pursuit: (acquire_leash_radius: 21))",
+    )?;
     let most = RuntimeCatalogs::load_from_directory(&bundle.directory)?;
     assert_eq!(most.units.movement_rules().lane_tolerance_permille(), 1000);
     std::fs::write(&path, "(group_routing:")?;

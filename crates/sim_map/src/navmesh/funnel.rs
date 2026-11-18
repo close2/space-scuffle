@@ -16,9 +16,13 @@
 //!   from the apex are tangent directions, so the comparisons are those of S11's modified funnel.
 //! - All arithmetic is Q32.32 with `SimScalar::sqrt`; no float (charter §3.1).
 //! - Each arc becomes waypoints on its circle: its two tangent points and the points of the arc
-//!   halved until every chord keeps at least `r + margin - ARC_CHORD_DIP` from the vertex it turns
-//!   around (plan Amendment 2). The polyline is therefore never longer than the tangent-and-arc
-//!   route, and every leg keeps at least `r + margin / 2` from the vertices it rounds.
+//!   halved until every chord keeps at least `r + margin - dip` from the vertex it turns around
+//!   (plan Amendment 2), where the dip is half the margin ([`ARC_CHORD_DIP`] at the full margin).
+//!   The polyline is therefore never longer than the tangent-and-arc route, and every leg keeps
+//!   at least `r + margin / 2` from the vertices it rounds.
+//! - The margin is [`CORNER_SAFETY_MARGIN`], except in the search's fitted retry (plan
+//!   `2026-11-18-contour-footprints` Amendment 1): a channel narrower than the disc plus two
+//!   margins is pulled once more with the margin it has room for, `(w_min - 2r) / 2`.
 
 use sim_types::{SimScalar, SimVec2};
 
@@ -123,15 +127,17 @@ pub enum PullStrategy {
 
 /// Runs the radius funnel through `portals` (`(left, right)` vertex indices in travel order).
 ///
-/// `rho` is the unit's radius plus [`crate::CORNER_SAFETY_MARGIN`]. `extra` lists the vertices
-/// of the start and goal triangles, which bound the route but belong to no portal.
+/// `rho` is the unit's radius plus its corner margin ([`crate::CORNER_SAFETY_MARGIN`], or the
+/// fitted margin of the search's last retry) and `dip` half that margin: how far an arc's chords
+/// may dip inside the circle of `rho`. `extra` lists the vertices of the start and goal
+/// triangles, which bound the route but belong to no portal.
 #[must_use]
 pub fn radius_funnel(
     mesh: &NavMesh,
     (start, goal): (SimVec2, SimVec2),
     portals: &[(u32, u32)],
     extra: &[u32],
-    (rho, strategy): (SimScalar, PullStrategy),
+    (rho, dip, strategy): (SimScalar, SimScalar, PullStrategy),
 ) -> FunnelRoute {
     let mut items: Vec<(Anchor, Anchor)> = Vec::with_capacity(portals.len() + 2);
     items.push((Anchor::Point(start), Anchor::Point(start)));
@@ -143,7 +149,7 @@ pub fn radius_funnel(
     }));
     items.push((Anchor::Point(goal), Anchor::Point(goal)));
     let anchors = string_pull(mesh, &items, extra, rho, strategy);
-    let waypoints = emit_waypoints(mesh, &anchors, rho);
+    let waypoints = emit_waypoints(mesh, &anchors, rho, dip);
     let mut length = SimScalar::ZERO;
     for pair in waypoints.windows(2) {
         length += pair[0].distance(pair[1]);
@@ -406,14 +412,19 @@ fn arc_points(
 
 /// Replaces each rounded vertex's arc by waypoints on its circle (D-6, Amendment 2): the two
 /// tangent points and, between them, the points of the arc halved until every chord keeps at
-/// least `rho - ARC_CHORD_DIP` from the vertex. The polyline is then never longer than the
-/// tangent-and-arc route and dips at most [`ARC_CHORD_DIP`] inside its circle.
-fn emit_waypoints(mesh: &NavMesh, anchors: &[Anchor], rho: SimScalar) -> Vec<SimVec2> {
+/// least `rho - dip` from the vertex. The polyline is then never longer than the
+/// tangent-and-arc route and dips at most `dip` inside its circle.
+fn emit_waypoints(
+    mesh: &NavMesh,
+    anchors: &[Anchor],
+    rho: SimScalar,
+    dip: SimScalar,
+) -> Vec<SimVec2> {
     let tangents: Vec<Tangent> = anchors
         .windows(2)
         .map(|pair| tangent(mesh, pair[0], pair[1], rho))
         .collect();
-    let floor = rho - ARC_CHORD_DIP;
+    let floor = rho - dip;
     let mut points = vec![centre(mesh, anchors[0])];
     for j in 1..anchors.len().saturating_sub(1) {
         let Anchor::Vertex(_, side) = anchors[j] else {
