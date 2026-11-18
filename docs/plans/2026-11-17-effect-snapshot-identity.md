@@ -1033,3 +1033,48 @@ item "the release throughput benchmark stays within noise" is met.
   beams. Two things bound that cost instead. `HeldBeams` is sized from the catalog and the effect pool (R2-2: at most
   512 shipped). The effect-stress diagnostics report `beams_capacity` and `beams_refused`. A measured
   beam-heavy frame budget belongs with the next effect frame-budget pass.
+
+## Amendment 7 (orchestrator, 2026-11-18): B-133, a projectile's flight starts on the shooter's bubble (short note, charter §6)
+
+**What changes.** B-133: the client starts a projectile's flight at `ProjectileVisual::pos` on its launch tick,
+which the simulation publishes at the shooter's ground + 0.5, so an anti-air flyer's projectile leaves from about
+2.5 units below its own bubble (`identity_wp4b_cross_plane_projectile_radv.png`). The fix is presentation only:
+the client starts the flight on the shooter's bubble, found by `ends.attacker` through the same lookup that B-128
+uses for the struck end (`effects::struck`), at the bubble's glass towards the target, the mirror of WP4b's
+landing rule. When the attacker is not found (dead or unseen on the launch frame), the flight starts where it does
+today, and that fallback is counted, as the struck end's is. The simulation, the published records and every
+checksum are unchanged.
+
+**Why.** It is the open half of B-128 (WP4b aimed only the struck end); the same lookup and the same geometry
+apply, so no new design is needed.
+
+**How it is tested.**
+- Unit tests beside the launch code: a flyer shooter starts its flight on its bubble's glass towards the target; a
+  ground shooter's start moves only to its own glass; an unknown attacker keeps today's start and is counted.
+- The GPU test that produced the B-133 evidence (`weapon_battle_gpu_tests`, the cross-plane projectile subject)
+  gains a bar: the projectile's first drawn position lies within 3 px of the shooter's drawn bubble outline, on
+  radv; the evidence picture is regenerated beside the old one.
+- Steady state: the launch lookup allocates nothing (`sync_steady_state_tests` / the valgrind count stay at 0).
+- Determinism: `git diff main -- crates/sim_*` is empty; goldens untouched.
+
+On acceptance B-133 is marked fixed in `DESIGN.md` §4 with its commits.
+
+**As built (2026-11-18, `d5449de9`, branch `projectile-launch`).** `effects::struck::launch_from_shooter` moves the
+start, after `at_struck_surface` has aimed the arrival, onto the shooter's outline (glass without a camera) towards
+the target at `LAUNCH_MARGIN` = 0 (on the glass itself, so the start lies on the drawn outline), the shooter's centre
+recovered from the published start and its drawn radius, the move at most `MOST_PULL` of the way to the arrival; the
+arrival and flight time are kept. The shooter is looked up by `StruckBubbles::find_shooter`, the same places as the
+struck end, counted apart (`shooter_found_in`); `on_bubbles` does both ends for `spawn_effects_from_events`. Unit
+tests `a_flyer_shooters_flight_starts_on_its_glass_towards_the_target`,
+`a_ground_shooters_start_moves_only_to_its_own_glass`, `a_projectile_whose_shooter_is_unknown_keeps_its_start_and_is_counted`.
+On radv the cross-plane projectile's flight starts 24.70 px from the shooter's drawn centre, its outline 24.70 px out:
+0.00 px off (bar 3 px; exact because the wave fires along the screen's x axis, which the test's outline radius also
+uses); every other bar passes. The same test on main's tree (10e747bf, radv, the same day) differs from this
+branch in one line only: `rocket_trail` (Across) 259 px against its blank's 21 (needs 62) on main, 242 against 1
+(needs 22) here. That is caused by this change: the shooter's start moved onto its glass, which also moves the
+flight's pixels near the struck bubble that the blank run sees. `lance_beam` (143) and `prism_beam` (109) read the same on both
+trees. Their rise from Amendment 3's 115 and 86 came before this change (94 and 136 at WP7 on radv, 106 and 143 at
+WP8 on lavapipe), and by code this change cannot reach a beam: `launch_from_shooter` returns before any lookup
+unless the published event is a `ProjectileVisual`, and `at_struck_surface` is unchanged for `BeamVisual`. The valgrind effect stream now sends a
+projectile a frame; its window difference stays 0. `git diff main -- crates/sim_*` is empty. Evidence:
+`identity_b133_cross_plane_projectile_radv.png` beside `identity_wp4b_cross_plane_projectile_radv.png`.

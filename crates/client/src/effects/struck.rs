@@ -1,6 +1,6 @@
 //! Where a hit shows: on the struck unit's own bubble, towards its attacker (plan
 //! `2026-11-09-effect-visualization` WP11, reviews 2 to 4: A2-1, A3-1, A3-2, A4-1, E3-5; plan
-//! `2026-11-17-effect-snapshot-identity` D-3, Amendments 2 and 3, B-125 and B-128).
+//! `2026-11-17-effect-snapshot-identity` D-3, Amendments 2, 3 and 7, B-125, B-128 and B-133).
 //!
 //! # Responsibility
 //! The simulation publishes an instant hit (`HitscanTracer`, `BeamVisual`) and a melee strike
@@ -23,12 +23,17 @@
 //!   the side of the bubble away from the camera is still in front of its glass: the camera
 //!   looks down at about 58 degrees, and a point 45 degrees up the far side faces it), at the
 //!   bubble's radius plus [`SURFACE_MARGIN`].
+//! - [`launch_from_shooter`] starts a projectile's flight on its **shooter's** bubble, found by
+//!   the shooter's id in the same places ([`StruckBubbles::find_shooter`]): the simulation
+//!   publishes the start at the shooter's ground + 0.5, far below a flyer's bubble. The start
+//!   goes onto the shooter's glass towards the target, the mirror of the landing rule.
 //!
 //! # How it fits
 //! `effects::systems::spawn_effects_from_events` passes every admitted event through
-//! [`at_struck_surface`] before it asks for the event's travel and impact, so a slug, a beam,
-//! its burn and a blow all meet the struck bubble's glass, a flyer's included, whatever stands
-//! below or beside it. Presentation only: the simulation's events and state are read, never
+//! [`at_struck_surface`], and a projectile then through [`launch_from_shooter`], before it asks
+//! for the event's travel and impact, so a slug, a beam, its burn and a blow all meet the struck
+//! bubble's glass, a flyer's included, whatever stands below or beside it, and a projectile
+//! leaves its shooter's glass. Presentation only: the simulation's events and state are read, never
 //! changed (D-1). The fog is not consulted here: the event was admitted by its published point
 //! (`BattleFog::reveals`), and the bubble's outline shows no more than that point shows.
 //!
@@ -37,7 +42,10 @@
 //!   the field), or whose struck bubble is found nowhere, is moved as if it struck a bubble of
 //!   [`DEFAULT_STRUCK_RADIUS`] centred on its published point, the radius its impact binds, so a
 //!   look placed `Behind` the hit still lands on that bubble's centre (review 3, E3-5). A
-//!   projectile in that case keeps its published flight, as before B-128 was fixed.
+//!   projectile in that case keeps its published flight, as before B-128 was fixed; one whose
+//!   shooter is found nowhere keeps its published start, as before B-133 was fixed. Both misses
+//!   are counted, apart ([`StruckBubbles::found_in`], [`StruckBubbles::shooter_found_in`]).
+//! - A projectile's start never moves more than [`MOST_PULL`] of the way to its arrival.
 //! - A shot's hit point never moves past [`MOST_PULL`] of the way back to its muzzle.
 //! - Every lookup is a binary search over an id-ordered slice: the snapshot writes its bubbles
 //!   in entity order and the presentation keeps that order. The one retained buffer, the last
@@ -62,6 +70,10 @@ pub const DEFAULT_STRUCK_RADIUS: f32 = 0.5;
 pub const DOME_RIM_LIFT: f32 = 0.1;
 /// How far up the struck bubble, from its drawn centre, its hit shows: 45 degrees, radians.
 pub const HIT_ELEVATION: f32 = std::f32::consts::FRAC_PI_4;
+/// World units beyond the shooter's bubble's radius at which its projectile's flight starts:
+/// none, so the flight leaves from the glass itself, where the drawn bubble's outline is (plan
+/// `2026-11-17-effect-snapshot-identity` Amendment 7, B-133).
+pub const LAUNCH_MARGIN: f32 = 0.0;
 
 /// The bubble a hit struck.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -135,15 +147,17 @@ impl StruckFrom {
     }
 }
 
-/// The bubbles a hit's struck entity is looked up among beyond the presented frame (those
-/// presented on the frame before this one, retained), and a count of where each lookup found
-/// its bubble, for the steady-state tests and the evidence.
+/// The bubbles a hit's struck entity, or a projectile's shooter, is looked up among beyond the
+/// presented frame (those presented on the frame before this one, retained), and a count of
+/// where each lookup found its bubble, for the steady-state tests and the evidence.
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub struct StruckBubbles {
     /// The last presented frame's bubbles: entity id and struck bubble, in entity id order.
     last: Vec<(EntityId, StruckBubble)>,
-    /// Lookups per [`StruckFrom`], in the order of [`StruckFrom::ALL`].
+    /// Struck-end lookups per [`StruckFrom`], in the order of [`StruckFrom::ALL`].
     found: [u64; 4],
+    /// Shooter lookups (a projectile's launch, B-133) per [`StruckFrom`], in the same order.
+    shooters: [u64; 4],
     /// The battle session `last` was kept for; `None` when none is presented.
     session: Option<SessionGeneration>,
 }
@@ -170,7 +184,35 @@ impl StruckBubbles {
         previous: Option<&[BubbleRenderInstance]>,
         id: EntityId,
     ) -> Option<StruckBubble> {
-        let (found, from) = if let Some(found) = struck_by_id(presented, id) {
+        let (found, from) = self.locate(presented, previous, id);
+        self.found[from.index()] += 1;
+        found
+    }
+
+    /// The bubble of a projectile's shooter, entity `id`, looked up as [`Self::find`] looks up
+    /// a struck bubble, in the same places and order (plan `2026-11-17-effect-snapshot-identity`
+    /// Amendment 7, B-133). Counted apart from the struck-end lookups
+    /// ([`Self::shooter_found_in`]).
+    pub fn find_shooter(
+        &mut self,
+        presented: &[BubbleRenderInstance],
+        previous: Option<&[BubbleRenderInstance]>,
+        id: EntityId,
+    ) -> Option<StruckBubble> {
+        let (found, from) = self.locate(presented, previous, id);
+        self.shooters[from.index()] += 1;
+        found
+    }
+
+    /// The bubble of entity `id` and where it was found: in `presented`, else in `previous`,
+    /// else among the last frame's bubbles, else nowhere. Counts nothing.
+    fn locate(
+        &self,
+        presented: &[BubbleRenderInstance],
+        previous: Option<&[BubbleRenderInstance]>,
+        id: EntityId,
+    ) -> (Option<StruckBubble>, StruckFrom) {
+        if let Some(found) = struck_by_id(presented, id) {
             (Some(found), StruckFrom::Presented)
         } else if let Some(found) = previous.and_then(|previous| struck_by_id(previous, id)) {
             (Some(found), StruckFrom::Previous)
@@ -183,9 +225,7 @@ impl StruckBubbles {
             (Some(*found), StruckFrom::LastFrame)
         } else {
             (None, StruckFrom::Nowhere)
-        };
-        self.found[from.index()] += 1;
-        found
+        }
     }
 
     /// Keeps `presented` (this frame's presented bubbles, in entity id order) as the bubbles a
@@ -203,6 +243,12 @@ impl StruckBubbles {
     #[must_use]
     pub const fn found_in(&self, from: StruckFrom) -> u64 {
         self.found[from.index()]
+    }
+
+    /// How many shooter lookups ([`Self::find_shooter`]) found their bubble in `from`.
+    #[must_use]
+    pub const fn shooter_found_in(&self, from: StruckFrom) -> u64 {
+        self.shooters[from.index()]
     }
 
     /// Address and capacity of the retained buffer, which an allocation would move or grow.
@@ -229,9 +275,10 @@ pub const fn strike_ends(event: &CombatEventVisual) -> Option<StrikeEnds> {
 
 /// `point` (map `x, y`, height) moved onto the glass of a bubble of `struck` centred on it in
 /// plan: towards `towards` (a unit map direction) and [`HIT_ELEVATION`] up from the bubble's
-/// drawn centre, at its radius plus [`SURFACE_MARGIN`], the horizontal move at most `most`.
-fn onto_glass(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f32) {
-    let reach = struck.radius + SURFACE_MARGIN;
+/// drawn centre, at its radius plus `margin` (world units; [`SURFACE_MARGIN`] for a hit,
+/// [`LAUNCH_MARGIN`] for a launch), the horizontal move at most `most`.
+fn onto_glass(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f32, margin: f32) {
+    let reach = struck.radius + margin;
     let across = (reach * HIT_ELEVATION.cos()).min(most);
     point[0] += towards.x * across;
     point[1] += towards.y * across;
@@ -251,27 +298,34 @@ pub fn onto_struck_outline(
     view: Option<Vec3>,
 ) {
     match view {
-        Some(view) => onto_outline(point, struck, towards, most, view),
-        None => onto_glass(point, struck, towards, most),
+        Some(view) => onto_outline(point, struck, towards, most, view, SURFACE_MARGIN),
+        None => onto_glass(point, struck, towards, most, SURFACE_MARGIN),
     }
 }
 
 /// `point` (map `x, y`, height) moved onto the outline of a bubble of `struck` centred on it in
 /// plan, as the camera looking along `view` (Bevy world, unit) sees it: the point of the
-/// bubble's silhouette, at its radius plus [`SURFACE_MARGIN`], on the side of `towards` (a unit
+/// bubble's silhouette, at its radius plus `margin` (world units), on the side of `towards` (a unit
 /// map direction) on screen, so a shot's end, its hit and a blow are drawn at the edge of the
 /// glass the attack comes from, never in front of the bubble's face or behind it (review 3,
 /// A3-2). On a dome, which has nothing below its base, a point that would fall below the base
 /// is put on the base rim instead (review 4, A4-1). The horizontal move is at most `most`.
 /// Falls back to [`onto_glass`] when `towards` runs along the view.
-fn onto_outline(point: &mut [f32; 3], struck: StruckBubble, towards: Vec2, most: f32, view: Vec3) {
+fn onto_outline(
+    point: &mut [f32; 3],
+    struck: StruckBubble,
+    towards: Vec2,
+    most: f32,
+    view: Vec3,
+    margin: f32,
+) {
     let across = Vec3::new(towards.x, 0.0, towards.y);
     let side = across - view * across.dot(view);
     if side.length_squared() < 1e-6 {
-        onto_glass(point, struck, towards, most);
+        onto_glass(point, struck, towards, most, margin);
         return;
     }
-    let reach = struck.radius + SURFACE_MARGIN;
+    let reach = struck.radius + margin;
     let mut offset = side.normalize() * reach;
     // A dome has nothing below its base: on the side towards the camera its visible outline is
     // its base rim, so the point stays there, a little above the floor (review 4, A4-1).
@@ -321,19 +375,13 @@ pub fn at_struck_surface(
             let length = back.length();
             if length > f32::EPSILON {
                 let bubble = found.unwrap_or_else(|| assumed(to));
-                match view {
-                    Some(view) => onto_outline(to, bubble, back / length, length * MOST_PULL, view),
-                    None => onto_glass(to, bubble, back / length, length * MOST_PULL),
-                }
+                onto_struck_outline(to, bubble, back / length, length * MOST_PULL, view);
             }
         }
         CombatEventVisual::MeleeSlashVisual { pos, angle_rad, .. } => {
             let bubble = found.unwrap_or_else(|| assumed(pos));
             let towards = Vec2::from_angle(*angle_rad);
-            match view {
-                Some(view) => onto_outline(pos, bubble, towards, f32::MAX, view),
-                None => onto_glass(pos, bubble, towards, f32::MAX),
-            }
+            onto_struck_outline(pos, bubble, towards, f32::MAX, view);
         }
         CombatEventVisual::ProjectileVisual {
             pos,
@@ -389,12 +437,110 @@ fn projectile_onto_struck(
     let length = back.length();
     let towards = back.normalize_or_zero();
     let mut point = [centre.x, centre.y, pos[2] + vel[2] * flight];
-    match view {
-        Some(view) => onto_outline(&mut point, struck, towards, length * MOST_PULL, view),
-        None => onto_glass(&mut point, struck, towards, length * MOST_PULL),
-    }
+    onto_struck_outline(&mut point, struck, towards, length * MOST_PULL, view);
     for (axis, velocity) in vel.iter_mut().enumerate() {
         *velocity = (point[axis] - pos[axis]) / flight;
+    }
+    true
+}
+
+/// `event` with its hit point on its struck bubble ([`at_struck_surface`]) and, for a
+/// projectile, its flight started on its shooter's bubble ([`launch_from_shooter`]), both
+/// bubbles found by id through `struck` in `presented` (the presented frame) and `previous`
+/// (the previous snapshot), each slice in entity id order. Without `struck` (an app without the
+/// effect system's lookup) nothing is found, so a projectile keeps its published flight. Returns
+/// the struck bubble's radius with the event, as [`at_struck_surface`] does.
+#[must_use]
+pub fn on_bubbles(
+    event: &CombatEventVisual,
+    struck: Option<&mut StruckBubbles>,
+    presented: &[BubbleRenderInstance],
+    previous: Option<&[BubbleRenderInstance]>,
+    view: Option<Vec3>,
+) -> (CombatEventVisual, Option<f32>) {
+    let Some(struck) = struck else {
+        return at_struck_surface(event, |_| None, view);
+    };
+    let (mut moved, radius) =
+        at_struck_surface(event, |id| struck.find(presented, previous, id), view);
+    launch_from_shooter(
+        &mut moved,
+        event,
+        |id| struck.find_shooter(presented, previous, id),
+        view,
+    );
+    (moved, radius)
+}
+
+/// `moved`, a projectile already aimed at its struck bubble ([`at_struck_surface`]), with its
+/// flight started on the glass of its shooter's bubble towards its target (plan
+/// `2026-11-17-effect-snapshot-identity` Amendment 7, B-133, the mirror of B-128's landing).
+/// `published` is the event as the simulation published it; `shooter_by_id(id)` gives the
+/// bubble of the shooter `id` its [`StrikeEnds`] name (see [`StruckBubbles::find_shooter`]).
+/// Returns whether the start was moved.
+///
+/// The simulation publishes the start at the edge of the shooter's drawn bubble towards the
+/// target, `shooter + direction * drawn_radius`, at ground + 0.5 (`sim_core`'s
+/// `launch_projectile`), so a flyer's projectile leaves from about 2.5 units below its bubble.
+/// The bubble's radius in the snapshot is that same drawn radius, so the shooter's centre on the
+/// launch tick is the published start moved back by `shooter.radius` along the published
+/// flight's horizontal direction. From that centre the start is put on the bubble's outline as
+/// the camera looking along `view` sees it (on its glass without a camera), towards the target,
+/// at its drawn height and [`LAUNCH_MARGIN`] out, the horizontal move at most [`MOST_PULL`] of
+/// the way to the arrival. The arrival and the flight time stay; the velocity is recomputed to
+/// reach the arrival from the new start.
+///
+/// Anything other than a projectile naming its shooter, a projectile without a positive flight
+/// time (neither asks for a lookup), and a projectile whose shooter is found nowhere (dead or
+/// unseen on the launch frame; the lookup counts it) keep their start.
+pub fn launch_from_shooter(
+    moved: &mut CombatEventVisual,
+    published: &CombatEventVisual,
+    mut shooter_by_id: impl FnMut(EntityId) -> Option<StruckBubble>,
+    view: Option<Vec3>,
+) -> bool {
+    let CombatEventVisual::ProjectileVisual {
+        pos: published_pos,
+        vel: published_vel,
+        ends: Some(ends),
+        ..
+    } = published
+    else {
+        return false;
+    };
+    let CombatEventVisual::ProjectileVisual {
+        pos,
+        vel,
+        duration_secs,
+        ..
+    } = moved
+    else {
+        return false;
+    };
+    let flight = duration_secs.unwrap_or(0.0);
+    if flight <= f32::EPSILON {
+        return false;
+    }
+    let Some(shooter) = shooter_by_id(ends.attacker) else {
+        return false;
+    };
+    let direction = Vec2::new(published_vel[0], published_vel[1]).normalize_or_zero();
+    let centre = Vec2::new(published_pos[0], published_pos[1]) - direction * shooter.radius;
+    let arrival = [
+        pos[0] + vel[0] * flight,
+        pos[1] + vel[1] * flight,
+        pos[2] + vel[2] * flight,
+    ];
+    let ahead = Vec2::new(arrival[0], arrival[1]) - centre;
+    let mut start = [centre.x, centre.y, published_pos[2]];
+    let most = ahead.length() * MOST_PULL;
+    match view {
+        Some(view) => onto_outline(&mut start, shooter, direction, most, view, LAUNCH_MARGIN),
+        None => onto_glass(&mut start, shooter, direction, most, LAUNCH_MARGIN),
+    }
+    *pos = start;
+    for (axis, velocity) in vel.iter_mut().enumerate() {
+        *velocity = (arrival[axis] - start[axis]) / flight;
     }
     true
 }
@@ -1008,6 +1154,169 @@ mod tests {
             [0, 0, 0, 1],
             "an event without ends asks for no lookup"
         );
+    }
+
+    /// Where a projectile's flight starts: its launch point.
+    fn start(event: &CombatEventVisual) -> [f32; 3] {
+        match event {
+            CombatEventVisual::ProjectileVisual { pos, .. } => *pos,
+            _ => [f32::NAN; 3],
+        }
+    }
+
+    /// `shot` aimed at its struck bubble and launched from its shooter's, both looked up in
+    /// `presented` through `struck`, the camera looking along `view`.
+    fn launched(
+        shot: &CombatEventVisual,
+        struck: &mut StruckBubbles,
+        presented: &[BubbleRenderInstance],
+        view: Option<Vec3>,
+    ) -> (CombatEventVisual, bool) {
+        let (mut moved, _) = at_struck_surface(shot, |id| struck.find(presented, None, id), view);
+        let started = launch_from_shooter(
+            &mut moved,
+            shot,
+            |id| struck.find_shooter(presented, None, id),
+            view,
+        );
+        (moved, started)
+    }
+
+    /// B-133 (Amendment 7): an anti-air flyer's projectile. The simulation publishes its start
+    /// at the edge of the shooter's bubble at ground + 0.5, 2.5 units below the bubble. The
+    /// flight starts on the shooter's own glass towards the target, and still lands on the
+    /// target's glass.
+    #[test]
+    fn a_flyer_shooters_flight_starts_on_its_glass_towards_the_target() {
+        // The shooter (ATTACKER, a flyer of radius 0.6) at (2, 2); its target, a flyer of
+        // radius 0.5, at (6, 2). Published: from 0.6 past the shooter's centre to 0.5 short of
+        // the target's.
+        let presented = [
+            bubble(1, [2.0, 2.0], 2.5, 0.6),
+            bubble(2, [6.0, 2.0], 2.5, 0.5),
+        ];
+        let shot = projectile([2.6, 2.0, 0.5], [5.5, 2.0, 0.5], Some(EntityId(2)));
+        let pitch = 58.0_f32.to_radians();
+        let view = Vec3::new(0.0, -pitch.sin(), pitch.cos());
+        let mut struck = StruckBubbles::default();
+        let (moved, started) = launched(&shot, &mut struck, &presented, Some(view));
+        assert!(started);
+        assert_eq!(struck.shooter_found_in(StruckFrom::Presented), 1);
+        assert_eq!(struck.found_in(StruckFrom::Presented), 1, "counted apart");
+        let from = start(&moved);
+        // Across the view: on the outline's side towards the target, level with the shooter's
+        // drawn centre, on its glass.
+        assert!(
+            near(from[0], 2.0 + 0.6 + LAUNCH_MARGIN) && near(from[1], 2.0),
+            "{from:?}"
+        );
+        assert!(
+            near(from[2], 2.5 + 0.6),
+            "on the flyer, not below it: {from:?}"
+        );
+        assert!(
+            near(from_centre(from, [2.0, 2.0], 2.5, 0.6), 0.6 + LAUNCH_MARGIN),
+            "{from:?}"
+        );
+        // The arrival found by the struck end is kept.
+        let (aimed, _) =
+            at_struck_surface(&shot, |id| struck.find(&presented, None, id), Some(view));
+        let (to, kept) = (arrival(&moved), arrival(&aimed));
+        assert!(
+            (0..3).all(|axis| near(to[axis], kept[axis])),
+            "{to:?} against {kept:?}"
+        );
+        // The event wiring's one call does both ends; without the lookup, neither moves.
+        assert_eq!(
+            on_bubbles(&shot, Some(&mut struck), &presented, None, Some(view)).0,
+            moved
+        );
+        assert_eq!(
+            on_bubbles(&shot, None, &presented, None, Some(view)),
+            (shot.clone(), None)
+        );
+        // Without a camera: on the glass, towards the target and up.
+        let from = start(&launched(&shot, &mut struck, &presented, None).0);
+        let reach = 0.6 + LAUNCH_MARGIN;
+        assert!(
+            near(from[0], 2.0 + reach * HIT_ELEVATION.cos())
+                && near(from[2], 2.5 + 0.6 + reach * HIT_ELEVATION.sin()),
+            "{from:?}"
+        );
+    }
+
+    /// B-133 (Amendment 7): a ground shooter's start only moves onto its own glass, found by
+    /// its id, never onto a flyer hovering over it.
+    #[test]
+    fn a_ground_shooters_start_moves_only_to_its_own_glass() {
+        let presented = [
+            bubble(1, [2.0, 2.0], 0.0, 0.5),
+            bubble(2, [6.0, 2.0], 0.0, 0.5),
+            bubble(3, [2.0, 2.0], 2.5, 0.9),
+        ];
+        let shot = projectile([2.5, 2.0, 0.5], [5.5, 2.0, 0.5], Some(EntityId(2)));
+        let mut struck = StruckBubbles::default();
+        let (moved, started) = launched(&shot, &mut struck, &presented, None);
+        assert!(started);
+        let from = start(&moved);
+        let reach = 0.5 + LAUNCH_MARGIN;
+        assert!(
+            near(from_centre(from, [2.0, 2.0], 0.0, 0.5), reach),
+            "on its own glass: {from:?}"
+        );
+        assert!(
+            near(from[0], 2.0 + reach * HIT_ELEVATION.cos())
+                && near(from[1], 2.0)
+                && near(from[2], 0.5 + reach * HIT_ELEVATION.sin()),
+            "towards the target and up its own glass: {from:?}"
+        );
+        assert!(
+            from[2] < 2.5,
+            "never on the flyer hovering over it: {from:?}"
+        );
+        // The flight time is kept.
+        let CombatEventVisual::ProjectileVisual { duration_secs, .. } = &moved else {
+            panic!("still a projectile: {moved:?}");
+        };
+        assert_eq!(*duration_secs, Some(1.0));
+    }
+
+    /// B-133 (Amendment 7): a shooter found nowhere (dead or unseen on the launch frame) keeps
+    /// today's start, and the miss is counted; an event that names no shooter asks for no
+    /// lookup.
+    #[test]
+    fn a_projectile_whose_shooter_is_unknown_keeps_its_start_and_is_counted() {
+        let presented = [bubble(2, [6.0, 2.0], 0.0, 0.5)];
+        let shot = projectile([2.5, 2.0, 0.5], [5.5, 2.0, 0.5], Some(EntityId(2)));
+        let mut struck = StruckBubbles::default();
+        let (aimed, _) = at_struck_surface(&shot, |id| struck.find(&presented, None, id), None);
+        let (moved, started) = launched(&shot, &mut struck, &presented, None);
+        assert!(!started);
+        assert_eq!(moved, aimed, "the landing is aimed, the start kept");
+        assert_eq!(start(&moved), [2.5, 2.0, 0.5]);
+        assert_eq!(
+            StruckFrom::ALL.map(|from| struck.shooter_found_in(from)),
+            [0, 0, 0, 1]
+        );
+        let synthetic = projectile([2.5, 2.0, 0.5], [5.5, 2.0, 0.5], None);
+        let (moved, started) = launched(&synthetic, &mut struck, &presented, None);
+        assert!(!started);
+        assert_eq!(moved, synthetic);
+        assert_eq!(
+            StruckFrom::ALL.map(|from| struck.shooter_found_in(from)),
+            [0, 0, 0, 1],
+            "an event without ends asks for no lookup"
+        );
+        // Not a projectile: nothing is asked or moved.
+        let mut hit = tracer(
+            [0.0, 0.0, 0.5],
+            [4.0, 0.0, 0.5],
+            WeaponSlot::Primary,
+            Some(EntityId(2)),
+        );
+        let published = hit.clone();
+        assert!(!launch_from_shooter(&mut hit, &published, |_| None, None));
+        assert_eq!(hit, published);
     }
 
     /// Review condition 3 (Amendment 3): the last frame's bubbles are forgotten when the
