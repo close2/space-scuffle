@@ -84,6 +84,11 @@ pub(crate) struct MotionEntry {
     /// Auto-acquisition scan range in world units, edge to edge: how far a surround walk without
     /// a target goes before it ends.
     pub(crate) scan_range: SimScalar,
+    /// Whether the actor is a registered structure (`map.structures()` holds its id, plan 49's
+    /// foundation identity). A registered structure is no body: it is neither a steering obstacle
+    /// nor a collision body, and meets units only through its footprint at their terrain radius
+    /// (plan `2026-11-18-structure-contact` D-1, B-131).
+    pub(crate) foundation: bool,
 }
 
 /// The nearest reachable point last found, so a group costs one region scan, not one per unit.
@@ -599,7 +604,8 @@ impl SimWorld {
                 reason: "movement actor is absent",
             })?;
         let policy = MotionPolicy::resolve(&self.catalog, &self.map, actor)?;
-        if self.map.structures().contains_key(&id) && !actor.is_immobile {
+        let foundation = self.map.structures().contains_key(&id);
+        if foundation && !actor.is_immobile {
             return Err(MovementInvariant::InvalidState {
                 entity: id,
                 reason: "registered foundation cannot author self-motion without atomic relocation",
@@ -639,6 +645,7 @@ impl SimWorld {
             turn_before_move: arch.turn_before_move,
             surround_walk: arch.surround_walk,
             scan_range: arch.scan_range,
+            foundation,
         })
     }
 
@@ -700,9 +707,12 @@ impl SimWorld {
             match self.motion_entry(id) {
                 Ok(entry) => {
                     // A body without collision (mining, or a status's suppression) is no
-                    // obstacle anyone steers around.
+                    // obstacle anyone steers around, and a registered structure is no body:
+                    // units meet it through its footprint, as they meet terrain (D-2 B2).
                     if let Some(actor) = self.entities.get(&id).filter(|a| {
-                        !a.is_mineral_walking && !a.status_modifiers().suppress_collision
+                        !entry.foundation
+                            && !a.is_mineral_walking
+                            && !a.status_modifiers().suppress_collision
                     }) {
                         let obstacle = self.obstacle_of(entry, actor);
                         let class = entry.policy.body_class();
@@ -2342,6 +2352,75 @@ mod tests {
 
     fn v(x: f64, y: f64) -> SimVec2 {
         SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// A flat 40 × 40 world with a 3×3 structure at cells (18, 18) and, beside its west face,
+    /// two ground units of different collision radii; returns the world, the structure and the
+    /// larger unit radius.
+    fn structure_and_units(
+    ) -> Result<(crate::SimWorld, sim_types::EntityId, SimScalar), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, ShapeKind};
+        let map = sim_map::GameMap::new(
+            40,
+            40,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 0x0B_131);
+        let structure_type = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                matches!(
+                    a.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a 3x3 structure")?;
+        let ground: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| {
+                !matches!(a.shape, ShapeKind::BuildingDome { .. })
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .take(2)
+            .collect();
+        let [small, large] = ground[..] else {
+            return Err("two ground units".into());
+        };
+        for (kind, radius) in [(small, 0.375), (large, 0.625)] {
+            let arch = world.catalog.get_mut(kind)?;
+            arch.collision_radius = SimScalar::from_num(radius);
+            arch.terrain_radius = SimScalar::from_num(radius);
+        }
+        let structure = world.spawn_structure(structure_type, PlayerId(0), 18, 18)?;
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world.spawn_unit(small, PlayerId(0), at(17.4, 19.5))?;
+        world.spawn_unit(large, PlayerId(1), at(14.0, 19.5))?;
+        Ok((world, structure, SimScalar::from_num(0.625)))
+    }
+
+    /// Plan `2026-11-18-structure-contact` D-2 B2: after the movement snapshot, the ground
+    /// obstacles hold the two units and not the registered structure (whose half-width 1.5
+    /// exceeds both unit radii), and the largest ground radius is the larger unit's.
+    #[test]
+    fn a_registered_structure_is_no_steering_obstacle() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut world, structure, largest) = structure_and_units()?;
+        let mut entries = Vec::new();
+        world.prepare_movement_snapshot(&mut entries);
+        assert!(world.drain_diagnostics().next().is_none());
+        assert_eq!(entries.len(), 3, "the structure is still validated");
+        let ids: Vec<_> = world.movement.obstacles[0].iter().map(|o| o.id).collect();
+        assert_eq!(ids.len(), 2, "the two units: {ids:?}");
+        assert!(!ids.contains(&structure), "{ids:?}");
+        assert_eq!(world.movement.largest_radius[0], largest);
+        Ok(())
     }
 
     /// Review F-2 (plan `2026-11-18-inner-radius` T5): a cast approach's goal outside the map is

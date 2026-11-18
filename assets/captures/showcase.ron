@@ -44,6 +44,14 @@
 // survivors at 4x until it fires at the enemy base; `assault` shows the enemy base at 2x; `closing`
 // pauses before the result. Render-checked on radv: scene ticks are in
 // docs/evidence/2026-11-18-inner-radius.md §4.
+// Retold for plan 2026-11-18-structure-contact (Amendment 1: a registered structure is no body, so
+// units leaving their spawn rings are no longer steered round their own hall's circle, and the
+// near-tied lane fight goes to player 1 again). The viewer's army dies in the lane fight (its last
+// death at about tick 634); the enemy's four surviving pulse bots walk to the viewer's base, kill
+// its workers (ticks 1,171 and 1,216) and fire on its hall until it falls at tick 2,193. `march`
+// follows the enemy's first survivor, whom the fog hides until the viewer's base sees it; `assault`
+// shows the viewer's base falling at 2x; `closing` pauses before the result. Render-checked on radv:
+// scene ticks are in docs/evidence/2026-11-18-structure-contact.md §3.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -126,10 +134,10 @@
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
                     length: UntilCombat(min: 5, max: 200),
-                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    camera: FollowUnit(player: 1, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Pathfinding",
-                        body: "Your survivors head for the enemy base, each on its own route on a navigation mesh sized to its body.",
+                        body: "The enemy's survivors head for your base, each on its own route on a navigation mesh sized to its body; the fog hides them until your base sees them.",
                         subsystems: ["Movement and pathfinding"],
                     ),
                 ),
@@ -141,7 +149,7 @@
                     camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Assault",
-                        body: "Your survivors cut down the enemy's workers and lay siege to its hall.",
+                        body: "The attackers cut down your workers and lay siege to your hall.",
                         subsystems: ["Combat"],
                     ),
                 ),

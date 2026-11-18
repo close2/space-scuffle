@@ -217,7 +217,9 @@ pub enum DisplacementAdmissionError {
     /// Ground footprint contains disconnected terrain or occupied structure cells.
     #[error("placement for {0:?} has a blocked ground footprint")]
     Terrain(EntityId),
-    /// A living actor in the same collision layer occupies the requested circle.
+    /// A living unit in the same collision layer occupies the requested circle. Never a
+    /// registered structure: structures refuse a point through their footprint, as `Terrain`
+    /// (plan `2026-11-18-structure-contact`, B-131).
     #[error("placement is occupied by {0:?}")]
     Occupied(EntityId),
     /// Invalid live definitions; callers must report this as corruption.
@@ -580,7 +582,10 @@ impl SimWorld {
         Ok(())
     }
 
-    /// Validates that no other live unit of `id`'s body class overlaps `point`.
+    /// Validates that no other live unit of `id`'s body class overlaps `point`, each at its
+    /// collision radius. A registered structure is not a body (plan
+    /// `2026-11-18-structure-contact` D-2 B3, B-131): its footprint has already judged `point` at
+    /// the terrain radius in [`Self::validate_placement_terrain`], so it is skipped here.
     fn validate_placement_unoccupied(
         &self,
         id: EntityId,
@@ -591,11 +596,12 @@ impl SimWorld {
             .get(&id)
             .ok_or(DisplacementAdmissionError::MissingEntity(id))?;
         let policy = MotionPolicy::resolve(&self.catalog, &self.map, actor)?;
-        for other in self
-            .entities
-            .values()
-            .filter(|e| e.id != id && e.is_alive() && !e.is_loaded_in_transport())
-        {
+        for other in self.entities.values().filter(|e| {
+            e.id != id
+                && e.is_alive()
+                && !e.is_loaded_in_transport()
+                && !self.map.structures().contains_key(&e.id)
+        }) {
             let other_policy = MotionPolicy::resolve(&self.catalog, &self.map, other)?;
             if policy.body_class() == other_policy.body_class()
                 && circles_overlap(point, policy.radius, other.position, other_policy.radius)

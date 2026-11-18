@@ -12,6 +12,10 @@
 //! - Friendly correction is capped to the unit's effective speed; hostile correction is not,
 //!   because bodies of two sides must never overlap by choice.
 //! - A body that may not move receives exactly zero correction.
+//! - A registered structure is not a body: it meets ground units through its footprint (contact
+//!   rule) at their terrain radius (plan `2026-11-18-structure-contact`, B-131), so it is never in
+//!   the body set, the grid or the largest-radius reach, and is never corrected (plan 49's
+//!   invariant that a foundation never moves holds by exclusion).
 
 use super::contact::settle_on_terrain;
 use super::locomotion::{slide_target, MotionEntry};
@@ -38,7 +42,7 @@ pub(super) struct CollisionBody {
     position: SimVec2,
     velocity: SimVec2,
     owner: PlayerId,
-    /// Nothing at all can move this body.
+    /// Nothing at all can move this body: it is immobile or unpushable.
     fixed: bool,
     /// Hold Position, immobile or unpushable.
     holding: bool,
@@ -109,9 +113,7 @@ impl SimWorld {
             position: actor.position,
             velocity: actor.velocity,
             owner: actor.owner,
-            fixed: actor.is_immobile
-                || actor.unpushable
-                || self.map.structures().contains_key(&entry.id),
+            fixed: actor.is_immobile || actor.unpushable,
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
             ghost: actor.is_mineral_walking || actor.status_modifiers().suppress_collision,
@@ -320,7 +322,7 @@ impl SimWorld {
         let mut grid = std::mem::take(&mut self.movement.collision_grid);
         bodies.clear();
         let mut largest = [SimScalar::ZERO; super::BODY_CLASSES];
-        for entry in &entries {
+        for entry in entries.iter().filter(|entry| !entry.foundation) {
             if let Some(actor) = self.entities.get(&entry.id) {
                 bodies.push(self.collision_body(*entry, actor));
                 let class = entry.policy.body_class();
@@ -386,6 +388,76 @@ impl SimWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flat 40 × 40 world with a 3×3 structure at cells (18, 18) and, beside its west face,
+    /// two ground units of different collision radii; returns the world, the structure and the
+    /// larger unit radius.
+    fn structure_and_units() -> Result<(SimWorld, EntityId, SimScalar), Box<dyn std::error::Error>>
+    {
+        use sim_types::{MoverType, PlayerId, ShapeKind};
+        let map = sim_map::GameMap::new(
+            40,
+            40,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 0x0B_131);
+        let structure_type = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                matches!(
+                    a.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a 3x3 structure")?;
+        let ground: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| {
+                !matches!(a.shape, ShapeKind::BuildingDome { .. })
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .take(2)
+            .collect();
+        let [small, large] = ground[..] else {
+            return Err("two ground units".into());
+        };
+        for (kind, radius) in [(small, 0.375), (large, 0.625)] {
+            let arch = world.catalog.get_mut(kind)?;
+            arch.collision_radius = SimScalar::from_num(radius);
+            arch.terrain_radius = SimScalar::from_num(radius);
+        }
+        let structure = world.spawn_structure(structure_type, PlayerId(0), 18, 18)?;
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world.spawn_unit(small, PlayerId(0), at(17.4, 19.5))?;
+        world.spawn_unit(large, PlayerId(1), at(14.0, 19.5))?;
+        Ok((world, structure, SimScalar::from_num(0.625)))
+    }
+
+    /// Plan `2026-11-18-structure-contact` D-2 B1: after the collision phase, the body set holds
+    /// the two units and not the registered structure beside them.
+    #[test]
+    fn a_registered_structure_is_no_collision_body() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut world, structure, _) = structure_and_units()?;
+        world.resolve_collisions_and_push();
+        assert!(world.drain_diagnostics().next().is_none());
+        let ids: Vec<EntityId> = world
+            .movement
+            .bodies
+            .iter()
+            .map(|body| body.entry.id)
+            .collect();
+        assert_eq!(ids.len(), 2, "the two units: {ids:?}");
+        assert!(!ids.contains(&structure), "{ids:?}");
+        Ok(())
+    }
 
     #[test]
     fn failed_pair_keeps_both_accumulators_and_prior_contributions() {
