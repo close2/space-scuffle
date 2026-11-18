@@ -394,7 +394,8 @@ fn bubble_instance(
             altitude_z,
         ],
         ground_z,
-        radius: arch.collision_radius.to_f32(),
+        // The drawn radius, not the range edge (plan `2026-11-18-structure-radius` D-6).
+        radius: arch.drawn_radius().to_f32(),
         velocity: [entity.velocity.x.to_f32(), entity.velocity.y.to_f32()],
         heading_angle_rad: entity.heading.to_radians_f32(),
         aim_angle_rad: entity.turret_angle.to_radians_f32(),
@@ -759,5 +760,49 @@ mod tests {
             "the marked units were published with their status"
         );
         assert!(hits > 0, "the units traded instant hits");
+    }
+
+    /// R-13 (plan `2026-11-18-structure-radius` D-6): a 3×3 dome whose radius is 1.8125
+    /// publishes the drawn radius 1.5, half its footprint, while a unit publishes its collision
+    /// radius.
+    #[test]
+    fn a_dome_is_drawn_at_its_footprint_not_its_radius() {
+        let (mut world, unit, unit_arch) = armed_unit();
+        let dome = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(
+                    arch.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a 3x3 structure");
+        world
+            .catalog
+            .get_mut(dome)
+            .expect("the dome's archetype")
+            .collision_radius = SimScalar::from_num(1.8125);
+        let structure = world
+            .spawn_structure(dome, PlayerId(1), 4, 4)
+            .expect("open ground");
+        let snapshot = world.build_render_snapshot();
+        let radius_of = |id: EntityId| {
+            snapshot
+                .bubbles
+                .iter()
+                .find(|bubble| bubble.entity_id == id)
+                .map(|bubble| bubble.radius)
+                .expect("published")
+        };
+        assert!((radius_of(structure) - 1.5).abs() < f32::EPSILON);
+        assert!(
+            (radius_of(unit) - unit_arch.collision_radius.to_f32()).abs() < f32::EPSILON,
+            "a unit is drawn at its collision radius"
+        );
     }
 }

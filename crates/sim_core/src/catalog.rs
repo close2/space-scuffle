@@ -274,6 +274,24 @@ impl UnitArchetype {
             && matches!(structure.shape, ShapeKind::BuildingDome { .. })
     }
 
+    /// The radius this archetype's bubble is drawn at, in world units (plan
+    /// `2026-11-18-structure-radius` D-6): for a structure's dome, half its footprint's smaller
+    /// side, so the dome covers the footprint units meet (B-131) and not its engine radius,
+    /// which is a range edge and no drawing size; for a unit, its collision radius.
+    ///
+    /// Presentation only: the render snapshot's radius, a projectile visual's ends, the death
+    /// shatter and the client's muzzle read it; no rule does.
+    #[must_use]
+    pub fn drawn_radius(&self) -> SimScalar {
+        match self.shape {
+            ShapeKind::BuildingDome {
+                footprint_w,
+                footprint_h,
+            } => SimScalar::from_i32(i32::from(footprint_w.min(footprint_h))) * SimScalar::HALF,
+            ShapeKind::UnitSphere => self.collision_radius,
+        }
+    }
+
     /// Returns whether this archetype is immobile by default (e.g. Building Dome or zero max speed).
     #[must_use]
     #[inline]
@@ -1984,5 +2002,43 @@ mod tests {
         let idle_prompt = first.veo_prompt(AnimState::Idle);
         assert!(idle_prompt.is_some());
         assert_ne!(idle_prompt.unwrap(), "");
+    }
+
+    /// R-16 (plan `2026-11-18-structure-radius` D-6): a dome is drawn at half its footprint's
+    /// smaller side whatever its radius; a unit at its collision radius.
+    #[test]
+    fn drawn_radius_is_half_the_footprints_smaller_side_for_a_dome_and_the_radius_for_a_unit() {
+        let catalog = crate::test_support::shipped_catalogs().units;
+        let mut domes = 0;
+        for archetype in catalog.archetypes() {
+            let mut edited = archetype.clone();
+            edited.collision_radius = SimScalar::from_num(7.25);
+            match archetype.shape {
+                ShapeKind::BuildingDome {
+                    footprint_w,
+                    footprint_h,
+                } => {
+                    let half = SimScalar::from_num(f64::from(footprint_w.min(footprint_h)) / 2.0);
+                    assert_eq!(archetype.drawn_radius(), half, "{}", archetype.slug);
+                    assert_eq!(edited.drawn_radius(), half, "{}", archetype.slug);
+                    domes += 1;
+                }
+                ShapeKind::UnitSphere => {
+                    assert_eq!(archetype.drawn_radius(), archetype.collision_radius);
+                    assert_eq!(edited.drawn_radius(), SimScalar::from_num(7.25));
+                }
+            }
+        }
+        assert!(domes > 0);
+        let mut oblong = catalog
+            .archetypes()
+            .find(|archetype| matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+            .cloned()
+            .expect("the shipped catalog has a structure");
+        oblong.shape = ShapeKind::BuildingDome {
+            footprint_w: 6,
+            footprint_h: 5,
+        };
+        assert_eq!(oblong.drawn_radius(), SimScalar::from_num(2.5));
     }
 }

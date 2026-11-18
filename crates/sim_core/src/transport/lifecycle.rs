@@ -156,3 +156,56 @@ impl SimWorld {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use crate::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{CombatEventVisual, PlayerId, ShapeKind, SimScalar};
+
+    /// R-15 (plan `2026-11-18-structure-radius` D-6): a dying 3×3 dome whose radius is 1.8125
+    /// shatters at its drawn radius 1.5, half its footprint, not at its radius.
+    #[test]
+    fn a_dying_structure_shatters_at_its_drawn_radius() {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world: SimWorld = crate::test_support::world(map, 0x0B_135);
+        let dome = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(
+                    arch.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a 3x3 structure");
+        world
+            .catalog
+            .get_mut(dome)
+            .expect("the dome's archetype")
+            .collision_radius = SimScalar::from_num(1.8125);
+        let structure = world
+            .spawn_structure(dome, PlayerId(0), 8, 8)
+            .expect("open ground");
+        world.pending_events.clear();
+        world.entities.get_mut(&structure).expect("spawned").hp = SimScalar::ZERO;
+        world.reap_dead_and_emit_shatter();
+        let shatters: Vec<_> = world
+            .pending_events
+            .iter()
+            .filter_map(|event| match event {
+                CombatEventVisual::BubbleShatter {
+                    radius, is_dome, ..
+                } => Some((*radius, *is_dome)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shatters, [(1.5, true)]);
+    }
+}

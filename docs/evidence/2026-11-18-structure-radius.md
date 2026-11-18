@@ -122,3 +122,75 @@ structure catalog. Tests that edit structures read the shipped file (`weapon_cat
 The base reproduces structure-contact Amendment 1: the default seed ends with player 1 winning at tick 2,193
 (reversals 25 / 10, stall give-ups 0 / 0, deeper unit-ticks 0 / 0); seeds 1 to 6 and 8 player 1 (at 2,203, 2,187,
 1,880, 5,688, 1,593, 3,419 and 1,716), seed 7 player 0 at 2,554.
+
+## 2. WP2: simulation readers and the presentation split
+
+**Change.** `UnitArchetype::drawn_radius()`: half the footprint's smaller side for a dome, the collision radius for a
+unit. Read by the render snapshot's `radius` (P1), the projectile visual's spawn and arrival points (A3v, through
+`SimWorld::drawn_radii`, looked up as the flight's radii are) and the death shatter (P2,
+`prepare_reap_with_resources`). No range reader changed.
+
+**Tests, red on WP1 first** (WP1 tree with WP2's tests; `drawn_radius` absent, the three sites reading
+`collision_radius`):
+
+| Test | WP1 | WP2 |
+|---|---|---|
+| R-13 `world::snapshot::tests::a_dome_is_drawn_at_its_footprint_not_its_radius` | Fails: the 3×3 at radius 1.8125 publishes 1.8125 | Passes: 1.5; a unit publishes its collision radius |
+| R-14 `combat_resolution::tests::a_projectile_visual_to_a_dome_arrives_on_its_drawn_dome` | Fails: arrival (19.6875, 21.5), 1.8125 from the centre | Passes: arrival (20.0, 21.5); published flight ticks follow radius 1.8125 |
+| R-15 `transport::lifecycle::tests::a_dying_structure_shatters_at_its_drawn_radius` | Fails: shatter radius 1.8125 | Passes: 1.5 |
+| R-16 `catalog::tests::drawn_radius_is_half_the_footprints_smaller_side_for_a_dome_and_the_radius_for_a_unit` | Does not compile (no `drawn_radius`) | Passes, including an oblong 6×5 dome (2.5) |
+
+**Guards** (pass on WP1 and WP2; each asserts a control at half the footprint, every integration tick asserts no
+diagnostic): `structure_radius_tests` R-1 weapon reach, R-2 scan, R-3 an armed 2×2's own reach, R-4 melee along a
+face, R-5 every shipped face in every shipped melee reach, R-6 projectile flight, R-7 splash, R-8 boarding, R-9
+Charge window; R-10 `world::casts::tests::a_cast_on_a_structure_is_in_range_at_its_radius`; R-11
+`effects::step::tests::a_missile_stops_short_of_a_structure_by_its_radius`.
+
+**Verified and recorded while writing the guards** (each a test-design finding, no production change):
+
+- **The structures in the tests are scratch copies of shipped structures** chosen by footprint (and weapon) and loaded
+  through `load_structures_from_ron_str` with `radius` replaced, so they pass the loader (R-1 to R-9, R-12). The unit
+  tests (R-10, R-11, R-13 to R-15) set the archetype's `collision_radius` in memory.
+- **R-4.** An attack-ordered melee unit walking in never touches the face: its pursuit heads for the centre and stops
+  at its band (damage within 28 to 31 ticks from 6 west of the face at either radius). The plan's control (±1.4 fails
+  at radius 1.5) does not hold for that setup, so R-4 starts the body touching the face (centre at its terrain
+  radius, 0.375). With the shortest shipped melee weapon (range 0.1): at radius 1.8125 it swings where it stands at
+  offsets 0, ±1.0, ±1.4 (reach on the face to ±1.517) and deals damage within 100 ticks; at radius 1.5 (reach to
+  ±0.946) it swings where it stands only from the middle and moves first from ±1.0 and ±1.4.
+- **R-6, A3 is presentation.** `ticks_to_impact` (`⌈max(d − R − r, 0.05) ÷ speed⌉`) only sets the published
+  `duration_secs` of the visual. The simulated projectile advances its speed a step from the shooter's centre and
+  lands once within its speed of the target radius (A6): on the `⌈(d − R) ÷ speed⌉`-th step counting the launch step,
+  which also advances it once. R-6 pins both at radii 1.8125 and 1.5 (published 4, in flight 3 at 1.8125).
+- **R-7** holds its primary target in place (an unheld target is moved by its retaliation, which shifted the search
+  point).
+- **R-8.** No shipped structure carries (`into_archetype` sets `transport_capacity: 0`), so the carrier is a scratch
+  3×3 with capacity 4. Out of boarding reach the `Load` order does not walk: `pursue_carrier` aims at the carrier's
+  centre cell, which a structure's footprint covers, and the order ends as unreachable. R-8 therefore pins only that a
+  passenger is aboard on the order's tick from `R + r + 1 − 2⁻¹⁶` and not from `+ 2⁻¹⁶`. Recorded as an open item
+  (no shipped content reaches it).
+- **R-10, R-11 (verify).** The only shipped unit-target effect ability (Abduct analogue) excludes structures
+  (`structures: Exclude`), so R-10 asks `cast_in_range` of a copy of it without its filter; R-11 flies the first
+  shipped homing missile node at a structure.
+
+**Audit** (`grep -rn "collision_radius\|policy.radius\|\.radius\b" crates/sim_core/src crates/sim_fixtures/src`,
+production hits): range readers A1 `target_acquisition.rs` 415 (largest-radius bound), 527 (`reaches_from_here`),
+658 (scan query), 690 (scan qualification); A2 `combat_resolution.rs` 413 (`capture_target_snapshots`), 515
+(`combined_radius`); A3 742, 748 (flight ticks, presentation duration); A4 854 (`ResolvedHit.radius`), 954 (splash
+offset); A5 1037 (`strike_area`); A6 1254, 1326 (projectile tracking, retarget); A7 `effects/step.rs` 148; A8
+`world/casts.rs` 180; A9 `world/attack_dash.rs` 111; A10 `movement/mod.rs` 277 (`MotionPolicy::resolve`) and
+`movement/locomotion.rs` 1173 (pursuit band); A11 `transport/orders.rs` 162. Domain A12: `movement/mod.rs` 277 with
+`terrain_radius` (D-5). Presentation: `world/snapshot.rs` (`drawn_radius`), `combat_resolution.rs`
+`drawn_radii`, `production/lifecycle.rs` (`drawn_radius`), `combat_resolution.rs` 243 (a splash zone's radius, not
+an entity's). Bodies and units only (U2 and B-131): `movement/collision.rs`, `steering.rs`, `movement/locomotion.rs`
+404 to 2306 (obstacles, waypoints, bodies; no foundation is a body or obstacle), `movement/mod.rs` 607 (placement
+occupancy, structures skipped), `production/mod.rs` 373 and `production/exits.rs` (products and exit ring bodies),
+`economy/mod.rs` 494 (the worker's own radius in `within_reach`, U1). Positive-radius invariants:
+`production/lifecycle.rs` 308, 420, `production/mod.rs` 346, `production/exits.rs` 34, 96. Catalog and validation:
+`catalog.rs`, `catalog/validation.rs`, `catalog/spells/flatten.rs` (a search's radius). Tooling U3:
+`sim_fixtures/src/trace/blocking.rs` 238, `trace/mod.rs` 702 (follow the field, D-8).
+
+**Bit-identity** (D-11, 1), WP1 tools against WP2 tools: matrix bit-identical (1,160 runs; expectation failures 0
+on the seeds of record, 4 over all seeds); battle 33 `seeds.csv` byte-identical; showcase `units.csv`, `summary.md`
+and `overlap.csv` byte-identical at 1,800 ticks, to the end and on seeds 1 to 8.
+The whole `sim_core` suite passes on WP2 (949 tests, every target; no test changed beyond the new ones). Goldens pass
+unchanged in debug and release native and in `wasm32-wasip1` release under wasmtime.
