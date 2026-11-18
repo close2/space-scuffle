@@ -2870,3 +2870,27 @@ publishes and presents. No simulation state, golden replay, checksum or look cha
 
 **Findings.** No gap or bug: the stance is published, every look is requested at its moment, and nothing leaks
 through the fog. No register entry, no evidence file (the tests are the evidence).
+
+## Amendment 30: B-122 to B-126 fixed by the effect snapshot identity plan (2026-11-18, pointer, charter §6)
+
+**Pointer note (charter §6, short note: documentation only).** The five follow-ups WP11 registered (Amendments 24 to
+28) were fixed by plan [`2026-11-17-effect-snapshot-identity`](2026-11-17-effect-snapshot-identity.md), which
+publishes the facts the client lacked, presentation-only (no checksum, golden replay or matrix result moved). What
+this plan's amendments say about the bubble match by position, the half-step landing, the fixed beam lines and the
+missing `DamageOverTime` look is superseded there:
+
+- **B-125** (Amendments 26 and 27): `StrikeEnds` on hits and blows; `effects::struck` finds the struck bubble by id,
+  its grid and plane tie-break removed (identity WP4, `29b978f3`).
+- **B-124** (Amendment 25): the impact is laid from the simulation's `SpellImpact` event (identity WP6,
+  `593811ab`).
+- **B-123** (E1-6): the four weapons' `visual_kind` per 5.0.14 with a loader rule (identity WP3, `2cdaecb5`).
+- **B-122** (Amendment 24 and the F1 row above): per-bubble statuses by `StatusId`; `fungal_affliction` is named by
+  `defaults.status_by_name` (identity WP5, `dc9e438b`).
+- **B-126** (Amendment 26, P2-2): a sustained beam is one held look whose ends and burns follow both bubbles
+  (identity WP7, `9dfaaf34`, `963b9a80` and review rounds to `babe788e`).
+- **B-128**, found by the identity plan in this plan's projectile path: a projectile lands on the struck bubble's
+  glass (identity WP4b, `5ed59171`); its launch from the shooter's ground + 0.5 is registered as B-133.
+
+The looks changed there (the held beam and its burn flare, the shown `fungal_affliction`) were accepted in the
+independent reviews `independent_review_identity_2.md` and `_3.md` under Q0080. The evidence, on radv and lavapipe,
+is [`docs/evidence/2026-11-17-effect-snapshot-identity.md`](../evidence/2026-11-17-effect-snapshot-identity.md).
