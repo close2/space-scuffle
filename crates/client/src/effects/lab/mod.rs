@@ -12,11 +12,17 @@
 //! A capture tool downstream of this crate builds a contact-sheet program and assembles the
 //! PNGs into a sheet; the effect GPU tests build their own programs in a child
 //! process of the GPU harness and measure the PNGs. Both run the same code, so what the tests
-//! check is what the sheets show.
+//! check is what the sheets show. Both render offscreen ([`LabSurface::Offscreen`],
+//! [`crate::offscreen`]): the camera draws into a canvas image and nothing is presented. A
+//! hidden window ([`LabSurface::Window`]) stays for viewing a program and for the test that
+//! proves both surfaces capture the same pixels.
 //!
 //! # Invariants
 //! - Effect time is `Time<Virtual>`, advanced only by the driver ([`program::next_step`]); a
 //!   program captures the same pictures on every run of one driver.
+//! - The surface changes only where the camera draws and what a screenshot copies: the size,
+//!   camera, time steps and render graph are the same, so both surfaces capture the same
+//!   pixels (plan `2026-11-17-gpu-test-readback`, D-6).
 //! - Nothing here names an effect, a unit or a terrain layer (charter C5).
 
 pub mod driver;
@@ -32,6 +38,7 @@ pub use scene::{LabScene, LabSceneError};
 
 use super::systems::EffectCatalogSource;
 use super::EffectsPlugin;
+use crate::offscreen::{windowless_plugins, CaptureTarget, OffscreenCanvas, OffscreenError};
 use crate::render_compatibility::RenderCompatibilityPlugin;
 use crate::ResolvedAssetsRoot;
 use bevy::prelude::*;
@@ -75,12 +82,18 @@ fn setup_stage(
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     root: Res<'_, ResolvedAssetsRoot>,
     mut driver: ResMut<'_, LabDriver>,
-    program: Res<'_, LabProgram>,
+    (program, capture): (Res<'_, LabProgram>, Res<'_, CaptureTarget>),
 ) {
     if let Some(below_x) = program.subject.fog_below_x {
         scene::spawn_fog_veil(&mut commands, &mut meshes, &mut materials, below_x);
     }
-    match scene::spawn_scene(&mut commands, &server, &mut meshes, &mut materials, &root) {
+    match scene::spawn_scene(
+        &mut commands,
+        &server,
+        (&mut meshes, &mut materials),
+        &root,
+        capture.camera_target(),
+    ) {
         Ok(stage) => {
             commands.insert_resource(stage);
         }
@@ -109,6 +122,16 @@ fn draw_overlay(
     scene::draw_overlay(&mut gizmos, &program.subject, radii);
 }
 
+/// Where the lab draws its frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabSurface {
+    /// An invisible window of the program's size, presented every frame: needs a display.
+    Window,
+    /// A canvas image of the program's size and no window, display or winit
+    /// ([`crate::offscreen`]): frames are not presented, and a screenshot copies the canvas.
+    Offscreen,
+}
+
 /// A lab app that cannot be built.
 #[derive(Debug, thiserror::Error)]
 pub enum LabAppError {
@@ -118,6 +141,9 @@ pub enum LabAppError {
     /// The assets root has no Bevy file path.
     #[error(transparent)]
     Assets(#[from] crate::assets::AssetsDirError),
+    /// The offscreen canvas could not be created.
+    #[error(transparent)]
+    Canvas(#[from] OffscreenError),
     /// The output directory could not be created.
     #[error("effect lab output {path}: {source}")]
     Output {
@@ -129,24 +155,56 @@ pub enum LabAppError {
     },
 }
 
-/// The lab app: an invisible `size` window, the production presentation and effect plugins
-/// reading `vocabulary` (the shipped one when `None`) under `root`, and `program`'s driver.
-/// Run it with [`crate::render_compatibility::run_render_app`].
+/// The lab app: a `size` canvas or invisible window (`surface`), the production presentation
+/// and effect plugins reading `vocabulary` (the shipped one when `None`) under `root`, and
+/// `program`'s driver. Run it with [`crate::render_compatibility::run_render_app`].
 ///
 /// # Errors
-/// [`LabAppError`] when the program is invalid, the assets root unusable or the output
-/// directory cannot be created.
+/// [`LabAppError`] when the program is invalid, the assets root unusable, the canvas cannot be
+/// created or the output directory cannot be created.
 pub fn lab_app(
     root: ResolvedAssetsRoot,
     program: LabProgram,
     vocabulary: Option<PathBuf>,
     size: UVec2,
+    surface: LabSurface,
 ) -> Result<App, LabAppError> {
     program.validate()?;
     std::fs::create_dir_all(&program.out).map_err(|source| LabAppError::Output {
         path: program.out.clone(),
         source,
     })?;
+    let presentation = crate::presentation::GamePresentationPlugins.set(AssetPlugin {
+        file_path: root.bevy_file_path()?.to_owned(),
+        ..default()
+    });
+    let mut app = App::new();
+    match surface {
+        LabSurface::Window => {
+            app.add_plugins(with_hidden_window(presentation, size))
+                .insert_resource(CaptureTarget::PrimaryWindow);
+        }
+        LabSurface::Offscreen => {
+            app.add_plugins(windowless_plugins(presentation));
+            OffscreenCanvas::install(&mut app, size)?;
+        }
+    }
+    app.add_plugins((RenderCompatibilityPlugin, EffectsPlugin))
+        .add_event::<crate::CombatVisualEvent>()
+        .insert_resource(root);
+    if let Some(vocabulary) = vocabulary {
+        app.insert_resource(EffectCatalogSource(vocabulary));
+    }
+    app.add_plugins(EffectLabPlugin { program });
+    Ok(app)
+}
+
+/// `presentation` with an invisible primary window of `size` physical pixels at scale factor 1,
+/// whose winit loop may run on the test's thread.
+fn with_hidden_window(
+    presentation: bevy::app::PluginGroupBuilder,
+    size: UVec2,
+) -> bevy::app::PluginGroupBuilder {
     let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
     window_backend.run_on_any_thread = true;
     let mut window = Window {
@@ -160,25 +218,10 @@ pub fn lab_app(
         reason = "window sizes are far below 2^24"
     )]
     window.resolution.set(size.x as f32, size.y as f32);
-    let mut app = App::new();
-    app.add_plugins(
-        crate::presentation::GamePresentationPlugins
-            .set(AssetPlugin {
-                file_path: root.bevy_file_path()?.to_owned(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(window),
-                ..default()
-            })
-            .set(window_backend),
-    )
-    .add_plugins((RenderCompatibilityPlugin, EffectsPlugin))
-    .add_event::<crate::CombatVisualEvent>()
-    .insert_resource(root);
-    if let Some(vocabulary) = vocabulary {
-        app.insert_resource(EffectCatalogSource(vocabulary));
-    }
-    app.add_plugins(EffectLabPlugin { program });
-    Ok(app)
+    presentation
+        .set(WindowPlugin {
+            primary_window: Some(window),
+            ..default()
+        })
+        .set(window_backend)
 }

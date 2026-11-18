@@ -7,9 +7,10 @@
 //! `client::vfx::CombatFxInstance` can make the second capture right.
 //!
 //! # How it fits
-//! The pixel test re-executes this test binary on the virtual GPU, as `dome_fill_tests.rs` does. Its
+//! The pixel test re-executes this test binary on the test GPU through `support/gpu_run.rs`. Its
 //! child runs Bevy's real renderer with the production `CombatFxPlugin`, the shipped
-//! `combat_fx.wgsl` and the shipped palette, on a black stage with one camera and one effect card.
+//! `combat_fx.wgsl` and the shipped palette, on a black stage with one camera and one effect card,
+//! offscreen: the camera draws into a canvas (`client::offscreen`), with no window or display.
 //! It writes one capture per shot and a report of the slots it used; the parent judges them.
 //!
 //! # Invariants verified
@@ -28,7 +29,8 @@
 mod gpu_run;
 
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::ScreenshotCaptured;
+use client::offscreen::{windowless_plugins, CaptureTarget, OffscreenCanvas};
 use client::player_presentation::{PlayerPalette, PlayerStyle};
 use client::render_compatibility::{run_render_app, RenderCompatibilityPlugin};
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
@@ -57,6 +59,8 @@ const SECOND: &str = "second";
 /// Capture of the second effect after its age is advanced to [`FADED_AGE`].
 const FADED: &str = "faded";
 
+/// Size of the offscreen canvas, physical pixels.
+const CANVAS_SIZE: UVec2 = UVec2::new(640, 360);
 /// Frames between a change on the stage and its capture.
 const SETTLE_FRAMES: u32 = 4;
 /// Captures of the first effect allowed while its pipeline compiles, before the child gives up.
@@ -167,14 +171,23 @@ fn two_owners(palette: &PlayerPalette) -> ([PlayerStyle; 2], [usize; 2]) {
     ([first, second], [first_channel, second_channel])
 }
 
-/// Spawns the camera and the card mesh.
+/// Spawns the camera, rendering into the capture target, and the card mesh.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn setup_stage(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut stage: ResMut<'_, Stage>,
+    capture: Res<'_, CaptureTarget>,
 ) {
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            target: capture.camera_target(),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, CAMERA_DISTANCE).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     stage.quad = Some(meshes.add(Rectangle::new(1.0, 1.0)));
@@ -214,6 +227,7 @@ fn run_shots(
     mut materials: ResMut<'_, Assets<CombatFxMaterial>>,
     mut instances: Query<'_, '_, &mut CombatFxInstance>,
     mut exit: EventWriter<'_, AppExit>,
+    capture: Res<'_, CaptureTarget>,
 ) {
     let Some(quad) = stage.quad.clone() else {
         return;
@@ -287,7 +301,7 @@ fn run_shots(
     }
     stage.capture_pending = true;
     let path = stage.directory.join(format!("{}.png", stage.shot.name()));
-    commands.spawn(Screenshot::primary_window()).observe(
+    commands.spawn(capture.screenshot()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>, mut stage: ResMut<'_, Stage>| {
             let image = trigger
                 .event()
@@ -332,7 +346,7 @@ fn assert_dominated_by(name: &str, sums: [f64; 3], expected: usize) {
 /// Runs the child and returns the directory holding its captures and report.
 fn run_child() -> TestResult<tempfile::TempDir> {
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, directory.path());
     command.assert_passes_validation("combat effect slot child");
@@ -369,56 +383,43 @@ fn a_reused_slot_draws_its_new_effect() -> TestResult {
     Ok(())
 }
 
-/// Builds a Bevy app with the real renderer, an invisible window and the production effect plugin.
-///
-/// libtest runs every test on a spawned thread, so winit must be allowed to run off the main
-/// thread here, as in `client::build_graphical_app_off_main_thread`.
+/// Builds a Bevy app with the real renderer drawing into a 640×360 offscreen canvas and the
+/// production effect plugin.
 fn child_app(directory: PathBuf) -> TestResult<App> {
     let root = ResolvedAssetsRoot::resolve()?;
     let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
     let (styles, channels) = two_owners(&definition.palette);
-    let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
-    window_backend.run_on_any_thread = true;
     let mut app = App::new();
-    app.add_plugins(
-        client::presentation::GamePresentationPlugins
-            .set(AssetPlugin {
-                file_path: root.bevy_file_path()?.to_owned(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    resolution: (640.0_f32, 360.0_f32).into(),
-                    visible: false,
-                    ..default()
-                }),
-                ..default()
-            })
-            .set(window_backend),
-    )
-    .add_plugins((RenderCompatibilityPlugin, CombatFxPlugin))
-    .insert_resource(ClearColor(Color::BLACK))
-    .insert_resource(Stage {
-        directory,
-        styles,
-        channels,
-        quad: None,
-        shot: Shot::First,
-        effect: None,
-        slots: [None; 2],
-        settled_frames: 0,
-        first_attempts: 0,
-        capture_pending: false,
-        captured: None,
-    })
-    .add_systems(Startup, setup_stage)
-    .add_systems(Update, run_shots);
+    app.add_plugins(windowless_plugins(
+        client::presentation::GamePresentationPlugins.set(AssetPlugin {
+            file_path: root.bevy_file_path()?.to_owned(),
+            ..default()
+        }),
+    ));
+    OffscreenCanvas::install(&mut app, CANVAS_SIZE)?;
+    app.add_plugins((RenderCompatibilityPlugin, CombatFxPlugin))
+        .insert_resource(ClearColor(Color::BLACK))
+        .insert_resource(Stage {
+            directory,
+            styles,
+            channels,
+            quad: None,
+            shot: Shot::First,
+            effect: None,
+            slots: [None; 2],
+            settled_frames: 0,
+            first_attempts: 0,
+            capture_pending: false,
+            captured: None,
+        })
+        .add_systems(Startup, setup_stage)
+        .add_systems(Update, run_shots);
     Ok(app)
 }
 
 /// The child of [`a_reused_slot_draws_its_new_effect`].
 #[test]
-#[ignore = "launched by the test above on a virtual display"]
+#[ignore = "launched by the test above through gpu_run, offscreen"]
 fn combat_fx_slot_child() {
     let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent test names the directory");
     let mut app = child_app(directory.into()).expect("the shipped assets must load");

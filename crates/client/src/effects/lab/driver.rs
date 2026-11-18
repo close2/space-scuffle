@@ -6,8 +6,8 @@
 //! subject drawn meanwhile so every effect pipeline is specialized), then for each take resets
 //! the effect runtime, poses the battle camera, lays the take's ground, spawns the subject and
 //! steps `Time<Virtual>` in steps of at most the take's step until each shot's exact age, where
-//! it draws one settling frame, then requests a screenshot and holds time still until the PNG
-//! is written.
+//! it draws one settling frame, then requests a screenshot of the lab's [`CaptureTarget`] (the
+//! window or the offscreen canvas) and holds time still until the PNG is written.
 //!
 //! # How it fits
 //! Time advances only through [`TimeUpdateStrategy::ManualDuration`], set here each frame for
@@ -24,10 +24,11 @@ use crate::effects::catalog::schema::EventKind;
 use crate::effects::catalog::EffectCatalog;
 use crate::effects::placement::WorldLine;
 use crate::effects::runtime::{EffectRuntime, SpawnRequest};
+use crate::offscreen::CaptureTarget;
 use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::render_resource::PipelineCache;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::ScreenshotCaptured;
 use bevy::time::TimeUpdateStrategy;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -140,6 +141,8 @@ pub struct LabWorld<'w, 's> {
     grounds: Query<'w, 's, &'static mut MeshMaterial3d<StandardMaterial>>,
     /// The app's exit.
     exit: EventWriter<'w, AppExit>,
+    /// What a screenshot copies: the window or the offscreen canvas.
+    capture: Res<'w, CaptureTarget>,
 }
 
 /// Advances the program by one frame.
@@ -318,7 +321,7 @@ fn advance(
     driver.settled = false;
     driver.pending = true;
     let path = program.out.join(format!("{}.png", next.name));
-    world.commands.spawn(Screenshot::primary_window()).observe(
+    world.commands.spawn(world.capture.screenshot()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>, mut driver: ResMut<'_, LabDriver>| {
             let written = trigger
                 .event()

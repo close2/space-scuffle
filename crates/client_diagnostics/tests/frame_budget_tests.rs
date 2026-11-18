@@ -10,9 +10,11 @@
 //!   [`SMOKE_FRAMES`] measured frames of the 400-unit scenario on the test GPU, under Vulkan
 //!   validation, through the client's GPU harness (`crates/client/tests/support/gpu_run.rs`), and
 //!   checks the report it writes. It proves the measurement works; its numbers mean nothing (plan
-//!   `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4). It declares
-//!   `--display-path xvfb-software-present`, the harness's path, and checks that the report
-//!   records it (`WP5b`).
+//!   `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4). It declares the display
+//!   path the harness chose for it (`kwin-virtual` under the headless `KWin`,
+//!   `xvfb-software-present` under Xvfb; plan `docs/plans/2026-11-17-gpu-test-readback.md`,
+//!   WP3) and checks that the report records it and the display variables that prove it
+//!   (`WP5b`).
 //! - `the_400_match_lasts_the_measured_window_with_combat_inside_it` steps the `400` scenario in
 //!   the simulation alone for the measured window and checks that the match does not end and that
 //!   the combat window fits inside it (plan `docs/plans/2026-11-11-scenario-outer-rings.md`,
@@ -277,6 +279,19 @@ fn rebuilding_a_root_replaces_only_a_root_the_tool_made() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// The `--display-path` that names the harness's display of a child, by its ledger name
+/// (`gpu_run::GpuCommand::display_name`): the headless `KWin` is `kwin-virtual`, Xvfb with
+/// radv's software present or with lavapipe is `xvfb-software-present`, and the test process's
+/// own display (no `xvfb-run`) is `desktop`.
+fn declared_display_path(display: &str) -> DisplayPath {
+    match display {
+        "kwin" => DisplayPath::KwinVirtual,
+        "xvfb-sw" | "xvfb" => DisplayPath::XvfbSoftwarePresent,
+        "host" => DisplayPath::Desktop,
+        other => panic!("the smoke run needs a windowed display, not {other:?}"),
+    }
+}
+
 #[test]
 fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> {
     if gpu_run::gpu_tests_opted_out() {
@@ -289,10 +304,9 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
         Path::new(env!("CARGO_BIN_EXE_frame_budget")),
         Some("1280x720x24"),
     );
-    // The harness removes `WAYLAND_DISPLAY` from every renderer child and runs it under Xvfb
-    // (`GpuCommand::renderer`), which is exactly what this path declares.
+    let declared = declared_display_path(command.display_name());
     command
-        .args(["--display-path", "xvfb-software-present"])
+        .args(["--display-path", declared.name()])
         .arg("--work-dir")
         .arg(work.path())
         .args(["--scenario", "400"])
@@ -337,10 +351,7 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
     }
     assert!(summary.interval_ms.p50 > 0.0, "{summary:?}");
     assert_ne!(report.environment.adapter, "");
-    assert_eq!(
-        report.environment.display_path,
-        DisplayPath::XvfbSoftwarePresent
-    );
+    assert_eq!(report.environment.display_path, declared);
     let recorded = |name: &str| {
         report
             .environment
@@ -354,7 +365,17 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
         display.as_deref().is_some_and(|value| value != "unset"),
         "DISPLAY is recorded: {display:?}"
     );
-    assert_eq!(recorded("WAYLAND_DISPLAY").as_deref(), Some("unset"));
+    let wayland = recorded("WAYLAND_DISPLAY");
+    match declared {
+        // `KWin` sets its socket for the session; Xvfb has none.
+        DisplayPath::KwinVirtual => assert!(
+            wayland.as_deref().is_some_and(|value| value != "unset"),
+            "WAYLAND_DISPLAY is recorded: {wayland:?}"
+        ),
+        DisplayPath::XvfbSoftwarePresent | DisplayPath::Desktop => {
+            assert_eq!(wayland.as_deref(), Some("unset"));
+        }
+    }
     assert_eq!(report.gpu_passes, None);
     Ok(())
 }

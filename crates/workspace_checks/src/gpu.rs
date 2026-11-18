@@ -30,14 +30,18 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Names that build an application with Bevy's renderer, and so a render device unless the
-/// backends are switched off.
-pub const RENDER_DEVICE_MARKERS: [&str; 6] = [
+/// backends are switched off: Bevy's and the client's plugin groups, the client's app builders,
+/// the effect lab's app (`client::effects::lab::lab_app`) and the windowless plugin group
+/// (`client::offscreen::windowless_plugins`, plan `2026-11-17-gpu-test-readback` D-8).
+pub const RENDER_DEVICE_MARKERS: [&str; 8] = [
     "DefaultPlugins",
     "GamePresentationPlugins",
     "build_graphical_app",
     "build_graphical_app_off_main_thread",
     "build_graphical_app_with_options",
     "request_adapter",
+    "lab_app",
+    "windowless_plugins",
 ];
 
 /// Lines after a marker searched for `backends: None`.
@@ -228,6 +232,82 @@ mod tests {
             "{findings:?}"
         );
         assert!(findings[0].message.contains("run_test_child"));
+        Ok(())
+    }
+
+    /// T-6 (plan `2026-11-17-gpu-test-readback`, D-8): the effect lab's app and the windowless
+    /// plugin group build a render device, so they pass only in a launched child or headless.
+    #[test]
+    fn the_lab_app_and_the_windowless_group_are_render_devices() -> Result<(), Box<dyn Error>> {
+        let dir = tree(&[
+            (
+                "crates/client/tests/lab_tests.rs",
+                "//! x
+use client::effects::lab::lab_app;
+#[test]
+fn t() {
+    \
+                 let app = lab_app(root, program, None, size, LabSurface::Offscreen);
+}
+",
+            ),
+            (
+                "crates/client/tests/offscreen_tests.rs",
+                "//! x
+mod gpu_run;
+#[test]
+fn parent() {
+    \
+                 gpu_run::run_offscreen_test_child(\"child\", \"c\");
+}
+\
+                 #[test]
+#[ignore = \"launched\"]
+fn child() {
+    \
+                 App::new().add_plugins(windowless_plugins(group));
+}
+\
+                 #[test]
+fn unlaunched() {
+    \
+                 App::new().add_plugins(windowless_plugins(group));
+}
+",
+            ),
+            (
+                "crates/client/src/offscreen.rs",
+                "//! x
+pub fn windowless_plugins() {}
+\
+                 #[cfg(test)]
+mod tests {
+    #[test]
+    fn headless() {
+        \
+                 App::new().add_plugins(windowless_plugins(group.set(RenderPlugin {
+            \
+                 render_creation: RenderCreation::Automatic(WgpuSettings {
+                \
+                 backends: None,
+            }),
+        })));
+    }
+}
+",
+            ),
+        ])?;
+        let findings = in_process_render_devices(dir.path())?;
+        assert_eq!(
+            lines(&findings),
+            [
+                "crates/client/tests/lab_tests.rs:5",
+                "crates/client/tests/offscreen_tests.rs:14",
+            ],
+            "{findings:?}"
+        );
+        assert!(findings[0].message.contains("`lab_app`"));
+        assert!(findings[1].message.contains("`windowless_plugins`"));
         Ok(())
     }
 }

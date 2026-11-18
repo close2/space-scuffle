@@ -8,9 +8,10 @@
 //! reference exactly at every frame boundary, on `radv` and on `lavapipe`.
 //!
 //! # How it fits
-//! The pixel test re-executes this test binary on the virtual GPU through `support/gpu_run.rs`,
+//! The pixel test re-executes this test binary on the test GPU through `support/gpu_run.rs`,
 //! as `combat_fx_slot_gpu_tests.rs` does, so the harness locks the physical GPU for the child only.
-//! The child runs Bevy's renderer with the production `BubbleDomeMaterialPlugin` (material, clock
+//! The child renders offscreen, into a canvas with no window or display (`client::offscreen`).
+//! It runs Bevy's renderer with the production `BubbleDomeMaterialPlugin` (material, clock
 //! buffer and its in-place upload) and the shipped `bubble_dome.wgsl`, on a black stage with two
 //! bubbles: one plain and one with frame blending. Their atlas is a fixture whose layers are solid,
 //! distinct colours, so a pixel names its layer. Only `FlipbookClock` changes between shots; the
@@ -47,7 +48,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::ScreenshotCaptured;
 use client::bubble_shader::{
     BubbleDomeMaterial, BubbleDomeMaterialPlugin, BubbleUniformGpu, FLAG_FRAME_BLEND,
 };
@@ -55,6 +56,7 @@ use client::flipbook_clock::{
     flipbook_layer, flipbook_sample, FlipbookClock, FlipbookClockGpu, FlipbookLanes, FlipbookMode,
     FlipbookSpan, ANIM_BLEND_BIT, CLOCK_UNITS_PER_TICK,
 };
+use client::offscreen::{windowless_plugins, CaptureTarget, OffscreenCanvas};
 use client::render_compatibility::{run_render_app, RenderCompatibilityPlugin};
 use client::ResolvedAssetsRoot;
 use naga::ShaderStage;
@@ -87,8 +89,8 @@ const PHASE_ZERO_AT: u32 = 123_457;
 /// Cycles, counted from [`PHASE_ZERO_AT`], whose frame boundaries are shot.
 const SHOT_CYCLES: [u32; 2] = [0, 5];
 
-/// Window size, in pixels.
-const WINDOW_SIZE: (f32, f32) = (320.0, 180.0);
+/// Size of the offscreen canvas, physical pixels.
+const CANVAS_SIZE: UVec2 = UVec2::new(320, 180);
 /// Distance from the camera to the bubbles' plane, in world units.
 const CAMERA_DISTANCE: f32 = 6.0;
 /// Centres of the plain and the blending bubble, in world units.
@@ -331,7 +333,7 @@ const MISSING_COLORSPACE_EXTENSION: gpu_run::AllowedValidationId = gpu_run::Allo
 /// Runs the child and returns the directory holding its report.
 fn run_child() -> TestResult<tempfile::TempDir> {
     let directory = tempfile::tempdir()?;
-    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, directory.path());
     let (run, report) = command.run_validated("flipbook clock child");
@@ -403,15 +405,24 @@ fn media_only_uniform(blend: bool) -> BubbleUniformGpu {
     .with_flipbook_lanes(lanes(blend))
 }
 
-/// Spawns the camera and the two bubbles.
+/// Spawns the camera, rendering into the capture target, and the two bubbles.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn setup_stage(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut images: ResMut<'_, Assets<Image>>,
     mut materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
+    capture: Res<'_, CaptureTarget>,
 ) {
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            target: capture.camera_target(),
+            ..default()
+        },
         Tonemapping::None,
         DebandDither::Disabled,
         Msaa::Off,
@@ -432,24 +443,18 @@ fn setup_stage(
     }
 }
 
-/// Physical pixel of each bubble's centre, once the camera's transform has propagated.
+/// Pixel of each bubble's centre, once the camera's transform has propagated. The canvas is an
+/// image, whose scale factor is 1, so its viewport coordinates are physical pixels.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "the centres are inside a 320 by 180 window"
+    reason = "the centres are inside a 320 by 180 canvas"
 )]
-fn bubble_centres(
-    camera: &Camera,
-    transform: &GlobalTransform,
-    scale: f32,
-) -> Option<[(u32, u32); 2]> {
+fn bubble_centres(camera: &Camera, transform: &GlobalTransform) -> Option<[(u32, u32); 2]> {
     let mut centres = [(0, 0); 2];
     for (pixel, centre) in centres.iter_mut().zip(BUBBLE_CENTRES) {
         let viewport = camera.world_to_viewport(transform, centre).ok()?;
-        *pixel = (
-            (viewport.x * scale).round() as u32,
-            (viewport.y * scale).round() as u32,
-        );
+        *pixel = (viewport.x.round() as u32, viewport.y.round() as u32);
     }
     Some(centres)
 }
@@ -466,9 +471,9 @@ fn run_shots(
     mut stage: ResMut<'_, Stage>,
     mut clock: ResMut<'_, FlipbookClock>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform)>,
-    windows: Query<'_, '_, &Window>,
     mut material_events: EventReader<'_, '_, AssetEvent<BubbleDomeMaterial>>,
     mut exit: EventWriter<'_, AppExit>,
+    capture: Res<'_, CaptureTarget>,
 ) {
     let modified = material_events
         .read()
@@ -478,11 +483,10 @@ fn run_shots(
         stage.material_modifications += u32::try_from(modified).expect("invariant: few events");
     }
     if stage.centres.is_none() {
-        let scale = windows.iter().next().map_or(1.0, Window::scale_factor);
         stage.centres = cameras
             .iter()
             .next()
-            .and_then(|(camera, transform)| bubble_centres(camera, transform, scale));
+            .and_then(|(camera, transform)| bubble_centres(camera, transform));
         return;
     }
     if stage.capture_pending {
@@ -529,7 +533,7 @@ fn run_shots(
         return;
     }
     stage.capture_pending = true;
-    commands.spawn(Screenshot::primary_window()).observe(
+    commands.spawn(capture.screenshot()).observe(
         |trigger: Trigger<'_, ScreenshotCaptured>, mut stage: ResMut<'_, Stage>| {
             let image = trigger
                 .event()
@@ -544,55 +548,41 @@ fn run_shots(
     );
 }
 
-/// Builds a Bevy app with the real renderer, an invisible window and the production bubble
-/// material plugin.
-///
-/// libtest runs every test on a spawned thread, so winit must be allowed to run off the main
-/// thread here, as in `client::build_graphical_app_off_main_thread`.
+/// Builds a Bevy app with the real renderer drawing into an offscreen canvas and the production
+/// bubble material plugin.
 fn child_app(directory: PathBuf) -> TestResult<App> {
     let root = ResolvedAssetsRoot::resolve()?;
-    let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
-    window_backend.run_on_any_thread = true;
     let mut app = App::new();
-    app.add_plugins(
-        client::presentation::GamePresentationPlugins
-            .set(AssetPlugin {
-                file_path: root.bevy_file_path()?.to_owned(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    resolution: WINDOW_SIZE.into(),
-                    visible: false,
-                    ..default()
-                }),
-                ..default()
-            })
-            .set(window_backend),
-    )
-    .add_plugins((RenderCompatibilityPlugin, BubbleDomeMaterialPlugin))
-    .insert_resource(ClearColor(Color::BLACK))
-    .insert_resource(Stage {
-        directory,
-        values: clock_values(),
-        shots: Vec::new(),
-        current: None,
-        warm: false,
-        warm_up_attempts: 0,
-        settled_frames: 0,
-        capture_pending: false,
-        captured: None,
-        centres: None,
-        material_modifications: 0,
-    })
-    .add_systems(Startup, setup_stage)
-    .add_systems(Update, run_shots);
+    app.add_plugins(windowless_plugins(
+        client::presentation::GamePresentationPlugins.set(AssetPlugin {
+            file_path: root.bevy_file_path()?.to_owned(),
+            ..default()
+        }),
+    ));
+    OffscreenCanvas::install(&mut app, CANVAS_SIZE)?;
+    app.add_plugins((RenderCompatibilityPlugin, BubbleDomeMaterialPlugin))
+        .insert_resource(ClearColor(Color::BLACK))
+        .insert_resource(Stage {
+            directory,
+            values: clock_values(),
+            shots: Vec::new(),
+            current: None,
+            warm: false,
+            warm_up_attempts: 0,
+            settled_frames: 0,
+            capture_pending: false,
+            captured: None,
+            centres: None,
+            material_modifications: 0,
+        })
+        .add_systems(Startup, setup_stage)
+        .add_systems(Update, run_shots);
     Ok(app)
 }
 
 /// The child of [`the_shader_picks_the_rust_layer_at_every_clock_value`].
 #[test]
-#[ignore = "launched by the test above on a virtual display"]
+#[ignore = "launched by the test above through gpu_run, offscreen"]
 fn flipbook_clock_child() {
     let directory = std::env::var_os(CHILD_OUT_VAR).expect("the parent test names the directory");
     let mut app =
