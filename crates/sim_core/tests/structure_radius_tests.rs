@@ -126,7 +126,14 @@ fn scratch_structure(
             } else if trimmed.starts_with("name:") {
                 format!("{indent}name: \"{slug}\",")
             } else if trimmed.starts_with("radius:") {
-                format!("{indent}radius: {radius},")
+                // A radius that covers the full box, so the copy loads; the test's radius is set
+                // below.
+                format!("{indent}radius: {},", f64::from(size) * 0.75)
+            } else if trimmed.starts_with("footprint_shape:") {
+                // These tests were written for full-square footprints, and keep them (plan
+                // `2026-11-18-contour-footprints` WP6).
+                let half = f64::from(size) / 2.0;
+                format!("{indent}footprint_shape: (half_width: {half}, half_height: {half}, chamfer: 0.0),")
             } else {
                 (*line).to_owned()
             }
@@ -137,6 +144,12 @@ fn scratch_structure(
         .catalog
         .load_structures_from_ron_str(&text)
         .expect("the scratch structure loads");
+    // The radius under test, set in memory: the loader now requires a radius to cover the
+    // footprint shape (plan `2026-11-18-contour-footprints` D-10), which the controls at half
+    // the footprint do not.
+    let arch = world.catalog.get_mut(id).expect("invariant: loaded above");
+    arch.collision_radius = s(radius);
+    arch.separation_radius = s(radius);
     id
 }
 
@@ -566,24 +579,27 @@ fn a_melee_attacker_strikes_a_structure_along_its_face() {
     }
 }
 
-/// R-5 (guard, data): for every shipped structure and every shipped ground melee weapon, a unit
-/// touching the middle of a face (centre `min(w, h) ÷ 2 + t` from the structure's centre) is in
-/// reach (`R + r + range`): the floor of D-4 on the shipped data, so no structure is unhittable
-/// by melee.
+/// R-5, revised by plan `2026-11-18-contour-footprints` WP6 (D-10): for every shipped structure
+/// and every shipped ground melee weapon, a unit touching the farthest point of the structure's
+/// footprint shape (its centre the shape's bounding radius plus `t` from the structure's centre)
+/// is in reach (`R + r + range`), so no point of any contour is out of melee reach.
 #[test]
-fn every_shipped_structure_face_is_in_melee_reach() {
+fn every_shipped_structure_contour_is_in_melee_reach() {
     let world = world_on(flat(8));
     let mut pairs = 0;
     for structure in world.catalog.archetypes() {
-        let ShapeKind::BuildingDome {
-            footprint_w,
-            footprint_h,
-            ..
-        } = structure.shape
-        else {
+        let ShapeKind::BuildingDome { shape, .. } = structure.shape else {
             continue;
         };
-        let half = s(f64::from(footprint_w.min(footprint_h)) * 0.5);
+        let quarters = |q: u16| f64::from(q) / 4.0;
+        let (hw, hh, c) = (
+            quarters(shape.half_width_q),
+            quarters(shape.half_height_q),
+            quarters(shape.chamfer_q),
+        );
+        let bounding = (hw * hw + (hh - c) * (hh - c))
+            .max((hw - c) * (hw - c) + hh * hh)
+            .sqrt();
         for unit in world.catalog.archetypes() {
             let Some(weapon) = unit
                 .weapon_against(MoverType::Ground, None)
@@ -594,9 +610,11 @@ fn every_shipped_structure_face_is_in_melee_reach() {
             if unit.mover_type != MoverType::Ground {
                 continue;
             }
+            let reach = f64::from(
+                (structure.collision_radius + unit.collision_radius + weapon.max_range).to_f32(),
+            );
             assert!(
-                half + unit.terrain_radius
-                    <= structure.collision_radius + unit.collision_radius + weapon.max_range,
+                bounding + f64::from(unit.terrain_radius.to_f32()) <= reach + 1e-6,
                 "{} against {}",
                 unit.slug,
                 structure.slug

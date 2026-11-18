@@ -1778,11 +1778,14 @@ impl StructureArchetypeDef {
     pub fn into_archetype(self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
         // Exact: validation admits only multiples of 1/16 (plan `2026-11-18-structure-radius` D-2).
         let radius = SimScalar::from_num(self.radius);
-        // No rule reads a structure's terrain radius (units meet its footprint, B-131, and it
-        // never moves); half the footprint's smaller side keeps `motion_entry`'s map-edge domain
-        // check true for a footprint flush with the border, and is at most `radius` (D-5).
-        let terrain_radius =
-            SimScalar::from_num(f64::from(self.footprint.0.min(self.footprint.1)) * 0.5);
+        // No rule reads a structure's terrain radius (units meet its shape, B-131, B-134, and it
+        // never moves). The shape's smaller half-extent keeps `motion_entry`'s map-edge domain
+        // check true for a footprint flush with the border (it is at most half the footprint's
+        // smaller side), and is at most `radius`, which covers the shape (plan
+        // `2026-11-18-contour-footprints` D-10). For a full-box shape it is half the footprint's
+        // smaller side, as plan `2026-11-18-structure-radius` D-5 set it; it is smaller only where
+        // the shape is smaller than the cells (the Spore Crawler analogue).
+        let terrain_radius = self.footprint_shape.resolve().inscribed_half_extent();
         let faction = factions.resolve_faction(&self.slug, &self.faction)?;
         let convert = |weapon: Option<WeaponSpecDef>| {
             weapon

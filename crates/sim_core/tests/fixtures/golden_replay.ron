@@ -307,6 +307,10 @@
 // checkpoint changed. No behaviour did: a scratch build that leaves the new field unhashed
 // reproduces every checksum recorded before this change. The leash of 21 from that point is
 // reached nowhere in this replay.
+// Re-recorded for plan 2026-11-18-contour-footprints WP6 (B-134): the halls' 5.0.14 contour
+// (corners cut by 1.5) changes their hashed clearance from checkpoint 1; entity state is
+// unchanged through tick 1000 (a scratch digest of only the entities, projectiles, players and
+// effects is identical on every tick with the full-square halls and with the contours).
 (
     checksum_schema: 30,
     seed: 0x5EED_0F_5CAFF1E,
@@ -334,25 +338,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x6ccd3d1ba8244093,
-        0x303c0ee113ee40c4,
-        0xacdd86b80a1d13bc,
-        0xa36393fcede04c6f,
-        0xabb6da2bb932b0c1,
-        0xd947e7a592b77213,
-        0x997f8e4681f64d89,
-        0xef69937b202c1315,
-        0x08c181e841d7bbae,
-        0x3183358f1fabd8a3,
-        0x6a890901f87297d8,
-        0x5ab1fa029e1c10af,
-        0x167161b5aa9994d5,
-        0x20fcb165e0e89577,
-        0x65198e0f7c495c33,
-        0x4981dd2e1b728bbe,
-        0x2ceea03e67759f9e,
-        0x87721397f368e350,
-        0x7f969d1a624eae93,
-        0x6fb2901f314ba460,
+        0x04554f8fce25aa53,
+        0xbedb0218fcc761b5,
+        0xc3ce293c35bf01e2,
+        0xfff0ca5bbfef5240,
+        0x72561b02a393158c,
+        0x17886ebc5d3aff5d,
+        0x354b1a6d93764787,
+        0x9c66083c4bb7d0b4,
+        0x0a6cd9d3deddec7a,
+        0x5cc5112d9140aaee,
+        0xe5522a675fe986a3,
+        0xad27db857ebc0b7b,
+        0x0e4069218a229db8,
+        0xbcedf91d781d83f0,
+        0x1b73034040c39fd4,
+        0x78fc3e0897b32335,
+        0xf85709f1cd8396d4,
+        0x675d2825ad1f351d,
+        0x75edc7d7a627fc3a,
+        0xfdfab7d382013cb2,
     ],
 )

@@ -702,3 +702,64 @@ texts; they gain the now-required `pursuit` section, so the tolerance cases stil
 **Pins re-recorded** with proof headers: `golden_replay`, `golden_replay_orders` (every checkpoint) and
 `DEFAULT_SANDBOX_CHECKSUM` (`17_544_490_958_066_995_222`). A scratch build that leaves `leash_origin` unhashed
 reproduces each previous value, and the 21-leash fires nowhere in them.
+
+## 6e. WP6 redone under D-15 with the leash of Amendment 4
+
+**Change** (WP6, on top of the leash commit `f0086939`): the 49 5.0.14 shapes and four B-138 rows of §6, D-10's
+cover rule, a structure's terrain radius as its shape's smaller half-extent (confirmed by Amendment 2), the WP6
+tests and test edits of §6, and the cross-reference of that terrain radius in plan `2026-11-18-structure-radius`.
+The base for every comparison is the leash commit with full-square data. On full squares it equals WP5 everywhere
+except the matrix's battle 35 (§6d).
+
+| What | Result |
+|---|---|
+| Matrix (`--compare` the leash commit's matrix) | Bit-identical (1,160 runs) |
+| Battle 33 `seeds.csv` | Byte-identical |
+| `golden_replay_orders` | Passes unchanged |
+| `golden_replay` | Changes from checkpoint 1. The scratch entity-only digest is **identical on all 1,000 ticks** between the leash commit and WP6. Re-recorded with the header the plan requires; passes debug, release, `wasm32-wasip1` release and debug |
+| `sim_fixtures` `DEFAULT_SANDBOX_CHECKSUM` (the sandbox places a hall, a depot and a production building) | Changes. Every entity's position is identical; a scratch run with the full-square catalog (cover rule off) reproduces the previous `17_544_490_958_066_995_222`. Re-recorded as `15_355_001_956_314_655_944` with that header |
+| Control (a): the hall contours reverted, scratch build without the cover rule | Showcase `units.csv` byte-identical to the base on the default seed and seeds 1 to 8 |
+| Control (b): the four B-138 rows' cells and radii reverted | Byte-identical to WP6 on all nine runs |
+
+**Showcase** (to the end; reversals and stall give-ups per owner, P0 / P1; deeper unit-ticks 0 / 0 on every run):
+
+| Seed | Base | WP6 | Reversals | Stall give-ups |
+|---|---|---|---|---|
+| Default | P1 at 2,191 | P1 at 1,946 | 25 / 10 → 13 / 10 | 0 / 0 → 0 / 0 |
+| 1 | P1 at 2,200 | P1 at 1,928 | 23 / 10 → 10 / 17 | 0 / 0 → 0 / 0 |
+| 2 | P1 at 2,185 | P1 at 1,913 | 22 / 12 → 12 / 20 | 0 / 0 → 0 / 0 |
+| 3 | P1 at 1,886 | P1 at 2,194 | 22 / 15 → 12 / 10 | 0 / 0 → 0 / 0 |
+| 4 | P1 at 5,700 | P1 at 2,616 | 11 / 11 → 18 / 11 | 0 / 0 → 0 / 0 |
+| 5 | P1 at 1,580 | P1 at 1,924 | 22 / 20 → 12 / 10 | 0 / 0 → 0 / 0 |
+| 6 | P1 at 3,419 | P1 at 2,175 | 19 / 23 → 12 / 15 | 0 / 0 → 0 / 0 |
+| 7 | P0 at 2,552 | P1 at 2,187 | 11 / 10 → 17 / 5 | 0 / 0 → 0 / 0 |
+| 8 | P1 at 1,712 | P1 at 1,921 | 40 / 14 → 12 / 19 | 0 / 0 → 0 / 0 |
+**Acceptance (D-15, 5) on the default seed holds.** The winner is the same (player 1), the match ends, deeper
+unit-ticks are 0, stall give-ups are 0 / 0 (bound base + 1) and reversals are 13 / 10 (bound base + 10). Every
+seed's give-ups are 0, and every seed's reversals are within base + 10.
+
+**Expected direction, confirmed.** Every seed first diverges at tick 0. Player 0's starting pulse bots are placed on
+slightly different ring points beside the hall (entity 5 at (8.5664, 5.3929) instead of (8.6218, 5.5323)): scenario
+placement checks each point with the disc against the hall's contour (D-8). Matches end 27 to 3,084 ticks earlier or
+later; on the default seed the hall falls at 1,946 instead of 2,191.
+
+**Seed 7 changes winner (player 0 at 2,552 → player 1 at 2,187).**
+
+- The cause is the same tick-0 placement, which is rule-caused (D-8, S3).
+- Its lane fight is close. On the base, player 0 leads 10 to 7 at tick 500 and keeps 5 units to player 1's 2 by tick
+  700. On WP6, the shifted starts give 8 to 8 at tick 500 and 2 to 6 by tick 700.
+- There is no stall, wedge or fallback: give-ups 0 / 0, deeper 0.
+- Seed 7 was player 0's only win of the nine. Reported, as D-15 rule 5 asks for seeds 1 to 8. The default seed's
+  winner is unchanged.
+
+**A finding outside this plan (B-143).** One full `sim_map` run failed
+`pathfinding_properties::mesh_routes_agree_with_the_exact_oracle`: a random terrain mask, radius 0.26, route
+(11.5, 12.5) to (6.5, 7.5), ratio 1.270 against `MESH_RATIO_BOUND`.
+
+- It fails identically with the fitted retry disabled, and identically on `main` `739ca6ea`, so it predates the plan.
+- The seed proptest appended to the tracked regressions file was taken out again (it would fail every run).
+- Registered as B-143. Its shrunk input:
+
+```text
+cc d51620938f4e0748a6e9240a09b12b64150e7a508147ffce1700eb50640e16cb # shrinks to blocked = [false, false, false, false, false, false, true, false, false, false, false, true, false, false, false, false, false, true, false, false, false, false, false, false, true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, true, true, false, false, true, true, false, false, false, false, true, false, false, false, false, false, true, false, false, false, true, false, false, false, false, false, false, true, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, true, false, false, false, true, false, false, false, false, false, true, false, false, false, true, true, false, false, true, false, false, false, false, true, false, false, false, false, true, true, false, false, false, false, true, false, true, false, false, false, false, true, true, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, true, false, true, true, false, false, true, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false, false, false, true, false, false, false, false, true, false, true, false, false, false, true, false, false, false, false, true, true, false, false, true, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false, false, false, false, false, false, true, false, true, false, false, true, true], radius_steps = 1, picks = [(1, 319), (967, 560), (956, 91), (796, 31)]
+```
