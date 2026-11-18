@@ -357,3 +357,25 @@ B-135 removed from the register as fixed; B-138 stays open (with B-134). The Com
 structure measure to its engine radius while its dome is drawn at its footprint, and lists
 `structure_radius_tests.rs`. Structure-contact Amendment 2 corrects its §2.2 bullet. This plan's row is `Done`, with
 the WP5 renders pending.
+
+## 7. Merge of main `477c740e`
+
+Conflicts: `DESIGN.md`'s register (main's B-137 and this branch's B-138 both kept) and the header comment of
+`assets/captures/showcase.ron` (both comments kept). Tools of main (`477c740e`, built in a temporary worktree,
+removed) against tools of the merged tree:
+
+| What | Result |
+|---|---|
+| Matrix (`--compare` main) | Bit-identical (1,160 runs; expectation failures 0 on the seeds of record, 4 over all seeds) |
+| Battle 33 `seeds.csv` | Byte-identical |
+| Showcase, default seed to the end | Main: player 1 at 2,193 (byte-identical to WP2); merged: player 1 at 2,191 (byte-identical to WP4) |
+| `scenarios/showcase_effects.ron` (main's new effects take battle), 6,000 ticks | Diverges at `units.csv` tick 319 (see below); neither run ends within the trace (outcome "in progress" both) |
+
+**Effects battle, traced.** At tick 318 player 1's napalm wheeler 13 (radius 0.625, scan 5.5) stands at
+(16.7194, 11.4863), 8.745 from player 0's hall centre (8.5, 8.5): beyond the old scan reach 5.5 + 0.625 + 2.5 =
+8.625, within the new 8.875. It acquires the hall (reader A1) and drops its route on tick 319. Control: the merged
+tools on a scratch `assets/` copy with only the Command Center row at 2.5 give `units.csv` byte-identical to main's.
+The raid's deaths shift by a few ticks (player 1's ninth to sixteenth deaths at 633 to 718 instead of 643 to 742;
+player 0's last three at 652, 688, 707 instead of 639, 683, 690). The divergence falls inside the effects take's
+`siege` scene (1x from about tick 304 for 240 frames), whose scene checks require each listed effect to spawn during
+the scene; that check needs a render (GPU), pending with §5's renders.
