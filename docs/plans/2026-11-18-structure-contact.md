@@ -440,3 +440,30 @@ divergence, no refused slide.
 4. WP4 as planned.
 
 No tuning constant is proposed (D-12, 7).
+
+## Amendment 1 (orchestrator, 2026-11-18): the showcase flip is accepted; seed 8 is traced before WP3
+
+**Decision.** Proposed Amendment 1 is adopted with one condition.
+
+1. **The default-seed flip is accepted as rule-caused** (player 1 at 2,193 instead of player 0 at 2,599). The
+   control runs isolate it to B2 alone: with structures back as steering obstacles the run is byte-identical to
+   WP1. The first divergence (tick 21, a unit keeping its route 0.53 off its own hall's face inside the old
+   circle's steering reach) is the game's model (S1, S6) and D-3's stated consequence. The showcase has flipped
+   for this class of cause twice before (contact Amendment 1, inner-radius Amendment 1). The shift of seven of
+   nine seeds toward player 1 follows from the scenario's spawn layout (only player 1's east-ring units pass
+   their own hall's faces on the way out), which is a property of the scenario, not of the rule; it is recorded,
+   not tuned.
+2. **Condition: seed 8 is traced before WP3.** Its player 0 reversals rise by 24, more than twice the bound.
+   That is the size of effect R-3 warns about (units stepping into a gap between a parked unit and a building
+   they cannot pass). The WP2 agent derives per-unit reversals for seed 8 on WP1 and WP2 from `units.csv` (or
+   adds a per-unit breakdown to `route_trace`, with a test), names the units and ticks that account for the
+   excess, and classifies them: rule (the units now take a route the circle used to block, and reverse for
+   ordinary reasons such as retargeting) or defect (a unit oscillating at a unit–building gap, R-3). If any is
+   a defect, the WP stops for a new amendment; no tuning constant is added without one. Seed 6 (+13 for player
+   1) is reported from the same breakdown but needs no classification unless a single unit accounts for more
+   than 10.
+3. `golden_replay` does not move; no re-recording. That no unit of `golden_replay` comes within steering reach
+   of a hall is recorded in the evidence as a finding (D-12, 5).
+4. WP3 then retells the storyboard for the new default-seed timeline with real renders on the RX 580, one GPU
+   lock per take with at least 60 s between consecutive holds (readback plan Amendment 4), and takes the picture
+   check. WP4 as planned.
