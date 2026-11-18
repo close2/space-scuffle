@@ -370,6 +370,17 @@ mod tests {
         Ok(())
     }
 
+    /// Plan `2026-11-18-contour-footprints` WP7: the one-cell footprint (the Sensor Tower
+    /// analogue's, B-138) is the clicked cell itself.
+    #[test]
+    fn a_one_cell_footprint_centres_on_the_clicked_cell() -> TestResult {
+        let world = flat_world()?;
+        let dome = sized(&plain_dome(&world)?, 1, 1);
+        assert_eq!(placement_cell(&world, &dome, 20.5, 40.25), Some((20, 40)));
+        assert_eq!(placement_cell(&world, &dome, 0.25, 0.75), Some((0, 0)));
+        Ok(())
+    }
+
     #[test]
     fn an_even_footprint_contains_the_clicked_cell() -> TestResult {
         let world = flat_world()?;

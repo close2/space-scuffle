@@ -275,9 +275,10 @@ impl UnitArchetype {
     }
 
     /// The radius this archetype's bubble is drawn at, in world units (plan
-    /// `2026-11-18-structure-radius` D-6): for a structure's dome, half its footprint's smaller
-    /// side, so the dome covers the footprint units meet (B-131) and not its engine radius,
-    /// which is a range edge and no drawing size; for a unit, its collision radius.
+    /// `2026-11-18-structure-radius` D-6): for a structure's dome, its footprint shape's smaller
+    /// half-extent (plan `2026-11-18-contour-footprints`; half the footprint's smaller side for
+    /// a full box), so the dome stands on the shape units meet (B-134) and not on its engine
+    /// radius, which is a range edge and no drawing size; for a unit, its collision radius.
     ///
     /// Presentation only: the render snapshot's radius, a projectile visual's ends, the death
     /// shatter and the client's muzzle read it; no rule does.

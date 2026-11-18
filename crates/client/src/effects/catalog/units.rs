@@ -117,8 +117,9 @@ struct UnitEntry {
     /// Area, tether or missile effects, by index in the archetype's `abilities`.
     abilities: Vec<AbilityLook>,
     /// The archetype's drawn bubble radius in world units (`UnitArchetype::drawn_radius`, which
-    /// the simulation's snapshot draws the bubble with: a unit's collision radius, half a
-    /// structure's footprint): where its shots leave its bubble.
+    /// the simulation's snapshot draws the bubble with: a unit's collision radius, a structure's
+    /// footprint shape's smaller half-extent, plan `2026-11-18-contour-footprints` D-11): where its
+    /// shots leave its bubble.
     muzzle: f32,
 }
 
@@ -677,6 +678,11 @@ mod tests {
     /// Plan `2026-11-18-structure-radius` WP3 (D-6): an armed 2×2 structure whose radius is
     /// 1.125 shoots from its drawn dome's rim, 1.0 (half its footprint), not from its radius;
     /// a unit shoots from its collision radius, which is also its drawn radius.
+    /// Plan `2026-11-18-contour-footprints` D-11 (revising structure-radius WP3): a structure's
+    /// muzzle is its drawn dome, its footprint shape's smaller half-extent, whatever its radius:
+    /// 1.0 for an armed 2×2 contour, 0.5 for the armed (anti-air) Spore-sized shape on its 2×2
+    /// cells; a
+    /// unit's muzzle is its collision radius.
     #[test]
     fn a_structures_muzzle_is_its_drawn_dome() {
         let root = crate::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
@@ -686,21 +692,27 @@ mod tests {
         )
         .expect("the shipped vocabulary loads");
         let mut units = sim_fixtures::shipped_catalogs().units;
-        let tower = units
-            .archetypes()
-            .find(|arch| {
-                matches!(
-                    arch.shape,
-                    ShapeKind::BuildingDome {
-                        footprint_w: 2,
-                        footprint_h: 2,
-                        ..
-                    }
-                ) && arch.weapon_against(MoverType::Ground, None).is_some()
-            })
-            .map(|arch| arch.unit_type_id)
-            .expect("the shipped catalog has an armed 2x2 structure");
-        units.get_mut(tower).expect("listed").collision_radius = SimScalar::from_num(1.125);
+        let armed_2x2 = |half_q: u16| {
+            units
+                .archetypes()
+                .find(|arch| {
+                    matches!(
+                        arch.shape,
+                        ShapeKind::BuildingDome {
+                            footprint_w: 2,
+                            footprint_h: 2,
+                            shape,
+                        } if shape.half_width_q == half_q
+                    ) && (arch.weapon_against(MoverType::Ground, None).is_some()
+                        || arch.weapon_against(MoverType::Air, None).is_some())
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has such an armed 2x2 structure")
+        };
+        let (tower, spore) = (armed_2x2(4), armed_2x2(2));
+        for kind in [tower, spore] {
+            units.get_mut(kind).expect("listed").collision_radius = SimScalar::from_num(1.125);
+        }
         let (unit, radius) = units
             .archetypes()
             .find(|arch| {
@@ -711,6 +723,7 @@ mod tests {
             .expect("the shipped catalog has an armed unit");
         let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
         assert!((tables.muzzle(tower) - 1.0).abs() < f32::EPSILON);
+        assert!((tables.muzzle(spore) - 0.5).abs() < f32::EPSILON);
         assert!((tables.muzzle(unit) - radius).abs() < f32::EPSILON);
     }
 }

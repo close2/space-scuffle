@@ -57,6 +57,14 @@
 // acquire the viewer's hall two ticks sooner, kill its workers at ticks 1,160 and 1,200 and fire on
 // it until it falls at tick 2,191. Scene ticks of a radv render are to be recorded in
 // docs/evidence/2026-11-18-structure-radius.md §5.
+// Re-checked for plan 2026-11-18-contour-footprints (B-134: structures meet units through their
+// 5.0.14 contour, and an automatic chase gives up beyond its 21 leash, B-142). The units start on
+// slightly different points beside the halls; the lane fight still goes to player 1: the viewer's
+// last unit dies at tick 621, the enemy's five surviving pulse bots walk to the viewer's base, kill
+// its workers (ticks 1,010 and 1,038) and fire on its hall until it falls at tick 1,946. Render-checked
+// on radv: `clash` runs from tick 305 to 680, `march` ends on combat at the viewer's base at tick
+// 937, and `assault` covers both worker deaths; scene ticks are in
+// docs/evidence/2026-11-18-contour-footprints.md §7.
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
 // Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall

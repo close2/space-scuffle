@@ -763,3 +763,54 @@ later; on the default seed the hall falls at 1,946 instead of 2,191.
 ```text
 cc d51620938f4e0748a6e9240a09b12b64150e7a508147ffce1700eb50640e16cb # shrinks to blocked = [false, false, false, false, false, false, true, false, false, false, false, true, false, false, false, false, false, true, false, false, false, false, false, false, true, true, false, false, false, false, true, false, false, false, false, false, false, false, false, true, true, false, false, true, true, false, false, false, false, true, false, false, false, false, false, true, false, false, false, true, false, false, false, false, false, false, true, false, false, false, false, false, true, true, false, false, false, false, false, false, true, false, false, true, false, false, false, true, false, false, false, false, false, true, false, false, false, true, true, false, false, true, false, false, false, false, true, false, false, false, false, true, true, false, false, false, false, true, false, true, false, false, false, false, true, true, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, true, false, true, true, false, false, true, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false, false, false, true, false, false, false, false, true, false, true, false, false, false, true, false, false, false, false, true, true, false, false, true, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false, false, false, false, false, false, true, false, true, false, false, true, true], radius_steps = 1, picks = [(1, 319), (967, 560), (956, 91), (796, 31)]
 ```
+
+## 7. WP7: client, presentation, measurement
+
+**Client tests.** `effects::catalog::units::a_structures_muzzle_is_its_drawn_dome` (revised to the shape: 1.0 for an
+armed 2×2 contour, 0.5 for the Spore analogue) and `battle_input::command_mode::a_one_cell_footprint_centres_on_the_clicked_cell`
+pass on WP6's tree. The client reads the drawn size through `drawn_radius` (the shape) and the cells through
+`footprint_w/h`, so neither test needed client code. One test edit: the Spore analogue is armed only against air, so
+the muzzle test now accepts an air or a ground weapon when it looks for an armed structure of a size. `grep -rn
+"footprint_w\|drawn_radius\|BuildingDome {" crates/client/src` finds only the editor's placement size (cells) and
+`matches!` on the dome kind; no client code changed (D-11). `drawn_radius`'s doc comment now names the shape.
+
+**Picture check** (radv, RX 580, one `with-gpu-lock` hold per take, at least 60 s between holds). A scratch assets tree
+(`~/scratch/contour-footprints/pic/assets`, symlinks to `assets/` plus a flat 48×48 map, three scenarios and three
+loadouts) and the scratch storyboard `~/scratch/contour-footprints/pic/picture.ron` place, at tick 0, a 5×5 hall, a
+2×2 dome (`capacitor_dome`) or the 1×1 sensor (`radar_beacon_dome`) with pulse bots on its first ring, seen from
+above and from the side (frames in `~/scratch/contour-footprints/pic/frames/`). Observations:
+
+- The hall's dome is drawn at 2.5; the ring's corner units stand outside it, in the cut corners, as the contour
+  allows. The 2×2 dome is drawn at 1.0 with units at all four corners; the sensor at 0.5, its ring 0.125 from its
+  glass. Nothing reads as a fault.
+- **Not pictured, recorded.** A scenario cannot place two structures corner to corner (start locations must be 16
+  cells apart, `MIN_START_SEPARATION_CELLS`), and no scenario order moves a worker, so the "worker between two 2×2
+  domes" picture needs a build order in a scripted take. The gap itself is proven by `wall_off_tests` and C-3. The
+  Spore and Spire analogues (`spore_spire_dome`, `chitin_spire_dome`, `apex_spire_dome`) have no admitted media, so
+  they cannot be drawn without faking a dome (charter §1.2). Both are left out of scope (Q0002).
+
+**Storyboard** (the default seed's timeline moved, §6e). The `battle` take rendered on radv (182 s, revision
+`a7ef86fc`): `advance` 251 to 305 (first shot), `clash` 305 to 680, past the lane fight's last
+death (tick 621), `march` 683 to 937 at 4x, ending on combat at the viewer's base, and `assault` from 937 at 2x
+over the workers' deaths (1,010 and 1,038). The enemy's five surviving pulse bots fire on the viewer's hall, which
+falls at 1,946. No scene length changed; the storyboard's comment gains the re-check.
+
+**XML sources of §2.3** (`FootprintData.xml`, 5.0.14 liberty, the `Shape` offsets of each footprint):
+
+```text
+Footprint:2016  <Offsets value="-1,-2.5;-2.5,-1;-2.5,1;-1,2.5;1,2.5;2.5,1;2.5,-1;1,-2.5"/>
+Footprint:2262  <Offsets value="1,-2.5;-1,-2.5;-2.5,-1;-2.5,1;-1,2.5;1,2.5;2.5,1;2.5,-1"/>
+Footprint:1936  <Offsets value="-1.5,-1;-1.5,1;-1,1.5;1,1.5;1.5,1;1.5,-1;1,-1.5;-1,-1.5"/>
+Footprint:2206  <Offsets value="-1,-1.5;-1.5,-1;-1.5,1;-1,1.5;1,1.5;1.5,1;1.5,-1;1,-1.5"/>
+Footprint:960  <Offsets value="-0.75,-1.5;0.75,-1.5;-0.75,1.5;0.75,1.5;-1.5,-0.75;-1.5,0.75;1.5,-0.75;1.5,0.75"/>
+Footprint:1951  <Offsets value="-1,0.5;-0.5,1;0.5,1;1,0.5;1,-0.5;0.5,-1;-0.5,-1;-1,-0.5"/>
+Footprint:5370  <Offsets value="-0.5,-1;0.5,-1;-0.5,1;0.5,1;-1,-0.5;-1,0.5;1,-0.5;1,0.5"/>
+Footprint:163  <Offsets value="-0.25,-0.5;0.25,-0.5;-0.25,0.5;0.25,0.5;-0.5,-0.25;-0.5,0.25;0.5,-0.25;0.5,0.25"/>
+Footprint:1107  <Offsets value="-0.5,-0.5;-0.5,0.5;0.5,0.5;0.5,-0.5"/>
+Footprint:2074  <Offsets value="0.5,-1;-0.5,-1;-1,-0.5;-1,0.5;-0.5,1;0.5,1;1,0.5;1,-0.5"/>
+Footprint:1239  <Offsets value="1,-0.5;0.5,-1;-0.5,-1;-1,-0.5;-1,0.5;-0.5,1;0.5,1;1,0.5"/>
+```
+
+The control runs are in §6e (controls (a) and (b)) and the corner-gap property's table in §3b
+(`a_diagonal_contour_gap_admits_exactly_the_discs_that_fit`, `8t² ≤ 1`). The mesh rebuild of the 24-structure row is
+in §3b: 11,125 µs square against 11,341 µs contour (+2 %), below the 25 % bar, so no profile was needed.
