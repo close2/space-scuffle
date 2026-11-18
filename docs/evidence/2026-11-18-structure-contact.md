@@ -288,7 +288,7 @@ Stills (640 wide) under `~/scratch/structure-contact/wp3/stills/` were looked at
 - `f1100.png`: `assault` on the viewer's hall, caption "Assault".
 - `f1300.png`: the closing card.
 
-The video is 15.2 MB (budget 25 MB). `client_diagnostics` `showcase_storyboard_tests` (7) and `showcase_tests`
+The render assembled its site within its budgets: video 15.2 MB (budget 25 MB), teaser 4.2 MB (budget 4.5 MB). `client_diagnostics` `showcase_storyboard_tests` (7) and `showcase_tests`
 (1) pass.
 
 **Picture check** (RX 580, `showcase render --driver radv`, one `with-gpu-lock` hold, 14 minutes after the
