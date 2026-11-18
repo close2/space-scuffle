@@ -31,6 +31,7 @@ mod execute;
 mod explain;
 mod gate_lock;
 mod glob;
+mod gpu_ledger;
 mod lockfile;
 mod manifest_diff;
 mod memory;
@@ -70,6 +71,10 @@ pub use gate_lock::{
     LOCK_PATH_VAR,
 };
 pub use glob::Glob;
+pub use gpu_ledger::{
+    parse_ledger, render_slowest, seconds_to_ms, slowest_phase, GpuChild, GpuChildren, GpuLedger,
+    LEDGER_FILE, LEDGER_VAR, LOCK_TIMEOUT_EXIT, SLOWEST_SHOWN,
+};
 pub use lockfile::{LockDiff, LockEntry};
 pub use manifest_diff::{classify_manifest, parse_toml, ManifestChange, TomlError, TomlValue};
 pub use memory::{

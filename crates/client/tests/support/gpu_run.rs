@@ -15,6 +15,9 @@
 //! - **The shared GPU lock.** On `radv`, [`GpuLock`] takes `/run/lock/gpu.lock`, the file
 //!   `with-gpu-lock` locks, immediately before the child starts and releases it when the child
 //!   exits. Nothing else holds it, so other users of the server get the GPU between children.
+//!   When the host's `with-gpu-lock` declares the fair queue ([`GPU_QUEUE_DIR`], B-136), the
+//!   harness takes the lock in order of arrival with every other taker that queues
+//!   ([`GpuLock::acquire_queued`], [`Ticket`]), so a series of short holds cannot starve a child.
 //! - **The launch environment**, the run limit, the evidence of which adapter rendered, the
 //!   opt-out policy, and the gate on Vulkan validation findings (remediation finding Q-7).
 //!
@@ -41,7 +44,9 @@
 //! 3. The run reads the child's executable into the page cache ([`preload_executable`]), takes
 //!    the lock (radv only), spawns the child, waits for it, releases the lock, then
 //!    checks the exit status and the adapter line, and appends a line to the ledger if
-//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The line names the child's display
+//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file (`cargo gate` names one per run). The line
+//!    records the wait for the lock (`lock_wait_s`) and the run (`run_s`); a child whose wait
+//!    expired is recorded too, with `exit=lock-timeout`, before the run fails. The line names the child's display
 //!    (`display=offscreen`, `kwin`, `xvfb-sw`, `xvfb`, `host` or `none`). The child's own log
 //!    timestamps split its run into phases ([`ChildTimeline`]); the ledger records them, and a
 //!    timeout names the slowest.
@@ -123,6 +128,16 @@ use std::time::{Duration, Instant, SystemTime};
 /// another file.
 pub const GPU_LOCK_PATH: &str = "/run/lock/gpu.lock";
 
+/// The queue directory of the fair lock protocol: one ticket file per waiter, served in order of
+/// arrival ([`Ticket`]; plan `docs/plans/2026-11-17-gpu-test-readback.md`, Amendment 5, B-136).
+///
+/// The harness queues there only when the host's `with-gpu-lock` names this directory
+/// ([`shared_queue`]), so both kinds of taker start queueing together.
+pub const GPU_QUEUE_DIR: &str = "/run/lock/gpu.queue";
+
+/// The log `with-gpu-lock` appends its `ACQUIRE`, `RELEASE` and `TIMEOUT` lines to (Q0060).
+pub const LOCK_TOOL_LOG: &str = "/run/lock/gpu-lock.log";
+
 /// Default wait for the shared lock, in seconds (4 min 50 s), when `GPU_LOCK_TIMEOUT` is unset.
 ///
 /// The owner's decision in `docs/questions/closed/0012-gpu-lock-peer-and-wait-limit.md`: every
@@ -134,10 +149,12 @@ pub const DEFAULT_LOCK_WAIT_SECS: u64 = 290;
 /// Variable that overrides [`DEFAULT_LOCK_WAIT_SECS`], in whole seconds, as for `with-gpu-lock`.
 pub const LOCK_WAIT_VAR: &str = "GPU_LOCK_TIMEOUT";
 
-/// Interval between two attempts to take a busy lock.
+/// Interval between two looks at the queue, or two attempts to take a busy lock.
 ///
-/// Peers block in the kernel and are woken the moment the lock is released, so a harness that
-/// polls lets a waiting peer win the next slot (plan decision D2).
+/// Without the queue, `with-gpu-lock` peers block in the kernel and are woken the moment the lock
+/// is released, so a harness that polls lets a waiting peer win the next slot (plan decision D2).
+/// That courtesy is what lets a series of short holds starve a test child (B-136); the queue
+/// ([`GPU_QUEUE_DIR`]) replaces it with arrival order.
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Variable that forces a driver: `radv`, `lavapipe` or `auto`. Unset means `auto`.
@@ -617,17 +634,33 @@ fn is_executable(path: &Path) -> bool {
 // ---------------------------------------------------------------------------------------------
 
 /// The process that holds a lock, as `/proc/locks` and `/proc/<pid>/cmdline` name it.
+///
+/// `/proc/locks` names the process that placed the lock, which need not be the one holding it
+/// now: `with-gpu-lock` opens the file in its shell and runs `flock 200`, so the PID listed is that
+/// short-lived `flock(1)` helper, gone by the time anyone looks, while the lock lives on in the
+/// shell's descriptor (found while diagnosing B-136). [`Self::running`] tells the two apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockHolder {
-    /// Process ID that placed the lock.
+    /// Process ID that placed the lock, or the ancestor that has the lock file open.
     pub pid: u32,
     /// Its command line, arguments joined by spaces, or empty if unreadable.
     pub command_line: String,
+    /// Whether that process still ran when it was looked up.
+    pub running: bool,
 }
 
 impl fmt::Display for LockHolder {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "PID {}: `{}`", self.pid, self.command_line)
+        if self.running {
+            write!(formatter, "PID {}: `{}`", self.pid, self.command_line)
+        } else {
+            write!(
+                formatter,
+                "PID {}, which no longer runs: the lock lives on in a descriptor it handed on, as \
+                 the `flock(1)` helper of `{LOCK_TOOL}` leaves it with the script's shell",
+                self.pid
+            )
+        }
     }
 }
 
@@ -649,6 +682,16 @@ pub enum GpuLockError {
         waited: Duration,
         /// The holder at expiry, when `/proc/locks` names one.
         holder: Option<LockHolder>,
+        /// The last `ACQUIRE` line of [`LOCK_TOOL_LOG`] with no `RELEASE` after it, when the lock
+        /// is the shared one and the log shows such a hold ([`open_tool_holds`]).
+        open_tool_hold: Option<String>,
+    },
+    /// The queue directory could not be created, read or written ([`GPU_QUEUE_DIR`]).
+    Queue {
+        /// The queue directory.
+        dir: PathBuf,
+        /// The operating system's reason.
+        source: std::io::Error,
     },
     /// An ancestor of this process holds the lock, so waiting could never succeed.
     HeldByAncestor {
@@ -680,6 +723,7 @@ impl fmt::Display for GpuLockError {
                 path,
                 waited,
                 holder,
+                open_tool_hold,
             } => {
                 write!(
                     formatter,
@@ -689,6 +733,12 @@ impl fmt::Display for GpuLockError {
                 )?;
                 if let Some(holder) = holder {
                     write!(formatter, ", held by {holder}")?;
+                }
+                if let Some(line) = open_tool_hold {
+                    write!(
+                        formatter,
+                        "; {LOCK_TOOL_LOG} shows a hold with no release: {line}"
+                    )?;
                 }
                 write!(
                     formatter,
@@ -705,6 +755,22 @@ impl fmt::Display for GpuLockError {
             Self::Io { path, source } => {
                 write!(formatter, "cannot lock {}: {source}", path.display())
             }
+            Self::Queue { dir, source } => write!(
+                formatter,
+                "cannot queue for the GPU lock in {}: {source}",
+                dir.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GpuLockError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Open { source, .. } | Self::Io { source, .. } | Self::Queue { source, .. } => {
+                Some(source)
+            }
+            Self::TimedOut { .. } | Self::HeldByAncestor { .. } => None,
         }
     }
 }
@@ -717,53 +783,368 @@ pub struct GpuLock {
 }
 
 impl GpuLock {
-    /// Takes the exclusive lock on `path`, retrying every [`LOCK_POLL_INTERVAL`] for up to `wait`.
-    ///
-    /// Opens the file for reading and writing, creating it with mode 0666 (subject to the umask)
-    /// as `flock(1)` does. On the first refusal it checks whether an ancestor of this process is
-    /// the holder, and fails at once if so. Returns the guard and the time spent waiting.
+    /// Takes the exclusive lock on `path` with no queue, retrying every [`LOCK_POLL_INTERVAL`]
+    /// for up to `wait`. As [`Self::acquire_queued`] with no queue.
     ///
     /// # Errors
-    /// [`GpuLockError`]: the file cannot be opened, an ancestor holds the lock, `wait` expired,
-    /// or `flock(2)` failed.
+    /// As [`Self::acquire_queued`].
     pub fn acquire(path: &Path, wait: Duration) -> Result<(Self, Duration), GpuLockError> {
+        Self::acquire_queued(path, None, wait)
+    }
+
+    /// Takes the exclusive lock on `path`, in turn when `queue` names a queue directory, waiting
+    /// up to `wait` in all. Returns the guard and the time spent waiting.
+    ///
+    /// Opens the file for reading and writing, creating it with mode 0666 (subject to the umask)
+    /// as `flock(1)` does. Before it waits, it fails at once if an ancestor of this process holds
+    /// the lock ([`ancestor_holder`]), since that wait could never end. With a queue, it puts a
+    /// [`Ticket`] in the directory and tries the lock only while that ticket is the queue's head
+    /// ([`queue_head`]), every [`LOCK_POLL_INTERVAL`]; it removes the ticket once it holds the
+    /// lock, or when it gives up. Without one, it tries the lock every [`LOCK_POLL_INTERVAL`].
+    ///
+    /// # Errors
+    /// [`GpuLockError`]: the file cannot be opened, an ancestor holds the lock, the queue cannot
+    /// be used, `wait` expired, or `flock(2)` failed.
+    pub fn acquire_queued(
+        path: &Path,
+        queue: Option<&Path>,
+        wait: Duration,
+    ) -> Result<(Self, Duration), GpuLockError> {
         let file = open_lock_file(path).map_err(|source| GpuLockError::Open {
             path: path.to_owned(),
             source,
         })?;
         let started = Instant::now();
-        let mut checked_ancestors = false;
+        if let Some(holder) = ancestor_holder(&file) {
+            return Err(GpuLockError::HeldByAncestor {
+                path: path.to_owned(),
+                holder,
+            });
+        }
+        let queue_error = |dir: &Path| {
+            let dir = dir.to_owned();
+            move |source| GpuLockError::Queue { dir, source }
+        };
+        let ticket = match queue {
+            Some(dir) => Some(QueueTicket::join(dir, wait).map_err(queue_error(dir))?),
+            None => None,
+        };
         loop {
-            match file.try_lock() {
-                Ok(()) => return Ok((Self { _file: file }, started.elapsed())),
-                Err(TryLockError::WouldBlock) => {}
-                Err(TryLockError::Error(source)) => {
-                    return Err(GpuLockError::Io {
-                        path: path.to_owned(),
-                        source,
-                    })
-                }
-            }
-            if !checked_ancestors {
-                checked_ancestors = true;
-                if let Some(holder) = lock_holder(&file).filter(|h| is_ancestor(h.pid)) {
-                    return Err(GpuLockError::HeldByAncestor {
-                        path: path.to_owned(),
-                        holder,
-                    });
+            let in_turn = match &ticket {
+                Some(ticket) => ticket.is_head().map_err(queue_error(&ticket.dir))?,
+                None => true,
+            };
+            if in_turn {
+                match file.try_lock() {
+                    Ok(()) => {
+                        // The ticket goes once the lock is held, so the next waiter becomes the
+                        // head and waits at the lock itself for this hold to end.
+                        drop(ticket);
+                        return Ok((Self { _file: file }, started.elapsed()));
+                    }
+                    Err(TryLockError::WouldBlock) => {}
+                    Err(TryLockError::Error(source)) => {
+                        return Err(GpuLockError::Io {
+                            path: path.to_owned(),
+                            source,
+                        })
+                    }
                 }
             }
             let waited = started.elapsed();
             if waited >= wait {
+                let open_tool_hold = (path == Path::new(GPU_LOCK_PATH))
+                    .then(|| std::fs::read_to_string(LOCK_TOOL_LOG).ok())
+                    .flatten()
+                    .and_then(|log| open_tool_holds(&log).pop());
                 return Err(GpuLockError::TimedOut {
                     path: path.to_owned(),
                     waited,
                     holder: lock_holder(&file),
+                    open_tool_hold,
                 });
             }
             std::thread::sleep(LOCK_POLL_INTERVAL.min(wait.saturating_sub(waited)));
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The fair queue (plan `2026-11-17-gpu-test-readback`, Amendment 5; B-136)
+// ---------------------------------------------------------------------------------------------
+
+/// One waiter's place in the queue for the GPU lock: an empty file in the queue directory whose
+/// name carries everything a peer needs, so the queue is read with one directory listing.
+///
+/// The name is `<arrival_ns>.<pid>.<start_ticks>.<deadline_s>`, with the arrival zero-padded to
+/// 20 digits, so that the byte order of the names is the order of arrival; ties (the same
+/// nanosecond) go by the rest of the name, byte-wise. That byte order is the queue order, for this
+/// harness ([`Ord`]) and for `with-gpu-lock`'s sorted glob alike. A ticket counts only while it is live
+/// ([`Self::is_live`]): its process runs, with the same start time, and its deadline has not
+/// passed. Every taker reads the same rule, so a dead, reused or expired ticket blocks nobody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ticket {
+    /// Wall-clock time the waiter joined, in nanoseconds since the Unix epoch.
+    pub arrival_ns: u128,
+    /// Process ID of the waiter (the process that will hold the lock).
+    pub pid: u32,
+    /// The waiter's start time, in clock ticks since boot (`/proc/<pid>/stat` field 22), which
+    /// tells a reused PID from the waiter.
+    pub start_ticks: u64,
+    /// The second since the Unix epoch after which the waiter has given up.
+    pub deadline_s: u64,
+}
+
+impl Ord for Ticket {
+    /// The byte order of the file names: arrival first, then the rest of the name.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.file_name().cmp(&other.file_name())
+    }
+}
+
+impl PartialOrd for Ticket {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ticket {
+    /// The ticket's file name in the queue directory.
+    pub fn file_name(&self) -> String {
+        format!(
+            "{:020}.{}.{}.{}",
+            self.arrival_ns, self.pid, self.start_ticks, self.deadline_s
+        )
+    }
+
+    /// Reads a ticket file name; `None` for any other name.
+    pub fn parse(name: &str) -> Option<Self> {
+        let mut fields = name.split('.');
+        let ticket = Self {
+            arrival_ns: fields.next()?.parse().ok()?,
+            pid: fields.next()?.parse().ok()?,
+            start_ticks: fields.next()?.parse().ok()?,
+            deadline_s: fields.next()?.parse().ok()?,
+        };
+        fields.next().is_none().then_some(ticket)
+    }
+
+    /// Whether the ticket still waits at `now_s` (seconds since the epoch): before its deadline,
+    /// and its PID runs with its start time, as `start_ticks_of` reports it.
+    pub fn is_live(&self, now_s: u64, start_ticks_of: impl Fn(u32) -> Option<u64>) -> bool {
+        now_s < self.deadline_s && start_ticks_of(self.pid) == Some(self.start_ticks)
+    }
+}
+
+/// The head of a queue: the earliest live ticket among the file `names`, ignoring names that are
+/// not tickets. `None` when no ticket is live.
+pub fn queue_head<S: AsRef<str>>(
+    names: impl IntoIterator<Item = S>,
+    now_s: u64,
+    start_ticks_of: impl Fn(u32) -> Option<u64>,
+) -> Option<Ticket> {
+    names
+        .into_iter()
+        .filter_map(|name| Ticket::parse(name.as_ref()))
+        .filter(|ticket| ticket.is_live(now_s, &start_ticks_of))
+        .min()
+}
+
+/// Reads a process's start time in clock ticks since boot (field 22) from the text of
+/// `/proc/<pid>/stat`. The fields are counted after the last `)`, as in [`stat_parent_pid`].
+pub fn stat_start_ticks(stat: &str) -> Option<u64> {
+    let (_, after_name) = stat.rsplit_once(')')?;
+    after_name.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// The start time of process `pid`, or `None` when it does not run (or `/proc` is absent).
+fn process_start_ticks(pid: u32) -> Option<u64> {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .as_deref()
+        .and_then(stat_start_ticks)
+}
+
+/// Seconds since the Unix epoch, now.
+fn epoch_now() -> Duration {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+}
+
+/// This process's ticket file in a queue directory; dropping it removes the file.
+#[derive(Debug)]
+struct QueueTicket {
+    /// The queue directory.
+    dir: PathBuf,
+    /// The ticket.
+    ticket: Ticket,
+}
+
+impl QueueTicket {
+    /// Joins the queue in `dir` for a wait of up to `wait`, creating the directory (mode 1777, so
+    /// every user of the GPU can queue) if it is absent.
+    fn join(dir: &Path, wait: Duration) -> std::io::Result<Self> {
+        ensure_queue_dir(dir)?;
+        let pid = std::process::id();
+        let start_ticks = process_start_ticks(pid).ok_or_else(|| {
+            std::io::Error::other("cannot read this process's start time from /proc/self/stat")
+        })?;
+        loop {
+            let now = epoch_now();
+            // Two seconds past the wait (one for the whole seconds cut off, one of margin), so
+            // the ticket outlives every check this waiter makes before it gives up.
+            let deadline_s = now.as_secs() + wait.as_secs() + 2;
+            let ticket = Ticket {
+                arrival_ns: now.as_nanos(),
+                pid,
+                start_ticks,
+                deadline_s,
+            };
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(ticket.file_name()))
+            {
+                Ok(_) => {
+                    return Ok(Self {
+                        dir: dir.to_owned(),
+                        ticket,
+                    })
+                }
+                // Another thread of this process joined in the same nanosecond: take the next.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Whether this ticket is the queue's head now. Removes, on the way, the tickets that are no
+    /// longer live and belong to this user ([`Self::sweep`]).
+    fn is_head(&self) -> std::io::Result<bool> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)? {
+            names.push(entry?.file_name().to_string_lossy().into_owned());
+        }
+        let now_s = epoch_now().as_secs();
+        self.sweep(&names, now_s);
+        let head = queue_head(names, now_s, process_start_ticks);
+        Ok(head == Some(self.ticket))
+    }
+
+    /// Removes the tickets among `names` that are not live at `now_s` and are owned by the user
+    /// who owns this ticket: a waiter of this user that crashed leaves one behind. The sticky
+    /// queue directory lets only a ticket's owner remove it, so another user's stale tickets stay
+    /// and are ignored. A removal that fails (a peer of this user removed it first) is harmless.
+    #[cfg(unix)]
+    fn sweep(&self, names: &[String], now_s: u64) {
+        use std::os::unix::fs::MetadataExt as _;
+        let Ok(own) = std::fs::metadata(self.dir.join(self.ticket.file_name())) else {
+            return;
+        };
+        for name in names {
+            let Some(ticket) = Ticket::parse(name) else {
+                continue;
+            };
+            if ticket.is_live(now_s, process_start_ticks) {
+                continue;
+            }
+            let path = self.dir.join(name);
+            if std::fs::metadata(&path).is_ok_and(|metadata| metadata.uid() == own.uid()) {
+                // Losing the race to a peer that removed it first is the only expected failure.
+                std::fs::remove_file(&path).ok();
+            }
+        }
+    }
+
+    /// Without Unix ownership no ticket is known to be this user's.
+    #[cfg(not(unix))]
+    fn sweep(&self, _names: &[String], _now_s: u64) {}
+}
+
+impl Drop for QueueTicket {
+    /// Removes the ticket file. A failure cannot be reported from `drop`; a ticket left behind
+    /// expires at its deadline and is ignored by every peer from then on.
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(self.dir.join(self.ticket.file_name())) {
+            eprintln!(
+                "cannot remove the GPU queue ticket {} in {}: {error}; it expires at its deadline",
+                self.ticket.file_name(),
+                self.dir.display()
+            );
+        }
+    }
+}
+
+/// Creates the queue directory with mode 1777 (world-writable, sticky like `/run/lock`) if it is
+/// absent, and checks that it is a directory and not a symbolic link.
+fn ensure_queue_dir(dir: &Path) -> std::io::Result<()> {
+    match std::fs::create_dir(dir) {
+        Ok(()) => set_queue_mode(dir)?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = std::fs::symlink_metadata(dir)?;
+    if metadata.is_dir() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "{} is not a directory",
+            dir.display()
+        )))
+    }
+}
+
+/// Sets mode 1777 on a queue directory this process created; the umask narrowed `create_dir`'s.
+#[cfg(unix)]
+fn set_queue_mode(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o1777))
+}
+
+/// Without Unix modes the directory keeps its default permissions.
+#[cfg(not(unix))]
+fn set_queue_mode(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Whether a `with-gpu-lock` script takes part in the queue: it names [`GPU_QUEUE_DIR`].
+pub fn tool_declares_queue(script: &str) -> bool {
+    script.contains(GPU_QUEUE_DIR)
+}
+
+/// The queue the shared lock uses: [`GPU_QUEUE_DIR`] when the host's `with-gpu-lock` declares
+/// it ([`tool_declares_queue`]), else none. Read once per test process.
+pub fn shared_queue() -> Option<&'static Path> {
+    static DECLARED: OnceLock<bool> = OnceLock::new();
+    let declared = *DECLARED.get_or_init(|| {
+        find_on_path(LOCK_TOOL)
+            .and_then(|tool| std::fs::read_to_string(tool).ok())
+            .is_some_and(|script| tool_declares_queue(&script))
+    });
+    declared.then_some(Path::new(GPU_QUEUE_DIR))
+}
+
+/// The `ACQUIRE` lines of a `with-gpu-lock` log with no `RELEASE` or `TIMEOUT` of the same PID
+/// after them, in log order. The last one is the hold most likely still running; one whose
+/// script was killed before it could log its release stays open here too.
+pub fn open_tool_holds(log: &str) -> Vec<String> {
+    let mut open: Vec<(String, &str)> = Vec::new();
+    for line in log.lines() {
+        let mut words = line.split_whitespace();
+        let (Some(_time), Some(event)) = (words.next(), words.next()) else {
+            continue;
+        };
+        let Some(pid) = words.find_map(|word| word.strip_prefix("pid=")) else {
+            continue;
+        };
+        match event {
+            "ACQUIRE" => open.push((pid.to_owned(), line)),
+            "RELEASE" | "TIMEOUT" => open.retain(|(held, _)| held != pid),
+            _ => {}
+        }
+    }
+    open.into_iter().map(|(_, line)| line.to_owned()).collect()
 }
 
 /// Opens `path` read-write, creating it with mode 0666 if it is absent.
@@ -808,9 +1189,59 @@ fn lock_holder(file: &File) -> Option<LockHolder> {
     let (major, minor, inode) = device_and_inode(file)?;
     let locks = std::fs::read_to_string("/proc/locks").ok()?;
     let pid = flock_holder_pid(&locks, major, minor, inode)?;
-    let command_line =
-        std::fs::read(format!("/proc/{pid}/cmdline")).map_or_default(|raw| command_line_text(&raw));
-    Some(LockHolder { pid, command_line })
+    Some(describe_process(pid))
+}
+
+/// Names process `pid`: its command line, and whether it runs.
+fn describe_process(pid: u32) -> LockHolder {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline"));
+    LockHolder {
+        pid,
+        running: raw.is_ok(),
+        command_line: raw.map_or_default(|raw| command_line_text(&raw)),
+    }
+}
+
+/// The ancestor of this process that holds `file`'s lock, if the lock is held and one does.
+///
+/// The lock is held by an ancestor when `/proc/locks` names one as its holder, as for
+/// `flock <file> cargo test`, or when an ancestor has the lock file open, as for
+/// `with-gpu-lock cargo test`: that script locks through a `flock(1)` helper that exits at once
+/// and leaves the lock in the shell's descriptor, so `/proc/locks` names a process that is gone.
+/// Descriptors are read from `/proc/<pid>/fd`, which only the same user can read; the ancestors
+/// of a test process are that user's.
+fn ancestor_holder(file: &File) -> Option<LockHolder> {
+    let (major, minor, inode) = device_and_inode(file)?;
+    let locks = std::fs::read_to_string("/proc/locks").ok()?;
+    let placed_by = flock_holder_pid(&locks, major, minor, inode)?;
+    let ancestors = strict_ancestors();
+    if ancestors.contains(&placed_by) {
+        return Some(describe_process(placed_by));
+    }
+    ancestors
+        .into_iter()
+        .find(|&pid| has_open(pid, (major, minor, inode)))
+        .map(describe_process)
+}
+
+/// Whether process `pid` has a descriptor open on the file `(major, minor, inode)`.
+#[cfg(unix)]
+fn has_open(pid: u32, (major, minor, inode): (u64, u64, u64)) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        std::fs::metadata(entry.path()).is_ok_and(|metadata| {
+            metadata.ino() == inode && split_device(metadata.dev()) == (major, minor)
+        })
+    })
+}
+
+/// Without `/proc` no descriptor can be seen.
+#[cfg(not(unix))]
+fn has_open(_pid: u32, _file: (u64, u64, u64)) -> bool {
+    false
 }
 
 /// The `(major, minor, inode)` of `file`, as `/proc/locks` prints them.
@@ -884,9 +1315,9 @@ pub fn ancestor_chain(start: u32, parent_of: impl Fn(u32) -> Option<u32>) -> Vec
     chain
 }
 
-/// Returns `true` if `pid` is a strict ancestor of this process. This process itself is not:
+/// The strict ancestors of this process, from its parent up. This process itself is not one:
 /// another test thread of the same process may hold the lock, and that one is worth waiting for.
-fn is_ancestor(pid: u32) -> bool {
+fn strict_ancestors() -> Vec<u32> {
     #[cfg(unix)]
     {
         let parent = std::os::unix::process::parent_id();
@@ -896,12 +1327,10 @@ fn is_ancestor(pid: u32) -> bool {
                 .as_deref()
                 .and_then(stat_parent_pid)
         })
-        .contains(&pid)
     }
     #[cfg(not(unix))]
     {
-        let _ = pid;
-        false
+        Vec::new()
     }
 }
 
@@ -1412,10 +1841,12 @@ enum LockPolicy {
 }
 
 impl LockPolicy {
-    /// The ledger's name for this policy.
-    fn name(&self) -> &'static str {
+    /// The ledger's name for this policy; `queued` says the shared lock is taken in turn
+    /// ([`shared_queue`]).
+    fn name(&self, queued: bool) -> &'static str {
         match self {
             Self::None => "none",
+            Self::Shared if queued => "shared-queued",
             Self::Shared => "shared",
             Self::Private(..) => "private lock",
         }
@@ -2213,16 +2644,34 @@ impl GpuCommand {
         let preload = preload_executable(&self.program).unwrap_or_else(|error| {
             panic!("{label}: cannot read {}: {error}", self.program.display())
         });
-        let (guard, lock_wait) = match &self.lock {
-            LockPolicy::None => (None, None),
+        let queue = match &self.lock {
+            LockPolicy::Shared => shared_queue(),
+            LockPolicy::None | LockPolicy::Private(..) => None,
+        };
+        let lock_name = self.lock.name(queue.is_some());
+        let acquired = match &self.lock {
+            LockPolicy::None => Ok(None),
             LockPolicy::Shared => {
-                let (guard, waited) =
-                    GpuLock::acquire(Path::new(GPU_LOCK_PATH), shared_lock_wait())?;
-                (Some(guard), Some(waited))
+                GpuLock::acquire_queued(Path::new(GPU_LOCK_PATH), queue, shared_lock_wait())
+                    .map(Some)
             }
-            LockPolicy::Private(path, wait) => {
-                let (guard, waited) = GpuLock::acquire(path, *wait)?;
-                (Some(guard), Some(waited))
+            LockPolicy::Private(path, wait) => GpuLock::acquire(path, *wait).map(Some),
+        };
+        let (guard, lock_wait) = match acquired {
+            Ok(Some((guard, waited))) => (Some(guard), Some(waited)),
+            Ok(None) => (None, None),
+            Err(error) => {
+                if let GpuLockError::TimedOut { waited, .. } = &error {
+                    append_to_ledger(&lock_timeout_ledger_line(
+                        label,
+                        self.driver(),
+                        self.display,
+                        lock_name,
+                        preload,
+                        *waited,
+                    ));
+                }
+                return Err(error);
             }
         };
         let spawned = SystemTime::now();
@@ -2251,7 +2700,7 @@ impl GpuCommand {
             timeline,
             ledger: String::new(),
         };
-        run.ledger = run.ledger_line(label, self.lock.name(), self.display);
+        run.ledger = run.ledger_line(label, lock_name, self.display);
         append_to_ledger(&run.ledger);
         keep_run_log(label, &log);
         run.assert_completed(label, self.run_limit_secs);
@@ -2770,6 +3219,30 @@ impl GpuRun {
         )
     }
 }
+
+/// The ledger line of a child that never ran because its wait for the lock expired: the columns of
+/// [`GpuRun`]'s line, with no adapter, `run_s=0.00`, `exit=lock-timeout` and no phases, so a gate
+/// shows the starved child next to the ones that ran (B-136).
+pub fn lock_timeout_ledger_line(
+    label: &str,
+    driver: Option<GpuDriver>,
+    display: &str,
+    lock: &str,
+    preload: Duration,
+    waited: Duration,
+) -> String {
+    format!(
+        "label={label}\tdriver={}\tdisplay={display}\tlock={lock}\tadapter=-\t\
+         driver_info=-\tpreload_s={:.2}\tlock_wait_s={:.2}\trun_s=0.00\t\
+         exit={LOCK_TIMEOUT_EXIT}\tphases=-\n",
+        driver.map_or("none", GpuDriver::name),
+        preload.as_secs_f64(),
+        waited.as_secs_f64(),
+    )
+}
+
+/// The ledger's `exit=` value of a child whose wait for the lock expired before it started.
+pub const LOCK_TIMEOUT_EXIT: &str = "lock-timeout";
 
 /// Appends `line` to the file named by [`LEDGER_VAR`], if set, in one `O_APPEND` write, so lines
 /// from concurrent test processes never interleave.

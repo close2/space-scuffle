@@ -42,6 +42,7 @@ use crate::execute::{
     time_limit, LaneRun, Outcome, TargetResult,
 };
 use crate::explain::render_selection;
+use crate::gpu_ledger::{GpuChildren, GpuLedger, LEDGER_VAR};
 use crate::memory::{own_process_group, MemorySource};
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 use crate::resume::{plan_resume, RecordedOutcome, ResultRecord, ResumeKey, ResumePlan, Resumed};
@@ -200,6 +201,9 @@ pub struct RunReport {
     /// The targets and steps that passed on this tree in an earlier run and were not run again
     /// (`--resume`).
     pub resumed: Resumed,
+    /// The GPU children this run's test executables recorded in its GPU run ledger, when tests
+    /// ran (plan 2026-11-17-gpu-test-readback WP4).
+    pub gpu: Option<GpuChildren>,
 }
 
 impl RunReport {
@@ -261,6 +265,9 @@ impl RunReport {
                 result.class.name(),
                 result.target
             );
+        }
+        if let Some(gpu) = &self.gpu {
+            out.push_str(&gpu.render());
         }
         out.push_str(&self.render_failures());
         let verdict = if self.passed() { "GREEN" } else { "RED" };
@@ -583,6 +590,7 @@ fn reuse_green_stamp(context: &Context, command: &Command) -> Result<Option<RunR
         slice_peak_anon_mib: None,
         stopped: false,
         resumed: Resumed::default(),
+        gpu: None,
     }))
 }
 
@@ -1053,6 +1061,7 @@ fn execute(
             targets: recorder.map_or_default(|r| r.plan.reused_targets.clone()),
             steps: Vec::new(),
         },
+        gpu: None,
     };
     let at = StepEnv {
         context,
@@ -1187,6 +1196,7 @@ fn run_tests(
     let memory = MemorySource::discover();
     let limits = memory_limits(options, &memory);
     let scheduler = Scheduler::new(options.jobs, jobs.clone(), limits);
+    let ledger = GpuLedger::for_run(std::env::var_os(LEDGER_VAR), at.log_dir);
     let run = LaneRun {
         root: context.git.root(),
         workspace: &context.workspace,
@@ -1195,6 +1205,7 @@ fn run_tests(
         memory,
         stop_file: options.stop_file.clone(),
         on_finish: Some(&record),
+        gpu_ledger: Some(&ledger.path),
     };
     let lanes = run_targets(&run, scheduler);
     write_lanes_tsv(at.log_dir, &lanes.results)?;
@@ -1206,6 +1217,7 @@ fn run_tests(
         return Ok(());
     }
     rerun_failures(&run, &jobs, report)?;
+    report.gpu = Some(GpuChildren::read(&ledger)?);
     report.targets.iter().for_each(record);
     note_overlapping_flakes(report, options.jobs);
     run_extras(at, selection, report)
@@ -1531,6 +1543,7 @@ mod tests {
             slice_peak_anon_mib: None,
             stopped: false,
             resumed: Resumed::default(),
+            gpu: None,
         };
         assert!(report.passed(), "a crash cured by the retry is green");
         assert_eq!(report.retried_steps(), ["clippy"]);
@@ -1581,6 +1594,7 @@ mod tests {
             slice_peak_anon_mib: Some(25_395),
             stopped: false,
             resumed: Resumed::default(),
+            gpu: None,
         }
     }
 
@@ -1669,6 +1683,7 @@ mod tests {
             slice_peak_anon_mib: None,
             stopped: false,
             resumed: Resumed::default(),
+            gpu: None,
         };
         assert!(!report.passed());
         let text = report.render();
@@ -1693,5 +1708,44 @@ mod tests {
         report.targets[0].outcome = Outcome::Passed;
         assert!(report.passed());
         assert!(!report.red_only_by_flakes());
+    }
+
+    /// T-9 in the report: the slowest GPU children follow the result table, before the
+    /// failures and the verdict; a report without GPU children prints no GPU block.
+    #[test]
+    fn the_slowest_gpu_children_follow_the_result_table() {
+        let mut report = lane_report(vec![lane_result(
+            "a",
+            0,
+            40,
+            Outcome::Failed {
+                tests: vec!["t".into()],
+            },
+        )]);
+        let without = report.render();
+        assert!(!without.contains("GPU children"), "{without}");
+        let (children, unreadable) = crate::gpu_ledger::parse_ledger(
+            "label=lab\tdriver=radv\tdisplay=kwin\tlock_wait_s=4.50\trun_s=31.00\texit=0\t\
+             phases=launch 1.0 s, startup and frames 30.0 s\n",
+        );
+        report.gpu = Some(GpuChildren {
+            ledger: PathBuf::from("/logs/gpu-ledger.tsv"),
+            children,
+            unreadable,
+        });
+        let text = report.render();
+        let position = |needle: &str| text.find(needle).unwrap_or(usize::MAX);
+        let row = position("  FAIL ");
+        let table = position("GPU children, slowest first");
+        let failures = position("FAILED");
+        let verdict = position("\nRED");
+        assert!(
+            verdict != usize::MAX && row < table && table < failures && failures < verdict,
+            "{text}"
+        );
+        assert!(
+            text.contains("GPU lock: 1 child(ren) waited 4.5 s in total"),
+            "{text}"
+        );
     }
 }

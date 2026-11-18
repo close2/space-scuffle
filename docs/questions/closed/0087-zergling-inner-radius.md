@@ -39,3 +39,15 @@ Options:
 
 ## Answer
 
+**Option 1 — Reading (a): `InnerRadius = 0.375` (matching its `Radius` `0.375`; no editor test needed).**
+
+**StarCraft II engine & wall-off geometry insight:** `0.375` is not even a deviation from StarCraft II — it **is** the Zergling's exact engine value:
+1. **`CUnit` C++ schema default:** In StarCraft II's Data Editor (`CUnit` binary schema), both `Radius` and `InnerRadius` have a C++ constructor default of **`0.375`** (`3/8` of a grid cell, `1536 / 4096` fixed-point), which is why `core.sc2mod`'s XML omits `<InnerRadius>` whenever a unit keeps `0.375`, why `ChangelingZergling` explicitly states `0.375`, and why SC2Mapster tutorials instruct custom mapmakers to *change* `InnerRadius` from its `0.375` default to `0` if they want a custom unit to pass between buildings.
+2. **Proof from SC2 diagonal building wall-offs:** In StarCraft II, two structures placed diagonally corner-to-corner (e.g., two Supply Depots or a Gateway + Cybernetics Core) have $45^\circ$ chamfered footprint corners leaving a diagonal clearance of $\sqrt{2}/2 \approx 0.707$ cells. That `0.707` gap famously blocks Zerglings because a Zergling's structure-collision diameter is $2 \times 0.375 = 0.75 > 0.707$ (and after Patch 5.0.13 reduced workers' `InnerRadius` from `0.375` to `0.3125`, $2 \times 0.3125 = 0.625 < 0.707$). If the Zergling's `InnerRadius` were `0`, Zerglings would walk straight through every diagonal building wall in StarCraft II, which is impossible in the game.
+
+## Closed (orchestrator, 2026-11-18)
+
+The owner chose reading (a), which is the default already in force: the Zergling analogue (`razor_mantis`) keeps
+meeting terrain and structures at 0.375, the `CUnit` schema default of `InnerRadius`. No data or code change
+follows. The owner's diagonal wall-off argument also bears on B-134 (contour footprints with chamfered corners);
+the plan that takes up B-134 cites it.
