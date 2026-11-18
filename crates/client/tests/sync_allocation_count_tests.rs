@@ -833,9 +833,15 @@ fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResul
             .resource::<client::effects::runtime::EffectRuntime>()
             .spawned_of(beam)
     });
-    if beams.slots().len() != 1 || beams.refused > 0 || beam_holds < 2 {
+    // Since review round 1 (R2-2) a hold the effect pool cannot place is refused and counted:
+    // the stream's fixture pool (64 effects) is at times full when a dead-target beam is
+    // struck, so at most those strikes, one every seventh frame since the app started, may be
+    // refused. The retargeting beam is held throughout.
+    let dead_strikes = (u64::from(WARM_FRAMES) + u64::from(frames)) / 7 + 1;
+    if beams.slots().len() != 1 || beams.refused > dead_strikes || beam_holds < 2 {
         return Err(format!(
-            "the beam stream must hold one beam and refuse none, held {} (refused {}), \
+            "the beam stream must hold one beam and refuse only dead-target beams, held {} \
+             (refused {}), \
              {beam_holds} held in all",
             beams.slots().len(),
             beams.refused

@@ -1706,7 +1706,7 @@ const BEAM_MAX_WAIT: u32 = 150;
 const BEAM_SAMPLE_FRAME: u32 = 20;
 /// Frames of the stream, from the first held beam, pictured round the beam's end at 1:1: about
 /// two strikes of the Void-Ray analogue's 0.36 s period (review round 1, R2-1).
-const BEAM_SEQUENCE: (u32, u32) = (6, 18);
+const BEAM_SEQUENCE: (u32, u32) = (4, 20);
 /// Window pixels of the sequence's crop round the beam's end.
 const BEAM_SEQUENCE_CROP: [u32; 2] = [96, 96];
 /// Frames recorded after the kill.
@@ -1835,9 +1835,9 @@ fn apply_beam_view(view: Res<'_, BeamView>, runtime: Option<ResMut<'_, EffectRun
 /// The held beam's shooter (found by data, C5): the first presentable unit whose block names a
 /// sustained travel look for one of its weapons; failing one (the beam units have no media),
 /// a presentable mobile ground unit with a primary weapon, lent in the test world's catalog
-/// only the first shipped beam's looks (its travel and impact), its weapon made an instant
-/// beam (`LaserBeam`, no projectile speed, a range of at least 6), as the waves lend lab
-/// families. Returns the unit, its
+/// only the looks of the shipped beam weapon with the shortest period (its travel and impact), its weapon made an instant
+/// beam (`LaserBeam`, no projectile speed, a range of at least 6, the beam unit's cadence), as
+/// the waves lend lab families. Returns the unit, its
 /// weapon's slot and the look's name.
 fn beam_shooter(
     world: &mut SimWorld,
@@ -1862,12 +1862,23 @@ fn beam_shooter(
     if own.is_some() {
         return own;
     }
-    let (travel, impact) = world.catalog.archetypes().find_map(|arch| {
-        arch.effects.weapons.iter().find_map(|entry| {
-            let travel = entry.travel.as_ref().filter(|travel| sustained(travel))?;
-            Some((travel.clone(), entry.impact.clone()))
+    // The shipped beam weapon with the shortest period (the Void-Ray analogue's), whose look
+    // and cadence are lent, so the 1:1 sequence spans several strikes.
+    let (travel, impact, timing) = world
+        .catalog
+        .archetypes()
+        .flat_map(|arch| {
+            arch.effects.weapons.iter().filter_map(|entry| {
+                let travel = entry.travel.as_ref().filter(|travel| sustained(travel))?;
+                let timing = slot_weapon(arch, entry.weapon).cloned()?;
+                Some((travel.clone(), entry.impact.clone(), Some(timing)))
+            })
         })
-    })?;
+        .min_by_key(|(_, _, timing)| {
+            timing
+                .as_ref()
+                .map_or(u16::MAX, |weapon| weapon.period_ticks)
+        })?;
     let id = world
         .catalog
         .archetypes()
@@ -1890,6 +1901,14 @@ fn beam_shooter(
     {
         weapon.visual_kind = WeaponVisualKind::LaserBeam;
         weapon.projectile_speed = None;
+        // The beam unit's own cadence, so the strikes (and their burns) come as the beam's do.
+        if let Some(timing) = &timing {
+            weapon.period_ticks = timing.period_ticks;
+            weapon.damage_point_ticks = timing.damage_point_ticks;
+            weapon.backswing_ticks = timing.backswing_ticks;
+            weapon.random_delay_min = timing.random_delay_min;
+            weapon.random_delay_max = timing.random_delay_max;
+        }
         // A beam's reach (the Void-Ray analogue's is 6), so the walking target stays in range
         // and the beam is not broken off by the shooter walking after it.
         weapon.max_range = weapon.max_range.max(SimScalar::from_num(6));
