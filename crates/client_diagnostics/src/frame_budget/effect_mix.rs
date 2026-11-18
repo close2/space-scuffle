@@ -30,8 +30,9 @@
 //! - No effect, unit, weapon or ability is named here: every source comes from the catalogs.
 //! - Steady state allocates nothing: the sources, held handles and view lists are built once
 //!   when the catalogs load and reused every frame.
-//! - Every decision is a function of the frame's presented snapshot and a sequence number, so
-//!   two runs of one battle stream the same events.
+//! - Two runs stream the same sources in the same order; which units an event joins depends on
+//!   the frame it lands on, because how many events a frame owes follows the measured frame
+//!   time (`Time<Virtual>`), so the runs are comparable in load, not identical event by event.
 
 use super::effect_stress::{mix as hash_mix, weapon_of};
 use bevy::prelude::*;

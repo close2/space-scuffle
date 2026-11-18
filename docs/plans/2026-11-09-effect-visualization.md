@@ -2942,13 +2942,15 @@ branch; the new scenario order is used by the new scenario only).
 - **Scene effects.** A storyboard scene may list `effects` (names in `effects.ron`; validation refuses an unknown
   name, `StoryboardFault::UnknownEffect`). The take records, per scene, every effect the runtime spawned or held
   for the viewer (`SceneRecord::effects`, from `EffectRuntime::spawned_per_effect`) and fails at the scene's end
-  when one it asks for is missing, as an `UntilCombat` scene fails without combat. `entrench` asks for
+  when one it asks for is missing, as an `UntilCombat` scene fails without combat. The check proves a spawn for the
+  viewer anywhere on the map, not that the look is in view or readable; that is judged on the pictures (review
+  round 1, W14-5). `entrench` asks for
   `burrow_dig`, `burrow_mound`, `mode_seal_sweep` and `siege_anchor`; `siege` for `shell_impact`, `cannon_tracer`,
   `flame_line`, `spine_line` and `vehicle_wreck`.
-- **`showcase_tests.rs`** (`the_effects_take_shows_every_effect_its_scenes_ask_for`, GPU class, harness lock):
+- **`showcase_tests.rs`** (`the_effects_take_spawns_every_effect_its_scenes_ask_for`, GPU class, harness lock):
   the shipped storyboard's take whose scenes ask for effects, cut to 480×270 with every moving scene at 4× over
-  the same ticks, is rendered and its manifest must list each asked-for effect in its scene. No name is written in
-  the test; they come from the storyboard.
+  the same ticks, is rendered and its manifest must list each asked-for effect as spawned in its scene. No name is
+  written in the test; they come from the storyboard.
 - **The frame budget with every effect (§10.3).** `frame_budget --effect-stress <rate> --effect-mix`
   (`client_diagnostics::frame_budget::effect_mix`) adds to the splash stream: as many shots and blows a second
   (round-robin over every weapon that names a travel or an impact, each the event its delivery publishes, between
@@ -2959,7 +2961,12 @@ branch; the new scenario order is used by the new scenario only).
   material and are not applied by the mix (recorded: the measure is of the effect passes).
 - **The effect pool is 6 144** (`effects.ron` budget, data first per §10.3). With every look at once the storms'
   flares and the clouds' billows keep hundreds of effects alive; 2 048 refused 44 % of the spawns, 4 096 0.3 %,
-  6 144 none, with no Critical overflow at any size. The held-beam table keeps its 800.
+  6 144 none. A refusal turns a whole new effect away (the runtime does not count refusals by class); at every size
+  no spawned effect's Critical layer went without a slot, so 2 048 degraded as designed. That load (200 splashes,
+  200 shots and 20 deaths a second, 20 storms and clouds at once) is one no battle produces: 6 144 is chosen so the
+  every-effect measure draws everything, not because a battle needs it (review round 1, W14-7). Its cost in an
+  ordinary battle is the per-frame walk over every slot and about a megabyte of slots; the baseline arm, run at
+  6 144, is the fastest recorded. The held-beam table keeps its 800.
 
 **Measured** ([`frame_budget_wp14.md`](../evidence/effects/review/frame_budget_wp14.md); the review packet's
 "WP14").
@@ -2969,14 +2976,15 @@ branch; the new scenario order is used by the new scenario only).
 | Effect passes' GPU time ≤ 1.5 ms (RX 580) | +0.47 ms (splashes), +0.57 ms (the plan's stress), +0.54 ms (every effect) | met |
 | p50 ≤ recorded baseline + 5 % (17.1 ms), p99 ≤ + 10 % (26.0 ms), the plan's stress (200 splashes/s, 20 areas, 50 statuses) | 14.97 and 25.20 ms (radv, load 4 to 7, two runs) | met |
 | The same, every effect at once (beyond the plan's stress: plus 200 shots/s and 20 deaths/s) | 17.15 and 26.93 ms | over by 0.3 % and 3.6 % |
-| Against today's faster baseline (11.86 ms p50) | the plan's stress +26 % p50, +17 % p99; every effect +45 %, +25 % | the cost is the main world's update (9.6 → 12.8 and 14.9 ms), not the GPU |
+| Against today's faster baseline (11.86 ms p50) | the plan's stress +26 % p50, +17 % p99; every effect +45 %, +25 % | the cost is the main world's update (9.6 → 12.8 and 14.9 ms), not the GPU, and the splash stream alone already carries it (S over B: +3.6 and +4.1 ms of update in the two pairs measured; review round 1, W14-1) |
 | Every effect of the vocabulary drawn | 59 of 59 | met |
-| The showcase's effects take shows each effect it asks for | radv full length and the cut-down GPU test: all asked | met |
-| CI showcase renders on lavapipe within its budget (render step ≤ 40 min) | local lavapipe on 4 CPUs: both takes complete, every asked-for effect shown, video 19.5 MB, teaser 4.26 MB; the effects take costs 0.77 of the battle take per frame, so the CI step is estimated at about 35 min | met by estimate; the first CI run measures it (WP15) |
+| The showcase's effects take spawns each effect it asks for | radv full length and the cut-down GPU test: all asked | met |
+| `entrench` shows its four looks at 1:1 (review round 1, W14-2) | re-staged in data: the orbit is centred on the siege line from its open side, the hall behind it (distance 10, pitch 68°); radv strip of frames 24 to 90, [`wp14_entrench_strip_radv.jpg`](../evidence/effects/review/wp14_entrench_strip_radv.jpg) | the dig, mound, seal sweep and anchor can each be pointed at |
+| CI showcase renders on lavapipe within its budget (render step ≤ 40 min) | local lavapipe on 4 CPUs: both takes complete, every asked-for effect spawned, video 19.5 MB, teaser 4.26 MB; the effects take costs 0.77 of the battle take per frame, so the CI step is estimated at about 35 min | met by estimate; the first CI run measures it (WP15) |
 
 **Tests.** `sim_core/scenario_tests` (`the_showcase_effects_battle_anchors_burrows_and_fights`,
 `enter_modes_queues_behind_earlier_orders`); `client_diagnostics/showcase_tests`
-(`the_effects_take_shows_every_effect_its_scenes_ask_for`, 29 s on radv); `showcase_storyboard_tests` (an unknown
+(`the_effects_take_spawns_every_effect_its_scenes_ask_for`, 29 s on radv); `showcase_storyboard_tests` (an unknown
 scene effect is refused; the viewer-advance check applies to scenarios that advance the viewer); `frame_budget_tests`
 (`the_mix_sources_cover_every_kind_of_look`); unit tests of the take's effect record, the mix's events and
 delivery, the air-burst stand-in and the report's exercised list. Gate catalog: `client_diagnostics/showcase_tests`
@@ -2985,9 +2993,14 @@ is triggered by the effect engine, `effects.ron`, `units.ron`, `start_loadouts.r
 
 **Open (recorded, Q0002).**
 
-- The main world's update cost of 20 live areas and 50 held looks (+3 ms at p50 on today's baseline): profile with
-  `--effect-mix` and take the `area_sight` item of Amendment 9's polish list first.
-- A quiet-machine series of the splash-only arm (S): measured only under load in this round.
+- **B-137** (`DESIGN.md` §4): the splash stream costs about +3.6 to +4.1 ms of main-world update over today's
+  baseline (WP6c measured +0 ms with the slice's three looks), so the plan's stress meets its bars only against the
+  recorded baseline, which is 27 % slower than today's client. Corrected in review round 1 (W14-1): this round first
+  attributed the cost to the areas and held looks, but the splash-only arm's runs show the same update cost. Order:
+  a quiet B/S/P series (at least two triples, no timestamp queries) to confirm the attribution; a `perf` profile of
+  the S arm (the splash path's decal reservation, erosion above 85 % of the pool and decal instance building are
+  the first suspects); `area_sight` only if P exceeds S; then re-record the baseline and hold the plan's stress to
+  +5 % (p50) of it.
 - The Baneling beat, when `volatile_tick` has media.
 - The CI render's margin: the step is estimated at about 35 of its 40 minutes and the teaser fits one rung later
   than before (640 px, q50 locally). If the first CI render exceeds 35 min, shorten `siege`, then `closing`.

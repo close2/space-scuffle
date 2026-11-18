@@ -1133,11 +1133,15 @@ fn enter_modes_queues_behind_earlier_orders() {
         &std::fs::read_to_string(assets_root().join(skirmish)).expect("shipped skirmish"),
     )
     .expect("skirmish parses");
+    let skirmish_document = MapFile::load(&assets_root().join(&skirmish_manifest.map))
+        .expect("skirmish map")
+        .decode()
+        .expect("skirmish map decodes");
     let mut workers = load_scenario_world(&assets_root(), skirmish).expect("skirmish builds");
     assert!(matches!(
         apply_initial_orders(
             &mut workers,
-            &document,
+            &skirmish_document,
             &skirmish_manifest.players,
             &[InitialOrder::EnterModes { player_slot: 1 }],
         ),

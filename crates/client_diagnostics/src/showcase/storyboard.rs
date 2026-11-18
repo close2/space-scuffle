@@ -123,8 +123,9 @@ pub struct Scene {
     /// Starts at the scene's own first pose instead of blending from the previous scene.
     #[serde(default)]
     pub cut: bool,
-    /// Effects (names in `assets/catalog/effects.ron`) the scene must show: each must be spawned
-    /// for the viewer at least once during the scene, or the take fails at the scene's end (plan
+    /// Effects (names in `assets/catalog/effects.ron`) the scene must spawn: each must be spawned
+    /// for the viewer at least once during the scene (anywhere on the map; whether it is in view
+    /// and readable is judged on the pictures), or the take fails at the scene's end (plan
     /// `2026-11-09-effect-visualization` WP14). Empty asks for nothing.
     #[serde(default)]
     pub effects: Vec<String>,

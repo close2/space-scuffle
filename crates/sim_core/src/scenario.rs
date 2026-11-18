@@ -391,13 +391,17 @@ pub fn start_approaches(
 /// The client's battle start and the route trace tool both call this, so a traced battle starts
 /// exactly as the game does. A unit receives an [`InitialOrder::AttackMoveToStart`] or
 /// [`InitialOrder::AttackMoveToCell`] when its owner matches, it is mobile, it is not a harvester
-/// and it has a weapon.
+/// and it has a weapon. A unit receives an [`InitialOrder::EnterModes`] when its owner matches and
+/// its archetype has a mode-switch ability: a cast of the first one, queued behind the orders the
+/// list gave it before (so a scenario lists that order after the moves it should follow).
 ///
 /// # Errors
 /// [`ScenarioError::NoStartApproach`] when either player of a start order has no approach,
 /// [`ScenarioError::OrderCellNotStandable`] when a cell order's cell is off the map or not free
-/// ground, [`ScenarioError::NoCombatants`] when an order reaches no unit, and
-/// [`ScenarioError::Spawn`] when the catalog lacks a unit's archetype or a unit refuses its order.
+/// ground, [`ScenarioError::NoCombatants`] when an attack-move order reaches no unit,
+/// [`ScenarioError::NoModeSwitches`] when an [`InitialOrder::EnterModes`] reaches no unit with a
+/// mode switch, and [`ScenarioError::Spawn`] when the catalog lacks a unit's archetype or a unit
+/// refuses its order.
 pub fn apply_initial_orders(
     world: &mut SimWorld,
     document: &MapDocument,

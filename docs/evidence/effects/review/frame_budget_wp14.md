@@ -27,8 +27,10 @@ WP14, Amendment 31. Measured on 2026-11-18 by the implementing agent on branch `
 
 ## Effect pool sizing (data first, §10.3)
 
-The first M run (DM-01) refused 24 608 of 55 000 effect spawns for a full instance pool (`budget.effects` 2 048),
-with no Critical instance left without a slot: next to the splash stream's 1 100 or so live effects, the 20 storms
+The first M run (DM-01) refused 24 608 of 55 000 effect spawns for a full instance pool (`budget.effects` 2 048).
+A refusal turns a whole new effect away (the runtime does not count refusals by class); no spawned effect's
+Critical layer went without a slot, so the pool degraded as designed under a load no battle produces. 6 144 is
+chosen so that the every-effect measure draws everything, not because a battle needs it (review round 1, W14-7): next to the splash stream's 1 100 or so live effects, the 20 storms
 and clouds keep emitting flares (`storm_flare`, 3 450 in a run) and billows (`murk_billow`, 2 858). At 4 096 it
 refused 147 (DM-02); at 6 144 none (DM-03 and every later run). `effects.ron` ships 6 144. The held-beam table
 keeps its 800 (a quarter of the pool, now 1 536, no longer limits it); no beam was refused at 6 144.
@@ -58,9 +60,24 @@ Against the plan's bars, which are set on the **recorded baseline** of
 
 Against **today's** baseline on the same machine (B, 11.86 ms), which is 27 % faster than the recorded one, the
 relative increases are larger: P +26 % at p50 and +17 % at p99, M +45 % and +25 %. The difference is the main
-world's update (B 9.6, P 12.8, M 14.9 ms at p50), not the GPU (below): the CPU side of 20 live areas, 50 held looks
-and their emitted children. Amendment 9's open polish already names one such cost, `area_sight` (about 9 000 fog
-queries per partly seen area per frame); profiling the update with the mix is an open item (Amendment 31).
+world's update (B 9.6, P 12.8, M 14.9 ms at p50), not the GPU (below).
+
+**Attribution (corrected after review round 1, W14-1).** This file first put that cost on the 20 live areas, the 50
+held looks and their emitted children. The runs below that are not of record say otherwise: the splash stream
+alone (S, no areas, no held looks) already adds as much update time as the plan's whole stress.
+
+| Pair | Load | B p50 / update p50 | S p50 / update p50 | S over B, update |
+|---|---|---|---|---|
+| DB-01 / DS-01 (both with timestamp queries) | 7 to 10 | 12.30 / 9.64 | 15.55 / 13.25 | +3.6 ms |
+| B-03 / S-03 | 9 to 42 | 11.90 / 9.76 | 16.80 / 13.87 | +4.1 ms |
+| B median / P median (of record) | 4 to 14 | 11.86 / 9.59 | P: 14.97 / 12.84 | +3.3 ms |
+
+WP6c measured the same 200 splashes a second at +1.1 % p50 and no update change, with the slice's three looks. Since
+then the vocabulary gained the heavier splash looks (flame bands, lance grooves, cleave fronts) with Critical ground
+marks, so the likely cost is in the splash path (decal reservation, erosion above 85 % of the decal pool, per-frame
+decal instance building), not `area_sight`. Registered as B-137 in `DESIGN.md` §4 with its order: a quiet B/S/P
+series to confirm, a profile of S, `area_sight` only if P exceeds S, then a re-recorded baseline with the plan's
+stress held to +5 % (p50) of it.
 
 ## GPU time of the effect passes (RX 580, `--render-diagnostics`)
 

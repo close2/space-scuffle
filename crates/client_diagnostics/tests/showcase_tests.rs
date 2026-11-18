@@ -261,7 +261,7 @@ fn effects_storyboard() -> Result<(Storyboard, String), Box<dyn Error>> {
 }
 
 #[test]
-fn the_effects_take_shows_every_effect_its_scenes_ask_for() -> Result<(), Box<dyn Error>> {
+fn the_effects_take_spawns_every_effect_its_scenes_ask_for() -> Result<(), Box<dyn Error>> {
     if gpu_run::gpu_tests_opted_out() {
         return Ok(());
     }

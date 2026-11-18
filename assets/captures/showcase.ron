@@ -46,8 +46,9 @@
 // docs/evidence/2026-11-18-inner-radius.md §4.
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are unchanged.
-// Player 0's siege line anchors and burrows at its base (`entrench`, 1x, ticks 0 to 100: the modes
-// settle by tick 81); the raiders' march is a 4x time-lapse until their first shot (about tick
+// Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall
+// (cells x 5 to 9 on row 5); `entrench` (1x, ticks 0 to 100: the modes settle by tick 81) orbits the
+// row from the open side, the hall behind it, close enough to see the dig, mound, sweep and anchor; the raiders' march is a 4x time-lapse until their first shot (about tick
 // 304); `siege` shows the fight at 1x for 240 frames (ticks 305 to 545; the raid is over before
 // its end). `closing` moved from the `battle` take to the end of this one, so the status card
 // still ends the video. A scene's `effects` must each be spawned for the viewer during the scene,
@@ -166,7 +167,7 @@
                     name: "entrench",
                     speed: Speed(1),
                     length: Frames(100),
-                    camera: Orbit(center: At((9.0, 9.0)), distance: 16.0, pitch_deg: 55.0, start_deg: -20.0, sweep_deg: 25.0),
+                    camera: Orbit(center: At((7.5, 5.5)), distance: 10.0, pitch_deg: 68.0, start_deg: 170.0, sweep_deg: 15.0),
                     overlay: Caption(
                         title: "Siege and burrow",
                         body: "Crawlers anchor and scorpions dig in. Each look is catalog data the unit's own definition chooses.",
