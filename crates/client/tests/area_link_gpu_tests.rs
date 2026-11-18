@@ -2533,9 +2533,10 @@ fn every_shot_belongs_to_one_stage() {
 // look in flight, that both missiles landed an impact (the enemy's seen in part), that the
 // struck units wore the affliction, and that no missile look was held before the casts.
 
-/// Seconds the Fungal Growth child pictures after the casts: the flight, the impact and most of
-/// the status.
-const FUNGAL_SECONDS: f64 = 3.6;
+/// Seconds the Fungal Growth child pictures after the casts: the flight, the impact, the whole
+/// status and its look's exit, so the late frames show the rim alone once the ground stain has
+/// faded (plan `2026-11-17-effect-snapshot-identity`, review round 1).
+const FUNGAL_SECONDS: f64 = 5.0;
 /// Frames between two whole-window pictures of the Fungal Growth child.
 const FUNGAL_BATTLE_EVERY: u32 = 10;
 /// Enemy stand-ins round the viewer's Fungal Growth target.

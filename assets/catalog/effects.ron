@@ -3013,6 +3013,13 @@
             class: Minor,
             event: Point,
             layers: [
+                // Plan `2026-11-17-effect-snapshot-identity`, review round 1, R2-1: each strike of
+                // a held beam swells the contact point on the target's rim, a short bright flare,
+                // so the steady beam reads as an attack between its strikes.
+                (
+                    block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.6), duration: 0.14, curve: "flash", priority: Critical,
+                ),
                 (
                     block: Sprite(texture: "droplet", ramp: "prism_body", shape: Radial, soft_depth: 0.2,
                         sort_bias: -0.05),
@@ -3032,6 +3039,11 @@
             class: Minor,
             event: Point,
             layers: [
+                // Review round 1, R2-1: the strike's flare on the target's rim, as `beam_burn`'s.
+                (
+                    block: Sprite(texture: "droplet", ramp: "lance_hot", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.6), duration: 0.14, curve: "flash", priority: Critical,
+                ),
                 (
                     block: Sprite(texture: "droplet", ramp: "lance_body", shape: Radial, soft_depth: 0.2,
                         sort_bias: -0.05),

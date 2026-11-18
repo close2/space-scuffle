@@ -95,9 +95,17 @@ pub fn load_effect_catalog(
             || Ok(UnitEffectTables::default()),
             |units| UnitEffectTables::build(&units.0, &catalog),
         )?;
-        Ok((catalog, tables))
+        // The held beams' table, sized from the catalog and the effect budget (R2-2).
+        let beams = units
+            .as_ref()
+            .map_or_else(super::beams::HeldBeams::default, |units| {
+                super::beams::HeldBeams::with_capacity(super::beams::HeldBeams::capacity_for(
+                    &units.0, &catalog,
+                ))
+            });
+        Ok((catalog, tables, beams))
     });
-    let (catalog, tables) = match loaded {
+    let (catalog, tables, beams) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
             error!("Effect catalog rejected: {error}");
@@ -138,6 +146,7 @@ pub fn load_effect_catalog(
     commands.insert_resource(EffectCatalogVersion(version.0.wrapping_add(1)));
     commands.insert_resource(EffectRuntime::new(&catalog));
     commands.insert_resource(tables);
+    commands.insert_resource(beams);
     commands.insert_resource(catalog);
 }
 
@@ -561,6 +570,9 @@ pub fn spawn_effects_from_events(
                 tables: &tables,
                 runtime: &mut runtime,
                 now,
+                battle_now: frames.map_or(0.0, |frames| {
+                    super::beams::battle_seconds(frames.presented_instant())
+                }),
             };
             beams.strike(
                 &event,

@@ -1704,6 +1704,11 @@ const BEAM_MAX_WAIT: u32 = 150;
 /// Frame of the stream, from the first frame the beam is held, at which the paired pictures
 /// are taken.
 const BEAM_SAMPLE_FRAME: u32 = 20;
+/// Frames of the stream, from the first held beam, pictured round the beam's end at 1:1: about
+/// two strikes of the Void-Ray analogue's 0.36 s period (review round 1, R2-1).
+const BEAM_SEQUENCE: (u32, u32) = (6, 18);
+/// Window pixels of the sequence's crop round the beam's end.
+const BEAM_SEQUENCE_CROP: [u32; 2] = [96, 96];
 /// Frames recorded after the kill.
 const BEAM_AFTER_FRAMES: u32 = 12;
 /// The plan's tolerance on the beam's end, window pixels.
@@ -1733,6 +1738,10 @@ struct BeamFrame {
     end_px: Option<[f32; 2]>,
     /// The target's drawn bubble's outline point towards the shooter, projected.
     outline_px: Option<[f32; 2]>,
+    /// Seconds since the youngest live burn (the per-strike impact) was born, if one is live
+    /// (review round 1, R2-1: the strike's flare on the target's rim).
+    #[serde(default)]
+    burn_age: Option<f32>,
 }
 
 /// What the held-beam child reports.
@@ -1749,6 +1758,9 @@ struct BeamReport {
     exit: f32,
     /// Frame the target was killed on.
     kill_frame: u32,
+    /// The 1:1 sequence round the beam's end through two strikes (R2-1): frame and file.
+    #[serde(default)]
+    sequence: Vec<(u32, String)>,
 }
 
 /// What the held-beam child is doing.
@@ -1792,6 +1804,8 @@ struct BeamStaging {
     gone: Option<u32>,
     /// The first frame a beam was held.
     first_held: Option<u32>,
+    /// The per-strike impact look (the burn), whose flare R2-1 asks for.
+    burn: Option<client::effects::catalog::EffectId>,
     /// The frame to record in `PostUpdate`, once transforms are propagated (what is drawn).
     record_now: Option<u32>,
     outstanding: Arc<AtomicU32>,
@@ -1942,6 +1956,18 @@ fn stage_beam(
         .and_then(|id| catalog.effect(id))
         .map_or(0.0, |effect| effect.held_exit);
     staging.look = catalog.effect_id(&look);
+    staging.burn = world
+        .catalog
+        .get(shooter_type)
+        .ok()
+        .and_then(|arch| {
+            arch.effects
+                .weapons
+                .iter()
+                .find(|entry| entry.weapon == slot && entry.mode.is_none())
+        })
+        .and_then(|entry| entry.impact.as_ref())
+        .and_then(|name| catalog.effect_id(name));
     staging.shooter = Some(shooter);
     staging.target = Some(target);
     let (world, queue) = session.world_and_commands();
@@ -1981,7 +2007,7 @@ fn record_beam(
     camera: (&Camera, &GlobalTransform),
     drawn: &[(EntityId, Vec3, f32)],
     beams: &client::effects::beams::HeldBeams,
-    runtime: &EffectRuntime,
+    (runtime, now): (&EffectRuntime, f64),
 ) {
     let (Some(shooter), Some(target), Some(look)) = (staging.shooter, staging.target, staging.look)
     else {
@@ -2020,6 +2046,14 @@ fn record_beam(
         muzzle_px,
         end_px,
         outline_px,
+        burn_age: staging.burn.and_then(|burn| {
+            runtime
+                .pool
+                .iter()
+                .filter(|(_, instance)| instance.effect == burn && instance.birth <= now)
+                .map(|(_, instance)| (now - instance.birth) as f32)
+                .reduce(f32::min)
+        }),
     });
 }
 
@@ -2031,6 +2065,7 @@ fn record_beam_frame(
     bubbles: Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
     beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
     runtime: Option<Res<'_, EffectRuntime>>,
+    time: Res<'_, Time<Virtual>>,
 ) {
     let Some(frame) = staging.record_now.take() else {
         return;
@@ -2042,7 +2077,14 @@ fn record_beam_frame(
         .iter()
         .map(|(bubble, global)| (bubble.0.entity_id, global.translation(), bubble.0.radius))
         .collect();
-    record_beam(&mut staging, frame, camera, &drawn, &beams, &runtime);
+    record_beam(
+        &mut staging,
+        frame,
+        camera,
+        &drawn,
+        &beams,
+        (&runtime, time.elapsed_secs_f64()),
+    );
     if staging.first_held.is_none()
         && staging
             .report
@@ -2129,6 +2171,30 @@ fn stage_beam_child(
         BeamPhase::Running { frame } => {
             view.bare = false;
             staging.record_now = Some(frame);
+            // R2-1: the beam's end at 1:1 through two strikes, before the sample pair.
+            let in_sequence = staging.first_held.is_some_and(|first| {
+                (first + BEAM_SEQUENCE.0..first + BEAM_SEQUENCE.1).contains(&frame)
+            });
+            if let Some([x, y]) = staging
+                .report
+                .frames
+                .last()
+                .and_then(|recorded| recorded.end_px)
+                .filter(|_| in_sequence)
+            {
+                let file = format!("beam_seq_{frame:03}.png");
+                let left = (x - BEAM_SEQUENCE_CROP[0] as f32 / 2.0).max(0.0) as u32;
+                let top = (y - BEAM_SEQUENCE_CROP[1] as f32 / 2.0).max(0.0) as u32;
+                capture_frame(
+                    &mut commands,
+                    vec![(
+                        staging.directory.join(&file),
+                        [left, top, BEAM_SEQUENCE_CROP[0], BEAM_SEQUENCE_CROP[1]],
+                    )],
+                    &staging.outstanding,
+                );
+                staging.report.sequence.push((frame, file));
+            }
             let kill_at = staging
                 .first_held
                 .map_or(BEAM_MAX_WAIT, |first| first + BEAM_STREAM_FRAMES);
@@ -2328,6 +2394,12 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
     )?)?;
     if let Some(target) = std::env::var_os(EVIDENCE_VAR).map(PathBuf::from) {
         std::fs::create_dir_all(&target)?;
+        for (_, file) in &report.sequence {
+            std::fs::copy(
+                directory.path().join(file),
+                target.join(format!("held_beam_{driver}_{file}")),
+            )?;
+        }
         for pair in [&report.sample, &report.after].into_iter().flatten() {
             for file in [&pair.0, &pair.1] {
                 std::fs::copy(
@@ -2381,6 +2453,30 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         })
         .collect();
     eprintln!("driver {driver}: frames (# beam held, . none, x target gone): {timeline}");
+    let burns: Vec<String> = report
+        .sequence
+        .iter()
+        .filter_map(|(frame, _)| {
+            report
+                .frames
+                .iter()
+                .find(|recorded| recorded.frame == *frame)
+        })
+        .map(|recorded| {
+            format!(
+                "{}:{}",
+                recorded.frame,
+                recorded
+                    .burn_age
+                    .map_or_else(|| "-".to_owned(), |age| format!("{age:.2}"))
+            )
+        })
+        .collect();
+    eprintln!(
+        "driver {driver}: 1:1 sequence round the beam's end, frame:age of the youngest burn (s): \
+         {}",
+        burns.join(" ")
+    );
     assert!(
         stream.len() >= 30,
         "the beam is held on most of the stream ({} frames)",

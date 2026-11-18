@@ -645,6 +645,7 @@ fn strike_at(
         tables,
         runtime,
         now,
+        battle_now: now,
     };
     beams.strike(event, line, presented, &mut context)
 }
@@ -661,6 +662,7 @@ fn keep_at(
         tables,
         runtime,
         now,
+        battle_now: now,
     };
     beams.keep(presented, None, None, &mut context);
 }
@@ -958,4 +960,158 @@ fn a_full_table_refuses_and_counts() {
             .all(|(_, _, capacity)| *capacity == HELD_BEAMS),
         "the table never grows"
     );
+}
+
+/// A context at effect time `now` and battle time `battle_now`.
+fn context_at<'a>(
+    (catalog, tables, runtime): (
+        &'a EffectCatalog,
+        &'a UnitEffectTables,
+        &'a mut EffectRuntime,
+    ),
+    now: f64,
+    battle_now: f64,
+) -> BeamContext<'a> {
+    BeamContext {
+        catalog,
+        tables,
+        runtime,
+        now,
+        battle_now,
+    }
+}
+
+/// Review round 1, R2-3: a paused battle (speed 0) stops the battle clock while the effects'
+/// clock runs on. The channelling beam is neither released nor eroded while paused, and on
+/// resume it is the same beam (no second hold, no replayed onset); its deadline counts battle
+/// time only.
+#[test]
+fn a_paused_battle_freezes_the_beam_and_resumes_it_without_a_new_onset() {
+    let (catalog, units, tables) = shipped();
+    let (source, effect) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let presented = [attacker.clone(), target.clone()];
+    let event = beam_strike(source, &attacker, &target);
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let line = travel_request(&event, &tables, &catalog).and_then(|shot| shot.line);
+    let mut context = context_at((&catalog, &tables, &mut runtime), 1.0, 1.0);
+    assert!(beams.strike(&event, line, &presented, &mut context));
+    let handle = beams.slots()[0].handle;
+    // Paused for ten seconds of effect time: the battle clock stays at 1.0.
+    for frame in 1..=250_u32 {
+        let now = 1.0 + f64::from(frame) * 0.04;
+        let mut context = context_at((&catalog, &tables, &mut runtime), now, 1.0);
+        beams.keep(&presented, None, None, &mut context);
+    }
+    assert_eq!(beams.slots().len(), 1, "still held after a long pause");
+    assert!(
+        runtime
+            .held(handle)
+            .is_some_and(|instance| instance.released_at.is_none()),
+        "not eroding while paused"
+    );
+    // Resumed: the next strike refreshes the same beam.
+    let mut context = context_at((&catalog, &tables, &mut runtime), 11.04, 1.04);
+    beams.keep(&presented, None, None, &mut context);
+    assert!(beams.strike(&event, line, &presented, &mut context));
+    assert_eq!(beams.slots()[0].handle, handle, "the same beam");
+    assert_eq!(runtime.spawned_of(effect), 1, "no second onset");
+    // With no further strike it goes a period and the grace of battle time later.
+    let deadline = beams.slots()[0].deadline;
+    let mut context = context_at((&catalog, &tables, &mut runtime), 30.0, deadline + 0.01);
+    beams.keep(&presented, None, None, &mut context);
+    assert_eq!(beams.slots().len(), 0);
+}
+
+/// Review round 1, R2-7: a strike without a travel line holds nothing (no beam at the world
+/// origin); it is still taken, so no shot is spawned for it, and the next strike with a line
+/// holds the beam.
+#[test]
+fn a_strike_without_a_line_holds_no_beam_at_the_origin() {
+    let (catalog, units, tables) = shipped();
+    let (source, effect) = beam_unit(&catalog, &units);
+    let attacker = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let presented = [attacker.clone(), target.clone()];
+    let event = beam_strike(source, &attacker, &target);
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    let mut context = context_at((&catalog, &tables, &mut runtime), 1.0, 1.0);
+    assert!(
+        beams.strike(&event, None, &presented, &mut context),
+        "taken"
+    );
+    assert_eq!(beams.slots().len(), 0);
+    assert_eq!(runtime.spawned_of(effect), 0, "nothing held");
+    assert_eq!(beams.refused, 0, "not a refusal");
+}
+
+/// Review round 1, R2-2: a strike whose look the effect pool cannot hold is refused and
+/// counted, as one finding the table full is.
+#[test]
+fn a_full_effect_pool_refuses_and_counts() {
+    let (mut catalog, units, tables) = shipped();
+    let (source, _) = beam_unit(&catalog, &units);
+    catalog.budget.effects = 1;
+    let target = beam_bubble(100, source.unit_type, 9.0, 4.0);
+    let first = beam_bubble(1, source.unit_type, 4.0, 4.0);
+    let second = beam_bubble(2, source.unit_type, 4.0, 6.0);
+    let presented = [first.clone(), second.clone(), target.clone()];
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut beams = HeldBeams::default();
+    for attacker in [&first, &second] {
+        let event = beam_strike(source, attacker, &target);
+        assert!(strike_at(
+            &mut beams,
+            &event,
+            &presented,
+            (&catalog, &tables, &mut runtime),
+            1.0
+        ));
+    }
+    assert_eq!(beams.slots().len(), 1, "the pool holds one effect");
+    assert_eq!(beams.refused, 1, "the second is refused and counted");
+}
+
+/// Review round 1, R2-2: a battle's table is sized from the catalog and the effect budget:
+/// at most a quarter of the effect pool, and no more than the most beams one beam unit type
+/// could hold if every player fielded only it.
+#[test]
+fn the_table_is_sized_from_the_catalog_and_the_budget() {
+    let (catalog, units, _) = shipped();
+    let capacity = HeldBeams::capacity_for(&units, &catalog);
+    let share = usize::try_from(catalog.budget.effects / 4).expect("small");
+    let cheapest = units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.effects.weapons.iter().any(|entry| {
+                entry
+                    .travel
+                    .as_ref()
+                    .and_then(|name| catalog.effect_id(name))
+                    .and_then(|id| catalog.effect(id))
+                    .is_some_and(|effect| effect.sustain.is_some())
+            })
+        })
+        .map(|archetype| archetype.supply_cost.max(1))
+        .min()
+        .expect("a shipped unit holds a beam");
+    let bound = sim_types::MAX_PLAYERS
+        * usize::try_from(sim_core::production::STANDARD_SUPPLY_CAP / cheapest).expect("small");
+    eprintln!("held-beam table: {capacity} (pool share {share}, catalog bound at least {bound})");
+    assert!(capacity <= share, "within a quarter of the effect pool");
+    assert_eq!(
+        capacity,
+        share.min(bound.max(capacity)),
+        "the smaller of the two"
+    );
+    assert!(capacity >= 64, "at least the earlier fixed table");
+    let table = HeldBeams::with_capacity(capacity);
+    assert_eq!(table.capacity(), capacity);
+    assert!(table
+        .buffers()
+        .iter()
+        .all(|(_, _, reserved)| *reserved >= capacity));
 }

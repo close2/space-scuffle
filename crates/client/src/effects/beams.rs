@@ -9,8 +9,12 @@
 //! - [`HeldBeams::strike`] refreshes the beam held for the strike's attacker and weapon,
 //!   moving its far end to the strike's target (a retarget, as the game's channelled beam may
 //!   switch target without ending), or holds a new one. The beam's deadline becomes the
-//!   strike's time plus the attacker's presented attack period (`attack_swing.period_ticks`, so
-//!   attack-rate buffs count; the look's own duration without a swing) plus the look's grace;
+//!   strike's presented battle time plus the attacker's presented attack period
+//!   (`attack_swing.period_ticks`, so attack-rate buffs count; the look's own duration without a
+//!   swing) plus the look's grace. Deadlines run on the presented battle clock
+//!   ([`battle_seconds`]), not on `Time<Virtual>`: a paused battle (speed 0) or a presentation
+//!   hitch freezes them, as it freezes every other held look's facts, so a channelling beam
+//!   neither erodes while paused nor replays its onset on resume (review round 1, R2-3);
 //! - [`HeldBeams::keep`], once a frame after the frame's strikes, puts every held beam's line
 //!   from its attacker's bubble to its target's outline, and recomputes its fog cut, because a
 //!   held beam lives for as long as its attacker keeps firing. It releases a beam whose
@@ -29,8 +33,10 @@
 //!
 //! # Invariants
 //! - At most one beam per `(attacker, weapon source)`; slots are sorted by that key and found by
-//!   binary search. At most [`HELD_BEAMS`] are held: a strike that finds the table full is
-//!   refused and counted ([`HeldBeams::refused`]), and draws no travel.
+//!   binary search. At most [`HeldBeams::capacity`] are held, sized at load from the catalog
+//!   and the effect budget ([`HeldBeams::capacity_for`]): a strike that finds the table full,
+//!   or whose look the effect pool cannot hold, is refused and counted
+//!   ([`HeldBeams::refused`]), and draws no travel.
 //! - The table's buffer is reserved once and never grows, so steady state allocates nothing.
 //! - Entity ids restart in a new battle session, so every beam is ended when the presented
 //!   session changes ([`HeldBeams::follow`]).
@@ -48,8 +54,13 @@ use bevy::prelude::*;
 use sim_types::snapshot::{BubbleRenderInstance, CombatEventVisual};
 use sim_types::{EffectSource, EntityId, PlayerId, StrikeEnds};
 
-/// Beams held at once: a battle of 400 units has a few dozen beam units at most.
+/// Beams held at once by a table made without a catalog ([`HeldBeams::default`]: tests and
+/// apps that load no units). A battle's table is sized by [`HeldBeams::capacity_for`].
 pub const HELD_BEAMS: usize = 64;
+
+/// The share of the effect pool held beams may take at most: the rest stays for the hits,
+/// splashes, deaths and areas a battle with that many beams also spawns.
+const BEAM_POOL_SHARE: u32 = 4;
 
 /// Seconds of one simulation tick.
 const TICK_SECONDS: f32 = 1.0 / sim_types::TICKS_PER_SECOND as f32;
@@ -69,7 +80,8 @@ pub struct BeamSlot {
     pub effect: EffectId,
     /// Its live instance.
     pub handle: EffectHandle,
-    /// Seconds of `Time<Virtual>` after which, with no further strike, it is released.
+    /// Seconds of the presented battle clock ([`battle_seconds`]) after which, with no further
+    /// strike, it is released.
     pub deadline: f64,
 }
 
@@ -78,7 +90,7 @@ pub struct BeamSlot {
 pub struct HeldBeams {
     /// Held beams, sorted by `(attacker, source)`.
     slots: Vec<BeamSlot>,
-    /// Strikes not held because [`HELD_BEAMS`] beams were.
+    /// Strikes not held: the table was full, or the effect pool had no room for the look.
     pub refused: u64,
     /// The battle session the beams were held in; `None` when none is presented.
     session: Option<SessionGeneration>,
@@ -86,16 +98,13 @@ pub struct HeldBeams {
     /// whatever one-shot layers it still plays (the pulses of its onset), so nothing of a beam
     /// outlives its exit.
     fading: Vec<(EffectHandle, f64)>,
+    /// The most beams held (and fading) at once; both buffers are reserved for it.
+    limit: usize,
 }
 
 impl Default for HeldBeams {
     fn default() -> Self {
-        Self {
-            slots: Vec::with_capacity(HELD_BEAMS),
-            refused: 0,
-            session: None,
-            fading: Vec::with_capacity(HELD_BEAMS),
-        }
+        Self::with_capacity(HELD_BEAMS)
     }
 }
 
@@ -107,8 +116,18 @@ pub struct BeamContext<'a> {
     pub tables: &'a UnitEffectTables,
     /// Live effects.
     pub runtime: &'a mut EffectRuntime,
-    /// Seconds of `Time<Virtual>`.
+    /// Seconds of `Time<Virtual>`: the effects' own clock (a beam's onset and its exit).
     pub now: f64,
+    /// Seconds of the presented battle clock ([`battle_seconds`]): the beams' deadlines.
+    pub battle_now: f64,
+}
+
+/// Seconds of the presented battle clock at the presented instant `(tick, fraction)`
+/// (`BattleFrameState::presented_instant`): it stands still while the battle is paused or the
+/// presentation waits for a tick, and runs at the battle's speed otherwise.
+#[must_use]
+pub fn battle_seconds((tick, fraction): (sim_types::Tick, f32)) -> f64 {
+    (f64::from(tick.0) + f64::from(fraction)) / f64::from(sim_types::TICKS_PER_SECOND)
 }
 
 /// The bubble of entity `id` among `bubbles`, which are in entity id order.
@@ -162,6 +181,65 @@ fn beam_bound(line: WorldLine) -> BoundValues {
 }
 
 impl HeldBeams {
+    /// An empty table of `capacity` beams (and as many fading ones), reserved at once.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            slots: Vec::with_capacity(capacity),
+            refused: 0,
+            session: None,
+            fading: Vec::with_capacity(capacity),
+            limit: capacity,
+        }
+    }
+
+    /// The most beams this table holds at once.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.limit
+    }
+
+    /// The table size a battle of `units` drawn with `effects` needs (review round 1, R2-2).
+    ///
+    /// A battle holds at most one beam per sustained weapon of each unit fielding one. A player
+    /// fields at most [`sim_core::production::STANDARD_SUPPLY_CAP`] supply, so the most beams
+    /// any one beam unit type can hold is `MAX_PLAYERS × cap / its supply cost × its sustained
+    /// weapons` (a free unit counts as costing 1); the bound is the largest over the catalog's
+    /// types, an army of only that unit. The shipped catalog's cheapest beam units cost 2
+    /// supply, which gives 800 at eight players. That bound is then limited to a
+    /// [`BEAM_POOL_SHARE`]th of the effect pool (`budget.effects`, 2048 shipped: 512), because
+    /// every held beam is a live effect instance and a battle with that many beams still
+    /// spawns its hits and splashes. A catalog with no sustained look needs none.
+    #[must_use]
+    pub fn capacity_for(units: &sim_core::catalog::UnitCatalog, effects: &EffectCatalog) -> usize {
+        let sustained = |name: &Option<String>| {
+            name.as_ref()
+                .and_then(|name| effects.effect_id(name))
+                .and_then(|id| effects.effect(id))
+                .is_some_and(|effect| effect.sustain.is_some())
+        };
+        let cap = sim_core::production::STANDARD_SUPPLY_CAP;
+        let players = u32::try_from(sim_types::MAX_PLAYERS).unwrap_or(u32::MAX);
+        let bound = units
+            .archetypes()
+            .map(|archetype| {
+                let weapons = archetype
+                    .effects
+                    .weapons
+                    .iter()
+                    .filter(|entry| sustained(&entry.travel))
+                    .count();
+                let weapons = u32::try_from(weapons).unwrap_or(u32::MAX);
+                (cap / archetype.supply_cost.max(1))
+                    .saturating_mul(players)
+                    .saturating_mul(weapons)
+            })
+            .max()
+            .unwrap_or(0);
+        let share = effects.budget.effects / BEAM_POOL_SHARE;
+        usize::try_from(bound.min(share)).unwrap_or(usize::MAX)
+    }
+
     /// Follows the presented battle session (`None`: none is presented): when it changes,
     /// every beam is ended at once (the old session's battle is no longer shown), because
     /// entity ids restart in a new session. Call once a frame, before that frame's strikes.
@@ -182,8 +260,9 @@ impl HeldBeams {
     /// holds a new one along `line` (the strike's travel line). `presented` (in entity id
     /// order) gives the attacker's attack period. Returns whether the strike was taken, so the
     /// caller spawns no travel shot for it; a `BeamVisual` without [`StrikeEnds`] or with a look
-    /// that is not sustained is not taken, and a strike refused for a full table is taken
-    /// (counted, drawn without a travel).
+    /// that is not sustained is not taken. A strike refused for a full table or a full effect
+    /// pool is taken (counted in [`Self::refused`], drawn without a travel), and so is one
+    /// without a travel `line` (none is held at the world origin; the next strike holds it).
     pub fn strike(
         &mut self,
         event: &CombatEventVisual,
@@ -221,7 +300,7 @@ impl HeldBeams {
                 },
                 |swing| f32::from(swing.period_ticks) * TICK_SECONDS,
             );
-        let deadline = context.now + f64::from(period + sustain.grace);
+        let deadline = context.battle_now + f64::from(period + sustain.grace);
         let key = (attacker, source);
         match self
             .slots
@@ -239,7 +318,7 @@ impl HeldBeams {
                         // The weapon's look changed (a mode switch): the old beam goes.
                         let old = self.slots.remove(index);
                         fade(
-                            &mut self.fading,
+                            (&mut self.fading, self.limit),
                             old,
                             context.catalog,
                             context.runtime,
@@ -249,11 +328,14 @@ impl HeldBeams {
                     }
                     Err(index) => index,
                 };
-                if self.slots.len() == HELD_BEAMS {
+                if self.slots.len() >= self.limit {
                     self.refused += 1;
                     return true;
                 }
-                let line = line.unwrap_or(WorldLine::whole(Vec3::ZERO, Vec3::ZERO));
+                // Review round 1, R2-7: no line, no beam at the world origin.
+                let Some(line) = line else {
+                    return true;
+                };
                 let request = super::runtime::SpawnRequest {
                     effect,
                     anchor: line.from,
@@ -261,10 +343,14 @@ impl HeldBeams {
                     line: Some(line),
                     delay: 0.0,
                 };
-                if let Some(handle) =
-                    context
-                        .runtime
-                        .hold(context.catalog, &request, context.now, false)
+                let held = context
+                    .runtime
+                    .hold(context.catalog, &request, context.now, false);
+                let Some(handle) = held else {
+                    // The effect pool is full: refused, as a full table is (R2-2).
+                    self.refused += 1;
+                    return true;
+                };
                 {
                     self.slots.insert(
                         index,
@@ -296,6 +382,7 @@ impl HeldBeams {
         context: &mut BeamContext<'_>,
     ) {
         let (catalog, tables, now) = (context.catalog, context.tables, context.now);
+        let battle_now = context.battle_now;
         let runtime = &mut *context.runtime;
         self.fading.retain(|(handle, until)| {
             let over = *until <= now;
@@ -304,11 +391,11 @@ impl HeldBeams {
             }
             !over
         });
-        let fading = &mut self.fading;
+        let fading = (&mut self.fading, self.limit);
         self.slots.retain(|slot| {
             let ends = bubble_of(presented, slot.attacker).zip(bubble_of(presented, slot.target));
-            let Some((attacker, target)) = ends.filter(|_| now <= slot.deadline) else {
-                fade(fading, *slot, catalog, runtime, now);
+            let Some((attacker, target)) = ends.filter(|_| battle_now <= slot.deadline) else {
+                fade((&mut *fading.0, fading.1), *slot, catalog, runtime, now);
                 return false;
             };
             let line = beam_line(attacker, target, tables.muzzle(attacker.unit_type), view);
@@ -356,16 +443,16 @@ impl HeldBeams {
 }
 
 /// Releases the beam held in `slot` at `now`: its held layers erode out over the look's exit,
-/// and the beam is ended once that exit is over ([`HeldBeams::keep`]), or at once when
-/// [`HELD_BEAMS`] beams are already fading.
+/// and the beam is ended once that exit is over ([`HeldBeams::keep`]), or at once when as many
+/// beams as the table holds are already fading.
 fn fade(
-    fading: &mut Vec<(EffectHandle, f64)>,
+    (fading, limit): (&mut Vec<(EffectHandle, f64)>, usize),
     slot: BeamSlot,
     catalog: &EffectCatalog,
     runtime: &mut EffectRuntime,
     now: f64,
 ) {
-    if fading.len() >= HELD_BEAMS {
+    if fading.len() >= limit {
         runtime.retire(slot.handle);
         return;
     }
@@ -409,11 +496,15 @@ pub fn keep_beams(
     let presented = session.as_deref().map_or(&[][..], |session| {
         session.frames.presented().bubbles.as_slice()
     });
+    let battle_now = session.as_deref().map_or(0.0, |session| {
+        battle_seconds(session.frames.presented_instant())
+    });
     let mut context = BeamContext {
         catalog: &catalog,
         tables: &tables,
         runtime: &mut runtime,
         now: time.elapsed_secs_f64(),
+        battle_now,
     };
     beams.keep(presented, fog.as_deref(), view, &mut context);
 }

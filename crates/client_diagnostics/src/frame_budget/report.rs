@@ -503,7 +503,8 @@ fn variant_text(variant: &RunVariant) -> String {
     let _ = writeln!(
         text,
         "- Effect stress: {} splash events/s; sent {}; effects spawned {}, refused {}; critical \
-         overflow {}, detail skipped {}, LOD skipped {}, retired {}",
+         overflow {}, detail skipped {}, LOD skipped {}, retired {}; held beams refused {} \
+         (table of {})",
         stress.rate_per_second,
         stress.events_sent,
         stress.effects_spawned,
@@ -511,7 +512,9 @@ fn variant_text(variant: &RunVariant) -> String {
         stress.critical_overflow,
         stress.detail_skipped,
         stress.lod_skipped,
-        stress.retired
+        stress.retired,
+        stress.beams_refused,
+        stress.beams_capacity
     );
     for source in &stress.sources {
         let _ = writeln!(text, "  - source: {source}");
