@@ -715,3 +715,40 @@ corner let go on.
    pursuer reaches it with zero `PursuitAbandoned`. It must fail on the current code first.
 5. Then WP6's measurements are repeated in full under D-15. The stop rules stay as written. An outcome change traced
    to chases that now continue around a building is rule-caused and is reported with its trace.
+
+## Amendment 4 (orchestrator, 2026-11-18): an automatic chase gets 5.0.14's leash (B-142 fixed here); Amendment 3 withdrawn
+
+**Why.** Amendment 3's straight-line measure changed nothing (evidence §6c). The attackers the workers respond to
+stand 10.5 to 10.6 away, already past the leash of 10.0 (twice the scan range of 5.0). So any measure of that
+leash ends the chase. The leash itself is the deviation. 5.0.14 has no per-unit leash for an automatic chase, only
+the game-wide `CGame` `AcquireLeashRadius` 21, `AcquireLeashResetRadius` 5 and `AcquireMovementLimit` 21 (core
+`GameData.xml`:8–10). Charter §8 makes an unsanctioned difference from StarCraft II a bug (B-142). Fixing it is
+in scope here, because it is what blocks this package's acceptance. Amendment 3 is withdrawn, and option (a)
+(`contour-footprints-wp6-wip3`) is not carried forward.
+
+**Decision: option (1), the agent's recommendation, with these conditions.**
+
+1. **Prototype first.** Before any test or commit, a scratch build of WP6 with the 21-from-origin leash runs the
+   showcase on the default seed and seed 7. It goes on only if the workers' `PursuitAbandoned` count falls to
+   base + 1 or lower. If it does not, stop with a trace and do not propose another leash variant. Report what still
+   ends the chase.
+2. **The rule.** An automatically acquired chase is given up when the pursuer is farther than the leash radius from
+   the point where it acquired the target. That applies to direct and routed chases alike, so the asymmetry goes
+   away. Ordered attacks are unchanged. The radius 21 and the reset radius are authored in the catalog's movement
+   rules with their 5.0.14 source; `PURSUIT_LEASH_SCAN_RANGES` is removed.
+   - Source what `AcquireLeashResetRadius` and `AcquireMovementLimit` do: the data, the editor documentation, or
+     sourced mechanics references.
+   - Implement only what is sourced. Record what stays unsourced in B-142's row and the evidence, as a recorded
+     minor difference.
+3. **Who it reaches.** The existing probe covered only `reroute_pursuit`. The new rule also measures direct
+   chases, so probe again with the new measure: the matrix, battle 33, the showcase with full squares, and both
+   goldens. Any chase that now ends, or ends differently, is traced and reported. It is rule-caused if it follows
+   from the 5.0.14 leash.
+4. **Checksum.** The acquisition point is new authoritative state, so it is hashed. Schema 30 is not on main yet,
+   so it stays 30. Every re-recorded pin gets the proof header: a scratch build that does not hash the new field
+   reproduces the previous value, or the world-state change is traced.
+5. **C-9.** A target 10 to 21 from the pursuer, behind a 5×5's cut corner, is reached with zero
+   `PursuitAbandoned`, and it fails on the current code first. **C-10**: an automatic chase beyond 21 from its
+   origin is given up.
+6. Then WP6's measurements are repeated in full under D-15. B-142 is marked fixed in `DESIGN.md` §4 when it lands.
+   It also gets a one-line cross-reference in whatever plan owns pursuit (B-113's).
