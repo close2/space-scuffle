@@ -162,10 +162,10 @@ fn hold(world: &mut SimWorld, id: EntityId) {
         .expect("hold admitted");
 }
 
-/// T-1: a body walks to a goal 0.05 beyond its terrain radius from a straight cliff face at
-/// x = 10 (a goal its collision disc would not fit, so it would be retargeted), then a hostile
-/// body holding beside it pushes it at 45° into the face (as contact T-B2 does). It comes to rest at its terrain radius from
-/// the face and is never nearer on any tick.
+/// T-1: a body walks to a goal 0.05 beyond its terrain radius from a straight cliff face at x = 10
+/// (a goal its collision disc would not fit, so it would be retargeted), then a hostile body
+/// holding beside it pushes it at 45° into the face (as contact T-B2 does). It comes to rest at its
+/// terrain radius from the face and is never nearer on any tick.
 #[test]
 fn a_body_rests_at_its_terrain_radius_against_a_wall() {
     let mut world = world_on(walled(20, |x, _| x >= 10));

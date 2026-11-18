@@ -166,8 +166,9 @@ An affected archetype at the arena border (T5), outcome unchanged: accepted unde
 | 8 | P1 at 1,927 | **P0 at 2,559** | 19 / 24 → 16 / 24 | 1 / 0 → 0 / 0 |
 
 The stop rule of D-12, 4 applied and WP3 was held. The trace from the spawn: positions are identical to tick 8;
-on tick 9 player 1's welder drone 16 at (53.39, 52.63), which the pulse bots passing it press against the spawn
-wall face y = 53, rests at its collision radius 0.375 below it on WP2 (y = 52.625) and moves on to its terrain
+on tick 9 player 1's welder drone 16 at (53.39, 52.63), which the pulse bots passing it press against the south
+face y = 53 of player 1's hall footprint (cells 53 to 57 in x and y, near its west corner; a structure, not
+terrain, and the hall's circle of radius 2.5 does not reach the drone, so the footprint decides), rests at its collision radius 0.375 below it on WP2 (y = 52.625) and moves on to its terrain
 radius 0.3125 on WP3 (y = 52.6875 by tick 13), never deeper. From tick 10 pulse bots 17, 18 and 19 walking past
 it take other paths, and the lane fight diverges. Classified as caused by the rule (R1, the workers' 5.0.13 inner
 radius), not a defect. On seed 1 both armies destroy each other and each side keeps two idle welder drones, so no
@@ -249,3 +250,32 @@ the fight), `f1100.png` (assault on the enemy hall, caption "Assault"), `f1300.p
 `showcase_storyboard_tests` (7) pass.
 
 **Throughput** (WP3 §3): within noise; `DESIGN.md` §5 unchanged.
+
+## 5. Review findings F-1 to F-4
+
+**F-1.** `MotionPolicy::resolve` refuses an air body whose terrain radius is not its collision radius ("an air
+body's terrain radius must equal its collision radius"): `contains` reads the terrain radius for every layer.
+Test `movement::tests::an_air_body_with_a_smaller_terrain_radius_is_an_invariant`.
+
+**F-2.** One focused test per terrain-radius path no test pinned. Each was run with its path temporarily reverted to
+the collision radius (one line each, restored after) and failed:
+
+| Path reverted | Test | With the revert |
+|---|---|---|
+| `flee.rs` bounds (`policy.radius`) | `terrain_radius_tests::a_flee_goal_stops_at_the_terrain_radius_from_the_map_edge` | Fails |
+| `locomotion.rs` `clamp_into_domain` | `locomotion::tests::a_cast_goal_is_clamped_into_the_terrain_radius_domain` | Fails |
+| `lifecycle.rs` mobile producer bounds | `terrain_radius_tests::a_mobile_producer_is_bounded_by_its_terrain_radius` | Fails |
+| `exits.rs` exit cell map bounds (`ring.radius`) | `exits::tests::an_exit_cell_at_the_map_corner_admits_the_terrain_disc` | Fails |
+| `exits.rs` both egress checks (`ring.radius`) | the same test | Fails |
+| `route_overlap.rs` meter (`collision_radius`) | `route_overlap::tests::the_meter_measures_the_terrain_disc` | Fails |
+
+The ring margin and the wider-than-map check were already pinned by T-8.
+
+**F-3.** `wall_contact_tests` T-B1 to T-B5 and T-B9 now run twice, with a 0.375 body whose terrain radius equals
+its collision radius (the marine's) and with one whose terrain radius is 0.3125 (the workers'), both chosen by
+their radii.
+
+**F-4.** Doc lines wrapped. The wall drone 16 rests against in the showcase trace (§3) is the south face of player
+1's hall footprint (structure 14, cells 53 to 57, face y = 53), near its west corner; the hall's circle (radius 2.5,
+centre (55.5, 55.5)) is 3.5 from the drone, beyond the sum of the radii, so the footprint, at the terrain radius,
+decides. R1 covers structures. §3 and Amendment 1 now say so.

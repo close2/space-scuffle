@@ -421,7 +421,7 @@ D-12, 4's stop applied, and this amendment is the decision it asks for. WP3 resu
 
 **Reasons.**
 - **The rule is the game's.** A worker meets terrain and structures at 0.3125 (R1, the 5.0.13 notes), and the flip is a consequence of it. The trace (evidence, WP3) shows this:
-  - The first divergence is tick 9: player 1's welder drone 16 rests 0.0625 nearer the spawn wall face at y = 53. It stops exactly at its terrain radius and never goes deeper (0 deeper unit-ticks on every run).
+  - The first divergence is tick 9: player 1's welder drone 16 rests 0.0625 nearer the south face (y = 53) of its hall's footprint, near the footprint's west corner: a structure, not terrain (corrected after review F-4; R1's "terrain / structures" covers both). It stops exactly at its terrain radius and never goes deeper (0 deeper unit-ticks on every run).
   - From tick 10, the pulse bots passing it take other paths.
   - This is the risk R-1 named, classified as rule-caused, not a defect.
 - **The base outcome was fragile.** The showcase's lane fight is near-tied: plan `2026-11-11-contact-and-missiles` Amendment 1 flipped it the other way for the same class of reason. A winner that turns on a worker's 1/16 unit against a wall is not a property to preserve against the game's rule.
@@ -442,3 +442,11 @@ D-12, 4's stop applied, and this amendment is the decision it asks for. WP3 resu
 WP4 must re-check the showcase storyboard and captions against the new default-seed timeline, with a real render on the RX 580, because the winner changes.
 
 **B-131 (new register entry, out of scope here).** A registered structure is also a body: a circle of half its footprint width. Placement occupancy, the collision phase and steering obstacles meet it at the unit's collision radius (D-6). So at the middle of a structure face a ground unit stays at `Radius`; only off the face does the terrain radius apply (T-6 tests points off the face middle). The game's inner radius governs interaction with buildings (R1, R3), so unit–structure pairs should use the terrain radius. Fixing this changes the collision phase and steering for unit–structure pairs, and would move outcomes again. It gets its own short plan and measurement after this one merges, not a change folded into WP3. WP5 adds the B-131 row to `DESIGN.md` §4.
+
+## As built (2026-11-18)
+
+WP0 to WP5 are on branch `inner-radius`; the evidence is [`docs/evidence/2026-11-18-inner-radius.md`](../evidence/2026-11-18-inner-radius.md). After the independent review (accept, four low findings):
+- **F-1:** `MotionPolicy::resolve` also refuses an air body whose terrain radius differs from its collision radius, since its domain reads the terrain radius.
+- **F-2:** focused tests pin the flee goal's bounds, `clamp_into_domain`, the mobile producer's bounds, the exit ring's map-bounds and egress checks, and the overlap meter at the terrain radius; each was shown red with its path reverted to the collision radius.
+- **F-3:** `wall_contact_tests` T-B1 to T-B5 and T-B9 run both a body whose terrain radius equals its collision radius and one whose terrain radius is smaller.
+- **F-4:** doc lines wrapped; the showcase trace's wall is the hall's footprint, not terrain (Amendment 1's wording corrected).
