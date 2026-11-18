@@ -14,8 +14,8 @@
             lore_description: "Massive industrial smelting base dome and central command hub.",
             sc2_inspiration: Some("Command Center"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10377; Footprint5x5Contour Shape 2.6926, Footprint:2015).
+            radius: 2.75,
             mineral_cost: 400,
             gas_cost: 0,
             build_time_ticks: 1786,
@@ -53,8 +53,8 @@
             lore_description: "Upgraded command dome equipped with an orbital communications uplink.",
             sc2_inspiration: Some("Orbital Command"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10523; Footprint5x5Contour Shape 2.6926, Footprint:2015).
+            radius: 2.75,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 625,
@@ -90,8 +90,8 @@
             lore_description: "Heavily fortified command hub crowned with twin long-range kinetic cannons.",
             sc2_inspiration: Some("Planetary Fortress"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10661; Footprint5x5Contour Shape 2.6926, Footprint:2015).
+            radius: 2.75,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 893,
@@ -156,8 +156,8 @@
             lore_description: "Subterranean electrical power cell expanding squadron logistics supply.",
             sc2_inspiration: Some("Supply Depot"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.25 = max(Radius 1.25, liberty UnitData:5663; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.25,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 536,
@@ -193,8 +193,8 @@
             lore_description: "Pressurized geothermal geyser siphon refining subterranean plasma.",
             sc2_inspiration: Some("Refinery"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:5776; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
+            radius: 1.6875,
             mineral_cost: 75,
             gas_cost: 0,
             build_time_ticks: 536,
@@ -230,8 +230,8 @@
             lore_description: "Automated mechanical fabrication bay assembling Directorate combat androids.",
             sc2_inspiration: Some("Barracks"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:5838; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 1161,
@@ -267,8 +267,8 @@
             lore_description: "Engineering research dome developing advanced infantry ballistic ordnance and alloys.",
             sc2_inspiration: Some("Engineering Bay"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:5970; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 125,
             gas_cost: 0,
             build_time_ticks: 625,
@@ -308,8 +308,8 @@
             lore_description: "Reinforced hardened defensive pillbox sheltering frontline infantry.",
             sc2_inspiration: Some("Bunker"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:6154; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 714,
@@ -345,7 +345,7 @@
             lore_description: "Long-range seismic and radar sweep dish detecting enemy movement through Fog of War.",
             sc2_inspiration: Some("Sensor Tower"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
+            // floor: half the footprint (B-138); the game's 0.75 = max(Radius 0.75, liberty UnitData:9452; Footprint1x1 Shape 0.7072, Footprint:1106).
             radius: 1.0,
             mineral_cost: 100,
             gas_cost: 50,
@@ -382,8 +382,8 @@
             lore_description: "Dedicated surface-to-air missile turret dome with optical detection scanner.",
             sc2_inspiration: Some("Missile Turret"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 0.75, liberty UnitData:6033; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 446,
@@ -450,8 +450,8 @@
             lore_description: "Heavy vehicular manufacturing plant producing tanks and combat mechs.",
             sc2_inspiration: Some("Factory"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.625, liberty UnitData:6238; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 100,
             build_time_ticks: 1071,
@@ -487,8 +487,8 @@
             lore_description: "Stealth operations research dome housing tactical cloaking and orbital warheads.",
             sc2_inspiration: Some("Ghost Academy"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9773; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 50,
             build_time_ticks: 714,
@@ -524,8 +524,8 @@
             lore_description: "Advanced flight bay constructing gunships, transports, and electronic warfare craft.",
             sc2_inspiration: Some("Starport"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.625, liberty UnitData:6371; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 100,
             build_time_ticks: 893,
@@ -561,8 +561,8 @@
             lore_description: "Heavy ordnance armory researching vehicle weapons, ship cannons, and reinforced plating.",
             sc2_inspiration: Some("Armory"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:6506; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 50,
             build_time_ticks: 1161,
@@ -602,8 +602,8 @@
             lore_description: "High-density plasma containment dome enabling capital weapon systems.",
             sc2_inspiration: Some("Fusion Core"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:10915; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 1161,
@@ -639,8 +639,8 @@
             lore_description: "Modular annex pod attached to production bays to unlock advanced schematics.",
             sc2_inspiration: Some("Tech Lab"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:6642; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 50,
             gas_cost: 25,
             build_time_ticks: 446,
@@ -676,8 +676,8 @@
             lore_description: "Parallel assembly annex enabling host factory to train two units simultaneously.",
             sc2_inspiration: Some("Reactor"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:6579; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 50,
             gas_cost: 50,
             build_time_ticks: 893,
@@ -717,8 +717,8 @@
             lore_description: "Central alien pyramid hub warping in harvesters and channeling Energy Recharge.",
             sc2_inspiration: Some("Nexus"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:4184; Footprint5x5Contour Shape 2.6926, Footprint:2015).
+            radius: 2.75,
             mineral_cost: 400, // 5.0.14 calibrated
             gas_cost: 0,
             build_time_ticks: 1786,
@@ -753,8 +753,8 @@
             lore_description: "Resonant crystalline spire broadcasting the psionic power matrix across 6.5 tiles.",
             sc2_inspiration: Some("Pylon"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:4335; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 446,
@@ -789,8 +789,8 @@
             lore_description: "Phase rift generator siphoning subterranean vespene plasma.",
             sc2_inspiration: Some("Assimilator"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:4122; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
+            radius: 1.6875,
             mineral_cost: 75,
             gas_cost: 0,
             build_time_ticks: 536,
@@ -825,8 +825,8 @@
             lore_description: "Spatial displacement portal warping in Enclave ground forces.",
             sc2_inspiration: Some("Gateway"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:4394; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 1161,
@@ -861,8 +861,8 @@
             lore_description: "Prismatic crystal matrix researching ground weapons, armor, and global plasma shields.",
             sc2_inspiration: Some("Forge"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4536; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 804,
@@ -901,8 +901,8 @@
             lore_description: "Automated perimeter defense spire discharging lethal branching violet lightning arcs.",
             sc2_inspiration: Some("Photon Cannon"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:11052; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 714,
@@ -993,8 +993,8 @@
             lore_description: "Psionic battery replenishing plasma shields on nearby friendly structures and units.",
             sc2_inspiration: Some("Shield Battery"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:1612; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.125,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 714,
@@ -1029,8 +1029,8 @@
             lore_description: "Advanced energy conduit researching Warp Gate technology and aerial upgrades.",
             sc2_inspiration: Some("Cybernetics Core"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:10817; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 893,
@@ -1069,8 +1069,8 @@
             lore_description: "Elder psionic council researching Charge, Phase Blink, and Resonating Glaives.",
             sc2_inspiration: Some("Twilight Council"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4604; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 100,
             build_time_ticks: 893,
@@ -1105,8 +1105,8 @@
             lore_description: "Deep-space stargate summoning aerial flying saucers and capital carrier craft.",
             sc2_inspiration: Some("Stargate"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:9640; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 1071,
@@ -1141,8 +1141,8 @@
             lore_description: "Automated robotics facility deploying observers, prisms, immortals, and colossi.",
             sc2_inspiration: Some("Robotics Facility"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9569; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 100,
             build_time_ticks: 1161,
@@ -1177,8 +1177,8 @@
             lore_description: "Ancient repository of telepathic disciplines unlocking catastrophic Psionic Storms.",
             sc2_inspiration: Some("Templar Archives"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4667; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 200,
             build_time_ticks: 893,
@@ -1213,8 +1213,8 @@
             lore_description: "Enigmatic shadow cloister unlocking permanent stealth and Shadow Stride.",
             sc2_inspiration: Some("Dark Shrine"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.5 = max(Radius 1.5, liberty UnitData:9510; Footprint2x2Contour Shape 1.1181, Footprint:1950).
+            radius: 1.5,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 1786,
@@ -1249,8 +1249,8 @@
             lore_description: "Advanced engineering core researching Extended Thermal Lance and robotic thrusters.",
             sc2_inspiration: Some("Robotics Bay"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9837; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 1161,
@@ -1285,8 +1285,8 @@
             lore_description: "Starlight guidance beacon unlocking advanced capital air upgrades and Carriers.",
             sc2_inspiration: Some("Fleet Beacon"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9708; Footprint3x3Contour Shape 1.803, Footprint:1935).
+            radius: 1.8125,
             mineral_cost: 300,
             gas_cost: 200,
             build_time_ticks: 1071,
@@ -1325,8 +1325,8 @@
             lore_description: "Primordial bio-heart of the grove spawning larvae eggs and spreading creep moss.",
             sc2_inspiration: Some("Hatchery"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8208; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
+            radius: 2.75,
             mineral_cost: 275, // 5.0.14 calibrated
             gas_cost: 0,
             build_time_ticks: 1786,
@@ -1360,8 +1360,8 @@
             lore_description: "Tier-2 mutated tree canopy unlocking specialized biomorphic structures.",
             sc2_inspiration: Some("Lair"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8290; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
+            radius: 2.75,
             mineral_cost: 150,
             gas_cost: 100,
             build_time_ticks: 1429,
@@ -1395,8 +1395,8 @@
             lore_description: "Apex heart of the swarm unlocking Tier-3 apex mutations and level 3 bio-upgrades.",
             sc2_inspiration: Some("Hive"),
             footprint: (5, 5),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 2.5,
+            // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8370; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
+            radius: 2.75,
             mineral_cost: 200,
             gas_cost: 150,
             build_time_ticks: 1786,
@@ -1430,8 +1430,8 @@
             lore_description: "Organic bio-funnel filtering raw subterranean vespene spores.",
             sc2_inspiration: Some("Extractor"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:8149; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
+            radius: 1.6875,
             mineral_cost: 25,
             gas_cost: 0,
             build_time_ticks: 536,
@@ -1465,8 +1465,8 @@
             lore_description: "Living cavernous womb dome enabling razor mantis metamorphosis and speed evolution.",
             sc2_inspiration: Some("Spawning Pool"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8886; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 200,
             gas_cost: 0,
             build_time_ticks: 1161,
@@ -1500,8 +1500,8 @@
             lore_description: "Genetic gestation organ researching melee talons, caustic spines, and hardened chitin carapace.",
             sc2_inspiration: Some("Evolution Chamber"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8444; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 75,
             gas_cost: 0,
             build_time_ticks: 625,
@@ -1539,8 +1539,8 @@
             lore_description: "Subterranean tentacle whipping massive armor-piercing spines against ground invaders.",
             sc2_inspiration: Some("Spine Crawler"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.0,
+            // 5.0.14 engine radius 1.125 = max(Radius 0.875, liberty UnitData:8615; Footprint2x2ZergSpineCrawler Shape 1.1181, Footprint:5369).
+            radius: 1.125,
             mineral_cost: 100,
             gas_cost: 0,
             build_time_ticks: 893,
@@ -1603,7 +1603,7 @@
             lore_description: "Organic anti-air spire launching bio-acid spores at enemy aircraft with full detection.",
             sc2_inspiration: Some("Spore Crawler"),
             footprint: (2, 2),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
+            // floor: half the footprint (B-138); the game's 0.875 = max(Radius 0.875, liberty UnitData:8749; Footprint2x2Contour2 Shape 0.559, Footprint:162).
             radius: 1.0,
             mineral_cost: 75,
             gas_cost: 0,
@@ -1667,8 +1667,8 @@
             lore_description: "Chitinous burrow mound enabling rhino-beetle metamorphosis and subterranean adaptations.",
             sc2_inspiration: Some("Roach Warren"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:11765; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 0,
             build_time_ticks: 982,
@@ -1702,8 +1702,8 @@
             lore_description: "Volatile acid nursery enabling baneling tick incubation and Centrifugal Hooks.",
             sc2_inspiration: Some("Baneling Nest"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9966; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 100,
             gas_cost: 50,
             build_time_ticks: 1071,
@@ -1737,8 +1737,8 @@
             lore_description: "Deep thorn den enabling hydralisk metamorphosis and Nanomuscular Swell sprint.",
             sc2_inspiration: Some("Hydralisk Den"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8949; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 100,
             gas_cost: 100,
             build_time_ticks: 714,
@@ -1772,8 +1772,8 @@
             lore_description: "Subterranean spire enabling lurker metamorphosis and seismic wave tech.",
             sc2_inspiration: Some("Lurker Den"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:676; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 1429,
@@ -1807,7 +1807,7 @@
             lore_description: "Towering organic spire enabling mutalisk and corruptor flight, and flyer upgrades.",
             sc2_inspiration: Some("Spire"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
+            // floor: half the footprint (B-138); the game's 1.125 = max(Radius 1.0, liberty UnitData:9011; Footprint2x2CreepContour Shape 1.1181, Footprint:2073).
             radius: 1.5,
             mineral_cost: 200,
             gas_cost: 200,
@@ -1845,7 +1845,7 @@
             lore_description: "Colossal mutated spire enabling Brood Lord metamorphosis.",
             sc2_inspiration: Some("Greater Spire"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
+            // floor: half the footprint (B-138); the game's 1.125 = max(Radius 1.0, liberty UnitData:9082; Footprint2x2IgnoreCreepContour Shape 1.1181, Footprint:1238).
             radius: 1.5,
             mineral_cost: 100,
             gas_cost: 150,
@@ -1880,8 +1880,8 @@
             lore_description: "Burrowing spore nursery enabling infestors, Microbial Shroud, and Hive morph.",
             sc2_inspiration: Some("Infestation Pit"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:2077; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 100,
             gas_cost: 100,
             build_time_ticks: 893,
@@ -1915,8 +1915,8 @@
             lore_description: "Global mycelial hub summoning Nydus Canals for instant subterranean army relocation.",
             sc2_inspiration: Some("Nydus Network"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9899; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 150,
             build_time_ticks: 893,
@@ -1950,8 +1950,8 @@
             lore_description: "Cavernous den enabling ultralisk incubation, Chitinous Plating, and Anabolic Synthesis.",
             sc2_inspiration: Some("Ultralisk Cavern"),
             footprint: (3, 3),
-            // Replaced by the 5.0.14 engine radius in plan 2026-11-18-structure-radius WP4.
-            radius: 1.5,
+            // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9215; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
+            radius: 1.8125,
             mineral_cost: 150,
             gas_cost: 200,
             build_time_ticks: 1161,

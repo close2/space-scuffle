@@ -2186,13 +2186,28 @@ fn b116_unit_terrain_radii_follow_starcraft() -> TestResult {
     Ok(())
 }
 
-/// B-116: an archetype whose terrain radius is below its collision radius is a ground unit with
-/// a row above that says so, so no unsourced value can be authored.
+/// B-116: a unit whose terrain radius is below its collision radius is a ground unit with a row
+/// above that says so, so no unsourced value can be authored. A structure's terrain radius is not
+/// authored: it is half its footprint's smaller side, below its radius wherever the 5.0.14 engine
+/// radius exceeds that (plan `2026-11-18-structure-radius` D-5), and no rule reads it.
 #[test]
 fn only_ground_units_with_a_smaller_inner_radius_author_one() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
     let mut smaller = 0;
     for archetype in catalogs.units.archetypes() {
+        if let sim_types::ShapeKind::BuildingDome {
+            footprint_w,
+            footprint_h,
+        } = archetype.shape
+        {
+            assert!(
+                (f(archetype.terrain_radius) - f32::from(footprint_w.min(footprint_h)) / 2.0).abs()
+                    < 0.001,
+                "{}: a structure's terrain radius is half its footprint",
+                archetype.slug
+            );
+            continue;
+        }
         if archetype.terrain_radius >= archetype.collision_radius {
             continue;
         }
@@ -3475,5 +3490,556 @@ fn blinding_cloud_values_follow_starcraft() -> TestResult {
         "DetectArc 0, swarm BehaviorData:25"
     );
     assert!(structures.periodic_effect.is_none());
+    Ok(())
+}
+
+/// B-135: every structure's radius, the edge its ranges measure to: its analogue's 5.0.14 engine
+/// radius `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)` (liberty `UnitData`, `FootprintData.xml` at
+/// `5444e12f13`; the live value of BurnySc2/sc2-techtree `data.json`, `c2c90e9b56`), floored at
+/// half our footprint's smaller side where our footprint is larger than the game's (plan
+/// `2026-11-18-structure-radius` §2.3, D-4; B-138). Rows name analogues (charter §3.3).
+const SC2_STRUCTURE_RADIUS: [(&str, [f32; 1], &str); 49] = [
+    (
+        "Command Center",
+        [2.75],
+        "liberty UnitData:10377 Radius 2.5; Footprint:2015 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Orbital Command",
+        [2.75],
+        "liberty UnitData:10523 Radius 2.5; Footprint:2015 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Planetary Fortress",
+        [2.75],
+        "liberty UnitData:10661 Radius 2.5; Footprint:2015 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Nexus",
+        [2.75],
+        "liberty UnitData:4184 Radius 2.0; Footprint:2015 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Hatchery",
+        [2.75],
+        "liberty UnitData:8208 Radius 2.0; Footprint:2261 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Lair",
+        [2.75],
+        "liberty UnitData:8290 Radius 2.0; Footprint:2261 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Hive",
+        [2.75],
+        "liberty UnitData:8370 Radius 2.0; Footprint:2261 Shape 2.6926; engine 2.75 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Barracks",
+        [1.8125],
+        "liberty UnitData:5838 Radius 1.75; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Engineering Bay",
+        [1.8125],
+        "liberty UnitData:5970 Radius 1.25; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Bunker",
+        [1.8125],
+        "liberty UnitData:6154 Radius 1.25; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Factory",
+        [1.8125],
+        "liberty UnitData:6238 Radius 1.625; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Ghost Academy",
+        [1.8125],
+        "liberty UnitData:9773 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Starport",
+        [1.8125],
+        "liberty UnitData:6371 Radius 1.625; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Armory",
+        [1.8125],
+        "liberty UnitData:6506 Radius 1.25; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Fusion Core",
+        [1.8125],
+        "liberty UnitData:10915 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Gateway",
+        [1.8125],
+        "liberty UnitData:4394 Radius 1.75; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Forge",
+        [1.8125],
+        "liberty UnitData:4536 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Cybernetics Core",
+        [1.8125],
+        "liberty UnitData:10817 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Twilight Council",
+        [1.8125],
+        "liberty UnitData:4604 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Stargate",
+        [1.8125],
+        "liberty UnitData:9640 Radius 1.75; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Robotics Facility",
+        [1.8125],
+        "liberty UnitData:9569 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Templar Archives",
+        [1.8125],
+        "liberty UnitData:4667 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Robotics Bay",
+        [1.8125],
+        "liberty UnitData:9837 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Fleet Beacon",
+        [1.8125],
+        "liberty UnitData:9708 Radius 1.5; Footprint:1935 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Spawning Pool",
+        [1.8125],
+        "liberty UnitData:8886 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Evolution Chamber",
+        [1.8125],
+        "liberty UnitData:8444 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Roach Warren",
+        [1.8125],
+        "liberty UnitData:11765 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Baneling Nest",
+        [1.8125],
+        "liberty UnitData:9966 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Hydralisk Den",
+        [1.8125],
+        "liberty UnitData:8949 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Lurker Den",
+        [1.8125],
+        "liberty UnitData:676 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Infestation Pit",
+        [1.8125],
+        "liberty UnitData:2077 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Nydus Network",
+        [1.8125],
+        "liberty UnitData:9899 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Ultralisk Cavern",
+        [1.8125],
+        "liberty UnitData:9215 Radius 1.5; Footprint:2205 Shape 1.803; engine 1.8125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Refinery",
+        [1.6875],
+        "liberty UnitData:5776 Radius 1.5; Footprint:959 Shape 1.6772; engine 1.6875 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Assimilator",
+        [1.6875],
+        "liberty UnitData:4122 Radius 1.5; Footprint:959 Shape 1.6772; engine 1.6875 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Extractor",
+        [1.6875],
+        "liberty UnitData:8149 Radius 1.5; Footprint:959 Shape 1.6772; engine 1.6875 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Supply Depot",
+        [1.25],
+        "liberty UnitData:5663 Radius 1.25; Footprint:1950 Shape 1.1181; engine 1.25 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Missile Turret",
+        [1.125],
+        "liberty UnitData:6033 Radius 0.75; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Tech Lab",
+        [1.125],
+        "liberty UnitData:6642 Radius 1.0; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Reactor",
+        [1.125],
+        "liberty UnitData:6579 Radius 1.0; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Pylon",
+        [1.125],
+        "liberty UnitData:4335 Radius 1.0; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Photon Cannon",
+        [1.125],
+        "liberty UnitData:11052 Radius 1.0; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Shield Battery",
+        [1.125],
+        "liberty UnitData:1612 Radius 1.0; Footprint:1950 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Dark Shrine",
+        [1.5],
+        "liberty UnitData:9510 Radius 1.5; Footprint:1950 Shape 1.1181; engine 1.5 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Spine Crawler",
+        [1.125],
+        "liberty UnitData:8615 Radius 0.875; Footprint:5369 Shape 1.1181; engine 1.125 (sc2-techtree c2c90e9b56)",
+    ),
+    (
+        "Spore Crawler",
+        [1.0],
+        "floor, D-4; B-138: half our footprint; the game's 0.875 (Radius 0.875, liberty UnitData:8749; Footprint2x2Contour2 Shape 0.559, Footprint:162)",
+    ),
+    (
+        "Sensor Tower",
+        [1.0],
+        "floor, D-4; B-138: half our footprint; the game's 0.75 (Radius 0.75, liberty UnitData:9452; Footprint1x1 Shape 0.7072, Footprint:1106)",
+    ),
+    (
+        "Spire",
+        [1.5],
+        "floor, D-4; B-138: half our footprint; the game's 1.125 (Radius 1.0, liberty UnitData:9011; Footprint2x2CreepContour Shape 1.1181, Footprint:2073)",
+    ),
+    (
+        "Greater Spire",
+        [1.5],
+        "floor, D-4; B-138: half our footprint; the game's 1.125 (Radius 1.0, liberty UnitData:9082; Footprint2x2IgnoreCreepContour Shape 1.1181, Footprint:1238)",
+    ),
+];
+
+#[test]
+fn b135_structure_radii_follow_starcraft() -> TestResult {
+    check_table("structure radius", true, &SC2_STRUCTURE_RADIUS, &[], |a| {
+        [f(a.collision_radius)]
+    })
+}
+
+/// B-135: each analogue's `[Radius, Shape.Radius, E]` (liberty `UnitData` `Radius`, its
+/// footprint's `FootprintData.xml` `<Shape><Radius>`, the live engine radius of sc2-techtree).
+const SC2_STRUCTURE_ENGINE_RADIUS: [(&str, [f32; 3], &str); 49] = [
+    (
+        "Command Center",
+        [2.5, 2.6926, 2.75],
+        "liberty UnitData:10377, Footprint:2015; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Orbital Command",
+        [2.5, 2.6926, 2.75],
+        "liberty UnitData:10523, Footprint:2015; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Planetary Fortress",
+        [2.5, 2.6926, 2.75],
+        "liberty UnitData:10661, Footprint:2015; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Nexus",
+        [2.0, 2.6926, 2.75],
+        "liberty UnitData:4184, Footprint:2015; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Hatchery",
+        [2.0, 2.6926, 2.75],
+        "liberty UnitData:8208, Footprint:2261; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Lair",
+        [2.0, 2.6926, 2.75],
+        "liberty UnitData:8290, Footprint:2261; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Hive",
+        [2.0, 2.6926, 2.75],
+        "liberty UnitData:8370, Footprint:2261; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Barracks",
+        [1.75, 1.803, 1.8125],
+        "liberty UnitData:5838, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Engineering Bay",
+        [1.25, 1.803, 1.8125],
+        "liberty UnitData:5970, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Bunker",
+        [1.25, 1.803, 1.8125],
+        "liberty UnitData:6154, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Factory",
+        [1.625, 1.803, 1.8125],
+        "liberty UnitData:6238, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Ghost Academy",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9773, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Starport",
+        [1.625, 1.803, 1.8125],
+        "liberty UnitData:6371, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Armory",
+        [1.25, 1.803, 1.8125],
+        "liberty UnitData:6506, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Fusion Core",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:10915, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Gateway",
+        [1.75, 1.803, 1.8125],
+        "liberty UnitData:4394, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Forge",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:4536, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Cybernetics Core",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:10817, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Twilight Council",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:4604, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Stargate",
+        [1.75, 1.803, 1.8125],
+        "liberty UnitData:9640, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Robotics Facility",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9569, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Templar Archives",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:4667, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Robotics Bay",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9837, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Fleet Beacon",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9708, Footprint:1935; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Spawning Pool",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:8886, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Evolution Chamber",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:8444, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Roach Warren",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:11765, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Baneling Nest",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9966, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Hydralisk Den",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:8949, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Lurker Den",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:676, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Infestation Pit",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:2077, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Nydus Network",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9899, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Ultralisk Cavern",
+        [1.5, 1.803, 1.8125],
+        "liberty UnitData:9215, Footprint:2205; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Refinery",
+        [1.5, 1.6772, 1.6875],
+        "liberty UnitData:5776, Footprint:959; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Assimilator",
+        [1.5, 1.6772, 1.6875],
+        "liberty UnitData:4122, Footprint:959; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Extractor",
+        [1.5, 1.6772, 1.6875],
+        "liberty UnitData:8149, Footprint:959; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Supply Depot",
+        [1.25, 1.1181, 1.25],
+        "liberty UnitData:5663, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Missile Turret",
+        [0.75, 1.1181, 1.125],
+        "liberty UnitData:6033, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Tech Lab",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:6642, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Reactor",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:6579, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Pylon",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:4335, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Photon Cannon",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:11052, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Shield Battery",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:1612, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Dark Shrine",
+        [1.5, 1.1181, 1.5],
+        "liberty UnitData:9510, Footprint:1950; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Spine Crawler",
+        [0.875, 1.1181, 1.125],
+        "liberty UnitData:8615, Footprint:5369; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Spore Crawler",
+        [0.875, 0.559, 0.875],
+        "liberty UnitData:8749, Footprint:162; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Sensor Tower",
+        [0.75, 0.7072, 0.75],
+        "liberty UnitData:9452, Footprint:1106; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Spire",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:9011, Footprint:2073; sc2-techtree c2c90e9b56",
+    ),
+    (
+        "Greater Spire",
+        [1.0, 1.1181, 1.125],
+        "liberty UnitData:9082, Footprint:1238; sc2-techtree c2c90e9b56",
+    ),
+];
+
+/// The engine rule and the floor pin the data together (plan `2026-11-18-structure-radius`
+/// §2.2, D-4): every row's live radius `E` is `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)`, and every
+/// structure's authored radius is `max(E, min(w, h) ÷ 2)` of its own footprint, so no unsourced
+/// value can be authored.
+#[test]
+fn structure_radii_follow_the_engine_rule() -> TestResult {
+    for (analogue, [radius, shape, engine], source) in &SC2_STRUCTURE_ENGINE_RADIUS {
+        let rule = radius.max((shape * 16.0).ceil() / 16.0);
+        assert!(
+            (rule - engine).abs() < 0.001,
+            "{analogue}: max({radius}, ceil(16 * {shape}) / 16) = {rule}, live {engine} ({source})"
+        );
+    }
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut checked = 0;
+    for archetype in catalogs.units.archetypes() {
+        let sim_types::ShapeKind::BuildingDome {
+            footprint_w,
+            footprint_h,
+        } = archetype.shape
+        else {
+            continue;
+        };
+        let name = analogue(archetype);
+        let (_, [_, _, engine], source) = SC2_STRUCTURE_ENGINE_RADIUS
+            .iter()
+            .find(|(row, ..)| *row == name)
+            .ok_or_else(|| format!("{} ({name}): no engine radius row", archetype.slug))?;
+        let floor = f32::from(footprint_w.min(footprint_h)) / 2.0;
+        let authored = f(archetype.collision_radius);
+        assert!(
+            (authored - engine.max(floor)).abs() < 0.001,
+            "{} ({name}): radius {authored}, expected max({engine}, {floor}) ({source})",
+            archetype.slug
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, SC2_STRUCTURE_ENGINE_RADIUS.len());
     Ok(())
 }

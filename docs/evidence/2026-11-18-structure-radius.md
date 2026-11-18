@@ -207,3 +207,98 @@ and the muzzle field say the simulation publishes the arrival at the target's dr
 
 The client's `struck` unit tests and `sync_steady_state_tests` (8) pass; `cargo clippy -p client --lib --tests` is
 clean. The simulation is unchanged from WP2, so its matrix, battle 33, showcase and goldens are WP2's.
+
+## 4. WP4: the 5.0.14 values
+
+**Change.** The 49 `radius` values of §2.3 in `structures.ron`, each with its source comment; the four floored rows
+(Sensor Tower, Spore Crawler, Spire, Greater Spire analogues) say "floor: half the footprint (B-138)" with the game's
+value. Values per analogue: 2.75 (Command Center, Orbital Command, Planetary Fortress, Nexus, Hatchery, Lair, Hive),
+1.8125 (26 contour 3×3 buildings), 1.6875 (three geysers), 1.25 (Supply Depot), 1.125 (Missile Turret, Tech Lab,
+Reactor, Pylon, Photon Cannon, Shield Battery, Spine Crawler), 1.5 (Dark Shrine), 1 (Spore Crawler, Sensor Tower:
+floor), 1.5 (Spire, Greater Spire: floor).
+
+**Tests, red on WP3 first** (WP3 tree with WP4's tests):
+
+| Test | WP3 | WP4 |
+|---|---|---|
+| `catalog_reference_values_tests::b135_structure_radii_follow_starcraft` (49 rows) | Fails: Command Center analogue 2.5, expected 2.75 | Passes |
+| `catalog_reference_values_tests::structure_radii_follow_the_engine_rule` (49 rows `[Radius, Shape, E]`; `E` = rule; authored = `max(E, floor)`) | Fails: Command Center analogue 2.5, expected `max(2.75, 2.5)` | Passes |
+
+**Test edit (one), explained by §3 A12 / D-5.** `catalog_reference_values_tests::only_ground_units_with_a_smaller_inner_radius_author_one`
+(B-116) failed on the WP4 data: "foundry_core_dome (Command Center): unsourced terrain radius". Its loop took every
+archetype whose terrain radius is below its collision radius to be an authored unit row; since WP1 a structure's
+terrain radius is half its footprint (D-5), below its radius wherever the engine radius exceeds the half-width (45
+structures from WP4). The test now checks each structure's terrain radius equals half its footprint's smaller side
+(a stricter check, not a looser one) and keeps the unit rule and its count of 17 unchanged.
+
+**Structure-free worlds** (D-11, 2), WP2 tools against WP4 tools: matrix bit-identical (1,160 runs; expectation
+failures 0 on the seeds of record, 4 over all seeds); battle 33 `seeds.csv` byte-identical; `golden_replay_orders`
+passes unchanged. The catalog's largest radius rises from 2.5 to 2.75 (D-9) and changes nothing there.
+
+**`golden_replay` does not move** (D-11, 5, a finding): it passes unchanged in debug and release native, in
+`wasm32-wasip1` release under wasmtime and once in `wasm32-wasip1` debug. No unit of its scenario scans, aims at,
+chases or shoots a hall within the 0.25 the CC analogue's radius gained, in a way that changes a checkpoint. It is
+not re-recorded.
+
+**Showcase** (`route_trace` to the end of the match; reversals and stall give-ups per owner P0 / P1; deeper
+unit-ticks from the overlap meter). Base: the WP2 tree's own run (byte-identical to WP0, which reproduces
+structure-contact Amendment 1).
+
+| Seed | Base | WP4 | Reversals | Stall give-ups | Deeper | First divergence (`units.csv` tick) |
+|---|---|---|---|---|---|---|
+| Default | P1 at 2,193 | P1 at 2,191 | 25 / 10 → 25 / 10 | 0 / 0 → 0 / 0 | 0 / 0 | 939, P1 pulse bot 23 |
+| 1 | P1 at 2,203 | P1 at 2,200 | 23 / 10 → 23 / 10 | 0 / 0 → 0 / 0 | 0 / 0 | 957, P1 pulse bot 20 |
+| 2 | P1 at 2,187 | P1 at 2,185 | 22 / 12 → 22 / 12 | 0 / 0 → 0 / 0 | 0 / 0 | 944, P1 pulse bot 23 |
+| 3 | P1 at 1,880 | P1 at 1,886 | 22 / 15 → 22 / 15 | 1 / 0 → 0 / 0 | 0 / 0 | 925, P1 pulse bot 23 |
+| 4 | P1 at 5,688 | P1 at 5,700 | 11 / 11 → 11 / 11 | 0 / 0 → 0 / 0 | 0 / 0 | 991, P1 pulse bot 20 |
+| 5 | P1 at 1,593 | P1 at 1,580 | 22 / 20 → 22 / 20 | 1 / 0 → 0 / 0 | 0 / 0 | 895, P1 rhino beetle 26 |
+| 6 | P1 at 3,419 | P1 at 3,419 | 19 / 23 → 19 / 23 | 0 / 0 → 0 / 0 | 0 / 0 | 964, P1 pulse bot 23 |
+| 7 | P0 at 2,554 | P0 at 2,552 | 11 / 10 → 11 / 10 | 0 / 0 → 0 / 0 | 0 / 0 | 1,007, P0 pulse bot 4 |
+| 8 | P1 at 1,716 | P1 at 1,712 | 40 / 14 → 40 / 14 | 0 / 0 → 0 / 0 | 0 / 0 | 907, P1 rhino beetle 25 |
+
+**No winner flips; acceptance (D-11, 4) holds** on the default seed: same winner (player 1), 0 deeper unit-ticks,
+stall give-ups 0 / 0 (bound base + 1), reversals unchanged (bound base + 10), the match ends. The 1,800-tick run
+differs from tick 939 on, as the run to the end does.
+
+**Trace of the first divergence (default seed).** The lane fight runs from tick 348 to 634 (unit counts in
+`units.csv`); by tick 801 player 0 has 2 units left and player 1 six, marching on player 0's hall (Command Center
+analogue at cells 6 to 10, centre (8.5, 8.5)). At `units.csv` tick 938 player 1's pulse bot 23 (radius 0.375, scan
+5.5) stands at (16.5005, 11.5281), 8.554 from the hall's centre: beyond the old scan reach 5.5 + 0.375 + 2.5 = 8.375,
+within the new 5.5 + 0.375 + 2.75 = 8.625. It acquires the hall (reader **A1**, the scan qualification of
+`scan_candidates`), drops its route on tick 939 instead of 941, and the hall first loses vitals two ticks earlier
+(944 instead of 946, counted in steps). Every seed is the same: the first divergence is the first tick a unit
+acquires an enemy hall, after the armies met, two ticks earlier than on the base.
+
+**Control run** (D-11, 3): the WP4 tools on a scratch copy of `assets/` with only the Command Center row reverted to
+2.5 (`route_trace --assets ~/scratch/structure-radius/assets-ctl`): `units.csv` byte-identical to the base on the
+default seed and seeds 1 to 8. The CC analogue's radius alone moves the showcase; the other 44 changed rows and the
+wider query bound move nothing. (Note: `route_trace` reads the catalogs from the assets directory at run time, so a
+control needs `--assets`, not a rebuilt binary.)
+
+**Seeds 3 and 4 end later (6 and 12 ticks), explained.** The plan expected every hall kill to come earlier or at the
+same tick. A scratch trace (`~/scratch/structure-radius/scripts/scratch_hall_trace.rs`, a temporary example not
+committed) reports per run the step a unit first targets an enemy hall, the step the hall first loses vitals and
+the end, with and without the weapons' random firing delays (`sim_fixtures::without_random_delays`):
+
+| Seed | Targeted, 2.5 → 2.75 | First damage, 2.5 → 2.75 | End, 2.5 → 2.75 | End without random delays, 2.5 → 2.75 |
+|---|---|---|---|---|
+| Default | 942 → 940 | 946 → 944 | 2,193 → 2,191 | 2,130 → 2,129 |
+| 1 | 960 → 958 | 964 → 962 | 2,203 → 2,200 | 2,130 → 2,129 |
+| 2 | 947 → 945 | 951 → 949 | 2,187 → 2,185 | 2,130 → 2,129 |
+| 3 | 928 → 926 | 932 → 930 | 1,880 → 1,886 | 2,130 → 2,129 |
+| 4 | 994 → 992 | 998 → 996 | 5,688 → 5,700 | 2,130 → 2,129 |
+| 5 | 898 → 896 | 906 → 904 | 1,593 → 1,580 | 2,130 → 2,129 |
+| 6 | 967 → 965 | 971 → 969 | 3,419 → 3,419 | 2,130 → 2,129 |
+| 7 | 1,010 → 1,008 | 1,014 → 1,012 | 2,554 → 2,552 | 2,130 → 2,129 |
+| 8 | 910 → 908 | 918 → 916 | 1,716 → 1,712 | 2,130 → 2,129 |
+
+On every seed the hall is targeted and first damaged two steps earlier. Without random delays the seed no longer
+matters, and the hall falls one step sooner. The random delay of each weapon release is drawn from the world's one
+seeded RNG in release order; an engagement two ticks earlier shifts which release draws which delay, so the hall's
+remaining life is dealt over a reshuffled sequence of delays, and the end moves by a few ticks either way (−13 to
++12). The rule's own effect is earlier or equal; the later ends are this reshuffle, not a defect (no pursuit fails
+its band, no unit oscillates at a face, no hit lands from beyond `E + r + range`: reversals and give-ups do not rise).
+
+The whole `sim_core` suite passes on WP4 (951 tests) with the one test edit above; none of the plan's "expected test
+edits" (`combat_correctness_tests`, `target_selection_tests`, `attack_dash_tests`, `load_orders_tests`,
+`transport_ownership_tests`, `full_match_tests`, `match_result_tests`, `effect_snapshot_tests`) needed a change.
