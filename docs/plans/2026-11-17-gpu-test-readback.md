@@ -861,3 +861,28 @@ Radv POLARIS10, Mesa 25.0.7, built from `63566e1b`; the build after the server's
    The children's own run time, which excludes lock waits and cargo, is lower under KWin (1400 and 1125 s against
    1472 and 1591 s, about 16 % less on average). That direction matches WP1, but the load makes the size
    unreliable. A clean figure needs a rerun on a quiet host, after the terrain fix.
+
+## Amendment 3 (orchestrator, 2026-11-18): the terrain preview's screen size; timings move to WP4
+
+**`terrain_tests` under KWin (short note, test-only, charter §6).** `test_terrain_preview_renders` asks for a
+1600×900 window. It calls `gpu_run::virtual_gpu_command` without a screen size, and only passed on Xvfb because
+Xvfb never resizes X windows. KWin's default 1280×720 output shrinks the window, and the test's own check
+(`terrain_tests.rs`, "Image width must be 1600") catches it.
+
+**Fix.** The test asks for its screen explicitly, `Some("1600x900x24")`, through `virtual_gpu_command_with`, as
+`editor_app_tests` does.
+
+**Audit.** Every windowed GPU test whose window is larger than 1280×720 states its screen size. The harness then
+refuses a KWin child whose requested window exceeds its output, with a message naming the missing size, instead
+of letting the compositor shrink it silently. A unit test covers that refusal. No assertion or bar changes.
+
+**Tested by.** `terrain_tests` passes on radv under KWin and under Xvfb (forced), and T-4 is rerun under KWin on
+all 19 windowed targets.
+
+**Timings.** The four interleaved rounds ran while another user's build loaded the host (load 7 to 270 on 16
+cores). Per-target times varied up to 30× within one display, so they give no reliable figure. They are recorded
+as they are (Amendment 2): the children's run time was about 16 % lower under KWin. The merge does not wait for a
+quiet host. The display path is accepted on correctness: T-1, T-2, T-4, the KWin safety tests and bit-identical
+pictures. WP4's per-gate ledger then measures the real lane time on every gate run, which, over many runs, is a
+better figure than one quiet window. `showcase_tests`' one failure in KWin round 2 waited 290 s for a GPU lock
+another user held. It is not a display fault, and it is recorded.
