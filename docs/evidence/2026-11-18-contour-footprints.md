@@ -814,3 +814,21 @@ Footprint:1239  <Offsets value="1,-0.5;0.5,-1;-0.5,-1;-1,-0.5;-1,0.5;-0.5,1;0.5,
 The control runs are in §6e (controls (a) and (b)) and the corner-gap property's table in §3b
 (`a_diagonal_contour_gap_admits_exactly_the_discs_that_fit`, `8t² ≤ 1`). The mesh rebuild of the 24-structure row is
 in §3b: 11,125 µs square against 11,341 µs contour (+2 %), below the 25 % bar, so no profile was needed.
+
+**Throughput** (`cargo bench -p sim_core --bench throughput`, release, each run under `flock ~/scratch/gate.lock`,
+base `main` `739ca6ea` against the candidate `a7ef86fc`, alternated over three rounds; ticks per second, each run's
+median of 3, and the median of the three rounds). The shared machine was loaded by another agent's GPU tests
+throughout: base round 1 ran under that load, and base round 3 (rerun after its first try lost its assets) shows it
+on the showcase and caster rows.
+
+| Scenario | Base rounds | Base | Candidate rounds | Candidate |
+|---|---|---:|---|---:|
+| 64x64, 0 units | 2,066 / 3,242 / 3,155 | 3,155 | 3,276 / 3,236 / 3,267 | 3,267 |
+| 64x64, 100 | 472 / 947 / 745 | 745 | 944 / 955 / 949 | 949 |
+| 64x64, 400 | 158 / 162 / 154 | 158 | 164 / 165 / 143 | 164 |
+| 128x128, 400 | 91 / 192 / 185 | 185 | 192 / 195 / 184 | 192 |
+| 256x256, 0 | 134 / 206 / 192 | 192 | 205 / 206 / 197 | 205 |
+| showcase_canyon, 400 | 119 / 121 / 85 | 119 | 120 / 124 / 114 | 120 |
+| 64x64, 67 casters, 400 | 219 / 233 / 164 | 219 | 238 / 237 / 216 | 237 |
+
+Every scenario stays far above 25 ticks per second; the candidate is not slower than the base on any row.
