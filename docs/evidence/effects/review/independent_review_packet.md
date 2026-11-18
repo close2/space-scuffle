@@ -7,6 +7,43 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## Identity WP5/WP7, round 2 (the conditions of `independent_review_identity_2.md`)
+
+Branch `effects-identity-looks`; plan Amendments 4 and 5, "Review round 1". Pictures on radv, debug build, Xvfb
+1280x720, at the battle camera's default zoom. Please write your review to `independent_review_identity_3.md`.
+
+| Finding | Answer |
+|---|---|
+| R2-1 (condition): the steady beam has no per-strike accent at 1:1 | `beam_burn` and `lance_burn` gain a bright 0.14 s flare on the target's rim with each strike. The held structure is unchanged (no pulse per strike) and the core has no flicker. See [identity_wp7_beam_strikes_radv.png](identity_wp7_beam_strikes_radv.png). Top: frames 13 to 24 of a stream at 1:1, 96 px round the beam's end, with strikes on frames 15 and 23. Bottom, 3x: the frame before a strike, the strike (the flare), the frame after, and the frame before the next |
+| R2-2: the 64-slot cap; refusals | The table is sized at load: `MAX_PLAYERS × supply cap / the cheapest beam unit's cost × its sustained weapons` (800 shipped), limited to a quarter of the effect pool (512 shipped). A hold the effect pool refuses is now counted with a full table's. Both appear in the effect-stress diagnostics (`beams_refused`, `beams_capacity`) beside the runtime's refusals |
+| R2-3: beams vanish at battle speed 0 | Deadlines run on the presented battle clock, so pause and presentation hitches freeze them; no erosion while paused and no second onset on resume (unit test) |
+| R2-4, R2-5, R2-6 | No change |
+| R2-7: a strike with no line | Taken, holds nothing (unit test) |
+| Note: the rim alone, late | [identity_wp5_fungal_late_radv.png](identity_wp5_fungal_late_radv.png): six consecutive frames at 1:1 after the ground stain has faded, and the victims at 3x |
+| Note: the fog-edge stain cut along fog cells | Registered as B-132 in `DESIGN.md` §4, not fixed here |
+
+**Measured (radv).**
+
+| Check | Result | Bar |
+|---|---|---|
+| Held beam: beams held / live through the stream | 1 / 1 on all 40 frames | 1 |
+| Held beam: end against the drawn target's outline point | 0.00 px, while the end travelled 163 px | 3 px |
+| Held beam: mid-stream pair, pixels along the path / within 3 px of its end | 653 / 19 | over 20 / over 0 |
+| After the death: live instances after exit + 1 frame; pixels on the former path | none; 0 | none; 0 |
+| Fungal victims wearing the named look from 0.4 s, over the whole status | 4 of 4, 62 frames each | every frame |
+| Storm stand-in victims | no named look, rim 0 | none |
+| Fungal impact centre; fog edge | 1.37 px; 0 of 357 unseen changed | 2 px; 0 |
+| Valgrind effect stream with held beams | window difference 0 | its baseline (0) |
+
+**Points to look at.**
+
+1. Is the per-strike flare enough life at 1:1, or should the held core also flicker?
+2. A burn is laid where its strike landed. On a fast-walking target its 0.46 s body stays a few pixels behind the
+   moving contact point (the purple dot right of the target in the strike sheet's top row). This has been the burns'
+   behaviour since WP11. Should the burn follow its target as the beam does?
+3. The beam look is lent to a presentable shooter in the test world only, with the Void-Ray analogue's cadence; no
+   shipped beam unit has media.
+
 ## Identity WP5/WP7 (plan `2026-11-17-effect-snapshot-identity`, B-122 and B-126)
 
 Plan: [`docs/plans/2026-11-17-effect-snapshot-identity.md`](../../../plans/2026-11-17-effect-snapshot-identity.md)

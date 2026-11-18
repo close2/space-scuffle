@@ -822,6 +822,18 @@ section "Identity WP5/WP7").
 The first radv run failed E1-3 (223 of 357 unseen samples changed): the storm stand-in's caster stood out of range and
 walked, moving the viewer's sight over the fog edge. It now stands within the ability's range; no bar was changed.
 
+**Review round 1 (2026-11-18; `independent_review_identity_2.md`, accepted).** The Fungal affliction was accepted.
+Two notes are answered here, and neither changes WP5's code:
+
+- *A late frame.* The Fungal child now pictures 5.0 s from the casts instead of 3.6 s, so it covers the whole status
+  and its look's exit. `identity_wp5_fungal_late_radv.png` shows six consecutive 40 ms frames at 1:1 after the ground
+  stain has faded, with only the victims' rims left, and the same victims at 3x. On radv each victim bears the status
+  on 71 frames and wears the named look on every one of the 62 frames from 0.4 s on. The impact centre is still
+  1.37 px from the aimed point, and the fog edge still changes 0 of 357 unseen samples. No bar was changed.
+- *The fog-edge stain cut along fog cells* (window x 975 to 1035, y 310 to 380 in
+  `identity_wp5_fungal_window_radv.png`) is outside this plan's diff. It is registered as **B-132** in `DESIGN.md`
+  §4 and is not fixed here.
+
 ## Amendment 5: WP7 as built (2026-11-17, short note, charter §6)
 
 WP7 (B-126) is on branch `effects-identity-looks` (commits `9dfaaf34`, `963b9a80`, `68587cda` and this note). Client and data
@@ -892,3 +904,46 @@ shows its pulses as it comes on and then holds steady, its core scrolling. This 
 | Valgrind effect stream with held beams, retargets and dead targets | window difference 0 (baseline 0) |
 | `sync_steady_state_tests` combat streams | pass |
 | Whole binaries on radv: `area_link_gpu_tests` (3), `status_gpu_tests` (3, not re-baselined), `weapon_battle_gpu_tests` (the family waves and the held beam) | pass; the waves' first run waited out the GPU lock (held 290 s by another user) and passed on the rerun with bars unchanged. In the waves `prism_beam` and `lance_beam` are lent to a hitscan shooter, so they are not held there: impact 94 px against a need of 46, and 136 against 44 |
+
+**Review round 1 (2026-11-18; `independent_review_identity_2.md`, accepted with conditions).** Branch
+`effects-identity-looks`; the packet section "Identity WP5/WP7, round 2" answers each finding.
+
+- **R2-1 (condition): the steady beam's per-strike accent.** `beam_burn` and `lance_burn` each gain a first layer: a
+  bright `Critical` flare of the beam's own ramp, 0.6 of the struck unit's scale, over 0.14 s (`flash` curve), on the
+  target's rim where the strike lands. The held beam keeps its structure: no pulse per strike, and the body is still
+  held steady. The held core gets no flicker; the flare is the per-strike accent. To show it at 1:1, the held-beam GPU
+  child lends the cadence of the shipped beam weapon with the shortest period (9 ticks, the Void-Ray analogue's)
+  together with its look. It now records each frame's youngest burn and pictures a 96 px crop round the beam's end on
+  every frame from the 4th to the 19th of the stream. On radv strikes landed on frames 15 and 23 (burn age 0.00).
+  `identity_wp7_beam_strikes_radv.png` shows frames 13 to 24 at 1:1 and, at 3x, the frame before a strike, the
+  strike, the frame after, and the frame before the next.
+- **R2-2: the table's size and its refusals.** `HeldBeams::capacity_for(units, effects)` sizes a battle's table at
+  load (`load_effect_catalog`). The catalog bound is `MAX_PLAYERS × STANDARD_SUPPLY_CAP / supply cost × sustained
+  weapons`, taking the largest beam unit type; the shipped catalog's cheapest beam units cost 2 supply, which gives
+  800. The table is then limited to a quarter of the effect pool (`budget.effects / 4`, 512 shipped), because every
+  held beam is a live effect instance. A table made without a catalog keeps `HELD_BEAMS` (64). A strike that
+  `EffectRuntime::hold` cannot place (pool full) is now refused and counted, as a full table is. The effect-stress
+  diagnostics (`StressSummary::beams_refused`, `beams_capacity`, printed in the frame-budget report's effect-stress
+  line next to the runtime's refusals) report it. `the_table_is_sized_from_the_catalog_and_the_budget` and
+  `a_full_effect_pool_refuses_and_counts` test both. The valgrind beam stream's fixture pool (64 effects) is at
+  times full when a dead-target beam is struck. Its check therefore allows those refusals, at most one per planted
+  dead-target strike, where it allowed none before (R2-2 now counts them); the window difference is still 0.
+- **R2-3: pause.** Deadlines run on the presented battle clock (`beams::battle_seconds` of
+  `BattleFrameState::presented_instant`), not on `Time<Virtual>`. A paused battle (speed 0) or a presentation that
+  waits for a tick therefore freezes them, as every other held look's facts freeze. A channelling beam neither erodes
+  while paused nor replays its onset on resume. Its onset and exit still run on `Time<Virtual>`.
+  `a_paused_battle_freezes_the_beam_and_resumes_it_without_a_new_onset` checks this: ten seconds of effect time
+  paused, the same beam afterwards, one hold in all, and release a period and the grace of battle time after the
+  last strike.
+- **R2-7.** A strike without a travel line is taken but holds nothing; the next strike with a line holds the beam
+  (`a_strike_without_a_line_holds_no_beam_at_the_origin`).
+- *Seen in the strike sequence, open:* a burn is a `Point` effect laid where the strike landed. On a target that walks
+  fast, its 0.46 s body therefore stays behind the moving contact point for a few frames (the purple dot right of the
+  target in `identity_wp7_beam_strikes_radv.png`). This is the burns' behaviour since WP11, not a held-beam change. A
+  burn that follows its target would hold it as the beam is held; that is left to the review.
+
+*Evidence, round 2 (radv).* Held beam: one beam and one live instance on all 40 frames; end 0.00 px from the target's
+outline point while it travelled 163 px; mid-stream pair 653 px along the path and 19 px within 3 px of its end;
+after the death no live instance and 0 px on the former path. Valgrind: effect stream window difference 0 (baseline
+0). `weapon_look_tests` 18, `effect_catalog_tests` 39, `client_diagnostics` lib 117, the `beams` unit tests,
+`cargo gate quick` GREEN, `clippy -p client -p client_diagnostics --all-targets -D warnings` clean.
