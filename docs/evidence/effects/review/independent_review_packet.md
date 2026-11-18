@@ -38,9 +38,10 @@ Branch `effects-identity-looks`; plan Amendments 4 and 5, "Review round 1". Pict
 **Points to look at.**
 
 1. Is the per-strike flare enough life at 1:1, or should the held core also flicker?
-2. A burn is laid where its strike landed. On a fast-walking target its 0.46 s body stays a few pixels behind the
-   moving contact point (the purple dot right of the target in the strike sheet's top row). This has been the burns'
-   behaviour since WP11. Should the burn follow its target as the beam does?
+2. A burn is laid where its strike landed. On a fast-walking target its 0.46 s body stays about 36 px behind the
+   moving contact point by the time the next strike lands (the purple dot right of the target in the strike sheet's
+   top row; measured by review round 2, R3-1). This has been the burns' behaviour since WP11. Should the burn follow
+   its target as the beam does? (Answered in review round 2: yes; fixed, see plan Amendment 5, "Review round 2".)
 3. The beam look is lent to a presentable shooter in the test world only, with the Void-Ray analogue's cadence; no
    shipped beam unit has media.
 

@@ -938,12 +938,43 @@ shows its pulses as it comes on and then holds steady, its core scrolling. This 
 - **R2-7.** A strike without a travel line is taken but holds nothing; the next strike with a line holds the beam
   (`a_strike_without_a_line_holds_no_beam_at_the_origin`).
 - *Seen in the strike sequence, open:* a burn is a `Point` effect laid where the strike landed. On a target that walks
-  fast, its 0.46 s body therefore stays behind the moving contact point for a few frames (the purple dot right of the
-  target in `identity_wp7_beam_strikes_radv.png`). This is the burns' behaviour since WP11, not a held-beam change. A
-  burn that follows its target would hold it as the beam is held; that is left to the review.
+  fast, its 0.46 s body therefore stays behind the moving contact point, about 36 px by the next strike (review round
+  2, R3-1; the purple dot right of the target in `identity_wp7_beam_strikes_radv.png`). This is the burns' behaviour
+  since WP11, not a held-beam change. Fixed in review round 2 (below).
 
 *Evidence, round 2 (radv).* Held beam: one beam and one live instance on all 40 frames; end 0.00 px from the target's
 outline point while it travelled 163 px; mid-stream pair 653 px along the path and 19 px within 3 px of its end;
 after the death no live instance and 0 px on the former path. Valgrind: effect stream window difference 0 (baseline
 0). `weapon_look_tests` 18, `effect_catalog_tests` 39, `client_diagnostics` lib 117, the `beams` unit tests,
 `cargo gate quick` GREEN, `clippy -p client -p client_diagnostics --all-targets -D warnings` clean.
+
+**Review round 2 (2026-11-18; `independent_review_identity_3.md`, accepted with conditions).**
+
+- **R3-1 (condition): a held beam's burns follow its end.** There were two candidate designs. One keeps the burns in
+  the held-beam table. The other anchors every `Point` impact that names `StrikeEnds` to its struck bubble while that
+  bubble is presented. The table was chosen. It is the only place that already knows the beam's end on the frame it
+  is drawn, and it already holds one slot per beam. It changes no other weapon's impacts: a projectile's or a blow's
+  hit stays where it landed, as the game draws it. It needs no per-impact lookup either.
+  - Each `BeamSlot` keeps the handles of its last two strikes' burns (`burns: [Option<EffectHandle>; 2]`). Two,
+    because a burn (0.46 s shipped) outlives the next strike (0.36 s).
+  - The event wiring hands the burn it spawns for a held beam's strike to `HeldBeams::attach_burn`.
+  - Every frame, `keep` moves both burns to the beam's end (`line.to`, the target's outline point) with the new
+    `EffectRuntime::move_anchor`, on the same frame and geometry as the line. A burn that has ended drops its stale
+    handle.
+  - No allocation, and no search beyond the slot's own binary search. Older burns and the burns of a released beam
+    stay where they last were.
+  - Tests: unit test `a_held_beams_burns_follow_its_end`. The held-beam GPU child records the youngest burn's
+    projected centre every frame, and the parent requires it within 3 px of the beam's end on every frame of the
+    stream with a burn.
+  - On radv: 0.00 px over 40 frames (was about 36 px by the next strike). The other measurements are unchanged: end
+    0.00 px, mid-stream pair 656 / 20 px, nothing left after the death.
+  - `identity_wp7_beam_burn_follows_radv.png` shows the same 1:1 sequence and 3x frames as round 2, with no burn left
+    behind.
+- **R3-2: the table-size test is exact.** `the_table_is_sized_from_the_catalog_and_the_budget` now computes the
+  catalog bound on its own and pins it for the shipped data: 8 × 200 / 2 × 1 = 800. It asserts the table is the
+  smaller of that and the pool share (512). With a pool of a million effects the bound wins (800). With every
+  `sustain` removed the size is 0.
+- **R3-3:** the Fungal child's fourth count is now the named status looks held, not the kind-keyed look that WP5
+  removed and that always printed 0. The parent asserts at least one per Fungal victim, and checks from the vocabulary
+  that no look is keyed on `DamageOverTime`. Its fog-edge message is joined without the run of spaces.
+- **R3-4:** no change.
