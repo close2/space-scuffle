@@ -355,8 +355,7 @@ scenario far above 25 ticks per second. `DESIGN.md` §5 is unchanged.
 
 B-135 removed from the register as fixed; B-138 stays open (with B-134). The Combat row says ranges to and from a
 structure measure to its engine radius while its dome is drawn at its footprint, and lists
-`structure_radius_tests.rs`. Structure-contact Amendment 2 corrects its §2.2 bullet. This plan's row is `Done`, with
-the WP5 renders pending.
+`structure_radius_tests.rs`. Structure-contact Amendment 2 corrects its §2.2 bullet. This plan's row is `Partly done` until the WP5 renders are made.
 
 ## 7. Merge of main `477c740e`
 
