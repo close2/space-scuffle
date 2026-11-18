@@ -1,4 +1,5 @@
-//! A real showcase take on the test GPU, rendered twice and compared byte for byte.
+//! Real showcase takes on the test GPU: the smoke take rendered twice and compared byte for byte,
+//! and the effects take checked for the effects its scenes ask for.
 //!
 //! # Responsibility
 //! Plan `docs/plans/2026-11-05-ci-showcase-video.md`, WP2 test 1: a smoke storyboard (480×270, four
@@ -8,10 +9,19 @@
 //! identical ticks, checksums and BLAKE3 hashes; the mezzanine must decode to 16 frames of 480×270,
 //! none of them uniform; the manifest must name the adapter the harness saw.
 //!
+//! Plan `docs/plans/2026-11-09-effect-visualization.md`, WP14 (Amendment 31): the shipped
+//! storyboard's take whose scenes ask for effects is rendered small and fast (480×270, every
+//! moving scene at 4× so the child fits the harness's run limit; the effects spawned depend on the
+//! simulated ticks, not on the frame step) and its manifest must list, for every scene, each
+//! effect the scene asks for. The take itself fails when one is missing, so the check is made
+//! twice: by the take's exit and by the test reading the manifest.
+//!
 //! # Invariants
 //! - The children render through the harness, which takes the shared lock on `radv` (charter §7,
 //!   C21); this process builds no render device.
 //! - The storyboard is written to a temporary directory, never under `assets/`.
+//! - No effect or unit is named here: the effects take and its asked-for effects come from the
+//!   shipped storyboard (C5).
 
 #![allow(
     clippy::expect_used,
@@ -32,6 +42,8 @@
 mod gpu_run;
 
 use client_diagnostics::showcase::recorder::TakeManifest;
+use client_diagnostics::showcase::storyboard::{Length, Speed, Storyboard};
+use client_diagnostics::showcase::DEFAULT_STORYBOARD;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -82,6 +94,16 @@ fn render(
     out: &Path,
     label: &str,
 ) -> Result<(TakeManifest, gpu_run::GpuRun), Box<dyn Error>> {
+    render_take(storyboard, "smoke", out, label)
+}
+
+/// Renders take `take` of `storyboard` into `out` through the harness and returns its manifest.
+fn render_take(
+    storyboard: &Path,
+    take: &str,
+    out: &Path,
+    label: &str,
+) -> Result<(TakeManifest, gpu_run::GpuRun), Box<dyn Error>> {
     let mut command = gpu_run::virtual_gpu_command_on_screen(
         Path::new(env!("CARGO_BIN_EXE_showcase")),
         Some("1280x720x24"),
@@ -93,7 +115,7 @@ fn render(
         .arg(storyboard)
         .args([
             "--take",
-            "smoke",
+            take,
             "--revision",
             "0123456789abcdef",
             "--revision-date",
@@ -103,7 +125,7 @@ fn render(
         .arg(out);
     let run = command.run(label);
     eprintln!("{label} took {:.1} s", run.run_time.as_secs_f64());
-    let manifest = TakeManifest::load(&TakeManifest::path(out, "smoke"))?;
+    let manifest = TakeManifest::load(&TakeManifest::path(out, take))?;
     Ok((manifest, run))
 }
 
@@ -186,5 +208,92 @@ fn showcase_smoke_take_is_byte_reproducible() -> Result<(), Box<dyn Error>> {
             "frame {index} of the mezzanine is not the frame read back"
         );
     }
+    Ok(())
+}
+
+/// The fast battle speed of the cut-down effects take: ticks per frame.
+const FAST: u32 = 4;
+
+/// The shipped storyboard cut down to its one take whose scenes ask for effects, at 480×270, with
+/// every moving scene at [`FAST`] over the same ticks (a paused scene is one frame long); returns
+/// it with that take's name.
+fn effects_storyboard() -> Result<(Storyboard, String), Box<dyn Error>> {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let mut storyboard = Storyboard::load(&assets.join(DEFAULT_STORYBOARD))?;
+    let take = storyboard
+        .takes
+        .iter()
+        .find(|take| take.scenes.iter().any(|scene| !scene.effects.is_empty()))
+        .ok_or("the shipped storyboard has a take whose scenes ask for effects")?
+        .clone();
+    let name = take.name.clone();
+    storyboard.resolution = SMOKE_SIZE;
+    storyboard.takes = vec![take];
+    for scene in &mut storyboard.takes[0].scenes {
+        match scene.speed {
+            Speed::Paused => scene.length = Length::Frames(1),
+            Speed::Speed(speed) => {
+                let scale = |frames: u32| (frames * speed).div_ceil(FAST).max(1);
+                scene.length = match scene.length {
+                    Length::Frames(frames) => Length::Frames(scale(frames)),
+                    Length::UntilCombat { min, max } => Length::UntilCombat {
+                        min: scale(min),
+                        max: scale(max),
+                    },
+                };
+                scene.speed = Speed::Speed(FAST);
+                scene.badge = Some("x4".to_owned());
+            }
+        }
+    }
+    // The teaser and the poster may name scenes of the other takes; keep one frame of this one's.
+    let first = storyboard.takes[0].scenes[0].name.clone();
+    storyboard.teaser.cuts.truncate(1);
+    for cut in &mut storyboard.teaser.cuts {
+        cut.scene.clone_from(&first);
+        cut.first = 0;
+        cut.frames = 1;
+        cut.from_end = false;
+    }
+    storyboard.poster.scene = first;
+    storyboard.poster.frame = 0;
+    Ok((storyboard, name))
+}
+
+#[test]
+fn the_effects_take_shows_every_effect_its_scenes_ask_for() -> Result<(), Box<dyn Error>> {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let (storyboard, take) = effects_storyboard()?;
+    let work = tempfile::tempdir()?;
+    let path = work.path().join("effects.ron");
+    std::fs::write(
+        &path,
+        ron::ser::to_string_pretty(&storyboard, ron::ser::PrettyConfig::default())?,
+    )?;
+    let out = work.path().join("take");
+    let (manifest, _) = render_take(&path, &take, &out, "showcase effects take")?;
+    assert!(manifest.complete, "{:?}", manifest.failure);
+    let mut asked = 0;
+    for scene in &storyboard.takes[0].scenes {
+        let record = manifest
+            .scene(&scene.name)
+            .ok_or_else(|| format!("scene `{}` was not rendered", scene.name))?;
+        eprintln!(
+            "scene `{}`: {} frames from tick {}, showed {:?}",
+            scene.name, record.frames, record.start_tick, record.effects
+        );
+        for effect in &scene.effects {
+            asked += 1;
+            assert!(
+                record.effects.contains(effect),
+                "scene `{}` asks for `{effect}` and showed {:?}",
+                scene.name,
+                record.effects
+            );
+        }
+    }
+    assert_ne!(asked, 0, "the effects take asks for effects");
     Ok(())
 }

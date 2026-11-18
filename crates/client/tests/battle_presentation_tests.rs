@@ -32,7 +32,8 @@ fn remap_order_slots(orders: &mut [BattleInitialOrder], from: u8, to: u8) {
                 remap(player_slot);
                 remap(target_player_slot);
             }
-            BattleInitialOrder::AttackMoveToCell { player_slot, .. } => remap(player_slot),
+            BattleInitialOrder::AttackMoveToCell { player_slot, .. }
+            | BattleInitialOrder::EnterModes { player_slot } => remap(player_slot),
         }
     }
 }

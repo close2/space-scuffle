@@ -17,8 +17,8 @@
 //!
 //! # How it fits
 //! Added by [`super::run`] only when `--effect-stress` or `--capture` is given; a plain run is
-//! unchanged. Statuses and areas are not streamed: the effect framework draws neither yet
-//! (plan WP9, WP10).
+//! unchanged. With `--effect-mix`, [`super::effect_mix`] adds shots, deaths, areas, tethers,
+//! missiles and held unit looks next to the splashes (plan WP14).
 //!
 //! # Invariants
 //! - No effect, unit or weapon is named here: the sources come from the catalogs.
@@ -70,7 +70,8 @@ pub struct StressSource {
 }
 
 /// The weapon of `archetype` in `key`'s slot, or the override of `key`'s mode.
-fn weapon_of(archetype: &UnitArchetype, key: WeaponKey) -> Option<&WeaponSpec> {
+#[must_use]
+pub fn weapon_of(archetype: &UnitArchetype, key: WeaponKey) -> Option<&WeaponSpec> {
     match (key.mode, key.slot) {
         (Some(mode), WeaponSlot::Air) => archetype
             .modes
@@ -171,6 +172,8 @@ pub struct StressConfig {
     pub capture_tick: u32,
     /// Consecutive frames captured from that frame on, at least 1.
     pub capture_frames: u32,
+    /// The "every effect" mix next to the splash stream (`--effect-mix`), if asked for.
+    pub mix: Option<super::effect_mix::MixConfig>,
 }
 
 /// What the stress mode did, for the report.
@@ -209,6 +212,16 @@ pub struct StressSummary {
     pub beams_capacity: u64,
     /// The captured frame, if any.
     pub capture: Option<CaptureSummary>,
+    /// What the "every effect" mix did (`--effect-mix`), if it ran.
+    #[serde(default)]
+    pub mix: Option<super::effect_mix::MixSummary>,
+    /// Every effect of the vocabulary, in id order (with `--effect-mix`).
+    #[serde(default)]
+    pub effect_names: Vec<String>,
+    /// Instances spawned or held per effect over the whole run, in id order (with
+    /// `--effect-mix`).
+    #[serde(default)]
+    pub spawned_per_effect: Vec<u32>,
 }
 
 /// The stressed frame that was captured.
@@ -314,12 +327,27 @@ impl EffectStress {
         self.handle.update(|summary| summary.sources = lines);
     }
 
-    /// Publishes the counters (no allocation).
+    /// Publishes the counters; with the mix, also its section and the spawn count of every
+    /// effect (in place, so no allocation once the lists have their size).
     fn publish_counters(
         &self,
         runtime: Option<&EffectRuntime>,
         beams: Option<&client::effects::beams::HeldBeams>,
+        mix: Option<&super::effect_mix::EffectMix>,
     ) {
+        if let Some(mix) = mix {
+            self.handle.update(|summary| {
+                match &mut summary.mix {
+                    Some(section) => section.clone_from(&mix.summary),
+                    None => summary.mix = Some(mix.summary.clone()),
+                }
+                if let Some(runtime) = runtime {
+                    summary
+                        .spawned_per_effect
+                        .clone_from(&runtime.spawned_per_effect);
+                }
+            });
+        }
         let stats = runtime.map_or_default(|runtime| runtime.stats);
         let (beams_refused, beams_capacity) = beams.map_or((0, 0), |beams| {
             (
@@ -345,6 +373,9 @@ impl EffectStress {
 
 /// Adds the stress mode to `app` and returns the handle its report section leaves through.
 pub fn install(app: &mut App, config: StressConfig) -> StressHandle {
+    if let Some(mix) = config.mix {
+        super::effect_mix::install(app, mix);
+    }
     let stress = EffectStress::new(config);
     let handle = stress.handle.clone();
     app.insert_resource(stress)
@@ -466,6 +497,14 @@ fn spawn_stress_events(
                 sources.len()
             );
             stress.publish_sources(&sources);
+            if stress.config.mix.is_some() {
+                let names = effects
+                    .effects
+                    .iter()
+                    .map(|effect| effect.name.clone())
+                    .collect();
+                stress.handle.update(|summary| summary.effect_names = names);
+            }
             stress.sources = Some(sources);
         }
     }
@@ -531,8 +570,9 @@ fn capture_stressed_frame(
     runtime: Option<Res<'_, EffectRuntime>>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
     beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
+    mix: Option<Res<'_, super::effect_mix::EffectMix>>,
 ) {
-    stress.publish_counters(runtime.as_deref(), beams.as_deref());
+    stress.publish_counters(runtime.as_deref(), beams.as_deref(), mix.as_deref());
     let Some(path) = stress.config.capture.clone() else {
         return;
     };

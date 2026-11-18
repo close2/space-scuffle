@@ -40,6 +40,7 @@
 //! - A run whose environment contradicts its declared display path writes nothing.
 
 pub mod display;
+pub mod effect_mix;
 pub mod effect_stress;
 pub mod fixture;
 pub mod recorder;
@@ -105,6 +106,12 @@ pub struct FrameBudgetOptions {
     /// presentation block names a splash effect ([`effect_stress`]).
     #[arg(long, value_name = "PER_SECOND")]
     pub effect_stress: Option<u32>,
+    /// With `--effect-stress`: every kind of look, not only splashes (plan
+    /// `2026-11-09-effect-visualization` §10.3 and WP14): as many shots and blows a second as
+    /// splashes, a tenth as many deaths, 20 held areas, 4 tethers, 2 spell missiles and 50 held
+    /// unit looks (statuses, stances, morphs, concealment) ([`effect_mix`]).
+    #[arg(long, requires = "effect_stress")]
+    pub effect_mix: bool,
     /// Screenshot (PNG) of the frame at the middle of the window (the first frame of a
     /// `--measure-frames` run), with the effect coverage of that frame in the report. The
     /// capture's readback adds work to one frame.
@@ -579,6 +586,9 @@ fn add_variant(
                 capture_tick: options.capture_tick.unwrap_or_else(|| {
                     options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0)
                 }),
+                mix: options
+                    .effect_mix
+                    .then(|| effect_mix::MixConfig::at_rate(options.effect_stress.unwrap_or(0))),
             },
         )
     })

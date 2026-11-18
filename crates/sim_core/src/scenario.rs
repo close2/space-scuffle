@@ -30,7 +30,9 @@ use sim_map::{
     validate_map, CellFlags, CliffLevel, MapDocument, MapEntityId, MapFile, MapFormatError,
     MapStartLocation, MapValidationError, TerrainKind,
 };
-use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId};
+use sim_types::{
+    AbilityTargetKind, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId,
+};
 
 use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
@@ -252,6 +254,13 @@ pub enum ScenarioError {
         /// Player slot index.
         slot: u8,
     },
+
+    /// An [`InitialOrder::EnterModes`] reaches no unit of its player with a mode switch.
+    #[error("player slot {slot} has no unit with a mode switch for its initial order")]
+    NoModeSwitches {
+        /// Player slot index.
+        slot: u8,
+    },
 }
 
 /// The scenario file schema version this build reads.
@@ -296,6 +305,15 @@ pub enum InitialOrder {
         player_slot: u8,
         /// Destination cell `(x, y)` in grid cells; the order aims at its centre, in world units.
         cell: (u32, u32),
+    },
+    /// Every unit of `player_slot` with a mode-switch ability (`AbilityTargetKind::ToggleMode`)
+    /// switches into the mode of its first such ability once the orders it already has are done
+    /// (a cast queued behind them, or given at once to a unit without orders), as a player's
+    /// queued cast would. A scenario lists it after the orders it should follow, so a siege line
+    /// can walk to its post and then anchor or burrow there.
+    EnterModes {
+        /// Owner whose mode-switching units receive the order.
+        player_slot: u8,
     },
 }
 
@@ -389,6 +407,10 @@ pub fn apply_initial_orders(
     let approaches = start_approaches(document, players, world)?;
     for order in orders {
         let (player_slot, target) = match *order {
+            InitialOrder::EnterModes { player_slot } => {
+                enter_modes(world, player_slot)?;
+                continue;
+            }
             InitialOrder::AttackMoveToStart {
                 player_slot,
                 target_player_slot,
@@ -434,6 +456,40 @@ fn standable_cell_centre(
         SimScalar::from_num(cell.0) + SimScalar::HALF,
         SimScalar::from_num(cell.1) + SimScalar::HALF,
     ))
+}
+
+/// Queues, for every unit of `player_slot` whose archetype has a mode-switch ability, a cast of
+/// its first such ability behind the orders it already has ([`InitialOrder::EnterModes`]).
+fn enter_modes(world: &mut SimWorld, player_slot: u8) -> Result<(), ScenarioError> {
+    let mut ordered = 0_usize;
+    for entity in world.entities.values_mut() {
+        if entity.owner != PlayerId(player_slot) {
+            continue;
+        }
+        let archetype = world.catalog.get(entity.unit_type_id)?;
+        let Some(ability_index) = archetype
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.target_kind, AbilityTargetKind::ToggleMode))
+            .and_then(|index| u8::try_from(index).ok())
+        else {
+            continue;
+        };
+        let order = UnitOrder::CastAbility {
+            ability_index,
+            target_pos: None,
+            target_entity: None,
+        };
+        let queued = !entity.order_queue.is_empty();
+        entity
+            .issue_order(order, queued)
+            .map_err(SimCoreError::from)?;
+        ordered += 1;
+    }
+    if ordered == 0 {
+        return Err(ScenarioError::NoModeSwitches { slot: player_slot });
+    }
+    Ok(())
 }
 
 /// Orders every mobile armed non-harvester of `player_slot` to attack-move to `target`.

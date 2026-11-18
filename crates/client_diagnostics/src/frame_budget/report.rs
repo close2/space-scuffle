@@ -519,6 +519,14 @@ fn variant_text(variant: &RunVariant) -> String {
     for source in &stress.sources {
         let _ = writeln!(text, "  - source: {source}");
     }
+    if let Some(mix) = &stress.mix {
+        mix_lines(
+            &mut text,
+            mix,
+            &stress.effect_names,
+            &stress.spawned_per_effect,
+        );
+    }
     if let Some(capture) = &stress.capture {
         let _ = writeln!(
             text,
@@ -535,6 +543,61 @@ fn variant_text(variant: &RunVariant) -> String {
         );
     }
     text
+}
+
+/// The "every effect" mix's lines: what it streamed and held, and which effects of the
+/// vocabulary the run spawned or held at least once and which it never did.
+fn mix_lines(
+    text: &mut String,
+    mix: &super::effect_mix::MixSummary,
+    names: &[String],
+    spawned: &[u32],
+) {
+    let _ = writeln!(
+        text,
+        "- Effect mix: {} shots and blows/s ({} sent over {} weapons), {} deaths/s ({} sent over \
+         {} death looks); held on the last frame: {} areas, tethers and missiles ({} ability \
+         looks), {} unit looks ({} looks in turn)",
+        mix.shots_per_second,
+        mix.shots_sent,
+        mix.shot_sources.len(),
+        mix.deaths_per_second,
+        mix.deaths_sent,
+        mix.death_sources.len(),
+        mix.views_held,
+        mix.ability_sources.len(),
+        mix.looks_held,
+        mix.held_looks.len()
+    );
+    let (drawn, never) = exercised(names, spawned);
+    let _ = writeln!(
+        text,
+        "- Effects spawned or held at least once: {} of {}: {}",
+        drawn.len(),
+        names.len(),
+        drawn.join(", ")
+    );
+    let _ = writeln!(text, "- Never spawned: {}", never.join(", "));
+}
+
+/// The names of `names` whose count in `spawned` is above 0, and those whose count is 0.
+#[must_use]
+pub fn exercised<'a>(names: &'a [String], spawned: &[u32]) -> (Vec<&'a str>, Vec<&'a str>) {
+    names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), spawned.get(index).copied().unwrap_or(0)))
+        .fold(
+            (Vec::new(), Vec::new()),
+            |(mut drawn, mut never), (name, count)| {
+                if count > 0 {
+                    drawn.push(name);
+                } else {
+                    never.push(name);
+                }
+                (drawn, never)
+            },
+        )
 }
 
 /// `NAME=value` pairs of the recorded graphics environment, comma-separated.
@@ -592,6 +655,13 @@ fn table_row(label: &str, statistics: &FrameStatistics) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exercised_splits_the_vocabulary_by_spawn_count() {
+        let names = ["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        assert_eq!(exercised(&names, &[2, 0]), (vec!["a"], vec!["b", "c"]));
+        assert_eq!(exercised(&[], &[1]), (vec![], vec![]));
+    }
 
     fn sample(frame: u32, tick: u32, combat_events: u32) -> FrameSample {
         FrameSample {

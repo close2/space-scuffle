@@ -123,6 +123,11 @@ pub struct Scene {
     /// Starts at the scene's own first pose instead of blending from the previous scene.
     #[serde(default)]
     pub cut: bool,
+    /// Effects (names in `assets/catalog/effects.ron`) the scene must show: each must be spawned
+    /// for the viewer at least once during the scene, or the take fails at the scene's end (plan
+    /// `2026-11-09-effect-visualization` WP14). Empty asks for nothing.
+    #[serde(default)]
+    pub effects: Vec<String>,
 }
 
 /// Battle speed of a scene.
@@ -402,6 +407,14 @@ pub enum StoryboardFault {
         /// Its status.
         status: SubsystemStatus,
     },
+    /// A scene asks for an effect the effect vocabulary does not define.
+    #[error("scene `{scene}` asks for effect `{effect}`, which effects.ron does not define")]
+    UnknownEffect {
+        /// Scene.
+        scene: String,
+        /// The unknown name.
+        effect: String,
+    },
     /// A followed unit slug is not a catalog identity.
     #[error("scene `{scene}` follows `{slug}`, which is not in the unit catalog")]
     UnknownUnit {
@@ -430,6 +443,8 @@ pub struct ValidationContext<'a> {
     pub catalog: &'a sim_core::catalog::UnitCatalog,
     /// The texture directory (`<assets>/textures`).
     pub textures: &'a Path,
+    /// The effect vocabulary read from the assets root, which the scenes' `effects` name.
+    pub effects: &'a client::effects::catalog::EffectCatalog,
 }
 
 impl Storyboard {
@@ -477,6 +492,7 @@ impl Storyboard {
         self.validate_publishing()?;
         self.validate_speeds()?;
         self.validate_captions(context.subsystems)?;
+        self.validate_effects(context.effects)?;
         self.validate_units(context)
     }
 
@@ -667,6 +683,25 @@ impl Storyboard {
                         status: row.status,
                     });
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_effects(
+        &self,
+        effects: &client::effects::catalog::EffectCatalog,
+    ) -> Result<(), StoryboardFault> {
+        for scene in self.scenes() {
+            if let Some(effect) = scene
+                .effects
+                .iter()
+                .find(|name| effects.effect_id(name).is_none())
+            {
+                return Err(StoryboardFault::UnknownEffect {
+                    scene: scene.name.clone(),
+                    effect: effect.clone(),
+                });
             }
         }
         Ok(())
