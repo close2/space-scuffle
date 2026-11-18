@@ -982,6 +982,22 @@ pub struct EffectDefRaw {
     /// `AreaRemaining` (both the duration of the longest status that search applies).
     #[serde(default)]
     pub impact: Option<String>,
+    /// For a `Shot` effect: held for as long as its attacker keeps striking one target, its
+    /// line following both units, instead of one shot per strike (see [`SustainDef`]; plan
+    /// `2026-11-17-effect-snapshot-identity` D-4, B-126).
+    #[serde(default)]
+    pub sustain: Option<SustainDef>,
+}
+
+/// How a sustained shot (a held beam) is kept: it is refreshed by each strike and released
+/// when its attacker's period plus `grace` passes with no strike, or when either unit is gone.
+/// Its held layers must erode out within 0.1 s once it is released.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SustainDef {
+    /// Seconds beyond the attacker's attack period a strike may come late (its random delay)
+    /// before the beam is released; positive.
+    pub grace: f32,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.
@@ -1147,6 +1163,12 @@ pub struct DefaultsDef {
     /// A status, by kind.
     #[serde(default)]
     pub status: BTreeMap<StatusKind, String>,
+    /// A look held on a unit bearing one catalog status, keyed by its name in `statuses.ron`
+    /// (plan `2026-11-17-effect-snapshot-identity` D-5): held in addition to the kind's look
+    /// above, so two statuses of one kind (Fungal Growth and Psionic Storm, both
+    /// `DamageOverTime`) can look different. Each value names a `Status` effect.
+    #[serde(default)]
+    pub status_by_name: BTreeMap<String, String>,
     /// How concealed units look (plan §5.2 `defaults.concealment`, D-5).
     #[serde(default)]
     pub concealment: ConcealmentDefaultsDef,

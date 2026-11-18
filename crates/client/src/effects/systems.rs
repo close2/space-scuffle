@@ -95,9 +95,17 @@ pub fn load_effect_catalog(
             || Ok(UnitEffectTables::default()),
             |units| UnitEffectTables::build(&units.0, &catalog),
         )?;
-        Ok((catalog, tables))
+        // The held beams' table, sized from the catalog and the effect budget (R2-2).
+        let beams = units
+            .as_ref()
+            .map_or_else(super::beams::HeldBeams::default, |units| {
+                super::beams::HeldBeams::with_capacity(super::beams::HeldBeams::capacity_for(
+                    &units.0, &catalog,
+                ))
+            });
+        Ok((catalog, tables, beams))
     });
-    let (catalog, tables) = match loaded {
+    let (catalog, tables, beams) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
             error!("Effect catalog rejected: {error}");
@@ -138,6 +146,7 @@ pub fn load_effect_catalog(
     commands.insert_resource(EffectCatalogVersion(version.0.wrapping_add(1)));
     commands.insert_resource(EffectRuntime::new(&catalog));
     commands.insert_resource(tables);
+    commands.insert_resource(beams);
     commands.insert_resource(catalog);
 }
 
@@ -479,12 +488,14 @@ pub fn replaces_shatter(
 }
 
 /// What the event wiring reads to put a hit on the struck bubble's glass: the battle (its
-/// presented frame and previous snapshot), the last frame's bubbles, and the battle camera (its
-/// view direction).
+/// presented frame and previous snapshot), the last frame's bubbles, the battle camera (its
+/// view direction), and the held beams a sustained beam's strikes refresh (plan
+/// `2026-11-17-effect-snapshot-identity` D-4).
 type StruckContext<'w, 's> = (
     Option<Res<'w, crate::battle_pipeline::session::BattleSession>>,
     Option<ResMut<'w, super::struck::StruckBubbles>>,
     Query<'w, 's, &'static GlobalTransform, With<crate::RtsCamera>>,
+    Option<ResMut<'w, super::beams::HeldBeams>>,
 );
 
 /// Spawns the effect of every admitted combat event.
@@ -499,7 +510,7 @@ pub fn spawn_effects_from_events(
     runtime: Option<ResMut<'_, EffectRuntime>>,
     fog: Option<Res<'_, crate::battle_pipeline::fog::BattleFog>>,
     time: Res<'_, Time<Virtual>>,
-    (session, mut struck, cameras): StruckContext<'_, '_>,
+    (session, mut struck, cameras, mut beams): StruckContext<'_, '_>,
 ) {
     // The last frame's bubbles name entities of the session they were kept for; a new
     // session's ids restart (plan `2026-11-17-effect-snapshot-identity` Amendment 3).
@@ -515,6 +526,14 @@ pub fn spawn_effects_from_events(
         return;
     };
     let now = time.elapsed_secs_f64();
+    if let Some(beams) = beams.as_deref_mut() {
+        beams.follow(
+            session
+                .as_deref()
+                .and_then(|session| session.frames.generation()),
+            &mut runtime,
+        );
+    }
     let mut lines = LineAssembly::default();
     // The battle camera's view direction: a shot's end and hit are drawn on the struck
     // bubble's outline as it sees it.
@@ -542,7 +561,27 @@ pub fn spawn_effects_from_events(
         };
         // A shot's travel is its own effect, never merged with another (plan WP11), cut where
         // the viewer stops seeing it.
-        if let Some(shot) = travel_request(&event, &tables, &catalog) {
+        let shot = travel_request(&event, &tables, &catalog);
+        // A sustained beam's strike refreshes the beam its attacker holds instead of spawning a
+        // shot (D-4, B-126).
+        let held = beams.as_deref_mut().is_some_and(|beams| {
+            let mut context = super::beams::BeamContext {
+                catalog: &catalog,
+                tables: &tables,
+                runtime: &mut runtime,
+                now,
+                battle_now: frames.map_or(0.0, |frames| {
+                    super::beams::battle_seconds(frames.presented_instant())
+                }),
+            };
+            beams.strike(
+                &event,
+                shot.and_then(|shot| shot.line),
+                presented,
+                &mut context,
+            )
+        });
+        if let Some(shot) = shot.filter(|_| !held) {
             let owner = event.owner();
             let clip = match fog.as_deref() {
                 Some(fog) if fog.viewer() != Some(owner) => shot_clip(
@@ -562,7 +601,11 @@ pub fn spawn_effects_from_events(
         if let Some(ready) = spawn_request_struck(&event, struck_radius, &tables, &catalog)
             .and_then(|request| lines.push(request))
         {
-            runtime.spawn(&catalog, &ready, now);
+            let burn = runtime.spawn(&catalog, &ready, now);
+            // A held beam's burn follows the beam's end (review round 2, R3-1).
+            if let (true, Some(burn), Some(beams)) = (held, burn, beams.as_deref_mut()) {
+                beams.attach_burn(&event, burn);
+            }
         }
         // A spell missile's impact, where and when the simulation ran it (plan
         // `2026-11-17-effect-snapshot-identity` D-6, B-124), cut by the fog as an area.

@@ -261,6 +261,31 @@ fn send_splash(
                 ends,
             },
         ));
+        // A held beam (plan `2026-11-17-effect-snapshot-identity` WP7): the first bubble beams
+        // at a target that changes every fourth frame (a retarget), and every seventh frame the
+        // second bubble beams at an entity that is not presented (a target that died), whose
+        // beam is held and released on the next keep.
+        if bubbles.len() >= 3 {
+            let beam = |attacker: usize, target: sim_types::EntityId| {
+                let [ax, ay, _] = bubbles[attacker].world_pos;
+                client::CombatVisualEvent(sim_types::snapshot::CombatEventVisual::BeamVisual {
+                    from: [ax, ay, 0.5],
+                    to: hit,
+                    is_lightning: false,
+                    owner: sim_types::PlayerId(0),
+                    source: beam_source(source.0),
+                    ends: Some(sim_types::StrikeEnds {
+                        attacker: bubbles[attacker].entity_id,
+                        target,
+                    }),
+                })
+            };
+            let target = 1 + usize::try_from(*counter / 4).unwrap_or(0) % (bubbles.len() - 1);
+            events.send(beam(0, bubbles[target].entity_id));
+            if counter.is_multiple_of(7) {
+                events.send(beam(1, sim_types::EntityId(u32::MAX - *counter % 64)));
+            }
+        }
         events.send(client::CombatVisualEvent(
             sim_types::snapshot::CombatEventVisual::MeleeSlashVisual {
                 pos: hit,
@@ -286,6 +311,18 @@ fn send_splash(
 /// The weapon the stream's instant hits and blows come from.
 #[derive(Resource)]
 struct StreamSource(sim_types::EffectSource);
+
+/// The weapon the stream's beams come from: `source`'s unit's air weapon, whose travel is the
+/// stream vocabulary's sustained `beam` (WP7).
+const fn beam_source(source: sim_types::EffectSource) -> sim_types::EffectSource {
+    sim_types::EffectSource {
+        unit_type: source.unit_type,
+        weapon: sim_types::WeaponKey {
+            slot: sim_types::WeaponSlot::Air,
+            mode: None,
+        },
+    }
+}
 
 /// The vocabulary of the effect stream: the default splash draws a card, a ring, a decal, a
 /// light and a particle burst, all within 0.6 s, so at one splash per 20 ms frame about 30
@@ -318,6 +355,12 @@ const STREAM_EFFECTS: &str = r#"
     "tongue": (class: Minor, event: Link, layers: [
         (block: Ribbon(texture: "soft_disc", ramp: "red_add", scroll: 1.0), size: (scale: 0.05),
          duration: 0.1, held: true, priority: Critical),
+    ]),
+    "beam": (class: Minor, event: Shot, sustain: Some((grace: 0.12)), layers: [
+        (block: Ribbon(texture: "solid", ramp: "red_add", shape: Radial), size: (scale: 0.05),
+         duration: 0.04, held: true, exit: 0.08, priority: Critical),
+        (block: Sprite(texture: "soft_disc", ramp: "red_add", ride: true, stretch: 2.0),
+         size: (scale: 0.1), duration: 0.1),
     ]),
     "bolt": (class: Minor, event: Shot, layers: [
         (block: Sprite(texture: "soft_disc", ramp: "red_add", ride: true, stretch: 2.0),
@@ -399,7 +442,15 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         weapon,
         mode: None,
         launch: None,
-        travel: Some("bolt".to_owned()),
+        // The air weapon's travel is the sustained beam of the beam stream (WP7).
+        travel: Some(
+            if weapon == sim_types::WeaponSlot::Air {
+                "beam"
+            } else {
+                "bolt"
+            }
+            .to_owned(),
+        ),
         impact: Some("hit".to_owned()),
         splash: Some("burst".to_owned()),
     };
@@ -423,11 +474,13 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         .insert_resource(views)
         .init_resource::<client::effects::areas::AreaLooks>()
         .init_resource::<client::effects::struck::StruckBubbles>()
+        .init_resource::<client::effects::beams::HeldBeams>()
         .add_systems(
             Update,
             (
                 spawn_effects_from_events.after(publish_combat_events),
                 hold_area_and_link.after(publish_combat_events),
+                client::effects::beams::keep_beams.after(spawn_effects_from_events),
             ),
         )
         .add_systems(PostUpdate, build_effect_frame);
@@ -772,12 +825,40 @@ fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResul
         )
         .into());
     }
+    // The held beams (WP7): one held for the retargeting stream, the beams at dead targets held
+    // and released, none refused.
+    let beams = world.resource::<client::effects::beams::HeldBeams>();
+    let beam_holds = catalog.effect_id("beam").map_or(0, |beam| {
+        world
+            .resource::<client::effects::runtime::EffectRuntime>()
+            .spawned_of(beam)
+    });
+    // Since review round 1 (R2-2) a hold the effect pool cannot place is refused and counted:
+    // the stream's fixture pool (64 effects) is at times full when a dead-target beam is
+    // struck, so at most those strikes, one every seventh frame since the app started, may be
+    // refused. The retargeting beam is held throughout.
+    let dead_strikes = (u64::from(WARM_FRAMES) + u64::from(frames)) / 7 + 1;
+    if beams.slots().len() != 1 || beams.refused > dead_strikes || beam_holds < 2 {
+        return Err(format!(
+            "the beam stream must hold one beam and refuse only dead-target beams, held {} \
+             (refused {}), \
+             {beam_holds} held in all",
+            beams.slots().len(),
+            beams.refused
+        )
+        .into());
+    }
     let struck = world.resource::<client::effects::struck::StruckBubbles>();
     let (presented, nowhere) = (
         struck.found_in(client::effects::struck::StruckFrom::Presented),
         struck.found_in(client::effects::struck::StruckFrom::Nowhere),
     );
-    if presented < 2 * u64::from(frames) || nowhere > 0 {
+    // A beam at a target that died (every seventh frame since the app started, the counts
+    // being the run's) finds its bubble nowhere, as a killing hit's would after its target
+    // left every frame kept; nothing else may.
+    if presented < 2 * u64::from(frames)
+        || nowhere > (u64::from(WARM_FRAMES) + u64::from(frames)) / 7 + 1
+    {
         return Err(format!(
             "the stream's hits and blows found {presented} struck bubbles in the presented \
              frame and {nowhere} nowhere in {frames} frames"

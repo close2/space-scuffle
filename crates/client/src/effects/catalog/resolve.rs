@@ -616,7 +616,12 @@ impl Resolver<'_> {
         }
         let mut layers = Vec::with_capacity(effect.layers.len());
         for (index, layer) in effect.layers.iter().enumerate() {
-            layers.push(self.layer(&site(name, Some(index)), effect.event, layer)?);
+            layers.push(self.layer(
+                &site(name, Some(index)),
+                effect.event,
+                effect.sustain.is_some(),
+                layer,
+            )?);
         }
         let lifetime = layers
             .iter()
@@ -652,6 +657,7 @@ impl Resolver<'_> {
                 });
             }
         }
+        let sustain = self.sustain(name, effect, held_exit)?;
         let (emit, hit) = self.status_links(name, effect)?;
         let impact = match &effect.impact {
             Some(impact) if effect.event == EventKind::Missile => Some(EffectId(self.id(
@@ -683,9 +689,58 @@ impl Resolver<'_> {
             emit,
             hit,
             impact,
+            sustain,
             reach: 0.0,
             shot_reach: super::ShotReach::default(),
         })
+    }
+
+    /// Resolves a `Shot` effect's `sustain` (plan `2026-11-17-effect-snapshot-identity` D-4):
+    /// only a `Shot` effect is sustained, its grace is a positive number of seconds, and its held
+    /// layers (`held_exit`, their longest exit) erode out within [`super::MAX_SUSTAIN_EXIT`].
+    fn sustain(
+        &self,
+        name: &str,
+        effect: &EffectDefRaw,
+        held_exit: f32,
+    ) -> Result<Option<super::Sustain>, EffectCatalogError> {
+        let Some(sustain) = effect.sustain else {
+            return Ok(None);
+        };
+        let at = site(name, None);
+        let refuse = |field: &'static str, value: f32, rule: &'static str| {
+            Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field,
+                value,
+                rule,
+            })
+        };
+        if effect.event != EventKind::Shot {
+            return refuse(
+                "sustain",
+                sustain.grace,
+                "only a `Shot` effect is sustained (a held beam)",
+            );
+        }
+        if !(sustain.grace > 0.0 && sustain.grace.is_finite()) {
+            return refuse(
+                "grace",
+                sustain.grace,
+                "it must be a positive number of seconds",
+            );
+        }
+        if held_exit > super::MAX_SUSTAIN_EXIT {
+            return refuse(
+                "exit",
+                held_exit,
+                "a sustained shot's held layers erode out within 0.1 s",
+            );
+        }
+        Ok(Some(super::Sustain {
+            grace: sustain.grace,
+        }))
     }
 
     /// Resolves what a `Status` effect lays while it is held and spawns on a hit (plan WP9);
@@ -784,7 +839,7 @@ impl Resolver<'_> {
     fn unit_bound(
         &self,
         at: &Site,
-        event: EventKind,
+        (event, sustained): (EventKind, bool),
         layer: &LayerDef,
         block: &Block,
     ) -> Result<(), EffectCatalogError> {
@@ -808,7 +863,7 @@ impl Resolver<'_> {
                     | EventKind::Area
                     | EventKind::Link
                     | EventKind::Missile
-            )
+            ) || (event == EventKind::Shot && sustained)
         };
         if !allowed {
             return Err(EffectCatalogError::InvalidValue {
@@ -816,8 +871,9 @@ impl Resolver<'_> {
                 site: at.clone(),
                 field,
                 value: 0.0,
-                rule: "only a `Mode`, `Status`, `Area`, `Link` or `Missile` effect is held and \
-                       may hold a layer, and only a `Mode` or `Status` effect may shape a bubble",
+                rule: "only a `Mode`, `Status`, `Area`, `Link` or `Missile` effect, or a \
+                       sustained `Shot`, is held and may hold a layer, and only a `Mode` or \
+                       `Status` effect may shape a bubble",
             });
         }
         if matches!(block, Block::Particles(_)) && layer.held {
@@ -838,6 +894,7 @@ impl Resolver<'_> {
         &self,
         at: &Site,
         event: EventKind,
+        sustained: bool,
         layer: &LayerDef,
     ) -> Result<Layer, EffectCatalogError> {
         let block = self.block(at, &layer.block)?;
@@ -862,7 +919,7 @@ impl Resolver<'_> {
         if let Block::Ring { arc: Some(arc), .. } = &block {
             values.push(*arc);
         }
-        self.unit_bound(at, event, layer, &block)?;
+        self.unit_bound(at, (event, sustained), layer, &block)?;
         if let Block::Sprite(look) | Block::Ring { look, .. } = &block {
             if look.rotation == super::schema::RotationDef::Facing {
                 self.require(at, event, super::schema::Binding::Facing)?;
@@ -1801,12 +1858,18 @@ impl Resolver<'_> {
         for (kind, name) in &file.defaults.status {
             status.insert(*kind, EffectId(self.id(NameKind::Effect, name, &at)?));
         }
+        let mut status_by_name = BTreeMap::new();
+        for (status_name, name) in &file.defaults.status_by_name {
+            let id = EffectId(self.id(NameKind::Effect, name, &at)?);
+            status_by_name.insert(status_name.clone(), id);
+        }
         let concealment = &file.defaults.concealment;
         Ok(Defaults {
             impact: one(file.defaults.impact.as_ref())?,
             splash: one(file.defaults.splash.as_ref())?,
             death: one(file.defaults.death.as_ref())?,
             status,
+            status_by_name,
             concealment: super::ConcealmentDefaults {
                 burrow_enter: one(concealment.burrow_enter.as_ref())?,
                 burrow_leave: one(concealment.burrow_leave.as_ref())?,

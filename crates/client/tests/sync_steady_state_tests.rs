@@ -372,6 +372,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
         found.push(vector("map.objects", &map.objects));
         found.push(vector("map.sprite_images", &map.sprite_images));
     }
+    if let Some(beams) = world.get_resource::<client::effects::beams::HeldBeams>() {
+        found.extend(beams.buffers());
+    }
     if let Some(runtime) = world.get_resource::<EffectRuntime>() {
         let names = [
             "effects.cards",
@@ -1120,6 +1123,10 @@ const STREAM_EFFECTS: &str = r#"
         (block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: SplashReach, scale: 1.0),
          duration: 0.5, priority: Critical),
     ]),
+    "beam": (class: Minor, event: Shot, sustain: Some((grace: 0.12)), layers: [
+        (block: Ribbon(texture: "solid", ramp: "red_add", shape: Radial), size: (scale: 0.05),
+         duration: 0.04, held: true, exit: 0.08, priority: Critical),
+    ]),
     "bolt": (class: Minor, event: Shot, layers: [
         (block: Sprite(texture: "soft_disc", ramp: "white", ride: true, stretch: 2.0),
          size: (scale: 0.1), duration: 0.2, lasts: FlightTime, priority: Critical),
@@ -1169,11 +1176,20 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
                     .archetypes()
                     .map(|archetype| archetype.unit_type_id)
                     .collect();
+                // An air weapon's travel is a sustained beam, held while a beam weapon keeps
+                // striking (plan `2026-11-17-effect-snapshot-identity` WP7).
                 let shot = |weapon| sim_core::catalog::WeaponEffects {
                     weapon,
                     mode: None,
                     launch: None,
-                    travel: Some("bolt".to_owned()),
+                    travel: Some(
+                        if weapon == sim_types::WeaponSlot::Air {
+                            "beam"
+                        } else {
+                            "bolt"
+                        }
+                        .to_owned(),
+                    ),
                     impact: Some("spark".to_owned()),
                     splash: Some("burst".to_owned()),
                 };

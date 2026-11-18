@@ -891,6 +891,11 @@
         "body_hold": [(0.00, 2.50, Linear), (0.85, 2.50, EaseInQuad), (1.00, 0.00, Linear)],
         "body_flight": [(0.00, 1.00, EaseOutCubic), (0.04, 2.50, Linear), (0.90, 2.50, EaseInQuad), (1.00, 0.00, Linear)],
         "body_beam": [(0.00, 0.75, EaseOutCubic), (0.06, 2.50, Linear), (0.85, 2.40, EaseInQuad), (1.00, 0.00, Linear)],
+        // Plan `2026-11-17-effect-snapshot-identity` D-4 (B-126): a held beam's body and core
+        // coming in, as `body_beam` and `beam_steady` do over their first frames, then held at
+        // their end while the beam is held; its exit erodes them out.
+        "body_beam_on": [(0.00, 0.75, EaseOutCubic), (1.00, 2.50, Linear)],
+        "beam_on": [(0.00, 0.30, EaseOutCubic), (1.00, 1.00, Linear)],
     },
     emitters: {
         // Dark rock chunks thrown out of the crater on ballistic arcs, tumbling.
@@ -2757,23 +2762,28 @@
         ),
         // A prismatic or disruption beam (Void-Ray-, Phoenix- or Sentry-like): a violet body
         // about 11 px wide, a hot core, and bright pulses carried from the muzzle to the target,
-        // a new one about every 0.09 s. It lives 0.46 s, longer than the Void-Ray analogue's
-        // attack period and its random delay (0.36 + 0.09 s), so a sustained attack holds its
-        // beam on the target (review 1, A1-5).
+        // a new one about every 0.09 s as it comes on. Plan `2026-11-17-effect-snapshot-identity`
+        // D-4 (B-126): one beam is held while its attacker keeps striking a target, its ends
+        // following both units, refreshed by each strike and released a period and the grace
+        // (above the shipped beams' 0.09 s random delay) after the last one, or at once when
+        // either unit is gone; its held body, core and muzzle erode out over 0.08 s.
         "prism_beam": (
             class: Minor,
             event: Shot,
+            sustain: Some((grace: 0.12)),
             layers: [
                 (
                     block: Ribbon(texture: "droplet", ramp: "prism_body", shape: Radial, taper: (0.08, 0.04),
                         sort_bias: -0.05),
-                    size: (scale: 0.16), duration: 0.46, curve: "body_beam", priority: Critical,
+                    size: (scale: 0.16), duration: 0.04, curve: "body_beam_on", held: true, exit: 0.08,
+                    priority: Critical,
                 ),
                 (
                     block: Ribbon(texture: "droplet", ramp: "prism", shape: Radial, taper: (0.08, 0.02),
                         repeat: 0.8, scroll: 3.0,
                         breakup: (noise: "noise_tile", scale: 1.0, amount: 0.35, softness: 0.4)),
-                    size: (scale: 0.05), duration: 0.46, curve: "beam_steady", ramp_curve: "beam_tint",
+                    size: (scale: 0.05), duration: 0.04, curve: "beam_on", ramp_curve: "beam_tint",
+                    held: true, exit: 0.08,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, ride: true, stretch: 1.8),
@@ -2794,32 +2804,35 @@
                 (
                     block: Sprite(texture: "droplet", ramp: "prism_body", shape: Radial, soft_depth: 0.1,
                         sort_bias: -0.05),
-                    size: (scale: 0.24), duration: 0.46, curve: "body_beam",
+                    size: (scale: 0.24), duration: 0.04, curve: "body_beam_on", held: true, exit: 0.08,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.1,
                         rotation: Random, breakup: (noise: "noise_tile", scale: 1.5, amount: 0.3, softness: 0.3)),
-                    size: (scale: 0.16), duration: 0.46, curve: "beam_steady",
+                    size: (scale: 0.16), duration: 0.04, curve: "beam_on", held: true, exit: 0.08,
                 ),
             ],
         ),
         // A thermal lance's beam (Colossus-like), from the walker to where it strikes: the same
         // structure in white-hot orange over a deep red body; the line it burns is the lance's
-        // splash.
+        // splash. Held while its walker keeps striking, as `prism_beam` (B-126).
         "lance_beam": (
             class: Minor,
             event: Shot,
+            sustain: Some((grace: 0.12)),
             layers: [
                 (
                     block: Ribbon(texture: "droplet", ramp: "lance_body", shape: Radial, taper: (0.08, 0.04),
                         sort_bias: -0.05),
-                    size: (scale: 0.15), duration: 0.46, curve: "body_beam", priority: Critical,
+                    size: (scale: 0.15), duration: 0.04, curve: "body_beam_on", held: true, exit: 0.08,
+                    priority: Critical,
                 ),
                 (
                     block: Ribbon(texture: "droplet", ramp: "tracer_hot", shape: Radial, taper: (0.08, 0.02),
                         repeat: 0.8, scroll: 3.0,
                         breakup: (noise: "fire_noise", scale: 1.0, amount: 0.35, softness: 0.4)),
-                    size: (scale: 0.05), duration: 0.46, curve: "beam_steady", ramp_curve: "beam_tint",
+                    size: (scale: 0.05), duration: 0.04, curve: "beam_on", ramp_curve: "beam_tint",
+                    held: true, exit: 0.08,
                 ),
                 (
                     block: Sprite(texture: "droplet", ramp: "tracer_hot", shape: Radial, ride: true, stretch: 1.8),
@@ -2840,7 +2853,7 @@
                 (
                     block: Sprite(texture: "droplet", ramp: "lance_body", shape: Radial, soft_depth: 0.1,
                         sort_bias: -0.05),
-                    size: (scale: 0.24), duration: 0.46, curve: "body_beam",
+                    size: (scale: 0.24), duration: 0.04, curve: "body_beam_on", held: true, exit: 0.08,
                 ),
             ],
         ),
@@ -3000,6 +3013,13 @@
             class: Minor,
             event: Point,
             layers: [
+                // Plan `2026-11-17-effect-snapshot-identity`, review round 1, R2-1: each strike of
+                // a held beam swells the contact point on the target's rim, a short bright flare,
+                // so the steady beam reads as an attack between its strikes.
+                (
+                    block: Sprite(texture: "droplet", ramp: "prism", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.6), duration: 0.14, curve: "flash", priority: Critical,
+                ),
                 (
                     block: Sprite(texture: "droplet", ramp: "prism_body", shape: Radial, soft_depth: 0.2,
                         sort_bias: -0.05),
@@ -3019,6 +3039,11 @@
             class: Minor,
             event: Point,
             layers: [
+                // Review round 1, R2-1: the strike's flare on the target's rim, as `beam_burn`'s.
+                (
+                    block: Sprite(texture: "droplet", ramp: "lance_hot", shape: Radial, soft_depth: 0.2),
+                    size: (scale: 0.6), duration: 0.14, curve: "flash", priority: Critical,
+                ),
                 (
                     block: Sprite(texture: "droplet", ramp: "lance_body", shape: Radial, soft_depth: 0.2,
                         sort_bias: -0.05),
@@ -3279,8 +3304,8 @@
                 ),
             ],
         ),
-        // The status of a unit eaten by something over time (`DamageOverTime`; plan WP11, F1):
-        // a sickly yellow-green light along its outline beating fast over a faintly green
+        // The status of a unit eaten by Fungal Growth (plan WP11, F1; named by its status in
+        // `defaults.status_by_name`, B-122): a sickly yellow-green light along its outline beating fast over a faintly green
         // body, and glowing motes rising off it. A slowed body reads grey and dull instead
         // (`concussive_daze`), so a unit both fungaled and slowed shows both.
         "fungal_affliction": (
@@ -3350,9 +3375,16 @@
             Slowed: "concussive_daze",
             Dash: "charge_streak",
             Barrier: "barrier_shell",
-            // WP11, F1: no `DamageOverTime` default. The snapshot publishes the status kind only,
-            // so a look keyed on it would show Fungal Growth's spores on a storm's victims too
-            // (B-122). `fungal_affliction` stays defined, for when the source is published.
+            // WP11, F1: no `DamageOverTime` default: a look keyed on the kind would show Fungal
+            // Growth's spores on a storm's victims too. Fungal Growth's look is named by its
+            // status below instead.
+        },
+        // Plan `2026-11-17-effect-snapshot-identity` D-5 (B-122): looks of single catalog
+        // statuses, by their `statuses.ron` names, held in addition to the kind's look. A
+        // fungaled unit also bears `fungal_growth_slow` (`Slowed`) and so shows
+        // `concussive_daze` with it; a storm's victims show nothing named.
+        status_by_name: {
+            "fungal_growth": "fungal_affliction",
         },
         concealment: (
             burrow_enter: "burrow_dig",

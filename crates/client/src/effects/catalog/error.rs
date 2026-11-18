@@ -347,6 +347,15 @@ pub enum EffectCatalogError {
         /// The effect's kind.
         found: EventKind,
     },
+    /// `defaults.status_by_name` names a status the spell catalog (`statuses.ron`) does not
+    /// have (plan `2026-11-17-effect-snapshot-identity` D-5).
+    #[error("'{path}': defaults status_by_name names unknown status '{name}'")]
+    UnknownStatus {
+        /// The vocabulary file.
+        path: PathBuf,
+        /// The status name.
+        name: String,
+    },
     /// A mode's `moving` slot names an effect that does not say how often it repeats.
     #[error("unit '{unit}' mode moving names effect '{name}', which has no `repeat` period")]
     TrailWithoutRepeat {

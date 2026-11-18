@@ -331,3 +331,52 @@ fn the_presented_instant_is_the_shown_tick_and_its_interpolation_fraction() -> T
     assert_eq!(state.presented_instant(), (Tick(1), 0.0));
     Ok(())
 }
+
+/// Plan `2026-11-17-effect-snapshot-identity` WP5: the presented statuses follow the presented
+/// bubbles' membership. A unit reaped on tick 1 keeps its status while the pose is interpolated
+/// from tick 0, and loses it with its bubble once tick 1 is shown.
+#[test]
+fn presented_statuses_follow_bubble_membership() -> TestResult {
+    let (mut state, mut world) = fixture()?;
+    let id = state
+        .current()
+        .bubbles
+        .first()
+        .ok_or("fixture absent")?
+        .entity_id;
+    let borne = StatusView {
+        entity: id,
+        status: sim_types::StatusId(3),
+    };
+    // The writer publishes a status only on a bubble; the test places one on tick 0's.
+    state.current.statuses.push(borne);
+    state.present(1.0)?;
+    assert_eq!(
+        state.presented_statuses(),
+        [borne],
+        "the current tick exactly"
+    );
+    world.entities.get_mut(&id).ok_or("actor absent")?.hp = SimScalar::ZERO;
+    world.reap_dead_and_emit_shatter();
+    world.current_tick += 1;
+    world.write_render_snapshot(state.begin_tick()?);
+    state.finish_tick()?;
+    assert!(
+        state.current().statuses.is_empty(),
+        "tick 1 has no bubble for it"
+    );
+    state.present(0.5)?;
+    assert!(state.presented().bubbles.iter().any(|b| b.entity_id == id));
+    assert_eq!(
+        state.presented_statuses(),
+        [borne],
+        "interpolated from tick 0: its bubble and its status are shown"
+    );
+    state.present(1.0)?;
+    assert!(!state.presented().bubbles.iter().any(|b| b.entity_id == id));
+    assert!(
+        state.presented_statuses().is_empty(),
+        "tick 1 shown: the status leaves with its bubble"
+    );
+    Ok(())
+}

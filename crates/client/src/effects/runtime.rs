@@ -439,6 +439,19 @@ impl EffectRuntime {
         }
     }
 
+    /// Moves the live effect `handle` (held or not) to `anchor` (world space); a stale handle does
+    /// nothing. Returns whether the effect is still live. A held beam's per-strike burns follow
+    /// the beam's end with it (plan `2026-11-17-effect-snapshot-identity`, review round 2, R3-1).
+    pub fn move_anchor(&mut self, handle: EffectHandle, anchor: Vec3) -> bool {
+        match self.pool.get_mut(handle) {
+            Some(instance) => {
+                instance.anchor = anchor;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Cuts every layer of the live effect `handle` that has no clip of its own to `clip` (an
     /// area the viewer sees in part, WP10); [`NO_CLIP`] draws it whole. A stale handle does
     /// nothing.
