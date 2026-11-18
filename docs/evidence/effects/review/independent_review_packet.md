@@ -7,6 +7,92 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## Identity WP5/WP7, round 2 (the conditions of `independent_review_identity_2.md`)
+
+Branch `effects-identity-looks`; plan Amendments 4 and 5, "Review round 1". Pictures on radv, debug build, Xvfb
+1280x720, at the battle camera's default zoom. Please write your review to `independent_review_identity_3.md`.
+
+| Finding | Answer |
+|---|---|
+| R2-1 (condition): the steady beam has no per-strike accent at 1:1 | `beam_burn` and `lance_burn` gain a bright 0.14 s flare on the target's rim with each strike. The held structure is unchanged (no pulse per strike) and the core has no flicker. See [identity_wp7_beam_strikes_radv.png](identity_wp7_beam_strikes_radv.png). Top: frames 13 to 24 of a stream at 1:1, 96 px round the beam's end, with strikes on frames 15 and 23. Bottom, 3x: the frame before a strike, the strike (the flare), the frame after, and the frame before the next |
+| R2-2: the 64-slot cap; refusals | The table is sized at load: `MAX_PLAYERS × supply cap / the cheapest beam unit's cost × its sustained weapons` (800 shipped), limited to a quarter of the effect pool (512 shipped). A hold the effect pool refuses is now counted with a full table's. Both appear in the effect-stress diagnostics (`beams_refused`, `beams_capacity`) beside the runtime's refusals |
+| R2-3: beams vanish at battle speed 0 | Deadlines run on the presented battle clock, so pause and presentation hitches freeze them; no erosion while paused and no second onset on resume (unit test) |
+| R2-4, R2-5, R2-6 | No change |
+| R2-7: a strike with no line | Taken, holds nothing (unit test) |
+| Note: the rim alone, late | [identity_wp5_fungal_late_radv.png](identity_wp5_fungal_late_radv.png): six consecutive frames at 1:1 after the ground stain has faded, and the victims at 3x |
+| Note: the fog-edge stain cut along fog cells | Registered as B-132 in `DESIGN.md` §4, not fixed here |
+
+**Measured (radv).**
+
+| Check | Result | Bar |
+|---|---|---|
+| Held beam: beams held / live through the stream | 1 / 1 on all 40 frames | 1 |
+| Held beam: end against the drawn target's outline point | 0.00 px, while the end travelled 163 px | 3 px |
+| Held beam: mid-stream pair, pixels along the path / within 3 px of its end | 653 / 19 | over 20 / over 0 |
+| After the death: live instances after exit + 1 frame; pixels on the former path | none; 0 | none; 0 |
+| Fungal victims wearing the named look from 0.4 s, over the whole status | 4 of 4, 62 frames each | every frame |
+| Storm stand-in victims | no named look, rim 0 | none |
+| Fungal impact centre; fog edge | 1.37 px; 0 of 357 unseen changed | 2 px; 0 |
+| Valgrind effect stream with held beams | window difference 0 | its baseline (0) |
+
+**Points to look at.**
+
+1. Is the per-strike flare enough life at 1:1, or should the held core also flicker?
+2. A burn is laid where its strike landed. On a fast-walking target its 0.46 s body stays about 36 px behind the
+   moving contact point by the time the next strike lands (the purple dot right of the target in the strike sheet's
+   top row; measured by review round 2, R3-1). This has been the burns' behaviour since WP11. Should the burn follow
+   its target as the beam does? (Answered in review round 2: yes; fixed, see plan Amendment 5, "Review round 2".)
+3. The beam look is lent to a presentable shooter in the test world only, with the Void-Ray analogue's cadence; no
+   shipped beam unit has media.
+
+## Identity WP5/WP7 (plan `2026-11-17-effect-snapshot-identity`, B-122 and B-126)
+
+Plan: [`docs/plans/2026-11-17-effect-snapshot-identity.md`](../../../plans/2026-11-17-effect-snapshot-identity.md)
+D-5, D-4, D-9, Amendments 4 and 5. Branch `effects-identity-looks`. Both change what the player sees, so per D-9
+they go to the review of Q0080. Please write your review to `independent_review_identity_2.md` next to this one.
+Pictures are on radv (the server's RX 580), debug build, Xvfb 1280x720, at the battle camera's default zoom.
+
+**What changed.**
+
+| Item | Before | Now |
+|---|---|---|
+| B-122, a status's look | Looks keyed by status kind only; no `DamageOverTime` look, so Fungal Growth's victims showed no affliction | `fungal_affliction` (a sickly yellow-green pulsing rim, a faint green body and rising motes) is held on every unit bearing the `fungal_growth` status, named by that status (`defaults.status_by_name`). A Psionic Storm victim, whose status is the same kind, shows nothing named. The slow's `concussive_daze` still shows beside it |
+| B-126, a beam | One 0.46 s beam per strike, fixed where it spawned: beams splayed behind a moving target and outlived a dead one | One beam per attacker and weapon, held while strikes come, its ends on both bubbles every frame (it now leaves a flyer's own bubble), moved to a new target on a retarget, released a period plus 0.12 s after the last strike or at once when either unit is gone, eroding out over 0.08 s. Its pulses play as it comes on; then it holds steady with its scrolling core. Per-strike burns are unchanged |
+
+**Material.**
+
+| File | What it shows |
+|---|---|
+| [identity_wp5_fungal_own_radv.png](identity_wp5_fungal_own_radv.png) | Four enemies under the viewer's Fungal Growth, 18 consecutive 40 ms frames at 1:1 from the impact's last ring on: the affliction on each victim's bubble |
+| [identity_wp5_fungal_window_radv.png](identity_wp5_fungal_window_radv.png) | The whole window during the affliction: the Fungal victims (left, round the stain) and the storm stand-in's two victims (cast without its area look), which must show no affliction |
+| [identity_wp7_held_beam_radv.png](identity_wp7_held_beam_radv.png) | The held beam (`prism_beam`, lent in the test world to a presentable shooter, as the waves lend lab looks) on a target walking up the screen. Top, 1:1: mid-stream drawn, the same instant bare (no effect layer), three frames after the target's death drawn, and bare. Bottom: the mid-stream pair at 2x |
+| [identity_wp7_held_beam_window_radv.png](identity_wp7_held_beam_window_radv.png) | The whole window of the mid-stream picture |
+| [identity_wp5_wp7_measurements.txt](identity_wp5_wp7_measurements.txt) | The children's printed measurements and the valgrind counts |
+
+**Measured.**
+
+| Check | Result | Bar |
+|---|---|---|
+| Fungal victims wearing the named look (rim colour of `fungal_affliction`, strength at least 0.2) from 0.4 s after the status | 4 of 4, on every one of 41 frames each; rim strength 0.30 to 0.80 | every frame |
+| Storm stand-in victims bearing their status, with no named look and never the named rim | 2 of 2, 41 frames each, rim 0 | none |
+| Fungal impact centre; fog edge (E1-3) | 1.37 px; 0 of 357 unseen samples changed, 488 of 619 seen | 2 px; 0 unseen |
+| Held beam: beams held and live through the stream | 1 and 1 on all 40 frames | 1 |
+| Held beam: its end against the drawn target's outline point towards the shooter | 0.00 px on 40 frames, while the end travelled 81 px | 3 px |
+| Held beam: beam pixels along its path / within 3 px of its end (mid-stream pair) | 306 / 9 | more than 20 / more than 0 |
+| After the target's death: live beam instances after the exit and a frame; changed pixels along the former path | none; 0 | none; 0 |
+| Valgrind effect stream (held beams with retargets and dead targets) | window difference 0 | its baseline (0) |
+
+**Points to look at.**
+
+1. Does the affliction read as Fungal Growth's at 1:1, over the slow's grey `concussive_daze`, and is it distinct from
+   nothing on the storm victims?
+2. The held beam: is the steady beam (pulses only at its onset) a good look for a channelled ray, or should a pulse
+   ride it on every strike? Does it end cleanly at the target's death?
+3. The end-point measurement compares the beam's line with the drawn bubble's outline point by the same geometry, so
+   0.00 px shows that the beam follows the drawn bubble on the same frame (no lag); the picture pair shows the drawn
+   end within 3 px of it.
+4. No beam unit has media, so the beam is shown lent to a presentable unit (in the test world only).
+
 ## Identity WP4b (plan `2026-11-17-effect-snapshot-identity` Amendment 3, B-128, and the WP4/WP6 conditions)
 
 A projectile now names its attacker and target (`ProjectileVisual::ends`), and the client lands its flight and

@@ -439,6 +439,10 @@ pub struct Effect {
     pub hit: Option<Hit>,
     /// What a `Missile` effect lays where the missile ends (an `Area` effect).
     pub impact: Option<EffectId>,
+    /// For a `Shot` effect held while its attacker keeps striking (a held beam, plan
+    /// `2026-11-17-effect-snapshot-identity` D-4): the grace, seconds, beyond the attacker's
+    /// period before it is released.
+    pub sustain: Option<Sustain>,
     /// How far, in world units, its constant-sized layers can draw from their placed point on
     /// the ground plane: size times the size curve's peak, placement radius, spread, drift over
     /// the layer's life and lift, and a particle's flight. The fog asks this far round a shot
@@ -448,6 +452,17 @@ pub struct Effect {
     /// flying layers' (ribbons, cards riding the line) along the whole path.
     pub shot_reach: ShotReach,
 }
+
+/// How a sustained shot is kept (see [`schema::SustainDef`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sustain {
+    /// Seconds beyond the attacker's attack period before the held shot is released.
+    pub grace: f32,
+}
+
+/// Longest exit, in seconds, of a sustained shot's held layers: a held beam must be gone
+/// within a few frames of its target's death or its attacker's last strike.
+pub const MAX_SUSTAIN_EXIT: f32 = 0.1;
 
 /// How far a shot's layers draw beside its path, world units, by where they are (see
 /// [`Effect::shot_reach`]).
@@ -564,6 +579,9 @@ pub struct Defaults {
     pub death: Option<EffectId>,
     /// Statuses, by `StatusKind`.
     pub status: BTreeMap<sim_types::StatusKind, EffectId>,
+    /// Looks of single catalog statuses, by the status's name in `statuses.ron`; resolved
+    /// against the spell catalog by [`UnitEffectTables::build`].
+    pub status_by_name: BTreeMap<String, EffectId>,
     /// How concealed units look.
     pub concealment: ConcealmentDefaults,
     /// Channel into a mode that anchors its unit and is not burrowed.

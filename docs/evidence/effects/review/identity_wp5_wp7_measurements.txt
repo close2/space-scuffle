@@ -1,0 +1,87 @@
+Identity WP5/WP7 measurements (plan 2026-11-17-effect-snapshot-identity), radv (RX 580), debug build, Xvfb 1280x720.
+
+== area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts (WP5)
+driver radv: Fungal Growth impact at age 0.20 s, radius 2.250: laid at [2.671573, 8.328427] for the aimed point [2.671573, 8.328427] (0.00000 world units apart); its Critical ring centred 1.37 px from the projected aimed point (-1.15, -0.75) over 16 ray pairs
+driver radv: Fungal Growth: missile looks held on 22 of 90 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 0; fog edge Some([18.884506, 7.2621036])
+driver radv: Fungal Growth at the fog edge: at most 488 of 619 seen and 0 of 357              unseen ground samples changed against the first frame (most seen on frame 9)
+driver radv: victim 0 (Fungal Growth): bears its status on 50 frames from Some(1.6) s, wears the named look on 41, rim strength 0.300 to 0.800
+driver radv: victim 1 (Fungal Growth): bears its status on 50 frames from Some(1.6) s, wears the named look on 41, rim strength 0.300 to 0.800
+driver radv: victim 2 (Fungal Growth): bears its status on 50 frames from Some(1.6) s, wears the named look on 41, rim strength 0.300 to 0.800
+driver radv: victim 3 (Fungal Growth): bears its status on 50 frames from Some(1.6) s, wears the named look on 41, rim strength 0.300 to 0.800
+driver radv: victim 4 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+driver radv: victim 5 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+
+== weapon_battle_gpu_tests::a_held_beam_follows_its_target_and_ends_with_it (WP7)
+driver radv: welder_drone (prism_beam) holds its beam from frame 5 on 40 frames to the kill at 45; at most 1 held and 1 live; its end lies at most 0.00 px from the target's outline point over 40 frames (mean 0.00 px) and travelled 81.1 px
+driver radv: frames (# beam held, . none, x target gone): x....##########################################xxxxxxxxxxx
+driver radv: sample, 20 frames into the stream: 306 px of the path and 9 px within 3 px of its end changed
+driver radv: after the death, the window's effect layers change 0 px (the death's own look); the beam's last muzzle [549.35205, 427.42133] and end [518.5868, 305.64847]
+driver radv: the target left the presented frame on frame 47; exit 0.08 s (2 frames); frames with the beam live after that and a frame: []; 0 px of its former path changed
+
+== sync_allocation_count_tests::steady_state_frames_allocate_nothing (valgrind dhat; the effect stream carries held beams with retargets and deaths)
+  LiveSync 64 frames: 0 (process 27282), 0 (process 27282); 128 frames: 0 (process 27280), 0 (process 27282); difference Some(0)
+  Baseline 64 frames: 0 (process 25525); 128 frames: 0 (process 25527); difference Some(0)
+  Planted 64 frames: 64 (process 27428); 128 frames: 128 (process 27492); difference Some(64)
+  RunningLive 64 frames: 384 (process 43104); 128 frames: 768 (process 43488); difference Some(384)
+  RunningBaseline 64 frames: 384 (process 41700); 128 frames: 768 (process 42082); difference Some(384)
+  EffectStream 64 frames: 0 (process 30799); 128 frames: 0 (process 30801); difference Some(0)
+  EffectBaseline 64 frames: 0 (process 27341); 128 frames: 0 (process 27343); difference Some(0)
+
+== whole binaries on radv
+area_link_gpu_tests: test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 247.02s
+status_gpu_tests: test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 253.68s
+weapon_battle_gpu_tests::weapon_looks_fire_in_a_staged_battle (rerun): test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 1209.89s
+driver radv: wave 3 prism_beam+beam_burn (Across): impact 94 px beside the struck bubble, its blank 13 px (needs 46)
+driver radv: wave 4 lance_beam+lance_burn (Across): impact 136 px beside the struck bubble, its blank 12 px (needs 44)
+
+== Review round 1 (round 2 of the packet), radv
+-- area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts (5.0 s sequence)
+driver radv: Fungal Growth impact at age 0.20 s, radius 2.250: laid at [2.671573, 8.328427] for the aimed point [2.671573, 8.328427] (0.00000 world units apart); its Critical ring centred 1.37 px from the projected aimed point (-1.15, -0.75) over 16 ray pairs
+driver radv: Fungal Growth: missile looks held on 22 of 124 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), afflictions held 0; fog edge Some([18.884506, 7.2621036])
+driver radv: Fungal Growth at the fog edge: at most 488 of 619 seen and 0 of 357              unseen ground samples changed against the first frame (most seen on frame 9)
+driver radv: victim 0 (Fungal Growth): bears its status on 71 frames from Some(1.6) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 1 (Fungal Growth): bears its status on 71 frames from Some(1.6) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 2 (Fungal Growth): bears its status on 71 frames from Some(1.6) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 3 (Fungal Growth): bears its status on 71 frames from Some(1.6) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 4 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+driver radv: victim 5 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+-- weapon_battle_gpu_tests::a_held_beam_follows_its_target_and_ends_with_it (Void-Ray cadence, burn flare)
+driver radv: welder_drone (prism_beam) holds its beam from frame 5 on 40 frames to the kill at 45; at most 1 held and 1 live; its end lies at most 0.00 px from the target's outline point over 40 frames (mean 0.00 px) and travelled 162.7 px
+driver radv: frames (# beam held, . none, x target gone): x....#########################################.xxxxxxxxxxx
+driver radv: 1:1 sequence round the beam's end, frame:age of the youngest burn (s): 9:0.16 10:0.20 11:0.24 12:0.28 13:0.32 14:0.36 15:0.00 16:0.04 17:0.08 18:0.12 19:0.16 20:0.20 21:0.24 22:0.28 23:0.00 24:0.04
+driver radv: sample, 20 frames into the stream: 653 px of the path and 19 px within 3 px of its end changed
+driver radv: after the death, the window's effect layers change 0 px, any death look included; the beam's last muzzle [548.0785, 412.24603] and end [522.3811, 223.0451]
+driver radv: the target left the presented frame on frame 47; exit 0.08 s (2 frames); frames with the beam live after that and a frame: []; 0 px of its former path changed
+-- sync_allocation_count_tests::steady_state_frames_allocate_nothing
+  LiveSync 64 frames: 0 (process 27280), 0 (process 27282); 128 frames: 0 (process 27280), 0 (process 27282); difference Some(0)
+  Baseline 64 frames: 0 (process 25525); 128 frames: 0 (process 25525); difference Some(0)
+  Planted 64 frames: 64 (process 27430); 128 frames: 128 (process 27494); difference Some(64)
+  RunningLive 64 frames: 384 (process 43106); 128 frames: 768 (process 43490); difference Some(384)
+  RunningBaseline 64 frames: 384 (process 41700); 128 frames: 768 (process 42082); difference Some(384)
+  EffectStream 64 frames: 0 (process 30799); 128 frames: 0 (process 30801); difference Some(0)
+  EffectBaseline 64 frames: 0 (process 27343); 128 frames: 0 (process 27345); difference Some(0)
+
+== Review round 2, radv (after merging main 5a29900c)
+driver radv: welder_drone (prism_beam) holds its beam from frame 5 on 40 frames to the kill at 45; at most 1 held and 1 live; its end lies at most 0.00 px from the target's outline point over 40 frames (mean 0.00 px) and travelled 163.5 px
+driver radv: frames (# beam held, . none, x target gone): x....#########################################.xxxxxxxxxxx
+driver radv: 1:1 sequence round the beam's end, frame:age of the youngest burn (s): 9:0.16 10:0.20 11:0.24 12:0.28 13:0.32 14:0.36 15:0.00 16:0.04 17:0.08 18:0.12 19:0.16 20:0.20 21:0.24 22:0.28 23:0.00 24:0.04
+driver radv: the youngest burn's centre lies at most 0.00 px from the beam's end over 40 frames with a burn
+driver radv: sample, 20 frames into the stream: 656 px of the path and 20 px within 3 px of its end changed
+driver radv: after the death, the window's effect layers change 0 px, any death look included; the beam's last muzzle [547.7254, 412.32306] and end [519.5104, 222.9758]
+driver radv: the target left the presented frame on frame 47; exit 0.08 s (2 frames); frames with the beam live after that and a frame: []; 0 px of its former path changed
+driver radv: Fungal Growth impact at age 0.20 s, radius 2.250: laid at [2.671573, 8.328427] for the aimed point [2.671573, 8.328427] (0.00000 world units apart); its Critical ring centred 0.94 px from the projected aimed point (-0.60, -0.72) over 16 ray pairs
+driver radv: Fungal Growth: missile looks held on 22 of 124 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), named status looks held 4; fog edge Some([18.884506, 7.2621036])
+driver radv: Fungal Growth at the fog edge: at most 488 of 619 seen and 0 of 357 unseen ground samples changed against the first frame (most seen on frame 9)
+driver radv: victim 0 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 1 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 2 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 3 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver radv: victim 4 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+driver radv: victim 5 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+  LiveSync 64 frames: 0 (process 27282), 0 (process 27280); 128 frames: 0 (process 27278), 0 (process 27282); difference Some(0)
+  Baseline 64 frames: 0 (process 25525); 128 frames: 0 (process 25525); difference Some(0)
+  Planted 64 frames: 64 (process 27426); 128 frames: 128 (process 27492); difference Some(64)
+  RunningLive 64 frames: 384 (process 43106); 128 frames: 768 (process 43490); difference Some(384)
+  RunningBaseline 64 frames: 384 (process 41700); 128 frames: 768 (process 42081); difference Some(384)
+  EffectStream 64 frames: 0 (process 30801); 128 frames: 0 (process 30799); difference Some(0)
+  EffectBaseline 64 frames: 0 (process 27343); 128 frames: 0 (process 27341); difference Some(0)

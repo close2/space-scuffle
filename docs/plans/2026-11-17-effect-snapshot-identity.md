@@ -767,3 +767,214 @@ below a flyer.* Every "proposed B-127" in this plan and in the review packet bec
   struck end. Aiming the launch from the shooter's bubble (the same lookup, by `ends.attacker`) is a follow-up. The
   needle look's margin over its bar is 0 px: the look is faint, and the bar and the look remain the review's
   (Q0080).
+
+## Amendment 4: WP5 as built (2026-11-17, short note, charter §6)
+
+WP5 (B-122) is on branch `effects-identity-looks`, made from `main` at `345da93f` (commit `dc9e438b`; its clippy
+fixes landed with the WP7 commit `963b9a80`). Client and data only: no simulation crate is touched, and the golden
+replays pass unchanged.
+
+**As planned.** `effects.ron` gains `defaults.status_by_name: { "fungal_growth": "fungal_affliction" }`, which
+replaces the B-122 comment. The resolver reads the effect names (an unknown one is the vocabulary's `UnknownName`);
+`UnitEffectTables::build` resolves the status names against the unit catalog's spell catalog, refusing an unknown
+one with the new `EffectCatalogError::UnknownStatus { path, name }` and a look of another event kind with
+`WrongEventKind` (slot `status_by_name`). `UnitEffectTables::named_status(StatusId)` is a binary search over the
+pairs sorted by status id. `BattleFrameState::presented_statuses()` shares the source choice of
+`presented_effect_views` (a private `discrete_source`). `StanceTrack` gains `named: [Option<(StatusId, HeldLook)>;
+MAX_NAMED_STATUSES]` (4) and `named_refused`, counted per frame a named status finds no slot, as `AreaLooks::refused`
+counts. Named looks are held in addition to the kind looks, under the bubble's fog rule, lay their `emit` effect as
+kind looks do, and erode out through the track's `releasing` slots.
+
+**Choices made while building.**
+
+- *No merge cursor.* `present_stances` iterates a Bevy query, whose order is not the entity order, so a cursor merged
+  against id-ordered bubbles (D-5) does not apply. Each bubble takes its run of the presented list by binary search
+  (`stance::statuses_of`, two `partition_point`s): O(log n) a bubble, nothing copied or allocated.
+- *The fog test.* The plan's case "an undetected cloaked enemy under Fungal Growth" cannot be staged with the
+  shipped data: `fungal_growth` has `reveal: true` (the game's `SuppressCloak`), so a fungaled cloaked unit is not
+  concealed. `battle_fog_tests::a_named_status_look_shows_only_on_a_unit_the_viewer_sees` checks instead that a seen
+  victim wears the look; that a victim cloaked while it bears the status is revealed (published `Concealment::None`)
+  and keeps it; and that a victim moved out of the viewer's sight wears none while the status is still published.
+  The `Shimmer` and `Hidden` paths are also covered by the unit test
+  `a_unit_the_viewer_does_not_see_as_it_is_holds_no_named_look`.
+- *The rim measurement.* `area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts` reads each victim's bubble
+  material shell rim every frame (as `status_gpu_tests` reads the stim's rim), and pictures each frame for the
+  review. A Fungal victim must, from 0.4 s after it first bears the status (the slow's own onset flash is over by
+  then), hold the named look on every frame, with the look's rim colour (±0.02 a channel) at strength 0.2 or more.
+  The storm stand-in is found by data: an ability whose block names an `Area` look and whose effect tree applies a
+  status of a kind the named status is also published as, with no named look (the Psionic Storm analogue). It is
+  cast, without its look, by a second caster on two further enemy stand-ins; they must bear their status, hold no
+  named look and never show the named rim. The old "afflicted exactly when the vocabulary names a `DamageOverTime`
+  default" check is now "no look is keyed on the kind" (0 such spawns).
+- `status_gpu_tests` is unchanged: none of its subjects bears a named status.
+
+**Evidence** (radv, the RX 580, debug build, Xvfb 1280x720; `identity_wp5_wp7_measurements.txt` and the packet
+section "Identity WP5/WP7").
+
+| Check | Result |
+|---|---|
+| Fungal victims wearing the named look from 0.4 s after the status | 4 of 4 on every frame (41 each); rim strength 0.30 to 0.80 |
+| Storm stand-in victims (status borne on 41 frames each) | no named look, rim 0 |
+| Fungal impact centre (WP6) | 1.37 px from the aimed point (tolerance 2) |
+| Fungal fog edge (E1-3) | 0 of 357 unseen ground samples changed; 488 of 619 seen |
+| `effect_catalog_tests` (39), `battle_fog_tests` (25), stance and timeline unit tests | pass |
+
+The first radv run failed E1-3 (223 of 357 unseen samples changed): the storm stand-in's caster stood out of range and
+walked, moving the viewer's sight over the fog edge. It now stands within the ability's range; no bar was changed.
+
+**Review round 1 (2026-11-18; `independent_review_identity_2.md`, accepted).** The Fungal affliction was accepted.
+Two notes are answered here, and neither changes WP5's code:
+
+- *A late frame.* The Fungal child now pictures 5.0 s from the casts instead of 3.6 s, so it covers the whole status
+  and its look's exit. `identity_wp5_fungal_late_radv.png` shows six consecutive 40 ms frames at 1:1 after the ground
+  stain has faded, with only the victims' rims left, and the same victims at 3x. On radv each victim bears the status
+  on 71 frames and wears the named look on every one of the 62 frames from 0.4 s on. The impact centre is still
+  1.37 px from the aimed point, and the fog edge still changes 0 of 357 unseen samples. No bar was changed.
+- *The fog-edge stain cut along fog cells* (window x 975 to 1035, y 310 to 380 in
+  `identity_wp5_fungal_window_radv.png`) is outside this plan's diff. It is registered as **B-132** in `DESIGN.md`
+  §4 and is not fixed here.
+
+## Amendment 5: WP7 as built (2026-11-17, short note, charter §6)
+
+WP7 (B-126) is on branch `effects-identity-looks` (commits `9dfaaf34`, `963b9a80`, `68587cda` and this note). Client and data
+only; the golden replays pass unchanged.
+
+**As planned.** A `Shot` effect may declare `sustain: Some((grace: <s>))`. The loader refuses it on any other event
+kind (`InvalidValue`, field `sustain`), with a grace that is not a positive number of seconds (`grace`), and when its
+held layers' longest exit exceeds `MAX_SUSTAIN_EXIT` = 0.1 s (`exit`). A held layer on a `Shot` is allowed only when
+it is sustained. The coverage test `every_shipped_weapon_names_the_looks_of_the_event_it_publishes` refuses a
+sustained travel on a weapon that does not publish an instant beam. The new `effects::beams` module holds
+`HeldBeams`: at most 64 slots sorted by `(attacker, EffectSource)`, found by binary search, with a `refused` counter.
+`spawn_effects_from_events` hands each admitted strike to `HeldBeams::strike` before it asks for a travel shot; a
+`BeamVisual` with `ends` whose travel is sustained refreshes its slot (a retarget moves the far end) or holds a new
+instance, and spawns no shot. The deadline is the strike's time plus the attacker's presented
+`attack_swing.period_ticks / 25` (the look's longest layer without a swing) plus the grace. `keep_beams` runs after
+the event wiring: it puts each line from the attacker's bubble to the target's outline (`beam_line`, through the new
+`struck::onto_struck_outline`), recomputes the fog cut with `shot_clip` for another player's beam, and releases a beam
+whose attacker or target is not presented or whose deadline has passed. Per-strike burns stay one `Point` per strike.
+
+**Data.** `prism_beam` and `lance_beam` gain `sustain: Some((grace: 0.12))`. Their body and core ribbons and their
+muzzle glows become held layers (`duration: 0.04` to come in, along the new curves `body_beam_on` and `beam_on`, which
+are `body_beam`'s and `beam_steady`'s first frames; `exit: 0.08`). The riding pulses stay one-shot layers, so a beam
+shows its pulses as it comes on and then holds steady, its core scrolling. This is a look change for the review
+(D-9).
+
+**Choices made while building.**
+
+- *A beam ends once its exit is over.* A released held instance lives on until its one-shot layers end, so the onset
+  pulses (up to 0.43 s) would outlive a target that dies early. `HeldBeams` keeps released beams in a second
+  64-slot list and ends each (`EffectRuntime::retire`) on the first keep after its exit; a full list ends one at
+  once. A session change ends every beam at once (`HeldBeams::follow`, as `StruckBubbles::follow`), because entity
+  ids restart.
+- *Beams only.* D-4 holds `BeamVisual` strikes; a `HitscanTracer` is never held, so the coverage rule reads "an
+  instant beam" (`LaserBeam` or `LightningArc` without a projectile speed), narrower than "an instant line".
+- *The beam leaves the attacker's bubble.* The line starts at the attacker's drawn centre, so a flyer's beam no
+  longer starts at its ground + 0.5 (unit test `a_flyers_beam_leaves_its_own_bubble_and_ends_on_the_targets_glass`).
+  A strike's first frame uses the event's travel line; `keep_beams` moves it onto the bubbles on the same frame.
+- *A refused strike draws no travel*, as a refused area draws nothing; it is counted.
+- *The GPU test is a child of its own* in `weapon_battle_gpu_tests.rs` (`held_beam_child`, parent
+  `a_held_beam_follows_its_target_and_ends_with_it`), not a wave of the family waves: it needs a walking target, a
+  kill and paused drawn/bare picture pairs, which the waves' staging does not have. No shipped beam unit has media,
+  so, as the waves lend lab families, the child lends the first shipped sustained look (`prism_beam` with its burn)
+  to a presentable ground shooter in the test world's catalog only, its weapon made an instant `LaserBeam` with a
+  range of at least 6 (so the walking target stays in range). Every frame, after transforms propagate, it records the
+  held beam's line end and the drawn target bubble's outline point towards the shooter (from the bubble's
+  `GlobalTransform` and the camera), both projected. Both follow the same geometry, so this check proves that the
+  beam follows the drawn bubble on the same frame (a first version, recorded before propagation, measured a constant
+  one-frame lag of 5 px, the test's own); the picture pair proves the drawn end. The parent requires one beam and one live instance for the
+  whole stream, the end within 3 px of the outline point on every frame, beam pixels along the path and within 3 px
+  of its end in the mid-stream pair, no live instance after the exit plus one frame from the target's death, and no
+  changed pixel along the former path (from 0.2 to 0.6 of its length, clear of the death look) in the pair taken
+  then.
+- *Steady state.* The valgrind effect stream sends, every frame, a beam from one bubble at a target that changes
+  every fourth frame, and every seventh frame a beam at an entity that is not presented (a dead target). The window
+  difference is 0. Those dead-target strikes find their struck bubble nowhere, so the stream's `Nowhere` bound is
+  their count, not 0. `sync_steady_state_tests` tracks `HeldBeams::buffers` and gives every air weapon of its stream
+  a sustained beam.
+
+**Evidence** (radv, debug build, Xvfb 1280x720; `identity_wp5_wp7_measurements.txt`, `identity_wp7_held_beam_radv.png`).
+
+| Check | Result |
+|---|---|
+| Beams held and live through the stream | 1 and 1 on all 40 frames |
+| Beam end against the drawn target's outline point | 0.00 px on 40 frames; the end travelled 81 px |
+| Mid-stream pair: changed pixels along the path / within 3 px of its end | 306 / 9 |
+| After the death (target gone on frame 47, exit 0.08 s): live instances after exit + 1 frame; changed pixels on the former path | none; 0 |
+| `weapon_look_tests` (14, six new), `effect_catalog_tests` (39), `beams` unit tests (3) | pass |
+| Valgrind effect stream with held beams, retargets and dead targets | window difference 0 (baseline 0) |
+| `sync_steady_state_tests` combat streams | pass |
+| Whole binaries on radv: `area_link_gpu_tests` (3), `status_gpu_tests` (3, not re-baselined), `weapon_battle_gpu_tests` (the family waves and the held beam) | pass; the waves' first run waited out the GPU lock (held 290 s by another user) and passed on the rerun with bars unchanged. In the waves `prism_beam` and `lance_beam` are lent to a hitscan shooter, so they are not held there: impact 94 px against a need of 46, and 136 against 44 |
+
+**Review round 1 (2026-11-18; `independent_review_identity_2.md`, accepted with conditions).** Branch
+`effects-identity-looks`; the packet section "Identity WP5/WP7, round 2" answers each finding.
+
+- **R2-1 (condition): the steady beam's per-strike accent.** `beam_burn` and `lance_burn` each gain a first layer: a
+  bright `Critical` flare of the beam's own ramp, 0.6 of the struck unit's scale, over 0.14 s (`flash` curve), on the
+  target's rim where the strike lands. The held beam keeps its structure: no pulse per strike, and the body is still
+  held steady. The held core gets no flicker; the flare is the per-strike accent. To show it at 1:1, the held-beam GPU
+  child lends the cadence of the shipped beam weapon with the shortest period (9 ticks, the Void-Ray analogue's)
+  together with its look. It now records each frame's youngest burn and pictures a 96 px crop round the beam's end on
+  every frame from the 4th to the 19th of the stream. On radv strikes landed on frames 15 and 23 (burn age 0.00).
+  `identity_wp7_beam_strikes_radv.png` shows frames 13 to 24 at 1:1 and, at 3x, the frame before a strike, the
+  strike, the frame after, and the frame before the next.
+- **R2-2: the table's size and its refusals.** `HeldBeams::capacity_for(units, effects)` sizes a battle's table at
+  load (`load_effect_catalog`). The catalog bound is `MAX_PLAYERS × STANDARD_SUPPLY_CAP / supply cost × sustained
+  weapons`, taking the largest beam unit type; the shipped catalog's cheapest beam units cost 2 supply, which gives
+  800. The table is then limited to a quarter of the effect pool (`budget.effects / 4`, 512 shipped), because every
+  held beam is a live effect instance. A table made without a catalog keeps `HELD_BEAMS` (64). A strike that
+  `EffectRuntime::hold` cannot place (pool full) is now refused and counted, as a full table is. The effect-stress
+  diagnostics (`StressSummary::beams_refused`, `beams_capacity`, printed in the frame-budget report's effect-stress
+  line next to the runtime's refusals) report it. `the_table_is_sized_from_the_catalog_and_the_budget` and
+  `a_full_effect_pool_refuses_and_counts` test both. The valgrind beam stream's fixture pool (64 effects) is at
+  times full when a dead-target beam is struck. Its check therefore allows those refusals, at most one per planted
+  dead-target strike, where it allowed none before (R2-2 now counts them); the window difference is still 0.
+- **R2-3: pause.** Deadlines run on the presented battle clock (`beams::battle_seconds` of
+  `BattleFrameState::presented_instant`), not on `Time<Virtual>`. A paused battle (speed 0) or a presentation that
+  waits for a tick therefore freezes them, as every other held look's facts freeze. A channelling beam neither erodes
+  while paused nor replays its onset on resume. Its onset and exit still run on `Time<Virtual>`.
+  `a_paused_battle_freezes_the_beam_and_resumes_it_without_a_new_onset` checks this: ten seconds of effect time
+  paused, the same beam afterwards, one hold in all, and release a period and the grace of battle time after the
+  last strike.
+- **R2-7.** A strike without a travel line is taken but holds nothing; the next strike with a line holds the beam
+  (`a_strike_without_a_line_holds_no_beam_at_the_origin`).
+- *Seen in the strike sequence, open:* a burn is a `Point` effect laid where the strike landed. On a target that walks
+  fast, its 0.46 s body therefore stays behind the moving contact point, about 36 px by the next strike (review round
+  2, R3-1; the purple dot right of the target in `identity_wp7_beam_strikes_radv.png`). This is the burns' behaviour
+  since WP11, not a held-beam change. Fixed in review round 2 (below).
+
+*Evidence, round 2 (radv).* Held beam: one beam and one live instance on all 40 frames; end 0.00 px from the target's
+outline point while it travelled 163 px; mid-stream pair 653 px along the path and 19 px within 3 px of its end;
+after the death no live instance and 0 px on the former path. Valgrind: effect stream window difference 0 (baseline
+0). `weapon_look_tests` 18, `effect_catalog_tests` 39, `client_diagnostics` lib 117, the `beams` unit tests,
+`cargo gate quick` GREEN, `clippy -p client -p client_diagnostics --all-targets -D warnings` clean.
+
+**Review round 2 (2026-11-18; `independent_review_identity_3.md`, accepted with conditions).**
+
+- **R3-1 (condition): a held beam's burns follow its end.** There were two candidate designs. One keeps the burns in
+  the held-beam table. The other anchors every `Point` impact that names `StrikeEnds` to its struck bubble while that
+  bubble is presented. The table was chosen. It is the only place that already knows the beam's end on the frame it
+  is drawn, and it already holds one slot per beam. It changes no other weapon's impacts: a projectile's or a blow's
+  hit stays where it landed, as the game draws it. It needs no per-impact lookup either.
+  - Each `BeamSlot` keeps the handles of its last two strikes' burns (`burns: [Option<EffectHandle>; 2]`). Two,
+    because a burn (0.46 s shipped) outlives the next strike (0.36 s).
+  - The event wiring hands the burn it spawns for a held beam's strike to `HeldBeams::attach_burn`.
+  - Every frame, `keep` moves both burns to the beam's end (`line.to`, the target's outline point) with the new
+    `EffectRuntime::move_anchor`, on the same frame and geometry as the line. A burn that has ended drops its stale
+    handle.
+  - No allocation, and no search beyond the slot's own binary search. Older burns and the burns of a released beam
+    stay where they last were.
+  - Tests: unit test `a_held_beams_burns_follow_its_end`. The held-beam GPU child records the youngest burn's
+    projected centre every frame, and the parent requires it within 3 px of the beam's end on every frame of the
+    stream with a burn.
+  - On radv: 0.00 px over 40 frames (was about 36 px by the next strike). The other measurements are unchanged: end
+    0.00 px, mid-stream pair 656 / 20 px, nothing left after the death.
+  - `identity_wp7_beam_burn_follows_radv.png` shows the same 1:1 sequence and 3x frames as round 2, with no burn left
+    behind.
+- **R3-2: the table-size test is exact.** `the_table_is_sized_from_the_catalog_and_the_budget` now computes the
+  catalog bound on its own and pins it for the shipped data: 8 × 200 / 2 × 1 = 800. It asserts the table is the
+  smaller of that and the pool share (512). With a pool of a million effects the bound wins (800). With every
+  `sustain` removed the size is 0.
+- **R3-3:** the Fungal child's fourth count is now the named status looks held, not the kind-keyed look that WP5
+  removed and that always printed 0. The parent asserts at least one per Fungal victim, and checks from the vocabulary
+  that no look is keyed on `DamageOverTime`. Its fog-edge message is joined without the run of spaces.
+- **R3-4:** no change.

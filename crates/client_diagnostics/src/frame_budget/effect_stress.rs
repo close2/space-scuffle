@@ -200,6 +200,13 @@ pub struct StressSummary {
     /// Effects that found no room for their decals and draw none.
     #[serde(default)]
     pub marks_refused: u64,
+    /// Beam strikes not held: the held-beam table or the effect pool was full (plan
+    /// `2026-11-17-effect-snapshot-identity`, review round 1, R2-2).
+    #[serde(default)]
+    pub beams_refused: u64,
+    /// The held-beam table's size.
+    #[serde(default)]
+    pub beams_capacity: u64,
     /// The captured frame, if any.
     pub capture: Option<CaptureSummary>,
 }
@@ -308,8 +315,18 @@ impl EffectStress {
     }
 
     /// Publishes the counters (no allocation).
-    fn publish_counters(&self, runtime: Option<&EffectRuntime>) {
+    fn publish_counters(
+        &self,
+        runtime: Option<&EffectRuntime>,
+        beams: Option<&client::effects::beams::HeldBeams>,
+    ) {
         let stats = runtime.map_or_default(|runtime| runtime.stats);
+        let (beams_refused, beams_capacity) = beams.map_or((0, 0), |beams| {
+            (
+                beams.refused,
+                u64::try_from(beams.capacity()).unwrap_or(u64::MAX),
+            )
+        });
         self.handle.update(|summary| {
             summary.events_sent = self.sequence;
             summary.effects_spawned = stats.spawned;
@@ -320,6 +337,8 @@ impl EffectStress {
             summary.retired = stats.retired;
             summary.marks_retired = stats.marks_retired;
             summary.marks_refused = stats.marks_refused;
+            summary.beams_refused = beams_refused;
+            summary.beams_capacity = beams_capacity;
         });
     }
 }
@@ -511,8 +530,9 @@ fn capture_stressed_frame(
     session: Res<'_, BattleSession>,
     runtime: Option<Res<'_, EffectRuntime>>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
+    beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
 ) {
-    stress.publish_counters(runtime.as_deref());
+    stress.publish_counters(runtime.as_deref(), beams.as_deref());
     let Some(path) = stress.config.capture.clone() else {
         return;
     };

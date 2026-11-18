@@ -22,7 +22,7 @@ use super::schema::EventKind;
 use super::{ConcealmentDefaults, EffectCatalog, EffectId};
 use sim_core::catalog::{ArchetypeEffects, EffectNode, SpellCatalog, UnitArchetype, UnitCatalog};
 use sim_types::EffectId as SpellEffectId;
-use sim_types::{AbilitySource, EffectSource, StatusKind, UnitTypeId, WeaponKey};
+use sim_types::{AbilitySource, EffectSource, StatusId, StatusKind, UnitTypeId, WeaponKey};
 
 /// Event kinds a splash slot accepts.
 const SPLASH_KINDS: &[EventKind] = &[EventKind::Splash, EventKind::Line];
@@ -154,6 +154,9 @@ pub struct UnitEffectTables {
     default_impact: Option<EffectId>,
     /// How concealed units look, from the vocabulary's defaults.
     concealment: ConcealmentDefaults,
+    /// Looks of single catalog statuses (`defaults.status_by_name`), sorted by status id
+    /// (plan `2026-11-17-effect-snapshot-identity` D-5).
+    named: Vec<(StatusId, EffectId)>,
 }
 
 impl UnitEffectTables {
@@ -166,8 +169,12 @@ impl UnitEffectTables {
     /// default.
     ///
     /// # Errors
-    /// [`EffectCatalogError::UnknownUnitEffect`], [`EffectCatalogError::UnknownUnitMode`] or
-    /// [`EffectCatalogError::WrongEventKind`].
+    /// The named status looks of the vocabulary's `defaults.status_by_name` are resolved
+    /// against the unit catalog's spell catalog (its `statuses.ron` names).
+    ///
+    /// # Errors
+    /// [`EffectCatalogError::UnknownUnitEffect`], [`EffectCatalogError::UnknownUnitMode`],
+    /// [`EffectCatalogError::UnknownStatus`] or [`EffectCatalogError::WrongEventKind`].
     pub fn build(units: &UnitCatalog, effects: &EffectCatalog) -> Result<Self, EffectCatalogError> {
         let defaults = &effects.defaults;
         let mut tables = Self {
@@ -175,6 +182,7 @@ impl UnitEffectTables {
             default_splash: defaults.splash,
             default_impact: defaults.impact,
             concealment: defaults.concealment,
+            named: named_statuses(effects, units.spells())?,
         };
         let check = Checker {
             effects,
@@ -282,6 +290,17 @@ impl UnitEffectTables {
         self.units
             .get(usize::from(unit.0))
             .and_then(|entry| entry.status[status_index(kind)])
+    }
+
+    /// The look held on a unit bearing catalog status `status` in addition to its kind's look
+    /// (`defaults.status_by_name`), if the vocabulary names one (plan
+    /// `2026-11-17-effect-snapshot-identity` D-5).
+    #[must_use]
+    pub fn named_status(&self, status: StatusId) -> Option<EffectId> {
+        self.named
+            .binary_search_by_key(&status, |(id, _)| *id)
+            .ok()
+            .map(|index| self.named[index].1)
     }
 
     /// Whether any unit names a `moving` trail, so the trail system has work at all.
@@ -400,6 +419,31 @@ impl Checker<'_> {
             found: effect.event,
         })
     }
+}
+
+/// Resolves the vocabulary's `defaults.status_by_name` against `spells`: each name must be a
+/// catalog status and each look a `Status` effect. Returns the pairs sorted by status id.
+fn named_statuses(
+    effects: &EffectCatalog,
+    spells: &SpellCatalog,
+) -> Result<Vec<(StatusId, EffectId)>, EffectCatalogError> {
+    let check = Checker {
+        effects,
+        unit: "defaults",
+    };
+    let mut named = Vec::with_capacity(effects.defaults.status_by_name.len());
+    for (name, effect) in &effects.defaults.status_by_name {
+        let status = spells
+            .status_id(name)
+            .ok_or_else(|| EffectCatalogError::UnknownStatus {
+                path: effects.path.clone(),
+                name: name.clone(),
+            })?;
+        check.kind("status_by_name", Some(*effect), STATUS_KINDS)?;
+        named.push((status, *effect));
+    }
+    named.sort_unstable_by_key(|(status, _)| *status);
+    Ok(named)
 }
 
 /// The index of mode `name` in `archetype`'s modes.

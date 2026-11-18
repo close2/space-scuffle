@@ -7,7 +7,8 @@
 //! instanced renderer of the `Sprite`, `Ring`, `Decal`, `Light` and CPU `Particles` blocks, and
 //! the looks held on units for their concealment and stance, whose `Shell` layers shape the
 //! units' own bubbles ([`stance`], WP8), and the looks held on published areas and tethers
-//! ([`areas`], WP10).
+//! ([`areas`], WP10), and the beams held while their attackers keep striking ([`beams`], plan
+//! `2026-11-17-effect-snapshot-identity` D-4).
 //!
 //! # How it fits
 //! The simulation publishes facts (`CombatEventVisual::SplashVisual`, every weapon event's
@@ -25,6 +26,7 @@
 //! - Pools are sized from the catalog's budget at load and never grow during a battle.
 
 pub mod areas;
+pub mod beams;
 pub mod binding;
 pub mod budget;
 pub mod catalog;
@@ -53,6 +55,7 @@ impl Plugin for EffectsPlugin {
         app.init_resource::<render::EffectCatalogVersion>()
             .init_resource::<areas::AreaLooks>()
             .init_resource::<struck::StruckBubbles>()
+            .init_resource::<beams::HeldBeams>()
             .add_systems(Startup, systems::load_effect_catalog)
             .add_systems(
                 Update,
@@ -62,6 +65,7 @@ impl Plugin for EffectsPlugin {
                     systems::spawn_mode_trails,
                     stance::present_stances,
                     areas::present_areas_and_links,
+                    beams::keep_beams.after(systems::spawn_effects_from_events),
                 )
                     .in_set(crate::battle_pipeline::BattleSet::Present),
             )
