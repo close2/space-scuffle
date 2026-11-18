@@ -1695,10 +1695,15 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
 
 /// Environment variable naming the held-beam child's output directory.
 const BEAM_CHILD_OUT_VAR: &str = "SPACE_SCUFFLE_HELD_BEAM_CHILD_OUT";
-/// Frames the beam streams at the walking target before it is killed.
+/// Frames the beam streams at the walking target, from the first frame it is held, before the
+/// target is killed.
 const BEAM_STREAM_FRAMES: u32 = 40;
-/// Frame of the stream at which the paired pictures are taken.
-const BEAM_SAMPLE_FRAME: u32 = 24;
+/// Frames the child waits for the first held beam (the shooter walks into range and winds up)
+/// before it kills the target anyway, so the parent fails on a beam that never came.
+const BEAM_MAX_WAIT: u32 = 150;
+/// Frame of the stream, from the first frame the beam is held, at which the paired pictures
+/// are taken.
+const BEAM_SAMPLE_FRAME: u32 = 20;
 /// Frames recorded after the kill.
 const BEAM_AFTER_FRAMES: u32 = 12;
 /// The plan's tolerance on the beam's end, window pixels.
@@ -1780,10 +1785,15 @@ struct BeamStaging {
     shooter: Option<EntityId>,
     target: Option<EntityId>,
     look: Option<client::effects::catalog::EffectId>,
-    /// The last held beam's projected muzzle and end.
-    last_line: Option<([f32; 2], [f32; 2])>,
+    /// The last held beam's muzzle and end, Bevy world space (projected when pictured, through
+    /// the camera of that moment).
+    last_line: Option<(Vec3, Vec3)>,
     /// The frame the target was first missing from the presented frame.
     gone: Option<u32>,
+    /// The first frame a beam was held.
+    first_held: Option<u32>,
+    /// The frame to record in `PostUpdate`, once transforms are propagated (what is drawn).
+    record_now: Option<u32>,
     outstanding: Arc<AtomicU32>,
     report: BeamReport,
 }
@@ -1808,26 +1818,77 @@ fn apply_beam_view(view: Res<'_, BeamView>, runtime: Option<ResMut<'_, EffectRun
     }
 }
 
-/// The first presentable unit whose block names a sustained travel look for one of its
-/// weapons, that weapon's slot and the look's name. Found by data (C5).
+/// The held beam's shooter (found by data, C5): the first presentable unit whose block names a
+/// sustained travel look for one of its weapons; failing one (the beam units have no media),
+/// a presentable mobile ground unit with a primary weapon, lent in the test world's catalog
+/// only the first shipped beam's looks (its travel and impact), its weapon made an instant
+/// beam (`LaserBeam`, no projectile speed, a range of at least 6), as the waves lend lab
+/// families. Returns the unit, its
+/// weapon's slot and the look's name.
 fn beam_shooter(
-    world: &SimWorld,
+    world: &mut SimWorld,
     catalog: &EffectCatalog,
 ) -> Option<(UnitTypeId, WeaponSlot, String)> {
-    world.catalog.archetypes().find_map(|arch| {
+    let sustained = |name: &String| {
+        catalog
+            .effect_id(name)
+            .and_then(|id| catalog.effect(id))
+            .is_some_and(|effect| effect.sustain.is_some())
+    };
+    let own = world.catalog.archetypes().find_map(|arch| {
         if arch.max_speed <= SimScalar::ZERO || !presentable(&assets(), &arch.slug) {
             return None;
         }
         arch.effects.weapons.iter().find_map(|entry| {
-            let travel = entry.travel.as_ref()?;
-            let sustained = catalog
-                .effect_id(travel)
-                .and_then(|id| catalog.effect(id))
-                .is_some_and(|effect| effect.sustain.is_some());
-            (sustained && entry.mode.is_none() && slot_weapon(arch, entry.weapon).is_some())
+            let travel = entry.travel.as_ref().filter(|travel| sustained(travel))?;
+            (entry.mode.is_none() && slot_weapon(arch, entry.weapon).is_some())
                 .then(|| (arch.unit_type_id, entry.weapon, travel.clone()))
         })
-    })
+    });
+    if own.is_some() {
+        return own;
+    }
+    let (travel, impact) = world.catalog.archetypes().find_map(|arch| {
+        arch.effects.weapons.iter().find_map(|entry| {
+            let travel = entry.travel.as_ref().filter(|travel| sustained(travel))?;
+            Some((travel.clone(), entry.impact.clone()))
+        })
+    })?;
+    let id = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.max_speed > SimScalar::ZERO
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+                && arch.weapon.is_some()
+                && (arch.ground_weapon.is_none() || arch.ground_weapon == arch.weapon)
+                && presentable(&assets(), &arch.slug)
+        })?
+        .unit_type_id;
+    let archetype = world
+        .catalog
+        .get_mut(id)
+        .expect("invariant: the type was just found in this catalog");
+    for weapon in [archetype.weapon.as_mut(), archetype.ground_weapon.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        weapon.visual_kind = WeaponVisualKind::LaserBeam;
+        weapon.projectile_speed = None;
+        // A beam's reach (the Void-Ray analogue's is 6), so the walking target stays in range
+        // and the beam is not broken off by the shooter walking after it.
+        weapon.max_range = weapon.max_range.max(SimScalar::from_num(6));
+    }
+    archetype.effects.weapons = vec![sim_core::catalog::WeaponEffects {
+        weapon: WeaponSlot::Primary,
+        mode: None,
+        launch: None,
+        travel: Some(travel.clone()),
+        impact,
+        splash: None,
+    }];
+    Some((id, WeaponSlot::Primary, travel))
 }
 
 /// Stages the held beam: the shooter in front of the target's walk across the screen, the
@@ -1937,8 +1998,8 @@ fn record_beam(
             Some(project3(camera, line.to)),
         )
     });
-    if let (Some(muzzle), Some(end)) = (muzzle_px, end_px) {
-        staging.last_line = Some((muzzle, end));
+    if let Some(line) = line {
+        staging.last_line = Some((line.from, line.to));
     }
     let outline_px = find(target)
         .zip(find(shooter))
@@ -1962,6 +2023,37 @@ fn record_beam(
     });
 }
 
+/// Records the frame the staging asked for, once transforms are propagated, so the beam's
+/// line and the target's bubble are compared as this frame draws them.
+fn record_beam_frame(
+    mut staging: ResMut<'_, BeamStaging>,
+    cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
+    bubbles: Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
+    beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
+    runtime: Option<Res<'_, EffectRuntime>>,
+) {
+    let Some(frame) = staging.record_now.take() else {
+        return;
+    };
+    let (Ok(camera), Some(beams), Some(runtime)) = (cameras.get_single(), beams, runtime) else {
+        return;
+    };
+    let drawn: Vec<(EntityId, Vec3, f32)> = bubbles
+        .iter()
+        .map(|(bubble, global)| (bubble.0.entity_id, global.translation(), bubble.0.radius))
+        .collect();
+    record_beam(&mut staging, frame, camera, &drawn, &beams, &runtime);
+    if staging.first_held.is_none()
+        && staging
+            .report
+            .frames
+            .last()
+            .is_some_and(|recorded| recorded.held > 0)
+    {
+        staging.first_held = Some(frame);
+    }
+}
+
 /// Advances the held-beam child by one frame.
 fn stage_beam_child(
     mut commands: Commands<'_, '_>,
@@ -1971,15 +2063,8 @@ fn stage_beam_child(
     mut time: ResMut<'_, Time<Virtual>>,
     mut view: ResMut<'_, BeamView>,
     fog: Option<Res<'_, BattleFog>>,
-    effects: (
-        Option<Res<'_, EffectRuntime>>,
-        Option<Res<'_, EffectCatalog>>,
-        Option<Res<'_, client::effects::beams::HeldBeams>>,
-    ),
-    (cameras, bubbles): (
-        Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
-        Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
-    ),
+    catalog: Option<Res<'_, EffectCatalog>>,
+    cameras: Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
     idle: Res<'_, LabRenderIdle>,
 ) {
     let fog = fog.expect("the skirmish presents a player, so it keeps a fog");
@@ -1991,10 +2076,6 @@ fn stage_beam_child(
     };
     let tick = session.published().map_or(0, |published| published.tick);
     let idle_long = idle.0.load(Ordering::Acquire) >= IDLE_FRAMES;
-    let drawn: Vec<(EntityId, Vec3, f32)> = bubbles
-        .iter()
-        .map(|(bubble, global)| (bubble.0.entity_id, global.translation(), bubble.0.radius))
-        .collect();
     staging.phase = match staging.phase {
         BeamPhase::Boot if tick < 2 => BeamPhase::Boot,
         BeamPhase::Boot => BeamPhase::Booting {
@@ -2017,8 +2098,7 @@ fn stage_beam_child(
             BeamPhase::Framing { frames: frames + 1 }
         }
         BeamPhase::Framing { .. } => {
-            let catalog = effects
-                .1
+            let catalog = catalog
                 .as_deref()
                 .expect("the effect system is loaded before the staging");
             let world = session.world().expect("a ready session has a world");
@@ -2042,27 +2122,24 @@ fn stage_beam_child(
             };
             hold_own_units(&mut session);
             stage_beam(&mut staging, &mut session, catalog, spot, up);
+            commands.queue(rebuild_tables);
             lab.battle_paused = false;
             BeamPhase::Running { frame: 0 }
         }
         BeamPhase::Running { frame } => {
-            if let (Some(runtime), Some(beams)) = (effects.0.as_deref(), effects.2.as_deref()) {
-                record_beam(
-                    &mut staging,
-                    frame,
-                    (camera, transform),
-                    &drawn,
-                    beams,
-                    runtime,
-                );
-            }
+            view.bare = false;
+            staging.record_now = Some(frame);
+            let kill_at = staging
+                .first_held
+                .map_or(BEAM_MAX_WAIT, |first| first + BEAM_STREAM_FRAMES);
+            let sample_at = staging.first_held.map(|first| first + BEAM_SAMPLE_FRAME);
             let world = session.world_mut().expect("a ready session has a world");
-            if frame < BEAM_STREAM_FRAMES {
+            if frame < kill_at {
                 // The target stands at full health while the beam streams.
                 if let Some(unit) = staging.target.and_then(|id| world.entities.get_mut(&id)) {
                     unit.hp = SimScalar::from_num(10_000);
                 }
-            } else if frame == BEAM_STREAM_FRAMES {
+            } else if frame == kill_at {
                 staging.report.kill_frame = frame;
                 if let Some(unit) = staging.target.and_then(|id| world.entities.get_mut(&id)) {
                     unit.hp = SimScalar::ZERO;
@@ -2073,7 +2150,7 @@ fn stage_beam_child(
                 .gone
                 .is_some_and(|gone| frame == gone + exit_frames + 1)
                 && staging.report.after.is_none();
-            if frame == BEAM_SAMPLE_FRAME || after_due {
+            if Some(frame) == sample_at && staging.report.sample.is_none() || after_due {
                 time.pause();
                 BeamPhase::Picturing {
                     frame,
@@ -2081,9 +2158,7 @@ fn stage_beam_child(
                     settle: 0,
                     after: after_due,
                 }
-            } else if frame >= BEAM_STREAM_FRAMES + BEAM_AFTER_FRAMES
-                && staging.report.after.is_some()
-            {
+            } else if frame >= kill_at + BEAM_AFTER_FRAMES && staging.report.after.is_some() {
                 lab.battle_paused = true;
                 BeamPhase::Finishing
             } else {
@@ -2095,12 +2170,16 @@ fn stage_beam_child(
             bare,
             settle,
             after,
-        } if settle < 3 || !idle_long => BeamPhase::Picturing {
-            frame,
-            bare,
-            settle: settle + 1,
-            after,
-        },
+        } if settle < 3 || !idle_long => {
+            // The view of the picture to come, set while its frames settle.
+            view.bare = bare;
+            BeamPhase::Picturing {
+                frame,
+                bare,
+                settle: settle + 1,
+                after,
+            }
+        }
         BeamPhase::Picturing {
             frame, bare, after, ..
         } => {
@@ -2115,7 +2194,14 @@ fn stage_beam_child(
                 &staging.outstanding,
             );
             if bare {
-                let (muzzle, end) = staging.last_line.unwrap_or(([0.0; 2], [0.0; 2]));
+                let (muzzle, end) = staging
+                    .last_line
+                    .map_or(([0.0; 2], [0.0; 2]), |(from, to)| {
+                        (
+                            project3((camera, transform), from),
+                            project3((camera, transform), to),
+                        )
+                    });
                 let drawn_file = format!("beam_{name}_drawn.png");
                 let pair = Some((drawn_file, file, muzzle, end));
                 if after {
@@ -2123,11 +2209,11 @@ fn stage_beam_child(
                 } else {
                     staging.report.sample = pair;
                 }
-                view.bare = false;
+                // The screenshot is of this frame's render, so the view changes only from the
+                // next frame on.
                 time.unpause();
                 BeamPhase::Running { frame: frame + 1 }
             } else {
-                view.bare = true;
                 BeamPhase::Picturing {
                     frame,
                     bare: true,
@@ -2181,7 +2267,10 @@ fn held_beam_child() {
         )
         .add_systems(
             PostUpdate,
-            apply_beam_view.after(client::effects::systems::build_effect_frame),
+            (
+                apply_beam_view.after(client::effects::systems::build_effect_frame),
+                record_beam_frame.after(TransformSystem::TransformPropagate),
+            ),
         );
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
@@ -2282,8 +2371,18 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         errors.len(),
         errors.iter().sum::<f32>() / errors.len().max(1) as f32,
     );
+    let timeline: String = report
+        .frames
+        .iter()
+        .map(|frame| match (frame.target_shown, frame.held) {
+            (false, _) => 'x',
+            (true, 0) => '.',
+            (true, _) => '#',
+        })
+        .collect();
+    eprintln!("driver {driver}: frames (# beam held, . none, x target gone): {timeline}");
     assert!(
-        stream.len() >= 20,
+        stream.len() >= 30,
         "the beam is held on most of the stream ({} frames)",
         stream.len()
     );
@@ -2321,7 +2420,8 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         BEAM_END_TOLERANCE_PX,
     );
     eprintln!(
-        "driver {driver}: sample frame {BEAM_SAMPLE_FRAME}: {along} px of the path and {at_end} \
+        "driver {driver}: sample, {BEAM_SAMPLE_FRAME} frames into the stream: {along} px of the \
+         path and {at_end} \
          px within {BEAM_END_TOLERANCE_PX} px of its end changed"
     );
     assert!(along > 20, "the beam is drawn along its path");
@@ -2343,7 +2443,15 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         .filter(|frame| frame.frame > gone + exit_frames && frame.live > 0)
         .map(|frame| frame.frame)
         .collect();
-    let (drawn, bare, muzzle, end) = report.after.as_ref().ok_or("the after pair was pictured")?;
+    let (drawn, bare, ..) = report.after.as_ref().ok_or("the after pair was pictured")?;
+    // The beam's path where it was last held, as that frame drew it (the camera stands still).
+    let (muzzle, end) = report
+        .frames
+        .iter()
+        .rev()
+        .find_map(|frame| frame.muzzle_px.zip(frame.end_px))
+        .ok_or("a beam was held")?;
+    let (muzzle, end) = (&muzzle, &end);
     let drawn_image = image::open(directory.path().join(drawn))?.to_rgb8();
     let bare_image = image::open(directory.path().join(bare))?.to_rgb8();
     let remains = changed_along(
@@ -2352,6 +2460,19 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         (*muzzle, *end),
         BEAM_PATH_SPAN,
         BEAM_PATH_HALF_PX,
+    );
+    let window_changed = drawn_image
+        .pixels()
+        .zip(bare_image.pixels())
+        .filter(|(a, b)| {
+            a.0.iter()
+                .zip(b.0.iter())
+                .any(|(a, b)| a.abs_diff(*b) >= BEAM_CHANGE_LEVEL)
+        })
+        .count();
+    eprintln!(
+        "driver {driver}: after the death, the window's effect layers change {window_changed} px \
+         (the death's own look); the beam's last muzzle {muzzle:?} and end {end:?}"
     );
     eprintln!(
         "driver {driver}: the target left the presented frame on frame {gone}; exit {:.2} s \

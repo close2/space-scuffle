@@ -2728,8 +2728,18 @@ fn set_up_fungal(
         let victim = spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
         staging.fungal_victims.push(victim);
     }
-    // WP5: the storm stand-in's victims, cast on by a second caster of the viewer at once.
-    let storm_caster = spawn_still(sim, kind, VIEWER, spots[3]);
+    // WP5: the storm stand-in's victims, cast on by a second caster of the viewer at once. The
+    // caster stands within the ability's range of its target, so it does not walk: a walking
+    // viewer unit would move the viewer's sight over the fog edge measured below.
+    let storm_range = sim
+        .catalog
+        .get(kind)
+        .ok()
+        .and_then(|arch| arch.abilities.get(usize::from(storm)))
+        .map_or(4.0, |spec| spec.cast_range.to_f32());
+    let towards = (spots[3] - spots[1]).normalize_or_zero();
+    let storm_at = spots[1] + towards * spots[1].distance(spots[3]).min(storm_range - 1.0).max(2.5);
+    let storm_caster = spawn_still(sim, kind, VIEWER, storm_at);
     for index in 0..STORM_VICTIMS {
         let angle = index as f32 * std::f32::consts::TAU / STORM_VICTIMS as f32;
         let victim = spawn_still(sim, kind, ENEMY, spots[1] + Vec2::from_angle(angle) * 0.6);
