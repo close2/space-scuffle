@@ -23,6 +23,7 @@ Please write the review of this round (if one is asked) to `independent_review_w
 | W14-7: the pool | Amendment 31, `frame_budget_wp14.md` and the `effects.ron` comment say a refusal turns away a whole new effect (not counted by class), that no Critical layer lacked a slot at 2 048, and that 6 144 serves the every-effect measure, not a battle |
 | W14-10: the mix's invariant | Reworded: the same sources in the same order; which units an event joins depends on the frame |
 | W14-8, W14-9 | No change |
+| Merge of main (`c06d8f5c`, structure-contact) | The battle take is main's retelling (player 1 wins); its scenes start on ticks 251, 305, 683 and 949 on radv, as in that plan's evidence. The effects take after the merge: the same scene ticks, every asked-for effect spawned, the entrench strip byte-identical. Pictures above are from the post-merge render; its site assembles within budget (video 20.0 MB of 26.2, teaser 4.46 MB of 4.72 at 640 px, quality 50) |
 
 ## WP14 (the showcase's effects take; every effect in the frame budget)
 
@@ -59,7 +60,7 @@ one. Pictures are on radv (the server's RX 580), release build, Xvfb 1280x720, u
 | Check | Result | Bar |
 |---|---|---|
 | Effects take, radv, full length: each scene shows what it asks for | `entrench`: `burrow_dig`, `burrow_mound`, `mode_seal_sweep`, `siege_anchor`; `siege`: `shell_impact`, `cannon_tracer`, `flame_line`, `spine_line`, `vehicle_wreck` (and `gauss_tracer`, `bullet_hit`) | all asked |
-| `battle` take unchanged | scenes start on ticks 251, 305, 683, 953, as in the inner-radius evidence | identical |
+| `battle` take unchanged by WP14 | scenes start on ticks 251, 305, 683, 953, as in the inner-radius evidence; after merging main's structure-contact (which retold that take), 251, 305, 683 (`march` 67 frames), 949, as in `docs/evidence/2026-11-18-structure-contact.md` §3 | identical to the take's own evidence |
 | Effect passes' GPU time, every effect at once (RX 580) | +0.54 ms mean over no effects (+0.57 with the plan's stress) | ≤ 1.5 ms |
 | Frame interval, the plan's §10.3 stress (radv, quiet) | p50 14.97, p99 25.20 ms | ≤ 17.1, ≤ 26.0 (recorded baseline +5 %, +10 %) |
 | Frame interval, every effect (beyond the plan's stress) | p50 17.15, p99 26.93 ms | over by 0.3 % and 3.6 % |

@@ -114,7 +114,7 @@ gate on the other CPUs), so the times are upper bounds.
 
 | Take | Frames | Render s | s/frame | Scenes' effects |
 |---|---:|---:|---:|---|
-| `battle` (unchanged; `closing` moved out) | 1 222 | 1 811.7 | 1.48 | its scenes start on ticks 251, 305, 683, 953 as before |
+| `battle` (unchanged; `closing` moved out) | 1 222 | 1 811.7 | 1.48 | its scenes start on ticks 251, 305, 683, 953, as in the inner-radius evidence (before main's structure-contact retelling; after merging it, radv gives 251, 305, 683, 949, as in that plan's evidence) |
 | `effects` | 591 | 676.3 | 1.14 | every asked-for effect shown (`entrench`: 4 of 4; `siege`: 5 of 5, plus `gauss_tracer`, `bullet_hit`) |
 
 The effects take costs 0.77 of the battle take per frame. Site: video 19.5 MB (budget 26.2 MB), teaser 4.26 MB at
