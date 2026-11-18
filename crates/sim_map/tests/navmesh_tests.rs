@@ -247,7 +247,10 @@ fn pathfinder_rebuilds_its_mesh_on_structure_change() {
 
 /// The showcase mesh digest, pinned. It must be identical on every target, including
 /// `wasm32-wasip1`; a change to the construction must re-pin it deliberately.
-const SHOWCASE_MESH_DIGEST: u64 = 0x46d3_38ba_8cd1_c537;
+///
+/// Re-pinned for plan 2026-11-18-contour-footprints WP1a: the digest now eats world coordinates
+/// and reduced widths; the mesh is unchanged.
+const SHOWCASE_MESH_DIGEST: u64 = 0x4a14_9269_337f_3464;
 
 #[test]
 fn digest_of_the_showcase_mesh_is_pinned() {

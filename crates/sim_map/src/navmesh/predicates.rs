@@ -272,6 +272,28 @@ impl SquaredWidth {
     pub fn parts(self) -> (u64, u64) {
         (self.num, self.den)
     }
+
+    /// Numerator and denominator in lowest terms (zero is `0 / 1`; [`Self::UNBOUNDED`] keeps its
+    /// parts): the same value always yields the same pair, whatever unit it was computed in.
+    #[must_use]
+    pub fn reduced_parts(self) -> (u64, u64) {
+        if self.is_unbounded() {
+            return (self.num, self.den);
+        }
+        let divisor = gcd(self.num, self.den);
+        if divisor == 0 {
+            return (0, 1);
+        }
+        (self.num / divisor, self.den / divisor)
+    }
+}
+
+/// Greatest common divisor by Euclid's algorithm; `gcd(0, 0)` is 0.
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 /// Squared distance from the lattice point `c` to the segment `[a, b]`, in cells squared.

@@ -555,6 +555,11 @@ impl NavMesh {
     }
 
     /// A 64-bit FNV-1a digest of the whole mesh, for determinism checks across targets.
+    ///
+    /// The digest is independent of the lattice's unit (plan `2026-11-18-contour-footprints`
+    /// D-3): it eats each vertex as its raw Q32.32 world position and each width as its value in
+    /// cells squared, reduced to lowest terms. A mesh whose coordinates are rescaled without
+    /// changing its geometry therefore keeps its digest.
     #[must_use]
     pub fn digest(&self) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -565,14 +570,16 @@ impl NavMesh {
             }
         };
         for v in &self.vertices {
-            eat(u64::from(v.x.unsigned_abs()) << 32 | u64::from(v.y.unsigned_abs()));
+            let world = v.to_sim();
+            eat(world.x.raw().unsigned_abs());
+            eat(world.y.raw().unsigned_abs());
         }
         for t in 0..self.triangles.len() {
             for k in 0..3 {
                 eat(u64::from(self.triangles[t][k]));
                 eat(u64::from(self.adjacent[t][k]));
                 eat(edge_kind_code(self.kinds[t][k]));
-                let (num, den) = self.widths[t][k].parts();
+                let (num, den) = self.widths[t][k].reduced_parts();
                 eat(num);
                 eat(den);
             }
