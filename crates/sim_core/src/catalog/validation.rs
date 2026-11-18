@@ -1865,8 +1865,9 @@ mod tests {
         Ok(())
     }
 
-    /// The shipped unit catalog with `terrain_radius: <value>` authored on the first unit whose
-    /// `mover_type` is `mover`, inserted before its `collision_radius`. Returns the edited text,
+    /// The shipped unit catalog with every authored `terrain_radius` removed and
+    /// `terrain_radius: <value>` authored on the first unit whose `mover_type` is `mover`,
+    /// inserted before its `collision_radius`. Returns the edited text,
     /// that unit's slug and its authored collision radius; the slug is read from the file, so no
     /// identity is named here (charter §3.3).
     fn units_with_terrain_radius(
@@ -1879,7 +1880,11 @@ mod tests {
         let mut slug = None;
         let mut armed = false;
         let mut found = None;
-        for line in text.lines() {
+        // Authored terrain radii are dropped first, so each test sees exactly one: its own.
+        for line in text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("terrain_radius:"))
+        {
             let trimmed = line.trim_start();
             if found.is_none() {
                 if let Some(rest) = trimmed.strip_prefix("slug: ") {
@@ -1934,7 +1939,7 @@ mod tests {
                 assert_eq!(unit.terrain_radius, SimScalar::from_f32_lossy(0.3125));
                 assert_eq!(unit.collision_radius, SimScalar::from_f32_lossy(radius));
             } else {
-                // The shipped catalog of this commit authors none, so every other unit reads its
+                // Every other authored value was removed, so every other unit reads its
                 // collision radius.
                 assert_eq!(unit.terrain_radius, unit.collision_radius, "{}", unit.slug);
                 others += 1;
