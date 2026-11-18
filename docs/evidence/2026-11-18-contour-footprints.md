@@ -176,3 +176,108 @@ refusal, and checks the restore on a walkable cell with a non-default flag set).
 byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical at 1,800 ticks, to the end and on
 seeds 1 to 8. Goldens (re-recorded) pass in debug, release and `wasm32-wasip1` release; `sim_map`'s
 `determinism_tests` and `navmesh_tests` pass on `wasm32-wasip1`. The whole `sim_core` suite passes.
+
+## 3. WP3: stopped at the threshold property (R-2), Proposed Amendment below
+
+WP3 is **not committed** to `contour-footprints`. Its work in progress (the contour cut, the D-6 raster and all of
+WP3's tests but the two new pinned goldens) is kept on the side branch `contour-footprints-wp3-wip`, one commit on
+top of WP2's evidence, so nothing is lost.
+
+**What the WIP does** (D-4, D-6): the whole-cell `EdgeGrid` is terrain only; a sorted `StructureEdges` store holds
+each structure's contour and its interior cell lines clipped to the shape's open interior, as unit quarter-lattice
+edges in four canonical directions; `ConstraintGraph` merges both (`Wall > Seam`), finds vertices by the
+eight-direction branch rule over every cell corner and every quarter point of each closed footprint, and collects
+runs in `(y, x)` order with directions east, north, north-east, north-west. Labels test the centroid against the
+occupant's shape exactly (`contains_open_scaled(sum, 3)`). The clearance field marks the corners of every half-cell
+whose open interior meets the shape.
+
+**Tests on the WIP** (red on WP2 first, as the plan asks):
+
+| Test | WP2 | WIP |
+|---|---|---|
+| `wall_off_tests::a_diagonal_contour_wall_passes_a_worker_and_stops_a_zergling` (both orientations) | Fails: the worker finds no route | Passes |
+| `wall_off_tests::a_diagonal_contour_gap_admits_exactly_the_discs_that_fit` (`k` = 64 to 115) | Fails at `k` = 64 | **Fails at `k` = 85** (below) |
+| `wall_off_tests::a_5x5_and_a_3x3_corner_to_corner_pass_medium_units` | Fails: 0.6875 finds no route | Passes |
+| `wall_off_tests::a_5x5_sharing_one_cell_of_border_is_a_semi_wall_and_two_cells_is_tight` | Fails: 0.3125 finds no route | Passes |
+| `wall_off_tests::face_adjacent_contours_are_tight` | Passes (a guard: cells were tighter) | Passes |
+| `navmesh_tests::a_square_shape_cuts_the_mesh_as_cells_did` (24 seeded square structures on the showcase map; digest `0xb220_7731_a3e3_10c8` computed by the same test on WP2's tree) | Passes (it pins WP2) | Passes: the square cut is the cell cut |
+| `navmesh_tests::contour_structure_triangles_lie_in_one_cell` | Fails: whole cut corners labelled structure | Passes |
+| `navmesh_tests::a_cut_corner_is_open_ground` | Fails | Passes |
+| `navmesh_tests::removing_a_contour_structure_restores_the_terrain_mesh` | Passes (guard) | Passes |
+| `navmesh_tests::contour_meshes_build_for_seeded_layouts` (proptest, 64 cases, flush, diagonal and seeded placements of the §2.3 shapes and a 3×2) | Fails: labels | Passes: no `ConstraintRecovery`, labels exact, every run on a contour, a clipped cell line or a cell edge |
+| `wall_contact_tests::contact_against_a_chamfer_is_exact` | Fails | Passes: point (10.25, 10.25), `distance_sq` exactly 2^61, normal `(−1, −1)/√2`, equal to the exhaustive flood |
+| `clearance_field_tests::square_shapes_keep_todays_clearance` (8 seeded layouts against the same cells as unwalkable terrain) | Passes | Passes |
+| `clearance_field_tests::a_contours_clearance_never_exceeds_the_true_clearance` (8 seeded layouts, exact distances at the nine samples) | Passes (cells underestimate more) | Passes, and some cells underestimate |
+| Guards `f7_no_tier_passes_between_structures_touching_at_a_corner`, `test_ramp_wall_off_geometry` | Pass | Pass |
+
+Every pre-existing `sim_map` golden is unchanged on the WIP (`EXPECTED_CHECKSUM`, `VALIDATION_GOLDEN`,
+`DECODE_GOLDEN`, `PATH_GOLDEN`, `SHOWCASE_MESH_DIGEST`) and every other `sim_map` test passes. Not yet written:
+`CONTOUR_PATH_GOLDEN`, `determinism_tests::contour_route_checksum` and the `navmesh_measure` row; they pin routes
+through contours, which the amendment below may change, so they are left for after it.
+
+**Bit-identity of the WIP** (every production structure still has a full-box shape until WP4, so D-15 rule 2 holds
+for the cut), WP2 tools against the WIP's tools: matrix bit-identical (1,160 runs); battle 33 `seeds.csv`
+byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical at 1,800 ticks, to the end and on
+seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release and `wasm32-wasip1` release; `sim_map`'s
+`determinism_tests` and `navmesh_tests` (with the new contour tests) pass on `wasm32-wasip1`. `cargo clippy -p
+sim_map --all-targets` is clean on the WIP.
+
+**The failure (R-2, traced).** On the staircase map with two 2×2 contours corner to corner (gap `1/√2 ≈ 0.7071`),
+scanning `t = k/256` in both orientations (`~/scratch/contour-footprints` scratch test, not committed):
+
+| `k` (t) | Route found | Funnel | Legs failing the segment predicate |
+|---|---|---|---|
+| 64 to 84 (0.25 to 0.328) | yes | legal (shrunk, or pinned for some `k`) | 0 |
+| 85 to 90 (0.332 to 0.352) | yes | **shrunk and pinned both illegal; fallback to portal midpoints** | 4 of 16 |
+| 91 to 115 | `NoPathFound` | — | — |
+
+Route **existence** is exact: the A* width test admits exactly `8t² ≤ 1` (`k ≤ 90`) in both orientations. The
+failure is the route's **shape**: for `2t < w < 2t + 2·CORNER_SAFETY_MARGIN` (here a spare `w − 2t` of 0.043 down to
+0.004), every corner waypoint lies `t + 0.05` from the vertex it rounds, which is `w − (t + 0.05) < t` from the
+parallel chamfer across the band, so every funnel leg through the gap fails the segment predicate; the pinned retry
+has the same `rho`; the portal-midpoint fallback cuts the corners of the approach. The threshold seen, spare below
+about 0.05 (one margin) rather than 0.1 (two), is the shrink and pinned retries absorbing up to one margin. This is
+the plan's R-2 exactly; its mitigation says "a failure is a funnel defect, traced and fixed by amendment; the margin
+is not tuned", so WP3 stops here.
+
+**Which shipped units it reaches.** Empirically a route through such a band is legal while its spare `w − 2t` is at
+least one margin (0.05; `k` = 84, spare 0.051, is legal) and illegal below. For corner-to-corner gaps of the §2.3
+chamfers (`w = (c₁ + c₂)/√2`, `c` in 0.25, 0.5, 0.75, 1.5) the failing bands are (0.152, 0.177], (0.240, 0.265],
+(0.329, 0.354] (2×2, 3×3 and Spore with geyser), (0.594, 0.619], (0.417, 0.442], (0.682, 0.707], (0.505, 0.530],
+(0.771, 0.796] and (1.036, 1.061]; **no shipped terrain radius** (0.3125, 0.375, 0.5, 0.5625, 0.625, 0.75, 0.875,
+0.9375, 1.0) lies in any of them, and the workers (0.3125, spare 0.082) get a legal route. The defect is still real:
+other radii, and other contour geometries (chamfer against face, against a terrain corner, semi-walls), give other
+widths that this scan did not enumerate, and a unit routed on the fallback walks legs the contact rule refuses.
+
+### Proposed Amendment (for the orchestrator): a margin that fits the channel
+
+**Decision asked.** How the radius funnel routes a disc through a channel whose narrowest width `w` leaves less than
+two corner margins, `2t < w < 2(t + CORNER_SAFETY_MARGIN)`. Contours make such channels common (every diagonal gap
+has a width that is not a whole number of cells), so R-2 is no longer a corner case.
+
+**Proposal (recommended): a fitted retry before the fallback.** In `navmesh/search.rs`, when the shrunk route and the
+pinned retry are both illegal, pull the channel once more (shrunk, then pinned) with
+`rho' = t + m'`, `m' = min(CORNER_SAFETY_MARGIN, (w_min − 2t) / 2)`, where `w_min` is the narrowest admitting width
+of the route's channel (the A* corner widths already computed, `SquaredWidth`, converted with a floor square root
+in raw units so `m'` can only be smaller). `CORNER_SAFETY_MARGIN` stays 0.05 and stays the margin wherever it fits;
+only a channel too narrow for it gets the room it has. The leg checks need the matching arc-chord allowance
+(`ARC_CHORD_DIP` is half the margin; it would become `m' / 2`). Routes that are legal today are unchanged (the
+retry runs only after both existing strategies fail), so every golden and every structure-free world stays
+bit-identical; that is checked in WP3's exit as today.
+
+- Acceptance: `a_diagonal_contour_gap_admits_exactly_the_discs_that_fit` passes for every `k` (a legal route iff
+  `8t² ≤ 1`), plus a property over the §2.3 gap widths (2×2, 3×3, 5×5, geyser pairs) asserting a legal route for
+  every shipped terrain radius that fits; `mesh_funnel_fallbacks` stays 0 on the matrix and the showcase.
+- Cost: one more funnel pull, only after two failures.
+
+**Alternatives.**
+1. Accept the fallback for now: the threshold property asserts existence for every `k` and legal legs only where
+   the spare is at least one margin, and a register row records the narrow-channel funnel defect. Cheaper, and no
+   shipped radius meets a failing band at the §2.3 corner gaps; but it weakens a test the plan specified, and other
+   geometries are not enumerated.
+2. Keep the margin and refuse such channels at the A* width test (`w ≥ 2(t + margin)`). Changes route existence
+   (workers would no longer pass a 0.707 gap: 0.625 + 0.1 > 0.707), contradicting S10 and the owner's Q0087 argument.
+3. Tune `CORNER_SAFETY_MARGIN`. Forbidden by D-15 rule 7.
+
+On approval, WP3 resumes from `contour-footprints-wp3-wip`: the amendment's change and tests, then
+`CONTOUR_PATH_GOLDEN`, `contour_route_checksum`, the `navmesh_measure` row, and WP3's exit measurements.
