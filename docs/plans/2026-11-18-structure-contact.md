@@ -497,3 +497,11 @@ WP0 to WP4 are on branch `structure-contact`; the evidence is
 structure's 5.0.14 engine radius `max(Radius, ⌈16 · Shape.Radius⌉ ÷ 16)` (plan
 [`2026-11-18-structure-radius`](2026-11-18-structure-radius.md) §2.2), which B-135's fix authors as `radius` in
 `structures.ron`.
+
+## Amendment 3 (2026-11-18): B-134 done (plan `2026-11-18-contour-footprints`)
+
+§10's first item, B-134, is done by plan [`2026-11-18-contour-footprints`](2026-11-18-contour-footprints.md): each
+structure carries its 5.0.14 footprint `Shape` as `footprint_shape`, cut into the navigation mesh on a quarter-cell
+lattice, and meets ground units through that shape at their terrain radius (D-1 here, unchanged) while its `Place`
+cells stay its placement footprint (WP3 to WP6, `82ea0a36` to `a7ef86fc`). The Hatchery's "6×5" of §10's
+non-square item is withdrawn there (§2.3): its footprint is 5×5.
