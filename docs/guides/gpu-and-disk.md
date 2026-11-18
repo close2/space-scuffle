@@ -26,6 +26,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   so a process the command leaves behind cannot hold it, and it logs every acquisition, timeout and release to
   `/run/lock/gpu-lock.log` (Q0060). Raise it with `GPU_LOCK_TIMEOUT=1200` only for a single long command, such as a
   frame-budget measurement.
+- **Leave at least 60 seconds between consecutive `with-gpu-lock` holds in a series** (B-136). `flock` is not fair:
+  a series of captures run back to back, or with short gaps, keeps taking the lock ahead of a GPU test child that
+  waits for it, until the child's 290-second wait expires. A pause of 60 seconds after each hold lets a waiting
+  child in. This rule holds until the lock serves its takers in order of arrival (plan
+  `docs/plans/2026-11-17-gpu-test-readback.md`, Amendment 5).
 - **Software Vulkan is the fallback, not the default.** Use `lavapipe` only where no physical GPU exists (CI) or to
   reproduce a CI result exactly. It needs no lock:
   ```bash
