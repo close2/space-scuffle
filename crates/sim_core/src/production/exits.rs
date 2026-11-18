@@ -1,22 +1,30 @@
 //! Local producer egress geometry and refreshed collision admission.
 //!
 //! Candidate order is clockwise from the expanded rectangle's minimum corner.
-//! Every ground exit connects to the actual producer boundary; only that producer's
-//! occupancy is waived during emergence, never terrain or another structure.
+//! Every ground exit connects to the actual producer boundary at the product's terrain
+//! radius; only that producer's footprint is waived, on the leg from the footprint to the
+//! exit, never terrain or another structure's footprint.
+//!
+//! Occupancy holds the live units, never registered structures: a structure is not a body
+//! and meets the product only through its footprint, which both egress checks test at the
+//! terrain radius (plan `2026-11-18-structure-contact` D-2 B4, B-131). Units meet the product
+//! at the sum of the collision radii.
 
 use super::ProductionInvariant;
 use crate::SimWorld;
 use sim_types::{EntityId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 impl SimWorld {
+    /// Rebuilds the exit occupancy from the live, unloaded units and their largest collision
+    /// radius. Registered structures are left out: they are not bodies (D-2 B4).
     pub(crate) fn rebuild_production_occupancy(&mut self) -> Result<(), ProductionInvariant> {
         self.production.occupancy.clear();
         self.production.max_radius = SimScalar::ZERO;
-        for entity in self
-            .entities
-            .values()
-            .filter(|e| e.is_alive() && !e.is_loaded_in_transport())
-        {
+        for entity in self.entities.values().filter(|e| {
+            e.is_alive()
+                && !e.is_loaded_in_transport()
+                && !self.map.structures().contains_key(&e.id)
+        }) {
             let arch = self.catalog.get(entity.unit_type_id).map_err(|_| {
                 ProductionInvariant::MissingArchetype {
                     entity: entity.id,
@@ -151,8 +159,9 @@ impl SimWorld {
     /// The centre of exit cell `(x, y)` when the product may emerge there, otherwise `None`.
     ///
     /// A free cell lies on the map with the product's terrain disc, connects to the producer's
-    /// boundary on the ground at that disc, and overlaps no body of the product's own layer at
-    /// the product's collision radius.
+    /// boundary on the ground at that disc, and overlaps no unit of the product's own layer at
+    /// the product's collision radius (structures are not in the occupancy; their footprints
+    /// are the egress checks').
     fn free_exit_point(
         &mut self,
         ring: &ExitRing,
@@ -444,6 +453,86 @@ mod tests {
         assert_eq!(
             world.production_exit(producer, product)?,
             Some(SimVec2::new(half, half))
+        );
+        Ok(())
+    }
+
+    /// S-5 (plan `2026-11-18-structure-contact` D-2 B4, B-131): a 3×3 producer's own circle
+    /// (half its width, 1.5) no longer refuses the middle cell of its west face's exit ring. A
+    /// product of radius 0.625 and terrain radius 0.5 has its ring one cell off the footprint;
+    /// that cell's centre lies 0.5 from the face (at least the terrain radius, which egress
+    /// checks) and 2.0 from the producer's centre, inside the old sum 1.5 + 0.625. A unit of
+    /// radius 0.375 standing 0.9 from the centre (below 0.625 + 0.375) still refuses it.
+    #[test]
+    fn a_producers_circle_does_not_block_its_face_middle_exit(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 3);
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                matches!(
+                    a.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no 3x3 structure")?;
+        let ground: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| {
+                !dome(&a.shape)
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .take(2)
+            .collect();
+        let [product, holder] = ground[..] else {
+            return Err("two ground units".into());
+        };
+        for (kind, collision, terrain) in [(product, 0.625, 0.5), (holder, 0.375, 0.375)] {
+            let arch = world.catalog.get_mut(kind)?;
+            arch.collision_radius = SimScalar::from_num(collision);
+            arch.terrain_radius = SimScalar::from_num(terrain);
+        }
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
+        let (left, bottom) = world.map.structures()[&producer].top_left;
+        let (cell_x, cell_y) = (i64::from(left) - 1, i64::from(bottom) + 1);
+        let centre = SimVec2::new(
+            SimScalar::from_num(f64::from(left) - 0.5),
+            SimScalar::from_num(f64::from(bottom) + 1.5),
+        );
+        world.rebuild_production_occupancy()?;
+        let ring = world
+            .exit_ring(producer, product)?
+            .ok_or("the product fits the map")?;
+        assert_eq!(
+            world.free_exit_point(&ring, cell_x, cell_y)?,
+            Some(centre),
+            "the producer's circle does not refuse its face-middle exit"
+        );
+        world.spawn_unit(
+            holder,
+            PlayerId(0),
+            SimVec2::new(centre.x - SimScalar::from_num(0.9), centre.y),
+        )?;
+        world.rebuild_production_occupancy()?;
+        assert_eq!(
+            world.free_exit_point(&ring, cell_x, cell_y)?,
+            None,
+            "a unit within the collision radii still occupies it"
         );
         Ok(())
     }
