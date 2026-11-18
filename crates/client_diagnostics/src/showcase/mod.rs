@@ -116,6 +116,9 @@ pub enum ShowcaseError {
     /// A take failed while rendering; its manifest says why.
     #[error("take failed: {0}")]
     Take(String),
+    /// The effect vocabulary (`assets/catalog/effects.ron`) did not load.
+    #[error("effect vocabulary: {0}")]
+    Effects(String),
 }
 
 /// A storyboard that passed validation, with the cards built from the same repository.
@@ -146,10 +149,16 @@ impl ValidatedStoryboard {
         let catalogs =
             sim_core::catalog::RuntimeCatalogs::load_from_directory(assets.join("catalog"))?;
         let textures = assets.join("textures");
+        let effects = client::effects::catalog::EffectCatalog::load(
+            &assets.join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+            assets,
+        )
+        .map_err(|error| ShowcaseError::Effects(error.to_string()))?;
         let context = storyboard::ValidationContext {
             subsystems: &cards.subsystems,
             catalog: &catalogs.units,
             textures: &textures,
+            effects: &effects,
         };
         parsed
             .validate(&context)

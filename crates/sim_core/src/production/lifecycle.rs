@@ -189,6 +189,8 @@ impl SimWorld {
 
     /// Prepares one lifecycle release against the caller's cumulative group balance.
     /// The caller validates owner consistency and commits only after every member succeeds.
+    /// Returns the released balance, whether the entity is a foundation, and its drawn radius
+    /// (world units) for the death shatter.
     pub(crate) fn prepare_reap_with_resources(
         &self,
         id: EntityId,
@@ -277,7 +279,9 @@ impl SimWorld {
                 reason: "mobile entity owns a foundation",
             });
         }
-        Ok((economy, dome, arch.collision_radius))
+        // The shatter is drawn where the bubble was drawn (plan `2026-11-18-structure-radius`
+        // D-6).
+        Ok((economy, dome, arch.drawn_radius()))
     }
 }
 

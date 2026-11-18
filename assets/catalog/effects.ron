@@ -3347,13 +3347,21 @@
     // third of headroom at that load. Round 4 (Amendment 7): each effect reserves its decals at
     // birth, whole or not at all, and above 85 % of the pool the oldest lasting marks erode out
     // to make room (docs/evidence/effects/review/stress_capture.txt). The class caps count an
-    // effect only while its fire (non-decal layers) is alive.
+    // effect only while its fire (non-decal layers) is alive. WP14 (Amendment 31): with every
+    // look at once (`--effect-stress 200 --effect-mix`: the splashes, as many shots, 20 deaths a
+    // second, 20 live areas, 4 tethers, 2 missiles and 50 held unit looks), the storms' flares
+    // and the clouds' billows alone keep hundreds of effects alive: 2 048 refused 44 % of the
+    // spawns and 4 096 still 0.3 %; at 6 144 none is refused. At every size no spawned effect's
+    // Critical layer lacked a slot, so 2 048 degraded as designed under a load no battle
+    // produces: 6 144 is chosen so the every-effect measure draws everything, not because a
+    // battle needs it. The effect passes cost 0.54 ms over the battle without effects on the
+    // RX 580 (docs/evidence/effects/review/frame_budget_wp14.md).
     budget: (
         particles: 30000,
         sprites: 4096,
         decals: 6144,
         lights: 16,
-        effects: 2048,
+        effects: 6144,
         classes: { Major: 96, Minor: 512, Ambient: 128 },
         min_screen_px: 6.0,
         full_particle_px: 96.0,

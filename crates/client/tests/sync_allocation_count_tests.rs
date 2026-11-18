@@ -224,8 +224,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     Ok(app)
 }
 
-/// Sends one splash event per frame, its centre walking over a 9 by 7 grid, and an instant hit
-/// and a blow at one of the presented bubbles in turn, naming it as the struck entity (WP11
+/// Sends one splash event per frame, its centre walking over a 9 by 7 grid, and an instant hit,
+/// a projectile and a blow at one of the presented bubbles in turn, naming it as the struck
+/// entity and the next bubble as the attacker (WP11
 /// review 3, E3-3; plan `2026-11-17-effect-snapshot-identity` WP4: the struck bubble's lookup
 /// by id, the last frame's bubbles kept, and the move onto the glass are in the counted path).
 #[expect(
@@ -286,6 +287,21 @@ fn send_splash(
                 events.send(beam(1, sim_types::EntityId(u32::MAX - *counter % 64)));
             }
         }
+        // A projectile from the attacker's bubble at the struck one (plan
+        // `2026-11-17-effect-snapshot-identity` Amendment 7, B-133): the shooter's lookup by id
+        // and the start's move onto its glass are in the counted path.
+        let [ax, ay, _] = bubbles[(index + 1) % bubbles.len()].world_pos;
+        let flight = 0.2;
+        events.send(client::CombatVisualEvent(
+            sim_types::snapshot::CombatEventVisual::ProjectileVisual {
+                pos: [ax, ay, 0.5],
+                vel: [(bx - ax) / flight, (by - ay) / flight, 0.0],
+                owner: sim_types::PlayerId(0),
+                duration_secs: Some(flight),
+                source: source.0,
+                ends,
+            },
+        ));
         events.send(client::CombatVisualEvent(
             sim_types::snapshot::CombatEventVisual::MeleeSlashVisual {
                 pos: hit,
@@ -849,6 +865,15 @@ fn check_effect_stream(app: &App, frames: u32, spawned_before: u64) -> TestResul
         .into());
     }
     let struck = world.resource::<client::effects::struck::StruckBubbles>();
+    // Every frame's projectile finds its shooter's bubble in the presented frame (B-133).
+    let shooters = struck.shooter_found_in(client::effects::struck::StruckFrom::Presented);
+    if shooters < u64::from(frames) {
+        return Err(format!(
+            "the stream's projectiles found {shooters} shooters' bubbles in the presented frame \
+             in {frames} frames"
+        )
+        .into());
+    }
     let (presented, nowhere) = (
         struck.found_in(client::effects::struck::StruckFrom::Presented),
         struck.found_in(client::effects::struck::StruckFrom::Nowhere),

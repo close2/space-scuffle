@@ -116,8 +116,9 @@ struct UnitEntry {
     death: Option<EffectId>,
     /// Area, tether or missile effects, by index in the archetype's `abilities`.
     abilities: Vec<AbilityLook>,
-    /// The archetype's bubble radius in world units (its collision radius, which the
-    /// simulation's snapshot draws the bubble with): where its shots leave its bubble.
+    /// The archetype's drawn bubble radius in world units (`UnitArchetype::drawn_radius`, which
+    /// the simulation's snapshot draws the bubble with: a unit's collision radius, half a
+    /// structure's footprint): where its shots leave its bubble.
     muzzle: f32,
 }
 
@@ -471,7 +472,7 @@ fn resolve_unit(
         unit: &archetype.slug,
     };
     let mut entry = UnitEntry {
-        muzzle: archetype.collision_radius.to_f32(),
+        muzzle: archetype.drawn_radius().to_f32(),
         ..UnitEntry::default()
     };
     for weapon in &block.weapons {
@@ -664,5 +665,51 @@ fn push_children(spells: &SpellCatalog, kind: EffectNode, stack: &mut Vec<SpellE
         | EffectNode::RemoveStatus { .. }
         | EffectNode::ModifyVitals { .. }
         | EffectNode::CancelOrders { .. } => {}
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::{EffectCatalog, UnitEffectTables};
+    use sim_types::{MoverType, ShapeKind, SimScalar};
+
+    /// Plan `2026-11-18-structure-radius` WP3 (D-6): an armed 2×2 structure whose radius is
+    /// 1.125 shoots from its drawn dome's rim, 1.0 (half its footprint), not from its radius;
+    /// a unit shoots from its collision radius, which is also its drawn radius.
+    #[test]
+    fn a_structures_muzzle_is_its_drawn_dome() {
+        let root = crate::ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+        let catalog = EffectCatalog::load(
+            &root.as_path().join(super::super::EFFECTS_CATALOG_PATH),
+            root.as_path(),
+        )
+        .expect("the shipped vocabulary loads");
+        let mut units = sim_fixtures::shipped_catalogs().units;
+        let tower = units
+            .archetypes()
+            .find(|arch| {
+                matches!(
+                    arch.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 2,
+                        footprint_h: 2
+                    }
+                ) && arch.weapon_against(MoverType::Ground, None).is_some()
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has an armed 2x2 structure");
+        units.get_mut(tower).expect("listed").collision_radius = SimScalar::from_num(1.125);
+        let (unit, radius) = units
+            .archetypes()
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.weapon_against(MoverType::Ground, None).is_some()
+            })
+            .map(|arch| (arch.unit_type_id, arch.collision_radius.to_f32()))
+            .expect("the shipped catalog has an armed unit");
+        let tables = UnitEffectTables::build(&units, &catalog).expect("every block resolves");
+        assert!((tables.muzzle(tower) - 1.0).abs() < f32::EPSILON);
+        assert!((tables.muzzle(unit) - radius).abs() < f32::EPSILON);
     }
 }

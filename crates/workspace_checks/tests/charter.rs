@@ -67,12 +67,12 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog.rs",
-        count: 66,
+        count: 67,
         reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load",
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog/validation.rs",
-        count: 40,
+        count: 41,
         reason: "authoring: range checks on catalog decimals before their fixed-point conversion",
     },
     FloatAllowance {

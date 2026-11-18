@@ -280,3 +280,78 @@ fn cast_context(caster: &Entity, ability_index: u8, target: EntityId) -> EffectC
         target: EffectTarget::Unit(target),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use crate::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AbilityEffectSpec, AbilityTargetKind, PlayerId, ShapeKind, SimScalar, SimVec2,
+    };
+
+    /// R-10 (plan `2026-11-18-structure-radius` §3 A8): a unit-target cast reaches a structure
+    /// when the edges are within its cast range, the structure's edge at its radius. No shipped
+    /// unit-target effect may target a structure (the only one's filter excludes them), so the
+    /// range is asked of a scratch copy of it without its filter: in range at `cast range + r +
+    /// R − 2⁻¹⁶` from a 3×3 at `R` = 1.8125, out of range at `+ 2⁻¹⁶`, and out at the first
+    /// distance when `R` is 1.5.
+    #[test]
+    fn a_cast_on_a_structure_is_in_range_at_its_radius() {
+        let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        let mut world: SimWorld = crate::test_support::world(map, 0x0B_135);
+        let (caster_kind, caster_radius, mut ability) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                let ability = arch.abilities.iter().find(|ability| {
+                    ability.target_kind == AbilityTargetKind::TargetEntity
+                        && matches!(ability.effect, AbilityEffectSpec::Effect(_))
+                })?;
+                Some((arch.unit_type_id, arch.collision_radius, ability.clone()))
+            })
+            .expect("the shipped catalog has a unit-target effect ability");
+        ability.target_filter = None;
+        let dome = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                matches!(
+                    arch.shape,
+                    ShapeKind::BuildingDome {
+                        footprint_w: 3,
+                        footprint_h: 3
+                    }
+                )
+            })
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a 3x3 structure");
+        // Cells 30 to 33: the centre is (31.5, 31.5).
+        let structure = world
+            .spawn_structure(dome, PlayerId(1), 30, 30)
+            .expect("open ground");
+        let epsilon = SimScalar::from_raw(1 << 16);
+        let caster = world
+            .spawn_unit(caster_kind, PlayerId(0), SimVec2::from_i32(8, 8))
+            .expect("open ground");
+        let in_range = |world: &mut SimWorld, radius: f64, offset: SimScalar| {
+            world
+                .catalog
+                .get_mut(dome)
+                .expect("the dome's archetype")
+                .collision_radius = SimScalar::from_num(radius);
+            let distance =
+                ability.cast_range + caster_radius + SimScalar::from_num(1.8125) + offset;
+            let at = SimVec2::new(
+                SimScalar::from_num(31.5) - distance,
+                SimScalar::from_num(31.5),
+            );
+            world.entities.get_mut(&caster).expect("spawned").position = at;
+            world.cast_in_range(&world.entities[&caster], &ability, (None, Some(structure)))
+        };
+        assert_eq!(in_range(&mut world, 1.8125, -epsilon), Some(true));
+        assert_eq!(in_range(&mut world, 1.8125, epsilon), Some(false));
+        assert_eq!(in_range(&mut world, 1.5, -epsilon), Some(false));
+    }
+}

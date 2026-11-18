@@ -987,6 +987,33 @@ impl UnitModeSpecDef {
 }
 
 impl StructureArchetypeDef {
+    /// Checks the authored structure radius (plan `2026-11-18-structure-radius` D-2): finite and
+    /// strictly positive; a multiple of 1/16 world unit, as every 5.0.14 engine radius is, so it
+    /// converts exactly; and at least half the footprint's smaller side, so a unit touching a
+    /// face is within reach of a melee weapon (D-4). Runs after the footprint is checked.
+    fn validate_radius(&self) -> SimResult<()> {
+        scalar(&self.slug, "radius", self.radius)?;
+        if self.radius <= 0.0 {
+            return Err(invalid(&self.slug, "radius", "must be strictly positive"));
+        }
+        if (self.radius * 16.0).fract() != 0.0 {
+            return Err(invalid(
+                &self.slug,
+                "radius",
+                "must be a multiple of 1/16 world unit",
+            ));
+        }
+        if self.radius < f64::from(self.footprint.0.min(self.footprint.1)) * 0.5 {
+            return Err(invalid(
+                &self.slug,
+                "radius",
+                "must be at least half the footprint's smaller side, so a unit touching a face \
+                 is within reach",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
@@ -1038,6 +1065,7 @@ impl StructureArchetypeDef {
         ] {
             nonnegative(&self.slug, field, value)?;
         }
+        self.validate_radius()?;
         sight(&self.slug, "sight_radius", self.sight_radius)?;
         structure_scan_range(
             &self.slug,
@@ -1985,6 +2013,154 @@ mod tests {
         let (_, _, radius) = units_with_terrain_radius("Air", "0.1")?;
         let (text, _, _) = units_with_terrain_radius("Air", &format!("{}", radius / 2.0))?;
         assert_eq!(rejected_load_field(load_units(&text)), "terrain_radius");
+        Ok(())
+    }
+}
+
+/// Structure radius rules (plan `2026-11-18-structure-radius` D-1, D-2, D-5): the authored
+/// `radius` is the structure's collision radius, required, finite and positive, a multiple of
+/// 1/16, and at least half the footprint's smaller side; the terrain radius is that half.
+#[cfg(test)]
+mod structure_radius_tests {
+    use sim_types::SimScalar;
+
+    /// The shipped structure catalog with every authored `radius` removed and `radius:`
+    /// authored after the footprint of every structure: `value` on the first structure whose
+    /// footprint is `width` cells wide (none when `value` is `None`), half the footprint's
+    /// smaller side on every other. Returns the edited text and that structure's slug; the slug
+    /// is read from the file, so no identity is named here (charter §3.3).
+    fn structures_with_radius(
+        width: u32,
+        value: Option<&str>,
+    ) -> Result<(String, String), Box<dyn std::error::Error>> {
+        let text = include_str!("../../../../assets/catalog/structures.ron");
+        let mut out = Vec::new();
+        let mut slug = None;
+        let mut chosen = None;
+        for line in text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("radius:"))
+        {
+            out.push(line.to_owned());
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("slug: ") {
+                slug = Some(rest.trim_end_matches(',').trim_matches('"').to_owned());
+            }
+            let Some(rest) = trimmed.strip_prefix("footprint: (") else {
+                continue;
+            };
+            let (w, h) = rest
+                .trim_end_matches("),")
+                .split_once(',')
+                .ok_or("a footprint is a pair")?;
+            let (w, h): (u32, u32) = (w.trim().parse()?, h.trim().parse()?);
+            let indent = &line[..line.len() - trimmed.len()];
+            if chosen.is_none() && w == width {
+                chosen = Some(slug.clone().ok_or("no slug before the footprint")?);
+                if let Some(value) = value {
+                    out.push(format!("{indent}radius: {value},"));
+                }
+            } else {
+                out.push(format!("{indent}radius: {},", f64::from(w.min(h)) * 0.5));
+            }
+        }
+        let slug = chosen.ok_or("no structure of that footprint width")?;
+        Ok((out.join("\n"), slug))
+    }
+
+    fn load(structures: &str) -> crate::error::SimResult<crate::catalog::UnitCatalog> {
+        crate::catalog::UnitCatalog::from_ron_str_bundle(
+            &crate::test_support::shipped_factions(),
+            include_str!("../../../../assets/catalog/units.ron"),
+            structures,
+        )
+    }
+
+    /// The field a catalog load refused, or the whole outcome as text when it was not a field
+    /// refusal (a load that succeeded, or another error), so the assertion shows it.
+    fn rejected_field(result: crate::error::SimResult<crate::catalog::UnitCatalog>) -> String {
+        match result {
+            Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            Err(other) => format!("other error: {other}"),
+            Ok(_) => "loaded".to_owned(),
+        }
+    }
+
+    fn archetype<'a>(
+        catalog: &'a crate::catalog::UnitCatalog,
+        slug: &str,
+    ) -> Result<&'a crate::catalog::UnitArchetype, Box<dyn std::error::Error>> {
+        Ok(catalog
+            .archetypes()
+            .find(|archetype| archetype.slug == slug)
+            .ok_or("the edited structure is in the catalog")?)
+    }
+
+    #[test]
+    fn a_structure_radius_is_read_into_the_collision_radius(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (text, slug) = structures_with_radius(3, Some("1.8125"))?;
+        let catalog = load(&text)?;
+        let structure = archetype(&catalog, &slug)?;
+        assert_eq!(structure.collision_radius, SimScalar::from_num(1.8125));
+        assert_eq!(structure.separation_radius, SimScalar::from_num(1.8125));
+        Ok(())
+    }
+
+    #[test]
+    fn a_structures_terrain_radius_is_half_its_footprints_smaller_side(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (text, slug) = structures_with_radius(5, Some("2.75"))?;
+        let catalog = load(&text)?;
+        let structure = archetype(&catalog, &slug)?;
+        assert_eq!(structure.collision_radius, SimScalar::from_num(2.75));
+        assert_eq!(structure.terrain_radius, SimScalar::from_num(2.5));
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_radius_is_required() -> Result<(), Box<dyn std::error::Error>> {
+        let (text, slug) = structures_with_radius(3, None)?;
+        let result = load(&text);
+        assert!(
+            matches!(
+                &result,
+                Err(crate::error::SimCoreError::RonDeserializationError(message))
+                    if message.contains("radius")
+            ),
+            "{slug} without `radius` must fail to parse, naming the field, got {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_radius_must_be_positive_and_finite() -> Result<(), Box<dyn std::error::Error>> {
+        for value in ["0.0", "-0.5", "NaN", "inf"] {
+            let (text, _) = structures_with_radius(3, Some(value))?;
+            assert_eq!(rejected_field(load(&text)), "radius", "{value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_radius_must_be_a_multiple_of_a_sixteenth(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (text, _) = structures_with_radius(3, Some("1.8"))?;
+        assert_eq!(rejected_field(load(&text)), "radius");
+        let (text, _) = structures_with_radius(3, Some("1.8125"))?;
+        assert_eq!(rejected_field(load(&text)), "loaded");
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_radius_may_not_be_below_half_the_footprint(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (text, _) = structures_with_radius(3, Some("1.4375"))?;
+        assert_eq!(rejected_field(load(&text)), "radius");
+        let (text, _) = structures_with_radius(3, Some("1.5"))?;
+        assert_eq!(rejected_field(load(&text)), "loaded");
+        let (text, _) = structures_with_radius(2, Some("0.75"))?;
+        assert_eq!(rejected_field(load(&text)), "radius");
         Ok(())
     }
 }

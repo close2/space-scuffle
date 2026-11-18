@@ -44,6 +44,29 @@
 // survivors at 4x until it fires at the enemy base; `assault` shows the enemy base at 2x; `closing`
 // pauses before the result. Render-checked on radv: scene ticks are in
 // docs/evidence/2026-11-18-inner-radius.md §4.
+// Retold for plan 2026-11-18-structure-contact (Amendment 1: a registered structure is no body, so
+// units leaving their spawn rings are no longer steered round their own hall's circle, and the
+// near-tied lane fight goes to player 1 again). The viewer's army dies in the lane fight (its last
+// death at about tick 634); the enemy's four surviving pulse bots walk to the viewer's base, kill
+// its workers (ticks 1,171 and 1,216) and fire on its hall until it falls at tick 2,193. `march`
+// follows the enemy's first survivor, whom the fog hides until the viewer's base sees it; `assault`
+// shows the viewer's base falling at 2x; `closing` pauses before the result. Render-checked on radv:
+// scene ticks are in docs/evidence/2026-11-18-structure-contact.md §3.
+// Re-checked for plan 2026-11-18-structure-radius (B-135: ranges to a structure measure to its
+// 5.0.14 engine radius, 2.75 for the halls). The lane fight is unchanged; the enemy's survivors
+// acquire the viewer's hall two ticks sooner, kill its workers at ticks 1,160 and 1,200 and fire on
+// it until it falls at tick 2,191. Scene ticks of a radv render are to be recorded in
+// docs/evidence/2026-11-18-structure-radius.md §5.
+// Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
+// (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
+// Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall
+// (cells x 5 to 9 on row 5); `entrench` (1x, ticks 0 to 100: the modes settle by tick 81) orbits
+// the row from the open side, the hall behind it, close enough to see the dig, mound, sweep and
+// anchor; the raiders' march is a 4x time-lapse until their first shot (about tick 304); `siege`
+// shows the fight at 1x for 240 frames (the raid is over before its end). `closing` moved from the
+// `battle` take to the end of this one, so the status card still ends the video. A scene's
+// `effects` must each be spawned for the viewer during the scene, or the take fails (the manifest
+// records what every scene spawned).
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -126,10 +149,10 @@
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
                     length: UntilCombat(min: 5, max: 200),
-                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    camera: FollowUnit(player: 1, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Pathfinding",
-                        body: "Your survivors head for the enemy base, each on its own route on a navigation mesh sized to its body.",
+                        body: "The enemy's survivors head for your base, each on its own route on a navigation mesh sized to its body; the fog hides them until your base sees them.",
                         subsystems: ["Movement and pathfinding"],
                     ),
                 ),
@@ -141,9 +164,54 @@
                     camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Assault",
-                        body: "Your survivors cut down the enemy's workers and lay siege to its hall.",
+                        body: "The attackers cut down your workers and lay siege to your hall.",
                         subsystems: ["Combat"],
                     ),
+                ),
+            ],
+        ),
+        (
+            name: "effects",
+            mode: Skirmish,
+            scenario: "scenarios/showcase_effects.ron",
+            readiness_timeout_seconds: 900,
+            scenes: [
+                (
+                    name: "entrench",
+                    speed: Speed(1),
+                    length: Frames(100),
+                    camera: Orbit(center: At((7.5, 5.5)), distance: 10.0, pitch_deg: 68.0, start_deg: 170.0, sweep_deg: 15.0),
+                    overlay: Caption(
+                        title: "Siege and burrow",
+                        body: "Crawlers anchor and scorpions dig in. Each look is catalog data the unit's own definition chooses.",
+                        subsystems: ["Effect presentation", "Abilities and spells"],
+                    ),
+                    cut: true,
+                    effects: ["burrow_dig", "burrow_mound", "mode_seal_sweep", "siege_anchor"],
+                ),
+                (
+                    name: "approach",
+                    speed: Speed(4),
+                    badge: Some("Fast-forward ×4"),
+                    length: UntilCombat(min: 5, max: 150),
+                    camera: Orbit(center: Current, distance: 22.0, pitch_deg: 55.0, start_deg: 5.0, sweep_deg: 10.0),
+                    overlay: Caption(
+                        title: "Raiders inbound",
+                        body: "The enemy's raiders head for the base; the fog hides them until they come into sight.",
+                        subsystems: ["Simulation vision and watchtowers"],
+                    ),
+                ),
+                (
+                    name: "siege",
+                    speed: Speed(1),
+                    length: Frames(240),
+                    camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
+                    overlay: Caption(
+                        title: "Splash effects",
+                        body: "Siege shells, flame jets and spine lines: generated textures, sized by the simulation's splash zones.",
+                        subsystems: ["Effect presentation", "Combat"],
+                    ),
+                    effects: ["shell_impact", "cannon_tracer", "flame_line", "spine_line", "vehicle_wreck"],
                 ),
                 (
                     name: "closing",
@@ -166,8 +234,9 @@
             (scene: "units", first: 0, frames: 75),
             (scene: "smog", first: 0, frames: 100),
             (scene: "advance", first: 0, frames: 25),
-            (scene: "clash", first: 0, frames: 150),
+            (scene: "clash", first: 0, frames: 100),
             (scene: "assault", first: 0, frames: 75),
+            (scene: "siege", first: 25, frames: 50),
             (scene: "closing", first: 0, frames: 150),
         ],
     ),

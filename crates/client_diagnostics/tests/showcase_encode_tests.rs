@@ -136,6 +136,7 @@ fn fixture_take(validated: &ValidatedStoryboard, directory: &Path) -> Result<(),
                 first_frame: index as u64 * 20,
                 frames: 20,
                 start_tick: index as u32 * 20,
+                effects: Vec::new(),
             })
             .collect(),
         frames: (0..FRAMES)
@@ -336,6 +337,7 @@ fn site_template_replaces_every_placeholder() -> Result<(), Box<dyn Error>> {
                 first_frame: 0,
                 frames: 125,
                 start_tick: 0,
+                effects: Vec::new(),
             }],
         },
     )?;

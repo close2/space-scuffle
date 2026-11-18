@@ -140,11 +140,14 @@ SuiteCatalog(
             "crates/client/tests/support/gpu_run.rs",
         ]),
         // The showcase smoke take renders a storyboard twice through the real renderer, HUD and
-        // smog and compares the frames byte for byte.
+        // smog and compares the frames byte for byte. Its effects take (plan
+        // 2026-11-09-effect-visualization WP14) must show every effect its scenes ask for: the
+        // effect engine, the vocabulary, the units' blocks, the loadouts and its scenario decide.
         "client_diagnostics/showcase_tests": (class: Gpu, triggers: [
-            "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs,battle_hud/**}",
+            "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs,battle_hud/**,effects/**}",
             "assets/captures/showcase.ron",
-            "assets/scenarios/showcase.ron",
+            "assets/scenarios/{showcase.ron,showcase_effects.ron}",
+            "assets/catalog/{effects.ron,units.ron,start_loadouts.ron}",
             "crates/client/tests/support/gpu_run.rs",
         ]),
         // Its `shell_order_audit::gpu_tests` start the real renderer to check the pipeline cache.

@@ -213,8 +213,8 @@ impl HeldBeams {
     /// weapons` (a free unit counts as costing 1); the bound is the largest over the catalog's
     /// types, an army of only that unit. The shipped catalog's cheapest beam units cost 2
     /// supply, which gives 800 at eight players. That bound is then limited to a
-    /// [`BEAM_POOL_SHARE`]th of the effect pool (`budget.effects`, 2048 shipped: 512), because
-    /// every held beam is a live effect instance and a battle with that many beams still
+    /// [`BEAM_POOL_SHARE`]th of the effect pool (`budget.effects`, 6144 shipped: 1536, so the
+    /// 800 holds), because every held beam is a live effect instance and a battle with that many beams still
     /// spawns its hits and splashes. A catalog with no sustained look needs none.
     #[must_use]
     pub fn capacity_for(units: &sim_core::catalog::UnitCatalog, effects: &EffectCatalog) -> usize {

@@ -14,6 +14,11 @@
 //! - **stall give-ups** ([`BlockingMetrics::stall_giveups`]): the `NoProgress` and
 //!   `PursuitAbandoned` route outcomes, orders given up because the unit stopped gaining ground.
 //!
+//! Every counted reversal is also kept as a [`ReversalEvent`] (tick, unit, position and both
+//! steps), so a run's reversals can be attributed to units and places
+//! ([`BlockingMeter::reversal_events`]; the route trace writes them as `reversals.csv`, plan
+//! `2026-11-18-structure-contact` Amendment 1).
+//!
 //! [`attackers_in_range`] counts, for one owner, the armed mobile non-harvesters and how many of
 //! them have a living target inside their weapon's band: the showcase acceptance of that plan (§7).
 //!
@@ -93,6 +98,23 @@ impl Intent {
     }
 }
 
+/// One counted reversal (D-1.4): the unit whose step reversed its previous one, and where.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReversalEvent {
+    /// The world's tick counter after the step that reversed (`SimWorld::current_tick`).
+    pub tick: u32,
+    /// The unit.
+    pub entity: EntityId,
+    /// Its owner slot.
+    pub owner: u8,
+    /// Its position after the step, world units.
+    pub position: (f64, f64),
+    /// Its previous step, world units per tick.
+    pub before: (f64, f64),
+    /// The step that reversed it, world units per tick.
+    pub now: (f64, f64),
+}
+
 /// A unit's last observed step and intent.
 #[derive(Debug, Clone)]
 struct LastStep {
@@ -109,6 +131,8 @@ pub struct BlockingMeter {
     owners: BTreeMap<u8, BlockingMetrics>,
     /// Reversals per unit.
     unit_reversals: BTreeMap<EntityId, u32>,
+    /// Every counted reversal, in the order counted (tick, then entity).
+    events: Vec<ReversalEvent>,
 }
 
 impl BlockingMeter {
@@ -145,8 +169,17 @@ impl BlockingMeter {
                     && is_reversal(last.velocity, velocity)
                     && !excused(world, entity, arch)
                 {
+                    let before = last.velocity;
                     self.owner(entity.owner).reversals += 1;
                     *self.unit_reversals.entry(id).or_default() += 1;
+                    self.events.push(ReversalEvent {
+                        tick: world.current_tick,
+                        entity: id,
+                        owner: entity.owner.0,
+                        position: (to_f64(entity.position.x), to_f64(entity.position.y)),
+                        before,
+                        now: velocity,
+                    });
                 }
             }
             if is_blocked_attacker(world, entity, arch) {
@@ -175,6 +208,12 @@ impl BlockingMeter {
     #[must_use]
     pub fn reversals_of(&self, id: EntityId) -> u32 {
         self.unit_reversals.get(&id).copied().unwrap_or(0)
+    }
+
+    /// Every counted reversal, in the order counted (tick, then entity).
+    #[must_use]
+    pub fn reversal_events(&self) -> &[ReversalEvent] {
+        &self.events
     }
 
     fn owner(&mut self, owner: PlayerId) -> &mut BlockingMetrics {
@@ -292,6 +331,49 @@ mod tests {
         // The threshold sits at a cosine of -0.3, about 107 degrees.
         assert!(!is_reversal((1.0, 0.0), (-0.29, 0.957)));
         assert!(is_reversal((1.0, 0.0), (-0.31, 0.951)));
+    }
+
+    /// Each counted reversal is logged once, with the tick, the unit, its owner, its position and
+    /// both steps; the log agrees with the per-unit and per-owner counters. The meter reads the
+    /// world only, so the steps are written straight into the unit's achieved velocity.
+    #[test]
+    fn every_counted_reversal_is_logged_with_its_unit_and_place(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_map::{CliffLevel, GameMap, MapCell};
+        use sim_types::MoverType;
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = crate::world(map, 7);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| a.mover_type == MoverType::Ground && a.max_speed > SimScalar::ZERO)
+            .map(|a| a.unit_type_id)
+            .ok_or("a mobile ground unit")?;
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        let id = world.spawn_unit(kind, PlayerId(1), at(8.0, 8.0))?;
+        let mut meter = BlockingMeter::new();
+        for (tick, step) in [(1, 0.125), (2, -0.125), (3, -0.125), (4, 0.125)] {
+            world.current_tick = tick;
+            world.entities.get_mut(&id).ok_or("spawned")?.velocity = at(step, 0.0);
+            meter.observe(&world);
+        }
+        let events = meter.reversal_events();
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert_eq!(
+            events[0],
+            ReversalEvent {
+                tick: 2,
+                entity: id,
+                owner: 1,
+                position: (8.0, 8.0),
+                before: (0.125, 0.0),
+                now: (-0.125, 0.0),
+            }
+        );
+        assert_eq!(events[1].tick, 4);
+        assert_eq!(meter.reversals_of(id), 2);
+        assert_eq!(meter.of_owner(PlayerId(1)).reversals, 2);
+        Ok(())
     }
 
     #[test]

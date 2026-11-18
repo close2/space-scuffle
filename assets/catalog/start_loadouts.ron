@@ -10,6 +10,31 @@
                 (slug: "rhino_beetle", count: 2),
             ],
         ),
+        // The two sides of the showcase's effects take (assets/scenarios/showcase_effects.ron;
+        // plan docs/plans/2026-11-09-effect-visualization.md, Amendment 31): a siege line that
+        // anchors and burrows, and the raiders that run into it. Every identity has admitted
+        // media (showcase_storyboard_tests).
+        (
+            slug: "showcase_siege_line",
+            display_name: "Showcase — siege line",
+            town_hall: "foundry_core_dome",
+            units: [
+                (slug: "railgun_crawler", count: 3),
+                (slug: "burrow_scorpion", count: 2),
+                (slug: "pulse_bot", count: 4),
+            ],
+        ),
+        (
+            slug: "showcase_raiders",
+            display_name: "Showcase — raiders",
+            town_hall: "foundry_core_dome",
+            units: [
+                (slug: "napalm_wheeler", count: 6),
+                (slug: "pulse_bot", count: 6),
+                (slug: "railgun_crawler", count: 2),
+                (slug: "rhino_beetle", count: 2),
+            ],
+        ),
         (
             slug: "standard_automaton",
             display_name: "Automaton Directorate — standard start",

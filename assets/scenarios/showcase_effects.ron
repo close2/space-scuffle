@@ -1,0 +1,22 @@
+// The battle of the showcase's effects take (assets/captures/showcase.ron, take `effects`; plan
+// docs/plans/2026-11-09-effect-visualization.md, WP14 and Amendment 31).
+//
+// Player 0 fields a siege line that holds where it spawns, in a row beside its hall: every unit with
+// a mode switch anchors or burrows at once (EnterModes; a unit with earlier orders would switch
+// after them). The burrowing units carry no weapon until they burrow, so an attack-move would not
+// take them along. Player 0's other units have no orders and fight where they stand. Player 1's
+// raiders attack-move into the line, towards player 0's base. The take is its own battle, so
+// the `battle` take's scenario, outcome and winner are unchanged.
+(
+    format_version: 1,
+    map: "maps/showcase_canyon.scmap.ron",
+    seed: 1592639215,
+    players: [
+        (player_slot: 0, loadout_slug: "showcase_siege_line"),
+        (player_slot: 1, loadout_slug: "showcase_raiders"),
+    ],
+    initial_orders: [
+        EnterModes(player_slot: 0),
+        AttackMoveToCell(player_slot: 1, cell: (11, 11)),
+    ],
+)

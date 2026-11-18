@@ -450,3 +450,9 @@ WP0 to WP5 are on branch `inner-radius`; the evidence is [`docs/evidence/2026-11
 - **F-2:** focused tests pin the flee goal's bounds, `clamp_into_domain`, the mobile producer's bounds, the exit ring's map-bounds and egress checks, and the overlap meter at the terrain radius; each was shown red with its path reverted to the collision radius.
 - **F-3:** `wall_contact_tests` T-B1 to T-B5 and T-B9 run both a body whose terrain radius equals its collision radius and one whose terrain radius is smaller.
 - **F-4:** doc lines wrapped; the showcase trace's wall is the hall's footprint, not terrain (Amendment 1's wording corrected).
+
+## Amendment 2 (2026-11-18): B-131 fixed by plan `2026-11-18-structure-contact`
+
+D-6's unit–structure circle, which Amendment 1 registered as B-131, is removed by plan
+[`2026-11-18-structure-contact`](2026-11-18-structure-contact.md): a registered structure is no body and meets ground
+units only through its footprint at their terrain radius.
