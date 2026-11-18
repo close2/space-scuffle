@@ -38,12 +38,12 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
 - **GPU tests lock the GPU themselves, one test child at a time.** `crates/client/tests/support/gpu_run.rs` runs
   each GPU test child on the physical GPU (`radv`). A child that only reads its own pictures renders offscreen,
   with no window and no display. A child that needs a window presents through a headless KWin
-  (`kwin_wayland --virtual --xwayland`), which composites on the same GPU inside the child's lock; where KWin is
-  missing, the harness uses `xvfb-run` with `MESA_VK_WSI_DEBUG=sw` and says so. On `lavapipe` windowed children
+  (`kwin_wayland --virtual --xwayland`), which composites on the same GPU inside the child's lock; where KWin, Xwayland or
+  `XDG_RUNTIME_DIR` is missing, the harness uses `xvfb-run` with `MESA_VK_WSI_DEBUG=sw` and says so. On `lavapipe` windowed children
   stay on Xvfb, because KWin would composite on the physical GPU without the lock.
-  `SPACE_SCUFFLE_GPU_TEST_DISPLAY=kwin` or `=xvfb` forces the display and never falls back. It takes
-  `/run/lock/gpu.lock`, the lock `with-gpu-lock` uses, just before the child starts, and releases it when the child
-  exits, so other users get the GPU between children. Run `cargo test --workspace` as it is and never wrap it in
+  `SPACE_SCUFFLE_GPU_TEST_DISPLAY=kwin` or `=xvfb` forces the display and never falls back. The harness
+  takes `/run/lock/gpu.lock`, the lock `with-gpu-lock` uses, just before the child starts, and releases it once the
+  child and every process it started are gone, so other users get the GPU between children. Run `cargo test --workspace` as it is and never wrap it in
   `with-gpu-lock`; the harness detects that and fails. A child waits up to `GPU_LOCK_TIMEOUT` (default 290 s) for
   the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is missing,
   as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces CI on this

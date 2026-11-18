@@ -87,6 +87,10 @@
 //! - If the test process itself is killed with `SIGKILL`, its child keeps running without the
 //!   lock for at most the run limit plus the kill grace ([`GpuDriver::run_limit_secs`],
 //!   [`KILL_GRACE_SECS`]).
+//! - `timeout` leads its own process group. When it exits, the harness kills that whole group
+//!   before it reads the output to its end and releases the lock ([`run_to_end`]), so a process
+//!   that outlives `KWin` or the program (one that ignores `SIGTERM`, a late Xwayland) can hold
+//!   neither the pipes nor the lock.
 //!
 //! # Invariants
 //! - A run counts as validated only if the loader reported inserting the layer, so a missing layer
@@ -103,11 +107,11 @@
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::Write as _;
+use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::OnceLock;
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 /// The lock file `with-gpu-lock` takes with `flock(1)`, shared by every user of the server's GPU.
@@ -166,7 +170,7 @@ const RENDER_NODE_PREFIX: &str = "renderD";
 
 /// Run limit on `radv`, in seconds: about three times the slowest child measured on the RX 580
 /// (39.8 s, the windowed skirmish; plan section 3.2), so a hung child holds the GPU at most
-/// 130 s with [`KILL_GRACE_SECS`].
+/// 135 s with [`KILL_GRACE_SECS`] and [`OUTPUT_DRAIN_SECS`] ([`run_to_end`]).
 const RADV_RUN_LIMIT_SECS: u32 = 120;
 
 /// Run limit on `lavapipe`, in seconds.
@@ -181,6 +185,13 @@ const LOCK_PROBE_RUN_LIMIT_SECS: u32 = 60;
 
 /// Seconds GNU `timeout` waits after its signal before it kills the child outright.
 pub const KILL_GRACE_SECS: u32 = 10;
+
+/// Seconds the harness waits, after it killed the run's process group, for the child's output
+/// pipes to close ([`run_to_end`]). Only a process that left the group can hold them open.
+pub const OUTPUT_DRAIN_SECS: u64 = 5;
+
+/// How often [`run_to_end`] looks whether `timeout` has exited.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Terrain sampler override read by `client::terrain::theme_gpu`.
 const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
@@ -1594,6 +1605,12 @@ impl KwinSession {
         self.directory.join("status")
     }
 
+    /// `KWin`'s Wayland socket, next to the session directory in the runtime directory. Its lock
+    /// file is the same path with `.lock` appended.
+    fn socket_path(&self) -> PathBuf {
+        self.directory.with_file_name(&self.socket)
+    }
+
     /// `KWin`'s arguments for running `child`: the headless flags, the output size, the socket
     /// and the session string.
     ///
@@ -1631,12 +1648,15 @@ impl KwinSession {
         .collect()
     }
 
-    /// Creates the session directory and writes the shim into it, executable. The returned
-    /// guard removes the directory when dropped.
+    /// Creates the session directory, which must not exist yet, and writes the shim into it,
+    /// executable. A directory left by an earlier run could hold a stale status file that would
+    /// pass a failed run, so an existing one is an error. The returned guard removes the
+    /// directory, and `KWin`'s socket and its lock file, when dropped.
     fn prepare(&self) -> std::io::Result<SessionFiles> {
-        std::fs::create_dir_all(&self.directory)?;
+        std::fs::create_dir(&self.directory)?;
         let guard = SessionFiles {
             directory: self.directory.clone(),
+            socket: self.socket_path(),
         };
         std::fs::write(self.shim(), SESSION_SHIM)?;
         make_executable(&self.shim())?;
@@ -1666,11 +1686,14 @@ impl KwinSession {
     }
 }
 
-/// Removes a `KWin` session's directory when dropped, whatever the run's outcome.
+/// Removes a `KWin` session's directory, and the socket and socket lock a killed `KWin` leaves,
+/// when dropped, whatever the run's outcome.
 #[derive(Debug)]
 struct SessionFiles {
     /// The directory to remove.
     directory: PathBuf,
+    /// `KWin`'s socket; the run's process group is gone, so no `KWin` uses it any more.
+    socket: PathBuf,
 }
 
 impl Drop for SessionFiles {
@@ -1680,6 +1703,18 @@ impl Drop for SessionFiles {
                 "WARNING: gpu_run could not remove the KWin session directory {}: {error}",
                 self.directory.display()
             );
+        }
+        let mut lock = self.socket.clone().into_os_string();
+        lock.push(".lock");
+        for file in [self.socket.clone(), PathBuf::from(lock)] {
+            match std::fs::remove_file(&file) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => eprintln!(
+                    "WARNING: gpu_run could not remove KWin's {}: {error}",
+                    file.display()
+                ),
+            }
         }
     }
 }
@@ -1699,16 +1734,16 @@ fn make_executable(_path: &Path) -> std::io::Result<()> {
 
 /// The exit status of a process that exited with `code`.
 #[cfg(unix)]
-fn exit_status(code: i32) -> std::process::ExitStatus {
+fn exit_status(code: i32) -> ExitStatus {
     use std::os::unix::process::ExitStatusExt as _;
-    std::process::ExitStatus::from_raw((code & 0xff) << 8)
+    ExitStatus::from_raw((code & 0xff) << 8)
 }
 
 /// The exit status of a process that exited with `code`.
 #[cfg(windows)]
-fn exit_status(code: i32) -> std::process::ExitStatus {
+fn exit_status(code: i32) -> ExitStatus {
     use std::os::windows::process::ExitStatusExt as _;
-    std::process::ExitStatus::from_raw(code.unsigned_abs())
+    ExitStatus::from_raw(code.unsigned_abs())
 }
 
 /// Returns `word` if `KWin`'s session string can carry it as one word.
@@ -1927,6 +1962,8 @@ impl GpuCommand {
             }
             ChildDisplay::Kwin { runtime_dir, .. } => {
                 command.env_remove("DISPLAY");
+                // KWin would otherwise register on the developer's session bus.
+                command.env_remove("DBUS_SESSION_BUS_ADDRESS");
                 command.env(RUNTIME_DIR_VAR, runtime_dir);
                 command.env("WINIT_UNIX_BACKEND", "x11");
             }
@@ -2033,6 +2070,15 @@ impl GpuCommand {
                 panic!("{label}: {error}");
             }
         }
+    }
+
+    /// The `KWin` child's Wayland socket path (its lock file is the same path with `.lock`) and
+    /// its session directory, or `None` for a child not on `KWin`. The self-tests check that a
+    /// run leaves neither behind.
+    pub fn kwin_session_paths(&self) -> Option<(PathBuf, PathBuf)> {
+        self.session
+            .as_ref()
+            .map(|session| (session.socket_path(), session.directory.clone()))
     }
 
     /// Declares the window the child asks for, `width`×`height` physical pixels. [`Self::try_run`]
@@ -2163,11 +2209,11 @@ impl GpuCommand {
         };
         let spawned = SystemTime::now();
         let started = Instant::now();
-        let output = launch.output();
+        let output = run_to_end(&mut launch);
         let run_time = started.elapsed();
         drop(guard);
         let output =
-            output.unwrap_or_else(|error| panic!("{label}: failed to launch {launch:?}: {error}"));
+            output.unwrap_or_else(|error| panic!("{label}: running {launch:?} failed: {error}"));
         let output = match &self.session {
             Some(session) => session.settle(output, label),
             None => output,
@@ -2303,6 +2349,107 @@ impl GpuCommand {
             }
         }
     }
+}
+
+/// Runs `launch` (which starts with `timeout`) as the leader of its own process group, and
+/// returns its exit status and both output streams once every process of that group is gone.
+///
+/// `Command::output` waits for both pipes to close, and any process holding one keeps it waiting:
+/// a session child that ignores `SIGTERM` survives `timeout`'s signal after `KWin` itself has
+/// exited, and `timeout` sends its `SIGKILL` only while its own child still runs. So when
+/// `timeout` exits, this kills the whole group, then reads the pipes, waiting at most
+/// [`OUTPUT_DRAIN_SECS`] for them to close. The group is killed while `timeout` is an unreaped
+/// zombie, which keeps its PID, and so the group's ID, from being reused.
+///
+/// # Errors
+/// When the command cannot start, its exit cannot be awaited, the group cannot be signalled, or
+/// a process outside the group still holds an output pipe after [`OUTPUT_DRAIN_SECS`].
+pub fn run_to_end(launch: &mut Command) -> std::io::Result<Output> {
+    use std::os::unix::process::CommandExt as _;
+    launch
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = launch.spawn()?;
+    let group = child.id();
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    while !has_exited(group) {
+        std::thread::sleep(EXIT_POLL_INTERVAL);
+    }
+    kill_process_group(group)?;
+    let status: ExitStatus = child.wait()?;
+    let deadline = Instant::now() + Duration::from_secs(OUTPUT_DRAIN_SECS);
+    Ok(Output {
+        status,
+        stdout: received_by(&stdout, deadline)?,
+        stderr: received_by(&stderr, deadline)?,
+    })
+}
+
+/// Reads `stream` to its end on a thread of its own and sends the bytes; a stream that was not
+/// captured sends nothing at once.
+fn drain(stream: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
+    let Some(mut stream) = stream else {
+        drop(sender.send(Vec::new()));
+        return receiver;
+    };
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Err(error) = stream.read_to_end(&mut bytes) {
+            bytes.extend_from_slice(
+                format!("\ngpu_run: reading the child's output failed: {error}\n").as_bytes(),
+            );
+        }
+        // The receiver is gone only after its deadline passed; then nobody wants the bytes.
+        drop(sender.send(bytes));
+    });
+    receiver
+}
+
+/// The bytes `receiver`'s reader sends before `deadline`.
+///
+/// # Errors
+/// [`std::io::ErrorKind::TimedOut`] when the pipe is still open at `deadline`.
+fn received_by(receiver: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> std::io::Result<Vec<u8>> {
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "a process outside the run's process group still held its output {OUTPUT_DRAIN_SECS} s \
+                     after the group was killed"
+                ),
+            )
+        })
+}
+
+/// Whether the child `pid` has exited: it is a zombie, or already gone.
+fn has_exited(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
+        stat.rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_none_or(|state| state == "Z")
+    })
+}
+
+/// Sends `SIGKILL` to every process of the group `group` with `kill(1)`; a group with no
+/// members left is not an error.
+///
+/// # Errors
+/// When `kill` cannot be started.
+fn kill_process_group(group: u32) -> std::io::Result<()> {
+    // `kill` exits 1 when no process is left in the group, which is the usual case.
+    Command::new("kill")
+        .args(["-s", "KILL", "--", &format!("-{group}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|_| ())
 }
 
 /// `timeout --kill-after=<grace> <limit>`, the start of every child command.

@@ -1031,7 +1031,7 @@ fn fixture_kwin(screen: Option<&str>) -> ChildDisplay {
 
 /// T-5 (`KWin`): the command is `timeout`, then `kwin_wayland` with the headless flags, the
 /// screen, a socket and the session string, which runs the status shim, its status file, the
-/// program and its arguments. Both display variables and radv's software present are removed.
+/// program and its arguments. Both display variables, the session bus and radv's software present are removed.
 #[test]
 fn a_kwin_child_runs_its_session_under_timeout() {
     let mut command = GpuCommand::inspect(
@@ -1076,9 +1076,21 @@ fn a_kwin_child_runs_its_session_under_timeout() {
             ),
         ]
     );
-    for removed in ["DISPLAY", "WAYLAND_DISPLAY", "MESA_VK_WSI_DEBUG"] {
+    for removed in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "MESA_VK_WSI_DEBUG",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ] {
         assert_eq!(variable(&command, removed), Setting::Removed, "{removed}");
     }
+    assert_eq!(
+        command.kwin_session_paths(),
+        Some((
+            PathBuf::from(format!("/fixture/run/{socket}")),
+            PathBuf::from(&directory)
+        ))
+    );
     for (key, value) in [
         ("XDG_RUNTIME_DIR", "/fixture/run"),
         ("WINIT_UNIX_BACKEND", "x11"),
@@ -1513,17 +1525,31 @@ fn still_running(sample: &[ProcessEntry]) -> Vec<ProcessEntry> {
         .collect()
 }
 
-/// T-8: a `KWin` session that outlives its run limit is ended by `timeout`, and nothing of the
-/// run remains: no `kwin_wayland`, `Xwayland` or program. During the run, a sampler finds the
-/// run's `timeout` by a variable only this run sets and records it with all its descendants;
-/// after the run, none of those processes (same PID and start time) may still run.
-#[test]
-fn a_timed_out_kwin_session_leaves_nothing_running() -> Result<(), Box<dyn std::error::Error>> {
-    if gpu_run::gpu_tests_opted_out()
-        || !kwin_is_selected("a_timed_out_kwin_session_leaves_nothing_running")
-    {
-        return Ok(());
-    }
+/// What one `KWin` probe run ([`kwin_probe`]) showed and left.
+struct KwinProbe {
+    /// The run's panic message (every probe's run fails).
+    message: String,
+    /// The run's processes the sampler saw: `timeout` and its descendants.
+    during: Vec<ProcessEntry>,
+    /// From the sampler's first sight of the run's processes, after the lock, to the run's return.
+    run_seen_for: Duration,
+}
+
+/// Runs a `KWin` session whose program first connects `xdpyinfo` (so `KWin` starts Xwayland),
+/// then runs `body`, under a 20 s limit, and checks that the run leaves nothing behind:
+/// immediately after the run returns, none of the processes a sampler saw during it (same PID
+/// and start time) still runs, no process carries the run's tag in its environment (a
+/// re-parented or late Xwayland), `KWin`'s socket, socket lock and session directory are gone,
+/// and no X socket that appeared during the run remains with a lock naming one of its processes,
+/// or with no lock at all.
+///
+/// The sampler finds the run's `timeout` by a variable only this run sets, and records it with
+/// all its descendants until `expected` are all seen.
+fn kwin_probe(
+    label: &str,
+    body: &str,
+    expected: &[&str],
+) -> Result<KwinProbe, Box<dyn std::error::Error>> {
     let tag = format!(
         "SPACE_SCUFFLE_KWIN_PROBE={}-{}",
         std::process::id(),
@@ -1532,34 +1558,37 @@ fn a_timed_out_kwin_session_leaves_nothing_running() -> Result<(), Box<dyn std::
             .as_nanos()
     );
     let (key, value) = tag.split_once('=').expect("invariant: the tag has an =");
-    // `KWin` starts Xwayland only when an X client connects, so the session first connects one
-    // where `xdpyinfo` is installed, then sleeps past the limit.
-    let x_client = gpu_run::find_on_path("xdpyinfo");
+    // `KWin` starts Xwayland only when an X client connects, and the probe must see it.
+    let x_client = gpu_run::find_on_path("xdpyinfo")
+        .ok_or("xdpyinfo is missing; the KWin probes need it to start Xwayland (x11-utils)")?;
     let directory = tempfile::tempdir()?;
-    let connect = x_client.as_ref().map_or_else(String::new, |client| {
-        format!("{} > /dev/null\n", client.display())
-    });
     let program = script(
         directory.path(),
-        "sleeper.sh",
-        &format!("{connect}exec /bin/sleep 600"),
+        "probe.sh",
+        &format!("{} > /dev/null\n{body}", x_client.display()),
     )?;
-    let mut expected = vec!["timeout", "kwin_wayland", "sleep"];
-    if x_client.is_some() {
-        expected.push("Xwayland");
-    }
     let mut command = gpu_run::virtual_gpu_command_with(&program, None, DisplayRequest::Kwin);
     command.env(key, value).set_run_limit_for_self_test(20);
+    let (socket, session_directory) = command
+        .kwin_session_paths()
+        .ok_or("a KWin command has a KWin session")?;
+    let x_sockets_before = x_sockets();
+    let run_returned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let sampler = {
         let tag = tag.clone();
+        let run_returned = std::sync::Arc::clone(&run_returned);
         let expected: Vec<String> = expected.iter().map(|name| (*name).to_owned()).collect();
         std::thread::spawn(move || {
-            // The lock wait comes first, then the 20 s run and its grace.
-            let deadline = Instant::now() + Duration::from_secs(400);
+            // Until the run returns: the lock wait comes first, then the 20 s run, its grace
+            // and the drain.
             let mut widest = Vec::new();
-            while Instant::now() < deadline {
+            let mut first_seen = None;
+            while !run_returned.load(std::sync::atomic::Ordering::Acquire) {
                 std::thread::sleep(Duration::from_millis(250));
                 let tree = process_tree(&tagged_roots(&tag));
+                if first_seen.is_none() && !tree.is_empty() {
+                    first_seen = Some(Instant::now());
+                }
                 let complete = expected
                     .iter()
                     .all(|name| tree.iter().any(|process| &process.comm == name));
@@ -1570,38 +1599,200 @@ fn a_timed_out_kwin_session_leaves_nothing_running() -> Result<(), Box<dyn std::
                     break;
                 }
             }
-            widest
+            (widest, first_seen)
         })
     };
-    let started = Instant::now();
-    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        command.run("kwin timeout probe")
-    }));
-    let elapsed = started.elapsed();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| command.run(label)));
+    let returned = Instant::now();
+    // Once, at once: every process of the run must be gone when the run returns.
+    let tagged_after = tagged_roots(&tag);
+    run_returned.store(true, std::sync::atomic::Ordering::Release);
+    let (during, first_seen) = sampler.join().map_err(|_| "the sampler panicked")?;
+    let left = still_running(&during);
     let Err(payload) = caught else {
-        panic!("a session that sleeps 600 s must hit the 20 s limit");
+        panic!("{label}: the probe's run must fail");
     };
     let message = panic_text(payload.as_ref());
-    assert!(message.contains("did not finish within 20 s"), "{message}");
-    let during = sampler.join().map_err(|_| "the sampler panicked")?;
     let names: Vec<&str> = during.iter().map(|process| process.comm.as_str()).collect();
-    for name in &expected {
+    for name in expected {
         assert!(
             names.contains(name),
             "{name} runs during the session: {names:?}"
         );
     }
-    let mut left = still_running(&during);
-    let settle = Instant::now();
-    while !left.is_empty() && settle.elapsed() < Duration::from_secs(5) {
-        std::thread::sleep(Duration::from_millis(250));
-        left = still_running(&during);
+    assert!(left.is_empty(), "{label}: the run left {left:?}");
+    assert!(
+        tagged_after.is_empty(),
+        "{label}: processes with the run's tag still run: {tagged_after:?}"
+    );
+    let mut socket_lock = socket.clone().into_os_string();
+    socket_lock.push(".lock");
+    for file in [socket, PathBuf::from(socket_lock), session_directory] {
+        assert!(!file.exists(), "{label}: the run left {}", file.display());
     }
-    assert!(left.is_empty(), "the timed-out run left {left:?}");
+    let ours: Vec<u32> = during.iter().map(|process| process.pid).collect();
+    let left_x: Vec<String> = x_sockets()
+        .into_iter()
+        .filter(|name| !x_sockets_before.contains(name))
+        .filter(|name| {
+            let lock = format!("/tmp/.{name}-lock");
+            std::fs::read_to_string(lock).map_or(true, |pid| {
+                pid.trim()
+                    .parse::<u32>()
+                    .is_ok_and(|pid| ours.contains(&pid))
+            })
+        })
+        .collect();
+    assert!(
+        left_x.is_empty(),
+        "{label}: the run left X sockets {left_x:?}"
+    );
+    let first_seen = first_seen.ok_or("the sampler never saw the run")?;
+    Ok(KwinProbe {
+        message,
+        during,
+        run_seen_for: returned.saturating_duration_since(first_seen),
+    })
+}
+
+/// The names (`X<n>`) in `/tmp/.X11-unix`.
+fn x_sockets() -> Vec<String> {
+    std::fs::read_dir("/tmp/.X11-unix").map_or_else(
+        |_| Vec::new(),
+        |entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        },
+    )
+}
+
+/// T-8: a `KWin` session that outlives its run limit is ended by `timeout`, and nothing of the
+/// run remains the moment the run returns ([`kwin_probe`]): no `kwin_wayland`, `Xwayland` or
+/// program, no tagged process, no socket or session file, no X socket.
+#[test]
+fn a_timed_out_kwin_session_leaves_nothing_running() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out()
+        || !kwin_is_selected("a_timed_out_kwin_session_leaves_nothing_running")
+    {
+        return Ok(());
+    }
+    let probe = kwin_probe(
+        "kwin timeout probe",
+        "exec /bin/sleep 600",
+        &["timeout", "kwin_wayland", "sleep", "Xwayland"],
+    )?;
+    assert!(
+        probe.message.contains("did not finish within 20 s"),
+        "{}",
+        probe.message
+    );
     eprintln!(
-        "kwin timeout probe: ended after {:.1} s; during the run {names:?}; nothing left",
+        "kwin timeout probe: returned {:.1} s after it started; during the run {:?}; nothing left",
+        probe.run_seen_for.as_secs_f64(),
+        probe
+            .during
+            .iter()
+            .map(|process| &process.comm)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// Review item 3: a session program that ignores `SIGTERM` survives `timeout`'s signal after
+/// `KWin` has exited. The harness kills `timeout`'s whole group when `timeout` exits, so the run
+/// still returns within its limit, the kill grace and the drain (plus `KWin`'s start), and
+/// leaves nothing ([`kwin_probe`]). Without the group kill it would wait out the 600 s sleep.
+#[test]
+fn a_session_child_that_ignores_sigterm_cannot_outlive_the_run(
+) -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out()
+        || !kwin_is_selected("a_session_child_that_ignores_sigterm_cannot_outlive_the_run")
+    {
+        return Ok(());
+    }
+    let probe = kwin_probe(
+        "kwin SIGTERM-ignoring probe",
+        "trap '' TERM\nexec /bin/sleep 600",
+        &["timeout", "kwin_wayland", "sleep", "Xwayland"],
+    )?;
+    assert!(
+        probe.message.contains("did not finish within 20 s"),
+        "{}",
+        probe.message
+    );
+    // 20 s limit, the kill grace, the drain, and a margin for KWin's start and the sampler.
+    let bound = Duration::from_secs(
+        20 + u64::from(gpu_run::KILL_GRACE_SECS) + gpu_run::OUTPUT_DRAIN_SECS + 15,
+    );
+    assert!(
+        probe.run_seen_for <= bound,
+        "the run took {:.1} s after it started, more than {:.0} s",
+        probe.run_seen_for.as_secs_f64(),
+        bound.as_secs_f64()
+    );
+    eprintln!(
+        "kwin SIGTERM-ignoring probe: returned {:.1} s after it started; nothing left",
+        probe.run_seen_for.as_secs_f64()
+    );
+    Ok(())
+}
+
+/// Review item 3, on any host: when the group leader exits, a process it left in its group,
+/// one that ignores `SIGTERM` and holds the output pipes, is killed, and the run returns at once
+/// with the leader's status and output.
+#[test]
+fn a_leftover_group_member_cannot_hold_the_output() -> Result<(), Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "trap '' TERM; /bin/sleep 600 & echo \"$!\"; exit 7"]);
+    let output = gpu_run::run_to_end(&mut command)?;
+    let elapsed = started.elapsed();
+    assert_eq!(output.status.code(), Some(7));
+    let sleeper: u32 = String::from_utf8(output.stdout)?.trim().parse()?;
+    assert!(
+        elapsed < Duration::from_secs(gpu_run::OUTPUT_DRAIN_SECS),
+        "the run waited {:.1} s for its leftover",
         elapsed.as_secs_f64()
     );
+    let alive = processes()
+        .into_iter()
+        .any(|process| process.pid == sleeper && process.comm == "sleep" && !process.zombie);
+    assert!(!alive, "the leftover sleep {sleeper} still runs");
+    Ok(())
+}
+
+/// Review item 4: a session directory left by an earlier run, whose `status` says 0, cannot pass
+/// a failed run. The run refuses before the lock and the stale file stays untouched.
+#[test]
+fn a_stale_session_directory_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out() || !kwin_is_selected("a_stale_session_directory_is_refused") {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let program = script(directory.path(), "exit3.sh", "exit 3")?;
+    let command = gpu_run::virtual_gpu_command_with(&program, None, DisplayRequest::Kwin);
+    let (_, session_directory) = command
+        .kwin_session_paths()
+        .ok_or("a KWin command has a KWin session")?;
+    std::fs::create_dir(&session_directory)?;
+    let stale = session_directory.join("status");
+    std::fs::write(&stale, "0\n")?;
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        command.run("stale session probe")
+    }));
+    let still_there = std::fs::read_to_string(&stale);
+    std::fs::remove_dir_all(&session_directory)?;
+    let Err(payload) = caught else {
+        panic!("a stale session directory must refuse the run");
+    };
+    let message = panic_text(payload.as_ref());
+    assert!(
+        message.contains("cannot write the KWin session files"),
+        "{message}"
+    );
+    assert_eq!(still_there?, "0\n", "the stale file is left as it was");
     Ok(())
 }
 

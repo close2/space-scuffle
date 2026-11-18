@@ -915,3 +915,42 @@ another user held. It is not a display fault, and it is recorded.
   and never started a child. These were lock waits, not display faults. Rerun with `GPU_LOCK_TIMEOUT=2400`, both
   pass under KWin (21 KWin children, 178 s of lock waits). So all 19 windowed targets pass on radv under KWin, and
   no `kwin_wayland`, `Xwayland` or session directory remained. The timings are not rerun; they move to WP4.
+
+**Amendment 3, review fixes (2026-11-18).** The independent review of WP3 (`29878106..b05aec6b`) accepted it with
+conditions. Each finding and what it became:
+
+1. **Settle after the run (medium).** The timeout self-test no longer waits 5 s for leftovers. It checks once,
+   immediately after the run returns, that none of the processes sampled during the run (same PID and start time)
+   still runs.
+2. **Holes in the process search (medium).** After the run, the probe also scans every process for the run's tag
+   in its environment (a re-parented or late Xwayland). It checks that `KWin`'s socket, its `.lock` and the session
+   directory are gone, and that no X socket that appeared during the run remains with a lock naming a process of
+   the run, or with no lock. A missing `xdpyinfo` now fails the probe on radv instead of quietly skipping Xwayland.
+3. **The worst-case bound (low to medium).** `GpuCommand::try_run` now runs the child through `run_to_end`.
+   `timeout` leads its own process group. When `timeout` exits, while it is still an unreaped zombie whose PID
+   cannot be reused, the harness sends `SIGKILL` to the whole group. It then reads the pipes, waiting at most
+   `OUTPUT_DRAIN_SECS` (5 s) for them to close, and only then releases the lock. So a group member that ignores
+   `SIGTERM` or outlives `KWin` holds neither the pipe nor the lock, and a hung radv child holds the GPU at most
+   135 s (120 s limit, 10 s grace, 5 s drain). Tests: `a_session_child_that_ignores_sigterm_cannot_outlive_the_run`
+   (radv, `KWin`; a session program with `trap '' TERM`) and `a_leftover_group_member_cannot_hold_the_output` (any
+   host; a backgrounded `sleep` that ignores `SIGTERM` holds the pipes after its parent exits 7).
+4. **Stale status file (low).** `KwinSession::prepare` creates the session directory with `create_dir`, so an
+   existing directory, and any stale `status` in it, refuses the run before the lock. Test:
+   `a_stale_session_directory_is_refused`. `SessionFiles` now also removes the socket and socket lock a killed `KWin`
+   leaves.
+5. **Undeclared windows (low).** `client::render_compatibility::WindowSizeCheckPlugin`, active only under
+   `SPACE_SCUFFLE_VIRTUAL_GPU`, records each window's requested size when it is spawned. From the first frame on, it
+   fails the app (error exit) when the window's physical size differs from that size times its scale factor.
+   `RenderCompatibilityPlugin` installs it, which covers the client, the lab, the terrain preview and the
+   `client_diagnostics` tools; the map editor, which does not use that plugin, adds it itself. Unit test:
+   `a_window_of_another_size_than_requested_is_a_mismatch`. The harness's refusal of a declared oversized window
+   stays as the earlier, clearer message.
+6. **Guide wording (low).** `docs/guides/gpu-and-disk.md` says "where KWin, Xwayland or `XDG_RUNTIME_DIR` is
+   missing", and says the harness takes the lock and releases it once the child and every process it started are
+   gone.
+7. **Session bus (low).** A `KWin` child's command removes `DBUS_SESSION_BUS_ADDRESS`, so `KWin` never registers on
+   a developer's session bus; the T-5 command test checks it.
+8. **What T-2 proves (info).** T-2 compares Bevy screenshots, which copy the swapchain image Bevy rendered before
+   it is presented, so before `KWin` composites it. It therefore proves that rendering is identical with radv's DRI3
+   present and with its software present, which is what D-6 asks. It does not compare `KWin`'s composited output,
+   which no test reads.

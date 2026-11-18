@@ -96,6 +96,8 @@ fn main() -> ExitCode {
     );
 
     app.add_plugins(EguiPlugin);
+    // Under the GPU test harness, a display that shrinks the editor's window fails the run.
+    app.add_plugins(client::render_compatibility::WindowSizeCheckPlugin);
 
     app.add_plugins(MapEditorPlugin {
         startup,
