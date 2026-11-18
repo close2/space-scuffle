@@ -249,3 +249,61 @@ repeats; the host was shared:
 
 Within noise (the bench scenarios spawn no structures, so WP1 and WP2 change no work in them); every scenario far
 above 25. `DESIGN.md` §5 is unchanged.
+
+## 3. WP3: client and presentation check
+
+**No client code changed** (**verified**): `grep -rn "SteeringObstacle\|validate_displacement" crates/client/src` finds
+nothing, so the client keeps no copy of the body set.
+
+**Storyboard** (`assets/captures/showcase.ron`), retold for player 1's win (Amendment 1).
+- Timeline from WP2's `units.csv` (default seed): the viewer's army dies in the lane fight, its last death at about
+  tick 634. Player 1 keeps four pulse bots (20, 21, 23, 24), which walk to the viewer's base and kill its workers
+  (last seen on ticks 1,170 and 1,215). They fire on its hall until it falls at tick 2,193.
+- `march` follows player 1's first survivor again, and its caption and `assault`'s are the player-1 telling of
+  contact-and-missiles §4c. No scene length changed.
+- The base merged with main `bdfcffcc` (`eff819dc`). Rendered on the RX 580 with `showcase render --driver radv`
+  (one `with-gpu-lock` hold for the one take, 08:14:25 to 08:18:07 UTC): the take is 1,421 frames in 206.7 s.
+
+| Scene | Speed | Frames | First frame | Start tick |
+|---|---|---:|---:|---:|
+| title | paused | 125 | 0 | 0 |
+| terrain | paused | 150 | 125 | 0 |
+| units | 1x | 150 | 275 | 1 |
+| smog | 1x | 100 | 425 | 151 |
+| advance | 1x until combat (25 to 500) | 54 | 525 | 251 |
+| clash | 1x | 375 | 579 | 305 |
+| march | 4x until combat (5 to 200) | 67 | 954 | 683 |
+| assault | 2x | 200 | 1,021 | 949 |
+| closing | paused | 200 | 1,221 | 1,347 |
+
+Readings of the render:
+- `clash` covers ticks 305 to 680, past the lane fight's last death (about 634).
+- `march` ends on combat at the viewer's base after 67 frames, above its 5-frame minimum.
+- `assault` covers ticks 949 to 1,347, including both workers' deaths.
+- `closing` pauses with the viewer's hall standing, so the video never shows the result.
+
+Stills (640 wide) under `~/scratch/structure-contact/wp3/stills/` were looked at:
+- `f800.png`: `clash`, both armies firing at the west ramp.
+- `f980.png`: `march`, the fog hiding the enemy's survivors, with the caption saying so.
+- `f1100.png`: `assault` on the viewer's hall, caption "Assault".
+- `f1300.png`: the closing card.
+
+The video is 15.2 MB (budget 25 MB). `client_diagnostics` `showcase_storyboard_tests` (7) and `showcase_tests`
+(1) pass.
+
+**Picture check** (RX 580, `showcase render --driver radv`, one `with-gpu-lock` hold, 14 minutes after the
+storyboard's hold was released; a scratch storyboard `~/scratch/structure-contact/wp3/picture.ron` of one take in
+`LiveBattle` mode, 4x to tick 981, 1x to tick 996, then paused and orbiting; stills under
+`~/scratch/structure-contact/wp3/pstills/`):
+- At tick 996, player 0's welder drone 3 (radius 0.375, terrain radius 0.3125) walks along the middle of its hall's
+  south face (y = 6) at (8.48, 5.69), 0.3134 from the footprint. Before WP2, the hall's circle held a unit there
+  at 0.375.
+- Its bubble overlaps the dome's rim (the hall's circle, radius 2.5) by about 0.06 world units, r − t. Seen top
+  down (`p261.png`) this is a hairline: the bubble's glass touches the dome's rim, beside drone 2.
+- Seen low (`p290.png`), both drones stand behind the dome's glass from the camera, the ordinary occlusion of a
+  tall dome.
+
+Nothing reads as a fault, so nothing is registered (R-7). B-135, the dome drawn at half the footprint width rather
+than the analogue's `Radius`, remains the separate open question.
+
+**Throughput:** §2. Within noise; `DESIGN.md` §5 unchanged.
