@@ -204,3 +204,70 @@ fn test_performance_quality_gate() {
         vis_duration
     );
 }
+
+/// Plan `2026-11-18-contour-footprints` WP3: 1,000 seeded routes on the default arena among eight
+/// 5.0.14 contour structures, hashed by raw bits; pinned when the contour cut landed and
+/// replayed on every target. Every draw is a fixed-width integer range.
+#[test]
+fn contour_route_checksum() {
+    let mut map = arena::default_arena();
+    let contours: [((u32, u32), u8, u16, u16); 8] = [
+        ((8, 8), 5, 10, 6),
+        ((14, 8), 3, 6, 2),
+        ((17, 11), 3, 6, 3),
+        ((20, 8), 2, 4, 2),
+        ((22, 10), 2, 4, 2),
+        ((40, 12), 5, 10, 6),
+        ((45, 17), 3, 6, 2),
+        ((12, 20), 2, 2, 1),
+    ];
+    for (index, (cell, size, half, chamfer)) in (0_u32..).zip(contours) {
+        let footprint = sim_map::StructureFootprint {
+            width: size,
+            height: size,
+            shape: sim_types::FootprintShape {
+                half_width_q: half,
+                half_height_q: half,
+                chamfer_q: chamfer,
+            },
+        };
+        map.place_structure(sim_types::EntityId(500 + index), cell, footprint)
+            .expect("invariant: the seeded sites are open ground");
+    }
+    let mut pathfinder = Pathfinder::new(&map);
+    let mut rng = ChaCha8Rng::seed_from_u64(0xc047_0e5e_ed00_0001);
+    let mut hasher = Xxh64::new(0);
+    let quarter = SimScalar::from_raw(1 << 30);
+    for _ in 0..1000 {
+        let point = |rng: &mut ChaCha8Rng| {
+            SimVec2::new(
+                SimScalar::from_num(rng.gen_range(2..62_i32)) + quarter * rng.gen_range(0..4_i32),
+                SimScalar::from_num(rng.gen_range(2..62_i32)) + quarter * rng.gen_range(0..4_i32),
+            )
+        };
+        let (start, goal) = (point(&mut rng), point(&mut rng));
+        let radius = SimScalar::from_raw(rng.gen_range(5..17_i64) << 28);
+        match pathfinder.find_path(
+            &map,
+            &PathRequest {
+                start,
+                goal,
+                radius,
+            },
+        ) {
+            Ok(res) => {
+                hasher.update(&(res.waypoints.len() as u64).to_le_bytes());
+                for wp in &res.waypoints {
+                    hasher.update(&wp.x.raw().to_le_bytes());
+                    hasher.update(&wp.y.raw().to_le_bytes());
+                }
+                hasher.update(&res.total_length.raw().to_le_bytes());
+            }
+            Err(_) => hasher.update(&[0]),
+        }
+    }
+    let checksum = hasher.digest();
+    eprintln!("contour route checksum: 0x{checksum:016x}");
+    const CONTOUR_ROUTE_CHECKSUM: u64 = 0xc0d5_fbfd_292f_37a4;
+    assert_eq!(checksum, CONTOUR_ROUTE_CHECKSUM, "contour routes diverged");
+}

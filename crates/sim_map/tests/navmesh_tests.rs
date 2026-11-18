@@ -412,3 +412,387 @@ fn a_smaller_disc_routes_wherever_a_larger_one_does() {
     }
     assert!(both > 250, "only {both} searches found a route");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Contour footprints (plan `2026-11-18-contour-footprints` WP3, D-4).
+// ---------------------------------------------------------------------------------------------
+
+/// A seeded integer draw in `0..bound` (`SplitMix64`).
+fn draw_below(state: &mut u64, bound: u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    z % bound
+}
+
+/// The 5.0.14 footprints of §2.3 as `(cells, half-width, half-height, chamfer)` in quarter
+/// cells, plus a scratch 3×2.
+const SHAPES: [(u8, u8, u16, u16, u16); 7] = [
+    (5, 5, 10, 10, 6),
+    (3, 3, 6, 6, 2),
+    (3, 3, 6, 6, 3),
+    (2, 2, 4, 4, 2),
+    (2, 2, 2, 2, 1),
+    (1, 1, 2, 2, 0),
+    (3, 2, 6, 4, 2),
+];
+
+fn footprint(index: usize, square: bool) -> sim_map::StructureFootprint {
+    let (width, height, hw, hh, c) = SHAPES[index % SHAPES.len()];
+    if square {
+        return sim_map::StructureFootprint::square(width, height);
+    }
+    sim_map::StructureFootprint {
+        width,
+        height,
+        shape: sim_types::FootprintShape {
+            half_width_q: hw,
+            half_height_q: hh,
+            chamfer_q: c,
+        },
+    }
+}
+
+/// Places up to `count` seeded structures of the §2.3 sizes on `map`, each where it fits;
+/// `square` gives every one the full box of its cells. Returns how many were placed.
+fn place_seeded(map: &mut GameMap, seed: u64, count: u32, square: bool) -> u32 {
+    let mut state = seed;
+    let mut placed = 0;
+    for attempt in 0..count * 8 {
+        if placed == count {
+            break;
+        }
+        let shape = draw_below(&mut state, SHAPES.len() as u64) as usize;
+        let x = draw_below(&mut state, u64::from(map.width() - 5)) as u32;
+        let y = draw_below(&mut state, u64::from(map.height() - 5)) as u32;
+        if map
+            .place_structure(EntityId(20_000 + attempt), (x, y), footprint(shape, square))
+            .is_ok()
+        {
+            placed += 1;
+        }
+    }
+    placed
+}
+
+fn showcase_map() -> GameMap {
+    let text = include_str!("../../../assets/maps/showcase_canyon.scmap.ron");
+    MapFile::from_ron_str(text)
+        .and_then(|file| file.decode())
+        .and_then(|document| document.to_game_map())
+        .expect("invariant: the shipped showcase map decodes")
+}
+
+/// The digest of the showcase mesh with 24 seeded square structures, computed by this same test
+/// on the tree before the contour cut (WP2 of plan `2026-11-18-contour-footprints`, where
+/// structures cut whole cells).
+const SQUARE_STRUCTURES_MESH_DIGEST: u64 = 0xb220_7731_a3e3_10c8;
+
+/// D-4's equivalence: a structure whose shape is the full box of its cells cuts exactly the mesh
+/// the cell cut made.
+#[test]
+fn a_square_shape_cuts_the_mesh_as_cells_did() {
+    let mut map = showcase_map();
+    assert_eq!(place_seeded(&mut map, 0x5eed, 24, true), 24);
+    let mesh = mesh_of(&map);
+    check_mesh_laws(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_labels(&map, &mesh).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        mesh.digest(),
+        SQUARE_STRUCTURES_MESH_DIGEST,
+        "digest {:#x}",
+        mesh.digest()
+    );
+}
+
+/// The vertex sum of triangle `t` in lattice units: three times its centroid.
+fn centroid_sum(mesh: &NavMesh, t: u32) -> (i64, i64) {
+    mesh.triangle_vertices(t)
+        .map(|v| mesh.vertex(v))
+        .iter()
+        .fold((0, 0), |(x, y), p| (x + i64::from(p.x), y + i64::from(p.y)))
+}
+
+/// Every structure triangle lies in one footprint cell and inside its structure's shape; every
+/// other triangle's centroid is outside every shape.
+fn check_contour_labels(map: &GameMap, mesh: &NavMesh) -> Result<(), String> {
+    let per_cell = i64::from(LATTICE_PER_CELL);
+    for t in 0..mesh.triangle_count() as u32 {
+        let (sx, sy) = centroid_sum(mesh, t);
+        let inside: Vec<EntityId> = map
+            .structures()
+            .values()
+            .filter(|placed| placed.contains_open_scaled(sx, sy, 3))
+            .map(|placed| placed.id)
+            .collect();
+        match mesh.label(t).kind {
+            TriangleKind::Structure(id) => {
+                if inside != [id] {
+                    return Err(format!("structure triangle {t} of {id:?} is in {inside:?}"));
+                }
+                let corners = mesh.triangle_vertices(t).map(|v| mesh.vertex(v));
+                let (cx, cy) = (sx.div_euclid(3 * per_cell), sy.div_euclid(3 * per_cell));
+                for p in corners {
+                    let (x, y) = (i64::from(p.x), i64::from(p.y));
+                    if x < cx * per_cell
+                        || x > (cx + 1) * per_cell
+                        || y < cy * per_cell
+                        || y > (cy + 1) * per_cell
+                    {
+                        return Err(format!("structure triangle {t} leaves cell ({cx}, {cy})"));
+                    }
+                }
+            }
+            TriangleKind::Open | TriangleKind::Blocked => {
+                if !inside.is_empty() {
+                    return Err(format!(
+                        "triangle {t} lies in {inside:?} but is not labelled"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn contour_structure_triangles_lie_in_one_cell() {
+    let mut map = arena::default_arena();
+    assert_eq!(place_seeded(&mut map, 0xc0de, 12, false), 12);
+    let mesh = mesh_of(&map);
+    check_mesh_laws(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_runs(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_contour_labels(&map, &mesh).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// D-8, plan §2.2: a 5×5 contour's corner cell centre is open ground (0.354 from its chamfer),
+/// while a 3×3 contour's corner cell centre is inside its shape.
+#[test]
+fn a_cut_corner_is_open_ground() {
+    let mut map = arena::default_arena();
+    map.place_structure(EntityId(1), (10, 10), footprint(0, false))
+        .expect("invariant: open ground");
+    map.place_structure(EntityId(2), (20, 10), footprint(1, false))
+        .expect("invariant: open ground");
+    let mesh = mesh_of(&map);
+    let label_at = |x: u32, y: u32| {
+        let centre = map
+            .cell_to_world_center(x, y)
+            .expect("invariant: on the map");
+        mesh.label(mesh.locate(centre).expect("invariant: on the map"))
+            .kind
+    };
+    for (x, y) in [(10, 10), (14, 10), (10, 14), (14, 14)] {
+        assert_eq!(
+            label_at(x, y),
+            TriangleKind::Open,
+            "5x5 corner cell ({x}, {y})"
+        );
+    }
+    assert_eq!(label_at(12, 12), TriangleKind::Structure(EntityId(1)));
+    for (x, y) in [(20, 10), (22, 10), (20, 12), (22, 12)] {
+        assert_eq!(
+            label_at(x, y),
+            TriangleKind::Structure(EntityId(2)),
+            "3x3 corner cell ({x}, {y})"
+        );
+    }
+}
+
+#[test]
+fn removing_a_contour_structure_restores_the_terrain_mesh() {
+    let terrain = arena::default_arena();
+    let base = mesh_of(&terrain);
+    let mut map = terrain.clone();
+    map.place_structure(EntityId(3), (12, 12), footprint(0, false))
+        .expect("invariant: open ground");
+    map.place_structure(EntityId(4), (17, 17), footprint(1, false))
+        .expect("invariant: open ground");
+    map.place_structure(EntityId(5), (20, 12), footprint(4, false))
+        .expect("invariant: open ground");
+    let placed = mesh_of(&map);
+    assert_ne!(placed.digest(), base.digest());
+    for id in [3, 4, 5] {
+        map.remove_structure(EntityId(id))
+            .expect("invariant: placed above");
+    }
+    let restored = mesh_of(&map);
+    assert_eq!(restored, base);
+    assert_eq!(restored.digest(), base.digest());
+}
+
+/// Every constraint run lies on a structure's contour, on one of its interior cell lines, or on
+/// a cell edge (terrain).
+fn check_run_geometry(map: &GameMap, mesh: &NavMesh) -> Result<(), String> {
+    let per_cell = LATTICE_PER_CELL;
+    for run in mesh.constraint_runs() {
+        let (a, b) = (run.from, run.to);
+        let axis = a.x == b.x || a.y == b.y;
+        let on_cell_line =
+            (a.x == b.x && a.x % per_cell == 0) || (a.y == b.y && a.y % per_cell == 0);
+        if axis && on_cell_line {
+            continue;
+        }
+        // Otherwise it must lie on some structure's contour.
+        let on_contour = map.structures().values().any(|placed| {
+            let (vertices, count) = placed.contour();
+            (0..count).any(|i| {
+                let (u, v) = (vertices[i], vertices[(i + 1) % count]);
+                let collinear = |p: LatticePoint| {
+                    i64::from(v.x - u.x) * i64::from(p.y - u.y)
+                        == i64::from(v.y - u.y) * i64::from(p.x - u.x)
+                };
+                let within = |p: LatticePoint| {
+                    p.x >= u.x.min(v.x)
+                        && p.x <= u.x.max(v.x)
+                        && p.y >= u.y.min(v.y)
+                        && p.y <= u.y.max(v.y)
+                };
+                collinear(a) && collinear(b) && within(a) && within(b)
+            })
+        });
+        if !on_contour {
+            return Err(format!(
+                "run {run:?} is neither a cell edge nor on a contour"
+            ));
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// Seeded layouts of up to 12 contour structures, touching, face-adjacent, diagonal and
+    /// beside cliffs on the default arena: the build never fails, labels follow the shapes, and
+    /// every constraint lies on a contour, a clipped cell line or a terrain edge.
+    #[test]
+    fn contour_meshes_build_for_seeded_layouts(seed in any::<u64>(), count in 1u32..=12) {
+        let mut map = arena::default_arena();
+        let mut state = seed;
+        let mut placed = 0;
+        let mut previous: Option<(u32, u32, u8, u8)> = None;
+        for attempt in 0..count * 6 {
+            if placed == count {
+                break;
+            }
+            let shape = draw_below(&mut state, SHAPES.len() as u64) as usize;
+            let print = footprint(shape, false);
+            // Half the time, put the next structure flush against the previous one's east or
+            // north face, or on its north-east corner.
+            let cell = match (previous, draw_below(&mut state, 6)) {
+                (Some((x, y, w, _)), 0) => (x + u32::from(w), y),
+                (Some((x, y, _, h)), 1) => (x, y + u32::from(h)),
+                (Some((x, y, w, h)), 2) => (x + u32::from(w), y + u32::from(h)),
+                _ => (
+                    draw_below(&mut state, u64::from(map.width() - 5)) as u32,
+                    draw_below(&mut state, u64::from(map.height() - 5)) as u32,
+                ),
+            };
+            if map.place_structure(EntityId(30_000 + attempt), cell, print).is_ok() {
+                placed += 1;
+                previous = Some((cell.0, cell.1, print.width, print.height));
+            }
+        }
+        let mesh = NavMesh::build(&map).map_err(|e| TestCaseError::fail(e.to_string()))?;
+        check_mesh_laws(&mesh).map_err(TestCaseError::fail)?;
+        check_runs(&mesh).map_err(TestCaseError::fail)?;
+        check_contour_labels(&map, &mesh).map_err(TestCaseError::fail)?;
+        check_run_geometry(&map, &mesh).map_err(TestCaseError::fail)?;
+    }
+}
+
+/// Funnel fallbacks to portal midpoints among seeded structures on the default arena: routes at
+/// the shipped terrain radii between seeded points where the disc fits, as `(routed, fallbacks,
+/// exact fits)`. An exact fit is a fallback a disc 1/4096 smaller avoids: a disc exactly as wide
+/// as a bent channel, which TA* admits (`(2r)² ≤ w²`) and no polyline rounds under the strict
+/// segment predicate.
+fn fallback_counts(layouts: u64, square: bool) -> (u32, u32, u32) {
+    let (mut routed, mut fallbacks, mut exact) = (0, 0, 0);
+    for layout in 0..layouts {
+        let mut state = layout.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut map = arena::default_arena();
+        let count = 1 + (layout % 12) as u32;
+        let mut placed = 0;
+        for attempt in 0..count * 6 {
+            if placed == count {
+                break;
+            }
+            let shape = draw_below(&mut state, SHAPES.len() as u64) as usize;
+            let cell = (
+                draw_below(&mut state, u64::from(map.width() - 5)) as u32,
+                draw_below(&mut state, u64::from(map.height() - 5)) as u32,
+            );
+            if map
+                .place_structure(EntityId(40_000 + attempt), cell, footprint(shape, square))
+                .is_ok()
+            {
+                placed += 1;
+            }
+        }
+        let mut pathfinder = sim_map::Pathfinder::new(&map);
+        for _ in 0..16 {
+            let mut cell = || {
+                let x = draw_below(&mut state, u64::from(map.width())) as u32;
+                let y = draw_below(&mut state, u64::from(map.height())) as u32;
+                map.cell_to_world_center(x, y).ok()
+            };
+            let (Some(start), Some(goal)) = (cell(), cell()) else {
+                continue;
+            };
+            let radius = SHIPPED_TERRAIN_RADII
+                [draw_below(&mut state, SHIPPED_TERRAIN_RADII.len() as u64) as usize];
+            let request = sim_map::PathRequest {
+                start,
+                goal,
+                radius: SimScalar::from_raw(radius << 28),
+            };
+            let fits = |p: SimVec2, pathfinder: &mut sim_map::Pathfinder| {
+                pathfinder.segment_is_passable(&map, &request.into(), p, p)
+            };
+            if !fits(start, &mut pathfinder) || !fits(goal, &mut pathfinder) {
+                continue;
+            }
+            let Ok(route) = pathfinder.find_route_mesh(&map, &request.into()) else {
+                continue;
+            };
+            routed += 1;
+            if route.fallback {
+                fallbacks += 1;
+                let smaller = sim_map::PathRequest {
+                    radius: request.radius - SimScalar::from_raw(1 << 20),
+                    ..request
+                };
+                exact += u32::from(
+                    pathfinder
+                        .find_route_mesh(&map, &smaller.into())
+                        .is_ok_and(|route| !route.fallback),
+                );
+            }
+        }
+    }
+    (routed, fallbacks, exact)
+}
+
+/// The shipped terrain radii, in sixteenths of a world unit: 0.3125 to 1.0.
+const SHIPPED_TERRAIN_RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
+
+/// Plan `2026-11-18-contour-footprints` Amendment 1: the contours add no funnel fallback. On 150
+/// seeded layouts of the §2.3 shapes, the same layouts with their contours fall back no more
+/// often than with full squares, in total and outside exact fits. (Fallbacks between points
+/// where the disc fits remain on terrain with or without structures; they are the funnel's
+/// existing behaviour, B-141.)
+#[test]
+fn contours_add_no_funnel_fallbacks() {
+    let (contour_routed, contour_fallbacks, contour_exact) = fallback_counts(150, false);
+    let (square_routed, square_fallbacks, square_exact) = fallback_counts(150, true);
+    eprintln!(
+        "contour: {contour_fallbacks} of {contour_routed} ({contour_exact} exact fits); \
+         square: {square_fallbacks} of {square_routed} ({square_exact} exact fits)"
+    );
+    assert!(contour_routed > 1_000 && square_routed > 1_000);
+    assert!(contour_fallbacks <= square_fallbacks);
+    assert!(contour_fallbacks - contour_exact <= square_fallbacks - square_exact);
+}

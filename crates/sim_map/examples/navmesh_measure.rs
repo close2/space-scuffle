@@ -6,7 +6,9 @@
 //! on 1,000 seeded queries per map and radius, the mesh route: found or not, legality under the
 //! mesh predicate, funnel fallbacks, and microseconds per search. WP10 removed the grid corridor
 //! search, so the grid-against-mesh columns of WP8's tables are no longer produced; the evidence
-//! keeps their last measurement.
+//! keeps their last measurement. A third table (plan `2026-11-18-contour-footprints` WP3, D-14)
+//! compares the showcase map with 24 seeded structures cut as full squares and as their 5.0.14
+//! contours: mesh size and rebuild time.
 //!
 //! # How it fits
 //! A measurement tool, not a test: it times with the wall clock, which the simulation never
@@ -190,6 +192,65 @@ fn report(name: &str, radius: SimScalar, d: &RouteStats) {
     );
 }
 
+/// The §2.3 footprints as `(cells, half extent, chamfer)` in quarter cells.
+const CONTOURS: [(u8, u16, u16); 5] = [(5, 10, 6), (3, 6, 2), (3, 6, 3), (2, 4, 2), (2, 2, 1)];
+
+/// `map` with up to `count` seeded structures of the §2.3 sizes, each with the full square of
+/// its cells or with its contour; the same cells either way.
+fn seeded(map: &GameMap, count: u32, contour: bool) -> Result<(GameMap, u32), Box<dyn Error>> {
+    let mut rng = ChaCha8Rng::seed_from_u64(0xc047_0e00);
+    let mut built = map.clone();
+    let mut placed = 0;
+    for attempt in 0..count * 10 {
+        if placed == count {
+            break;
+        }
+        let (size, half, chamfer) = CONTOURS[usize::try_from(rng.gen_range(0..5_u32))?];
+        let cell = (
+            rng.gen_range(0..map.width() - 5),
+            rng.gen_range(0..map.height() - 5),
+        );
+        let footprint = if contour {
+            sim_map::StructureFootprint {
+                width: size,
+                height: size,
+                shape: sim_types::FootprintShape {
+                    half_width_q: half,
+                    half_height_q: half,
+                    chamfer_q: chamfer,
+                },
+            }
+        } else {
+            sim_map::StructureFootprint::square(size, size)
+        };
+        if built
+            .place_structure(EntityId(60_000 + attempt), cell, footprint)
+            .is_ok()
+        {
+            placed += 1;
+        }
+    }
+    Ok((built, placed))
+}
+
+/// The contour row of D-14: mesh size and rebuild time with 24 seeded structures, square
+/// against contour.
+fn contour_rows(canyon: &GameMap) -> Result<(), Box<dyn Error>> {
+    println!("| Showcase + seeded structures | Structures | Vertices / triangles | Rebuild (µs) |");
+    println!("|---|---:|---:|---:|");
+    for (name, contour) in [("square", false), ("contour", true)] {
+        let (built, placed) = seeded(canyon, 24, contour)?;
+        let mesh = NavMesh::build(&built)?;
+        println!(
+            "| {name} | {placed} | {} / {} | {} |",
+            mesh.vertex_count(),
+            mesh.triangle_count(),
+            time_build(&built, 21)?,
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let arena = load("default_arena.scmap.ron")?;
     let canyon = load("showcase_canyon.scmap.ron")?;
@@ -199,6 +260,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     build_row("default_arena 64x64", &arena, 6)?;
     build_row("showcase_canyon 64x64", &canyon, 6)?;
     build_row("canyon 4x4 tiled 256x256", &big, 40)?;
+    println!();
+    contour_rows(&canyon)?;
     println!();
     println!("| Map | Radius | Found | Not found | Illegal mesh | Fallbacks | Mesh µs (median) | Max expansions |");
     println!("|---|---:|---:|---:|---:|---:|---:|---:|");

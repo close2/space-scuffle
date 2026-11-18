@@ -301,3 +301,43 @@ fn the_early_out_never_hides_a_wall_on_both_shipped_maps() {
         }
     }
 }
+
+/// Plan `2026-11-18-contour-footprints` WP3: a 2×2 contour's chamfer is a wall of its own. From
+/// the cut corner (10, 10), the nearest wall point is the chamfer's midpoint (10.25, 10.25),
+/// exactly `1/8` squared world units away, and the normal points out of the shape at 45°.
+#[test]
+fn contact_against_a_chamfer_is_exact() {
+    let mut map = walled(20, |_, _| false);
+    map.place_structure(
+        EntityId(1),
+        (10, 10),
+        sim_map::StructureFootprint {
+            width: 2,
+            height: 2,
+            shape: sim_types::FootprintShape {
+                half_width_q: 4,
+                half_height_q: 4,
+                chamfer_q: 2,
+            },
+        },
+    )
+    .expect("a free 2 × 2 site");
+    let mut pathfinder = Pathfinder::new(&map);
+    pathfinder.recompute_clearance(&map);
+    let p = at(10.0, 10.0);
+    let req = request(p, s(0.5));
+    let found = pathfinder
+        .wall_contact(&map, &req, p)
+        .expect("0.354 from the chamfer");
+    assert_eq!(found.point, at(10.25, 10.25));
+    assert_eq!(found.distance_sq, 1_i128 << 61);
+    assert_eq!(found.normal, SimVec2::from_i32(-1, -1).normalize_or_zero());
+    assert_eq!(
+        pathfinder.wall_contact_exhaustive(&map, &req, p),
+        Some(found)
+    );
+    // A disc of 0.35 at the corner does not touch it.
+    assert!(pathfinder
+        .wall_contact(&map, &request(p, s(0.35)), p)
+        .is_none());
+}

@@ -281,3 +281,75 @@ bit-identical; that is checked in WP3's exit as today.
 
 On approval, WP3 resumes from `contour-footprints-wp3-wip`: the amendment's change and tests, then
 `CONTOUR_PATH_GOLDEN`, `contour_route_checksum`, the `navmesh_measure` row, and WP3's exit measurements.
+
+## 3b. WP3 resumed under Amendment 1
+
+**Change** (on top of the work in progress of §3, brought from `contour-footprints-wp3-wip`):
+
+- **Fitted retry** (`navmesh/search.rs` `fitted_retry`, Amendment 1). After the shrunk pull and the pinned retry
+  both fail the segment predicate, the channel is pulled once more, shrunk then pinned, with the corner margin
+  `min(CORNER_SAFETY_MARGIN, (w_min − 2t)/2)` and an arc-chord dip of half that margin (`radius_funnel` now takes
+  the dip; every earlier pull passes `ARC_CHORD_DIP` as before). `fitted_margin` returns nothing when the full
+  margin fits or no room is left.
+- **`w_min` is measured across the channel, not from the TA* corner widths.** The amendment named "the A* corner
+  widths already computed"; tracing a proptest failure showed they can miss the bottleneck: a Spore-sized shape's top
+  face across from the long terrain edge y = 30 on the default arena is exactly 1.5 wide, but the triangles the route
+  crosses measure their corners at (34, 30) (1.677) and (35.5, 28.25) (1.75), and no corner width pairs the face
+  with the wall. `channel_width` therefore takes the least distance between the channel's left obstacles (left portal
+  vertices, blocking edges of channel triangles on the left) and its right ones. It can only underestimate, so the
+  margin can only be smaller (a `PERFORMANCE RATIONALE` explains the quadratic scan on this rare path).
+
+**Tests** (Amendment 1, item 2):
+
+| Test | Result |
+|---|---|
+| `wall_off_tests::a_diagonal_contour_gap_admits_exactly_the_discs_that_fit` (k = 64 to 115) | Passes: a route iff `8t² ≤ 1`, every leg passes the segment predicate (k = 85 to 90 now take the fitted retry) |
+| `wall_off_tests::the_fitted_retry_passes_a_channel_with_a_quarter_margin_to_spare` (both orientations; red before the retry: the portal-midpoint fallback) | Passes: no fallback, every leg legal |
+| `navmesh::search::tests::the_fitted_margin_is_half_the_spare_width` (unit) | Passes |
+| `wall_off_tests::a_channel_with_room_for_the_margin_keeps_its_route` (guard: k = 64 to 84, spare ≥ one margin, both orientations; digest `0xfeff_042e_30b7_7389` recorded with the retry disabled) | Passes: byte-identical routes |
+| `navmesh_tests::contours_add_no_funnel_fallbacks` (deterministic, 150 seeded layouts, see below) | Passes |
+
+**The fallback assertion: a deviation from Amendment 1's wording, for the orchestrator to confirm.** The amendment
+asked for fallbacks to be "counted and asserted zero in the proptest". Asserting zero is not attainable there.
+Stressing the property with up to 3,000 random cases found three classes of fallback that remain:
+
+1. **Wedged starts**: the disc already overlaps a wall where it starts (D-3's regime, legs held to the centre). Full
+   squares fall back there too (e.g. r = 0.75 beside a 3×2 at (17, 24)).
+2. **Exact fits**: a disc exactly as wide as a bent channel (`(2r)² = w²`, which TA* admits by its existing `≤`
+   rule), as r = 0.75 between that 1.5-wide face and wall. No polyline rounds such a bend under the strict segment
+   predicate; a disc 1/4096 smaller now routes legally through the same channel (it fell back before `w_min` was
+   measured across the channel).
+3. **A vertex outside the channel**: a leg passes closer than `r` to a vertex that is neither a portal vertex nor a
+   vertex of the start or goal triangle, which the funnel's refinement never considers (e.g. r = 0.875 from
+   (41.5, 47.5): the first leg passes 0.765 from a geyser-shaped chamfer's end (40.75, 46)).
+
+Classes 2 and 3 occur with **full-square structures as well**. On 600 seeded layouts (about 7,150 routes each),
+contours: 14 fallbacks (12 exact fits); full squares: 35 (32 exact fits). Stressing the same property with
+full-square layouts fails too (seed 12480478581175701913). So a zero assertion over random seeds would be a flaky
+test of a pre-existing funnel limitation, now registered as **B-141**. Instead, `contours_add_no_funnel_fallbacks`
+asserts deterministically, on 150 seeded layouts with the shipped terrain radii and endpoints where the disc fits,
+that the contour layouts fall back no more often than the same layouts with full squares, in total and outside exact
+fits: contour 11 of 1,729 (6 exact fits); square 14 of 1,722 (8 exact fits). The proptest
+`contour_meshes_build_for_seeded_layouts` keeps the mesh laws (no `ConstraintRecovery`, labels, run geometry).
+
+**New pins** (each passes native debug and release, and `wasm32-wasip1` release and debug):
+`validation_golden_tests::find_path_with_vision_on_contours_matches_the_recorded_corpus_digest`
+(`CONTOUR_PATH_GOLDEN` `0x9069_95c7_29b7_3498`; 256 cornered routes, 141 failures; every draw is a fixed-width range,
+so it is the same corpus on 32- and 64-bit targets) and `determinism_tests::contour_route_checksum`
+(`0xc0d5_fbfd_292f_37a4`, 1,000 routes among eight contours).
+
+**B-140 registered** (Amendment 1, item 4), with a trace: the path corpus's radius index is drawn with
+`rng.gen_range(0..3)` over `usize`; with that draw made `u32` (scratch, not committed) native produces exactly the
+wasm digest `0xa243_924f_8125_f760` and wasm agrees, so that corpus differs because the test draws a different
+corpus on 32-bit targets. The decode and validation corpora draw many `usize` ranges the same way (not traced). Pins
+unchanged.
+
+**Mesh build** (`navmesh_measure`, release, a new third table): the showcase with 24 seeded structures, full squares
+573 / 1,123 vertices / triangles and a 11,125 µs rebuild; contours 671 / 1,321 and 11,341 µs (+2 %, below the
+plan's 25 % bar). The output is in `~/scratch/contour-footprints/navmesh_measure_wp3.md`.
+
+**Exit (D-15, 2; Amendment 1, item 3)**, WP2 tools against WP3 tools: matrix bit-identical (1,160 runs); battle 33
+`seeds.csv` byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical at 1,800 ticks, to the
+end and on seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release, `wasm32-wasip1` release and once
+in `wasm32-wasip1` debug; every pre-existing `sim_map` golden is unchanged, and `sim_map`'s determinism and navmesh
+tests pass on `wasm32-wasip1`.

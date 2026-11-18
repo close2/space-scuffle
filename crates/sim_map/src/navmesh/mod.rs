@@ -16,13 +16,21 @@
 //!
 //! # Invariants
 //! - Every vertex is a point of the quarter-cell lattice (`predicates.rs`, plan
-//!   `2026-11-18-contour-footprints` D-3) and every constraint lies on cell edges, so
-//!   construction uses exact integer predicates only and no Steiner points.
-//! - Constraints are the map border, every edge where terrain does not connect, every edge where
-//!   the `(cliff_level, ramp)` tag changes, and every edge of every structure cell. Each triangle
-//!   therefore lies in one region of uniform label, and a structure triangle in one cell.
-//! - The mesh is a pure function of the map's cells: structure insertion order cannot matter,
-//!   and removing a structure restores the terrain mesh exactly (its cells' flags are restored).
+//!   `2026-11-18-contour-footprints` D-3, D-4). Constraints are chains of unit lattice edges in
+//!   eight directions (the cell grid's and the two diagonals), so construction uses exact integer
+//!   predicates only and no Steiner points.
+//! - Constraints are the map border, every cell edge where terrain does not connect, every cell
+//!   edge where the `(cliff_level, ramp)` tag changes, the boundary of every structure's
+//!   footprint shape, and every interior cell line of a structure's footprint clipped to its
+//!   shape. Each triangle therefore lies in one region of uniform label, and a structure triangle
+//!   in one cell, so knowledge stays per cell.
+//! - No two constraints cross: a diagonal unit edge crosses no lattice line inside, axis-aligned
+//!   unit edges meet only at lattice points, and a lattice point where edges branch, turn or
+//!   change kind is a vertex. `NavMeshError::ConstraintRecovery` guards the rule.
+//! - The mesh is a pure function of the map's cells and structures: insertion order of
+//!   structures cannot matter, and removing a structure restores the terrain mesh exactly (its
+//!   cells' flags are restored). A structure whose shape is the full box of its cells cuts
+//!   exactly the mesh it cut before footprint shapes.
 //! - Storage is `Vec`s indexed by `u32`; loops run in index order; no float, no hashed
 //!   collection (charter §3.1).
 
@@ -42,7 +50,7 @@ pub mod segment;
 use sim_types::{EntityId, SimScalar, SimVec2, VisibilityState};
 use thiserror::Error;
 
-use crate::grid::{CellFlags, GameMap, RampDir};
+use crate::grid::{CellFlags, GameMap, PlacedStructure, RampDir};
 use crate::pathfinding::PathRequestWithVision;
 use cdt::{Triangulation, NONE};
 use predicates::{
@@ -69,6 +77,45 @@ pub enum NavMeshError {
         /// Second lattice endpoint of the run.
         to: LatticePoint,
     },
+}
+
+/// One of the four canonical directions of a unit lattice edge, in insertion order (D-4): an
+/// edge is stored at its start point and runs one lattice unit east, north, north-east or
+/// north-west.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Direction {
+    East,
+    North,
+    NorthEast,
+    NorthWest,
+}
+
+impl Direction {
+    const ALL: [Self; 4] = [Self::East, Self::North, Self::NorthEast, Self::NorthWest];
+
+    /// The lattice step of the edge.
+    const fn step(self) -> (i32, i32) {
+        match self {
+            Self::East => (1, 0),
+            Self::North => (0, 1),
+            Self::NorthEast => (1, 1),
+            Self::NorthWest => (-1, 1),
+        }
+    }
+}
+
+/// The stronger of two constraint kinds: `Wall` over `Seam` over none.
+fn stronger(a: Option<EdgeKind>, b: Option<EdgeKind>) -> Option<EdgeKind> {
+    let rank = |k: Option<EdgeKind>| match k {
+        None | Some(EdgeKind::Free) => 0,
+        Some(EdgeKind::Seam) => 1,
+        Some(EdgeKind::Wall) => 2,
+    };
+    if rank(b) > rank(a) {
+        b
+    } else {
+        a
+    }
 }
 
 /// What a mesh edge is.
@@ -108,12 +155,13 @@ pub struct TriangleLabel {
     pub cell: u32,
 }
 
-/// One maximal constraint run: an axis-aligned segment between two mesh vertices.
+/// One maximal constraint run: a straight chain of unit lattice edges (east, north, north-east
+/// or north-west) between two mesh vertices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConstraintRun {
-    /// Lower-left endpoint.
+    /// Start endpoint: the lower one, or the western one of a horizontal run.
     pub from: LatticePoint,
-    /// Upper-right endpoint.
+    /// End endpoint, one or more unit steps from `from` in the run's direction.
     pub to: LatticePoint,
     /// Constraint kind shared by every unit edge of the run.
     pub kind: EdgeKind,
@@ -230,25 +278,16 @@ impl EdgeGrid {
             .flatten()
     }
 
-    fn west(&self, x: usize, y: usize) -> Option<EdgeKind> {
-        x.checked_sub(1).and_then(|x| self.east(x, y))
-    }
-
-    fn south(&self, x: usize, y: usize) -> Option<EdgeKind> {
-        y.checked_sub(1).and_then(|y| self.north(x, y))
-    }
-
     /// Per cell, row-major: whether the cell is usable, holds no structure, and none of its four
     /// sides blocks a request that knows every structure. A side blocks such a request when it
-    /// is a wall (the map border included) or a seam to a structure cell; every other seam joins
-    /// two open triangles. The mesh's blocking edges lie on such sides only: an edge between two
-    /// open cells' triangles is free or a passable seam.
+    /// is a wall (the map border included) or borders a structure cell; every other seam joins
+    /// two open triangles. The mesh's blocking edges lie on such sides or inside structure cells
+    /// only (a structure's shape lies in its cells): an edge between two open cells' triangles
+    /// is free or a passable seam.
     fn contact_free_cells(&self, map: &GameMap) -> Vec<bool> {
         let class = |x: usize, y: usize| classify_cell(map, x, y);
-        let blocks = |kind: Option<EdgeKind>, neighbour: Option<(usize, usize)>| match kind {
-            Some(EdgeKind::Wall) => true,
-            Some(EdgeKind::Seam) => neighbour.is_some_and(|(x, y)| class(x, y).structure),
-            Some(EdgeKind::Free) | None => false,
+        let blocks = |kind: Option<EdgeKind>, neighbour: Option<(usize, usize)>| {
+            kind == Some(EdgeKind::Wall) || neighbour.is_some_and(|(x, y)| class(x, y).structure)
         };
         let (w, h) = (self.width, self.height);
         (0..h)
@@ -273,23 +312,209 @@ impl EdgeGrid {
             })
             .collect()
     }
+}
 
-    /// Whether lattice point `(x, y)` must be a mesh vertex: a constraint ends, turns, branches
-    /// or changes kind there.
-    fn is_vertex(&self, x: usize, y: usize) -> bool {
-        let (w, e, s, n) = (
-            self.west(x, y),
-            self.east(x, y),
-            self.south(x, y),
-            self.north(x, y),
+/// The unit lattice edges of every structure's geometry (D-4): the boundary of its shape and
+/// the interior cell lines of its footprint clipped to the shape's open interior, all `Seam`.
+// PERFORMANCE RATIONALE:
+// Why: A dense edge grid on the quarter lattice would hold 16 times the whole-cell grid's
+// points and be rebuilt and scanned on every structure change.
+// What: Terrain stays in the whole-cell `EdgeGrid`; only structure edges, which lie in their
+// footprints, are kept here, as a `Vec` sorted by start point and direction and searched by
+// bisection (no hashed collection, charter §3.1).
+// Trade-off: A sort per rebuild and a logarithmic lookup per edge query, in exchange for memory
+// and work proportional to the structures, not to the map.
+struct StructureEdges {
+    /// `((y, x), direction)` of each unit edge's start point, sorted and unique.
+    edges: Vec<((i32, i32), Direction)>,
+}
+
+impl StructureEdges {
+    fn new(map: &GameMap) -> Self {
+        let mut edges = Vec::new();
+        for placed in map.structures().values() {
+            Self::add_structure(placed, &mut edges);
+        }
+        edges.sort_unstable();
+        edges.dedup();
+        Self { edges }
+    }
+
+    /// Adds the unit edges of `placed`'s contour and of its clipped interior cell lines.
+    fn add_structure(placed: &PlacedStructure, edges: &mut Vec<((i32, i32), Direction)>) {
+        let (vertices, count) = placed.contour();
+        for i in 0..count {
+            let (u, v) = (vertices[i], vertices[(i + 1) % count]);
+            let (sx, sy) = ((v.x - u.x).signum(), (v.y - u.y).signum());
+            let length = (v.x - u.x).abs().max((v.y - u.y).abs());
+            for k in 0..length {
+                let a = (u.x + k * sx, u.y + k * sy);
+                edges.push(Self::canonical(a, (sx, sy)));
+            }
+        }
+        let centre = placed.shape_centre();
+        let (hw, hh, c) = (
+            i32::from(placed.shape.half_width_q),
+            i32::from(placed.shape.half_height_q),
+            i32::from(placed.shape.chamfer_q),
         );
-        let count = [w, e, s, n].iter().filter(|k| k.is_some()).count();
+        let reach = hw + hh - c;
+        let corner = LatticePoint::cell_corner(
+            i32::try_from(placed.top_left.0).unwrap_or(i32::MAX),
+            i32::try_from(placed.top_left.1).unwrap_or(i32::MAX),
+        );
+        for i in 1..i32::from(placed.width) {
+            let x = corner.x + i * LATTICE_PER_CELL;
+            let dx = (x - centre.x).abs();
+            let half = hh.min(reach - dx);
+            if dx < hw && half > 0 {
+                for y in centre.y - half..centre.y + half {
+                    edges.push(((y, x), Direction::North));
+                }
+            }
+        }
+        for j in 1..i32::from(placed.height) {
+            let y = corner.y + j * LATTICE_PER_CELL;
+            let dy = (y - centre.y).abs();
+            let half = hw.min(reach - dy);
+            if dy < hh && half > 0 {
+                for x in centre.x - half..centre.x + half {
+                    edges.push(((y, x), Direction::East));
+                }
+            }
+        }
+    }
+
+    /// The stored form of the unit edge from `a` along `step`: its start point and direction.
+    fn canonical(a: (i32, i32), step: (i32, i32)) -> ((i32, i32), Direction) {
+        let (x, y) = a;
+        match step {
+            (1, 0) => ((y, x), Direction::East),
+            (-1, 0) => ((y, x - 1), Direction::East),
+            (0, 1) => ((y, x), Direction::North),
+            (0, -1) => ((y - 1, x), Direction::North),
+            (1, 1) => ((y, x), Direction::NorthEast),
+            (-1, -1) => ((y - 1, x - 1), Direction::NorthEast),
+            (-1, 1) => ((y, x), Direction::NorthWest),
+            _ => ((y - 1, x + 1), Direction::NorthWest),
+        }
+    }
+
+    fn contains(&self, start: (i32, i32), direction: Direction) -> bool {
+        self.edges
+            .binary_search(&((start.1, start.0), direction))
+            .is_ok()
+    }
+}
+
+/// The constraint graph of a map on the quarter lattice (D-4): terrain from the whole-cell
+/// [`EdgeGrid`], structures from [`StructureEdges`], each unit edge of the stronger kind.
+struct ConstraintGraph<'a> {
+    terrain: &'a EdgeGrid,
+    structures: StructureEdges,
+}
+
+impl ConstraintGraph<'_> {
+    /// The kind of the unit edge from lattice point `p` one step along `(dx, dy)`, if any.
+    fn kind(&self, p: (i32, i32), (dx, dy): (i32, i32)) -> Option<EdgeKind> {
+        let (start, direction) = StructureEdges::canonical(p, (dx, dy));
+        let structure = self
+            .structures
+            .contains((start.1, start.0), direction)
+            .then_some(EdgeKind::Seam);
+        stronger(self.terrain_kind(p, (dx, dy)), structure)
+    }
+
+    /// The terrain kind of a unit edge: that of the whole-cell edge containing it, if it lies on
+    /// a cell line; diagonal edges are never terrain.
+    fn terrain_kind(&self, (x, y): (i32, i32), (dx, dy): (i32, i32)) -> Option<EdgeKind> {
+        let cell = |v: i32| usize::try_from(v.div_euclid(LATTICE_PER_CELL)).ok();
+        match (dx, dy) {
+            (1 | -1, 0) if y.rem_euclid(LATTICE_PER_CELL) == 0 => {
+                let column = cell(x.min(x + dx))?;
+                self.terrain.east(column, cell(y)?)
+            }
+            (0, 1 | -1) if x.rem_euclid(LATTICE_PER_CELL) == 0 => {
+                let row = cell(y.min(y + dy))?;
+                self.terrain.north(cell(x)?, row)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether lattice point `p` must be a mesh vertex: its incident unit edges are not exactly
+    /// one straight pair of one kind (today's rule, in eight directions).
+    fn is_vertex(&self, p: (i32, i32)) -> bool {
+        let steps = [
+            (1, 0),
+            (0, 1),
+            (1, 1),
+            (-1, 1),
+            (-1, 0),
+            (0, -1),
+            (-1, -1),
+            (1, -1),
+        ];
+        let kinds = steps.map(|step| self.kind(p, step));
+        let count = kinds.iter().filter(|k| k.is_some()).count();
         if count == 0 {
             return false;
         }
-        let straight_x = count == 2 && w.is_some() && w == e;
-        let straight_y = count == 2 && s.is_some() && s == n;
-        !(straight_x || straight_y)
+        let straight = count == 2 && (0..4).any(|d| kinds[d].is_some() && kinds[d] == kinds[d + 4]);
+        !straight
+    }
+
+    /// Every vertex in row-major `(y, x)` order: the cell corners that are vertices, and the
+    /// quarter points of every closed footprint rectangle that are.
+    fn vertices(&self, map: &GameMap) -> Vec<LatticePoint> {
+        let (w, h) = (signed(map.width()), signed(map.height()));
+        let mut candidates: Vec<(i32, i32)> = (0..=h)
+            .flat_map(|y| (0..=w).map(move |x| (y * LATTICE_PER_CELL, x * LATTICE_PER_CELL)))
+            .collect();
+        for placed in map.structures().values() {
+            let corner =
+                LatticePoint::cell_corner(signed(placed.top_left.0), signed(placed.top_left.1));
+            let (pw, ph) = (
+                i32::from(placed.width) * LATTICE_PER_CELL,
+                i32::from(placed.height) * LATTICE_PER_CELL,
+            );
+            for y in corner.y..=corner.y + ph {
+                for x in corner.x..=corner.x + pw {
+                    candidates.push((y, x));
+                }
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+            .into_iter()
+            .filter(|&(y, x)| self.is_vertex((x, y)))
+            .map(|(y, x)| LatticePoint::new(x, y))
+            .collect()
+    }
+
+    /// The maximal runs from each vertex in order, directions east, north, north-east and
+    /// north-west (D-4).
+    fn runs(&self, vertices: &[LatticePoint]) -> Vec<ConstraintRun> {
+        let mut runs = Vec::new();
+        for &from in vertices {
+            for direction in Direction::ALL {
+                let step = direction.step();
+                let Some(kind) = self.kind((from.x, from.y), step) else {
+                    continue;
+                };
+                let mut to = (from.x + step.0, from.y + step.1);
+                while !self.is_vertex(to) {
+                    to = (to.0 + step.0, to.1 + step.1);
+                }
+                runs.push(ConstraintRun {
+                    from,
+                    to: LatticePoint::new(to.0, to.1),
+                    kind,
+                });
+            }
+        }
+        runs
     }
 }
 
@@ -333,7 +558,8 @@ fn edge_kind(
     if !a.usable || !b.usable || !map.terrain_step_is_connected(to_cell(cell_a), to_cell(cell_b)) {
         return Some(EdgeKind::Wall);
     }
-    if a.level != b.level || a.ramp != b.ramp || a.structure || b.structure {
+    // Structures add their own geometry (`StructureEdges`); the edge grid is terrain only.
+    if a.level != b.level || a.ramp != b.ramp {
         return Some(EdgeKind::Seam);
     }
     None
@@ -352,36 +578,37 @@ impl NavMesh {
             return Err(NavMeshError::TooLarge { width, height });
         }
         let edges = EdgeGrid::new(map);
-        let (w, h) = (width as usize, height as usize);
+        let graph = ConstraintGraph {
+            terrain: &edges,
+            structures: StructureEdges::new(map),
+        };
         let mut tri = Triangulation::rectangle(
             signed(width) * LATTICE_PER_CELL,
             signed(height) * LATTICE_PER_CELL,
         );
-        let mut lattice_vertex = vec![NONE; (w + 1) * (h + 1)];
-        for (corner, (x, y)) in [(0, 0), (w, 0), (w, h), (0, h)].into_iter().enumerate() {
-            lattice_vertex[y * (w + 1) + x] = u32::try_from(corner).unwrap_or(NONE);
-        }
+        // Each inserted vertex's index, keyed by `(y, x)`; the rectangle's corners come first.
+        let mut index: Vec<((i32, i32), u32)> = tri
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| ((p.y, p.x), u32::try_from(i).unwrap_or(NONE)))
+            .collect();
+        let vertices = graph.vertices(map);
         let mut hint = 0;
-        for y in 0..=h {
-            for x in 0..=w {
-                if lattice_vertex[y * (w + 1) + x] != NONE || !edges.is_vertex(x, y) {
-                    continue;
-                }
-                let before = tri.points.len();
-                hint = tri.insert_point(
-                    LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
-                    hint,
-                );
-                if tri.points.len() > before {
-                    lattice_vertex[y * (w + 1) + x] = u32::try_from(before).unwrap_or(NONE);
-                }
+        for &p in &vertices {
+            let before = tri.points.len();
+            hint = tri.insert_point(p, hint);
+            if tri.points.len() > before {
+                index.push(((p.y, p.x), u32::try_from(before).unwrap_or(NONE)));
             }
         }
-        let runs = collect_runs(&edges);
+        index.sort_unstable();
+        let runs = graph.runs(&vertices);
         for run in &runs {
             let index_of = |p: LatticePoint| {
-                let cell = |v: i32| usize::try_from(v / LATTICE_PER_CELL).unwrap_or(0);
-                lattice_vertex[cell(p.y) * (w + 1) + cell(p.x)]
+                index
+                    .binary_search_by_key(&(p.y, p.x), |&(key, _)| key)
+                    .map_or(NONE, |i| index[i].1)
             };
             if !tri.insert_constraint(index_of(run.from), index_of(run.to), run.kind) {
                 return Err(NavMeshError::ConstraintRecovery {
@@ -453,15 +680,20 @@ impl NavMesh {
             .unwrap_or(0)
             .min(self.height - 1);
         let class = classify_cell(map, cx as usize, cy as usize);
-        let kind = if !class.usable {
-            TriangleKind::Blocked
-        } else if class.structure {
-            map.cell(cx, cy)
-                .ok()
-                .and_then(|cell| cell.occupying_structure)
-                .map_or(TriangleKind::Blocked, TriangleKind::Structure)
-        } else {
+        // A triangle in a structure's cell is the structure's when its centroid lies inside the
+        // shape (exact on three times the centroid, D-4); a centroid is never on a constraint.
+        let occupant = map
+            .cell(cx, cy)
+            .ok()
+            .and_then(|cell| cell.occupying_structure)
+            .and_then(|id| map.structures().get(&id))
+            .filter(|placed| placed.contains_open_scaled(sx, sy, 3));
+        let kind = if let Some(placed) = occupant {
+            TriangleKind::Structure(placed.id)
+        } else if class.usable {
             TriangleKind::Open
+        } else {
+            TriangleKind::Blocked
         };
         TriangleLabel {
             kind,
@@ -806,44 +1038,6 @@ fn edge_kind_code(kind: EdgeKind) -> u64 {
         EdgeKind::Seam => 1,
         EdgeKind::Wall => 2,
     }
-}
-
-fn signed_usize(value: usize) -> i32 {
-    i32::try_from(value).unwrap_or(i32::MAX)
-}
-
-fn collect_runs(edges: &EdgeGrid) -> Vec<ConstraintRun> {
-    let mut runs = Vec::new();
-    for y in 0..=edges.height {
-        for x in 0..=edges.width {
-            if !edges.is_vertex(x, y) {
-                continue;
-            }
-            if let Some(kind) = edges.east(x, y) {
-                let mut end = x + 1;
-                while !edges.is_vertex(end, y) {
-                    end += 1;
-                }
-                runs.push(ConstraintRun {
-                    from: LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
-                    to: LatticePoint::cell_corner(signed_usize(end), signed_usize(y)),
-                    kind,
-                });
-            }
-            if let Some(kind) = edges.north(x, y) {
-                let mut end = y + 1;
-                while !edges.is_vertex(x, end) {
-                    end += 1;
-                }
-                runs.push(ConstraintRun {
-                    from: LatticePoint::cell_corner(signed_usize(x), signed_usize(y)),
-                    to: LatticePoint::cell_corner(signed_usize(x), signed_usize(end)),
-                    kind,
-                });
-            }
-        }
-    }
-    runs
 }
 
 /// Which triangles a path request may enter, by the knowledge rules of

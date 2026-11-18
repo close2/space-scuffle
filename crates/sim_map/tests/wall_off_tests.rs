@@ -4,6 +4,7 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
     clippy::uninlined_format_args,
     clippy::doc_markdown
 )]
@@ -335,4 +336,304 @@ fn placement_refuses_unwalkable_ground() {
         })
     ));
     assert!(map.structures().is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Contour walls (plan `2026-11-18-contour-footprints` WP3, §2.2 rule 3, S9 and S10).
+// ---------------------------------------------------------------------------------------------
+
+/// The side of the contour-wall maps, in cells.
+const WALL_SIDE: u32 = 24;
+
+/// A world unit fraction `k / 256` as a radius.
+fn radius_256(k: i64) -> SimScalar {
+    SimScalar::from_raw(k << 24)
+}
+
+fn cell_centre(x: u32, y: u32) -> SimVec2 {
+    SimVec2::new(
+        SimScalar::from_num(x) + SimScalar::HALF,
+        SimScalar::from_num(y) + SimScalar::HALF,
+    )
+}
+
+/// A 2×2, 3×3 or 5×5 footprint with its 5.0.14 contour (§2.3): corners cut by 0.5, 0.5, 1.5.
+fn contour(size: u8) -> sim_map::StructureFootprint {
+    let chamfer_q = if size == 5 { 6 } else { 2 };
+    sim_map::StructureFootprint {
+        width: size,
+        height: size,
+        shape: sim_types::FootprintShape {
+            half_width_q: 2 * u16::from(size),
+            half_height_q: 2 * u16::from(size),
+            chamfer_q,
+        },
+    }
+}
+
+/// The staircase map of `clearance_field_tests::f7_no_tier_passes_between_structures_touching_
+/// at_a_corner` (terrain blocks `(i, i)` and `(i + 1, i)` below cell 10 and from cell 14), with
+/// two 2×2 contours at cells (10, 10) and (12, 12). `mirror` reflects the layout across the
+/// anti-diagonal, `(x, y) -> (23 - y, 23 - x)`. Returns the map, the start and the goal.
+fn diagonal_depot_wall(mirror: bool) -> (GameMap, SimVec2, SimVec2) {
+    let flip = |(x, y): (u32, u32)| {
+        if mirror {
+            (WALL_SIDE - 1 - y, WALL_SIDE - 1 - x)
+        } else {
+            (x, y)
+        }
+    };
+    let mut map = GameMap::new(WALL_SIDE, WALL_SIDE, MapCell::default_ground(CliffLevel(1)))
+        .expect("invariant: a positive side is a valid map size");
+    let mut blocked = Vec::new();
+    for i in (0..10).chain(14..WALL_SIDE) {
+        blocked.push((i, i));
+        if i + 1 < WALL_SIDE {
+            blocked.push((i + 1, i));
+        }
+    }
+    for cell in blocked {
+        let (x, y) = flip(cell);
+        map.cell_mut(x, y).expect("invariant: on the map").flags = CellFlags::empty();
+    }
+    // A 2×2 at cells (x, y) to (x + 1, y + 1) mirrors to the 2×2 whose minimum cell is the
+    // image of (x + 1, y + 1).
+    for (id, cell) in [(1, (10, 10)), (2, (12, 12))] {
+        let origin = if mirror {
+            flip((cell.0 + 1, cell.1 + 1))
+        } else {
+            cell
+        };
+        map.place_structure(EntityId(id), origin, contour(2))
+            .expect("invariant: open ground");
+    }
+    let (start, goal) = (flip((3, 18)), flip((18, 3)));
+    (
+        map,
+        cell_centre(start.0, start.1),
+        cell_centre(goal.0, goal.1),
+    )
+}
+
+/// A wall of terrain bands and the given contours separating the north-west of a 32-cell map
+/// from its south-east, with a gap only where the structures leave one. Each band is the cells
+/// within 2 of a diagonal, running from `low` (the south-west corner of the lowest structure)
+/// to the map's south-west and from `high` (the north-east corner of the highest) to its
+/// north-east, so a chamfered corner's pocket is closed by the band's faces.
+fn banded_wall(
+    structures: &[((u32, u32), sim_map::StructureFootprint)],
+    low: (i64, i64),
+    high: (i64, i64),
+) -> GameMap {
+    let side = 32_u32;
+    let mut map = GameMap::new(side, side, MapCell::default_ground(CliffLevel(1)))
+        .expect("invariant: a positive side is a valid map size");
+    let inside = |x: i64, y: i64| {
+        structures.iter().any(|&((left, bottom), footprint)| {
+            (i64::from(left)..i64::from(left) + i64::from(footprint.width)).contains(&x)
+                && (i64::from(bottom)..i64::from(bottom) + i64::from(footprint.height)).contains(&y)
+        })
+    };
+    for y in 0..i64::from(side) {
+        for x in 0..i64::from(side) {
+            let below = (x - y - (low.0 - low.1)).abs() <= 2 && x + y <= low.0 + low.1;
+            let above = (x - y - (high.0 - high.1)).abs() <= 2 && x + y >= high.0 + high.1 - 2;
+            if (below || above) && !inside(x, y) {
+                let (cx, cy) = (u32::try_from(x).unwrap_or(0), u32::try_from(y).unwrap_or(0));
+                map.cell_mut(cx, cy).expect("invariant: on the map").flags = CellFlags::empty();
+            }
+        }
+    }
+    for (index, &(cell, footprint)) in structures.iter().enumerate() {
+        map.place_structure(
+            EntityId(u32::try_from(index).unwrap_or(0) + 1),
+            cell,
+            footprint,
+        )
+        .expect("invariant: open ground");
+    }
+    map
+}
+
+/// Whether a disc of `radius` routes from the north-west corner region to the south-east one,
+/// and every leg of the route passes the segment predicate at that radius.
+fn routes(map: &GameMap, start: SimVec2, goal: SimVec2, radius: SimScalar) -> bool {
+    let mut pathfinder = Pathfinder::new(map);
+    let request = PathRequest {
+        start,
+        goal,
+        radius,
+    };
+    match pathfinder.find_path(map, &request) {
+        Ok(path) => {
+            for pair in path.waypoints.windows(2) {
+                assert!(
+                    pathfinder.segment_is_passable(map, &request.into(), pair[0], pair[1]),
+                    "leg {pair:?} at {radius:?}"
+                );
+            }
+            true
+        }
+        Err(MapError::NoPathFound { .. }) => false,
+        Err(other) => panic!("unexpected routing error {other:?}"),
+    }
+}
+
+/// S10, the owner's case (Q0087): two 2×2 contours corner to corner leave a diagonal gap of
+/// `1/√2 ≈ 0.707`. A worker (terrain radius 0.3125) passes; the Zergling analogue (0.375)
+/// does not. The same holds mirrored across the anti-diagonal.
+#[test]
+fn a_diagonal_contour_wall_passes_a_worker_and_stops_a_zergling() {
+    for mirror in [false, true] {
+        let (map, start, goal) = diagonal_depot_wall(mirror);
+        assert!(
+            routes(&map, start, goal, radius_256(80)),
+            "worker, mirror {mirror}"
+        );
+        assert!(
+            !routes(&map, start, goal, radius_256(96)),
+            "zergling, mirror {mirror}"
+        );
+    }
+}
+
+/// The gap admits exactly the discs that fit: for `t = k / 256`, `k` in 64 to 115, a route
+/// exists iff `2t ≤ √2 / 2`, that is `8t² ≤ 1`.
+#[test]
+fn a_diagonal_contour_gap_admits_exactly_the_discs_that_fit() {
+    let (map, start, goal) = diagonal_depot_wall(false);
+    for k in 64..=115_i64 {
+        let fits = 8 * k * k <= 256 * 256;
+        assert_eq!(
+            routes(&map, start, goal, radius_256(k)),
+            fits,
+            "t = {k}/256"
+        );
+    }
+}
+
+/// S9: a 5×5 and a 3×3 corner to corner leave a gap of √2: a Stalker-sized disc (0.6875)
+/// passes, a tank-sized one (0.75) does not.
+#[test]
+fn a_5x5_and_a_3x3_corner_to_corner_pass_medium_units() {
+    let map = banded_wall(
+        &[((8, 8), contour(5)), ((13, 13), contour(3))],
+        (8, 8),
+        (16, 16),
+    );
+    let (start, goal) = (cell_centre(3, 28), cell_centre(28, 3));
+    assert!(routes(&map, start, goal, radius_256(176)));
+    assert!(!routes(&map, start, goal, radius_256(192)));
+}
+
+/// S9: a 3×3 sharing one cell of border with a 5×5's face, corner beside chamfer, is a
+/// semi-wall: the 3×3's chamfer vertex is `1/√2` from the 5×5's chamfer, so 0.3125 passes and
+/// 0.375 does not. Sharing two cells, the faces meet: no route even at 0.0625.
+#[test]
+fn a_5x5_sharing_one_cell_of_border_is_a_semi_wall_and_two_cells_is_tight() {
+    let (start, goal) = (cell_centre(3, 28), cell_centre(28, 3));
+    let one = banded_wall(
+        &[((8, 8), contour(5)), ((13, 12), contour(3))],
+        (8, 8),
+        (16, 15),
+    );
+    assert!(routes(&one, start, goal, radius_256(80)));
+    assert!(!routes(&one, start, goal, radius_256(96)));
+    let two = banded_wall(
+        &[((8, 8), contour(5)), ((13, 11), contour(3))],
+        (8, 8),
+        (16, 14),
+    );
+    assert!(!routes(&two, start, goal, radius_256(16)));
+}
+
+/// S9: buildings side by side share a face and completely block units.
+#[test]
+fn face_adjacent_contours_are_tight() {
+    let (start, goal) = (cell_centre(3, 28), cell_centre(28, 3));
+    let map = banded_wall(
+        &[((10, 10), contour(3)), ((13, 10), contour(3))],
+        (10, 10),
+        (16, 13),
+    );
+    assert!(!routes(&map, start, goal, radius_256(16)));
+}
+
+/// An FNV-1a digest of every waypoint's raw coordinates of the routes through the diagonal
+/// depot wall for `t = k / 256`, `k` in `ks`, both orientations.
+fn route_bytes_digest(ks: std::ops::RangeInclusive<i64>) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut eat = |value: i64| {
+        for byte in value.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for mirror in [false, true] {
+        let (map, start, goal) = diagonal_depot_wall(mirror);
+        for k in ks.clone() {
+            let request = PathRequest {
+                start,
+                goal,
+                radius: radius_256(k),
+            };
+            let route = Pathfinder::new(&map)
+                .find_route_mesh(&map, &request.into())
+                .expect("invariant: these discs fit the gap");
+            assert!(!route.fallback, "t = {k}/256, mirror {mirror}");
+            for p in &route.waypoints {
+                eat(p.x.raw());
+                eat(p.y.raw());
+            }
+        }
+    }
+    hash
+}
+
+/// The route bytes of [`route_bytes_digest`] for `k` in 64 to 84, recorded on the tree before the
+/// fitted retry of plan `2026-11-18-contour-footprints` Amendment 1.
+const ROUTES_WITH_ROOM_FOR_THE_MARGIN: u64 = 0xfeff_042e_30b7_7389;
+
+/// Amendment 1 guard: a channel whose spare width `w - 2t` is at least one corner margin (here
+/// `k ≤ 84`, spare 0.0509 and more) never reaches the fitted retry, so its route is byte for byte
+/// the route before the retry existed.
+#[test]
+fn a_channel_with_room_for_the_margin_keeps_its_route() {
+    assert_eq!(
+        route_bytes_digest(64..=84),
+        ROUTES_WITH_ROOM_FOR_THE_MARGIN,
+        "digest {:#x}",
+        route_bytes_digest(64..=84)
+    );
+}
+
+/// Amendment 1: a channel whose spare width is a quarter of the corner margin. The disc fits the
+/// 2×2 diagonal gap (`1/√2`) with `w - 2t = CORNER_SAFETY_MARGIN / 4`; the shrunk and pinned
+/// pulls at the full margin cannot pass it, so the fitted retry does: the route is no fallback
+/// and every leg passes the segment predicate.
+#[test]
+fn the_fitted_retry_passes_a_channel_with_a_quarter_margin_to_spare() {
+    // √2 / 2 in raw Q32.32 units, rounded down: 3,037,000,499.97...
+    let gap = SimScalar::from_raw(3_037_000_499);
+    let spare = SimScalar::from_raw(sim_map::CORNER_SAFETY_MARGIN.raw() / 4);
+    let radius = (gap - spare) / 2;
+    for mirror in [false, true] {
+        let (map, start, goal) = diagonal_depot_wall(mirror);
+        let request = PathRequest {
+            start,
+            goal,
+            radius,
+        };
+        let mut pathfinder = Pathfinder::new(&map);
+        let route = pathfinder
+            .find_route_mesh(&map, &request.into())
+            .expect("invariant: the disc fits the gap");
+        assert!(!route.fallback, "mirror {mirror}: {route:?}");
+        for pair in route.waypoints.windows(2) {
+            assert!(
+                pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
+                "leg {pair:?}"
+            );
+        }
+    }
 }
