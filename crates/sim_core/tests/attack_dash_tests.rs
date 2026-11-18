@@ -87,6 +87,7 @@ fn register(world: &mut SimWorld, slug: &str, edit: impl FnOnce(&mut UnitArchety
     arch.slug = slug.to_string();
     arch.name = slug.to_string();
     arch.collision_radius = SimScalar::from_num(0.5);
+    arch.terrain_radius = SimScalar::from_num(0.5);
     arch.max_speed = SimScalar::from_num(0.2);
     arch.acceleration = SimScalar::from_num(10);
     arch.deceleration = SimScalar::from_num(10);

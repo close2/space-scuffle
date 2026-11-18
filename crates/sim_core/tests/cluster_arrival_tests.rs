@@ -53,6 +53,7 @@ fn world(
         .unit_type_id;
     let arch = catalogs.units.get_mut(kind)?;
     arch.collision_radius = SimScalar::HALF;
+    arch.terrain_radius = SimScalar::HALF;
     arch.max_speed = SimScalar::from_num(0.25);
     arch.weapon = None;
     arch.ground_weapon = None;
@@ -279,6 +280,7 @@ fn order_onto_a_foundation_ends_beside_it_without_revealing_it() -> TestResult {
                 footprint_h: 1,
             };
             arch.collision_radius = SimScalar::HALF;
+            arch.terrain_radius = SimScalar::HALF;
             arch.weapon = None;
             arch.ground_weapon = None;
             arch.air_weapon = None;
@@ -354,6 +356,7 @@ fn dead_cargo_and_other_layer_neighbors_cannot_complete_arrival() -> TestResult 
                 .unit_type_id;
             let arch = w.catalog.get_mut(air)?;
             arch.collision_radius = SimScalar::HALF;
+            arch.terrain_radius = SimScalar::HALF;
             arch.weapon = None;
             arch.ground_weapon = None;
             arch.air_weapon = None;

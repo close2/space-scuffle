@@ -475,7 +475,8 @@ impl SimWorld {
         Ok(id)
     }
 
-    /// Whether `entity` is a living ground body overlapping `site`.
+    /// Whether `entity` is a living ground body whose terrain disc overlaps `site`: a structure
+    /// meets a unit at its terrain radius (plan `2026-11-18-inner-radius` T8).
     fn stands_on(&self, entity: &crate::Entity, site: Footprint) -> bool {
         if !entity.is_alive() || entity.is_loaded_in_transport() {
             return false;
@@ -486,7 +487,7 @@ impl SimWorld {
                 && !matches!(arch.shape, ShapeKind::BuildingDome { .. })
                 && site
                     .gap(entity.position)
-                    .is_some_and(|gap| gap < arch.collision_radius)
+                    .is_some_and(|gap| gap < arch.terrain_radius)
         })
     }
 

@@ -317,3 +317,83 @@ proptest! {
         prop_assert_eq!(mesh_of(&map), fresh);
     }
 }
+
+/// A seeded draw in `[low, high)` (`SplitMix64`), so the property below is reproducible on every
+/// target without a random-number crate.
+fn draw(state: &mut u64, low: f64, high: f64) -> f64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    #[expect(clippy::cast_precision_loss, reason = "a test draw")]
+    let unit = (z >> 11) as f64 / (1_u64 << 53) as f64;
+    low + (high - low) * unit
+}
+
+/// T-13 of plan `2026-11-18-inner-radius` (property): a smaller disc routes wherever a larger
+/// one does. On both shipped maps, bare and with seeded 2 × 2 structures, 500 seeded start and
+/// goal pairs are searched, each at one of the radius pairs of the terrain radius in turn
+/// (0.3125 against 0.375, 0.375 against 0.5625, 0.5 against 0.625, 0.5625 against 1.0, in world
+/// units; 125 pairs each, which keeps the target fast): whenever the larger disc has a route,
+/// the smaller one has one too. The terrain radius only ever shrinks
+/// a body against terrain, so this is what keeps it from losing a route the collision radius
+/// had.
+#[test]
+fn a_smaller_disc_routes_wherever_a_larger_one_does() {
+    const PAIRS: [(f64, f64); 4] = [
+        (0.3125, 0.375),
+        (0.375, 0.5625),
+        (0.5, 0.625),
+        (0.5625, 1.0),
+    ];
+    let mut rng = 0x1B_116_u64;
+    let mut both = 0_u32;
+    for file in [arena::DEFAULT_ARENA_FILE, arena::SHOWCASE_CANYON_FILE] {
+        for with_structures in [false, true] {
+            let mut map = arena::load_game_map(file);
+            let (width, height) = (f64::from(map.width()), f64::from(map.height()));
+            if with_structures {
+                let mut placed = 0;
+                for index in 0..24_u32 {
+                    let x = draw(&mut rng, 1.0, width - 3.0) as u32;
+                    let y = draw(&mut rng, 1.0, height - 3.0) as u32;
+                    // A site on a cliff or ramp is refused; the others stand.
+                    placed += u32::from(
+                        map.place_structure(EntityId(100 + index), x, y, 2, 2)
+                            .is_ok(),
+                    );
+                }
+                assert!(placed >= 8, "{file}: only {placed} structures stand");
+            }
+            let mut pathfinder = sim_map::Pathfinder::new(&map);
+            for index in 0..500 {
+                let start = SimVec2::new(
+                    SimScalar::from_num(draw(&mut rng, 0.0, width)),
+                    SimScalar::from_num(draw(&mut rng, 0.0, height)),
+                );
+                let goal = SimVec2::new(
+                    SimScalar::from_num(draw(&mut rng, 0.0, width)),
+                    SimScalar::from_num(draw(&mut rng, 0.0, height)),
+                );
+                {
+                    let (small, large) = PAIRS[index % PAIRS.len()];
+                    let request = |radius: f64| sim_map::PathRequest {
+                        start,
+                        goal,
+                        radius: SimScalar::from_num(radius),
+                    };
+                    if pathfinder.find_path(&map, &request(large)).is_ok() {
+                        assert!(
+                            pathfinder.find_path(&map, &request(small)).is_ok(),
+                            "{file} (structures: {with_structures}): {start:?} to {goal:?} \
+                             routes at {large} but not at {small}"
+                        );
+                        both += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(both > 250, "only {both} searches found a route");
+}

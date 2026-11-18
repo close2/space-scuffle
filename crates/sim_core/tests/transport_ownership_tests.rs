@@ -44,6 +44,7 @@ impl Fixture {
         arch.ground_weapon = None;
         arch.air_weapon = None;
         arch.collision_radius = SimScalar::HALF;
+        arch.terrain_radius = SimScalar::HALF;
         arch.max_hp = SimScalar::from_num(100);
         arch.max_shields = SimScalar::ZERO;
         arch.max_energy = SimScalar::from_num(100);

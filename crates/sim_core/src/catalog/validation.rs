@@ -16,8 +16,8 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ProjectileTargetLossBehavior, SimAngle,
-    SimScalar, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, MoverType, ProjectileTargetLossBehavior,
+    SimAngle, SimScalar, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -353,6 +353,35 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// Checks an authored terrain radius (`StarCraft` II `InnerRadius`, plan
+    /// `2026-11-18-inner-radius` D-2): finite and strictly positive after Q32.32 conversion,
+    /// strictly below the collision radius (the game uses `min(InnerRadius, Radius)`, so an equal
+    /// or larger value has no effect and is omitted instead), and on a ground mover only (terrain
+    /// does not touch an air body). Runs after `collision_radius` is checked positive.
+    fn validate_terrain_radius(&self) -> SimResult<()> {
+        let Some(terrain_radius) = self.terrain_radius else {
+            return Ok(());
+        };
+        positive(&self.slug, "terrain_radius", terrain_radius)?;
+        if SimScalar::from_f32_lossy(terrain_radius)
+            >= SimScalar::from_f32_lossy(self.collision_radius)
+        {
+            return Err(invalid(
+                &self.slug,
+                "terrain_radius",
+                "must be smaller than collision_radius; omit it when equal",
+            ));
+        }
+        if self.mover_type == MoverType::Air {
+            return Err(invalid(
+                &self.slug,
+                "terrain_radius",
+                "terrain does not touch air bodies; omit it on an air unit",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the hull rate, the stationary hull rate when authored, and `turn_before_move`
     /// against both. Runs after `max_speed` is checked nonnegative.
     fn validate_hull_turning(&self) -> SimResult<()> {
@@ -470,6 +499,7 @@ impl UnitArchetypeDef {
             f64::from(self.start_energy),
             f64::from(self.max_energy),
         )?;
+        self.validate_terrain_radius()?;
         self.validate_hull_turning()?;
         self.validate_regeneration_delays()?;
         self.validate_weapons()?;
@@ -1832,6 +1862,129 @@ mod tests {
         weapon.projectile_speed = Some(1.0);
         weapon.max_projectile_lifetime_ticks = weapon.max_projectile_lifetime_ticks.max(1);
         unit.validate()?;
+        Ok(())
+    }
+
+    /// The shipped unit catalog with every authored `terrain_radius` removed and
+    /// `terrain_radius: <value>` authored on the first unit whose `mover_type` is `mover`,
+    /// inserted before its `collision_radius`. Returns the edited text,
+    /// that unit's slug and its authored collision radius; the slug is read from the file, so no
+    /// identity is named here (charter §3.3).
+    fn units_with_terrain_radius(
+        mover: &str,
+        value: &str,
+    ) -> Result<(String, String, f32), Box<dyn std::error::Error>> {
+        let text = include_str!("../../../../assets/catalog/units.ron");
+        let mover_line = format!("mover_type: {mover},");
+        let mut out = Vec::new();
+        let mut slug = None;
+        let mut armed = false;
+        let mut found = None;
+        // Authored terrain radii are dropped first, so each test sees exactly one: its own.
+        for line in text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("terrain_radius:"))
+        {
+            let trimmed = line.trim_start();
+            if found.is_none() {
+                if let Some(rest) = trimmed.strip_prefix("slug: ") {
+                    slug = Some(rest.trim_end_matches(',').trim_matches('"').to_owned());
+                }
+                if trimmed == mover_line {
+                    armed = true;
+                }
+                if armed {
+                    if let Some(rest) = trimmed.strip_prefix("collision_radius: ") {
+                        let indent = &line[..line.len() - trimmed.len()];
+                        out.push(format!("{indent}terrain_radius: Some({value}),"));
+                        let radius: f32 = rest.trim_end_matches(',').parse()?;
+                        found = Some((slug.clone().ok_or("no slug before the radius")?, radius));
+                    }
+                }
+            }
+            out.push(line.to_owned());
+        }
+        let (slug, radius) = found.ok_or("no unit of that mover type")?;
+        Ok((out.join("\n"), slug, radius))
+    }
+
+    fn load_units(text: &str) -> crate::error::SimResult<crate::catalog::UnitCatalog> {
+        let factions = crate::test_support::shipped_factions();
+        crate::catalog::UnitCatalog::from_ron_str(&factions, text)
+    }
+
+    /// The field a catalog load refused, or the whole outcome as text when it was not a field
+    /// refusal (a load that succeeded, or another error), so the assertion shows it.
+    fn rejected_load_field(result: crate::error::SimResult<crate::catalog::UnitCatalog>) -> String {
+        match result {
+            Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            Err(other) => format!("other error: {other}"),
+            Ok(_) => "loaded".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_terrain_radius_is_read_and_defaults_to_the_collision_radius(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::SimScalar;
+        let (text, slug, radius) = units_with_terrain_radius("Ground", "0.3125")?;
+        assert!(
+            radius > 0.3125,
+            "{slug} must be larger than the authored value"
+        );
+        let catalog = load_units(&text)?;
+        let mut others = 0;
+        for unit in catalog.archetypes() {
+            if unit.slug == slug {
+                assert_eq!(unit.terrain_radius, SimScalar::from_f32_lossy(0.3125));
+                assert_eq!(unit.collision_radius, SimScalar::from_f32_lossy(radius));
+            } else {
+                // Every other authored value was removed, so every other unit reads its
+                // collision radius.
+                assert_eq!(unit.terrain_radius, unit.collision_radius, "{}", unit.slug);
+                others += 1;
+            }
+        }
+        assert!(others > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_terrain_radius_must_be_positive_and_finite() -> Result<(), Box<dyn std::error::Error>> {
+        for value in ["0.0", "-0.1", "NaN", "inf", "1e-30"] {
+            let (text, _, _) = units_with_terrain_radius("Ground", value)?;
+            assert_eq!(
+                rejected_load_field(load_units(&text)),
+                "terrain_radius",
+                "{value}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_terrain_radius_must_be_smaller_than_the_collision_radius(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (_, _, radius) = units_with_terrain_radius("Ground", "0.1")?;
+        for value in [radius, radius + 0.25] {
+            let (text, _, _) = units_with_terrain_radius("Ground", &format!("{value}"))?;
+            assert_eq!(
+                rejected_load_field(load_units(&text)),
+                "terrain_radius",
+                "{value}"
+            );
+        }
+        // Just below the collision radius (one sixteenth less) is accepted.
+        let (text, _, _) = units_with_terrain_radius("Ground", &format!("{}", radius - 0.0625))?;
+        assert!(load_units(&text).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn an_air_unit_may_not_have_a_terrain_radius() -> Result<(), Box<dyn std::error::Error>> {
+        let (_, _, radius) = units_with_terrain_radius("Air", "0.1")?;
+        let (text, _, _) = units_with_terrain_radius("Air", &format!("{}", radius / 2.0))?;
+        assert_eq!(rejected_load_field(load_units(&text)), "terrain_radius");
         Ok(())
     }
 }

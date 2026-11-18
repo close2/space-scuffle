@@ -29,6 +29,8 @@
             deceleration: 0.00784,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.3125 (voidmulti UnitData:1528; liberty:4745 0.375); Radius 0.375. Blizzard 5.0.13 patch notes: worker inner radius 0.375 to 0.3125.
+            terrain_radius: Some(0.3125),
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -119,6 +121,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:4839) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -234,6 +237,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
+            // No terrain_radius: 5.0.14 InnerRadius 0.625 (liberty UnitData:7197) is above Radius 0.5, so it has no effect (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.65,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -317,6 +321,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.375 (liberty UnitData:3186); Radius 0.5 (class default).
+            terrain_radius: Some(0.375),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -417,6 +423,7 @@
             turn_before_move: true,
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 0.875,
+            // No terrain_radius: 5.0.14 InnerRadius 0.875 (liberty UnitData:5096) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.85,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -646,6 +653,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5625,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.375 (liberty UnitData:11016); Radius 0.5625.
+            terrain_radius: Some(0.375),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -734,6 +743,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:4912) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -822,6 +832,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:5007) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -905,6 +916,8 @@
             turn_rate_deg_per_tick: 40.32,
             stationary_turn_rate_deg_per_tick: Some(84.0),
             collision_radius: 0.625,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:11570); Radius 0.625.
+            terrain_radius: Some(0.5),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -998,6 +1011,7 @@
             turn_before_move: true,
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 1.0,
+            // No terrain_radius: 5.0.14 InnerRadius 1.0 (void UnitData:1406) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 1.0,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1505,6 +1519,8 @@
             deceleration: 0.00784,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.3125 (voidmulti UnitData:1287; liberty:3085 0.375); Radius 0.375. Blizzard 5.0.13 patch notes: worker inner radius 0.375 to 0.3125.
+            terrain_radius: Some(0.3125),
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1595,6 +1611,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:3975); Radius 0.625.
+            terrain_radius: Some(0.5),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1706,6 +1724,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.375 (liberty UnitData:11395); Radius 0.5 (class default).
+            terrain_radius: Some(0.375),
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1789,6 +1809,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.375 (void UnitData:3233); Radius 0.5 (class default).
+            terrain_radius: Some(0.375),
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1872,6 +1894,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:3268) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -1972,6 +1995,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:3362) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2057,6 +2081,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 0.75,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:10746); Radius 0.75.
+            terrain_radius: Some(0.5),
             separation_radius: 0.7,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2149,6 +2175,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 1.0,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5625 (liberty UnitData:4053); Radius 1.0.
+            terrain_radius: Some(0.5625),
             separation_radius: 1.0,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2545,6 +2573,8 @@
             deceleration: 0.00784,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.3125 (voidmulti UnitData:523; liberty:7050 0.375); Radius 0.375. Blizzard 5.0.13 patch notes: worker inner radius 0.375 to 0.3125.
+            terrain_radius: Some(0.3125),
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2634,6 +2664,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius is unset (liberty UnitData:7563); read as Radius until Q0087 is answered (plan D-4) (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2718,6 +2749,7 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
+            // No terrain_radius: 5.0.14 InnerRadius 0.375 (liberty UnitData:9322) equals Radius (plan 2026-11-18-inner-radius §2.2).
             separation_radius: 0.45,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2811,6 +2843,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.75,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:1019); Radius 0.75.
+            terrain_radius: Some(0.5),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -2893,6 +2927,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.375 (liberty UnitData:7685); Radius 0.625.
+            terrain_radius: Some(0.375),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -3003,6 +3039,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.9375,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (void UnitData:755; liberty:741 was 0.375); Radius 0.9375.
+            terrain_radius: Some(0.5),
             separation_radius: 0.7,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -3428,6 +3466,8 @@
             turn_before_move: true,
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 1.0,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.75 (liberty UnitData:8024); Radius 1.0.
+            terrain_radius: Some(0.75),
             separation_radius: 1.0,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59) plus AlliedPushPriority 1
             // (voidmulti:1943; 5.0.14 patch notes: "now pushes allied units out of the way when
@@ -3522,6 +3562,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.875,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:11417); Radius 0.875.
+            terrain_radius: Some(0.5),
             separation_radius: 0.7,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
@@ -3661,6 +3703,8 @@
             deceleration: 3.136,
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
+            // Terrain radius, StarCraft II min(InnerRadius, Radius): 5.0.14 InnerRadius 0.5 (liberty UnitData:10071); Radius 0.625 (voidmulti:830).
+            terrain_radius: Some(0.5),
             separation_radius: 0.6,
             // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,

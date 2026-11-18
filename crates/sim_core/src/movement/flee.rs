@@ -40,6 +40,7 @@ impl SimWorld {
             MotionPolicy {
                 layer: MovementLayer::Ground,
                 radius: SimScalar::ONE,
+                terrain: SimScalar::ONE,
                 burrowed: false,
             },
             victim_pos,
@@ -112,7 +113,7 @@ impl SimWorld {
         } else {
             -SimVec2::X_AXIS
         };
-        let min = i128::from(policy.radius.raw());
+        let min = i128::from(policy.terrain_radius().raw());
         let max_x = (i128::from(map.width()) << 32) - min;
         let max_y = (i128::from(map.height()) << 32) - min;
         if min > max_x || min > max_y {
