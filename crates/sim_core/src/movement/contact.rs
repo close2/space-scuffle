@@ -271,6 +271,7 @@ mod tests {
         MotionPolicy {
             layer: MovementLayer::Ground,
             radius: s(radius),
+            terrain: s(radius),
             burrowed: false,
         }
     }
@@ -393,6 +394,72 @@ mod tests {
             }
         }
         assert!(projected >= 20, "{projected} moves were projected");
+    }
+
+    /// T-11 (plan `2026-11-18-inner-radius`, extends T-B7): bodies whose terrain radius is below
+    /// their collision radius settle seeded moves by their terrain disc. The depth measured at
+    /// the terrain radius never rises, and some settled ends lie nearer a wall than the
+    /// collision radius, which a contact rule at the collision radius would have refused.
+    #[test]
+    fn a_settled_move_never_deepens_at_the_terrain_radius() {
+        let mut rng = 0x1B_116C_u64;
+        let mut inside_collision_radius = 0;
+        for _ in 0..12 {
+            let blocks: Vec<(f64, f64, f64, f64)> = (0..6)
+                .map(|_| {
+                    let (x, y) = (draw(&mut rng, 2.0, 20.0), draw(&mut rng, 2.0, 20.0));
+                    (
+                        x,
+                        y,
+                        x + draw(&mut rng, 1.0, 5.0),
+                        y + draw(&mut rng, 1.0, 5.0),
+                    )
+                })
+                .collect();
+            let map = walled(24, |x, y| {
+                let (x, y) = (f64::from(x), f64::from(y));
+                blocks
+                    .iter()
+                    .any(|&(x0, y0, x1, y1)| x >= x0.floor() && x < x1 && y >= y0.floor() && y < y1)
+            });
+            let mut pathfinder = Pathfinder::new(&map);
+            for _ in 0..200 {
+                let radius = draw(&mut rng, 0.375, 1.0);
+                let policy = MotionPolicy {
+                    terrain: s(radius * draw(&mut rng, 0.5, 0.95)),
+                    ..ground(radius)
+                };
+                let from = at(draw(&mut rng, 1.0, 23.0), draw(&mut rng, 1.0, 23.0));
+                let to = at(
+                    f64::from(from.x.to_f32()) + draw(&mut rng, -1.0, 1.0),
+                    f64::from(from.y.to_f32()) + draw(&mut rng, -1.0, 1.0),
+                );
+                if !policy.contains(&map, from)
+                    || !policy.permits_segment(&map, from, from)
+                    || !policy.permits_segment(&map, from, to)
+                {
+                    continue;
+                }
+                let terrain = policy.terrain_radius();
+                let (before, _) = clearance(&map, &mut pathfinder, terrain, from);
+                let settled = settle_on_terrain(&map, &mut pathfinder, policy, from, from, to)
+                    .expect("representable");
+                let Some(end) = settled else {
+                    continue;
+                };
+                let (after, _) = clearance(&map, &mut pathfinder, terrain, end);
+                assert!(
+                    after >= before - WALL_CONTACT_TOLERANCE,
+                    "{from:?} to {to:?} settled at {end:?}: {before:?} to {after:?}"
+                );
+                let (at_radius, _) = clearance(&map, &mut pathfinder, policy.radius, end);
+                inside_collision_radius += usize::from(at_radius < policy.radius);
+            }
+        }
+        assert!(
+            inside_collision_radius >= 20,
+            "{inside_collision_radius} ends lie within the collision radius of a wall"
+        );
     }
 
     /// The probe refuses a step whose centre stays clear of a wall but whose disc would sweep

@@ -73,6 +73,7 @@ fn dummy_target_archetype(
         surround_walk: true,
         stationary_turn_rate: SimAngle::ZERO,
         collision_radius: SimScalar::HALF,
+        terrain_radius: SimScalar::HALF,
         separation_radius: SimScalar::HALF,
         push_priority: 10,
         sight_radius: SimScalar::from_num(8),

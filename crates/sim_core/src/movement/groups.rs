@@ -364,7 +364,8 @@ impl SimWorld {
         }
     }
 
-    /// The active ground member nearest the active members' centroid, with its radius; ties go
+    /// The active ground member nearest the active members' centroid, with its terrain radius
+    /// (the lane is a route, plan `2026-11-18-inner-radius` T3); ties go
     /// to the smallest id. `None` when no member has the group's order active.
     fn group_leader(&self, group: &RouteGroup) -> Option<(EntityId, SimScalar)> {
         let mut active: Vec<(EntityId, SimVec2, SimScalar)> = Vec::new();
@@ -376,7 +377,7 @@ impl SimWorld {
                 continue;
             };
             if policy.layer == MovementLayer::Ground && membership_is_active(entity, ordinal) {
-                active.push((id, entity.position, policy.radius));
+                active.push((id, entity.position, policy.terrain_radius()));
             }
         }
         let count = i128::try_from(active.len()).ok().filter(|n| *n > 0)?;

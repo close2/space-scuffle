@@ -2069,6 +2069,151 @@ fn b47_unit_radii_follow_starcraft() -> TestResult {
     )
 }
 
+/// B-116: the radius of every ground unit's disc against terrain and structures, `StarCraft` II's
+/// `min(InnerRadius, Radius)` (plan `2026-11-18-inner-radius` §2.2; 5.0.14, `5444e12f13`). Rows
+/// name analogues, never archetypes (charter §3.3).
+const SC2_UNIT_TERRAIN_RADIUS: [(&str, [f32; 1], &str); 27] = [
+    ("SCV", [0.3125], "voidmulti UnitData:1528; 5.0.13 notes"),
+    ("Probe", [0.3125], "voidmulti UnitData:1287; 5.0.13 notes"),
+    ("Drone", [0.3125], "voidmulti UnitData:523; 5.0.13 notes"),
+    ("Zealot", [0.375], "liberty UnitData:3186"),
+    ("Marauder", [0.375], "liberty UnitData:11016"),
+    ("Hellion", [0.5], "liberty UnitData:11570"),
+    ("Stalker", [0.5], "liberty UnitData:3975"),
+    ("Sentry", [0.375], "liberty UnitData:11395"),
+    ("Adept", [0.375], "void UnitData:3233"),
+    ("Immortal", [0.5], "liberty UnitData:10746"),
+    ("Colossus", [0.5625], "liberty UnitData:4053"),
+    ("Ravager", [0.5], "liberty UnitData:1019"),
+    ("Hydralisk", [0.375], "liberty UnitData:7685"),
+    ("Lurker", [0.5], "void UnitData:755"),
+    ("Ultralisk", [0.75], "liberty UnitData:8024"),
+    ("Queen", [0.5], "liberty UnitData:11417"),
+    ("Infestor", [0.5], "liberty UnitData:10071"),
+    (
+        "Marine",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:4839",
+    ),
+    (
+        "Reaper",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:4912",
+    ),
+    (
+        "Ghost",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:5007",
+    ),
+    (
+        "Siege Tank",
+        [0.875],
+        "InnerRadius 0.875 equals Radius, liberty UnitData:5096",
+    ),
+    (
+        "Thor",
+        [1.0],
+        "InnerRadius 1.0 equals Radius, void UnitData:1406",
+    ),
+    (
+        "High Templar",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:3268",
+    ),
+    (
+        "Dark Templar",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:3362",
+    ),
+    (
+        "Baneling",
+        [0.375],
+        "InnerRadius 0.375 equals Radius, liberty UnitData:9322",
+    ),
+    (
+        "Roach",
+        [0.5],
+        "InnerRadius 0.625 >= Radius 0.5, no effect, liberty UnitData:7197",
+    ),
+    (
+        "Zergling",
+        [0.375],
+        "InnerRadius unset (liberty UnitData:7563): read as Radius, plan D-4, Q0087",
+    ),
+];
+
+/// B-116: every ground unit meets terrain at its 5.0.14 effective `InnerRadius`; an air unit's
+/// terrain radius is its collision radius.
+#[test]
+fn b116_unit_terrain_radii_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes() {
+        if is_structure(archetype) {
+            continue;
+        }
+        if archetype.mover_type == sim_types::MoverType::Air {
+            assert_eq!(
+                archetype.terrain_radius,
+                archetype.collision_radius,
+                "{} ({}): an air unit's terrain radius is its radius",
+                archetype.slug,
+                analogue(archetype)
+            );
+            continue;
+        }
+        let name = analogue(archetype);
+        let Some((_, [want], source)) = SC2_UNIT_TERRAIN_RADIUS
+            .iter()
+            .find(|(unit, ..)| *unit == name)
+        else {
+            return Err(format!("{} ({name}): no terrain radius row", archetype.slug).into());
+        };
+        let got = f(archetype.terrain_radius);
+        assert!(
+            (got - want).abs() < 0.001,
+            "{} ({name}): terrain radius is {got}, StarCraft II {want} ({source})",
+            archetype.slug
+        );
+        seen.insert(name.to_owned());
+    }
+    for (unit, ..) in &SC2_UNIT_TERRAIN_RADIUS {
+        assert!(
+            seen.contains(*unit),
+            "terrain radius: row {unit} has no archetype"
+        );
+    }
+    Ok(())
+}
+
+/// B-116: an archetype whose terrain radius is below its collision radius is a ground unit with
+/// a row above that says so, so no unsourced value can be authored.
+#[test]
+fn only_ground_units_with_a_smaller_inner_radius_author_one() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut smaller = 0;
+    for archetype in catalogs.units.archetypes() {
+        if archetype.terrain_radius >= archetype.collision_radius {
+            continue;
+        }
+        let name = analogue(archetype);
+        let row = SC2_UNIT_TERRAIN_RADIUS
+            .iter()
+            .find(|(unit, ..)| *unit == name)
+            .ok_or_else(|| format!("{} ({name}): unsourced terrain radius", archetype.slug))?;
+        assert!(
+            row.1[0] < f(archetype.collision_radius),
+            "{} ({name}): its row ({}) does not give a smaller inner radius",
+            archetype.slug,
+            row.2
+        );
+        assert!(!is_structure(archetype), "{}: a structure", archetype.slug);
+        smaller += 1;
+    }
+    assert_eq!(smaller, 17, "the 17 ground analogues of plan §2.2");
+    Ok(())
+}
+
 /// B-82: the Baneling's damage to a structure is its own effect, `VolatileBurstU2`: 80 (`liberty`
 /// EffectData:1058), +5 a level (`ZergMeleeWeapons`, `liberty` UpgradeData:505), `ArmorReduction`
 /// 0 (`liberty` EffectData:1063). No other modelled weapon has one.

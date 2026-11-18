@@ -4,7 +4,8 @@
 //!
 //! # Responsibility
 //! After each tick, for every walking ground body, asks `Pathfinder::wall_contact` for the
-//! nearest wall within the body's collision radius under its physical request (true terrain,
+//! nearest wall within the body's terrain radius (`UnitArchetype::terrain_radius`, plan
+//! `2026-11-18-inner-radius` T10) under its physical request (true terrain,
 //! every structure, no vision) and records its depth, `radius − distance`. Per owner it counts
 //! the unit-ticks with a depth above zero, the deepest overlap with its entity, tick and
 //! position, and the unit-ticks on which a body's depth rose above its depth at the tick's start
@@ -88,7 +89,7 @@ impl OverlapMeter {
                 continue;
             };
             if arch.mover_type == MoverType::Ground {
-                bodies.push((*id, entity.owner.0, entity.position, arch.collision_radius));
+                bodies.push((*id, entity.owner.0, entity.position, arch.terrain_radius));
             }
         }
         let mut seen = BTreeMap::new();
@@ -196,6 +197,44 @@ pub fn overlap_markdown(owners: &[(u8, OverlapMetrics)]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review F-2 (plan `2026-11-18-inner-radius` T10): the meter measures the terrain disc. A
+    /// body of radius 0.5 and terrain radius 0.3125 whose centre is 0.4 from a cliff face does
+    /// not overlap it; one 0.25 from the face overlaps by 0.0625, not 0.25.
+    #[test]
+    fn the_meter_measures_the_terrain_disc() {
+        use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
+        use sim_types::{PlayerId, SimScalar};
+        let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(1)))
+            .expect("invariant: a valid size");
+        for y in 0..20 {
+            for x in 10..20 {
+                map.cell_mut(x, y).expect("inside").flags = CellFlags::UNPASSABLE_CLIFF;
+            }
+        }
+        let mut world = crate::world(map, 0x1B_116);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| a.mover_type == MoverType::Ground && a.max_speed > SimScalar::ZERO)
+            .map(|a| a.unit_type_id)
+            .expect("invariant: the shipped catalog has a mobile ground unit");
+        let arch = world.catalog.get_mut(kind).expect("registered");
+        arch.collision_radius = SimScalar::from_num(0.5);
+        arch.terrain_radius = SimScalar::from_num(0.3125);
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world
+            .spawn_unit(kind, PlayerId(0), at(9.6, 5.0))
+            .expect("open ground");
+        world
+            .spawn_unit(kind, PlayerId(1), at(9.75, 15.0))
+            .expect("open ground");
+        let mut meter = OverlapMeter::new();
+        meter.observe(&mut world, 0);
+        assert_eq!(meter.of_owner(0).overlapping_ticks, 0);
+        let deepest = meter.of_owner(1).deepest.expect("the near body overlaps");
+        assert!((deepest.0 - 0.0625).abs() < 1e-6, "{deepest:?}");
+    }
 
     #[test]
     fn the_csv_and_the_table_list_what_was_recorded() {

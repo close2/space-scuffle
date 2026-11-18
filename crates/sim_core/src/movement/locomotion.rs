@@ -343,9 +343,9 @@ fn gate_step_by_facing(hull: Option<HullGate>, origin: SimVec2, proposal: &mut M
     }
 }
 
-/// `point` moved, if need be, into the full-radius domain of `policy`'s body on `map`.
+/// `point` moved, if need be, into the terrain-radius domain of `policy`'s body on `map`.
 fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimVec2 {
-    let r = policy.radius;
+    let r = policy.terrain_radius();
     let clamp = |value: SimScalar, extent: u32| {
         let high = SimScalar::from_num(extent).saturating_sub(r);
         if high < r {
@@ -507,7 +507,7 @@ fn route_request<'a>(
     PathRequestWithVision {
         start: actor.position,
         goal,
-        radius: policy.radius,
+        radius: policy.terrain_radius(),
         vision: knowledge.map(|(vision, _)| vision),
         block_unexplored_ramps: false,
         known_structures: knowledge.map(|(_, known)| known.as_slice()),
@@ -608,7 +608,7 @@ impl SimWorld {
         if !policy.contains(&self.map, actor.position) {
             return Err(MovementInvariant::InvalidState {
                 entity: id,
-                reason: "actor is outside its current full-radius movement domain",
+                reason: "actor is outside its current terrain-radius movement domain",
             });
         }
         if !actor.is_immobile {
@@ -862,7 +862,7 @@ impl SimWorld {
         if !policy.contains(&self.map, target) {
             return Err(MovementInvariant::InvalidState {
                 entity: id,
-                reason: "active movement order is outside the current full-radius domain",
+                reason: "active movement order is outside the current terrain-radius domain",
             });
         }
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
@@ -2342,6 +2342,36 @@ mod tests {
 
     fn v(x: f64, y: f64) -> SimVec2 {
         SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// Review F-2 (plan `2026-11-18-inner-radius` T5): a cast approach's goal outside the map is
+    /// moved into the body's terrain-radius domain, so a body of radius 0.5 and terrain radius
+    /// 0.3125 is clamped to 0.3125 from each edge, not 0.5.
+    #[test]
+    fn a_cast_goal_is_clamped_into_the_terrain_radius_domain(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use super::{clamp_into_domain, MotionPolicy, MovementLayer};
+        let map = sim_map::GameMap::new(
+            20,
+            16,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let policy = MotionPolicy {
+            layer: MovementLayer::Ground,
+            radius: SimScalar::from_num(0.5),
+            terrain: SimScalar::from_num(0.3125),
+            burrowed: false,
+        };
+        assert_eq!(
+            clamp_into_domain(policy, &map, v(-3.0, 0.1)),
+            v(0.3125, 0.3125)
+        );
+        assert_eq!(
+            clamp_into_domain(policy, &map, v(25.0, 30.0)),
+            v(20.0 - 0.3125, 16.0 - 0.3125)
+        );
+        assert_eq!(clamp_into_domain(policy, &map, v(0.4, 9.0)), v(0.4, 9.0));
+        Ok(())
     }
 
     /// A slide along the wall that keeps most of the step is taken and is not refused.

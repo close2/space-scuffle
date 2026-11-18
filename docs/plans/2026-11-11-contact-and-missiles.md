@@ -527,6 +527,8 @@ Scoping decisions under Q0002, each of which can be brought back:
   of Stalkers, Marauders, Hydralisks and workers. It is registered in WP5 and planned separately. This plan
   isolates it behind `MotionPolicy::terrain_radius()`, so the follow-up is a catalog field and a data change plus
   its measurement.
+  *Pointer (2026-11-18):* done by plan [`2026-11-18-inner-radius`](2026-11-18-inner-radius.md), which authors the
+  radius for 17 ground units; unit–structure contact remains, as B-131.
 - **Missile arrival at the centre or the edge** (§2.2). The game's 3D arrival point is not documented. We keep the
   target's edge, as our weapons do.
 - **Placement rules** for unload, landing and teleports (R-9).

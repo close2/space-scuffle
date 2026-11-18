@@ -86,6 +86,7 @@ impl SimWorld {
                     unit_type: product,
                 })?;
         let radius = target.collision_radius;
+        let terrain_radius = target.terrain_radius;
         let airborne = crate::movement::MovementLayer::from_mover(target.mover_type)
             == crate::movement::MovementLayer::Air;
         if radius <= SimScalar::ZERO {
@@ -122,13 +123,16 @@ impl SimWorld {
                     cell(origin.y, raw),
                 )
             };
-        let margin =
-            i64::try_from((i128::from(radius.raw()) + (1_i128 << 31) + (1_i128 << 32) - 1) >> 32)
-                .unwrap_or(i64::MAX);
+        // The ring keeps the product's terrain disc off the footprint, which a structure meets
+        // at that radius (plan `2026-11-18-inner-radius` D-8).
+        let margin = i64::try_from(
+            (i128::from(terrain_radius.raw()) + (1_i128 << 31) + (1_i128 << 32) - 1) >> 32,
+        )
+        .unwrap_or(i64::MAX);
         let bounds = (left - margin, bottom - margin, right + margin, top + margin);
         // A product wider than the map cannot have any legal endpoint. Avoid
         // enumerating an enormous authored-radius perimeter in this case.
-        if i128::from(radius.raw()) * 2
+        if i128::from(terrain_radius.raw()) * 2
             > (i128::from(self.map.width().min(self.map.height())) << 32)
         {
             return Ok(None);
@@ -139,14 +143,16 @@ impl SimWorld {
             footprint: dome.then_some((left, bottom, right, top)),
             bounds,
             radius,
+            terrain_radius,
             airborne,
         }))
     }
 
     /// The centre of exit cell `(x, y)` when the product may emerge there, otherwise `None`.
     ///
-    /// A free cell lies on the map with the product's whole body, connects to the producer's
-    /// boundary on the ground, and overlaps no body of the product's own layer.
+    /// A free cell lies on the map with the product's terrain disc, connects to the producer's
+    /// boundary on the ground at that disc, and overlaps no body of the product's own layer at
+    /// the product's collision radius.
     fn free_exit_point(
         &mut self,
         ring: &ExitRing,
@@ -161,7 +167,7 @@ impl SimWorld {
             SimScalar::from_raw((x << 32) + (1_i64 << 31)),
             SimScalar::from_raw((y << 32) + (1_i64 << 31)),
         );
-        let raw_radius = i128::from(radius.raw());
+        let raw_radius = i128::from(ring.terrain_radius.raw());
         if i128::from(point.x.raw()) - raw_radius < 0
             || i128::from(point.y.raw()) - raw_radius < 0
             || i128::from(point.x.raw()) + raw_radius > (i128::from(self.map.width()) << 32)
@@ -178,8 +184,9 @@ impl SimWorld {
             } else {
                 ring.origin
             };
-            if !self.egress_connected(anchor, point, radius, Some(ring.producer))
-                || !self.egress_connected(point, point, radius, None)
+            let terrain = ring.terrain_radius;
+            if !self.egress_connected(anchor, point, terrain, Some(ring.producer))
+                || !self.egress_connected(point, point, terrain, None)
             {
                 return Ok(None);
             }
@@ -241,8 +248,11 @@ struct ExitRing {
     footprint: Option<(i64, i64, i64, i64)>,
     /// The ring rectangle `(left, bottom, right, top)` in cells, inclusive.
     bounds: (i64, i64, i64, i64),
-    /// The product's collision radius in world units.
+    /// The product's collision radius in world units: its size against other bodies.
     radius: SimScalar,
+    /// The product's terrain radius in world units: its disc against terrain, structures and
+    /// the map edge (plan `2026-11-18-inner-radius` T7).
+    terrain_radius: SimScalar,
     /// Whether the product flies, so ground connectivity does not apply and only air bodies block.
     airborne: bool,
 }
@@ -314,7 +324,8 @@ mod tests {
             .catalog
             .archetypes()
             .find(|a| !dome(&a.shape) && a.collision_radius > sim_types::SimScalar::ZERO)
-            .map(|a| (a.unit_type_id, a.collision_radius))
+            // The ring keeps the product's terrain radius off the footprint (D-8).
+            .map(|a| (a.unit_type_id, a.terrain_radius))
             .ok_or("catalog has no mobile unit")?;
         let producer = world.spawn_structure(producer_type, sim_types::PlayerId(0), 10, 10)?;
         let (left, bottom) = world.map.structures()[&producer].top_left;
@@ -328,6 +339,111 @@ mod tests {
                 corner(i64::from(left)),
                 corner(i64::from(bottom))
             ))
+        );
+        Ok(())
+    }
+
+    /// T-8 (plan `2026-11-18-inner-radius` D-8): the ring keeps the product's terrain radius
+    /// from the footprint, so a product of radius 0.625 and terrain radius 0.5 exits one cell
+    /// off it (`ceil(0.5 + 0.5)`; two cells at `ceil(0.625 + 0.5)`), while bodies still meet it
+    /// at its collision radius: a body of radius 0.375 at 0.95 from the first exit (below
+    /// 0.625 + 0.375, above 0.5 + 0.375) moves the exit to the next cell.
+    #[test]
+    fn an_exit_ring_keeps_the_terrain_radius_from_the_footprint_and_the_collision_radius_from_bodies(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 1);
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .find(|a| dome(&a.shape))
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no structure")?;
+        let ground: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| {
+                !dome(&a.shape)
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .take(2)
+            .collect();
+        let [product, blocker] = ground[..] else {
+            return Err("two ground units".into());
+        };
+        for (kind, collision, terrain) in [(product, 0.625, 0.5), (blocker, 0.375, 0.375)] {
+            let arch = world.catalog.get_mut(kind)?;
+            arch.collision_radius = SimScalar::from_num(collision);
+            arch.terrain_radius = SimScalar::from_num(terrain);
+        }
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
+        let (left, bottom) = world.map.structures()[&producer].top_left;
+        let (left, bottom) = (f64::from(left), f64::from(bottom));
+        let point = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        world.rebuild_production_occupancy()?;
+        assert_eq!(
+            world.production_exit(producer, product)?,
+            Some(point(left - 0.5, bottom - 0.5)),
+            "one cell off the footprint"
+        );
+        world.spawn_unit(blocker, PlayerId(0), point(left - 0.5, bottom - 1.45))?;
+        world.rebuild_production_occupancy()?;
+        assert_eq!(
+            world.production_exit(producer, product)?,
+            Some(point(left + 0.5, bottom - 0.5)),
+            "the body within the collision radii moves the exit along the ring"
+        );
+        Ok(())
+    }
+
+    /// Review F-2 (plan `2026-11-18-inner-radius` T7): at the map's corner the ring's corner
+    /// cell (0, 0) has its centre 0.5 from both edges. A product of radius 0.625 and terrain
+    /// radius 0.5 exits there: the map-bounds check and both egress checks use the terrain
+    /// radius, and either one at the radius 0.625 would refuse the cell.
+    #[test]
+    fn an_exit_cell_at_the_map_corner_admits_the_terrain_disc(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+        let map = sim_map::GameMap::new(
+            32,
+            32,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 2);
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .find(|a| dome(&a.shape))
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no structure")?;
+        let product = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                !dome(&a.shape)
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a ground unit")?;
+        let arch = world.catalog.get_mut(product)?;
+        arch.collision_radius = SimScalar::from_num(0.625);
+        arch.terrain_radius = SimScalar::from_num(0.5);
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 1, 1)?;
+        world.rebuild_production_occupancy()?;
+        let half = SimScalar::HALF;
+        assert_eq!(
+            world.production_exit(producer, product)?,
+            Some(SimVec2::new(half, half))
         );
         Ok(())
     }
