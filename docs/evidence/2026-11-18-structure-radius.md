@@ -302,3 +302,58 @@ its band, no unit oscillates at a face, no hit lands from beyond `E + r + range`
 The whole `sim_core` suite passes on WP4 (951 tests) with the one test edit above; none of the plan's "expected test
 edits" (`combat_correctness_tests`, `target_selection_tests`, `attack_dash_tests`, `load_orders_tests`,
 `transport_ownership_tests`, `full_match_tests`, `match_result_tests`, `effect_snapshot_tests`) needed a change.
+
+## 5. WP5: presentation check, storyboard and throughput
+
+**Picture check and storyboard render: not done in this session (pending).** The scratch picture storyboard
+`~/scratch/structure-radius/wp5/picture.ron` (player 1's pulse bots firing projectiles at player 0's hall, the
+showcase's only domes: a 5×5 Command Center analogue whose `E − h`, 0.25, is the largest of any shipped dome) and the
+re-check render of `assets/captures/showcase.ron` were prepared, and `showcase` was built
+(`cargo build --release -p client_diagnostics --bin showcase`). Both `showcase render --driver radv` runs (which take
+`with-gpu-lock` per take) were refused by this session's permission policy, so no frame was rendered. The
+orchestrator, or a session allowed to use the GPU, runs:
+
+```bash
+WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json \
+  "$CARGO_TARGET_DIR"/release/showcase render --driver radv \
+  --storyboard ~/scratch/structure-radius/wp5/picture.ron --out ~/scratch/structure-radius/wp5/picture
+# at least 60 s later:
+WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json \
+  "$CARGO_TARGET_DIR"/release/showcase render --driver radv --out ~/scratch/structure-radius/wp5/show1
+```
+
+Scoping (Q0002): the showcase holds no Photon Cannon analogue and no 3×3 dome, so the plan's cannon shot and 3×3 dome
+cannot appear in it; the hall is the strongest case of D-6 (projectiles drawn to 2.5 while flying for the 2.75 edge).
+A melee unit at a dome face is not in the showcase's hall siege either (the survivors are pulse bots and a rhino
+beetle, all ranged). R-13, R-14 and the WP3 test pin the drawn ends in code.
+
+**Storyboard text.** The default-seed timeline moved by a few ticks after the lane fight (§4): the enemy's
+survivors acquire the viewer's hall two ticks sooner, kill its workers at ticks 1,160 and 1,200 (1,171 and 1,216
+before) and the hall falls at 2,191 (2,193). The storyboard's header comment says so; no scene length changed. The
+scene ticks of a render are to be recorded here once rendered: `march` ends on combat at the viewer's base, which can
+now come up to two ticks sooner (half a frame at 4x), and `assault` (ticks from about 949 for 400 ticks at 2x) still
+covers both worker deaths.
+
+**Throughput** (D-10): the `throughput` bench binaries of WP0 (`7b718151`, built in a temporary worktree removed
+afterwards) and WP4 (`b4f1269b`), alternated, three rounds, under the gate lock; ticks per second, each the bench's
+median of three repeats; the host was shared:
+
+| Scenario | WP0 | WP4 |
+|---|---|---|
+| 64×64, 0 units | 3,278 / 2,642 / 3,264 | 3,256 / 3,280 / 3,266 |
+| 64×64, 100 | 961 / 667 / 953 | 885 / 954 / 951 |
+| 64×64, 400 | 165 / 112 / 164 | 162 / 163 / 162 |
+| 128×128, 400 | 189 / 137 / 194 | 195 / 193 / 198 |
+| 256×256, 0 | 201 / 204 / 205 | 204 / 205 / 203 |
+| showcase canyon, 400 | 118 / 117 / 122 | 115 / 124 / 119 |
+| 64×64, 67 casters, 400 | 229 / 222 / 241 | 153 / 238 / 231 |
+
+Within noise (WP0's round 2 and WP4's round 1 casters row are host dips; each tree's best rounds match); every
+scenario far above 25 ticks per second. `DESIGN.md` §5 is unchanged.
+
+## 6. WP6: bookkeeping
+
+B-135 removed from the register as fixed; B-138 stays open (with B-134). The Combat row says ranges to and from a
+structure measure to its engine radius while its dome is drawn at its footprint, and lists
+`structure_radius_tests.rs`. Structure-contact Amendment 2 corrects its §2.2 bullet. This plan's row is `Done`, with
+the WP5 renders pending.
