@@ -688,3 +688,30 @@ follows the pathing of its target's position; a unit does not stand pressed agai
 - **`w_min`** is measured across the channel's left and right obstacles.
 - **B-140**: the path corpus is traced to `usize` range draws. The decode and validation corpora stay open under
   B-140 and are not part of this plan.
+
+## Amendment 3 (orchestrator, 2026-11-18): the automatic-chase leash measures the target's distance, not the route's length
+
+**Why.** The trace Amendment 2 asked for (evidence §6b) shows the stalled workers already ask the mesh for a route.
+`chase` calls `reroute_pursuit` on every refused step, and in 80 of 80 cases the route was found (11.15 to 12.17
+long). The route was then longer than the automatic-chase leash (scan range × `PURSUIT_LEASH_SCAN_RANGES` =
+10.0), so the chase was abandoned and re-acquired in a loop. Amendment 2's change would therefore do nothing, and
+it is withdrawn. The defect is an asymmetry in the leash: a direct chase is never measured, while the same chase
+after a refused step is measured by route length. So a chamfer that refuses one step ends a chase that a square
+corner let go on.
+
+**Decision: option (a), the agent's recommendation.**
+
+1. An automatic chase is given up when the target is farther than `scan_range × PURSUIT_LEASH_SCAN_RANGES` from the
+   pursuer, measured in a straight line. The route's length is not compared. A route found after a refused step is
+   adopted. Unrefused direct chases and every ordered attack are unchanged. No constant changes.
+2. Before changing the rule, trace who reaches the leash today: the matrix, battle 33 and the goldens. Record the
+   trace in evidence §6b.
+3. **StarCraft II source.** Look up and cite how StarCraft II limits an automatically acquired chase (for example
+   the unit's acquire and leash fields in the 5.0.14 data, or a sourced mechanics reference). If the source shows a
+   different measure, such as distance from where the target was acquired, record the difference as a bug in
+   `DESIGN.md` §4 rather than widening this package. If no source is found, say so in the evidence. Either way the
+   straight-line measure stands for this package.
+4. Replace C-9: the target is within leash distance but beyond leash route length, behind a 5×5's cut corner. The
+   pursuer reaches it with zero `PursuitAbandoned`. It must fail on the current code first.
+5. Then WP6's measurements are repeated in full under D-15. The stop rules stay as written. An outcome change traced
+   to chases that now continue around a building is rule-caused and is reported with its trace.
