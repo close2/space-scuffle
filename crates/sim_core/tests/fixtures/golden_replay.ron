@@ -302,6 +302,11 @@
 // shape and keeps schema 29 reproduces every checksum recorded before this change, and a scratch
 // digest of only the entities, projectiles, players and effects is identical on all 1000 ticks
 // with and without the shape encoded. Every shape is still the full square of its cells here.
+// Re-recorded for plan 2026-11-18-contour-footprints Amendment 4 (B-142): each unit's movement
+// memory now holds where its current automatic chase began (`leash_origin`, hashed), so every
+// checkpoint changed. No behaviour did: a scratch build that leaves the new field unhashed
+// reproduces every checksum recorded before this change. The leash of 21 from that point is
+// reached nowhere in this replay.
 (
     checksum_schema: 30,
     seed: 0x5EED_0F_5CAFF1E,
@@ -329,25 +334,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xa228a1d73d29ef76,
-        0xf9498676218f5a82,
-        0x4c56d4353489c618,
-        0x06bd12bfa7a1364c,
-        0xcbf01d8deb071f20,
-        0xc53c0c422827d2d2,
-        0x68ab9e5e8e5f85d3,
-        0x8886bb40c567d037,
-        0x3e4a6dc20391cc15,
-        0x5989fd564819bb82,
-        0x72bda50b4f5e1450,
-        0xec70d041eabf5b06,
-        0x8b0f114577342d55,
-        0x9443c0e2aafcf728,
-        0xe2f959fd9e6df820,
-        0x312e646e2adf323f,
-        0x6fb5dad5637e5599,
-        0x917774d62a5b8d92,
-        0x727dc82636a9f30b,
-        0x1492dca13bd153ae,
+        0x6ccd3d1ba8244093,
+        0x303c0ee113ee40c4,
+        0xacdd86b80a1d13bc,
+        0xa36393fcede04c6f,
+        0xabb6da2bb932b0c1,
+        0xd947e7a592b77213,
+        0x997f8e4681f64d89,
+        0xef69937b202c1315,
+        0x08c181e841d7bbae,
+        0x3183358f1fabd8a3,
+        0x6a890901f87297d8,
+        0x5ab1fa029e1c10af,
+        0x167161b5aa9994d5,
+        0x20fcb165e0e89577,
+        0x65198e0f7c495c33,
+        0x4981dd2e1b728bbe,
+        0x2ceea03e67759f9e,
+        0x87721397f368e350,
+        0x7f969d1a624eae93,
+        0x6fb2901f314ba460,
     ],
 )

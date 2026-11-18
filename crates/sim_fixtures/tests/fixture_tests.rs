@@ -65,7 +65,10 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 30 (plan `2026-11-18-contour-footprints` WP2), which encodes
 /// each placed structure's footprint shape; a scratch build that does not encode the shape and
 /// keeps schema 29 reproduces `1_650_891_098_077_756_775`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_611_770_232_129_032_728;
+/// Re-recorded for plan `2026-11-18-contour-footprints` Amendment 4 (B-142), which hashes each
+/// unit's leash origin; a scratch build that leaves it unhashed reproduces
+/// `13_611_770_232_129_032_728`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_544_490_958_066_995_222;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

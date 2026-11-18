@@ -286,7 +286,8 @@ fields!(MovementMemory {
     flank_spent,
     flank_blocked_ticks,
     flank_walked,
-    flank_target
+    flank_target,
+    leash_origin
 });
 fields!(ActiveBuff {
     buff_id,

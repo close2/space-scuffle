@@ -1119,3 +1119,66 @@ fn units_blocked_by_a_holding_line_never_reverse() -> TestResult {
     }
     Ok(())
 }
+
+/// C-10 of plan `2026-11-18-contour-footprints` (Amendment 4, B-142): an automatic chase is given
+/// up once the pursuer stands farther than 5.0.14's leash, 21, from where the chase began
+/// (`movement_rules.ron` `pursuit.acquire_leash_radius`). A melee unit acquires an enemy beside
+/// it, which then walks away across open ground; the chaser follows, gives the chase up at the
+/// leash with a `PursuitAbandoned`, and never strays more than one step beyond it. Before, a
+/// direct chase was never measured, so it followed on.
+#[test]
+fn an_automatic_chase_is_given_up_beyond_its_leash() -> TestResult {
+    let mut world = sim_fixtures::world(flat(64)?, SEED);
+    let kind = world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == MoverType::Ground
+                && !a.is_immobile_by_default()
+                && a.max_speed > SimScalar::ZERO
+                && a.harvester.is_none()
+                && a.weapon_against(MoverType::Ground, None)
+                    .is_some_and(|w| w.melee)
+        })
+        .ok_or("the catalog needs a melee unit that acquires targets")?
+        .clone();
+    let origin = at(8.5, 32.5);
+    let chaser = spawn(&mut world, kind.unit_type_id, BLUE, origin)?;
+    let runner = spawn(&mut world, kind.unit_type_id, RED, at(10.5, 32.5))?;
+    order(
+        &mut world,
+        RED,
+        &[runner],
+        UnitOrder::Move {
+            target: at(62.5, 32.5),
+        },
+    );
+    let leash = 21.0;
+    let step = f64::from(kind.max_speed.to_f32());
+    let mut farthest: f64 = 0.0;
+    let mut gave_up = false;
+    for _ in 0..900 {
+        tick(&mut world, Vec::new());
+        farthest = farthest.max(distance_to(&world, chaser, origin));
+        gave_up = world.route_outcomes().iter().any(|o| {
+            o.entity == chaser && matches!(o.kind, RouteOutcomeKind::PursuitAbandoned { .. })
+        });
+        if gave_up {
+            break;
+        }
+    }
+    assert!(
+        farthest > 3.0,
+        "the chaser did not follow (farthest {farthest})"
+    );
+    assert!(
+        gave_up,
+        "the chase was never given up (farthest {farthest})"
+    );
+    assert!(
+        farthest <= leash + step + 1e-3,
+        "the chaser strayed {farthest} from where it began"
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}

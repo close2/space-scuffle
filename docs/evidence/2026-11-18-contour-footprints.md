@@ -636,3 +636,69 @@ scan range. Option (a) only changes which rule applies at 10.0, and both measure
   on. This needs a different acceptance bound than base + 1 (D-15, 5), and seed 7's flip has the same cause.
 - **(3)** Measure the leash never, only on a refused step, for a target that acquired the pursuer itself
   (retaliation). Narrower and invented; not recommended.
+
+## 6d. Amendment 4: 5.0.14's leash of an automatic chase (B-142)
+
+**Prototype first** (Amendment 4, condition 1). A scratch build of the WP6 work (`contour-footprints-wp6-wip2`)
+gave an automatic chase up once the pursuer stood farther than 21 from where the chase began, routed or direct, and
+adopted every route found after a refused step. On the WP6 showcase:
+
+| Seed | WP6 (old leash) | Prototype |
+|---|---|---|
+| Default | P1 at 1,918; give-ups P0 / P1 451 / 0 | P1 at 1,946; give-ups 0 / 0 |
+| 7 | P1 at 2,159; give-ups 376 / 0 | P1 at 2,187; give-ups 0 / 0 |
+
+The workers' give-ups fall to 0 (base 0), so the work went on. Seed 7's winner is still player 1 against WP5's
+player 0; it is traced with WP6's measurements (§6e).
+
+**Sources** (condition 2). `CGame` `AcquireLeashRadius` 21 (core `GameData.xml`:9 at `5444e12f13`). No unit in the
+5.0.14 `UnitData.xml` sets a per-unit leash: the editor shows one, "Movement: Acquire Leash Radius", and a value of
+-1 uses the game's ([SC2Mapster 162386](https://www.sc2mapster.com/forums/data/162386-weapon-level-3-but-what-does-it-do/previous)).
+Community posts describe the leash as measured from where the unit acquired its target
+([SC2Mapster 172487](https://www.sc2mapster.com/forums/development/miscellaneous-development/172487-changing-a-units-pursuit-distance?comment=2)).
+What `AcquireLeashResetRadius` 5 and `AcquireMovementLimit` 21 do is **not sourced**: searches found only the editor
+labels "Combat: Acquire Leash Radius" and "Combat: Acquire Movement Limit". They are not modelled, and B-142's row
+records them as a minor difference.
+
+**The rule.** `MovementMemory.leash_origin` (hashed) holds where the current automatic chase began. It is set on the
+chase's first tick, and cleared when the chase is abandoned, on an ordered attack, or on a new order (the memory's
+`restart`). `chase` gives the target up (`PursuitAbandoned`) when the pursuer stands farther than
+`movement_rules.ron` `pursuit.acquire_leash_radius` (21, required, whole world units ≥ 1) from it. `reroute_pursuit`
+adopts any route it finds. `PURSUIT_LEASH_SCAN_RANGES` and `Pursuit.scan_range` are removed. Ordered attacks are
+unchanged. Schema stays 30 (not yet on main).
+
+**Who it reaches** (condition 3). The leash-only tree (branch head plus the rule, full-square data), with the new
+field left unhashed so behaviour is compared directly:
+
+| Run | 21-leash abandonments | Against WP5 |
+|---|---:|---|
+| Battle 33, 64 seeds | 0 | `seeds.csv` byte-identical |
+| Showcase, default seed and seeds 1 to 8 | 0 | `units.csv` byte-identical |
+| `golden_replay`, `golden_replay_orders` | 0 | Pass unchanged |
+| Matrix, 1,160 runs | 6 | Only `35_12_vikings_vs_6_colossi` moves |
+
+Battle 35 moves on 4 of its 16 seeds: the seed of record, 9, 10 and 15. In each, Viking analogues follow the last
+Colossus analogue as it walks off and give the chase up 21 from where they began; for example, tick 547, entity 3 at
+(54.65, 58.88), origin (37.56, 46.48). The battle then runs to its 900-tick limit with that one Colossus alive,
+instead of ending with its death at ticks 566 to 607. Blue keeps all 12 Vikings and the expectation is still met;
+no winner changes. This follows from the 5.0.14 leash, so it is rule-caused (Amendment 4, item 3). Before, a direct
+chase was never measured.
+
+**Tests.**
+
+| Test | Before (wip2 code) | After |
+|---|---|---|
+| C-9 `contour_footprint_tests::a_worker_called_from_a_cut_corner_reaches_an_attacker_behind_the_hall` (a shipped worker in a shipped 5×5's cut corner, called to help against a shooter 10 to 21 away beyond the hall) | Fails: 40 `PursuitAbandoned` | Passes: reached, 0 abandoned |
+| C-10 `movement_contact_tests::an_automatic_chase_is_given_up_beyond_its_leash` (an enemy acquired beside a melee unit walks away) | Fails: the chase is never given up | Passes: given up within one step of 21 |
+| `movement_rules::tests::the_leash_is_read_and_must_be_positive` and the missing-section cases | New | Pass |
+
+C-10 was first written with the enemy across a long wall. Acquisition never chose that target, so the chaser never
+moved and that setup could not test the leash. It was re-derived as an enemy that walks away. The existing
+`movement_contact_tests::acquired_attack_without_a_short_route_is_dropped` passes unchanged.
+
+**Test edits.** `group_routing_tests::g11_movement_rules_fail_loudly_with_the_path` writes `movement_rules.ron`
+texts; they gain the now-required `pursuit` section, so the tolerance cases still reach their check.
+
+**Pins re-recorded** with proof headers: `golden_replay`, `golden_replay_orders` (every checkpoint) and
+`DEFAULT_SANDBOX_CHECKSUM` (`17_544_490_958_066_995_222`). A scratch build that leaves `leash_origin` unhashed
+reproduces each previous value, and the 21-leash fires nowhere in them.

@@ -7,8 +7,18 @@
 // group's leader whenever that route is at most this many thousandths longer than the unit's
 // own shortest route. 0 switches the rule off: every unit routes on its own, as in
 // StarCraft II. Allowed range 0 to 1000.
+//
+// `pursuit.acquire_leash_radius`: a unit chasing a target it acquired by itself gives the chase up
+// once it stands farther than this many world units from where the chase began (5.0.14 `CGame`
+// `AcquireLeashRadius` 21, core GameData.xml:9 at 5444e12f13; plan
+// `docs/plans/2026-11-18-contour-footprints.md` Amendment 4, B-142). 5.0.14's
+// `AcquireLeashResetRadius` 5 and `AcquireMovementLimit` 21 (GameData.xml:10 and 8) are not
+// modelled: what they do is not sourced (recorded in B-142). Whole world units, at least 1.
 (
     group_routing: (
         lane_tolerance_permille: 75,
+    ),
+    pursuit: (
+        acquire_leash_radius: 21,
     ),
 )
