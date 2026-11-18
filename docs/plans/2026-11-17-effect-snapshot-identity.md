@@ -1058,3 +1058,18 @@ apply, so no new design is needed.
 - Determinism: `git diff main -- crates/sim_*` is empty; goldens untouched.
 
 On acceptance B-133 is marked fixed in `DESIGN.md` §4 with its commits.
+
+**As built (2026-11-18, `d5449de9`, branch `projectile-launch`).** `effects::struck::launch_from_shooter` moves the
+start, after `at_struck_surface` has aimed the arrival, onto the shooter's outline (glass without a camera) towards
+the target at `LAUNCH_MARGIN` = 0 (on the glass itself, so the start lies on the drawn outline), the shooter's centre
+recovered from the published start and its drawn radius, the move at most `MOST_PULL` of the way to the arrival; the
+arrival and flight time are kept. The shooter is looked up by `StruckBubbles::find_shooter`, the same places as the
+struck end, counted apart (`shooter_found_in`); `on_bubbles` does both ends for `spawn_effects_from_events`. Unit
+tests `a_flyer_shooters_flight_starts_on_its_glass_towards_the_target`,
+`a_ground_shooters_start_moves_only_to_its_own_glass`, `a_projectile_whose_shooter_is_unknown_keeps_its_start_and_is_counted`.
+On radv the cross-plane projectile's flight starts 24.70 px from the shooter's drawn centre, its outline 24.70 px out:
+0.00 px off (bar 3 px; exact because the wave fires along the screen's x axis, which the test's outline radius also
+uses); every other bar passes, `rocket_trail` (Across) 259 → 242 px against needs 22, the rest within 1 px of
+Amendment 3 except `lance_beam` 115 → 143 and `prism_beam` 86 → 109. The valgrind effect stream now sends a
+projectile a frame; its window difference stays 0. `git diff main -- crates/sim_*` is empty. Evidence:
+`identity_b133_cross_plane_projectile_radv.png` beside `identity_wp4b_cross_plane_projectile_radv.png`.

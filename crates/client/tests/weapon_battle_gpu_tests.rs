@@ -1606,12 +1606,15 @@ fn judge_launch(subject: &SubjectReport, wave: usize, driver: &str) -> Option<St
     let from_centre = (x - cx).hypot(y - cy);
     let off = (from_centre - radius).abs();
     eprintln!(
-        "driver {driver}: wave {wave} {} (CrossPlane): its flight starts {from_centre:.2} px          from the shooter's drawn centre, whose outline is {radius:.2} px out: {off:.2} px off          the outline (tolerance {LAUNCH_TOLERANCE_PX})",
+        "driver {driver}: wave {wave} {} (CrossPlane): its flight starts {from_centre:.2} px \
+         from the shooter's drawn centre, whose outline is {radius:.2} px out: {off:.2} px off \
+         the outline (tolerance {LAUNCH_TOLERANCE_PX})",
         subject.family
     );
     (off > LAUNCH_TOLERANCE_PX).then(|| {
         format!(
-            "{} (CrossPlane): its flight starts {off:.2} px off the shooter's drawn bubble              outline (tolerance {LAUNCH_TOLERANCE_PX})",
+            "{} (CrossPlane): its flight starts {off:.2} px off the shooter's drawn bubble \
+             outline (tolerance {LAUNCH_TOLERANCE_PX})",
             subject.family
         )
     })
