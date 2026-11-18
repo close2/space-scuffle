@@ -174,8 +174,21 @@ pub struct UnitArchetype {
     /// the unit translates, the hull turns at [`Self::turn_rate`]. `StarCraft` II stores this
     /// per unit as `StationaryTurningRate`. Structures have 0.
     pub stationary_turn_rate: SimAngle,
-    /// Hard circle-circle collision radius in world units.
+    /// Hard circle-circle collision radius in world units: the body's size against other bodies
+    /// (separation, pushes, steering, placement occupancy), in weapon, scan, cast and interaction
+    /// reach, and as the drawn bubble. `StarCraft` II `Radius`.
     pub collision_radius: SimScalar,
+    /// Radius of the body's disc against terrain and structures, in world units: the contact
+    /// rule, route widths and the radius funnel, group lanes, the Charge path, the map-edge
+    /// domain, placement against terrain and structures, production exit rings and construction
+    /// site occupancy read it. Bodies still meet each other at [`Self::collision_radius`].
+    ///
+    /// `StarCraft` II stores this as `InnerRadius` ("collision with terrain / structures", 5.0.13
+    /// patch notes) and uses `min(InnerRadius, Radius)`. The catalog authors it as the optional
+    /// `terrain_radius`, strictly smaller than `collision_radius` and on ground bodies only;
+    /// omitted, and on structures, it equals `collision_radius`. Always `0 < terrain_radius <=
+    /// collision_radius` (plan `2026-11-18-inner-radius` D-1).
+    pub terrain_radius: SimScalar,
     /// Soft Boid repulsion boundary radius in world units.
     pub separation_radius: SimScalar,
     /// Integer priority mass used to resolve collision pushes (higher pushes lower).
@@ -1259,6 +1272,12 @@ struct UnitArchetypeDef {
     #[serde(default)]
     stationary_turn_rate_deg_per_tick: Option<f32>,
     collision_radius: f32,
+    /// Radius against terrain and structures in world units (`StarCraft` II `InnerRadius`), for a
+    /// ground body whose 5.0.14 value is below its `Radius`; omitted means equal to
+    /// `collision_radius`. Validation requires it finite, strictly positive, strictly below
+    /// `collision_radius` and on a ground mover (plan `2026-11-18-inner-radius` D-1, D-2).
+    #[serde(default)]
+    terrain_radius: Option<f32>,
     separation_radius: f32,
     push_priority: u8,
     sight_radius: f32,
@@ -1544,6 +1563,9 @@ impl UnitArchetypeDef {
             surround_walk: self.surround_walk,
             stationary_turn_rate,
             collision_radius: SimScalar::from_f32_lossy(self.collision_radius),
+            terrain_radius: SimScalar::from_f32_lossy(
+                self.terrain_radius.unwrap_or(self.collision_radius),
+            ),
             separation_radius: SimScalar::from_f32_lossy(self.separation_radius),
             push_priority: self.push_priority,
             sight_radius: SimScalar::from_f32_lossy(self.sight_radius),
@@ -1755,6 +1777,7 @@ impl StructureArchetypeDef {
             surround_walk: false,
             stationary_turn_rate: SimAngle::ZERO,
             collision_radius: radius,
+            terrain_radius: radius,
             separation_radius: radius,
             push_priority: 255,
             sight_radius: SimScalar::from_num(self.sight_radius),
