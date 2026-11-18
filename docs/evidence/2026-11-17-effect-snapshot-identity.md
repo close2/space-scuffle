@@ -101,5 +101,30 @@ hidden, so under Q0080 no further round is opened.
 
 ## 4. Simulation throughput (Amendment 1, deferred to WP8)
 
-See §4 of the plan's Amendment 6, which records the alternated release runs of the identity simulation merge
-`c4bf2f16` against its first parent `bf4a7d2d`.
+Amendment 1 measured the writer at WP3 on a loaded server, where the figures could not show "within noise". Here the
+identity simulation merge `c4bf2f16` (WP1 to WP4, WP4b and WP6) is compared with its first parent `bf4a7d2d`. That
+merge holds every simulation change of the plan; WP5 and WP7 changed the client only. Both trees were exported with
+`git archive` and built in release with the same toolchain (1.100.0). `cargo bench -p sim_core --bench throughput
+--locked` ran five times on each, alternated before/after, each run under the gate lock, on 2026-11-18 between
+05:44 and 06:09 UTC. Each run prints the median of three repeats; the table gives the median of the five runs, in
+ticks per second.
+
+| Map | Units | Before (`bf4a7d2d`) | After (`c4bf2f16`) | Change |
+|---|---:|---:|---:|---:|
+| 64x64 | 0 | 3264 | 3282 | +0.6 % |
+| 64x64 | 100 | 950 | 947 | -0.3 % |
+| 64x64 | 400 | 163 | 168 | +3.1 % |
+| 128x128 | 400 | 191 | 198 | +3.7 % |
+| 256x256 | 0 | 204 | 204 | 0 % |
+| showcase_canyon | 400 | 119 | 122 | +2.5 % |
+| 64x64, 67 casters | 400 | 236 | 239 | +1.3 % |
+
+The single runs, before: 3257/951/164/186/204/121/236, 3191/931/159/191/202/119/238, 3264/950/163/191/202/116/232,
+3290/966/165/195/206/121/236, 3269/915/163/194/207/119/238. After: 2401/486/112/111/172/112/216 (the first after-run
+coincided with a load average of 107 from another user's test run), 3282/947/168/199/204/122/201,
+3282/964/170/199/204/117/239, 3286/950/169/198/205/122/241, 3274/946/167/198/205/124/244. The load average was 5 to 30
+for the other runs.
+
+Every row is within noise of the tree before the plan, including the caster battle, which publishes about 100
+statuses a tick through the new `publish_statuses` pass. The release benchmark's floor (25 ticks/s) is far below
+every row.

@@ -1021,6 +1021,12 @@ review could not have seen, so under Q0080 no round was opened.
 - `crates/gate/suites.ron`: the plan added no test file (`effects/beams.rs` is a source file, and its unit tests
   run in the `client` lib). C22 (`suite_catalog_tests`) and `workspace_checks` pass unchanged.
 
+**Throughput (Amendment 1's deferred comparison).** The packet's §4 compares the identity simulation merge
+`c4bf2f16` with its first parent `bf4a7d2d`: five alternated release runs each, under the gate lock. Every row is
+within noise. On the flat rows the before and after medians are 3264/3282, 950/947, 163/168, 191/198 and 204/204
+ticks/s. `showcase_canyon` is 119/122, and the 67-caster battle (about 100 statuses a tick) is 236/239. The D-8
+item "the release throughput benchmark stays within noise" is met.
+
 **Out of scope, recorded (Q0002).**
 - *A frame-budget run with held beams* (§9's risk row). The `frame_budget` scene fights with two armies of one unit
   type. It holds no beam unless a beam unit is chosen, so a run would not measure the per-frame fog cut of held
