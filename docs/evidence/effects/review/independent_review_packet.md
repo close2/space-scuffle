@@ -7,6 +7,58 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP14 (the showcase's effects take; every effect in the frame budget)
+
+Branch `effects-viz-wp14`; plan Amendment 31. WP14 adds no look and changes none: every effect it shows was
+accepted in an earlier round. What is new is how the effects are shown to the world, in the CI showcase video, and
+how many draw at once in the crowd measure. Please write your review to `independent_review_wp14_1.md` next to this
+one. Pictures are on radv (the server's RX 580), release build, Xvfb 1280x720, unless marked lavapipe.
+
+**What changed.**
+
+| Item | Before | Now |
+|---|---|---|
+| Showcase video | One take (`battle`): pulse bots, beetles and workers; the only effects seen are the bots' rounds, the beetles' acid and glass deaths | A second take, `effects`, after it: a siege line (three siege crawlers, two burrowing scorpions, four bots) anchors and burrows at its base (scene `entrench`, 1x, 4 s), raiders (six flame trikes, six bots, two crawlers, two beetles) are time-lapsed in (`approach`, 4x) and run into it (`siege`, 1x, 9.6 s); the status card (`closing`) now ends this take. The `battle` take is unchanged |
+| A scene's effects | Not checked | A scene lists the effects it must show; the take fails if one is not spawned for the viewer during the scene, and the manifest records what each scene showed |
+| Frame budget | Splashes only (200 a second over the splash looks) | `--effect-mix`: the splashes, as many shots and blows, 20 deaths a second, 20 areas, 4 tethers, 2 spell missiles and 50 held unit looks (statuses, stances, morphs, cloak and burrow looks) at once |
+| Textures | — | None made; nothing spent (Amendment 31: `fx_energy` has no look to serve) |
+
+**Material.**
+
+- [wp14_effects_take_radv.jpg](wp14_effects_take_radv.jpg): six frames of the effects take at 1:1 (scaled to half
+  width): `entrench` at 1.2 s and 3.2 s, then `siege` at 0.8, 2.0, 3.6 and 6.0 s.
+- [wp14_siege_sequence_radv.jpg](wp14_siege_sequence_radv.jpg): 24 consecutive frames (40 ms apart) of `siege` from
+  0.8 s, the centre 640x360 of each frame: flame jets, spine lines, rounds and impacts.
+- The whole video (radv, 75 s, 1 873 frames before this round's trim to 1 813) is on the development server at
+  `~/scratch/effects-viz-wp14/showcase_radv/site/showcase.mp4`; the lavapipe one at
+  `~/scratch/effects-viz-wp14/showcase_lavapipe/site/`. After merge, the CI showcase publishes it.
+- [wp14_crowd_mix_400.jpg](wp14_crowd_mix_400.jpg) and [wp14_crowd_baseline_400.jpg](wp14_crowd_baseline_400.jpg):
+  the 400-unit measured battle at tick 300 with every effect at once (the full mix) and without; the review camera
+  at distance 22. Read with [frame_budget_wp14.md](frame_budget_wp14.md), which also explains why the mix's
+  random shot pairs make the frame busier than a battle.
+
+**Measured.**
+
+| Check | Result | Bar |
+|---|---|---|
+| Effects take, radv, full length: each scene shows what it asks for | `entrench`: `burrow_dig`, `burrow_mound`, `mode_seal_sweep`, `siege_anchor`; `siege`: `shell_impact`, `cannon_tracer`, `flame_line`, `spine_line`, `vehicle_wreck` (and `gauss_tracer`, `bullet_hit`) | all asked |
+| `battle` take unchanged | scenes start on ticks 251, 305, 683, 953, as in the inner-radius evidence | identical |
+| Effect passes' GPU time, every effect at once (RX 580) | +0.54 ms mean over no effects (+0.57 with the plan's stress) | ≤ 1.5 ms |
+| Frame interval, the plan's §10.3 stress (radv, quiet) | p50 14.97, p99 25.20 ms | ≤ 17.1, ≤ 26.0 (recorded baseline +5 %, +10 %) |
+| Frame interval, every effect (beyond the plan's stress) | p50 17.15, p99 26.93 ms | over by 0.3 % and 3.6 % |
+| Effects refused, Critical overflow (every effect, pool 6 144) | 0, 0 | 0, 0 |
+| Effects of the vocabulary drawn in the every-effect run | 59 of 59 | all |
+| CI showcase render on lavapipe | both takes complete on lavapipe with every asked-for effect; video 19.5 MB, teaser 4.26 MB (640 px, q50); estimated CI render step about 35 min | render step ≤ 40 min |
+
+**Points to look at.**
+
+1. `entrench`: do the morphs read at the orbit's distance (16 units, closer than the battle camera's default
+   22)? The anchor's seal sweep and the dig are short against a 4 s scene.
+2. `siege`: the camera follows the fight (`FollowCombat`, distance 16). Is the flame jet, the sieged shell and the
+   spine line each readable for what it is in the 1x fight, or does the crowd of rounds and wrecks blur them?
+3. The crowd frame with every effect: are the units still readable (checklist item 6)?
+4. The Baneling burst is not in the video: its unit has no media (Amendment 31). Its look is in the crowd frame.
+
 ## Identity WP5/WP7, round 2 (the conditions of `independent_review_identity_2.md`)
 
 Branch `effects-identity-looks`; plan Amendments 4 and 5, "Review round 1". Pictures on radv, debug build, Xvfb

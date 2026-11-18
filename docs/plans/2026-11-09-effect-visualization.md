@@ -2929,8 +2929,8 @@ branch; the new scenario order is used by the new scenario only).
   tick 81 (burrows at 34 and 36, sieges at 76 to 81), the first shot is at tick 304, the sieged crawlers and the
   burrowed scorpions fire their modes' splashes, the trikes their flame, and all 16 raiders and 4 defenders die by
   tick 1,200. Scenes: `entrench` (1x, 100 frames: the dig, the mound, the seal sweep and the anchor), `approach`
-  (4x until the first shot), `siege` (1x, 240 frames, ticks 305 to 545: shells, cannon rounds, flame, spines, wrecks) and `closing`,
-  the status card, moved here from the `battle` take so it still ends the video.
+  (4x until the first shot), `siege` (1x, 240 frames, ticks 305 to 545: shells, cannon rounds, flame, spines,
+  wrecks) and `closing`, the status card, moved here from the `battle` take so it still ends the video.
 - **A new scenario order, `EnterModes { player_slot }`** (`sim_core::scenario`): every unit of the player with a
   mode-switch ability casts its first one, queued behind the orders it already has (a cast at once for a unit
   without orders), exactly as a player's queued cast; a player without one is the typed `NoModeSwitches`. It is a
@@ -2957,3 +2957,43 @@ branch; the new scenario order is used by the new scenario only).
   over every `Status` and `Mode` effect of the vocabulary. The report lists which effects of the vocabulary were
   spawned or held at least once and which never were. The held unit looks' `Shell` layers write the bubble's own
   material and are not applied by the mix (recorded: the measure is of the effect passes).
+- **The effect pool is 6 144** (`effects.ron` budget, data first per §10.3). With every look at once the storms'
+  flares and the clouds' billows keep hundreds of effects alive; 2 048 refused 44 % of the spawns, 4 096 0.3 %,
+  6 144 none, with no Critical overflow at any size. The held-beam table keeps its 800.
+
+**Measured** ([`frame_budget_wp14.md`](../evidence/effects/review/frame_budget_wp14.md); the review packet's
+"WP14").
+
+| Bar (§10.3, WP14 row) | Result | |
+|---|---|---|
+| Effect passes' GPU time ≤ 1.5 ms (RX 580) | +0.47 ms (splashes), +0.57 ms (the plan's stress), +0.54 ms (every effect) | met |
+| p50 ≤ recorded baseline + 5 % (17.1 ms), p99 ≤ + 10 % (26.0 ms), the plan's stress (200 splashes/s, 20 areas, 50 statuses) | 14.97 and 25.20 ms (radv, load 4 to 7, two runs) | met |
+| The same, every effect at once (beyond the plan's stress: plus 200 shots/s and 20 deaths/s) | 17.15 and 26.93 ms | over by 0.3 % and 3.6 % |
+| Against today's faster baseline (11.86 ms p50) | the plan's stress +26 % p50, +17 % p99; every effect +45 %, +25 % | the cost is the main world's update (9.6 → 12.8 and 14.9 ms), not the GPU |
+| Every effect of the vocabulary drawn | 59 of 59 | met |
+| The showcase's effects take shows each effect it asks for | radv full length and the cut-down GPU test: all asked | met |
+| CI showcase renders on lavapipe within its budget (render step ≤ 40 min) | local lavapipe on 4 CPUs: both takes complete, every asked-for effect shown, video 19.5 MB, teaser 4.26 MB; the effects take costs 0.77 of the battle take per frame, so the CI step is estimated at about 35 min | met by estimate; the first CI run measures it (WP15) |
+
+**Tests.** `sim_core/scenario_tests` (`the_showcase_effects_battle_anchors_burrows_and_fights`,
+`enter_modes_queues_behind_earlier_orders`); `client_diagnostics/showcase_tests`
+(`the_effects_take_shows_every_effect_its_scenes_ask_for`, 29 s on radv); `showcase_storyboard_tests` (an unknown
+scene effect is refused; the viewer-advance check applies to scenarios that advance the viewer); `frame_budget_tests`
+(`the_mix_sources_cover_every_kind_of_look`); unit tests of the take's effect record, the mix's events and
+delivery, the air-burst stand-in and the report's exercised list. Gate catalog: `client_diagnostics/showcase_tests`
+is triggered by the effect engine, `effects.ron`, `units.ron`, `start_loadouts.ron` and both showcase scenarios
+(C22).
+
+**Open (recorded, Q0002).**
+
+- The main world's update cost of 20 live areas and 50 held looks (+3 ms at p50 on today's baseline): profile with
+  `--effect-mix` and take the `area_sight` item of Amendment 9's polish list first.
+- A quiet-machine series of the splash-only arm (S): measured only under load in this round.
+- The Baneling beat, when `volatile_tick` has media.
+- The CI render's margin: the step is estimated at about 35 of its 40 minutes and the teaser fits one rung later
+  than before (640 px, q50 locally). If the first CI render exceeds 35 min, shorten `siege`, then `closing`.
+
+**For WP15 (bookkeeping, not done here).** The evidence file
+`docs/evidence/2026-11-09-effect-visualization.md` gains a WP14 section (this amendment's table, the spend line,
+the CI showcase render once it runs on `main`); `DESIGN.md`'s "Effect presentation" row names the showcase take and
+the frame-budget mix, its "Showcase video" row the second take; the plan row in `docs/plans/README.md` records WP8
+to WP14 done; B-107 and B-108 are reviewed for closing.
