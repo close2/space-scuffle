@@ -93,15 +93,17 @@ Every arm is far under the plan's 1.5 ms. The opaque pass moves by 0.06 ms (run-
 
 ## Crowd capture (checklist item 6)
 
-`--capture-tick 300 --camera-distance 22` (review camera, not a figure of record):
-[`wp14_crowd_mix_400.jpg`](wp14_crowd_mix_400.jpg) with every effect,
-[`wp14_crowd_baseline_400.jpg`](wp14_crowd_baseline_400.jpg) without. At tick 300 with every effect: 3 166 live effects, 4 305 cards, 3 154 decals; effect footprints cover
-69.0 % of the screen (union, transparent texels included, so an upper bound), summed footprint area 12.4 screens,
-at most 85 footprints on one 4-pixel cell. Without: 67 live effects, footprints 2.9 %. The closer review camera
-frames about a quarter of the battle, so these shares are not comparable with WP6c's far view (25.3 %). Every
-cluster of the baseline frame is visible in the stressed one. The mix's shots fly between two hashed units, so
-its beams and tracers cross the whole fight, which a battle's shots (at weapon range) never do: the frame is
-busier than any battle would be.
+`--capture-tick 150` at the spec's far view, as in WP6c (retaken in review round 2, W14-6; the first take used a
+closer review camera that cut the fight at the frame's top): [`wp14_crowd_mix_400.jpg`](wp14_crowd_mix_400.jpg)
+with every effect, [`wp14_crowd_baseline_400.jpg`](wp14_crowd_baseline_400.jpg) without. Not figures of record.
+At tick 150 with every effect: 2 283 live effects, 2 877 cards, 3 203 decals; effect footprints cover 15.1 % of the
+screen (union, transparent texels included, so an upper bound), summed footprint area 1.9 screens, at most 69
+footprints on one 4-pixel cell. Without: 60 live effects, footprints 0.17 %. WP6c's splash stream covered 25.3 %
+at the same tick and view; the mix covers less because the battle's armies stand in one row here, and the far view
+culls small layers by their size on screen. Every cluster of the baseline frame is visible in the stressed one.
+The left of the frame is off the map in both. The mix's shots fly between two hashed units, so its beams and
+tracers cross the whole fight, which a battle's shots (at weapon range) never do: the frame is busier than any
+battle would be.
 
 ## lavapipe
 

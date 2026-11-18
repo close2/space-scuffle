@@ -7,6 +7,23 @@ effects against each of the seven checklist items, write **accept** or **reject*
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
 (round 5: `independent_review_round5.md`, see "Round 5" below).
 
+## WP14 round 2 (the conditions of `independent_review_wp14_1.md`)
+
+Branch `effects-viz-wp14`; plan Amendment 31 (corrected in place). Pictures on radv, release build, 1280x720.
+Please write the review of this round (if one is asked) to `independent_review_wp14_2.md`.
+
+| Finding | Answer |
+|---|---|
+| C2, W14-2: `entrench` shows none of its looks | Re-staged in data (`showcase.ron`): the orbit is centred on the siege line (7.5, 5.5) from its open side, the hall behind it, distance 10, pitch 68°. The line holds where it spawns: the scorpions carry no weapon until they burrow, so an attack-move would leave them behind. [wp14_entrench_strip_radv.jpg](wp14_entrench_strip_radv.jpg): frames 24 to 90 of the take, every 6th, a 600x300 crop at 1:1 centred on the line. Left to right in each tile: two scorpions, three crawlers (bots at the far left, the hall at the top). The dig: the scorpions sink into their dirt (tiles 1 to 3). The mound: the brown stain spreading under the scorpions (from tile 2 on). The seal sweep: the dark arcs round the crawlers while they seal (tiles 1 to 8). The anchor: the crawlers in their sieged clip from tile 8, with the anchor's dark pads beside them (clearest at the right of the last tiles; small at this zoom, which is the orchestrator's check of W14-2). The take's own check passed (all four spawned), and the effects battle is unchanged (the camera only) |
+| C2, W14-3: the scenario's comment | Rewritten to the orders the file gives |
+| C1, W14-1: cost attribution | Amendment 31 and `frame_budget_wp14.md` now put the +3.6 to 4.1 ms of update on the splash stream (the S arm's runs, with the reviewer's table). Registered as **B-137** in `DESIGN.md` §4: a quiet B/S/P series, a profile of S, `area_sight` only if P exceeds S, then a re-recorded baseline with the plan's stress held to +5 % (p50) |
+| C3, W14-4: `apply_initial_orders` docs | Names `EnterModes` and `NoModeSwitches`; the `NoModeSwitches` test loads the skirmish's own map |
+| C3, W14-5: "spawned", not "shown" | `Scene::effects`' doc, Amendment 31 and the GPU test (renamed `the_effects_take_spawns_every_effect_its_scenes_ask_for`) |
+| W14-6: the crowd frame | Retaken at WP6c's far view and tick 150, the whole fight in frame: [wp14_crowd_mix_400.jpg](wp14_crowd_mix_400.jpg), [wp14_crowd_baseline_400.jpg](wp14_crowd_baseline_400.jpg); figures in `frame_budget_wp14.md` |
+| W14-7: the pool | Amendment 31, `frame_budget_wp14.md` and the `effects.ron` comment say a refusal turns away a whole new effect (not counted by class), that no Critical layer lacked a slot at 2 048, and that 6 144 serves the every-effect measure, not a battle |
+| W14-10: the mix's invariant | Reworded: the same sources in the same order; which units an event joins depends on the frame |
+| W14-8, W14-9 | No change |
+
 ## WP14 (the showcase's effects take; every effect in the frame budget)
 
 Branch `effects-viz-wp14`; plan Amendment 31. WP14 adds no look and changes none: every effect it shows was
