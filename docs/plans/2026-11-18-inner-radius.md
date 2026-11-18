@@ -250,7 +250,7 @@ General rule, as in contact plan D-9: **a winner flip anywhere stops the WP.** T
 
 | Area | Files | WP |
 |---|---|---|
-| Plan row, question, register text | `docs/plans/README.md`, `docs/questions/open/0087-zergling-inner-radius.md`, `DESIGN.md` §4 | WP0 |
+| Plan row, question, register text | `docs/plans/README.md`, `docs/questions/closed/0087-zergling-inner-radius.md`, `DESIGN.md` §4 | WP0 |
 | Catalog model and loader | `crates/sim_core/src/catalog.rs`, `crates/sim_core/src/catalog/validation.rs` | WP1 |
 | Struct-literal archetypes in tests | `crates/sim_core/src/world/snapshot.rs` (test), `crates/sim_core/tests/damage_and_shields_tests.rs`, `crates/sim_core/tests/attack_move_simulation_tests.rs` | WP1 |
 | Wiring | `crates/sim_core/src/movement/{mod.rs,locomotion.rs,groups.rs,flee.rs}`, `crates/sim_core/src/world/attack_dash.rs`, `crates/sim_core/src/production/{exits.rs,construction.rs,lifecycle.rs}`, `crates/sim_fixtures/src/trace/route_overlap.rs` | WP2 |
@@ -270,7 +270,7 @@ Branch `inner-radius`. Each package writes its tests first and shows them red on
 ### WP0: records (S, docs only)
 
 - This plan's row in `docs/plans/README.md` (`Proposed`).
-- `docs/questions/open/0087-zergling-inner-radius.md`: D-4's two readings, the sources (R3, R4, liberty:12004), recommendation (a), and "Default until answered: (a), no data change for the Zergling analogue". Blocking: no.
+- `docs/questions/closed/0087-zergling-inner-radius.md`: D-4's two readings, the sources (R3, R4, liberty:12004), recommendation (a), and "Default until answered: (a), no data change for the Zergling analogue". Blocking: no.
 - `DESIGN.md` B-116 row restated: 17 archetypes (§2.2), the Zealot included; pointer to this plan.
 - Gate: docs-only `package` (fmt, `workspace_checks`, C17 and C18).
 
@@ -450,3 +450,9 @@ WP0 to WP5 are on branch `inner-radius`; the evidence is [`docs/evidence/2026-11
 - **F-2:** focused tests pin the flee goal's bounds, `clamp_into_domain`, the mobile producer's bounds, the exit ring's map-bounds and egress checks, and the overlap meter at the terrain radius; each was shown red with its path reverted to the collision radius.
 - **F-3:** `wall_contact_tests` T-B1 to T-B5 and T-B9 run both a body whose terrain radius equals its collision radius and one whose terrain radius is smaller.
 - **F-4:** doc lines wrapped; the showcase trace's wall is the hall's footprint, not terrain (Amendment 1's wording corrected).
+
+## Amendment 2 (2026-11-18): B-131 fixed by plan `2026-11-18-structure-contact`
+
+D-6's unit–structure circle, which Amendment 1 registered as B-131, is removed by plan
+[`2026-11-18-structure-contact`](2026-11-18-structure-contact.md): a registered structure is no body and meets ground
+units only through its footprint at their terrain radius.

@@ -168,7 +168,9 @@ pub fn compute_concave_arc_steering(
     })
 }
 
-/// A nearby body, as local steering, contact and arrival see it.
+/// A nearby unit body, as local steering, contact and arrival see it. Registered structures are
+/// never obstacles: units meet them through their footprint, as they meet terrain (plan
+/// `2026-11-18-structure-contact` D-2 B2, B-131).
 ///
 /// Values are captured at the start of the movement phase, so every unit in a tick reacts to the
 /// same world regardless of the order units are processed in.

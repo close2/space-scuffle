@@ -993,3 +993,308 @@ and 3 of 3 tests, 24 `KWin` children), and `cargo gate quick` on the merged tree
    display needs Linux anyway.
 5. **Window size message.** It now gives the physical size, the requested physical size, the logical size and the
    scale factor, and says the display changed the size, without assuming it shrank.
+
+## Amendment 4 (orchestrator, 2026-11-18): GPU lock starvation (B-136) joins WP4
+
+**Finding.** `client/weapon_battle_gpu_tests` failed twice this week because one child waited the harness's whole
+lock timeout (290 s) for `/run/lock/gpu.lock`: once during the effect identity WP7 runs, and once in the package
+gate of this branch's WP3 tree (`a6a4cd31`, test `weapon_looks_fire_in_a_staged_battle`, holder PID 2422378, not in
+`/run/lock/gpu-lock.log`, so a harness child, not a `with-gpu-lock` command). At the time another agent ran a series
+of `with-gpu-lock` frame-budget captures of about 75 s each with gaps of about 10 s. `flock` is not fair: a waiter
+that polls or blocks is not served before a holder that re-acquires, so a series of short holds can starve a test
+child for longer than its timeout. The gate passed on the rerun. Two flakes of one target in a week are a bug
+(gate blueprint §3.5), registered as **B-136**.
+
+**Decision.** WP4 is widened:
+
+1. Register B-136 in `DESIGN.md` §4 (the finding above, with the two runs).
+2. The GPU run ledger records, per child, the time it waited for the lock (`lock_wait_s`) next to `run_s`, and
+   the gate's slowest-children table shows it, so contention is visible in every gate log.
+3. Make waiting fair across every taker of the lock on this host: the harness and `with-gpu-lock` (both users).
+   The WP4 agent reads `with-gpu-lock` and the guide, and proposes the smallest sound design (for example a ticket
+   queue beside the lock, or a hand-over rule in `with-gpu-lock`), with its failure modes (a crashed holder, a
+   stale ticket, a taker that does not know the queue). Code under this repository (`gpu_run.rs`) may be changed
+   in WP4 with tests. A change to the shared `with-gpu-lock` script or the lock's location outside this
+   repository is **not** made by the agent: it is written as a proposal in this plan for the orchestrator, who
+   decides it under Q0086's delegation (`docs/guides/gpu-and-disk.md`, `AGENTS.md` §7) and records it.
+4. Until fairness lands, the guide asks agents to leave at least 60 s between consecutive `with-gpu-lock` holds
+   in a series, so a waiting test child gets the lock.
+
+Tests: T-9 as planned, extended to `lock_wait_s`; a unit test of any fairness logic added to `gpu_run.rs` with
+a fake lock; the guide change is checked by reading. B-136 closes when fairness is in place for both takers or
+the orchestrator records why not.
+
+## Amendment 5: WP4 as built, and the fair lock proposal for the orchestrator (2026-11-18, short note, charter §6)
+
+WP4 and Amendment 4 are on branch `gpu-ledger`, made from `main` at `bdfcffcc`. Nothing outside this repository
+was changed: `/usr/local/bin/with-gpu-lock` and `/run/lock/gpu.lock` are as they were. Part C is a proposal for
+the orchestrator, who decides it under Q0086's delegation.
+
+### A. The gate writes the ledger and prints the slowest children (WP4, T-9)
+
+- **New module `crates/gate/src/gpu_ledger.rs`** in place of the `test_log.rs` change §5 named: the ledger is a
+  file of its own, not a `cargo test` log. The gate still depends on no workspace crate; it repeats the variable's
+  name `SPACE_SCUFFLE_GPU_RUN_LEDGER` and reads the ledger as text.
+- **The ledger per run.** `run_tests` (`runner.rs`) sets `GpuLedger::for_run`: the file the variable already names
+  in the gate's own environment, else `<run log dir>/gpu-ledger.tsv`. `LaneRun::gpu_ledger` (`execute.rs`) passes
+  it to every test executable, reruns included. The gate reads only the lines appended after the run began (the
+  file's length at the start), so an inherited ledger that holds older runs adds nothing old.
+- **The table.** `RunReport::render` prints, after the result rows and before the failures, the five slowest
+  children by `run_s` (label, driver, display, `run_s`, `lock_wait_s`, slowest phase), then one line on the lock:
+  ```
+  GPU children, slowest first (5 of 87; ledger ~/scratch/logs/gate/<tree>/package/gpu-ledger.tsv):
+       run_s lock_wait_s  driver   display   slowest phase                      label
+        80.0        45.2  radv     offscreen startup and frames (79.0 s)        effect slice ...
+    GPU lock: 87 child(ren) waited 341.3 s in total, longest 290.0 s (weapon wave); 1 waited out the lock wait and never ran: weapon wave
+  ```
+  A run with no GPU child prints nothing. A ledger line that does not parse is counted in the heading, never
+  dropped. Times are kept as whole milliseconds parsed exactly from the ledger's decimals.
+- **Tests (T-9).** Unit tests in `gpu_ledger.rs`: the five slowest in order with their waits and the lock line; a run
+  without GPU children prints nothing; exact decimal parsing; the slowest phase; only this run's lines are read.
+  `runner.rs`: the block follows the result rows and precedes the failures and the verdict.
+  `tests/lane_run_tests.rs`, `every_executable_receives_the_run_ledger`: two fake executables on two lanes append
+  to the ledger the gate names, and the gate reads both lines back.
+
+### B. Amendment 4 in this repository
+
+1. **B-136 registered** in `DESIGN.md` §4, with a corrected diagnosis. The WP3 gate log
+   (`~/scratch/logs/gate/a6a4cd31…/package/client__weapon_battle_gpu_tests.log`, written 06:56:12) and
+   `/run/lock/gpu-lock.log` show the child arrived about 06:51:22, behind a `with-gpu-lock` capture held 06:51:21 to
+   06:54:36, and lost the hand-over to a second capture (PID 2422377, 06:54:36 to 06:56:23) that waited blocked in
+   the kernel. The holder the harness named, PID 2422378 with an empty command line, was not a harness child: it
+   was that capture's `flock(1)` helper. `with-gpu-lock` runs `exec 200>file; flock 200`, so `/proc/locks` names
+   the helper, which exits at once, while the lock lives on in the script's shell. In arrival order the child would
+   have run at 06:54:36, after about 194 s of its 290 s.
+2. **`lock_wait_s`.** The harness already recorded it per child since WP1. New: a child whose wait expires is
+   recorded too, before the run fails (`lock_timeout_ledger_line`: `run_s=0.00`, `exit=lock-timeout`), so the
+   gate's lock line names the starved child. The ledger's `lock=` field says `shared-queued` when the queue is used.
+3. **Harness (`gpu_run.rs`).**
+   - **The queue** (protocol in C). `GpuLock::acquire_queued` puts a `Ticket` in the queue directory and tries the
+     lock only while that ticket is the head; it removes the ticket once it holds the lock, or when it gives up
+     (`Drop`). It sweeps stale tickets of its own user. The harness uses the shared queue only when the host's
+     `with-gpu-lock` names `/run/lock/gpu.queue` (`shared_queue`), so both kinds of taker switch together: until
+     the orchestrator installs C's script, the harness behaves as before, and its ledger says `lock=shared`.
+   - **An ancestor that holds the lock through a descriptor** now fails at once. The old check compared
+     `/proc/locks`' PID with the ancestors, which is the dead helper under `with-gpu-lock cargo test`, so that case
+     waited the whole 290 s; the guide's "the harness detects that and fails" was true only for `flock <file> cmd`.
+     `ancestor_holder` also looks for an ancestor with the lock file open (`/proc/<pid>/fd`). The check now runs
+     before the wait, so a queued harness never joins a queue its own ancestor heads.
+   - **A gone holder** is described as such ("no longer runs: the lock lives on in a descriptor it handed on"), and
+     a timeout on the shared lock quotes the last `ACQUIRE` of `/run/lock/gpu-lock.log` with no release.
+   - `GpuLockError` implements `std::error::Error`.
+4. **Interim guide rule** in `docs/guides/gpu-and-disk.md`: at least 60 s between consecutive `with-gpu-lock` holds
+   in a series, until the lock serves in arrival order.
+
+**Tests** (`gpu_validation_tests.rs`, fake lock: a private lock file and queue directory, any Linux host, CI
+included): `queued_waiters_take_the_lock_in_arrival_order` (four waiters, served 0 to 3; the directory is 1777; no
+ticket left); `a_series_of_short_holds_cannot_starve_a_queued_waiter` (B-136 with a fake lock: a holder that
+re-takes the lock at once, 12 holds of 150 ms; the queued waiter gets it after at most 2 holds, under 2 s);
+`stale_tickets_block_nobody_and_a_live_one_keeps_its_turn` (dead PID, reused PID, expired deadline and a
+non-ticket file; this user's stale tickets are swept; a live ticket ahead holds the waiter to its timeout, and the
+waiter removes its own ticket); `the_queue_head_is_the_earliest_live_ticket`, `queue_tickets_are_named_and_parsed`
+(byte order of names is the queue order, also on ties); `open_tool_holds_are_read_from_the_lock_log`;
+`a_gone_holder_and_the_queue_declaration_are_described`;
+`an_ancestor_holding_the_lock_through_a_descriptor_fails_fast` (re-executes itself under `bash -c 'exec
+200>"$1"; flock 200; shift; "$@" 200>&-'`, as the host script locks); `a_lock_timeout_is_recorded_in_the_ledger`.
+
+### C. Proposal: fair waiting for every taker of the lock (for the orchestrator)
+
+**Why `flock` alone cannot be fair here.** Linux wakes every blocked `flock` waiter on release and the first to
+run wins; a process that polls (the harness, every 250 ms) loses nearly every hand-over to one blocked in the
+kernel (`with-gpu-lock`), and a holder that re-takes the lock at once beats both. Reproduced with the current
+script on a private lock: two loops of eight 0.5 s `with-gpu-lock` holds, and a waiter polling every 250 ms. The
+waiter got the lock after 8.2 s, behind all 16 holds (`~/scratch/gpu-ledger/proposal/old.*`). A rule in the
+script alone ("pause before re-taking") would not help a waiter that polls, and making the harness block in the
+kernel only turns certain loss into a race.
+
+**Design: a ticket queue beside the lock.** The lock file and the `flock` protocol stay exactly as they are, so
+exclusion never depends on the queue; the queue only decides who may try.
+
+- **Directory** `/run/lock/gpu.queue`, mode 1777 (world-writable and sticky, like `/run/lock`), created on demand
+  by the first taker (`mkdir -m 1777`); `/run/lock` is a tmpfs, so it starts empty after a reboot.
+- **Ticket**: an empty file named `<arrival_ns>.<pid>.<start_ticks>.<deadline_s>`: the wall-clock arrival in
+  nanoseconds, zero-padded to 20 digits; the PID that will hold the lock (the script's shell, or the test process);
+  that process's start time in clock ticks (`/proc/<pid>/stat` field 22); and the second after which the waiter
+  has given up (its timeout plus 2 s). Created with `O_EXCL` (`noclobber`).
+- **Order**: the byte order of the names, which is arrival order, then the rest of the name.
+- **Live**: a ticket counts while its PID runs with that start time (`/proc/<pid>/stat` is world-readable; `/proc`
+  is mounted without `hidepid`) and before its deadline.
+- **Turn**: a taker tries `flock` only while its own ticket is the earliest live one; it looks every 250 ms.
+- **Hand-over**: a taker removes its ticket the moment it holds the lock, so the next ticket becomes the head and
+  waits at the lock itself (the script blocked in the kernel, the harness polling) for the hold to end; a newcomer,
+  and a holder that wants the lock again, queue behind it.
+- **Timeout**: one wait covers queue and lock, as today (`GPU_LOCK_TIMEOUT`, 600 s for the script, 290 s for the
+  harness). On timeout, a signal while waiting, or any exit, the ticket is removed (`trap … EXIT`; HUP, INT and
+  TERM are trapped while waiting only, so a signal during the command behaves as today).
+- **Sweep**: a taker removes stale tickets of its own user that it passes; the sticky bit keeps other users'.
+
+**Failure modes.**
+
+| Case | What happens |
+|---|---|
+| A holder crashes | It has no ticket (removed on acquiring); the kernel releases the `flock` with its descriptor, as today. |
+| A waiter is killed (`SIGKILL`) | Its ticket stays but is stale (dead PID): every taker ignores it at once, and its owner's next taker removes it. |
+| A PID is reused | The start time differs, so the ticket is stale. |
+| A waiter hangs alive (stopped, swapped) while it is the head | Everyone behind waits, at most until its deadline (its own timeout plus 2 s), then it is ignored. Exclusion is unaffected. |
+| A ticket with a far deadline (`GPU_LOCK_TIMEOUT=2400`) | It is a real waiter; it is served in turn like any other. |
+| A taker unaware of the queue (plain `flock /run/lock/gpu.lock`, an older harness binary, a tool of the other user) | It still takes the lock between holds, as today; exclusion is unchanged, and the aware takers keep arrival order among themselves. Its holds show in `lock_wait_s` of the gate's table. |
+| The other user's agents | They use the same `/usr/local/bin/with-gpu-lock`, so they queue the same way with no change on their side; their PIDs' start times are readable. |
+| `with-gpu-lock` wraps `cargo test` (misuse) | The script holds the lock with no ticket; the harness sees the ancestor's descriptor and fails at once (B.3). |
+| The queue directory cannot be used (a file or symlink in its place, no space) | The script logs `QUEUE-ERROR` and exits 1; the harness fails with `GpuLockError::Queue`. Loud, never a silent fallback. |
+| A clock step | Only the order of the waiters present at that moment can be wrong once; exclusion and deadlines of a few seconds are unaffected. |
+| Equal arrivals | Ordered by the rest of the name, byte-wise, identically in both takers (tested). |
+
+**The script diff** (`/usr/local/bin/with-gpu-lock`; the full proposed file is
+`~/scratch/gpu-ledger/proposal/with-gpu-lock`). Besides the queue, `ACQUIRE` gains `wait_ms=` (queue and lock),
+`RELEASE`'s `dur_ms` counts the hold only, and `TIMEOUT` names the ticket it was queued behind.
+
+```diff
+--- /usr/local/bin/with-gpu-lock	2026-11-06 02:36:43.331667184 +0000
++++ with-gpu-lock	2026-11-18 08:26:09.133307505 +0000
+@@ -1,30 +1,105 @@
+ #!/usr/bin/env bash
+ # Serializes hardware GPU test invocations across quorra and spacescuffle
+ # Usage: with-gpu-lock <command> [args...]
++# Waiters are served in order of arrival through the ticket queue in QUEUE_DIR, shared with the
++# Space Scuffle GPU test harness (crates/client/tests/support/gpu_run.rs, B-136).
+ set -euo pipefail
++shopt -s extglob
+ LOCK_FILE="/run/lock/gpu.lock"
+ LOG_FILE="/run/lock/gpu-lock.log"
++QUEUE_DIR="/run/lock/gpu.queue"
+ TIMEOUT="${GPU_LOCK_TIMEOUT:-600}"
+ 
++log() { printf '%s %s user=%s pid=%d %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" \
++  "${USER:-$(id -un)}" "$$" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
++
++# Field 22 of /proc/<pid>/stat (start time in clock ticks), counted after the command name.
++start_ticks() {
++  local stat IFS=$' \t\n'
++  { stat=$(<"/proc/$1/stat"); } 2>/dev/null || return 1
++  stat=${stat##*) }
++  set -- $stat
++  printf '%s' "${20}"
++}
++
++# A ticket <arrival_ns>.<pid>.<start_ticks>.<deadline_s> waits while its process runs with that
++# start time and its deadline has not passed.
++live() {
++  local IFS=. now
++  [[ $1 == +([0-9]).+([0-9]).+([0-9]).+([0-9]) ]] || return 1
++  set -- $1
++  [[ $# -eq 4 ]] || return 1
++  printf -v now '%(%s)T' -1
++  (( now < $4 )) || return 1
++  [[ "$(start_ticks "$2" 2>/dev/null)" == "$3" ]]
++}
++
++START_NS=${EPOCHREALTIME/./}000
++DEADLINE=$(( ${START_NS:0:10} + TIMEOUT + 2 ))
+ exec 200>"$LOCK_FILE"
+-if ! flock --timeout "$TIMEOUT" 200; then
+-  printf '%s TIMEOUT user=%s pid=%d timeout=%ss cmd=%s\n' \
+-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-$(id -un)}" "$$" "$TIMEOUT" "$*" >>"$LOG_FILE" 2>/dev/null || true
++
++if ! mkdir -m 1777 "$QUEUE_DIR" 2>/dev/null && [[ ! -d $QUEUE_DIR || -L $QUEUE_DIR ]]; then
++  log QUEUE-ERROR "dir=$QUEUE_DIR cmd=$*"
++  echo "with-gpu-lock: cannot use the queue $QUEUE_DIR" >&2
++  exit 1
++fi
++if ! TICKS=$(start_ticks $$); then
++  echo "with-gpu-lock: cannot read this shell's start time from /proc/$$/stat" >&2
++  exit 1
++fi
++TICKET="$(printf '%020d' "$START_NS").$$.$TICKS.$DEADLINE"
++set -o noclobber
++if ! : >"$QUEUE_DIR/$TICKET"; then
++  log QUEUE-ERROR "ticket=$TICKET cmd=$*"
++  echo "with-gpu-lock: cannot write a ticket in $QUEUE_DIR" >&2
+   exit 1
+ fi
++set +o noclobber
++trap 'rm -f "$QUEUE_DIR/$TICKET"' EXIT
++
++# The queue's head: the earliest live ticket. Names sort byte-wise in arrival order (C collation,
++# local to this function, so the command never sees it). Stale tickets of this user (a waiter
++# that was killed) are removed on the way; the sticky directory keeps other users' for them.
++queue_head() {
++  local LC_ALL=C path name
++  for path in "$QUEUE_DIR"/*; do
++    name=${path##*/}
++    if live "$name"; then printf '%s' "$name"; return 0; fi
++    if [[ $name == +([0-9]).+([0-9]).+([0-9]).+([0-9]) && -O $path ]]; then rm -f "$path"; fi
++  done
++}
+ 
+-START_NS=$(date +%s%N)
+-printf '%s ACQUIRE user=%s pid=%d cmd=%s\n' \
+-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-$(id -un)}" "$$" "$*" >>"$LOG_FILE" 2>/dev/null || true
++# Wait for the turn. A signal while waiting still removes the ticket (EXIT trap).
++trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
++while :; do
++  head=$(queue_head)
++  [[ $head == "$TICKET" ]] && break
++  printf -v now '%(%s)T' -1
++  if (( now + 2 >= DEADLINE )); then
++    log TIMEOUT "timeout=${TIMEOUT}s queued_behind=$head cmd=$*"
++    exit 1
++  fi
++  sleep 0.25
++done
++
++printf -v now '%(%s)T' -1
++REMAINING=$(( DEADLINE - 2 - now ))
++(( REMAINING > 0 )) || REMAINING=1
++if ! flock --timeout "$REMAINING" 200; then
++  log TIMEOUT "timeout=${TIMEOUT}s cmd=$*"
++  exit 1
++fi
++rm -f "$QUEUE_DIR/$TICKET"
++trap - HUP INT TERM
++
++ACQUIRED_NS=${EPOCHREALTIME/./}000
++log ACQUIRE "wait_ms=$(( (ACQUIRED_NS - START_NS) / 1000000 )) cmd=$*"
+ 
+ set +e
+ "$@" 200>&-
+ rc=$?
+ set -e
+ 
+-END_NS=$(date +%s%N)
+-DUR_MS=$(( (END_NS - START_NS) / 1000000 ))
+-printf '%s RELEASE user=%s pid=%d rc=%d dur_ms=%d cmd=%s\n' \
+-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${USER:-$(id -un)}" "$$" "$rc" "$DUR_MS" "$*" >>"$LOG_FILE" 2>/dev/null || true
+-
++END_NS=${EPOCHREALTIME/./}000
++log RELEASE "rc=$rc dur_ms=$(( (END_NS - ACQUIRED_NS) / 1000000 )) cmd=$*"
+ exit "$rc"
+```
+
+**Tested on private paths** (`~/scratch/gpu-ledger/proposal/t*`): four script takers started 0.3 s apart behind a
+1.5 s hold ran A, B, C, D, each taking over at the previous release; a series of six back-to-back 0.5 s holds and a
+waiter that arrived during the first ran S1, WAITER, S2 … S6 (the current script: the waiter after all holds); a
+live ticket in the harness's format held the script until its process exited (2.1 s), and was then swept; a live
+ticket ahead made the script time out after `GPU_LOCK_TIMEOUT=2` with its own ticket removed and `TIMEOUT …
+queued_behind=<ticket>` logged; files that are not tickets (`README`, `1x.2.3.4`) were ignored and left; the
+created directory was 1777.
+
+**Rollout, for the orchestrator.**
+1. Install the proposed file as `/usr/local/bin/with-gpu-lock` (root), after the other user's owner is told, since
+   the script is theirs too.
+2. Nothing else changes: the next harness process sees the queue in the script and queues (`lock=shared-queued` in
+   the ledger). `the_host_lock_tool_uses_the_harness_lock_file` keeps checking the lock file.
+3. Record the decision; drop the interim 60 s rule from the guide; close B-136 with the commit and the first
+   gate whose lock line shows no `lock-timeout` under a capture series.
+
+**Out of scope (recorded, Q0002).** The harness keeps polling at its turn rather than blocking in the kernel: with
+the queue, only unaware takers compete at the lock, and Rust's standard library has no `flock` with a timeout.
+Fairness for takers that bypass `with-gpu-lock` is not attempted. The queue gives no priorities (a test child and a
+frame-budget capture are equal).
+
+### D. Results (2026-11-18, radv, the GPU shared with other agents)
+
+- `cargo clippy -p gate --all-targets` and `-p client --test gpu_validation_tests`, `-D warnings`: clean.
+- `cargo test -p gate`: all pass (142 unit tests, among them the 7 `gpu_ledger` tests and the runner test; 9 lane
+  tests, among them the ledger test; the other integration tests unchanged).
+- `gpu_validation_tests` at one thread on radv (the harness took the lock itself): 62 passed, 0 failed, 3 ignored
+  (the re-executed children), 158 s; its ledger shows the new `exit=lock-timeout` line of the busy-lock self-test.

@@ -44,16 +44,24 @@
 // survivors at 4x until it fires at the enemy base; `assault` shows the enemy base at 2x; `closing`
 // pauses before the result. Render-checked on radv: scene ticks are in
 // docs/evidence/2026-11-18-inner-radius.md §4.
+// Retold for plan 2026-11-18-structure-contact (Amendment 1: a registered structure is no body, so
+// units leaving their spawn rings are no longer steered round their own hall's circle, and the
+// near-tied lane fight goes to player 1 again). The viewer's army dies in the lane fight (its last
+// death at about tick 634); the enemy's four surviving pulse bots walk to the viewer's base, kill
+// its workers (ticks 1,171 and 1,216) and fire on its hall until it falls at tick 2,193. `march`
+// follows the enemy's first survivor, whom the fog hides until the viewer's base sees it; `assault`
+// shows the viewer's base falling at 2x; `closing` pauses before the result. Render-checked on radv:
+// scene ticks are in docs/evidence/2026-11-18-structure-contact.md §3.
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
-// (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are unchanged.
+// (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
 // Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall
-// (cells x 5 to 9 on row 5); `entrench` (1x, ticks 0 to 100: the modes settle by tick 81) orbits the
-// row from the open side, the hall behind it, close enough to see the dig, mound, sweep and anchor; the raiders' march is a 4x time-lapse until their first shot (about tick
-// 304); `siege` shows the fight at 1x for 240 frames (ticks 305 to 545; the raid is over before
-// its end). `closing` moved from the `battle` take to the end of this one, so the status card
-// still ends the video. A scene's `effects` must each be spawned for the viewer during the scene,
-// or the take fails (the manifest records what every scene showed). Render-checked on radv: the
-// `battle` take's scenes start on the ticks of the inner-radius evidence, its outcome unchanged.
+// (cells x 5 to 9 on row 5); `entrench` (1x, ticks 0 to 100: the modes settle by tick 81) orbits
+// the row from the open side, the hall behind it, close enough to see the dig, mound, sweep and
+// anchor; the raiders' march is a 4x time-lapse until their first shot (about tick 304); `siege`
+// shows the fight at 1x for 240 frames (the raid is over before its end). `closing` moved from the
+// `battle` take to the end of this one, so the status card still ends the video. A scene's
+// `effects` must each be spawned for the viewer during the scene, or the take fails (the manifest
+// records what every scene spawned).
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -136,10 +144,10 @@
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
                     length: UntilCombat(min: 5, max: 200),
-                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    camera: FollowUnit(player: 1, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Pathfinding",
-                        body: "Your survivors head for the enemy base, each on its own route on a navigation mesh sized to its body.",
+                        body: "The enemy's survivors head for your base, each on its own route on a navigation mesh sized to its body; the fog hides them until your base sees them.",
                         subsystems: ["Movement and pathfinding"],
                     ),
                 ),
@@ -151,7 +159,7 @@
                     camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Assault",
-                        body: "Your survivors cut down the enemy's workers and lay siege to its hall.",
+                        body: "The attackers cut down your workers and lay siege to your hall.",
                         subsystems: ["Combat"],
                     ),
                 ),

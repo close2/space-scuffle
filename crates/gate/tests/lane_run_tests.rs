@@ -53,6 +53,8 @@ struct Fake {
     grandchild_mib: usize,
     marker: Option<PathBuf>,
     fail_once: Option<PathBuf>,
+    /// A label to append to the GPU run ledger the gate names, as a GPU child would.
+    ledger_label: Option<String>,
     exit: i32,
 }
 
@@ -71,6 +73,7 @@ impl Fake {
                 "marker" => fake.marker = Some(PathBuf::from(value)),
                 "fail_once" => fake.fail_once = Some(PathBuf::from(value)),
                 "exit" => fake.exit = value.parse().unwrap_or(0),
+                "ledger_label" => fake.ledger_label = Some(value.to_string()),
                 other => panic!("unknown fake key {other}"),
             }
         }
@@ -87,6 +90,9 @@ impl Fake {
         }
         if let Some(path) = &self.fail_once {
             let _ = write!(spec, ";fail_once={}", path.display());
+        }
+        if let Some(label) = &self.ledger_label {
+            let _ = write!(spec, ";ledger_label={label}");
         }
         spec
     }
@@ -134,6 +140,19 @@ fn fake_entry() {
         child.wait().ok();
     }
     std::hint::black_box(&held);
+    if let Some(label) = &fake.ledger_label {
+        let ledger = std::env::var_os(gate::LEDGER_VAR).expect("the gate names the GPU run ledger");
+        let line = format!(
+            "label={label}\tdriver=radv\tdisplay=offscreen\tlock=shared\tlock_wait_s=0.50\t\
+             run_s=1.00\texit=0\tphases=-\n"
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(ledger)
+            .expect("invariant: the ledger's directory exists");
+        std::io::Write::write_all(&mut file, line.as_bytes()).expect("invariant: writable");
+    }
     if let Some(path) = &fake.fail_once {
         if !path.exists() {
             std::fs::write(path, "failed once").expect("invariant: the directory exists");
@@ -223,6 +242,7 @@ impl Sandbox {
                 limit_bytes: None,
             },
             stop_file,
+            gpu_ledger: None,
             on_finish: None,
         }
     }
@@ -632,5 +652,41 @@ fn progress_lines_are_whole_lines_and_lanes_tsv_lists_every_target() -> Result<(
         starts.windows(2).all(|w| w[0] <= w[1]),
         "sorted by start: {tsv}"
     );
+    Ok(())
+}
+
+/// WP4 (plan 2026-11-17-gpu-test-readback): every executable of a lane run receives the run's
+/// GPU run ledger, and the gate reads back exactly the lines its children appended.
+#[test]
+fn every_executable_receives_the_run_ledger() -> Result<(), GateError> {
+    let fakes: Vec<Fake> = ["first", "second"]
+        .iter()
+        .map(|name| Fake {
+            name: (*name).to_string(),
+            ledger_label: Some(format!("{name}-child")),
+            ..Fake::default()
+        })
+        .collect();
+    let sandbox = Sandbox::new(&fakes);
+    let ledger = gate::GpuLedger::for_run(None, &sandbox.logs);
+    let run = LaneRun {
+        gpu_ledger: Some(&ledger.path),
+        ..sandbox.lane_run(None)
+    };
+    let jobs = vec![job("first", 1, None), job("second", 1, None)];
+    let outcome = run_targets(&run, Scheduler::new(2, jobs, MemoryLimits::UNLIMITED));
+    assert!(
+        outcome.results.iter().all(|r| r.outcome == Outcome::Passed),
+        "{:?}",
+        outcome.results
+    );
+    let children = gate::GpuChildren::read(&ledger)?;
+    let mut labels: Vec<&str> = children.children.iter().map(|c| c.label.as_str()).collect();
+    labels.sort_unstable();
+    assert_eq!(labels, ["first-child", "second-child"]);
+    assert_eq!(children.unreadable, 0);
+    assert!(children
+        .render()
+        .contains("GPU children, slowest first (2 of 2"));
     Ok(())
 }

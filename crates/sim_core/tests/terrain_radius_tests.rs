@@ -390,13 +390,13 @@ fn any_structure(world: &SimWorld) -> UnitTypeId {
         .expect("invariant: the shipped catalog has a structure")
 }
 
-/// T-6: a teleport or unload point `t + ε` west of a structure's footprint is admitted and one
-/// `t − ε` from it is refused `Terrain`; a second body within the sum of the collision radii
-/// still refuses the admitted point as `Occupied`.
+/// T-6: a teleport or unload point `t + ε` west of the middle of a structure's west face is
+/// admitted and one `t − ε` from it is refused `Terrain`; a second body within the sum of the
+/// collision radii still refuses the admitted point as `Occupied`.
 ///
-/// The points lie beside the footprint's west face, far enough from its middle that the
-/// structure's own body (a circle of half its width, which meets other bodies at their collision
-/// radius, plan D-6) does not reach them: this test is about the footprint.
+/// A registered structure is not a body (plan `2026-11-18-structure-contact` S-2, B-131): its
+/// footprint judges the point at the terrain radius, even at the face's middle, where its old
+/// circle of half its width reached `h + r` from its centre.
 #[test]
 fn a_placement_beside_a_structure_uses_the_terrain_radius() {
     const EPSILON: f64 = 0.01;
@@ -408,16 +408,7 @@ fn a_placement_beside_a_structure_uses_the_terrain_radius() {
         .expect("open ground");
     let footprint = &world.map.structures()[&placed];
     let left = f64::from(footprint.top_left.0);
-    let (half_width, half_height) = (
-        f64::from(footprint.width) / 2.0,
-        f64::from(footprint.height) / 2.0,
-    );
-    let middle = f64::from(footprint.top_left.1) + half_height;
-    // Off the middle by enough that the nearer point clears the structure's circle.
-    let near = half_width + T - EPSILON;
-    let off = ((half_width + R + 0.02).powi(2) - near.powi(2)).sqrt();
-    assert!(off < half_height, "the points stay beside the west face");
-    let y = middle - off;
+    let y = f64::from(footprint.top_left.1) + f64::from(footprint.height) / 2.0;
     let body = world
         .spawn_unit(kind, PlayerId(0), at(4.0, 4.0))
         .expect("spawn");
