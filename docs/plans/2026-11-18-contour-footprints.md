@@ -622,3 +622,30 @@ As in the contact, inner-radius, structure-contact and structure-radius plans: *
 - **Harvest, return and build reach:** stay on the Place cells (radius plan D-3).
 - **A clearance field on quarter cells:** rejected (D-6).
 - **Drawing the contour** (an overlay): the game draws none. Not added.
+
+## Amendment 1 (orchestrator, 2026-11-18): the funnel takes a fitted retry before its fallback (R-2); B-140 registered
+
+**Decision.** The Proposed Amendment of evidence §3 is adopted in its recommended form.
+
+1. **Fitted retry.** When a channel's spare width is below one corner margin, so that both the shrunk and the
+   pinned funnel pulls fail, the funnel pulls once more with the margin `min(CORNER_SAFETY_MARGIN, (w_min − 2t)/2)`
+   and scales `ARC_CHORD_DIP` with it, before it falls back to portal midpoints. Reasons: route existence is
+   already exact (k ≤ 90 routes, k ≥ 91 does not, matching `8t² ≤ 1`), so the defect is only the route's shape; a
+   route that is legal today never reaches the retry, so it is unchanged; and the 0.05 constant is not tuned
+   (alternative 3 is forbidden by the plan). Alternative 2 is rejected because it breaks the owner's wall-off
+   argument (Q0087: workers pass the 0.707 gap); alternative 1 would leave an illegal route in the code.
+2. **Tests.** `a_diagonal_contour_gap_admits_exactly_the_discs_that_fit` passes for every k as specified (every
+   leg of every route passes the segment predicate). Add a unit test of the retry on a synthetic channel whose
+   spare width is a quarter of the margin, and a guard that a channel with spare width ≥ the margin produces the
+   same route bytes as before the change. The fallback, if still reachable, is counted and asserted zero in the
+   proptest.
+3. **Determinism.** With full-square shapes the retry is unreachable on shipped maps, so WP3 stays bit-identical
+   to WP2 everywhere until the data WP; the agent shows this with the same runs as WP1b.
+4. **B-140 registered** (finding of this plan, not fixed here): `sim_map` `validation_golden_tests`' three corpus
+   digests differ between native and `wasm32-wasip1` on the base tree too (validation counts: unreachable 0
+   against 4, warnings 2,487 against 2,362). Map validation is part of the simulation boundary that charter §3.1
+   requires to be bit-identical on every target, so this is a determinism bug, not a test detail. It gets its own
+   investigation; the WP0 agent of this plan adds the row with the evidence and does not change the pins.
+
+WP3 resumes from `contour-footprints-wp3-wip` with the retry, then `CONTOUR_PATH_GOLDEN`, `contour_route_checksum`
+and the `navmesh_measure` row, and continues to WP8 under the plan's stop rules.
