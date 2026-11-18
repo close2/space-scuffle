@@ -1033,3 +1033,28 @@ item "the release throughput benchmark stays within noise" is met.
   beams. Two things bound that cost instead. `HeldBeams` is sized from the catalog and the effect pool (R2-2: at most
   512 shipped). The effect-stress diagnostics report `beams_capacity` and `beams_refused`. A measured
   beam-heavy frame budget belongs with the next effect frame-budget pass.
+
+## Amendment 7 (orchestrator, 2026-11-18): B-133, a projectile's flight starts on the shooter's bubble (short note, charter §6)
+
+**What changes.** B-133: the client starts a projectile's flight at `ProjectileVisual::pos` on its launch tick,
+which the simulation publishes at the shooter's ground + 0.5, so an anti-air flyer's projectile leaves from about
+2.5 units below its own bubble (`identity_wp4b_cross_plane_projectile_radv.png`). The fix is presentation only:
+the client starts the flight on the shooter's bubble, found by `ends.attacker` through the same lookup that B-128
+uses for the struck end (`effects::struck`), at the bubble's glass towards the target, the mirror of WP4b's
+landing rule. When the attacker is not found (dead or unseen on the launch frame), the flight starts where it does
+today, and that fallback is counted, as the struck end's is. The simulation, the published records and every
+checksum are unchanged.
+
+**Why.** It is the open half of B-128 (WP4b aimed only the struck end); the same lookup and the same geometry
+apply, so no new design is needed.
+
+**How it is tested.**
+- Unit tests beside the launch code: a flyer shooter starts its flight on its bubble's glass towards the target; a
+  ground shooter's start moves only to its own glass; an unknown attacker keeps today's start and is counted.
+- The GPU test that produced the B-133 evidence (`weapon_battle_gpu_tests`, the cross-plane projectile subject)
+  gains a bar: the projectile's first drawn position lies within 3 px of the shooter's drawn bubble outline, on
+  radv; the evidence picture is regenerated beside the old one.
+- Steady state: the launch lookup allocates nothing (`sync_steady_state_tests` / the valgrind count stay at 0).
+- Determinism: `git diff main -- crates/sim_*` is empty; goldens untouched.
+
+On acceptance B-133 is marked fixed in `DESIGN.md` §4 with its commits.
