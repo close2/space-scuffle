@@ -586,3 +586,53 @@ while an unrefused direct chase is never measured. That asymmetry is what the co
 
 In StarCraft II, a unit chasing an automatically acquired target is leashed by distance from where it acquired it,
 not by its route's length (not sourced here; **verify** when the amendment is written).
+
+## 6c. Amendment 3 measured: the straight-line leash does not end the stall (Proposed Amendment 4)
+
+**Who reaches the leash today** (Amendment 3, item 2). A scratch probe (not committed;
+`~/scratch/contour-footprints/scripts/leash_probe.py`) prints every abandonment in `reroute_pursuit`: a found route
+longer than the leash, or no route. On the branch head (WP5 code, full-square data):
+
+| Run | Route-length abandonments | No-route abandonments |
+|---|---:|---:|
+| Matrix, 1,160 runs | 0 | 0 |
+| Battle 33, 64 seeds | 0 | 0 |
+| Showcase, default seed to the end | 0 | 0 |
+| `golden_replay`, `golden_replay_orders` | 0 | 0 |
+
+The leash is reached nowhere today, so changing how it measures cannot move any of these.
+
+**StarCraft II source** (Amendment 3, item 3). The 5.0.14 data has no per-unit leash for an automatic chase.
+`CAbilAttack` (core AbilData:115) has none; the only `Leash` values are the Carrier's interceptors (AbilData:2086) and
+wander behaviours. One game-wide setting exists: `CGame` `AcquireMovementLimit` 21, `AcquireLeashRadius` 21 and
+`AcquireLeashResetRadius` 5 (core `GameData.xml`:8–10 at `5444e12f13`, downloaded to
+`~/scratch/contour-footprints/dl-gamedata/`). Community posts describe the leash as measured from where the unit
+acquired its target ([SC2Mapster 172487](https://www.sc2mapster.com/forums/development/miscellaneous-development/172487-changing-a-units-pursuit-distance?comment=2),
+[SC2Mapster 162386](https://www.sc2mapster.com/forums/data/162386-weapon-level-3-but-what-does-it-do/previous));
+the data alone does not confirm the measure. Ours is twice the scan range (10 for the worker analogue), measured
+from the pursuer. Registered as **B-142**; not widened here.
+
+**Option (a) implemented and measured.** The leash compares the pursuer's straight-line distance to the target,
+not the route's length. The showcase on the default seed is **byte-identical to WP6**: player 1 wins at 1,918 with
+451 give-ups for player 0. The reason is in §6b's probe: the attackers the workers respond to stand 10.5 to 10.6
+from them in a straight line (for example tick 946: entity 3 at (7.109, 5.871), target at (16.090, 11.346)). That is
+already beyond the leash of 10.0 (scan range 5.0), so a straight-line measure taken when the step is refused also
+gives them up. With the square hall the leash was never consulted, because the direct chase was never refused.
+C-9 was not written, since the rule it would pin does not cure the stall. The work (WP6 and option (a)) is on
+`contour-footprints-wp6-wip3` (`f1817b66`).
+
+### Proposed Amendment 4 (for the orchestrator)
+
+**Decision asked.** What leash an automatic chase gets, given that the workers chase attackers beyond twice their
+scan range. Option (a) only changes which rule applies at 10.0, and both measures end at 10.0.
+
+- **(1) Recommended: adopt 5.0.14's leash (fix B-142 in this package).** An automatic chase is given up when the
+  pursuer is farther than `AcquireLeashRadius` 21 from where it acquired the target. The radius is authored in the
+  catalog's movement rules, not a constant; whether `AcquireLeashResetRadius` 5 resets the origin needs a source.
+  The probe shows no leash abandonment in the matrix, battle 33, the showcase or the goldens on today's data, so
+  those stay bit-identical; only the contour showcase moves. Needs a source check of the measure, and C-9 with a
+  target 10 to 21 away behind a 5×5's cut corner.
+- **(2)** Accept the give-ups as rule-caused. The workers now meet the existing leash where a square let them chase
+  on. This needs a different acceptance bound than base + 1 (D-15, 5), and seed 7's flip has the same cause.
+- **(3)** Measure the leash never, only on a refused step, for a target that acquired the pursuer itself
+  (retaliation). Narrower and invented; not recommended.
