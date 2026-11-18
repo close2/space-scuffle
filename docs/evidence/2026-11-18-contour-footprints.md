@@ -414,3 +414,114 @@ byte-identical; showcase `units.csv`, `summary.md`, `overlap.csv` byte-identical
 seeds 1 to 8; `golden_replay_tests` pass unchanged in debug, release and `wasm32-wasip1` release. No Blink, unload,
 Abduct or egress near a square corner occurred in these runs, so no difference needed a trace. The `sim_core`
 suite passes.
+
+## 6. WP6: stopped at the showcase acceptance (a stall at a chamfer), Proposed Amendment 2 below
+
+WP6 is **not committed** to `contour-footprints`. Its work (the 49 shapes and four B-138 rows, D-10's loader rule,
+the structure terrain radius change below, the WP6 tests and test edits, and WP7's two client tests) is kept on the
+side branch `contour-footprints-wp6-wip`.
+
+**Change on the branch.** The 49 `footprint_shape` values of §2.3 and the four B-138 rows (Sensor analogue 1×1 at
+radius 0.75; Spire and Greater Spire analogues 2×2 at 1.125; Spore analogue shape (0.5, 0.5, 0.25) at 0.875), each
+with its UnitData and Footprint lines (generated from the verified data by
+`~/scratch/contour-footprints/scripts/wp6_data.py`). D-10: `validate_radius` requires the radius to cover the shape
+instead of the floor.
+
+**A conflict the plan did not foresee (decision recorded, Q0002).** The plan keeps structure-radius D-5 (a
+structure's terrain radius is half its footprint's smaller side). For the Spore analogue that is 1.0 on its 2×2
+cells, above its new radius 0.875, which breaks the invariant `terrain_radius ≤ collision_radius` (the first tick
+reports `MovementInvariant … "terrain radius must be positive and at most the collision radius"` for the
+structure). On the branch a structure's terrain radius is its shape's smaller half-extent: unchanged for every
+full-box shape (all 45 others), 0.5 for the Spore analogue. It is still at most half the footprint (the map-edge
+domain of R-12) and at most the radius (which covers the shape). No rule reads it.
+
+**Tests on the branch, red on WP5 first**: `b134_footprint_shapes_follow_starcraft` (49 rows), the four B-138 rows of
+`b135_structure_radii_follow_starcraft`, `structure_radii_follow_the_engine_rule` (authored = E and E covers the
+shape), loader `a_structure_radius_must_cover_its_shape` (0.75 admitted and 0.6875 refused on the 1×1; 1.8125
+admitted and 1.75 refused on a 3×3 cut by 0.5), R-5 `every_shipped_structure_contour_is_in_melee_reach`, and C-3 to
+C-8 in `contour_footprint_tests.rs`; all pass with the data. C-3 asserts that the Zergling-sized body never reaches
+x − y ≥ 0. The plan's "never crosses x + y = 24" names the anti-diagonal through the gap; the wall that separates
+start and goal is the diagonal x = y.
+
+**Test edits on the branch, each re-derived:**
+
+- `structure_radius_tests`' scratch structures (R-1 to R-9) were written for full-square footprints at the control
+  radius 1.5 and the engine radius 1.8125. The cover rule refuses both through the loader with the shipped
+  contours, so the copy now keeps a full-square shape, loads with a covering radius, and gets the radius under test
+  in memory. The tests' setups and assertions are unchanged, and all 10 pass.
+- The catalog loader tests' RON helpers rewrote every other row to the old full-square radius or shape, which the
+  cover rule refuses. They now keep every other row as shipped. `a_structures_terrain_radius_is_half_its_footprints_smaller_side`
+  is renamed `…_is_its_shapes_smaller_half_extent`, with the same assertion for the 5×5.
+- `catalog_reference_values_tests::only_ground_units_with_a_smaller_inner_radius_author_one`: a structure's terrain
+  radius is its shape's smaller half-extent and at most its radius (was half its footprint).
+- C7 allowlist: `catalog.rs` 70, `catalog/validation.rs` 42 (ratchet).
+
+None of the plan's "expected test edits" (`production_transactions_tests`, `harvest_income_tests`,
+`full_match_tests`, `match_result_tests`, `structure_contact_tests` S-1 and S-4) failed. The whole `sim_core` suite
+otherwise passes.
+
+**Measurements** (WP5 tools against WP6 tools):
+
+| What | Result |
+|---|---|
+| Matrix (structure-free) | Bit-identical (1,160 runs) |
+| Battle 33 `seeds.csv` | Byte-identical |
+| `golden_replay_orders` | Passes unchanged |
+| `golden_replay` | Changes from checkpoint 1 (20 of 20 checkpoints). The scratch entity-only digest (entities, projectiles, players, effects) is **identical on all 1,000 ticks** between WP5 and WP6: only the halls' hashed clearance differs. Not re-recorded, because the package stops |
+| Control (a): WP6 with the seven hall contours reverted to (2.5, 2.5, 0), on a scratch build without the cover rule (which refuses a full 5×5 at 2.75) | Showcase `units.csv` byte-identical to WP5 on the default seed and seeds 1 to 8 |
+| Control (b): the four B-138 rows' cells and radii reverted | Byte-identical to WP6 on all nine runs |
+
+The hall contour alone moves the showcase.
+
+| Seed | WP5 | WP6 | Reversals P0 / P1 | Stall give-ups P0 / P1 | Deeper |
+|---|---|---|---|---|---|
+| Default | P1 at 2,191 | P1 at 1,918 | 25 / 10 → 13 / 10 | 0 / 0 → **451** / 0 | 0 / 0 |
+| 1 | P1 at 2,200 | P1 at 1,900 | 23 / 10 → 10 / 17 | 0 / 0 → **345** / 0 | 0 / 0 |
+| 2 | P1 at 2,185 | P1 at 1,883 | 22 / 12 → 12 / 20 | 0 / 0 → **380** / 0 | 0 / 0 |
+| 3 | P1 at 1,886 | P1 at 2,156 | 22 / 15 → 12 / 10 | 0 / 0 → **429** / 0 | 0 / 0 |
+| 4 | P1 at 5,700 | P1 at 2,575 | 11 / 11 → 17 / 11 | 0 / 0 → **395** / 0 | 0 / 0 |
+| 5 | P1 at 1,580 | P1 at 1,898 | 22 / 20 → 12 / 10 | 0 / 0 → **469** / 0 | 0 / 0 |
+| 6 | P1 at 3,419 | P1 at 2,142 | 19 / 23 → 12 / 15 | 0 / 0 → **404** / 0 | 0 / 0 |
+| 7 | **P0** at 2,552 | **P1** at 2,159 | 11 / 10 → 17 / 5 | 0 / 0 → **376** / 0 | 0 / 0 |
+| 8 | P1 at 1,712 | P1 at 1,892 | 40 / 14 → 12 / 19 | 0 / 0 → **383** / 0 | 0 / 0 |
+
+**Stop (D-15, 5).** The default-seed winner is unchanged, but acceptance fails: stall give-ups 451 against a bound of
+base + 1. Seed 7's winner also flips (D-15: "a winner flip anywhere stops the package").
+
+**Trace (default seed).**
+
+- **First divergence, tick 0.** Player 0's starting pulse bots spawn on slightly different ring points beside the
+  hall: entity 5 at (8.5664, 5.3929) instead of (8.6218, 5.5323). Scenario placement validates each point with
+  the disc against the shape (C2, D-8), which admits points nearer the hall's cut corners. This is rule-caused.
+- **The give-ups.** All 451 give-ups are `PursuitAbandoned` of player 0's two workers (`welder_drone`, entities 2
+  and 3). A scratch `eprintln` in `BlockingMeter::observe` (not committed) names each one; the first is at tick 946.
+- **What the workers do on WP5.** From tick ~932 they chase player 1's attackers east along the hall's south face
+  (y ≈ 5.67, x 7.9 → 11.4 by tick 1,160), with no route (route length 0, a direct pursuit), and are killed at
+  ticks 1,160 and 1,200.
+- **What they do on WP6.** They walk north-east into the hall's cut south-west corner and stop pressed against the
+  45° chamfer x + y = 13.5 (the hall covers cells 6 to 10), at (6.64, 6.36) and (7.20, 5.84). Their gap to the
+  chamfer is ≈ 0.36 against a terrain radius of 0.3125.
+- **Why they stall.** The chamfer faces almost straight along their heading to the targets at (14–16, 11–14).
+  The wall-slide of their direct step is a sliver, and B-113's rule waits a sliver out. So they gain no ground, the
+  pursuit is abandoned, they re-acquire, and this repeats about every two to four ticks until the match ends. They
+  survive the match, and the hall falls earlier (1,918).
+- **Classification.** Against the square, the same heading met the south face at about 45°, so the slide was large.
+  This is the plan's **defect** class "a stall … at a chamfer", not a rule-caused change. Every seed shows the same
+  give-ups (345 to 469), and seed 7's flip comes from the same stall.
+
+### Proposed Amendment 2 (for the orchestrator): a pursuit that stalls against a wall takes a route
+
+**Decision asked.** How a direct (route-less) pursuit leaves a wall that faces its heading. Contours put 45° walls
+in front of units that chase past a building's corner; a square never did.
+
+- **Recommended:** when a pursuer's direct step is waited out against terrain or a structure (a sliver slide, not a
+  body), it asks the mesh for a route to its target, as a move order's stall repath does, instead of being counted
+  toward `PursuitAbandoned`. Route-following already rounds the chamfer at the unit's terrain radius (WP3, C-5).
+  It needs its own trace of the pursuit code (`movement/locomotion.rs` pursuit band and stall counter) and a test
+  (C-9: a worker chasing a target across a 5×5's cut corner reaches it), then WP6's measurements again.
+- **Alternative:** limit the sliver-wait of B-113 to walls whose normal is within some angle of the step. This
+  invents an angle constant (D-15, 7 forbids tuning), so not recommended.
+- **Not proposed:** reverting the hall contour. It is the game's data (S3).
+
+On approval, WP6 resumes from `contour-footprints-wp6-wip` with that change, the `golden_replay` re-record (header:
+entity state unchanged through tick 1000, if it still holds), and WP6's measurements; then WP7 and WP8.
