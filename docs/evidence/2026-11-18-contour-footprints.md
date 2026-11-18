@@ -525,3 +525,9 @@ in front of units that chase past a building's corner; a square never did.
 
 On approval, WP6 resumes from `contour-footprints-wp6-wip` with that change, the `golden_replay` re-record (header:
 entity state unchanged through tick 1000, if it still holds), and WP6's measurements; then WP7 and WP8.
+
+**Addendum to WP2 (found by `cargo gate quick` after the merge of main).** One more pin carries the world checksum:
+`sim_fixtures/tests/fixture_tests.rs`' `DEFAULT_SANDBOX_CHECKSUM` (the default battle sandbox, which places three
+structures per side). Schema 30 changed it; WP2's runs did not cover `sim_fixtures`' tests. The same proof holds: a
+scratch build that does not encode the shape and keeps schema 29 reproduces the recorded `1_650_891_098_077_756_775`.
+Re-recorded as `13_611_770_232_129_032_728` with that header.
