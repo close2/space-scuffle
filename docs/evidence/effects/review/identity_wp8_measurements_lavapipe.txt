@@ -1,0 +1,52 @@
+Identity WP8 measurements (plan 2026-11-17-effect-snapshot-identity), lavapipe (SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe), debug build, Xvfb 1280x720, tree 8662f22b, 2026-11-18.
+
+== weapon_battle_gpu_tests::a_held_beam_follows_its_target_and_ends_with_it
+driver lavapipe: welder_drone (prism_beam) holds its beam from frame 5 on 40 frames to the kill at 45; at most 1 held and 1 live; its end lies at most 0.00 px from the target's outline point over 40 frames (mean 0.00 px) and travelled 163.5 px
+driver lavapipe: frames (# beam held, . none, x target gone): x....#########################################.xxxxxxxxxxx
+driver lavapipe: 1:1 sequence round the beam's end, frame:age of the youngest burn (s): 9:0.16 10:0.20 11:0.24 12:0.28 13:0.32 14:0.36 15:0.00 16:0.04 17:0.08 18:0.12 19:0.16 20:0.20 21:0.24 22:0.28 23:0.00 24:0.04
+driver lavapipe: the youngest burn's centre lies at most 0.00 px from the beam's end over 40 frames with a burn
+driver lavapipe: sample, 20 frames into the stream: 656 px of the path and 20 px within 3 px of its end changed
+driver lavapipe: after the death, the window's effect layers change 0 px, any death look included; the beam's last muzzle [547.7254, 412.32306] and end [519.5104, 222.9758]
+driver lavapipe: the target left the presented frame on frame 47; exit 0.08 s (2 frames); frames with the beam live after that and a frame: []; 0 px of its former path changed
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 45.39s
+
+== area_link_gpu_tests::fungal_growth_flies_lands_and_afflicts
+driver lavapipe: Fungal Growth impact at age 0.20 s, radius 2.250: laid at [2.671573, 8.328427] for the aimed point [2.671573, 8.328427] (0.00000 world units apart); its Critical ring centred 0.90 px from the projected aimed point (-0.61, -0.66) over 16 ray pairs
+driver lavapipe: Fungal Growth: missile looks held on 22 of 124 frames (first at Some(0.08) s), impacts laid 2 (first at Some(0.32) s), named status looks held 4; fog edge Some([18.884506, 7.2621036])
+driver lavapipe: Fungal Growth at the fog edge: at most 486 of 619 seen and 0 of 357 unseen ground samples changed against the first frame (most seen on frame 9)
+driver lavapipe: victim 0 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver lavapipe: victim 1 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver lavapipe: victim 2 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver lavapipe: victim 3 (Fungal Growth): bears its status on 71 frames from Some(1.56) s, wears the named look on 62, rim strength 0.300 to 0.800
+driver lavapipe: victim 4 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+driver lavapipe: victim 5 (storm stand-in): bears its status on 41 frames from Some(0.08) s, wears the named look on 0, rim strength 0.000 to 0.000
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 75.62s
+
+== weapon_battle_gpu_tests::weapon_looks_fire_in_a_staged_battle (every subject against its blank)
+driver lavapipe: 10 waves; lab families no presentable shooter carries: []
+driver lavapipe: wave 0 none+weld_sparks (Across): impact 174 px beside the struck bubble, its blank 4 px (needs 28)
+driver lavapipe: wave 0 gauss_tracer+bullet_hit (Across): impact 69 px beside the struck bubble, its blank 0 px (needs 20)
+driver lavapipe: wave 0 acid_spit+acid_hit (Across): impact 104 px beside the struck bubble, its blank 7 px (needs 34)
+driver lavapipe: wave 1 none+psi_slash (Across): impact 258 px beside the struck bubble, its blank 47 px (needs 114)
+driver lavapipe: wave 1 cannon_tracer+cannon_hit (Across): impact 98 px beside the struck bubble, its blank 0 px (needs 20)
+driver lavapipe: wave 1 grenade_lob+rocket_hit (Across): impact 252 px beside the struck bubble, its blank 7 px (needs 34)
+driver lavapipe: wave 2 sniper_tracer+bullet_hit (Across): impact 82 px beside the struck bubble, its blank 0 px (needs 20)
+driver lavapipe: wave 2 rocket_trail+rocket_hit (Across): impact 258 px beside the struck bubble, its blank 21 px (needs 62)
+driver lavapipe: wave 3 plasma_bolt+plasma_hit (Across): impact 189 px beside the struck bubble, its blank 0 px (needs 20)
+driver lavapipe: wave 3 prism_beam+beam_burn (Across): impact 106 px beside the struck bubble, its blank 13 px (needs 46)
+driver lavapipe: wave 3 cannon_tracer+plasma_hit (Across): impact 165 px beside the struck bubble, its blank 5 px (needs 30)
+driver lavapipe: wave 4 lance_beam+lance_burn (Across): impact 143 px beside the struck bubble, its blank 11 px (needs 42)
+driver lavapipe: wave 4 none+claw_rake (Across): impact 128 px beside the struck bubble, its blank 4 px (needs 28)
+driver lavapipe: wave 4 needle_volley+needle_hit (Across): impact 34 px beside the struck bubble, its blank 7 px (needs 34)
+driver lavapipe: wave 5 spore_bolt+acid_hit (Across): impact 142 px beside the struck bubble, its blank 0 px (needs 20)
+driver lavapipe: wave 5 none+impaler_strike (Across): impact 122 px beside the struck bubble, its blank 4 px (needs 28)
+driver lavapipe: wave 6 gauss_tracer+bullet_hit (Above): impact 89 px beside the struck bubble, its blank 2 px (needs 24)
+driver lavapipe: wave 6 gauss_tracer+bullet_hit (Below): impact 102 px beside the struck bubble, its blank 7 px (needs 34)
+driver lavapipe: wave 6 none+weld_sparks (Above): impact 105 px beside the struck bubble, its blank 8 px (needs 36)
+driver lavapipe: wave 7 none+weld_sparks (Below): impact 211 px beside the struck bubble, its blank 74 px (needs 168)
+driver lavapipe: wave 7 gauss_tracer+bullet_hit (AtFlyer): impact 302 px beside the struck bubble, its blank 4 px (needs 28)
+driver lavapipe: wave 8 gauss_tracer+bullet_hit (CrossPlane): beside the 3 ground units under the flyer, the impact changed 9 px, its blank 9 px (allowed 17)
+driver lavapipe: wave 8 gauss_tracer+bullet_hit (CrossPlane): impact 274 px beside the struck bubble, its blank 27 px (needs 74)
+driver lavapipe: wave 9 rocket_trail+rocket_hit (CrossPlane): beside the 3 ground units under the flyer, the impact changed 1 px, its blank 1 px (allowed 9)
+driver lavapipe: wave 9 rocket_trail+rocket_hit (CrossPlane): impact 402 px beside the struck bubble, its blank 1 px (needs 22)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 871.76s

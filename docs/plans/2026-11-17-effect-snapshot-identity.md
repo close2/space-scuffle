@@ -978,3 +978,52 @@ after the death no live instance and 0 px on the former path. Valgrind: effect s
   removed and that always printed 0. The parent asserts at least one per Fungal victim, and checks from the vocabulary
   that no look is keyed on `DamageOverTime`. Its fog-edge message is joined without the run of spaces.
 - **R3-4:** no change.
+
+## Amendment 6: WP8 as built, and the plan closed (2026-11-18, short note, charter §6)
+
+WP8 is on branch `effects-identity-wp8`, made from `main` at `8662f22b`. It changes documentation and evidence
+only, with no code or test. The plan is Done.
+
+**The evidence packet.** [`docs/evidence/2026-11-17-effect-snapshot-identity.md`](../evidence/2026-11-17-effect-snapshot-identity.md)
+sets the radv figures the reviews accepted beside a lavapipe run of the same three tests, at `8662f22b`, with
+`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` (CI's driver):
+
+- `a_held_beam_follows_its_target_and_ends_with_it`;
+- `fungal_growth_flies_lands_and_afflicts`;
+- `weapon_looks_fire_in_a_staged_battle`, which includes both `cross_plane` waves.
+
+Every bar passes on lavapipe on the first run, and no bar or staging was changed:
+
+- *Held beam.* The end lies 0.00 px from the target's outline point, and the burns 0.00 px from the end, on all
+  40 frames. One beam is held through the stream, and nothing is left after the death.
+- *Fungal.* The ring is centred 0.90 px from the aimed point (radv 0.94). No unseen fog sample changes. All four
+  victims wear the named look on all 62 frames, and the storm stand-in's victims wear none.
+- *Cross-plane.* The instant hit shows 274 px beside the flyer (needs 74) and 9 px beside the ground units (allowed
+  17). The projectile shows 402 px (needs 22) and 1 px (allowed 9).
+- *`needle_volley`.* It passes exactly at its bar on lavapipe too (34 px, needs 34), as on radv (Amendment 3).
+
+The packet's sheets show the three sequences at 1:1 and 2x on lavapipe, next to the radv sheets.
+
+**No further review round.** The lavapipe pictures match the accepted radv ones frame for frame. The beam and burn
+positions agree to 0.00 px, and the counts differ by a few pixels of rasterisation. lavapipe showed nothing the radv
+review could not have seen, so under Q0080 no round was opened.
+
+**Bookkeeping.**
+- `DESIGN.md` §4:
+  - B-122 to B-126 and B-128 are marked fixed, with their commits and merges.
+  - The "Effect presentation" row describes the lookup by id, the named statuses, the impacts laid by event and the
+    held beams. Its known-issues cell now lists B-132, B-133 and B-107; the WP11 review note is gone, since WP11 was
+    accepted.
+  - The new entry this plan named in §10 is B-128, registered by Amendment 3; it is now marked fixed.
+  - Amendment 3's open item, a projectile launched from the shooter's ground + 0.5, is registered as **B-133**.
+- `docs/plans/README.md`: this plan's row is Done.
+- Plan `2026-11-09-effect-visualization` gains Amendment 30, which points from its WP11 follow-ups to this plan.
+- `crates/gate/suites.ron`: the plan added no test file (`effects/beams.rs` is a source file, and its unit tests
+  run in the `client` lib). C22 (`suite_catalog_tests`) and `workspace_checks` pass unchanged.
+
+**Out of scope, recorded (Q0002).**
+- *A frame-budget run with held beams* (§9's risk row). The `frame_budget` scene fights with two armies of one unit
+  type. It holds no beam unless a beam unit is chosen, so a run would not measure the per-frame fog cut of held
+  beams. Two things bound that cost instead. `HeldBeams` is sized from the catalog and the effect pool (R2-2: at most
+  512 shipped). The effect-stress diagnostics report `beams_capacity` and `beams_refused`. A measured
+  beam-heavy frame budget belongs with the next effect frame-budget pass.
