@@ -2471,8 +2471,8 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
         })
         .count();
     eprintln!(
-        "driver {driver}: after the death, the window's effect layers change {window_changed} px \
-         (the death's own look); the beam's last muzzle {muzzle:?} and end {end:?}"
+        "driver {driver}: after the death, the window's effect layers change {window_changed} px, any death look \
+         included; the beam's last muzzle {muzzle:?} and end {end:?}"
     );
     eprintln!(
         "driver {driver}: the target left the presented frame on frame {gone}; exit {:.2} s \

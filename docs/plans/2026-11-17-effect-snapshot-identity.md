@@ -822,3 +822,72 @@ section "Identity WP5/WP7").
 The first radv run failed E1-3 (223 of 357 unseen samples changed): the storm stand-in's caster stood out of range and
 walked, moving the viewer's sight over the fog edge. It now stands within the ability's range; no bar was changed.
 
+## Amendment 5: WP7 as built (2026-11-17, short note, charter §6)
+
+WP7 (B-126) is on branch `effects-identity-looks` (commits `9dfaaf34`, `963b9a80`, `68587cda` and this note). Client and data
+only; the golden replays pass unchanged.
+
+**As planned.** A `Shot` effect may declare `sustain: Some((grace: <s>))`. The loader refuses it on any other event
+kind (`InvalidValue`, field `sustain`), with a grace that is not a positive number of seconds (`grace`), and when its
+held layers' longest exit exceeds `MAX_SUSTAIN_EXIT` = 0.1 s (`exit`). A held layer on a `Shot` is allowed only when
+it is sustained. The coverage test `every_shipped_weapon_names_the_looks_of_the_event_it_publishes` refuses a
+sustained travel on a weapon that does not publish an instant beam. The new `effects::beams` module holds
+`HeldBeams`: at most 64 slots sorted by `(attacker, EffectSource)`, found by binary search, with a `refused` counter.
+`spawn_effects_from_events` hands each admitted strike to `HeldBeams::strike` before it asks for a travel shot; a
+`BeamVisual` with `ends` whose travel is sustained refreshes its slot (a retarget moves the far end) or holds a new
+instance, and spawns no shot. The deadline is the strike's time plus the attacker's presented
+`attack_swing.period_ticks / 25` (the look's longest layer without a swing) plus the grace. `keep_beams` runs after
+the event wiring: it puts each line from the attacker's bubble to the target's outline (`beam_line`, through the new
+`struck::onto_struck_outline`), recomputes the fog cut with `shot_clip` for another player's beam, and releases a beam
+whose attacker or target is not presented or whose deadline has passed. Per-strike burns stay one `Point` per strike.
+
+**Data.** `prism_beam` and `lance_beam` gain `sustain: Some((grace: 0.12))`. Their body and core ribbons and their
+muzzle glows become held layers (`duration: 0.04` to come in, along the new curves `body_beam_on` and `beam_on`, which
+are `body_beam`'s and `beam_steady`'s first frames; `exit: 0.08`). The riding pulses stay one-shot layers, so a beam
+shows its pulses as it comes on and then holds steady, its core scrolling. This is a look change for the review
+(D-9).
+
+**Choices made while building.**
+
+- *A beam ends once its exit is over.* A released held instance lives on until its one-shot layers end, so the onset
+  pulses (up to 0.43 s) would outlive a target that dies early. `HeldBeams` keeps released beams in a second
+  64-slot list and ends each (`EffectRuntime::retire`) on the first keep after its exit; a full list ends one at
+  once. A session change ends every beam at once (`HeldBeams::follow`, as `StruckBubbles::follow`), because entity
+  ids restart.
+- *Beams only.* D-4 holds `BeamVisual` strikes; a `HitscanTracer` is never held, so the coverage rule reads "an
+  instant beam" (`LaserBeam` or `LightningArc` without a projectile speed), narrower than "an instant line".
+- *The beam leaves the attacker's bubble.* The line starts at the attacker's drawn centre, so a flyer's beam no
+  longer starts at its ground + 0.5 (unit test `a_flyers_beam_leaves_its_own_bubble_and_ends_on_the_targets_glass`).
+  A strike's first frame uses the event's travel line; `keep_beams` moves it onto the bubbles on the same frame.
+- *A refused strike draws no travel*, as a refused area draws nothing; it is counted.
+- *The GPU test is a child of its own* in `weapon_battle_gpu_tests.rs` (`held_beam_child`, parent
+  `a_held_beam_follows_its_target_and_ends_with_it`), not a wave of the family waves: it needs a walking target, a
+  kill and paused drawn/bare picture pairs, which the waves' staging does not have. No shipped beam unit has media,
+  so, as the waves lend lab families, the child lends the first shipped sustained look (`prism_beam` with its burn)
+  to a presentable ground shooter in the test world's catalog only, its weapon made an instant `LaserBeam` with a
+  range of at least 6 (so the walking target stays in range). Every frame, after transforms propagate, it records the
+  held beam's line end and the drawn target bubble's outline point towards the shooter (from the bubble's
+  `GlobalTransform` and the camera), both projected. Both follow the same geometry, so this check proves that the
+  beam follows the drawn bubble on the same frame (a first version, recorded before propagation, measured a constant
+  one-frame lag of 5 px, the test's own); the picture pair proves the drawn end. The parent requires one beam and one live instance for the
+  whole stream, the end within 3 px of the outline point on every frame, beam pixels along the path and within 3 px
+  of its end in the mid-stream pair, no live instance after the exit plus one frame from the target's death, and no
+  changed pixel along the former path (from 0.2 to 0.6 of its length, clear of the death look) in the pair taken
+  then.
+- *Steady state.* The valgrind effect stream sends, every frame, a beam from one bubble at a target that changes
+  every fourth frame, and every seventh frame a beam at an entity that is not presented (a dead target). The window
+  difference is 0. Those dead-target strikes find their struck bubble nowhere, so the stream's `Nowhere` bound is
+  their count, not 0. `sync_steady_state_tests` tracks `HeldBeams::buffers` and gives every air weapon of its stream
+  a sustained beam.
+
+**Evidence** (radv, debug build, Xvfb 1280x720; `identity_wp5_wp7_measurements.txt`, `identity_wp7_held_beam_radv.png`).
+
+| Check | Result |
+|---|---|
+| Beams held and live through the stream | 1 and 1 on all 40 frames |
+| Beam end against the drawn target's outline point | 0.00 px on 40 frames; the end travelled 81 px |
+| Mid-stream pair: changed pixels along the path / within 3 px of its end | 306 / 9 |
+| After the death (target gone on frame 47, exit 0.08 s): live instances after exit + 1 frame; changed pixels on the former path | none; 0 |
+| `weapon_look_tests` (14, six new), `effect_catalog_tests` (39), `beams` unit tests (3) | pass |
+| Valgrind effect stream with held beams, retargets and dead targets | window difference 0 (baseline 0) |
+| `sync_steady_state_tests` combat streams | pass |
