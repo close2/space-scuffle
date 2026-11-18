@@ -59,3 +59,10 @@ no price (`BudgetError::UnpricedModel`), and prints spent and remaining dollars 
 per-run cap (12), the rolling 7-day cap (25, then 60 by Q0047) and `--weekly-budget` are removed; Google's quota
 refusals still stop a run (exit code 3), and the message says it is Google's limit. The committed ledger
 (`docs/evidence/veo/ledger.jsonl`) totals 41 generations, **$16.40 spent, $183.60 remaining**.
+
+## Note, 2026-11-18: the total raised to $230
+
+Owner (chat, 2026-11-18): "cap is raised to 230$". `assets/media/veo_budget.ron` now holds
+`total_budget_usd_cents: 23000` ($230.00); the single total-spend rule above is otherwise unchanged, and the $200
+limit applied from 2026-11-05 to 2026-11-18. The committed ledger on that day totals 269 clips ($107.60) and 55 paid
+image requests ($6.05): **$113.65 spent, $116.35 remaining**.

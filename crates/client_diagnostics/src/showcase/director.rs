@@ -527,6 +527,7 @@ mod tests {
             overlay: Overlay::None,
             badge: None,
             cut: false,
+            effects: Vec::new(),
         }
     }
 

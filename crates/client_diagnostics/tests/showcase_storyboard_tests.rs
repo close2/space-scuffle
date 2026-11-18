@@ -71,6 +71,7 @@ struct Fixture {
     cards: RepositoryCards,
     catalogs: sim_core::catalog::RuntimeCatalogs,
     textures: PathBuf,
+    effects: client::effects::catalog::EffectCatalog,
 }
 
 impl Fixture {
@@ -82,6 +83,10 @@ impl Fixture {
                 assets().join("catalog"),
             )?,
             textures: assets().join("textures"),
+            effects: client::effects::catalog::EffectCatalog::load(
+                &assets().join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+                &assets(),
+            )?,
         })
     }
 
@@ -90,6 +95,7 @@ impl Fixture {
             subsystems: &self.cards.subsystems,
             catalog: &self.catalogs.units,
             textures: &self.textures,
+            effects: &self.effects,
         })
     }
 
@@ -259,6 +265,14 @@ fn validation_reports_the_first_fault_in_order() -> Result<(), Box<dyn Error>> {
                 ..
             }
         )
+    }));
+    // A scene that asks for an effect the vocabulary does not define.
+    let mut storyboard = base.clone();
+    storyboard.takes[0].scenes[caption]
+        .effects
+        .push("no_such_effect".to_owned());
+    cases.push(("unknown effect", storyboard, |f| {
+        matches!(f, StoryboardFault::UnknownEffect { .. })
     }));
     let slugs: [(&str, String, Expectation); 2] = [
         ("unknown slug", "no_such_identity".to_owned(), |f| {
@@ -459,7 +473,24 @@ fn the_showcase_scenario_fields_only_media_backed_identities() -> Result<(), Box
 #[test]
 fn skirmish_applies_the_scenario_initial_orders_to_the_viewer() -> Result<(), Box<dyn Error>> {
     const TICKS: usize = 100;
+    let mut checked = 0;
     for scenario in showcase_scenarios()? {
+        // Only a scenario that sends the viewer's (slot 0's) army forward; the effects take's
+        // siege line holds its ground (sim_core `scenario_tests`).
+        let manifest = sim_core::scenario::ScenarioManifest::from_ron_str(
+            &std::fs::read_to_string(assets().join(&scenario))?,
+        )?;
+        let advances = manifest.initial_orders.iter().any(|order| {
+            matches!(
+                order,
+                sim_core::scenario::InitialOrder::AttackMoveToStart { player_slot: 0, .. }
+                    | sim_core::scenario::InitialOrder::AttackMoveToCell { player_slot: 0, .. }
+            )
+        });
+        if !advances {
+            continue;
+        }
+        checked += 1;
         let scenario = scenario.to_string_lossy().into_owned();
         let mut harness =
             battle_harness::Harness::boot_scenario(client::ClientMode::Skirmish, &scenario);
@@ -496,5 +527,6 @@ fn skirmish_applies_the_scenario_initial_orders_to_the_viewer() -> Result<(), Bo
             "{scenario}: the viewer's army did not advance on slot 1 ({before} -> {after})"
         );
     }
+    assert_ne!(checked, 0, "the battle take's scenario advances the viewer");
     Ok(())
 }

@@ -330,6 +330,8 @@ struct TakeState {
     buffer: FrameOrderBuffer<(FrameRecord, Vec<u8>)>,
     mezzanine: Option<Mezzanine>,
     outcome: TakeOutcome,
+    /// The effect runtime's spawn counts per effect when the current scene started.
+    scene_spawns: Vec<u32>,
 }
 
 impl TakeState {
@@ -379,6 +381,7 @@ impl TakeState {
             buffer: FrameOrderBuffer::default(),
             mezzanine: Some(mezzanine),
             outcome,
+            scene_spawns: Vec::new(),
         }
     }
 
@@ -581,6 +584,7 @@ fn observe_loading(world: &mut World, state: &mut TakeState) -> Result<(), Strin
     state.manifest.readiness_seconds = state.started.elapsed().as_secs_f32();
     *world.resource_mut::<TimeUpdateStrategy>() = TimeUpdateStrategy::ManualDuration(FRAME_STEP);
     state.stage = Stage::Recording;
+    state.scene_spawns = spawn_counts(world);
     let now = Instant::now();
     state.recording_started = Some(now);
     state.last_frame_at = Some(now);
@@ -612,6 +616,7 @@ fn record_frame(world: &mut World, state: &mut TakeState) -> Result<(), String> 
             first_frame: index,
             frames: 0,
             start_tick: tick,
+            effects: Vec::new(),
         });
     }
     if let Some(scene) = state.manifest.scenes.last_mut() {
@@ -633,11 +638,15 @@ fn record_frame(world: &mut World, state: &mut TakeState) -> Result<(), String> 
         .spawn((Screenshot::primary_window(), ShowcaseFrame(record)))
         .observe(readback);
     world.resource_mut::<FrameStamp>().0 = Some(index);
-    match state
+    let scene = state.clock.scene;
+    let outcome = state
         .clock
         .end_frame(&state.take.scenes, combat)
-        .map_err(|error| error.to_string())?
-    {
+        .map_err(|error| error.to_string())?;
+    if outcome != FrameOutcome::Continue {
+        close_scene_effects(world, state, scene)?;
+    }
+    match outcome {
         FrameOutcome::Continue => {}
         FrameOutcome::NextScene => state.camera.start_scene(),
         FrameOutcome::Finished => {
@@ -657,6 +666,75 @@ fn record_frame(world: &mut World, state: &mut TakeState) -> Result<(), String> 
         );
     }
     Ok(())
+}
+
+/// The effect runtime's spawn counts per effect id, or none without an effect runtime.
+fn spawn_counts(world: &World) -> Vec<u32> {
+    world
+        .get_resource::<client::effects::runtime::EffectRuntime>()
+        .map_or_else(Vec::new, |runtime| runtime.spawned_per_effect.clone())
+}
+
+/// The names of the effects whose spawn count grew from `before` to `after`, sorted.
+fn grown_effects(
+    catalog: Option<&client::effects::catalog::EffectCatalog>,
+    before: &[u32],
+    after: &[u32],
+) -> Vec<String> {
+    let Some(catalog) = catalog else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = grown_ids(before, after)
+        .filter_map(|index| {
+            let id = client::effects::catalog::EffectId(u16::try_from(index).ok()?);
+            catalog.effect(id).map(|effect| effect.name.clone())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// The indices whose count in `after` exceeds the one in `before` (0 where `before` is short).
+fn grown_ids<'a>(before: &'a [u32], after: &'a [u32]) -> impl Iterator<Item = usize> + 'a {
+    after
+        .iter()
+        .enumerate()
+        .filter(|&(index, count)| *count > before.get(index).copied().unwrap_or(0))
+        .map(|(index, _)| index)
+}
+
+/// The scene's asked-for effects (`Scene::effects`) that are missing from `shown`.
+fn missing_effects<'a>(asked: &'a [String], shown: &[String]) -> Vec<&'a str> {
+    asked
+        .iter()
+        .filter(|name| !shown.contains(name))
+        .map(String::as_str)
+        .collect()
+}
+
+/// Ends scene `scene` for the effect record: writes the effects it spawned into its manifest
+/// record, starts the next scene's count, and fails when an effect the scene asks for is missing.
+fn close_scene_effects(world: &World, state: &mut TakeState, scene: usize) -> Result<(), String> {
+    let now = spawn_counts(world);
+    let shown = grown_effects(
+        world.get_resource::<client::effects::catalog::EffectCatalog>(),
+        &state.scene_spawns,
+        &now,
+    );
+    state.scene_spawns = now;
+    let asked = &state.take.scenes[scene].effects;
+    let missing = missing_effects(asked, &shown);
+    if let Some(record) = state.manifest.scenes.last_mut() {
+        record.effects = shown;
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "scene `{}` showed none of {missing:?}, which it asks for",
+            state.take.scenes[scene].name
+        ))
+    }
 }
 
 /// After the last frame: waits for every readback, closes the mezzanine and writes the manifest.
@@ -808,5 +886,28 @@ fn complete_pipelines(
         if cache.waiting_pipelines().next().is_some() {
             ledger.insert(frame);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_shows_the_effects_whose_spawn_count_grew() {
+        assert_eq!(
+            grown_ids(&[0, 3, 1], &[0, 4, 1, 2]).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(grown_ids(&[], &[]).count(), 0);
+        assert_eq!(grown_effects(None, &[0], &[5]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn missing_effects_lists_what_was_asked_and_not_shown() {
+        let asked = vec!["a".to_owned(), "b".to_owned()];
+        assert_eq!(missing_effects(&asked, &["b".to_owned()]), vec!["a"]);
+        assert_eq!(missing_effects(&asked, &asked), Vec::<&str>::new());
+        assert_eq!(missing_effects(&[], &[]), Vec::<&str>::new());
     }
 }

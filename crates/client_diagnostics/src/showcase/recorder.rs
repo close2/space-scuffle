@@ -303,6 +303,11 @@ pub struct SceneRecord {
     pub frames: u64,
     /// Simulation tick shown by its first frame.
     pub start_tick: u32,
+    /// Names of the effects spawned for the viewer during the scene, sorted (plan
+    /// `2026-11-09-effect-visualization` WP14): an effect counts when the effect runtime placed
+    /// an instance of it, a one-shot or a held look, on one of the scene's frames.
+    #[serde(default)]
+    pub effects: Vec<String>,
 }
 
 /// One frame as rendered.

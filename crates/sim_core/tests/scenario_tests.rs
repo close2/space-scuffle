@@ -850,7 +850,7 @@ fn the_showcase_battle_starts_with_its_initial_orders() {
     for order in &manifest.initial_orders {
         let (player_slot, cell) = match *order {
             InitialOrder::AttackMoveToCell { player_slot, cell } => Some((player_slot, cell)),
-            InitialOrder::AttackMoveToStart { .. } => None,
+            InitialOrder::AttackMoveToStart { .. } | InitialOrder::EnterModes { .. } => None,
         }
         .expect("the showcase names its targets by cell");
         targets.insert(
@@ -966,5 +966,185 @@ fn cell_orders_refuse_cells_where_no_ground_unit_can_stand() {
     assert!(matches!(
         apply_initial_orders(&mut world, &document, &manifest.players, &[order(free)]),
         Err(ScenarioError::NoCombatants { slot: 0 })
+    ));
+}
+
+/// The battle of the showcase's effects take (plan `2026-11-09-effect-visualization`, WP14 and
+/// Amendment 31), played headless from the shipped files. Player 0's `EnterModes` settles every
+/// unit with a mode switch in its mode before the raiders' first shot; every such archetype then
+/// fires its mode's splash; the raiders fire a splash of their own default stance; units die on
+/// both sides. The take's `effects` scenes rely on each of these beats.
+#[test]
+fn the_showcase_effects_battle_anchors_burrows_and_fights() {
+    use sim_types::snapshot::CombatEventVisual;
+    use std::collections::{BTreeMap, BTreeSet};
+    let scenario = Path::new("scenarios/showcase_effects.ron");
+    let mut world = load_scenario_battle(&assets_root(), scenario).expect("effects scenario");
+    let switching: Vec<_> = world
+        .entities
+        .values()
+        .filter(|entity| entity.owner == PlayerId(0) && toggles(&world, entity.unit_type_id))
+        .map(|entity| (entity.id, entity.unit_type_id))
+        .collect();
+    assert!(!switching.is_empty(), "the siege line has mode switches");
+    let mut settled: BTreeMap<sim_types::EntityId, u32> = BTreeMap::new();
+    let mut first_shot = None;
+    let mut splashes: BTreeSet<(u8, sim_types::UnitTypeId, Option<u8>)> = BTreeSet::new();
+    let mut deaths = [0_u32; 2];
+    for _ in 0..1_200 {
+        let snapshot = world.step(&empty_bundle(world.current_tick));
+        let tick = world.current_tick;
+        for (id, _) in &switching {
+            if let Some(entity) = world.entities.get(id) {
+                if entity.active_mode.is_some() && entity.channeling_remaining_ticks == 0 {
+                    settled.entry(*id).or_insert(tick);
+                }
+            }
+        }
+        for event in &snapshot.combat_events {
+            match event {
+                CombatEventVisual::SplashVisual { source, owner, .. } => {
+                    splashes.insert((owner.0, source.unit_type, source.weapon.mode));
+                }
+                CombatEventVisual::BubbleShatter { owner, .. } => {
+                    if let Some(count) = deaths.get_mut(usize::from(owner.0)) {
+                        *count += 1;
+                    }
+                }
+                CombatEventVisual::HitscanTracer { .. }
+                | CombatEventVisual::ProjectileVisual { .. }
+                | CombatEventVisual::BeamVisual { .. }
+                | CombatEventVisual::MeleeSlashVisual { .. } => {
+                    first_shot.get_or_insert(tick);
+                }
+                CombatEventVisual::SpellImpact { .. } => {}
+            }
+        }
+    }
+    let first_shot = first_shot.expect("the raiders reach the siege line");
+    for (id, _) in &switching {
+        let at = settled.get(id).copied();
+        assert!(
+            at.is_some_and(|tick| tick < first_shot),
+            "{id:?} settled at {at:?}, the first shot was at tick {first_shot}"
+        );
+    }
+    for (_, unit_type) in &switching {
+        assert!(
+            splashes
+                .iter()
+                .any(|&(owner, source, mode)| owner == 0 && source == *unit_type && mode.is_some()),
+            "{unit_type:?} fires no splash of its mode: {splashes:?}"
+        );
+    }
+    assert!(
+        splashes
+            .iter()
+            .any(|&(owner, _, mode)| owner == 1 && mode.is_none()),
+        "the raiders fire no splash: {splashes:?}"
+    );
+    assert!(deaths.iter().all(|&count| count > 0), "deaths {deaths:?}");
+}
+
+/// Whether `unit_type` has a mode-switch ability.
+fn toggles(world: &sim_core::SimWorld, unit_type: sim_types::UnitTypeId) -> bool {
+    world.catalog.get(unit_type).is_ok_and(|archetype| {
+        archetype.abilities.iter().any(|ability| {
+            matches!(
+                ability.target_kind,
+                sim_types::AbilityTargetKind::ToggleMode
+            )
+        })
+    })
+}
+
+/// `EnterModes` queues the mode switch behind the orders a unit already has, gives it at once to
+/// a unit without orders, and tells no other unit anything; a player with no mode switch is a
+/// typed failure.
+#[test]
+fn enter_modes_queues_behind_earlier_orders() {
+    let scenario = Path::new("scenarios/showcase_effects.ron");
+    let manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets_root().join(scenario)).expect("shipped scenario"),
+    )
+    .expect("scenario parses");
+    let document = MapFile::load(&assets_root().join(&manifest.map))
+        .expect("map")
+        .decode()
+        .expect("map decodes");
+    let mut world = load_scenario_world(&assets_root(), scenario).expect("world builds");
+    apply_initial_orders(
+        &mut world,
+        &document,
+        &manifest.players,
+        &[
+            InitialOrder::AttackMoveToCell {
+                player_slot: 0,
+                cell: (11, 11),
+            },
+            InitialOrder::EnterModes { player_slot: 0 },
+        ],
+    )
+    .expect("orders apply");
+    let (mut queued, mut at_once) = (0, 0);
+    for entity in world
+        .entities
+        .values()
+        .filter(|entity| entity.owner == PlayerId(0))
+    {
+        let archetype = world.catalog.get(entity.unit_type_id).expect("shipped");
+        let queue: Vec<_> = entity.order_queue.iter().cloned().collect();
+        let Some(index) = archetype.abilities.iter().position(|ability| {
+            matches!(
+                ability.target_kind,
+                sim_types::AbilityTargetKind::ToggleMode
+            )
+        }) else {
+            assert!(
+                !queue
+                    .iter()
+                    .any(|order| matches!(order, UnitOrder::CastAbility { .. })),
+                "a unit without a mode switch is not told to switch: {queue:?}"
+            );
+            continue;
+        };
+        let cast = UnitOrder::CastAbility {
+            ability_index: u8::try_from(index).expect("small index"),
+            target_pos: None,
+            target_entity: None,
+        };
+        if let [UnitOrder::AttackMove { .. }, last] = queue.as_slice() {
+            assert_eq!(last, &cast);
+            queued += 1;
+        } else {
+            assert_eq!(queue.as_slice(), std::slice::from_ref(&cast));
+            at_once += 1;
+        }
+    }
+    // The anchoring units are armed and walk first; the burrowing ones are unarmed until they
+    // burrow, take no attack-move and switch at once.
+    assert!(
+        queued > 0 && at_once > 0,
+        "queued {queued}, at once {at_once}"
+    );
+    // The skirmish fields only workers, none of which switches modes.
+    let skirmish = Path::new("scenarios/skirmish.ron");
+    let skirmish_manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets_root().join(skirmish)).expect("shipped skirmish"),
+    )
+    .expect("skirmish parses");
+    let skirmish_document = MapFile::load(&assets_root().join(&skirmish_manifest.map))
+        .expect("skirmish map")
+        .decode()
+        .expect("skirmish map decodes");
+    let mut workers = load_scenario_world(&assets_root(), skirmish).expect("skirmish builds");
+    assert!(matches!(
+        apply_initial_orders(
+            &mut workers,
+            &skirmish_document,
+            &skirmish_manifest.players,
+            &[InitialOrder::EnterModes { player_slot: 1 }],
+        ),
+        Err(ScenarioError::NoModeSwitches { slot: 1 })
     ));
 }
