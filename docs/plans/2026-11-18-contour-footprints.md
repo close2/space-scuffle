@@ -649,3 +649,42 @@ As in the contact, inner-radius, structure-contact and structure-radius plans: *
 
 WP3 resumes from `contour-footprints-wp3-wip` with the retry, then `CONTOUR_PATH_GOLDEN`, `contour_route_checksum`
 and the `navmesh_measure` row, and continues to WP8 under the plan's stop rules.
+
+## Amendment 2 (orchestrator, 2026-11-18): a direct pursuit stalled against a wall asks the mesh for a route; WP6 deviations confirmed
+
+**Why.** WP6 stopped on D-15 (evidence §6). The seven hall contours alone move the showcase. Player 0's two workers
+chase with no route, walk into a hall's 45° chamfer that faces their heading, and B-113's rule waits out the sliver
+slide. Their pursuit is abandoned and re-acquired every two to four ticks: 345 to 469 `PursuitAbandoned` per seed,
+and seed 7 flips. Against a square the same heading met a face at about 45°, so the slide was large. This is the
+plan's defect class "a stall at a chamfer", not a rule-caused change. In StarCraft II an attacking unit always
+follows the pathing of its target's position; a unit does not stand pressed against a building's corner.
+
+**Decision (the agent's recommendation, adopted).**
+
+1. When a direct (route-less) pursuer's step is waited out against terrain or a structure (a sliver slide, not a
+   body), it asks the mesh for a route to its target, through the same request a move order's stall repath makes,
+   instead of counting toward `PursuitAbandoned`. Route-following already rounds a chamfer at the unit's terrain
+   radius (WP3, C-5). A body block keeps today's behaviour. If the mesh finds no route, today's abandon rule applies
+   unchanged. No new constant: the trigger is B-113's existing sliver test, and the route is replanned under the
+   existing stall-repath rules.
+2. Before changing it, trace the pursuit band and stall counter in `movement/locomotion.rs` and record the trace in
+   evidence §6. New test **C-9**: a worker chasing a target past a 5×5's cut corner reaches it, with zero
+   `PursuitAbandoned`. It must be red on the WP6 side branch first.
+3. Then WP6's measurements are repeated in full under D-15. That includes the matrix, battle 33, the showcase on the
+   default seed and seeds 1 to 8 with controls, and the goldens. Re-record `golden_replay` only with the
+   entity-only proof header, if it still holds through tick 1,000, or with a full trace if it does not. The stop
+   rules stay as written. A further flip or a give-up count above base + 1 stops the package again, with a trace.
+   An outcome change traced to units now rounding corners that they used to hug is rule-caused and is reported with
+   its trace.
+
+**Deviations confirmed.**
+
+- **D-5 for a structure's terrain radius.** A structure's terrain radius is its shape's smaller half-extent, not
+  half its footprint's smaller side. It is unchanged for every full-box shape and is 0.5 for the Spore analogue, so
+  the invariant terrain ≤ collision radius holds. This supersedes structure-radius D-5 for structures; the agent
+  records it in that plan too as a one-line cross-reference.
+- **Amendment 1's zero-fallback proptest** is replaced by the deterministic `contours_add_no_funnel_fallbacks`. The
+  fallback classes that exist with full squares are registered as B-141.
+- **`w_min`** is measured across the channel's left and right obstacles.
+- **B-140**: the path corpus is traced to `usize` range draws. The decode and validation corpora stay open under
+  B-140 and are not part of this plan.
