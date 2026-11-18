@@ -1069,7 +1069,12 @@ tests `a_flyer_shooters_flight_starts_on_its_glass_towards_the_target`,
 `a_ground_shooters_start_moves_only_to_its_own_glass`, `a_projectile_whose_shooter_is_unknown_keeps_its_start_and_is_counted`.
 On radv the cross-plane projectile's flight starts 24.70 px from the shooter's drawn centre, its outline 24.70 px out:
 0.00 px off (bar 3 px; exact because the wave fires along the screen's x axis, which the test's outline radius also
-uses); every other bar passes, `rocket_trail` (Across) 259 → 242 px against needs 22, the rest within 1 px of
-Amendment 3 except `lance_beam` 115 → 143 and `prism_beam` 86 → 109. The valgrind effect stream now sends a
+uses); every other bar passes. The same test on main's tree (10e747bf, radv, the same day) differs from this
+branch in one line only: `rocket_trail` (Across) 259 px against its blank's 21 (needs 62) on main, 242 against 1
+(needs 22) here. That is caused by this change: the shooter's start moved onto its glass, which also moves the
+flight's pixels near the struck bubble that the blank run sees. `lance_beam` (143) and `prism_beam` (109) read the same on both
+trees. Their rise from Amendment 3's 115 and 86 came before this change (94 and 136 at WP7 on radv, 106 and 143 at
+WP8 on lavapipe), and by code this change cannot reach a beam: `launch_from_shooter` returns before any lookup
+unless the published event is a `ProjectileVisual`, and `at_struck_surface` is unchanged for `BeamVisual`. The valgrind effect stream now sends a
 projectile a frame; its window difference stays 0. `git diff main -- crates/sim_*` is empty. Evidence:
 `identity_b133_cross_plane_projectile_radv.png` beside `identity_wp4b_cross_plane_projectile_radv.png`.
