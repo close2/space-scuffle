@@ -743,9 +743,10 @@ fn d12_the_dry_run_prints_the_spend_of_the_committed_ledger_and_the_planned_cost
         - count("mode_clip_quota_refused");
     let images = count("image_request_started") - count("image_quota_refused");
     let spent_cents = 40 * clips + 11 * images;
-    let remaining_cents = 20_000 - spent_cents;
+    // The shipped cap: $230.00 since the owner's raise of 2026-11-18 ($200.00 before).
+    let remaining_cents = 23_000 - spent_cents;
     let expected = format!(
-        "${}.{:02} spent of $200.00, ${}.{:02} remaining",
+        "${}.{:02} spent of $230.00, ${}.{:02} remaining",
         spent_cents / 100,
         spent_cents % 100,
         remaining_cents / 100,
