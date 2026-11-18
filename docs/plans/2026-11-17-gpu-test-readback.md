@@ -5,7 +5,7 @@ minutes (setup evaluation 2026-11-16, item 7). The same GPU tests run faster on 
 Vulkan than here on the RX 580: `effect_slice_gpu_tests` 1,997 s on radv against 937 s on lavapipe, and
 `editor_app_tests` 618 s against 181 s. On radv each child keeps about one CPU core busy the whole time.
 
-The owner answered Q0083 (`docs/questions/open/0083-gate-gpu-driver.md`):
+The owner answered Q0083 (`docs/questions/closed/0083-gate-gpu-driver.md`, closed by Amendment 6):
 
 - **First, option 1:** make radv fast by removing the frame readback / WSI bottleneck. Render offscreen, and copy a
   frame into a `HOST_VISIBLE | HOST_CACHED` staging buffer only on the ticks where a test inspects pixels.
@@ -29,7 +29,7 @@ search for the quoted symbol. Claims not confirmed while planning are marked **v
 
 | Question | State | Where in this plan |
 |---|---|---|
-| Q0083: gate GPU driver | Answered: option 1 first, option 2 pre-authorized | Whole plan; D-9, §8 |
+| Q0083: gate GPU driver | Answered: option 1 first, option 2 pre-authorized. Closed: §8 kept radv (Amendment 6) | Whole plan; D-9, §8 |
 | Q0084: charter compaction | Answered: option 2 (exact diff shown to the owner first) | §9 (same procedure for the §7 text) |
 | Q0019: frame-budget display path | Closed: headless KWin is the path of record | D-4 (the same path for windowed children) |
 | Q0012: GPU lock wait 290 s | Closed | Unchanged |
@@ -1298,3 +1298,70 @@ frame-budget capture are equal).
   tests, among them the ledger test; the other integration tests unchanged).
 - `gpu_validation_tests` at one thread on radv (the harness took the lock itself): 62 passed, 0 failed, 3 ignored
   (the re-executed children), 158 s; its ledger shows the new `exit=lock-timeout` line of the busy-lock self-test.
+
+## Amendment 6: WP5, re-measured; §8 keeps radv for every GPU target (2026-11-18, short note, charter §6)
+
+WP5 is on branch `gpu-readback-wp5`, made from `main` at `f404c7d7` (WP2 to WP4 merged). It commits only the
+evidence (`docs/evidence/2026-11-17-gpu-test-readback.md`, section "WP5") and this amendment, and closes Q0083.
+
+**Measured** (the evidence file has the per-target tables, loads and lock waits):
+
+- **M1 again, in §8's paired order** radv, lavapipe, lavapipe, radv (2026-11-18 10:00 to 17:53 UTC; load 5 to 186
+  on 16 vCPUs; no `with-gpu-lock` command of anyone else during any target). Serial wall of the 25 GPU targets:
+  radv 2,190 and 2,596 s (WP1: 4,159 s), lavapipe 4,867 and 4,875 s (WP1: 5,059 s). CPU: radv 3,000 to 3,500 s,
+  lavapipe about 28,000 s. Every target passed in every round on both drivers.
+- **The GPU lane against the general lanes**, from the three package gates on WP3 and WP4 trees (`a6a4cd31`,
+  `beba35aa`, `a9df06b8`): `R` = 2,635, 2,489 and 2,132 s against `G` = 1,221, 1,069 and 853 s, so `R − G` =
+  1,414, 1,420 and 1,279 s. Before WP2 it was 2,680 to 3,218 s. The WP4 ledgers show 144 and 318 s of lock waits in
+  a lane.
+- **CI's lavapipe** (4-vCPU runner) gained nothing from WP2 and WP3 (3,090 → 3,282 s for the GPU targets), and
+  local radv is now faster than it on every large target.
+- **`LP_NUM_THREADS`** (single runs of the two largest lavapipe targets): 8 threads save 16 to 22 % of the CPU,
+  with the wall 3 % shorter to 23 % longer. 4 threads save 19 to 30 %, with the wall 20 to 93 % longer
+  (`effect_slice_gpu_tests` 1,971 s at 8 threads and 3,087 s at 4, against 1,596 and 1,757 s at the default 16).
+
+**§8 applied.**
+
+1. **Rule 1 is not met.** `R ≤ G + 5 min` fails in every gate measured, by 979 to 1,120 s beyond the 300 s it
+   allows. The two radv rounds differ by 406 s (19 %), and the smallest margin is 2.4 times that spread, in three
+   gates, so noise cannot change this. Option 1 halved the lane but the GPU lane is still the critical path, by 21 to
+   24 min.
+2. **Rule 2 cannot be met, so WP6 is not built.** Rule 2 adopts lavapipe only if its test phase `W_lvp` is at most
+   `0.85 × W_radv` and at least 10 min shorter. With the three gates' test phases (`W_radv` = 3,010, 2,853 and
+   2,427 s), `W_lvp` would have to be at most 2,410, 2,253 and 1,827 s. Lower bounds for `W_lvp`, none of which
+   needs WP6's code:
+   - **As D-9 schedules it** (lavapipe targets join the two general lanes; the canaries stay on radv in the GPU
+     lane): `W_lvp ≥ X + (L1 + L2 + lavapipe targets other than the canaries) / 2`. With this host's lavapipe
+     (4,641 s without the canaries, both rounds) that is 3,912, 3,750 and 3,468 s: option 2 would make the gate
+     900 to 1,040 s *slower* than radv does today. Even with CI's faster, dedicated lavapipe (3,133 s without the
+     canaries) it is 3,158, 2,996 and 2,714 s, above every threshold.
+   - **With any number of lanes** (a change D-9 does not make), the bounds are close but are not met on this host.
+     The CPU bound `X + (general CPU + lavapipe CPU) / 16 vCPUs`, with the whole host to the gate alone, is 2,401,
+     2,401 and 2,283 s at the default threads: above the threshold in the two gates on WP4 trees, and level with it
+     (2,401 against 2,410 s) in the WP3 gate, whose radv lane includes a child's 290 s lock-timeout wait (B-136). At
+     `LP_NUM_THREADS=8` the CPU bound would fall by about a fifth (estimate), but the slice target alone then takes
+     1,971 s, so `X` plus it is 2,266 to 2,346 s. That is above the threshold in the two gates on WP4 trees; in the
+     WP4 package gate the margin is only 4 % on one run, inside the noise. At 4 threads the slice takes 3,087 s.
+     Every one of these bounds assumes an idle host, which this one never was: another user's jobs ran throughout,
+     at loads of 5 to 186.
+
+   §8's step 2 says to build WP6's gate part and measure. That measurement is skipped (Q0002, a written scoping
+   decision). WP6 builds D-9's scheduling, and under it the bound fails by 740 to 890 s even with CI's lavapipe
+   speed, which is more favourable to lavapipe than any run on this host could be. So the measurement could not
+   adopt option 2. The many-lanes variant would be a different design, beyond D-9, and its bounds are not met on
+   this shared host either. If the owner wants a measurement anyway, WP6 stands as written and can be done later.
+3. **Outcome: rule 3, option 1 only.** Every GPU target keeps running on radv, as charter §7 and
+   `docs/guides/gpu-and-disk.md` already say. No catalog field, no scheduling change, no `LP_NUM_THREADS` default
+   and no canary set are added, and the §9 draft additions for option 2 are dropped. Forcing lavapipe in a gate
+   stays possible through `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, as CI does.
+
+**Consequences.**
+
+- **Q0083 is closed** (`docs/questions/closed/0083-gate-gpu-driver.md`, with its resolution): option 1 was done
+  (WP2 to WP4), and the pre-authorized option 2 was measured not to pay on this host.
+- **WP6 is not done.** WP7 keeps its bookkeeping, minus the option 2 text.
+- **What remains of the lane** (recorded, not decided here; plan §12 already names both): the `effect_slice`
+  target (92 children, 568 to 818 s of child time) and `weapon_battle_gpu_tests` (20 children,
+  370 to 452 s) are 50 to 57 % of the radv lane. Merging each slice subject's three children (§12, setup
+  evaluation 7(d)) and letting the GPU lane run during the exclusive valgrind phase (§12, 7(c); `X` is 295 to 375 s)
+  are the next candidates for a follow-up note.

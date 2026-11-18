@@ -269,3 +269,152 @@ shrink to 0.16 to 0.3 of their time offscreen (§M4), which saves about 1,550 to
 windowed production children (about 1,400 s of child time) shrink to 0.4 to 0.9 under KWin (status 0.42, editor 0.5
 to 0.7, HUD 1.0), which saves about 140 to 700 s. WP5 measures it |
 | §7 text | Only `docs/guides/gpu-and-disk.md` names the display path since Q0085; `AGENTS.md` §7 does not change. The text names `crates/client/tests/support/gpu_run.rs`, `kwin_wayland --virtual --xwayland` and the Xvfb fallback. Drafted as Q0086 |
+
+## WP5. Re-measure on `main` after WP2 to WP4
+
+Plan WP5: M1 again, on `main` at `f404c7d7` (WP2 offscreen children, WP3 headless KWin, WP4 gate ledger with lock
+waits), and §8's decision on option 2. Raw data: `~/scratch/gpu-readback-wp5/` (`m1/<arm>/` with a ledger per
+target, `targets.tsv` with each target's wall, CPU, gate-lock wait, load before and after, the `anon` line, and the
+`with-gpu-lock` holds by others while it ran; `ci/` for the CI logs; scripts in `bin/`). Scratch files may be
+cleaned; the tables below are the record.
+
+### Method
+
+- **Tree and build:** branch `gpu-readback-wp5` at `f404c7d7`, debug test binaries built once
+  (`cargo test --no-run -p client -p client_diagnostics`, 7.5 min).
+- **Runs:** every `Gpu` target of `crates/gate/suites.ron` (25), one after another, as the gate runs it
+  (`--test-threads` from the catalog), through `cargo test -q` like WP1's M1, each target under its own
+  `flock ~/scratch/gate.lock`. GPU children took the GPU lock through the harness. `SPACE_SCUFFLE_GPU_RUN_LEDGER`
+  named one ledger per target, so every child is attributed exactly.
+- **Order:** plan §8's paired order, radv, lavapipe, lavapipe, radv (2026-11-18 10:00 to 17:53 UTC), lavapipe
+  forced with `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`. Then the two largest lavapipe targets with
+  `LP_NUM_THREADS=4` and `=8`.
+- **Not done:** §8 asks for each run to be a `cargo gate package`. This WP ran no package gate (the orchestrator's
+  instruction; Q0061). The GPU lane against the general lanes comes from the three package gates other agents ran on
+  trees with WP3 (and WP4), whose `lanes.tsv` and WP4 ledger are in `~/scratch/logs/gate/`.
+- **Host:** shared and loaded. The one-minute load at a target's start was 5 to 186 on 16 vCPUs (per target in
+  `targets.tsv`); `anon` stayed below 1.7 GiB. Other agents' gates and tests took the gate lock between targets
+  (5,540, 4,945, 2,774 and 583 s of waits in the four rounds), which is outside every target's wall. No
+  `with-gpu-lock` command of another user or agent ran during any target (the GPU-lock log's `ACQUIRE` lines,
+  counted per target). The harness's own lock waits were 119 and 42 s in the radv rounds, all between children of
+  the same target (`capture_path_gpu_tests` and `dome_fill_tests` run two children at once), and 1 s on lavapipe
+  (the lock self-tests).
+
+### Per target, serial (wall s, with the children's summed `run_s` in brackets)
+
+| Target | WP1 radv (Xvfb) | radv r1 | radv r2 | lavapipe r1 | lavapipe r2 | lavapipe ÷ radv |
+|---|---:|---:|---:|---:|---:|---:|
+| `client/battle_hud_window_tests` | 21 | 14 (13) | 15 (15) | 22 (21) | 18 (17) | 1.1 to 1.6 |
+| `client/battle_result_window_tests` | 22 | 14 (13) | 15 (15) | 32 (30) | 20 (19) | 1.3 to 2.3 |
+| `client/capture_path_gpu_tests` | — | 72 (67) | 69 (64) | 48 (43) | 55 (49) | 0.7 to 0.8 |
+| `client/combat_fx_slot_gpu_tests` | 4 | 2 (1) | 5 (3) | 2 (1) | 2 (1) | 0.4 to 1.2 |
+| `client/concealment_gpu_tests` | 22 | 16 (16) | 25 (23) | 23 (22) | 24 (23) | 0.9 to 1.5 |
+| `client/mode_atlas_gpu_tests` | 30 | 27 (26) | 42 (26) | 30 (29) | 28 (27) | 0.7 to 1.1 |
+| `client/dome_fill_tests` | 30 | 71 (20) | 25 (24) | 30 (29) | 25 (24) | 0.3 to 1.2 |
+| `client/editor_app_tests` | 215 | 143 (17) | 139 (19) | 225 (56) | 166 (61) | 1.2 to 1.6 |
+| `client/effect_gpu_tests` | 21 | 3 (2) | 3 (2) | 4 (3) | 5 (4) | 1.4 to 1.7 |
+| `client/effect_slice_gpu_tests` | 2278 | 716 (568) | 1005 (818) | 1596 (1457) | 1757 (1600) | 1.6 to 2.5 |
+| `client/flipbook_clock_gpu_tests` | 9 | 5 (4) | 5 (4) | 20 (19) | 25 (23) | 4.0 to 5.3 |
+| `client/gpu_validation_tests` | 104 | 121 (110) | 155 (143) | 156 (143) | 162 (144) | 1.0 to 1.3 |
+| `client/lab_scene_tests` | 38 | 28 (19) | 31 (21) | 80 (75) | 88 (81) | 2.6 to 3.2 |
+| `client/round2_visual_tests` | 31 | 18 (18) | 14 (13) | 23 (22) | 26 (25) | 1.2 to 1.8 |
+| `client/runtime_battle_tests` | 43 | 34 (16) | 37 (13) | 33 (23) | 29 (16) | 0.8 to 1.0 |
+| `client/skirmish_match_tests` | 141 | 76 (21) | 71 (20) | 85 (33) | 84 (32) | 1.1 to 1.2 |
+| `client/smog_bouncing_bubbles_tests` | 78 | 69 (16) | 104 (51) | 65 (27) | 66 (31) | 0.6 to 1.0 |
+| `client/stance_gpu_tests` | 160 | 69 (68) | 93 (91) | 581 (578) | 353 (352) | 3.8 to 8.4 |
+| `client/status_gpu_tests` | 149 | 66 (66) | 63 (61) | 330 (327) | 250 (248) | 3.8 to 5.3 |
+| `client/weapon_battle_gpu_tests` | 542 | 381 (370) | 464 (452) | 1108 (1097) | 1181 (1167) | 2.4 to 3.1 |
+| `client/area_link_gpu_tests` | 122 | 134 (110) | 114 (92) | 240 (223) | 365 (346) | 1.8 to 3.2 |
+| `client/terrain_tests` | 20 | 16 (13) | 18 (14) | 18 (16) | 28 (26) | 1.0 to 1.7 |
+| `client_diagnostics/frame_budget_tests` | 27 | 40 (39) | 32 (29) | 48 (47) | 55 (54) | 1.2 to 1.7 |
+| `client_diagnostics/showcase_tests` | 40 | 40 (38) | 40 (39) | 50 (47) | 50 (49) | 1.2 to 1.2 |
+| `client_diagnostics/lib` | 12 | 13 (12) | 11 (10) | 19 (18) | 15 (14) | 1.1 to 1.7 |
+
+| Round | Wall s | Children | Sum `run_s` | CPU s (user + sys) | Harness lock wait s | Load at target starts | Failed |
+|---|---:|---:|---:|---:|---:|---|---:|
+| WP1 radv (Xvfb, 24 targets) | 4,159 | 147 | 3,332 | — | 256 | 12 to 310 | 0 |
+| WP1 lavapipe (24 targets) | 5,059 | 147 | 4,537 | — | 0 | 15 to 196 | 0 |
+| radv r1 | 2,190 | 158 | 1,662 | 2,996 | 119 | 5 to 160 | 0 |
+| lavapipe r1 | 4,867 | 153 | 4,388 | 28,151 | 1 | 5 to 177 | 0 |
+| lavapipe r2 | 4,875 | 153 | 4,433 | 27,877 | 1 | 8 to 186 | 0 |
+| radv r2 | 2,596 | 158 | 2,064 | 3,466 | 42 | 9 to 153 | 0 |
+
+- radv children: 99 offscreen, 52 under KWin, 3 forced onto Xvfb (T-1, T-2 and the Xvfb leftover probe) and 4 lock
+  self-tests. lavapipe has 5 fewer, the radv-only KWin self-tests; its windowed children run under Xvfb.
+- Every target passed in every round, on both drivers.
+
+**What the rounds show, and where the noise is.**
+
+- **The radv lane fell to 0.53 to 0.62 of WP1's** (2,190 and 2,596 s against 4,159 s; 1,662 and 2,064 s of child
+  time against 3,332 s), within WP1's estimate of 1,700 to 2,450 s. `effect_slice_gpu_tests` fell from 2,278 s to
+  716 and 1,005 s; the skirmish look targets fell to about half or less (`stance` 160 → 69 and 93 s, `status`
+  149 → 66 and 63 s, `weapon_battle` 542 → 381 and 464 s).
+- **The lavapipe lane did not change** (4,867 and 4,875 s against WP1's 5,059 s), as WP1 and Amendment 1 predicted:
+  a lavapipe child is bound by rasterising.
+- **lavapipe is now about twice as slow as radv on this host** (2.2 and 1.9 times the serial wall, pairwise) and uses
+  8 to 9 times its CPU (about 28,000 against 3,000 to 3,500 CPU s, 6.4 cores per second of child time). It is
+  slower in both pairs for every target that renders many frames: `effect_slice` 1.6 to 2.5 times, `weapon_battle`
+  2.4 to 3.1, `stance` 3.8 to 8.4, `status` 3.8 to 5.3, `lab_scene` 2.6 to 3.2, `area_link` 1.8 to 3.2.
+- **Noise.** The two radv rounds differ by 19 % (2,190 against 2,596 s): `effect_slice` 716 against 1,005 s,
+  `smog_bouncing_bubbles` 69 against 104 s, `mode_atlas` 27 against 42 s; the load at a target's start ranged from
+  5 to 186 in every round. No difference below about 40 % between drivers or rounds is resolved for a single
+  target. That covers `capture_path` (lavapipe looked faster in both pairs, 0.7 to 0.8, but its radv wall includes
+  58 and 32 s of its two children waiting for each other), `runtime_battle`, `smog_bouncing_bubbles`, `mode_atlas`,
+  `dome_fill`, `concealment`, `skirmish_match`, `gpu_validation` and the small windowed targets. None of the
+  conclusions below depends on these targets.
+
+### The GPU lane against the general lanes (package gates on WP3 and WP4 trees)
+
+The three complete package gates whose tree has WP3, from their `lanes.tsv`. `X` is the exclusive valgrind phase,
+which runs alone first; the GPU lane and the two general lanes start when it ends. `R` is the GPU lane's span, `G`
+the longer general lane, and the test phase is `X + max(R, G)`.
+
+| Gate (tree, time UTC) | GPU targets | X s | R s | G s | R − G s | Test phase s | Ledger: children, sum `run_s`, sum `lock_wait_s` |
+|---|---:|---:|---:|---:|---:|---:|---|
+| WP3 package (`a6a4cd31`, 07:11) | 24 | 375 | 2,635 | 1,221 | 1,414 | 3,010 | none (before WP4); `weapon_battle_gpu_tests` waited out the lock once (B-136) and passed on its rerun |
+| WP4 package (`beba35aa`, 09:28) | 25 | 364 | 2,489 | 1,069 | 1,420 | 2,853 | 158, 1,737 s, 318 s (longest wait 95 s) |
+| `structure-radius` package (`a9df06b8`, 13:45, `main` with WP4) | 23 | 295 | 2,132 | 853 | 1,279 | 2,427 | 156, 1,577 s, 144 s (longest wait 75 s) |
+| Before WP2: WP12 (`814e0172`, 11-16), `110321bd` (11-17), `457ba79f` (11-18 05:08) | 21 to 24 | 215 to 382 | 3,560 to 5,216 | 820 to 2,026 | 2,680 to 3,218 | — | none |
+
+- The GPU lane is still the critical path, by 1,279 to 1,420 s (21 to 24 min), in every gate. Its targets' serial
+  sum in this WP's rounds (2,190 and 2,596 s) agrees with the gates' `R`.
+- In the gates, the children's run time is 1,577 to 1,737 s of a 2,132 to 2,489 s lane, and lock waits add 144 to
+  318 s (the WP4 ledger's lock line). The rest is the test executables' own work outside their children
+  (comparing pictures and goldens, the non-GPU tests in the same binaries).
+- The general lanes used 3,804 to 4,586 CPU s together (`lanes.tsv`).
+- **CI** (lavapipe on the 4-vCPU runner, `cargo gate full` in one lane): the 25 GPU targets took 3,090 s before
+  WP2 and WP3 (`b71e4e50`) and 3,282 s after (`bdfcffcc`), with 9,420 and 9,977 CPU s; `effect_slice_gpu_tests`
+  957 and 1,004 s, `weapon_battle_gpu_tests` 816 and 857 s. CI gained nothing from WP2 and WP3, as Amendment 1
+  predicted for lavapipe. Local radv is now faster per target than CI's lavapipe (`effect_slice` 716 to 1,005 s,
+  `weapon_battle` 381 to 464 s, `stance` 69 to 93 s against 308 s, `status` 63 to 66 s against 221 s), so Q0083's
+  premise, CI's lavapipe being faster than local radv, no longer holds.
+
+### `LP_NUM_THREADS` (lavapipe, the two largest targets)
+
+Run after the four rounds (17:53 to 20:08 UTC, load 13 to 59 at the starts), one target at a time as above. The
+default is lavapipe's own thread count (one rasteriser thread per vCPU, 16 here).
+
+| Target | Default threads (r1, r2): wall s, CPU s | `LP_NUM_THREADS=8`: wall s, CPU s | `LP_NUM_THREADS=4`: wall s, CPU s |
+|---|---|---|---|
+| `client/effect_slice_gpu_tests` | 1,596 and 1,757; 13,207 and 12,784 | 1,971; 10,692 | 3,087; 10,339 |
+| `client/weapon_battle_gpu_tests` | 1,108 and 1,181; 5,523 and 5,951 | 1,147; 4,613 | 1,418; 4,071 |
+
+- Fewer threads save some CPU and cost wall time. 8 threads: 16 to 22 % less CPU, and the wall from 3 % shorter to
+  23 % longer. 4 threads: 19 to 30 % less CPU, and the wall 20 to 93 % longer. No setting brings the CPU near CI's
+  3 cores per second of child time, and none makes a target faster.
+- Both runs passed. These are single runs, so differences under about 25 % are not resolved (see "Noise" above).
+
+### Plan §8 applied
+
+The decision and its arithmetic are recorded in the plan's Amendment 6. In short:
+
+- **Rule 1 fails:** `R − G` is 1,279 to 1,420 s in every gate measured, against the 300 s it allows.
+- **Rule 2 cannot pass, under any assumption checked:**
+  - As D-9 schedules it (lavapipe targets in the two general lanes, canaries on radv), the test phase would be at
+    least 3,468 to 3,912 s with this host's lavapipe. That is about 900 to 1,040 s *longer* than radv's today. With
+    CI's faster lavapipe it would be at least 2,714 to 3,158 s, still above every threshold (1,827 to 2,410 s).
+  - With unlimited lanes and the whole host to one gate, a change D-9 does not make, the bounds are close. With the
+    default threads the CPU bound exceeds the threshold in both gates on WP4 trees. With `LP_NUM_THREADS=8` the
+    slice target alone exceeds it, in the WP4 package gate by only 4 % on one run, which is inside the noise. Neither
+    bound can be met on a host that another user loads (load 5 to 186 throughout).
+- **Outcome: rule 3.** radv stays the driver for every gate GPU target; WP6 is not built.
