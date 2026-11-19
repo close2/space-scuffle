@@ -6,7 +6,7 @@ use sim_core::{
     movement::{MovementOutcome, MovementReceipt},
     production::{ProductionInvariant, ProductionJob, ProductionOutcome, ProductionReceipt},
 };
-use sim_types::{EntityId, PlayerId, ResourceNodeId, SiteRefusal, Tick, UnitTypeId};
+use sim_types::{EntityId, PlacementFlag, PlayerId, ResourceNodeId, SiteRefusal, Tick, UnitTypeId};
 
 /// An identity whose digits would stand out in any message that leaked it.
 const ID: EntityId = EntityId(987_654);
@@ -248,6 +248,14 @@ fn every_build_rejection_has_a_presentable_message() {
         BuildRejection::Blocked(PlacementFailureReason::OutOfBounds),
         BuildRejection::CoversResource,
         BuildRejection::ExtractorNeedsGas,
+        BuildRejection::FlaggedSite {
+            flag: PlacementFlag::NearResources,
+            cell: (60_000, 1),
+        },
+        BuildRejection::FlaggedSite {
+            flag: PlacementFlag::Fogged,
+            cell: (60_000, 1),
+        },
         BuildRejection::Invariant(INVARIANT),
     ] {
         let mut text = String::new();
@@ -431,6 +439,20 @@ fn a_refused_site_reads_like_the_same_rejection_on_arrival() {
             BuildRejection::ExtractorNeedsGas,
         ),
         (
+            SiteRefusal::NearResources,
+            BuildRejection::FlaggedSite {
+                flag: PlacementFlag::NearResources,
+                cell: (3, 4),
+            },
+        ),
+        (
+            SiteRefusal::NotVisible,
+            BuildRejection::FlaggedSite {
+                flag: PlacementFlag::Fogged,
+                cell: (3, 4),
+            },
+        ),
+        (
             SiteRefusal::InvalidRequest,
             BuildRejection::UnknownStructure(UnitTypeId(1)),
         ),
@@ -443,4 +465,26 @@ fn a_refused_site_reads_like_the_same_rejection_on_arrival() {
             arrival
         );
     }
+}
+
+/// Plan `2026-11-19-footprint-flags` D-9: the two placement flags read as the game's reasons.
+#[test]
+fn a_flagged_site_says_which_rule_refused_it() {
+    assert_eq!(
+        site_reason(SiteRefusal::NearResources),
+        "too close to resources"
+    );
+    assert_eq!(
+        site_reason(SiteRefusal::NotVisible),
+        "the site must be in sight"
+    );
+    let mut text = String::new();
+    write_build_rejection(
+        &mut text,
+        &BuildRejection::FlaggedSite {
+            flag: PlacementFlag::NearResources,
+            cell: (3, 4),
+        },
+    );
+    assert_eq!(text, "too close to resources");
 }
