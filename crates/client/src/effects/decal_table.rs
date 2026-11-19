@@ -25,6 +25,13 @@
 //!   drawn by its `only` filter and have not ended, while it holds decal slots.
 //! - Keys are unique, so the order is a total order; it is re-sorted only on frames whose rows
 //!   changed.
+//! - Time runs forward (`Time<Virtual>` never goes back; the lab resets the runtime between
+//!   takes): a layer dropped at a rewrite because it ended is never brought back by a later,
+//!   earlier `now`.
+//! - Rows fit when an effect's placed decals never outnumber the decal slots it was granted at
+//!   birth; a held line lengthened under a held line-placed decal layer could break this, and
+//!   the shipped vocabulary has none. A row that finds no room is counted as a critical
+//!   overflow, never dropped silently.
 
 use super::binding::{resolve_value, BoundValues};
 use super::budget::{lod_skips, retire_fade};
@@ -239,6 +246,13 @@ pub fn age_decal(
 }
 
 /// The retained decal rows of the live effects.
+// PERFORMANCE RATIONALE:
+// Why: Half the frame build's instructions went to re-placing, re-clipping and re-hashing every
+// lasting decal every frame, although those values change only when its effect changes (B-137).
+// What: Rows allocated once at the decal budget, chained per pool slot with a free list, a
+// dirty bitset and list of slots, and a per-slot expiry: only changed effects are rewritten.
+// Trade-off: Every API that changes an effect must mark it (enforced by the pool being private
+// and tested per API), and the rows hold about 280 bytes per decal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecalTable {
     /// Row records, by row.

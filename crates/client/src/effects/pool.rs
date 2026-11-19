@@ -92,6 +92,11 @@ pub struct EffectInstance {
 
 /// The per-effect constants of an effect's line: its clip window and its ground direction's
 /// yaw, computed once when the line is set instead of for every instance every frame.
+// PERFORMANCE RATIONALE:
+// Why: The line's clip window (a normalisation) and its yaw (an `atan2`) were recomputed for
+// every instance of every layer every frame, though they change only with the line.
+// What: Both are computed when the line is set (spawn, `update_held_line`) and read after.
+// Trade-off: 20 bytes per effect, kept in step with `line` by the two places that set it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineFrame {
     /// [`super::runtime::line_clip_window`] of the line; no clip without a line.
@@ -124,6 +129,12 @@ impl LineFrame {
 /// (`held_marks`), and the span of time it stays valid: it is recounted when the effect's age
 /// leaves `[from_age, until_age]`, when a released effect's age since release passes
 /// `until_exit`, or when an API that changes its inputs clears `valid`.
+// PERFORMANCE RATIONALE:
+// Why: The ledger recounted every effect's decal layers' placements every frame, though the
+// count changes only when one of them ends or the effect is changed.
+// What: The count with the span of time it holds for; recounted only outside it.
+// Trade-off: 20 bytes per effect and three APIs that must clear it, checked against the
+// recount by a test-only assertion on every call.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarksCache {
     /// Whether the count is set.

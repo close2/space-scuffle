@@ -25,10 +25,10 @@ Plan: [`docs/plans/2026-11-19-retained-effect-instances.md`](../../../plans/2026
 
 ## Base (WP1, head `0b63d4b4`)
 
-| Stream | Marginal instructions per frame | Digest (2 400 frames) | Live effects | Cards | Decals |
+| Stream | Marginal instructions per frame | Digest (2 400 frames) | Live effects | Cards | Decals (last frame) |
 |---|---:|---|---:|---:|---:|
-| S | **10.10 M** | `071aaddfbf6f8981` | 760 | 1 806 | 3 293 |
-| P | **11.89 M** | `936a7c2e7f8fcc06` | 1 026 | 2 790 | 3 356 |
+| S | **10.10 M** | `071aaddfbf6f8981` | 760 | 1 781 | 3 295 |
+| P | **11.89 M** | `936a7c2e7f8fcc06` | 1 028 | 2 798 | 3 353 |
 
 The S figure matches the planner's 10.07 M (§3.2).
 
@@ -85,7 +85,7 @@ Every row compares the WP's head with the base on the same host, in the same alt
 | WP2 exact CPU wins | `67560ea2` | 7.74 M | 9.31 M | equal to the base | 16 of 16 byte-identical |
 | WP3 spawn-path indices | `67cf360a` | 7.30 M | 8.82 M | equal to the base | 16 of 16 byte-identical |
 | WP4 decal table (CPU aging) | `dae18996` | 6.27 M | 7.82 M | equal to the base | 16 of 16 byte-identical |
-| WP5 keyed card sort | `419ed33f` | **6.01 M** | **7.38 M** | re-recorded (ties): S `a4afd00c954b7095`, P `14a7fd038cc8d77e` | 13 of 16 differ in 66 to 359 pixels, at most 5/255 |
+| WP5 keyed card sort | `419ed33f` | **6.01 M** | **7.38 M** | re-recorded (ties): S `a4afd00c954b7095`, P `14a7fd038cc8d77e` | 13 of 16 differ in 66 to 359 pixels (see below) |
 
 So far the CPU work packages remove **41 % (S) and 38 % (P)** of the build's instructions. Thread CPU per frame of
 `build_frame` (secondary, load-dependent): base S 1.8 to 3.1 ms and P 2.2 to 4.1 ms; WP5 S 1.3 to 3.1 ms and
@@ -100,8 +100,10 @@ order. Per D-3 the `(key, index)` order is the definition from WP5 on:
 - `effect_frame --frame-digests` with the old sort (a build of WP5 with the old `sort_cards`) against the new: S
   frames differ on 624 of 2 400, P on 2 400 of 2 400. Ordering the darkening cards canonically (they multiply, so
   their order draws nothing different) still leaves 624 and 2 397, so the ties are among ordinary cards.
-- Identity scene: 13 of 16 captures differ from WP1's base in 66 to 359 of 921 600 pixels, peak difference 3 to 5
-  levels. [Sheet](retained_decals_wp5_ties_radv.jpg): capture 2 at the base, at WP5, and their difference × 16.
+- Identity scene: 13 of 16 captures differ from WP1's base in 66 to 359 of 921 600 pixels. The per-channel peak is
+  at most 5 levels in ten of them, 8 in captures 10 and 13, and 65 in capture 5, where 34 pixels in one blob
+  (x 621 to 631, y 246 to 254) show another of two equal-depth cards on top: a visible tie-order change, as D-3
+  allows (independent review, round 1; the WP5 commit message's "at most 5/255" is wrong). [Sheet](retained_decals_wp5_ties_radv.jpg): capture 2 at the base, at WP5, and their difference × 16.
 
 WP5's captures (`~/scratch/retained-decals/base-wp5/`) are the base WP6's D-10 check 3 is compared with.
 

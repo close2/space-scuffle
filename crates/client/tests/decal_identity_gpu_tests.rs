@@ -5,8 +5,10 @@
 //! One child of this binary runs the production effect lab (`client::effects::lab`) offscreen
 //! through `support/gpu_run.rs` (radv with the shared lock, or lavapipe), at 1280×720 under the
 //! battle camera on the bright ground, with a copy of the shipped vocabulary whose decal budget
-//! and class caps are tightened, and a [`LabCrowd`] that exercises every input a lasting decal
-//! depends on:
+//! and class caps are tightened, and a [`LabCrowd`] that exercises the inputs of a lasting decal
+//! the shipped vocabulary lets a picture show (independent review, round 1: no shipped tether has
+//! a decal, the released look's decals end before its release, and no line is merged here; those
+//! paths are pinned by the decal table's dirty-coverage unit tests instead):
 //! - every shipped effect with a decal layer (found from the catalog, none named), on a grid,
 //!   spawned or held by its event kind, and spawned again in two later waves so that the
 //!   tightened decal budget retires marks and the tightened class caps retire details;

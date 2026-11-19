@@ -13,7 +13,7 @@
 //!   `move_anchor`, as the frame budget's §10.3 stress keeps them.
 //!
 //! # How it fits
-//! `client` cannot use `client_diagnostics` (the dependency runs the other way), so the
+//! `client` cannot use the diagnostics crate (the dependency runs the other way), so the
 //! runtime's oracle tests drive this stream built from the shipped catalogs instead of the frame
 //! budget's own S and P streams; the `effect_frame` bench drives those for the digests. Test
 //! code only.
@@ -82,7 +82,7 @@ pub struct TestStream {
 pub fn shipped_catalog() -> EffectCatalog {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     EffectCatalog::load(&root.join(EFFECTS_CATALOG_PATH), &root)
-        .expect("the shipped vocabulary loads")
+        .expect("invariant: the repository's shipped vocabulary loads, which its own tests check")
 }
 
 /// The frame budget's camera: 75 units out at the battle camera's pitch over the stream.

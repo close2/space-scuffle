@@ -834,3 +834,15 @@ and P at the base), and WP7's series is still to be taken after WP6.
 **For WP6.** `decal_table::age_decal` is the Rust reference (`decal_clock` then `decal_at`); it still ages from the
 f64 birth as today's code did. D-8's `hi`/`lo` split belongs to WP6 together with the WGSL port. `frame.decals` is
 still filled every frame by the CPU aging (D-15 is WP6's).
+
+**Independent review, round 1** (identity evidence and dirty coverage; verdict: the identity claims hold for WP2 to
+WP4). Its should-fix items: the WP5 peak difference was misstated (corrected in the evidence: up to 65 levels in one
+34-pixel blob of capture 5); the identity scene does not picture a released held decal, a tether decal or a merged
+line (its doc now says so; the dirty-coverage unit tests pin those paths, and WP6 may add a released held decal look
+to the scene when it re-baselines the scene anyway); the table's rows fit only while an effect's placed decals never
+outnumber its granted slots (documented as the table's precondition, counted as a critical overflow; open for WP6:
+clamp rows to `decal_slots` or size the table); `// PERFORMANCE RATIONALE:` blocks were added to the table, the
+caches and the bit arithmetic. Notes kept open: correctness assumes time runs forward (now stated in the table's
+docs; D-8's "any `now` sequence" no longer holds for a backward step without a reset); WP2 to WP5 were compared on
+radv only (lavapipe at the base); the bench binaries were built minutes before their commits, so the digests cover
+the trees built, not the commit hashes.

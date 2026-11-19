@@ -75,6 +75,10 @@ pub struct CameraView {
     /// Viewport width over height.
     pub aspect: f32,
     /// `tan(fov_y / 2)`, computed once.
+    // PERFORMANCE RATIONALE:
+    // Why: `pixels` and `sees` computed `tan(fov_y / 2)` per call, several times per instance.
+    // What: Computed once in `new`; `fov_y` stays public for reading.
+    // Trade-off: Assigning `fov_y` after `new` would leave it stale; cameras are made by `new`.
     half_tan: f32,
 }
 
@@ -2332,6 +2336,11 @@ pub fn seen_clip_window_in(whole: LineClip, seen: u64, spacing: f32, position: V
 /// [`WorldLine::sees_point`] reads it): `(low, high)`, where every point in `low..point` and in
 /// `point + 1..=high` is seen and the next one beyond each end is not (or is past the line).
 /// This is the walk of [`seen_clip_window`], done with bit counts.
+// PERFORMANCE RATIONALE:
+// Why: The walk ran outward bit by bit from every clipped instance's point every frame.
+// What: Two shifts and a leading- or trailing-ones count per end.
+// Trade-off: Bit arithmetic in place of an obvious loop, tied to it by a test over every point
+// of 10 000 random lines.
 #[must_use]
 pub fn seen_run(seen: u64, last: u32, point: u32) -> (u32, u32) {
     // Consecutive seen points from bit `bit` downward.
@@ -2368,6 +2377,11 @@ pub fn seen_run(seen: u64, last: u32, point: u32) -> (u32, u32) {
 /// it past the layer's span; this evaluates the same expression with the largest delay any
 /// placement gives ([`max_placed_delay`]), and IEEE subtraction is monotone, so when it is
 /// past the span every instance's is (D-3: skipped before placement, bit-identical).
+// PERFORMANCE RATIONALE:
+// Why: An effect lives until its last mark ends, and its ended fire layers were placed instance
+// by instance every frame before their clocks refused them.
+// What: One test per layer with its largest placed delay, before any placement.
+// Trade-off: A second expression of a layer's end, which must bound `place`'s delays.
 pub(super) fn layer_ended(layer: &Layer, instance: &EffectInstance, age: f32) -> bool {
     if layer.held && instance.held {
         return false;
