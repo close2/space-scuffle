@@ -28,8 +28,8 @@ field (schema 30 → 31), and the work follows three withdrawn rules whose failu
 | [Q0089](../questions/closed/0089-queued-attacker-keeps-order.md) a unit queued behind fighting friends keeps its attack order | Answered (a), landed (D-4 of the first plan) | D-2 relies on it |
 | Q0061 hand back after `cargo gate quick`; a verifier runs `package` | Standing rule | §6 |
 | Q0002 scoping is the agent's call if written down | Standing rule | §9 |
-| **OQ-1 (orchestrator, blocking WP2 and WP3)** may stop rule 1 judge matrix battle 31, whose 20 matrix seeds split 6 / 7 / 7, on 100 seeds? | Open. Default: **no** (the strict reading); then WP2 and WP3 do not start and R-A and the re-arm stay open with §4's figures | §2.3, §5 |
-| **OQ-2 (orchestrator, blocking WP3)** may D-1 land although it lowers the corridor's standing from 96 to 87 % for one unit (reversals 7 → 3)? | Open. Default: **no**; then WP3 does not start and D-1 stays open with §4's figures | §5 D-2.4 |
+| **OQ-1 (orchestrator, blocking WP2 and WP3)** may stop rule 1 judge matrix battle 31, whose 20 matrix seeds split 6 / 7 / 7, on 100 seeds? | **Decided yes (Amendment 1).** Was: default **no** (the strict reading); then WP2 and WP3 do not start and R-A and the re-arm stay open with §4's figures | §2.3, §5 |
+| **OQ-2 (orchestrator, blocking WP3)** may D-1 land although it lowers the corridor's standing from 96 to 87 % for one unit (reversals 7 → 3)? | **Decided yes, with a recorded residual (Amendment 1).** Was: default **no**; then WP3 does not start and D-1 stays open with §4's figures | §5 D-2.4 |
 
 ---
 
@@ -648,3 +648,35 @@ Nothing left out is accepted as a deviation by being left out; each stays under 
   (C1's is reproduced by C2's without the alternation).
 - Results (A1s under the name `A1s2`): `~/scratch/crowd-edge-2/<name>/summary.txt`, `repro.log`, `b31/`; probe classes
   `~/scratch/crowd-edge-2/probe-out/<name>-9.classes`.
+
+## Amendment 1 (orchestrator, 2026-11-19): OQ-1 and OQ-2 decided
+
+**OQ-1: yes, the 100-seed reading.**
+
+- **When it applies.** Stop rule 1 judges a matrix battle on 100 seeds when its 20-run base split is within one
+  seed between the two sides. Today that is battle 31 only, at 6 / 7 / 7. WP1 adds the method and names the
+  battles it covers.
+- **When the rule is met.** It holds when the 100-seed winner is unchanged and the winner's share does not fall by
+  more than the placebo band.
+- **Why.** Every candidate that moves the matrix, the placebos included, flips battle 31's 20-run winner, while
+  over 100 seeds blue wins 46 to 22 in the base and in every candidate. The 20-run reading of a battle that is
+  decided by one seed measures the seed draw, not the rule. The battle's own claim says either side may win.
+- **The placebo band.** An effect on reversals counts only below the band's lower edge (6,017 of record), as the
+  plan says.
+
+**OQ-2: yes, with a recorded residual.**
+
+- **What D-1 costs.** D-1 (A1) may land although one corridor unit's standing falls from 96 to 87 %. That is still
+  above the 65 to 88 % on main before D-2, and corridor reversals fall from 7 to 3.
+- **How the corridor test is handled.**
+  - WP2 un-ignores the corridor standing test at K4's figures.
+  - If WP3 makes the test fail for that unit, WP3 does not loosen the bound. It re-ignores the test with the
+    measured figures in its reason, and records the residual in the B-103 row as open.
+  - Every other corridor and walker bound stays as planned.
+
+**Added to WP3: trace showcase seed 6.** A1 leaves it unfinished by tick 3,000, with player 1's army dead. WP3
+traces why player 0 does not end the match. A stall at a structure, a give-up loop or a wedge is a defect and
+stops the WP. A slow but progressing siege is reported as rule-caused.
+
+**Housekeeping.** The prototype worktrees under `~/scratch/crowd-edge-2/` and their target directories are removed
+once WP3 is measured. WP0 deletes the three `crowd-edge-wp*-wip` side branches, as planned.
