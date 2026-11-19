@@ -355,3 +355,10 @@ rounded corners with their sides, against the mesh route's turns):
 In each, the oracle passes through other gaps than the mesh route: TA* ranks channels by their pull with the corner
 margin, and these channels need no margin only on the oracle's side. None is a defect of the funnel (the funnel's
 own routes through their channels gain nothing from finer bisection: 1.0451 → 1.0443 for the worst). No stop.
+
+## WP5: bookkeeping
+
+- `DESIGN.md` §4: B-141 leaves the register as fixed, with the figures above; B-146 stays open.
+- `docs/plans/README.md`: the plan's row is `Done`.
+- The showcase did not move (bit-identical on nine seeds), so no storyboard check is needed.
+- Open: a wall-clock throughput run on a quiet host (Amendment 1, point 3); the verifier's `cargo gate package`.
