@@ -77,7 +77,21 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// Digest of every path result over a corpus with seeded 5.0.14 contour structures (plan
 /// `2026-11-18-contour-footprints` WP3), pinned when the contour cut landed. Its draws use only
 /// fixed-width integer ranges, so the same corpus is drawn on 32-bit and 64-bit targets.
-const CONTOUR_PATH_GOLDEN: u64 = 0x9069_95c7_29b7_3498;
+///
+/// Re-recorded for plan `2026-11-19-funnel-fallbacks` WP2 (D-3, obstacle vertices near a leg;
+/// was `0x9069_95c7_29b7_3498`, which the tree reproduces with D-3 switched off). Two of the 500
+/// requests change: a wedged start on the showcase (r 0.75) now rounds an obstacle vertex outside
+/// its channel, legal both ways, 53.72 -> 53.54 long; and a partial-knowledge request (r 0.625)
+/// that falls back both ways through another channel's midpoints (B-146). The new value is the
+/// same in native debug, native release and `wasm32-wasip1` release.
+///
+/// Re-recorded for WP3 of the same plan (D-2, the zero-room retry, with Amendments 1 and 2; was
+/// `0x6637_d70a_80d8_a859`, which the tree reproduces with D-2 switched off, and
+/// `0x9069_95c7_29b7_3498` with D-2 and D-3 off). One of the 500 requests changes: a class E
+/// zero-room pinch on the showcase under partial knowledge, r 1.0, (34.5, 23.5) -> (50.0, 47.5),
+/// which fell back to the portal midpoints (91.45 long) and is now legal (51.27). The new value
+/// is the same in native debug and release and in `wasm32-wasip1` release and debug.
+const CONTOUR_PATH_GOLDEN: u64 = 0x36ff_bf4b_e967_0683;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;

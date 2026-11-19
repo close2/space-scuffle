@@ -779,11 +779,11 @@ fn fallback_counts(layouts: u64, square: bool) -> (u32, u32, u32) {
 /// The shipped terrain radii, in sixteenths of a world unit: 0.3125 to 1.0.
 const SHIPPED_TERRAIN_RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
 
-/// Plan `2026-11-18-contour-footprints` Amendment 1: the contours add no funnel fallback. On 150
-/// seeded layouts of the §2.3 shapes, the same layouts with their contours fall back no more
-/// often than with full squares, in total and outside exact fits. (Fallbacks between points
-/// where the disc fits remain on terrain with or without structures; they are the funnel's
-/// existing behaviour, B-141.)
+/// Plan `2026-11-18-contour-footprints` Amendment 1, as plan `2026-11-19-funnel-fallbacks`
+/// completes it (B-141): on 150 seeded layouts of the §2.3 shapes, with contours and with full
+/// squares, no route between points where the disc fits falls back to the portal midpoints.
+/// Before the zero-room retry (D-2) and the obstacle vertices near a leg (D-3), 11 of 1,729
+/// contour routes and 14 of 1,722 square routes did, all of them zero-room pinches.
 #[test]
 fn contours_add_no_funnel_fallbacks() {
     let (contour_routed, contour_fallbacks, contour_exact) = fallback_counts(150, false);
@@ -793,6 +793,5 @@ fn contours_add_no_funnel_fallbacks() {
          square: {square_fallbacks} of {square_routed} ({square_exact} exact fits)"
     );
     assert!(contour_routed > 1_000 && square_routed > 1_000);
-    assert!(contour_fallbacks <= square_fallbacks);
-    assert!(contour_fallbacks - contour_exact <= square_fallbacks - square_exact);
+    assert_eq!((contour_fallbacks, square_fallbacks), (0, 0));
 }
