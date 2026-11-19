@@ -119,6 +119,10 @@ SuiteCatalog(
         // renders the whole scene twice at 1280x720. The GPU renderer and shader rules select it
         // for `effects/**` and `assets/shaders/**`; the catalog rule for `effects.ron`.
         "client/decal_identity_gpu_tests": (class: Gpu, test_threads: Some(1)),
+        // The decal aging pass (plan 2026-11-19-retained-effect-instances WP6): three children
+        // render the identity scene (GPU aging with read-back, CPU aging, forced full copies).
+        // Selected like the identity scene: `effects/**`, `assets/shaders/**`, `effects.ron`.
+        "client/decal_age_gpu_tests": (class: Gpu, test_threads: Some(1)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
         // On lavapipe (CI) a GPU child keeps its textures in host memory and no GPU lock
         // serializes the children, so each test thread runs a whole client at once: four threads
@@ -261,6 +265,7 @@ SuiteCatalog(
                 "client/effect_gpu_tests",
                 "client/effect_slice_gpu_tests",
                 "client/decal_identity_gpu_tests",
+                "client/decal_age_gpu_tests",
                 "client/stance_gpu_tests",
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",

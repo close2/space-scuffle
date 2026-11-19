@@ -733,7 +733,8 @@ fn camera_view(
     ))
 }
 
-/// Ages the effects and rebuilds this frame's instances.
+/// Ages the effects and rebuilds this frame's instances; under
+/// [`super::render::EffectDecalSource::Cpu`] also ages the decal rows on the CPU.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -741,6 +742,7 @@ fn camera_view(
 pub fn build_effect_frame(
     catalog: Option<Res<'_, EffectCatalog>>,
     runtime: Option<ResMut<'_, EffectRuntime>>,
+    source: Option<Res<'_, super::render::EffectDecalSource>>,
     time: Res<'_, Time<Virtual>>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform, &Projection), With<Camera3d>>,
 ) {
@@ -750,13 +752,16 @@ pub fn build_effect_frame(
     if runtime.pool().live_total() == 0
         && runtime.particles.is_empty()
         && runtime.frame.sorted.is_empty()
-        && runtime.frame.decals.is_empty()
+        && runtime.decal_table().live() == 0
         && runtime.frame.lights.is_empty()
     {
         return;
     }
     let camera = camera_view(&cameras);
     runtime.build_frame(&catalog, time.elapsed_secs_f64(), camera.as_ref());
+    if source.as_deref() == Some(&super::render::EffectDecalSource::Cpu) {
+        runtime.age_decals_on_cpu(&catalog);
+    }
 }
 
 /// Writes the frame's lights into the pooled light entities and hides the rest.

@@ -381,8 +381,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
             "effects.depth",
             "effects.order",
             "effects.sorted",
-            "effects.decals",
+            "effects.aged_decals",
             "effects.lights",
+            "effects.distortions",
         ];
         for (name, (address, capacity)) in names.into_iter().zip(runtime.frame.buffers()) {
             found.push((name, address, capacity));
@@ -399,6 +400,7 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
             "effects.table.dirty_bits",
             "effects.table.dirty",
             "effects.table.expiry",
+            "effects.table.patches",
         ];
         for (name, (address, capacity)) in table.into_iter().zip(runtime.decal_table().buffers()) {
             found.push((name, address, capacity));

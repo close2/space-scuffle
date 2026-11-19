@@ -57,6 +57,7 @@ pub struct EffectsPlugin;
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<render::EffectCatalogVersion>()
+            .init_resource::<render::EffectDecalSource>()
             .init_resource::<areas::AreaLooks>()
             .init_resource::<struck::StruckBubbles>()
             .init_resource::<beams::HeldBeams>()
