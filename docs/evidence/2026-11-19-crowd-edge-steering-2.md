@@ -293,3 +293,48 @@ Friendly-blocking Amendment 4 change 5 is marked superseded by D-2. This plan's 
 **Open items** (carried under B-103, plan §9): R-B and R-D (need the slide round a friend that holds its ground as a
 locomotion rule first), R-C (needs a wall-bearing matrix battle), the walk's start retreat, the corridor's standing
 residual, R-E (B-144) and R-F (B-145).
+
+## WP3 stopped: the matchup matrix test fails on two seeds of record (trace)
+
+**What failed.** After WP4 and the merge of `main` (`399c6098`), `cargo gate quick` is green, but
+`sc2_who_wins_matchup_matrix_tests::every_battle_keeps_its_recorded_outcome_on_every_seed` (outside the quick tier)
+fails on WP3's tree:
+
+- `26_100_lings_vs_6_colossi` seed 33 (of record): the colossi win with 2 left; the battle records `red: (4, 999)`
+  ("Six colossi vaporize a hundred zerglings"; WP2: 4 left, tick 390; WP3: 2 left, tick 525).
+- `36b_marines_beat_zealots_without_storm` seed 22 (of record): the marines win with 12 left; the battle records
+  `red: (9, 11)` (WP2: 11 left, tick 347; WP3: 12 left, tick 349).
+
+Neither is a winner flip, and both battles keep their overall winner (stop rule 1 holds), but each breaks the
+survivor band the matrix records for every seed. The plan's stop rules did not name this test; the brief forbids
+loosening a bound, and re-recording either band would loosen it. **So WP3 stops** (and WP4, which depends on it).
+
+**First divergence** (`matchup_trace --battle <b> --seed <s>` with the saved release tools of WP2 and WP3,
+`~/scratch/crowd-edge-2/wp3-stop/`):
+
+- Battle 26 seed 33: tick 2, blue zergling entity 91 at (24.20, 50.91). On WP2 it steps forward (0.112, −0.018);
+  on WP3 its surround walk goes on, (0.023, 0.164). Its first walk step had stepped back, so D-1 holds the walk
+  where the old end test ended it. 100 zerglings walking round each other from tick 1 make this battle the most
+  sensitive to D-1 (its reversals of record fall 1,021 → 895).
+- Battle 36b seed 22: tick 118, red marine (pulse bot) entity 8 at (34.23, 43.82). On WP2 it steps forward
+  (0.113, 0.014); on WP3 it walks (0.013, −0.125).
+
+**Cause.** D-1, as designed and as prototyped. The rule-off control (D-1 off by a scratch flag, field kept)
+reproduces WP2's matrix byte for byte, and WP3's matrix is byte-identical to prototype A1 + K4's, which already had
+these two misses (`~/scratch/crowd-edge-2/A1K4/matrix.log`: "expectation failures 2 on the seeds of record"); the
+plan's §4 tables did not report the matrix's expectation failures. Over all seeds, the misses go from 3 (WP2) to 9:
+battle 26 seeds 4, 10, 16 (on seed 16 the zerglings win, 8 left) and 33; battle 33 seeds 8 and 9 (red wins);
+battle 36b seeds 8 and 22; battle 38a seed 2.
+
+**Classification:** rule-caused (a plan gap: the stop rules read each battle's overall winner, while the matrix test
+holds each seed of record to the battle's survivor band). Not a defect of the implementation.
+
+**Proposed amendment** (the orchestrator's choice):
+
+1. *Land D-1 with the two bands restated*, each with its trace in the fixture's comment: battle 26 `red: (2, 999)`
+   (the colossi still win every seed of record; on seed 33 the zerglings kill four) and battle 36b `red: (9, 12)`
+   (the marines still win every seed). This widens two recorded bands by measurement, so it needs the orchestrator's
+   (or the owner's, if it wants) sanction under the "no bound is loosened" rule; the rest of WP3 and WP4 is ready
+   on this branch as measured above.
+2. *Or keep D-1 out:* only WP0 to WP2 land; R-A stays open under B-103 with WP3's figures (matrix of record 4,659,
+   showcase 174, walkers 16, corridor 3) and this trace, for a plan that prices the survivor bands in.
