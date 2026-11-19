@@ -270,6 +270,12 @@ pub struct MovementMemory {
     pub flank_blocked_ticks: u16,
     /// Distance walked round the crowd on this walk, in world units.
     pub flank_walked: SimScalar,
+    /// Distance the surround walk has stepped back from its goal since it last became active, in
+    /// world units: the sum of each walk step's backward part along the way in. A walk in
+    /// progress ends only when the straight way in is free for a step plus this distance, so it
+    /// does not end on the room its own retreat made (plan `2026-11-19-crowd-edge-steering-2`
+    /// D-1). Cleared when the unit steps forward, when the walk ends and on a new order.
+    pub flank_retreat: SimScalar,
     /// The target the surround walk approaches; `None` for an attack-move without one. A walk
     /// for another goal starts afresh.
     pub flank_target: Option<EntityId>,

@@ -69,7 +69,9 @@ use std::collections::BTreeMap;
 /// and each unit's last storm damage tick.
 /// Schema 30 adds each placed structure's footprint shape: half-width, half-height and chamfer
 /// in quarter cells (plan `2026-11-18-contour-footprints`).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 30;
+/// Schema 31 adds each unit's surround-walk retreat, `MovementMemory::flank_retreat`, after the
+/// distance walked (plan `2026-11-19-crowd-edge-steering-2` D-1).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 31;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
