@@ -608,3 +608,25 @@ Then D-8's five moves, and the measurements of §7 rule 3 with the re-record of 
   `protolog/`, `matrix/`, `route/`, `golden/`).
 - Moved maps: `~/scratch/footprint-flags/maps/`.
 - The scratch worktree and its target directory were removed at hand-back; the diff rebuilds it on `e969dc75`.
+
+## Amendment 1 (orchestrator, 2026-11-19): WP4's map-naming tests are fixed in WP4
+
+**Why.** WP4 stopped on §7 rule 4 (evidence `docs/evidence/2026-11-19-footprint-flags-wp4-stop.md`, on
+`footprint-flags-wp4-wip`). Three tests outside §6.1 fail with the geysers moved. Each one names or digests the moved
+node cells, and none shows a change in simulation behaviour.
+
+**Decision: adopted as proposed.**
+
+1. **Test data:** `full_match_tests::stim_is_locked_until_researched_through_the_whole_tech_path` changes its site
+   to `(14, 5)` and its gas cell to `(15, 6)`.
+2. **Digests:** `sim_map/validation_golden_tests`' validation and decode digests are re-recorded with a proof
+   header, the same on native debug and release and on `wasm32-wasip1` release and debug. Every required error
+   variant must still be raised.
+3. **Rule 4 is read as follows.** A test that fails only because it names or digests the moved cells is fixed in
+   the WP4 commit, with its trace. Any other failure still stops the package.
+
+**Added to WP4.**
+
+- Re-measure the matrix, battle 33 and the showcase on the tree that includes main's funnel changes (`bf4252cf` or
+  later), against main's own run, not against `41fa340d`.
+- Run the GPU targets that read the shipped maps: `runtime_battle_tests`, `editor_app_tests` and `terrain_tests`.
