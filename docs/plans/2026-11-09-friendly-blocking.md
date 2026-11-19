@@ -737,3 +737,10 @@ Implementation decision under the sc2 pathfinding plan's Amendment 4 (defect b),
   kill (tick 64), the rear walker standing between it and its next target. `golden_replay` re-recorded (every
   checkpoint from the first, ticks 1 to 50, where an attack-moving squad walks round its own column);
   `golden_replay_orders` unchanged.
+
+## Amendment 8 (2026-11-19): B-103 is carried by plan `2026-11-19-crowd-edge-steering`
+
+B-103 is carried by plan [`2026-11-19-crowd-edge-steering`](2026-11-19-crowd-edge-steering.md). That plan
+landed its D-4, under which a unit queued behind a friend that holds its ground is not stalled (Q0089). This plan's
+Amendment 4, change 5, the timed retry of a spent walk, stays: its replacement (crowd-edge D-3) flipped matrix
+battle 31 and moved to a new plan (crowd-edge Amendment 3).

@@ -72,7 +72,7 @@ pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--ass
   --seed <n>         the world's random seed replacing the scenario's
   Always writes groups.md (route groups, their lanes and GroupLane events), overlap.csv
   (every unit-tick on which a ground body's disc overlaps a wall) and reversals.csv (every
-  counted reversal: tick, unit, position and both steps).";
+  counted reversal: tick, unit, position, both steps and its cause).";
 
 /// A named axis-aligned box of the map in world units, bounds inclusive.
 #[derive(Debug, Clone, PartialEq)]
@@ -639,14 +639,15 @@ fn lines(rows: &[String]) -> String {
     rows.iter().flat_map(|row| [row.as_str(), "\n"]).collect()
 }
 
-/// One line per counted reversal: the tick, the unit, its owner, its position and both steps
-/// (world units and world units per tick, four decimals).
+/// One line per counted reversal: the tick, the unit, its owner, its position, both steps
+/// (world units and world units per tick, four decimals) and its cause, `proposal` or `contact`
+/// (plan `2026-11-19-crowd-edge-steering` D-5).
 #[must_use]
 pub fn reversals_csv(events: &[ReversalEvent]) -> String {
-    let mut rows = vec!["tick,entity,owner,x,y,before_x,before_y,now_x,now_y".to_owned()];
+    let mut rows = vec!["tick,entity,owner,x,y,before_x,before_y,now_x,now_y,cause".to_owned()];
     rows.extend(events.iter().map(|e| {
         format!(
-            "{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+            "{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{}",
             e.tick,
             e.entity.0,
             e.owner,
@@ -655,7 +656,8 @@ pub fn reversals_csv(events: &[ReversalEvent]) -> String {
             e.before.0,
             e.before.1,
             e.now.0,
-            e.now.1
+            e.now.1,
+            if e.proposal { "proposal" } else { "contact" }
         )
     }));
     lines(&rows)
@@ -735,9 +737,10 @@ pub fn summary_markdown(output: &RouteTraceOutput) -> String {
     ));
     rows.push(String::new());
     rows.push(format!(
-        "| Owner | In range at tick {IN_RANGE_TICK} | Blocked attacker ticks | Reversals | Stall give-ups |"
+        "| Owner | In range at tick {IN_RANGE_TICK} | Blocked attacker ticks | Reversals | \
+         Proposal-caused | Contact-caused | Stall give-ups |"
     ));
-    rows.push("|---:|---|---:|---:|---:|".to_owned());
+    rows.push("|---:|---|---:|---:|---:|---:|---:|".to_owned());
     for &(owner, blocking) in &output.blocking {
         let in_range = output
             .in_range
@@ -745,8 +748,12 @@ pub fn summary_markdown(output: &RouteTraceOutput) -> String {
             .find(|(slot, _)| *slot == owner)
             .map_or_else(|| "—".to_owned(), |(_, (hit, of))| format!("{hit} of {of}"));
         rows.push(format!(
-            "| {owner} | {in_range} | {} | {} | {} |",
-            blocking.blocked_attacker_ticks, blocking.reversals, blocking.stall_giveups
+            "| {owner} | {in_range} | {} | {} | {} | {} | {} |",
+            blocking.blocked_attacker_ticks,
+            blocking.reversals,
+            blocking.proposal_reversals,
+            blocking.contact_reversals,
+            blocking.stall_giveups
         ));
     }
     rows.push(String::new());
@@ -876,11 +883,12 @@ mod tests {
             position: (3.25, 4.5),
             before: (0.1, 0.0),
             now: (-0.1, 0.01),
+            proposal: true,
         };
         assert_eq!(
             super::reversals_csv(&[event]),
-            "tick,entity,owner,x,y,before_x,before_y,now_x,now_y\n\
-             12,7,1,3.2500,4.5000,0.1000,0.0000,-0.1000,0.0100\n"
+            "tick,entity,owner,x,y,before_x,before_y,now_x,now_y,cause\n\
+             12,7,1,3.2500,4.5000,0.1000,0.0000,-0.1000,0.0100,proposal\n"
         );
     }
 }

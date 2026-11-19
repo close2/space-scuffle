@@ -10,7 +10,11 @@
 //!   the previous tick's (cosine below [`REVERSAL_COSINE`], both steps longer than
 //!   [`REVERSAL_MIN_STEP`]) while the unit's order, target and goal are unchanged (a chased target
 //!   that moved changes the goal) and no enemy touches the unit. This is invariant D-1.4 of plan
-//!   `2026-11-09-friendly-blocking`, which the waiting rule makes hold;
+//!   `2026-11-09-friendly-blocking`, which the waiting rule makes hold. Each reversal is either
+//!   **proposal-caused** ([`BlockingMetrics::proposal_reversals`]), when the steps the unit
+//!   proposed on the two ticks (`SimWorld::proposed_step`) reverse by the same test, or
+//!   **contact-caused** ([`BlockingMetrics::contact_reversals`]), when only the collision phase's
+//!   corrections made the achieved steps reverse (plan `2026-11-19-crowd-edge-steering` D-5);
 //! - **stall give-ups** ([`BlockingMetrics::stall_giveups`]): the `NoProgress` and
 //!   `PursuitAbandoned` route outcomes, orders given up because the unit stopped gaining ground.
 //!
@@ -55,13 +59,24 @@ pub const REVERSAL_MIN_STEP: f64 = 0.005;
 /// Gap between body edges, world units, within which an enemy counts as touching a unit.
 pub const ENEMY_TOUCH_GAP: f64 = 0.05;
 
+/// Achieved step, world units per tick, up to which a unit counts as standing: the simulation's
+/// own `sim_core::movement::tuning::STANDING_DRIFT` (1/64), which is not exported, named here for
+/// measurement (plan `2026-11-19-crowd-edge-steering` D-6). Contact nudges a waiting body in a
+/// crowd by a few thousandths of a unit per tick, while a walking one moves a tenth or more.
+pub const STANDING_DRIFT: f64 = 1.0 / 64.0;
+
 /// One owner's blocking counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BlockingMetrics {
     /// Unit-ticks spent out of range of a held target with a non-yielding friend in the way.
     pub blocked_attacker_ticks: u32,
-    /// Unit-ticks whose step reversed the previous one under an unchanged order (D-1.4).
+    /// Unit-ticks whose step reversed the previous one under an unchanged order (D-1.4): the
+    /// sum of [`Self::proposal_reversals`] and [`Self::contact_reversals`].
     pub reversals: u32,
+    /// Reversals whose proposed steps reverse as well: the unit's own motion rule turned it.
+    pub proposal_reversals: u32,
+    /// Reversals whose proposed steps do not reverse: collision's corrections turned it.
+    pub contact_reversals: u32,
     /// Orders given up for lack of progress (`NoProgress`, `PursuitAbandoned`).
     pub stall_giveups: u32,
 }
@@ -75,6 +90,12 @@ impl BlockingMetrics {
                 .blocked_attacker_ticks
                 .saturating_add(other.blocked_attacker_ticks),
             reversals: self.reversals.saturating_add(other.reversals),
+            proposal_reversals: self
+                .proposal_reversals
+                .saturating_add(other.proposal_reversals),
+            contact_reversals: self
+                .contact_reversals
+                .saturating_add(other.contact_reversals),
             stall_giveups: self.stall_giveups.saturating_add(other.stall_giveups),
         }
     }
@@ -113,12 +134,16 @@ pub struct ReversalEvent {
     pub before: (f64, f64),
     /// The step that reversed it, world units per tick.
     pub now: (f64, f64),
+    /// Whether the unit's proposed steps reversed too ([`BlockingMetrics::proposal_reversals`]).
+    pub proposal: bool,
 }
 
 /// A unit's last observed step and intent.
 #[derive(Debug, Clone)]
 struct LastStep {
     velocity: (f64, f64),
+    /// The step the unit proposed (`SimWorld::proposed_step`), if it proposed one.
+    proposed: Option<(f64, f64)>,
     intent: Intent,
 }
 
@@ -163,29 +188,41 @@ impl BlockingMeter {
                 continue;
             };
             let velocity = (to_f64(entity.velocity.x), to_f64(entity.velocity.y));
+            let proposed = world
+                .proposed_step(id)
+                .map(|step| (to_f64(step.x), to_f64(step.y)));
             let intent = Intent::of(entity);
             if let Some(last) = self.last.get(&id) {
                 if last.intent == intent
                     && is_reversal(last.velocity, velocity)
                     && !excused(world, entity, arch)
                 {
-                    let before = last.velocity;
-                    self.owner(entity.owner).reversals += 1;
-                    *self.unit_reversals.entry(id).or_default() += 1;
-                    self.events.push(ReversalEvent {
+                    let proposal = last
+                        .proposed
+                        .zip(proposed)
+                        .is_some_and(|(before, now)| is_reversal(before, now));
+                    self.count_reversal(ReversalEvent {
                         tick: world.current_tick,
                         entity: id,
                         owner: entity.owner.0,
                         position: (to_f64(entity.position.x), to_f64(entity.position.y)),
-                        before,
+                        before: last.velocity,
                         now: velocity,
+                        proposal,
                     });
                 }
             }
             if is_blocked_attacker(world, entity, arch) {
                 self.owner(entity.owner).blocked_attacker_ticks += 1;
             }
-            seen.insert(id, LastStep { velocity, intent });
+            seen.insert(
+                id,
+                LastStep {
+                    velocity,
+                    proposed,
+                    intent,
+                },
+            );
         }
         self.last = seen;
     }
@@ -214,6 +251,19 @@ impl BlockingMeter {
     #[must_use]
     pub fn reversal_events(&self) -> &[ReversalEvent] {
         &self.events
+    }
+
+    /// Counts `event` for its owner and unit, by its class, and logs it.
+    fn count_reversal(&mut self, event: ReversalEvent) {
+        let metrics = self.owner(PlayerId(event.owner));
+        metrics.reversals += 1;
+        if event.proposal {
+            metrics.proposal_reversals += 1;
+        } else {
+            metrics.contact_reversals += 1;
+        }
+        *self.unit_reversals.entry(event.entity).or_default() += 1;
+        self.events.push(event);
     }
 
     fn owner(&mut self, owner: PlayerId) -> &mut BlockingMetrics {
@@ -368,6 +418,7 @@ mod tests {
                 position: (8.0, 8.0),
                 before: (0.125, 0.0),
                 now: (-0.125, 0.0),
+                proposal: false,
             }
         );
         assert_eq!(events[1].tick, 4);
@@ -376,16 +427,87 @@ mod tests {
         Ok(())
     }
 
+    /// Plan `2026-11-19-crowd-edge-steering` D-5: a reversal whose proposed steps reverse as well
+    /// is proposal-caused; one whose proposals keep their direction, or that has no proposal (no
+    /// movement phase ran), is contact-caused; `reversals` is their sum. The unit walks a `Move`
+    /// east, is set down beyond its goal and walks back west under the same order: its proposals
+    /// reverse. Then its achieved step alone is reversed while it keeps proposing west.
+    #[test]
+    fn reversals_are_split_into_proposal_and_contact_caused(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_map::{CliffLevel, GameMap, MapCell};
+        use sim_types::MoverType;
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = crate::world(map, 7);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+                    && !a.is_immobile_by_default()
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a mobile ground unit")?;
+        let at = |x: f64, y: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+        let id = world.spawn_unit(kind, PlayerId(0), at(8.0, 16.0))?;
+        let order = UnitOrder::Move {
+            target: at(16.0, 16.0),
+        };
+        world.try_issue_movement(PlayerId(0), &[id], &order, false)?;
+        let mut meter = BlockingMeter::new();
+        let walk = |world: &mut SimWorld, meter: &mut BlockingMeter| {
+            world.current_tick += 1;
+            world.step_movement_and_steering();
+            meter.observe(world);
+        };
+        walk(&mut world, &mut meter);
+        let east = world.proposed_step(id).ok_or("a proposal")?;
+        assert!(east.x > SimScalar::ZERO, "{east:?}");
+        let unit = world.entities.get_mut(&id).ok_or("spawned")?;
+        unit.position = at(24.0, 16.0);
+        unit.current_funnel_waypoints.clear();
+        walk(&mut world, &mut meter);
+        let west = world.proposed_step(id).ok_or("a proposal")?;
+        assert!(west.x < SimScalar::ZERO, "{west:?}");
+        let metrics = meter.of_owner(PlayerId(0));
+        assert_eq!(
+            (metrics.proposal_reversals, metrics.contact_reversals),
+            (1, 0)
+        );
+        // Still proposing west, the unit is turned east by what happened after the proposal.
+        walk(&mut world, &mut meter);
+        let unit = world.entities.get_mut(&id).ok_or("spawned")?;
+        unit.velocity = at(0.1, 0.0);
+        meter.observe(&world);
+        let metrics = meter.of_owner(PlayerId(0));
+        assert_eq!(
+            (metrics.proposal_reversals, metrics.contact_reversals),
+            (1, 1)
+        );
+        assert_eq!(metrics.reversals, 2);
+        let events = meter.reversal_events();
+        assert_eq!(
+            events.iter().map(|e| e.proposal).collect::<Vec<_>>(),
+            [true, false]
+        );
+        Ok(())
+    }
+
     #[test]
     fn metrics_add_counter_by_counter_and_saturate() {
         let a = BlockingMetrics {
             blocked_attacker_ticks: 1,
             reversals: 2,
+            proposal_reversals: 1,
+            contact_reversals: 1,
             stall_giveups: 3,
         };
         let b = BlockingMetrics {
             blocked_attacker_ticks: u32::MAX,
             reversals: 5,
+            proposal_reversals: 0,
+            contact_reversals: 5,
             stall_giveups: 0,
         };
         assert_eq!(
@@ -393,6 +515,8 @@ mod tests {
             BlockingMetrics {
                 blocked_attacker_ticks: u32::MAX,
                 reversals: 7,
+                proposal_reversals: 1,
+                contact_reversals: 6,
                 stall_giveups: 3,
             }
         );
