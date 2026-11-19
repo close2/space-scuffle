@@ -31,7 +31,8 @@ use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
 use super::funnel::{
-    portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side, ARC_CHORD_DIP,
+    portal_midpoints, radius_funnel, Anchor, Emission, FunnelRoute, FunnelScratch, Obstacles,
+    PullStrategy, Side, ARC_CHORD_DIP, ZERO_ROOM_SLACK,
 };
 use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
@@ -83,6 +84,10 @@ pub struct MeshRoute {
     pub turns: Vec<(LatticePoint, Side)>,
     /// Whether a funnel leg failed the segment predicate and the portal midpoints were used.
     pub fallback: bool,
+    /// Whether the zero-room retry (plan `2026-11-19-funnel-fallbacks` D-2) produced the route:
+    /// every pull with a corner margin failed, and the route passes a pinch with no room to
+    /// spare. A diagnostic, read by the tests that hold these routes to the oracle (Amendment 2).
+    pub zero_room: bool,
     /// Search nodes expanded.
     pub expansions: u32,
 }
@@ -99,6 +104,8 @@ pub struct MeshSearch {
     /// Reachable cells of [`nearest_reachable_point`]: `(distance squared, cell index, x)`.
     candidates: Vec<(u64, u32, u32)>,
     pub(crate) segment: SegmentScratch,
+    /// Buffers of the funnel's refinement (plan `2026-11-19-funnel-fallbacks` D-3).
+    funnel: FunnelScratch,
     /// Word trie and word-keyed visit lists of the lane-restricted search (D-5 of plan
     /// `2026-11-10-group-routing`).
     lanes: LaneScratch,
@@ -455,9 +462,14 @@ impl MeshSearch {
             &[s[0], s[1], s[2], g[0], g[1], g[2]],
             (
                 query.radius + CORNER_SAFETY_MARGIN,
-                ARC_CHORD_DIP,
+                Emission::Inscribed { dip: ARC_CHORD_DIP },
                 PullStrategy::Pinned,
             ),
+            &mut Obstacles {
+                access: query.access,
+                segment: &mut self.segment,
+                scratch: &mut self.funnel,
+            },
         );
         if self.is_legal(query, &pinned) {
             (pinned, true)
@@ -491,7 +503,57 @@ impl MeshSearch {
                 (query.start, query.goal),
                 &self.portals,
                 &[s[0], s[1], s[2], g[0], g[1], g[2]],
-                (query.radius + margin, margin / 2, strategy),
+                (
+                    query.radius + margin,
+                    Emission::Inscribed { dip: margin / 2 },
+                    strategy,
+                ),
+                &mut Obstacles {
+                    access: query.access,
+                    segment: &mut self.segment,
+                    scratch: &mut self.funnel,
+                },
+            );
+            if self.is_legal(query, &route) {
+                return (route, true);
+            }
+        }
+        (failed, false)
+    }
+
+    /// Pulls the channel in `self.portals` a last time, shrunk then pinned, with no room to spare
+    /// (plan `2026-11-19-funnel-fallbacks` D-2), after every pull with a margin failed the
+    /// segment predicate: at `r + ZERO_ROOM_SLACK`, with arcs circumscribed and gate lines across
+    /// pinches, and no candidate rounded that comes nearest a leg at the start or the goal.
+    /// Returns the first legal route, else `failed`, and whether the returned route is legal.
+    fn zero_room_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        failed: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let (s, g) = (
+            query.mesh.triangle_vertices(start_triangle),
+            query.mesh.triangle_vertices(query.goal_triangle),
+        );
+        for strategy in [PullStrategy::Shrunk, PullStrategy::Pinned] {
+            let route = radius_funnel(
+                query.mesh,
+                (query.start, query.goal),
+                &self.portals,
+                &[s[0], s[1], s[2], g[0], g[1], g[2]],
+                (
+                    query.radius + ZERO_ROOM_SLACK,
+                    Emission::ZeroRoom {
+                        radius: query.radius,
+                    },
+                    strategy,
+                ),
+                &mut Obstacles {
+                    access: query.access,
+                    segment: &mut self.segment,
+                    scratch: &mut self.funnel,
+                },
             );
             if self.is_legal(query, &route) {
                 return (route, true);
@@ -568,7 +630,16 @@ impl MeshSearch {
                     (query.start, query.goal),
                     &self.portals,
                     &end_vertices,
-                    (rho, ARC_CHORD_DIP, PullStrategy::Shrunk),
+                    (
+                        rho,
+                        Emission::Inscribed { dip: ARC_CHORD_DIP },
+                        PullStrategy::Shrunk,
+                    ),
+                    &mut Obstacles {
+                        access: query.access,
+                        segment: &mut self.segment,
+                        scratch: &mut self.funnel,
+                    },
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
@@ -699,6 +770,7 @@ fn route(
         total_length: start.distance(goal),
         turns: Vec::new(),
         fallback: false,
+        zero_room: false,
         expansions,
     };
     let lane = restriction.map(|r| LaneQuery {
@@ -751,6 +823,12 @@ fn route(
     } else {
         search.fitted_retry(&query, start_triangle, route)
     };
+    let (route, legal, zero_room) = if legal {
+        (route, true, false)
+    } else {
+        let (route, legal) = search.zero_room_retry(&query, start_triangle, route);
+        (route, legal, legal)
+    };
     let turns = route
         .anchors
         .iter()
@@ -774,6 +852,7 @@ fn route(
         total_length,
         turns,
         fallback,
+        zero_room,
         expansions,
     })
 }

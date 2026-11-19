@@ -121,6 +121,10 @@ fn oracle_clearance(walls: &[(i64, i64)], x: i64, y: i64) -> u8 {
     u8::try_from((16 * best.unsigned_abs()).isqrt()).unwrap_or(u8::MAX)
 }
 
+/// Fallbacks from a wedged start that `funnel_paths_are_legal_and_no_shorter_than_a_straight_line`
+/// exempted, counted across its cases.
+static WEDGED_FALLBACKS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -174,8 +178,10 @@ proptest! {
 
     /// Every returned path joins its endpoints through legal segments, and reporting is honest.
     /// A start where the disc does not fit may always be left (plan D-3), so its first leg is
-    /// held to the predicate only when the disc fits at the start; a counted fallback to portal
-    /// midpoints is exempt.
+    /// held to the predicate only when the disc fits at the start. A counted fallback to portal
+    /// midpoints is exempt only from a wedged start (plan `2026-11-19-funnel-fallbacks` §9; these
+    /// requests know every structure, so B-146's partial knowledge does not arise), and each
+    /// exempted case is counted in the test's output.
     #[test]
     fn funnel_paths_are_legal_and_no_shorter_than_a_straight_line(
         blocked in obstacle_mask(8),
@@ -194,6 +200,13 @@ proptest! {
         let found = pathfinder.find_path(&map, &request);
         // A counted fallback through portal midpoints (plan D-6, R-2) is exempt from legality.
         let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+        let start_fits =
+            pathfinder.segment_is_passable(&map, &request.into(), request.start, request.start);
+        prop_assert!(!fell_back || !start_fits, "fallback from a fitting start: {:?}", request);
+        if fell_back {
+            let exempted = WEDGED_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            eprintln!("wedged-start fallback {exempted}: {request:?}");
+        }
         if let Ok(path) = found {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
             prop_assert_eq!(path.waypoints.last(), Some(&request.goal));
@@ -472,7 +485,8 @@ const MESH_RATIO_BOUND: f64 = 1.10;
 
 /// Over a fixed set of seeded maps, radii and pairs, at least 95 % of mesh routes are within
 /// 1 % of the oracle's length, none is beyond [`MESH_RATIO_BOUND`], none disagrees on
-/// existence or fails a leg, and at most 2 % fall back to portal midpoints.
+/// existence or fails a leg, and none falls back to portal midpoints: every endpoint has room
+/// for the disc (plan `2026-11-19-funnel-fallbacks` WP4; before its D-2 and D-3, up to 2 % did).
 #[test]
 fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
     use rand::{Rng, SeedableRng};
@@ -522,9 +536,108 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
         "mesh against oracle: {within}/{total} within 1 %, worst ratio {worst:.4}, \
          {fallbacks} fallbacks"
     );
-    assert!(fallbacks * 50 <= total, "{fallbacks}/{total} fell back");
+    assert_eq!(fallbacks, 0, "{fallbacks}/{total} fell back");
     assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
     assert!(share >= 0.95, "only {within}/{total} within 1 %");
+}
+
+/// Plan `2026-11-19-funnel-fallbacks` WP4: routes for discs exactly as wide as whole-cell gaps
+/// (r 0.5 and 1.0) on seeded maps, between cell centres where the disc fits. Every route is
+/// legal with no fallback, none is shorter than the oracle's by more than 10⁻³, existence agrees,
+/// and none is beyond [`MESH_RATIO_BOUND`]. Of the routes the zero-room retry produced
+/// (`MeshRoute::zero_room`: no pull with a corner margin was legal, so the route is an exact fit),
+/// at least 95 % are within 1 % of the oracle's length: stop rule 8's measure (plan Amendment 2).
+/// Its arcs are bisected to a thirty-second of a turn, whose circumscribed factor 1.0032 keeps a
+/// route of many corners within that bound. Routes that keep the margin are longer than this
+/// margin-free oracle by design and are compared with it only from below. The six zero-room
+/// routes beyond 1 % take another channel than the oracle's (TA*'s channel choice, evidence
+/// WP4).
+///
+/// The oracle runs at `r - 10⁻⁵`, not at `r`: its float tolerance and one-degree arc samples
+/// miss a passage exactly `2r` wide (the plan's §4.3 found it reporting 0.976 and 0.899 times
+/// the mesh's length at `r`), and a hair less finds it. Routes with room for the margin keep it
+/// round their corners, so they are compared with this margin-free oracle only from below.
+#[test]
+fn exact_fit_routes_agree_with_the_oracle() {
+    use rand::{Rng, SeedableRng};
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0x0e_8ac7_f175);
+    let (mut routes, mut exact, mut within, mut worst) = (0u32, 0u32, 0u32, 1.0f64);
+    for map_index in 0..60_u32 {
+        let radius_f = if map_index % 2 == 0 { 0.5 } else { 1.0 };
+        let blocked: Vec<bool> = (0..CELLS)
+            .map(|_| rng.gen_range::<i32, _>(0..6) == 0)
+            .collect();
+        let Ok(map) = build_map(&blocked) else {
+            continue;
+        };
+        let radius = SimScalar::from_num(radius_f);
+        let tight = oracle::Oracle::new(oracle::walls_of(&map), radius_f - 1e-5);
+        let mut pathfinder = Pathfinder::new(&map);
+        let mut fitting = Vec::new();
+        for y in 0..SIDE {
+            for x in 0..SIDE {
+                let p = centre(x, y);
+                let request = mesh_request(p, p, radius);
+                if pathfinder.segment_is_passable(&map, &request, p, p) {
+                    fitting.push(p);
+                }
+            }
+        }
+        if fitting.len() < 2 {
+            continue;
+        }
+        for _ in 0..6 {
+            let (start, goal) = (
+                fitting[draw_index(&mut rng, fitting.len())],
+                fitting[draw_index(&mut rng, fitting.len())],
+            );
+            let request = mesh_request(start, goal, radius);
+            let mesh = pathfinder.find_route_mesh(&map, &request);
+            let reference = tight.shortest(to_f64(start), to_f64(goal));
+            let (Ok(route), Some(reference)) = (&mesh, reference) else {
+                assert!(
+                    mesh.is_err() && reference.is_none(),
+                    "{start:?} -> {goal:?} at r {radius_f}: mesh {mesh:?}, oracle {reference:?}"
+                );
+                continue;
+            };
+            assert!(!route.fallback, "fallback at r {radius_f}: {route:?}");
+            for pair in route.waypoints.windows(2) {
+                assert!(
+                    pathfinder.segment_is_passable(&map, &request, pair[0], pair[1]),
+                    "leg {pair:?} at r {radius_f}"
+                );
+            }
+            let length = f64::from(route.total_length.to_f32());
+            assert!(
+                length >= reference - 1e-3,
+                "{start:?} -> {goal:?} at r {radius_f}: {length} shorter than {reference}"
+            );
+            routes += 1;
+            if reference <= 0.0 {
+                continue;
+            }
+            let ratio = length / reference;
+            worst = worst.max(ratio);
+            if route.zero_room {
+                exact += 1;
+                within += u32::from(ratio <= 1.01);
+            }
+        }
+    }
+    eprintln!(
+        "exact fits against the oracle: {routes} routes (worst ratio {worst:.4}), {within} of \
+         {exact} zero-room routes within 1 %"
+    );
+    assert!(
+        routes >= 200 && exact >= 20,
+        "{routes} routes, {exact} exact fits"
+    );
+    assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
+    assert!(
+        within * 100 >= exact * 95,
+        "only {within} of {exact} zero-room routes within 1 %"
+    );
 }
 
 /// B-143's shrunk case (plan `2026-11-18-contour-footprints` Amendment 5, evidence §6e): the
