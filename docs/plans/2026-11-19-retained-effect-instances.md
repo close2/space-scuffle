@@ -777,3 +777,60 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock frame_bud
   is registered as its own item.
 - **A quiet-machine wall series.** Taken when a quiet window appears. Not a blocker under D-14.
 - **Lab and showcase changes** beyond the identity scene's lab extension.
+
+---
+
+## Amendment 1 (2026-11-19): WP0 to WP5 implemented; WP6 to WP8 not started
+
+**State.** WP0 to WP5 are on branch `retained-decals-plan` (`182eaafa`, `0b63d4b4`, `67560ea2`, `67cf360a`,
+`dae18996`, `419ed33f`). The figures are in
+[`retained_decals_baseline.md`](../evidence/effects/review/retained_decals_baseline.md): marginal instructions per
+frame S 10.10 M → 6.01 M, P 11.89 M → 7.38 M; digests equal to the base through WP4, re-recorded at WP5 (ties);
+identity captures byte-identical through WP4. WP6 (GPU aging), WP7 (series of record, decision gate) and WP8 (review
+of the D-10 evidence, bookkeeping) were not started: the implementing session ended after WP5. Nothing in WP6 depends
+on a decision taken here beyond the items below; the WP1 series was taken (no quiet pair; CPU verdict missed for S
+and P at the base), and WP7's series is still to be taken after WP6.
+
+**Implementation decisions** (each recorded so it can be revisited, Q0002):
+
+1. **CPU clocks through `rustix`, not `libc`** (D-14). `client_diagnostics` forbids `unsafe`, and `libc`'s
+   `clock_gettime` needs it; `rustix` (already in `Cargo.lock`) wraps the same `CLOCK_THREAD_CPUTIME_ID` and
+   `CLOCK_PROCESS_CPUTIME_ID` safely. Off Unix the clock reports `Unsupported` and `frame_budget` fails its run
+   rather than record a wall time as CPU time.
+2. **The identity scene renders in two child processes** (WP1, D-9). Two takes in one process start at different
+   absolute `Time<Virtual>`; `elapsed_secs_f64` rounds differently there, the lab's f32 steps move by nanoseconds,
+   and the first try differed in 1 344 pixels of capture 1. Two processes test the claim D-9 makes (the same capture
+   on every run of a driver) directly, and each child has the whole 120 s.
+3. **`LabCrowd`, a resource, carries the identity scene's further subjects** (WP1 verify: the take model did need
+   more than a list of subjects). Besides spawn times it gives holds, a release time, a drift (`update_held`,
+   `update_held_line` with the ends moving apart, `move_anchor`), a sweeping fog clip and a camera dolly. As a
+   separate optional resource it leaves `LabProgram`'s nine constructions unchanged.
+4. **The oracle tests drive client-side streams** (WP2 to WP4). `client` cannot use `client_diagnostics` (the
+   dependency runs the other way), so `effects::test_streams` (test code) builds a splash stream (every spawned look
+   of the vocabulary at 200 events a second, lines requested again on the next frame so they merge) and a plan stream
+   (plus held areas with moving fog clips, tethers with moving ends, held looks moved, released and held anew, a
+   moved mark) from the shipped vocabulary. The frame budget's own S and P streams are what `effect_frame` drives for
+   the digests and the counts. The incremental-versus-scratch test runs on these streams, not on the identity scene's
+   (which only the GPU test runs); the identity captures cover it.
+5. **`LineFrame` keeps the clip window and the along-line yaw; the seen run is computed, not stored** (D-3). The run
+   around a point is two bit counts on the seen mask (`seen_run`), as cheap as a lookup, and needs no boundary
+   masks kept in step with the mask.
+6. **The ended-layer skip bounds the delay by `max_placed_delay`** (D-3). It mirrors `place`'s own expression at a
+   placement's last point. `max_line_delay`, the bound `held_marks` uses, can be exceeded by a `between` line
+   placement on a line shorter than its spacing (its one instance sits half a spacing out); the skip evaluates
+   `layer_clock`'s expression with the largest delay, so by IEEE monotonicity no drawn instance is lost.
+7. **D-4 verify: `retirement_candidate` has no class order.** It filters out `Major` and takes the oldest birth, the
+   lowest slot among equal births; the detail heap is keyed `(birth, slot)` as the function is, and the oracle test
+   confirms every choice. The plan's description "class order, then birth" does not match the code; the heap follows
+   the code.
+8. **D-5 row ends without a `free_at` heap.** A slot's rows record when the earliest of their layers ends (the
+   expression of `layer_ended`, and a released held layer's exit); the table's pass over its slots marks the effect
+   dirty 1 ms before that, and the rewrite drops the ended layer exactly when `layer_ended` says so. Rows therefore
+   leave on the frame their layer ends, which the incremental-versus-scratch test checks every frame.
+9. **WP5 re-baseline (D-3).** Equal card depths occur (624 of 2 400 S frames, nearly every P frame; not only among
+   the darkening cards); the `(key, index)` order is the definition from WP5 on, and WP5's identity captures are the
+   base of WP6's check 3.
+
+**For WP6.** `decal_table::age_decal` is the Rust reference (`decal_clock` then `decal_at`); it still ages from the
+f64 birth as today's code did. D-8's `hi`/`lo` split belongs to WP6 together with the WGSL port. `frame.decals` is
+still filled every frame by the CPU aging (D-15 is WP6's).
