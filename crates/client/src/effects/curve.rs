@@ -65,7 +65,28 @@ pub fn ease(easing: Easing, t: f32) -> f32 {
     }
 }
 
+/// The code of `easing` in the GPU curve table (`decal_age.wgsl`'s `ease`), in declaration
+/// order.
+#[must_use]
+pub const fn easing_code(easing: Easing) -> u32 {
+    match easing {
+        Easing::Linear => 0,
+        Easing::Step => 1,
+        Easing::EaseInQuad => 2,
+        Easing::EaseOutQuad => 3,
+        Easing::EaseOutCubic => 4,
+        Easing::EaseInOut => 5,
+    }
+}
+
 impl Curve {
+    /// The keys `(time, value, easing to the next key)`, strictly increasing in time (the GPU
+    /// curve table is written from them).
+    #[must_use]
+    pub fn keys(&self) -> &[(f32, f32, Easing)] {
+        &self.keys
+    }
+
     /// Builds a curve from validated keys.
     ///
     /// # Errors

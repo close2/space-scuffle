@@ -15,9 +15,12 @@
 //!
 //! It prints the thread CPU time per frame of the spawn phase and of `build_frame`
 //! (`CLOCK_THREAD_CPUTIME_ID`), the live effects, cards, decals and lights of the last frame,
-//! and with `--digest` a 64-bit FNV-1a of every frame's uploaded bytes (cards back to front,
+//! and with `--digest` a 64-bit FNV-1a of every frame's drawn bytes (cards back to front,
 //! decals, lights, distortions and the darkening counters), per 100 measured frames and in
-//! total.
+//! total. From WP6 the renderer ages the decals on the GPU; the digest takes the decals the Rust
+//! reference ages from the retained rows (`EffectRuntime::current_decals`, outside the timed
+//! build), in draw order, and counts the darkening ones among them, as the frame's decal list
+//! held them before, so digests stay comparable across the work packages.
 //!
 //! # How it fits
 //! Wall time on the shared host varies by a factor of two between identical runs, instruction
@@ -38,6 +41,7 @@
 use bevy::math::Vec3;
 use client::effects::areas::Keep;
 use client::effects::catalog::{EffectCatalog, UnitEffectTables, EFFECTS_CATALOG_PATH};
+use client::effects::instances::DecalInstance;
 use client::effects::runtime::{CameraView, EffectRuntime};
 use client::effects::systems::{spawn_request, LineAssembly};
 use client_diagnostics::cpu_clock::thread_cpu_time;
@@ -145,11 +149,19 @@ fn fnv(mut hash: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
-/// The digest of everything the renderer uploads from `runtime`'s frame.
-fn frame_digest(hash: u64, runtime: &EffectRuntime) -> u64 {
+/// The decals `runtime`'s rows draw at its last build, and how many of them darken.
+fn drawn_decals(runtime: &EffectRuntime, catalog: &EffectCatalog) -> (Vec<DecalInstance>, u32) {
+    let decals = runtime.current_decals(catalog);
+    let darkening = decals.iter().filter(|decal| decal.darken != 0.0).count();
+    (decals, u32::try_from(darkening).unwrap_or(u32::MAX))
+}
+
+/// The digest of everything the renderer draws from `runtime`'s frame.
+fn frame_digest(hash: u64, runtime: &EffectRuntime, catalog: &EffectCatalog) -> u64 {
     let frame = &runtime.frame;
+    let (decals, darkening_decals) = drawn_decals(runtime, catalog);
     let mut hash = fnv(hash, bytemuck::cast_slice(&frame.sorted));
-    hash = fnv(hash, bytemuck::cast_slice(&frame.decals));
+    hash = fnv(hash, bytemuck::cast_slice(&decals));
     for light in &frame.lights {
         for value in light
             .position
@@ -162,12 +174,12 @@ fn frame_digest(hash: u64, runtime: &EffectRuntime) -> u64 {
     }
     hash = fnv(hash, bytemuck::cast_slice(&frame.distortions));
     hash = fnv(hash, &frame.darkening_cards.to_le_bytes());
-    fnv(hash, &frame.darkening_decals.to_le_bytes())
+    fnv(hash, &darkening_decals.to_le_bytes())
 }
 
 /// [`frame_digest`] of one frame, with its darkening cards (the first `darkening_cards` of
 /// `sorted`) taken in byte order instead of sort order.
-fn canonical_digest(runtime: &EffectRuntime) -> u64 {
+fn canonical_digest(runtime: &EffectRuntime, catalog: &EffectCatalog) -> u64 {
     let frame = &runtime.frame;
     let prefix = (frame.darkening_cards as usize).min(frame.sorted.len());
     let mut darkening: Vec<&[u8]> = frame.sorted[..prefix]
@@ -180,7 +192,10 @@ fn canonical_digest(runtime: &EffectRuntime) -> u64 {
         hash = fnv(hash, card);
     }
     hash = fnv(hash, bytemuck::cast_slice(&frame.sorted[prefix..]));
-    fnv(hash, bytemuck::cast_slice(&frame.decals))
+    fnv(
+        hash,
+        bytemuck::cast_slice(&drawn_decals(runtime, catalog).0),
+    )
 }
 
 /// The synthetic units of the `p` stream at `now`: a grid, each circling its own cell slowly.
@@ -365,13 +380,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if options.frame_digests {
             println!(
                 "frame {frame:>5}: {:016x} {:016x}",
-                frame_digest(FNV_OFFSET, &world.runtime),
-                canonical_digest(&world.runtime)
+                frame_digest(FNV_OFFSET, &world.runtime, &world.catalog),
+                canonical_digest(&world.runtime, &world.catalog)
             );
         }
         if options.digest {
-            digest = frame_digest(digest, &world.runtime);
-            window_digest = frame_digest(window_digest, &world.runtime);
+            digest = frame_digest(digest, &world.runtime, &world.catalog);
+            window_digest = frame_digest(window_digest, &world.runtime, &world.catalog);
             let measured = frame - WARM_FRAMES + 1;
             if measured.is_multiple_of(DIGEST_EVERY) {
                 println!("digest frames {measured:>5}: {window_digest:016x}");
@@ -383,14 +398,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let runtime = &world.runtime;
     println!(
         "stream {:?}, {} measured frames: spawn {:.3} ms/frame, build_frame {:.3} ms/frame \
-         (thread CPU); live {}, cards {}, decals {}, lights {}; stats {:?}",
+         (thread CPU); live {}, cards {}, decals {} (rows {}), lights {}; stats {:?}",
         options.stream,
         options.frames,
         per_frame(spawn_cpu),
         per_frame(build_cpu),
         runtime.pool().live_total(),
         runtime.frame.sorted.len(),
-        runtime.frame.decals.len(),
+        drawn_decals(runtime, &world.catalog).0.len(),
+        runtime.decal_table().live(),
         runtime.frame.lights.len(),
         runtime.stats,
     );

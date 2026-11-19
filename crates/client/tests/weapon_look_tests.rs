@@ -432,7 +432,10 @@ fn an_unseen_missile_is_not_drawn_and_lands_no_impact() {
             .all(|card| card.clip_min >= nothing[2] && card.clip_axis == [nothing[0], nothing[1]]),
         "nothing of it is drawn"
     );
-    assert!(runtime.frame.decals.is_empty(), "it lays no mark");
+    assert!(
+        runtime.current_decals(&catalog).is_empty(),
+        "it lays no mark"
+    );
 }
 
 /// Review 1, E1-1: an instant shot's impact is laid when its slug arrives, never before. At 40 ms
@@ -456,10 +459,10 @@ fn strip_head(runtime: &EffectRuntime, line: client::effects::placement::WorldLi
         .reduce(f32::max)
 }
 
-/// Whether `runtime`'s frame draws anything at all.
-fn draws(runtime: &EffectRuntime) -> bool {
+/// Whether `runtime`'s frame draws anything at all (its decals as the reference ages them).
+fn draws(runtime: &EffectRuntime, catalog: &EffectCatalog) -> bool {
     !runtime.frame.sorted.is_empty()
-        || !runtime.frame.decals.is_empty()
+        || !runtime.current_decals(catalog).is_empty()
         || !runtime.frame.lights.is_empty()
 }
 
@@ -515,7 +518,7 @@ fn an_instant_shots_impact_waits_for_its_slug() {
                 alone.build_frame(&catalog, now, None);
                 struck.build_frame(&catalog, now, None);
                 heads.push(strip_head(&alone, line));
-                if first_impact.is_none() && draws(&struck) {
+                if first_impact.is_none() && draws(&struck, &catalog) {
                     first_impact = Some(frame);
                 }
             }
@@ -873,7 +876,7 @@ fn the_beam_ends_when_the_target_is_gone() {
     );
     assert!(runtime.held(handle).is_none(), "ended after its exit");
     runtime.build_frame(&catalog, after, None);
-    assert!(!draws(&runtime), "no beam pixel after its exit");
+    assert!(!draws(&runtime, &catalog), "no beam pixel after its exit");
 }
 
 #[test]
