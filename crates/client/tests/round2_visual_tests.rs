@@ -4,7 +4,7 @@
 //! - Every file in `assets/shaders` composes with its real Bevy imports and passes strict naga
 //!   validation under each shader-def variant the mesh pipeline can request.
 //! - Module IR of shipped shaders matches the Rust uniform layouts, bindings and feature flags.
-//! - `BubbleUniformGpu` memory layout is strictly 176 bytes and 16-byte aligned.
+//! - `BubbleUniformGpu` memory layout is strictly 192 bytes and 16-byte aligned.
 //! - The catalog units with flipbooks are exactly the audited set, each 512 wide and within the
 //!   WebGPU 16384 height limit.
 //! - Ray-sphere selection math passes direct hit, tangent, and miss scenarios.
@@ -208,8 +208,8 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
         "fragment must derive its basis from view.world_from_view"
     );
 
-    // Verify memory layout exactly equals 176 bytes and 16-byte alignment
-    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
+    // Verify memory layout exactly equals 192 bytes and 16-byte alignment
+    assert_eq!(size_of::<BubbleUniformGpu>(), 192);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 

@@ -68,6 +68,10 @@
 //!   `FLAG_FRAME_BLEND` (same plan, WP4). Hashing the first 160 bytes with bit 10 of
 //!   `feature_flags` cleared, the old image (the new row is all zero for fixed lanes), all four
 //!   reproduced their previous values, so no smog output changed.
+//! - The same four were re-recorded when the uniform grew from 176 to 192 bytes, its last row
+//!   carrying the bubble's entity id as the critical brown-out's seed (plan
+//!   `2026-11-09-effect-visualization` Amendment 34, B-120). Hashing the bubble uniforms' first
+//!   176 bytes, all four reproduced their previous values, so no smog output changed.
 //! - C-18 WP7 and WP8 changed no constant (bit-exact refactors). C-18 WP9 re-recorded the seven
 //!   fluid goldens and the four system goldens (glibc 2.41, `x86_64`) in one commit, for one
 //!   deliberate change: velocities of at most `1e-3` world units per second become exactly zero
@@ -1012,11 +1016,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x4459_0814_2009_2b71;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xe8c4_a287_a561_ee4b;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x33ee_40dd_7e58_d19e;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xc4b0_ef45_a4e7_36ab;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xdac9_628c_19f9_46f1;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xe693_e1e0_09cd_aba2;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0x6d82_65a1_b8dd_97dd;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x7054_6874_6ce7_4a47;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

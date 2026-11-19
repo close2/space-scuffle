@@ -840,9 +840,9 @@ fn headless_simulation_check(root: &ResolvedAssetsRoot) -> Result<(), String> {
                 style,
                 bubble_shader::still_frame_lanes(None, bubble.anim_state),
             );
-            if size_of::<BubbleUniformGpu>() != 176 {
+            if size_of::<BubbleUniformGpu>() != 192 {
                 return Err(format!(
-                    "BubbleUniformGpu size mismatch: expected 176, got {}",
+                    "BubbleUniformGpu size mismatch: expected 192, got {}",
                     size_of::<BubbleUniformGpu>()
                 ));
             }
