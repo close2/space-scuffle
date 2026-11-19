@@ -821,7 +821,8 @@ independent and run at most two at a time.
 - `frame_budget` (`client_diagnostics`) on the 400-unit scenario with an effect stress mode (200 splashes per second
   across the slice's effects, 20 live areas, 50 statuses): p50 frame interval ≤ 5 % above the recorded baseline
   (16.3 ms), p99 ≤ 10 %; GPU time of the effect passes ≤ 1.5 ms on the RX 580 (Bevy's render diagnostics). Measured
-  after WP6c and WP14; a miss shrinks budgets in data first.
+  after WP6c and WP14; a miss shrinks budgets in data first. **Superseded by Amendment 36 (Q0090):** the synthetic
+  200-splash stress is held to p50 ≤ 16.67 ms (60 FPS) and at most +20 % p50 over the baseline on a quiet host.
 - Overdraw: the fraction of screen pixels covered by effect layers in the stress frame is reported; the checklist
   item "units stay readable" is judged on that frame's capture.
 - Simulation throughput benchmark unchanged within noise (snapshot writer only).
@@ -3151,3 +3152,17 @@ series on the shared host ([`frame_budget_b137_retained.md`](../evidence/effects
 - **GPU:** the effect passes stay at +0.63 ms, under 1.5 ms.
 
 B-137 stays open; the next step is that plan's decision gate (its Amendment 3).
+
+## Amendment 36: §10.3's stress bar relaxed by the owner; B-137 closed (2026-11-19, short note, charter §6)
+
+The owner answered Q0090 with option (d), combined with option (a)'s quiet-machine check.
+
+- **New bar.** The synthetic stress of 200 splashes a second is held to a real-time bar: p50 ≤ 16.67 ms (60 FPS)
+  and at most +20 % p50 over the baseline, measured on a quiet host. The GPU-time bar of 1.5 ms is unchanged.
+- **Measurement already in hand.** The quietest pair of the retained-instances series (`B-03` against `S-03`, load
+  about 9 to 12) shows 13.77 ms against 11.82 ms, which is +16.5 %, within both parts of the bar. Evidence:
+  [`frame_budget_b137_retained.md`](../evidence/effects/review/frame_budget_b137_retained.md).
+- **Closed without further work.** B-137 leaves the `DESIGN.md` §4 register as fixed. No further optimization and no
+  visual budget cut follow from it.
+- **Follow-up.** A confirmation series on a quiet host is taken when the host is idle. It is a confirmation item,
+  not a blocker.
