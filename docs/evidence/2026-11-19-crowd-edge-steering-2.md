@@ -273,3 +273,23 @@ median of 3 per run; `~/scratch/crowd-edge-2/wp3/bench/`):
 
 Every scenario stays far above 25 ticks per second. The rounds of one build spread as widely as the builds differ
 (the host is shared); no change beyond noise is claimed, and `DESIGN.md` §5 is not touched.
+
+## WP4: storyboard and bookkeeping
+
+**Storyboard** (the default seed's timeline moved: player 1 wins at 1,935, not 1,946). The `battle` take rendered
+on radv (RX 580, Mesa 25.0.7, one `with-gpu-lock` hold, 161 s, revision `c8cb9321`; manifest
+`~/scratch/crowd-edge-2/wp4/takes/battle.manifest.ron`): `advance` 251 to 305 (first shot), `clash` 305 to 680,
+past the lane fight's last death (the viewer's last unit at tick 622; 621 before), `march` 683 to 933 at 4x, ending
+on combat at the viewer's base, and `assault` from 933 at 2x over the workers' deaths (ticks 1,007 and 1,033; 1,010
+and 1,038 before). The enemy's five surviving pulse bots fire on the viewer's hall, which falls at 1,935. No scene
+length changed; the storyboard's comment gains the re-check. `showcase_storyboard_tests` and `showcase_tests` pass.
+
+**Records.** `DESIGN.md` B-103 restated (landed: D-4 of the first plan, D-1 and D-2 here; open, with figures over
+the showcase's nine seeds: R-B 31, R-D 24, R-C 37, the walk's start retreat 32, the corridor's standing at 87 and
+94.9 %; R-E's rise 7 → 26 under B-144); the Movement row names D-1 and D-2 (its test files already list
+`crowd_edge_tests.rs` and `second_line_tests.rs`); `DESIGN.md` §5 is not touched (throughput within noise).
+Friendly-blocking Amendment 4 change 5 is marked superseded by D-2. This plan's row is `Done`.
+
+**Open items** (carried under B-103, plan §9): R-B and R-D (need the slide round a friend that holds its ground as a
+locomotion rule first), R-C (needs a wall-bearing matrix battle), the walk's start retreat, the corridor's standing
+residual, R-E (B-144) and R-F (B-145).

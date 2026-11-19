@@ -649,7 +649,7 @@ acceptance of §7 pursued. Implementation decisions, recorded under Q0002; figur
      (D-3).
   5. A spent walk waits `FLANK_RETRY_TICKS` (24) and then walks afresh: the crowd round a target changes as units
      die. Without it, a corridor unit gave up its order (3 give-ups in `no_room_means_waiting_still`).
-     *Replaced by plan [`2026-11-19-crowd-edge-steering-2`](2026-11-19-crowd-edge-steering-2.md) D-2: the
+     *Superseded by plan [`2026-11-19-crowd-edge-steering-2`](2026-11-19-crowd-edge-steering-2.md) D-2: the
      timed retry is removed; a spent walk re-arms when the side that closed last opens for a whole step, on ground
      gained or on a new target, and the give-ups are prevented by D-4 of plan `2026-11-19-crowd-edge-steering`.*
 - **Result.** No overall winner of the matrix or the showcase differs from the base. Battle 10's upper bound was
