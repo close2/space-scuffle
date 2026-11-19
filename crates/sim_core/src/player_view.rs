@@ -26,9 +26,9 @@ use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
     AbilityEffectSpec, AbilityLockView, CarrierView, CastStateView, CommandOptionView,
-    CommandSubject, ModeStateView, PlayerId, PlayerStatusView, PlayerView, QueuedItem,
-    QueuedJobView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick, UnitTypeId,
-    VisibilityState, VisibleNodeView,
+    CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView, PlayerView,
+    QueuedItem, QueuedJobView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick,
+    UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -293,6 +293,10 @@ fn site_refusal(rejection: &BuildRejection) -> SiteRefusal {
         | BuildRejection::RememberedStructure => SiteRefusal::KnownStructure,
         BuildRejection::CoversResource => SiteRefusal::CoversResource,
         BuildRejection::ExtractorNeedsGas => SiteRefusal::ExtractorNeedsGas,
+        BuildRejection::FlaggedSite { flag, .. } => match flag {
+            PlacementFlag::NearResources => SiteRefusal::NearResources,
+            PlacementFlag::Fogged => SiteRefusal::NotVisible,
+        },
         // Site checks raise none of these except the identity pair, which is the caller's error.
         BuildRejection::UnknownStructure(_)
         | BuildRejection::NotAStructure(_)
