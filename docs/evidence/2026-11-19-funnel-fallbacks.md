@@ -130,3 +130,75 @@ Every scenario is within 5 % of `main`; the wall-clock medians that could be tak
 the showcase under load 91) are in `~/scratch/funnel-fallbacks/impl/throughput-wp2*.txt`. **Deviation:** the
 decision rests on instructions, not on wall-clock time, because of the host's load; a quiet-host wall-clock re-run is
 an open item.
+
+## WP3 stopped: the derived gate run lengthens r = 1 routes past stop rule 8 (trace and proposed amendment)
+
+**What was built** (branch `funnel-fallbacks-wp3-wip`, not on the plan's branch): D-2 as written.
+`ZERO_ROOM_SLACK = 2⁻¹²` (16 Q16 steps), `gate_run(r) = 2^⌈log₂ √(2rε)⌉` (2⁻⁵ at r 1, 2⁻⁶ at r 0.3125 to 0.875),
+`Emission::{Inscribed, ZeroRoom}` in `radius_funnel`, the circumscribed emission (tangent lines, gate lines,
+bisectors above an eighth turn, redundant lines dropped, axis gates snapped by assignment, gate runs),
+`segment::blocking_features_near` (the point flood from the vertex's open fan), `MeshSearch::zero_room_retry` after
+`fitted_retry`, and the start/goal exemption for every candidate of the zero-room pulls. Tests: E1, E2, E3 and the
+touching start un-ignored and passing (E1's waypoints beside the face have `x == 1` exactly, E2's last leg lies on
+`y == 29.5`); `contours_add_no_funnel_fallbacks` asserts zero fallbacks for both shapes and passes;
+`funnel_paths_are_legal_and_no_shorter_than_a_straight_line` keeps its exemption only for wedged starts and passes;
+unit tests `zero_room_legs_keep_the_disc_radius`, `gate_runs_keep_the_feature_across` (legal at `GATE_RUN(r)`,
+illegal at a quarter of it, every shipped radius) and `a_circumscribed_arc_passes_an_exact_pinch` pass.
+
+**Fallback corpora (WP3 tree):** zero everywhere.
+
+| Corpus | Routes (contour / square) | `main` | WP3 |
+|---|---|---|---|
+| 150 layouts (the test) | 1,729 / 1,722 | 11 / 14 | **0 / 0** |
+| 1,000 layouts | 11,932 / 11,838 | 25 / 30 | **0 / 0** |
+| 2,000 flush layouts | 23,890 / 23,717 | 42 / 94 | **0 / 0** |
+
+No fixed route has an illegal leg; none is shorter than the oracle at `r − 10⁻⁵` (the nearest is 0.00075 longer).
+
+**The stop: rule 8, at least 95 % of fixed routes within 1.01 of the oracle.**
+
+| Square corpus (routes that fell back on `main`) | Within 1.01 | Max ratio | With the prototype's run 2⁻⁸ |
+|---|---|---|---|
+| 150 layouts | 14 / 14 | 1.0048 | 14 / 14, 1.0025 |
+| 1,000 layouts (contains the 150) | 28 / 30 (93.3 %) | 1.0258 | 29 / 30, 1.0258 |
+| 2,000 flush layouts | 89 / 94 (94.7 %) | 1.0126 | 94 / 94, 1.0078 |
+| All three, distinct routes | 117 / 124 (94.4 %) | 1.0258 | 123 / 124 |
+
+None is beyond `MESH_RATIO_BOUND` (1.10). The seven routes above 1.01, all at r 1.0:
+
+| Corpus, layout, request | Ratio, derived run | Ratio, run 2⁻⁸ | Cause |
+|---|---|---|---|
+| flush 34 q 10 | 1.0126 | 1.0078 | gate runs |
+| flush 455 q 13, flush 475 q 13 (same route) | 1.0114 | 1.0066 | gate runs |
+| flush 671 q 9, flush 689 q 9 (same route) | 1.0102 | 1.0036 | gate runs |
+| 1,000-layout 791 q 7 | 1.0155 | 1.0077 | gate runs |
+| 1,000-layout 563 q 15 | 1.0258 | 1.0258 | the channel TA* picks (independent of the run) |
+
+**Trace.** Six of the seven exceed 1.01 only because of the run: with the run set to 2⁻⁸ by a scratch switch,
+everything else unchanged, they fall to 1.0036 to 1.0078. A run of 2⁻⁵ at r 1 replaces each meeting point
+within 2⁻⁵ of a gate's touch point by the run's end, so the route walks 2⁻⁵ along the gate before it turns, at
+every gate on both sides. Restricting the runs to gates across a point (an edge's end), where the derivation of
+D-2.5 applies, changes nothing (scratch switch, same seven figures): every lengthened gate is across a vertex. The
+derived bound is a worst case: in these routes the legs that the run replaces do not come within `ε` of the gate
+near its touch point, which is why 2⁻⁸ was legal in every corpus. The seventh (563) is not a defect of this plan.
+R-3 says a residual is traced, not tuned, and that a shortfall of the derived value is a stop, so WP3 stops here.
+
+**Proposed amendment (for the owner of the plan to decide).**
+
+1. **Conditional runs (recommended).** Keep `GATE_RUN(r)` as derived, but replace a meeting point within the run
+   only when the leg leaving it would pass within `r` of the gate's feature (an exact Q16 check of that one leg
+   against that one point, the predicate's own). The derived bound remains the guarantee where it is needed, and
+   no route walks a run it does not need. Expected: the prototype's figures (123 / 124 within 1.01), to be
+   measured.
+2. Or restate stop rule 8 for this plan as "at least 94 % within 1.01, none beyond 1.03" (the derived runs as built:
+   117 / 124, max 1.0258).
+3. Not proposed: the prototype's 2⁻⁸ as a constant. It is a tuning value without a derivation (rule 9), and the
+   unit test shows a quarter of the derived run is illegal against a point feature in the worst case.
+
+**Also measured on the stopped tree** (`~/scratch/funnel-fallbacks/wp3`): the D-5 battle set is **bit-identical** to
+`main` (matrix file, battle 33 and 31 `seeds.csv`, showcase `units.csv` on nine seeds); the retry fires in no battle.
+The two pins would move to `contour_route_checksum` `0xf390_68c2_2c01_2b87` and `CONTOUR_PATH_GOLDEN`
+`0xab3f_b3c9_d6ae_df40` (native release; with D-2 and D-3 off the tree reproduces both old values, with D-2 off
+WP2's). Not re-recorded and not proven on other targets, since WP3 commits nothing; throughput not measured. The
+branch `funnel-fallbacks-wp3-wip` (`97765727`, on WP2) holds the code; its two pin tests fail by design until an
+amendment decides the run.
