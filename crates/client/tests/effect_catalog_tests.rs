@@ -1684,6 +1684,18 @@ fn status_effects_hold_layers_lay_and_spawn_and_their_values_are_checked() {
             "strength.floor",
         ),
         (
+            status("", &card_with("(bind: BarrierRatio, span: 0.0)")),
+            "strength.span",
+        ),
+        (
+            status("", &card_with("(bind: BarrierRatio, span: -0.5)")),
+            "strength.span",
+        ),
+        (
+            status("", &card_with("(bind: BarrierRatio, span: inf)")),
+            "strength.span",
+        ),
+        (
             status(r#", emit: Some((effect: "puff", every: 0.0))"#, shell),
             "emit.every",
         ),

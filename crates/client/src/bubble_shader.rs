@@ -10,7 +10,7 @@
 //! alone never modifies a material.
 //!
 //! # Invariants
-//! - `BubbleUniformGpu` memory layout is strictly 176 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
+//! - `BubbleUniformGpu` memory layout is strictly 192 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
 //! - Every `BubbleDomeMaterial` binds the shared clock buffer at binding 3: [`BubbleDomeMaterial::new`]
 //!   is the only constructor, and [`BubbleDomeMaterialPlugin`] registers the material with its clock.
 //! - Mobile units and building domes share one full UV sphere mesh. A dome is placed with its centre
@@ -44,7 +44,8 @@ pub const FLAG_FRESNEL: u32 = 1 << 3;
 pub const FLAG_INNER_WARP: u32 = 1 << 4;
 /// Feature bitflag: Voronoi spiderweb glass cracks & electrical arcing.
 pub const FLAG_CRACKS: u32 = 1 << 5;
-/// Feature bitflag: CRT scanlines & chromatic aberration jitter.
+/// Feature bitflag: the damage look: scanlines on a worn bubble and, below the critical health,
+/// a brown-out (flicker) of the media's own colours (plan Amendment 33, B-120).
 pub const FLAG_CRT_GLITCH: u32 = 1 << 6;
 /// Feature bitflag: Pulsing rim arc trailing a speed-boosted unit.
 pub const FLAG_SPEED_BOOSTED: u32 = 1 << 7;
@@ -80,9 +81,10 @@ mod gpu_layout {
     /// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
     // PERFORMANCE RATIONALE:
     // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-    // What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 176 bytes.
+    // What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 192 bytes.
     // Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes,
-    // and the flipbook lanes that do not fit the earlier rows fill the last 16-byte row.
+    // the flipbook lanes that do not fit the earlier rows fill the next 16-byte row, and the per-bubble seed with
+    // explicit padding fills the last one.
     // Trade-off: Manual struct layout in exchange for zero runtime padding overhead and zero shader misalignment faults.
     #[repr(C)]
     #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
@@ -106,7 +108,7 @@ mod gpu_layout {
         /// Flipbook clock time at which the bubble's elapsed animation time is zero, in clock
         /// units of 1/1024 tick (`FlipbookLanes::origin`).
         pub anim_origin: u32,
-        /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical glitch < 0.35).
+        /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical brown-out < 0.35).
         pub hp_ratio: f32,
         /// Shield energy ratio [0.0, 1.0].
         pub shield_ratio: f32,
@@ -144,6 +146,15 @@ mod gpu_layout {
         pub anim_mode: u32,
         /// Loop phase offset in clock units (`FlipbookLanes::offset`).
         pub anim_offset: u32,
+        /// The bubble's entity id, a stable per-bubble seed: the critical brown-out's phase,
+        /// so damaged units do not flicker in step (plan Amendment 33, B-120 review round 1).
+        pub seed: u32,
+        /// Padding of the last 16-byte row; always 0.
+        pub pad0: u32,
+        /// Padding of the last 16-byte row; always 0.
+        pub pad1: u32,
+        /// Padding of the last 16-byte row; always 0.
+        pub pad2: u32,
     }
 
     /// GPU uniform matching `struct ShellUniform` in `bubble_dome.wgsl`: the modulation of a
@@ -218,6 +229,10 @@ impl Default for BubbleUniformGpu {
             frame_count: 0,
             anim_mode: 0,
             anim_offset: 0,
+            seed: 0,
+            pad0: 0,
+            pad1: 0,
+            pad2: 0,
         }
     }
 }
@@ -392,6 +407,7 @@ impl BubbleUniformGpu {
             hull_hit_angle_rad: instance.hull_hit_angle_rad,
             hull_hit_flash: instance.hull_hit_flash,
             build_progress: instance.build_or_queue_progress.unwrap_or(1.0),
+            seed: instance.entity_id.0,
             selected: u32::from(instance.selected),
             cloaked: u32::from(instance.concealment.is_concealed()),
             feature_flags: {

@@ -210,16 +210,20 @@ fn kept_samples(
 
 /// The ends of a tether between two bodies of radius `from_radius` and `to_radius` centred at
 /// `from` and `to` (world space): on each body's surface, facing the other. Bodies that touch
-/// or overlap give the segment between their centres.
+/// or overlap give a tether of no length at their contact, halfway between the two surface
+/// points, so the line shrinks to nothing as an Abduct pull arrives and never turns round or
+/// runs across both bodies (plan Amendment 33, B-121). Coincident centres give `from` twice.
 #[must_use]
 pub fn tether_ends(from: Vec3, from_radius: f32, to: Vec3, to_radius: f32) -> (Vec3, Vec3) {
     let span = to - from;
     let length = span.length();
+    let direction = span.normalize_or_zero();
+    let (start, end) = (from + direction * from_radius, to - direction * to_radius);
     if length <= from_radius + to_radius {
-        return (from, to);
+        let contact = (start + end) * 0.5;
+        return (contact, contact);
     }
-    let direction = span / length;
-    (from + direction * from_radius, to - direction * to_radius)
+    (start, end)
 }
 
 /// One held area.
@@ -1026,8 +1030,34 @@ mod tests {
         let (from, to) = tether_ends(Vec3::ZERO, 0.5, Vec3::new(4.0, 0.0, 0.0), 0.75);
         assert!(from.distance(Vec3::new(0.5, 0.0, 0.0)) < 1e-6);
         assert!(to.distance(Vec3::new(3.25, 0.0, 0.0)) < 1e-6);
+    }
+
+    /// B-121: as the bodies close in, the tether shortens to nothing at their contact and
+    /// never turns round: its direction never opposes the caster-to-victim direction.
+    #[test]
+    fn an_arriving_tether_shrinks_to_its_contact_and_never_turns_round() {
+        let mut previous = f32::INFINITY;
+        for step in 0..=60 {
+            #[expect(clippy::cast_precision_loss, reason = "a small step count")]
+            let gap = 3.0 - step as f32 * 0.05;
+            let victim = Vec3::new(gap, 0.0, 0.0);
+            let (from, to) = tether_ends(Vec3::ZERO, 0.5, victim, 0.75);
+            let length = from.distance(to);
+            assert!(length <= previous + 1e-6, "at {gap}: it only shortens");
+            assert!(
+                (to - from).dot(victim) >= 0.0,
+                "at {gap}: it points from the caster to the victim"
+            );
+            previous = length;
+        }
+        let touching = tether_ends(Vec3::ZERO, 0.5, Vec3::new(1.25, 0.0, 0.0), 0.75);
+        assert!(touching.0.distance(Vec3::new(0.5, 0.0, 0.0)) < 1e-6);
+        assert_eq!(touching.0, touching.1, "touching bodies: no line");
         let (from, to) = tether_ends(Vec3::ZERO, 0.5, Vec3::new(0.8, 0.0, 0.0), 0.5);
-        assert_eq!((from, to), (Vec3::ZERO, Vec3::new(0.8, 0.0, 0.0)));
+        assert_eq!(from, to, "overlapping bodies: no line");
+        assert!(from.distance(Vec3::new(0.4, 0.0, 0.0)) < 1e-6, "halfway");
+        let (from, to) = tether_ends(Vec3::ONE, 0.5, Vec3::ONE, 0.5);
+        assert_eq!((from, to), (Vec3::ONE, Vec3::ONE), "coincident centres");
     }
 
     #[test]

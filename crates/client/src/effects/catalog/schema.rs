@@ -685,16 +685,26 @@ pub struct PulseDef {
 }
 
 /// A factor on a layer's intensity from a bound value (plan WP9: a barrier's shell thins as it
-/// absorbs): `floor + (1 - floor) · clamp(value, 0, 1)`, so the layer never vanishes while its
-/// effect is shown.
+/// absorbs): `floor + (1 - floor) · clamp(value / span, 0, 1)`, so with a positive floor the
+/// layer never vanishes while its effect is shown. With `size`, the factor also scales the
+/// layer's size: a tether's grip shrinks and fades as the tether gets shorter than the grip
+/// (plan Amendment 33, B-121).
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrengthDef {
-    /// The bound value, read as a fraction in [0, 1].
+    /// The bound value, read as a fraction of `span`.
     pub bind: Binding,
     /// The factor at a bound value of 0, in [0, 1].
     #[serde(default)]
     pub floor: f32,
+    /// The bound value at and above which the factor is 1, in the binding's unit (world units
+    /// for a length); positive. 1 reads a ratio as it is.
+    #[serde(default = "one")]
+    pub span: f32,
+    /// Whether the factor also scales the layer's `size` (a card's half-size, a decal's or a
+    /// light's radius); a ring drawn by its own `radius` is not scaled.
+    #[serde(default)]
+    pub size: bool,
 }
 
 /// An effect a `Status` effect lays again and again while it is held (plan WP9): the dust a
