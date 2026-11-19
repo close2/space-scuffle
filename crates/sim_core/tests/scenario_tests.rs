@@ -1164,7 +1164,7 @@ fn shipped_maps() -> Vec<(String, MapDocument)> {
         })
         .collect();
     maps.sort_by(|a, b| a.0.cmp(&b.0));
-    assert!(!maps.is_empty());
+    assert_eq!(maps.len(), 2, "both shipped maps");
     maps
 }
 
@@ -1192,7 +1192,7 @@ fn every_shipped_start_clears_every_resource_reach() {
             ShapeKind::UnitSphere => None,
         })
         .collect();
-    assert!(!halls.is_empty());
+    assert_eq!(halls.len(), 7, "the seven town hall analogues");
     let mut checked = 0;
     for (name, doc) in shipped_maps() {
         for start in &doc.start_locations {
@@ -1236,7 +1236,7 @@ fn every_shipped_gas_node_takes_an_extractor() {
             .filter(|arch| arch.capabilities.is_gas_extractor)
             .map(|arch| arch.unit_type_id)
             .collect();
-        assert!(!extractors.is_empty());
+        assert_eq!(extractors.len(), 3, "one extractor analogue per faction");
         for node in doc
             .resources
             .iter()
