@@ -873,3 +873,34 @@ and the 21 acquisition leash stay. The question is closed.
    - The B-103 row is restated: what WP4 fixed, R-A to R-C open with the measured residuals, and a pointer to the
      new plan.
    - The side branches stay until the new plan is written. Then they are deleted.
+
+## Amendment 3 (orchestrator, 2026-11-19): D-4 lands alone; D-3 goes to the new plan; WP5 closes the package
+
+**Why.** WP4 stopped on stop rules 1 and 2 (evidence §4, on `crowd-edge-wp4-wip`). Matrix battle 31's overall winner
+flips, and give-ups of record rise from 2 to 3.
+
+- **The cause is D-3.** With D-3 off, the traced seeds reproduce WP1 exactly. Without the timed retry, a spent walk
+  never re-arms when a side opens without the unit advancing (risk K-6, red stalker 23 at tick 135).
+- **D-4 alone** (Q0089 answer (a)) moved nothing measurable on the traced seeds or in the corridor. It moves
+  `golden_replay` from tick 397, with a proof header.
+
+The flip is not accepted. Re-arming a spent walk needs a defined "a side opens" test, which belongs to the new R-A
+to R-C plan.
+
+**Decision.**
+
+1. **WP4 is restated as D-4 alone.** The timed retry (`FLANK_RETRY_TICKS`) stays.
+   - Take D-4, CE-9 and the D-4 parts of the evidence from `crowd-edge-wp4-wip`.
+   - Re-run the full WP4 measurement for D-4 alone against WP1, under the unchanged stop rules: the matrix of
+     record, all seeds' give-ups, battle 33, the showcase on 9 seeds, throughput, and the goldens with proof
+     headers.
+   - CE-7 and CE-8 (D-3's tests) and the corridor's standing bound move to the new plan as ignored tests or as
+     recorded figures. They are not committed red.
+   - If D-4 alone breaches a stop rule, stop again with a trace.
+2. **WP5 closes the package.**
+   - Carry over evidence §2 to §4 as documentation.
+   - Restate the B-103 row: D-4 landed, while R-A, R-B, R-C, the walk re-arm (D-3, K-6) and the corridor's
+     standing stay open, with the measured residuals, under the new plan, which is still to be written.
+   - Add the throughput figures to the evidence.
+   - The WP5 storyboard re-check applies only if the showcase moves.
+3. The side branches stay until the new plan is filed.
