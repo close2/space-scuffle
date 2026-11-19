@@ -701,7 +701,8 @@ pub struct StrengthDef {
     /// for a length); positive. 1 reads a ratio as it is.
     #[serde(default = "one")]
     pub span: f32,
-    /// Whether the factor also scales the layer's size.
+    /// Whether the factor also scales the layer's `size` (a card's half-size, a decal's or a
+    /// light's radius); a ring drawn by its own `radius` is not scaled.
     #[serde(default)]
     pub size: bool,
 }

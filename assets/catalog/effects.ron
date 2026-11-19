@@ -2491,8 +2491,9 @@
                     // The grip: a blunt, round swelling, set back from the victim's surface by
                     // 0.6 of its radius, fixed in rotation and without noise, so its outline is
                     // a soft round end on every driver. Once the tongue is shorter than the
-                    // grip is wide (0.68, twice its half-size), the grip shrinks and fades with
-                    // it, so an arriving pull never paints it over both units (B-121).
+                    // grip is wide (0.68, twice its half-size: the span moves with the size),
+                    // the grip shrinks and fades with it, so an arriving pull never paints it
+                    // over both units (B-121).
                     block: Sprite(texture: "droplet", ramp: "tongue", shape: Radial, soft_depth: 0.1),
                     placement: LineEnd(back: (scale: 0.2)),
                     size: (scale: 0.34), duration: 0.1, curve: "hold_firm", held: true, exit: 0.15,
