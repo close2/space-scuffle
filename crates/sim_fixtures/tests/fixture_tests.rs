@@ -72,7 +72,10 @@ use std::path::PathBuf;
 /// structures take their 5.0.14 footprint shapes, which are hashed and change their clearance.
 /// Every entity stands where it stood; a scratch run with the full-square catalog reproduces
 /// `17_544_490_958_066_995_222`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 15_355_001_956_314_655_944;
+/// Re-recorded for checksum schema 31 (plan `2026-11-19-crowd-edge-steering-2` WP3, B-103), which
+/// encodes each unit's surround-walk retreat, 0 at spawn; a scratch build that does not encode
+/// it and keeps schema 30 reproduces `15_355_001_956_314_655_944`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_350_324_976_263_869_928;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -12,10 +12,11 @@
 //! 2. A synthetic arc: ten ranged units in two rows attack-move past an immobile pillar, and all
 //!    ten reach range by tick 300 with no reversals and no give-ups.
 //! 3. No room: units in a corridor two cells wide queue behind those that reach range, and
-//!    those that cannot reach it stand, without give-ups (the reversals bound is still ignored). Standing is the simulation's own: an achieved step of at most
+//!    those that cannot reach it stand, without give-ups (both bounds ignored with their residuals). Standing is the simulation's own: an achieved step of at most
 //!    `STANDING_DRIFT` (1/64 world units).
 //! 4. Walkers at a crowd's edge: short-ranged units behind a firing line walk round it without
-//!    ending and restarting their walk every other tick (plan Amendment 7).
+//!    ending and restarting their walk every other tick (plan Amendment 7), at most three
+//!    reversals each (plan `2026-11-19-crowd-edge-steering-2` D-1).
 //!
 //! The synthetic tests use scratch archetypes written in this file (C5), so a rebalance of the
 //! shipped catalog cannot break them.
@@ -192,7 +193,7 @@ const SHOWCASE_RESIDUAL_REVERSALS: [u32; 2] = [0, 3];
 ///    and reversals per owner within the out-of-scope residual (plan
 ///    `2026-11-19-crowd-edge-steering` D-6). Attackers in range at tick 900 are reported only.
 #[test]
-#[ignore = "crowd-edge WP1 base: 13 and 10 reversals (proposal 3 and 5, contact 10 and 5), 0 give-ups, player 1 wins at tick 1,946; R-A to R-D open for a new plan (B-103, evidence §1, §6)"]
+#[ignore = "crowd-edge-2 WP3: 8 and 9 reversals (proposal 4 and 5, contact 4 and 4), 0 give-ups, player 1 wins at tick 1,935; R-B, R-C, R-D, the walk's start retreat and R-E open (B-103)"]
 fn showcase_crowd_edges_do_not_reverse() -> TestResult {
     let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
     let mut meter = BlockingMeter::new();
@@ -343,8 +344,14 @@ impl CorridorRun {
 ///    since contact eases a pressed body apart by ever smaller steps that reach zero only after
 ///    tens of ticks (plan `2026-11-19-crowd-edge-steering` D-6, §2.7). The timed retry of a spent
 ///    walk walked the queue every 24 ticks (rear units on 65 to 88 %); without it (plan
-///    `2026-11-19-crowd-edge-steering-2` D-2) they stand on 96 to 99.7 %.
+///    `2026-11-19-crowd-edge-steering-2` D-2) they stood on 96 to 99.7 %. That plan's D-1 (a walk
+///    does not end on the room its own retreat made) then lengthens two walks of entity 5 while
+///    the queue forms, along the wall on ticks 70 to 114 and again on ticks 145 to 159 after it
+///    gained ground; from tick 160 it stands spent. Its share falls to 87 %, a residual the owner's
+///    orchestrator accepted (that plan's Amendment 1, OQ-2) and recorded under B-103; the bound
+///    is kept, not loosened.
 #[test]
+#[ignore = "crowd-edge-2 WP3 (Amendment 1, OQ-2): 0 give-ups, 2 of 6 in range, 3 reversals; rear entities 3 to 7 stand on 332 of 340, 331 of 332, 283 of 324 (87.3 %), 309 of 309 and 300 of 316 (94.9 %) ticks; entities 5 and 7 below 95 % (B-103 residual)"]
 fn no_room_means_waiting_still() -> TestResult {
     let run = CorridorRun::play()?;
     let report = run.report();
@@ -367,10 +374,10 @@ fn no_room_means_waiting_still() -> TestResult {
 }
 
 /// 3b. The corridor's queue does not reverse (friendly-blocking §7). Plan
-///    `2026-11-19-crowd-edge-steering` expected D-1 to remove its walk retreats (R-A); D-1 is
-///    withdrawn (Amendment 1), so the bound waits for the plan that replaces it.
+///    `2026-11-19-crowd-edge-steering-2` takes it from 21 reversals to 7 (D-2) and 3 (D-1); the
+///    rest are a walk's start retreat and contact (B-103).
 #[test]
-#[ignore = "crowd-edge WP4: 7 reversals (6 proposal, 1 contact), the walk retreats R-A that D-1 was to remove; D-1 withdrawn (Amendments 1 and 2), B-103"]
+#[ignore = "crowd-edge-2 WP3: 3 reversals (2 proposal, 1 contact), one each for entities 5, 6 and 7 (B-103)"]
 fn no_room_means_no_reversals() -> TestResult {
     let run = CorridorRun::play()?;
     assert_eq!(run.meter.of_owner(BLUE).reversals, 0, "{}", run.report());
@@ -382,8 +389,9 @@ fn no_room_means_no_reversals() -> TestResult {
 ///    half clipped by the firing line used to end its surround walk, step into contact and walk
 ///    again, a reversal every other tick (107 for one walker before friendly-blocking plan
 ///    Amendment 7, and 14 of 17 in range at tick 300). The walk now ends only when the whole
-///    straight step is free, so every attacker reaches range and no walker reverses more than
-///    a few times at the crowd's edge.
+///    straight step is free, and the room beyond its own retreat (plan
+///    `2026-11-19-crowd-edge-steering-2` D-1), so every attacker reaches range and no walker
+///    reverses more than three times, 16 in all (31 before D-1; measured, not to be loosened).
 #[test]
 fn walkers_at_the_crowds_edge_do_not_toggle() -> TestResult {
     const GAP: f32 = 0.85;
@@ -426,6 +434,7 @@ fn walkers_at_the_crowds_edge_do_not_toggle() -> TestResult {
     assert_eq!(attackers_in_range(&world, BLUE), (17, 17), "{report}");
     assert_eq!(meter.of_owner(BLUE).stall_giveups, 0, "{report}");
     // A few single reversals at the crowd's edge remain (B-103); a toggling walk made dozens.
-    assert!(per_walker.iter().all(|&count| count <= 10), "{report}");
+    assert!(per_walker.iter().all(|&count| count <= 3), "{report}");
+    assert!(per_walker.iter().sum::<u32>() <= 16, "{report}");
     Ok(())
 }

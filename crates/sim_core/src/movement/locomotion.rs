@@ -2280,9 +2280,13 @@ fn surround_walk(
         // is free, short by at most what contact nudges a standing body (`STANDING_DRIFT`): a
         // walk starts below half a step forward and ends at a full one, so a unit at the crowd's
         // edge, whose straight step is clipped to between the two, keeps walking instead of
-        // stepping in and out of contact every tick (friendly-blocking plan Amendment 7).
-        let straight = remove_blocked_velocity(body, checked_vec_scale(ahead, speed)?, neighbours)?;
-        forward_free = admits_whole_step(straight, ahead, speed)?;
+        // stepping in and out of contact every tick (friendly-blocking plan Amendment 7). The
+        // way must also hold the room the walk's own retreat made, so a walk that stepped back
+        // round a body does not end on that room and step straight back into the same contact
+        // (plan `2026-11-19-crowd-edge-steering-2` D-1).
+        let reach = speed.saturating_add(memory.flank_retreat);
+        let straight = remove_blocked_velocity(body, checked_vec_scale(ahead, reach)?, neighbours)?;
+        forward_free = admits_whole_step(straight, ahead, reach)?;
     } else if forward_free && memory.flank_walked > SimScalar::ZERO {
         // A unit that has walked round this crowd goes in straight while its walk pauses:
         // steering's step can lead back across the walk, and the next blocked tick sends the unit
@@ -2297,6 +2301,7 @@ fn surround_walk(
         // The unit steps forward. The sides it tried stay tried for this target, so a crowd that
         // opens for a tick and closes again cannot send it back and forth for ever.
         memory.flank_active = false;
+        memory.flank_retreat = SimScalar::ZERO;
         memory.flank_blocked_ticks = 0;
         return Ok(velocity);
     }
@@ -2327,6 +2332,7 @@ fn surround_walk(
     if open {
         memory.flank_blocked_ticks = 0;
         memory.flank_walked = memory.flank_walked.saturating_add(step.length());
+        memory.flank_retreat = add_retreat(memory.flank_retreat, step, ahead)?;
         // A chase walks at most one circle round its target (D-3). An attack-move without a
         // target walks to bring an enemy ahead into scan; one that has walked its scan range
         // sideways and still sees none would only stretch the line (Amendment 4).
@@ -2429,6 +2435,22 @@ fn closed_side_reopens(
         ))
 }
 
+/// `retreat` plus the backward part of the walk step `step` along the way in `ahead` (a unit
+/// vector), `max(0, -step · ahead)`, in world units; saturating (plan
+/// `2026-11-19-crowd-edge-steering-2` D-1.1).
+fn add_retreat(
+    retreat: SimScalar,
+    step: SimVec2,
+    ahead: SimVec2,
+) -> Result<SimScalar, MovementMathError> {
+    let along = checked_dot(step, ahead)?;
+    Ok(if along < SimScalar::ZERO {
+        retreat.saturating_sub(along)
+    } else {
+        retreat
+    })
+}
+
 /// Clears the surround walk for a new target, keeping the side last walked.
 fn end_surround_walk(memory: &mut MovementMemory) {
     memory.flank_active = false;
@@ -2436,6 +2458,7 @@ fn end_surround_walk(memory: &mut MovementMemory) {
     memory.flank_spent = false;
     memory.flank_blocked_ticks = 0;
     memory.flank_walked = SimScalar::ZERO;
+    memory.flank_retreat = SimScalar::ZERO;
 }
 
 /// Whether a friend of the unit that stands ([`SteeringObstacle::is_standing`]) and will not step aside
@@ -2706,14 +2729,32 @@ mod tests {
         );
     }
 
-    /// A unit of radius 0.375 and step 0.126 at (10, 10) on open ground, chasing entity 99 at
-    /// (20, 10): its walk's sides are ±y, the kept side (`flank_left` false) is -y. `blocker` is a
-    /// friend holding its ground that far below the unit's edge, if any. Returns whether its
-    /// spent walk, having walked `walked` world units, re-arms on its closed side.
-    fn reopens(walked: f64, blocker: Option<f64>) -> Result<bool, Box<dyn std::error::Error>> {
-        use super::{closed_side_reopens, MotionPolicy, MovementLayer, StepContext};
-        use crate::entity::MovementMemory;
-        use crate::steering::{ContactBody, SteeringObstacle};
+    /// A friend of radius 0.375 holding its ground at `pos`.
+    fn holder(pos: SimVec2) -> crate::steering::SteeringObstacle {
+        use sim_types::{EntityId, PlayerId};
+        crate::steering::SteeringObstacle {
+            owner: PlayerId(0),
+            push_priority: 10,
+            anchored: true,
+            idle: false,
+            ..crate::steering::SteeringObstacle::new(
+                EntityId(2),
+                pos,
+                SimScalar::from_num(0.375),
+                v(0.0, 0.0),
+            )
+        }
+    }
+
+    /// Runs `probe` on the step context of a unit of radius 0.375 and step 0.126 at (10, 10) on
+    /// open ground, chasing entity 99 toward (20, 10), with `neighbours` round it: its way in is
+    /// +x and its walk's sides are ±y (left is +y).
+    fn on_walk_context<R>(
+        neighbours: &[crate::steering::SteeringObstacle],
+        probe: impl FnOnce(&super::StepContext<'_>, &mut sim_map::Pathfinder) -> R,
+    ) -> Result<R, Box<dyn std::error::Error>> {
+        use super::{MotionPolicy, MovementLayer, StepContext};
+        use crate::steering::ContactBody;
         use sim_types::{EntityId, PlayerId};
         let map = sim_map::GameMap::new(
             40,
@@ -2722,21 +2763,6 @@ mod tests {
         )?;
         let mut world = crate::test_support::world(map, 0x0CE_2D2);
         let radius = SimScalar::from_num(0.375);
-        let neighbours: Vec<SteeringObstacle> = blocker
-            .map(|gap| SteeringObstacle {
-                owner: PlayerId(0),
-                push_priority: 10,
-                anchored: true,
-                idle: false,
-                ..SteeringObstacle::new(
-                    EntityId(2),
-                    v(10.0, 10.0 - 0.75 - gap),
-                    radius,
-                    v(0.0, 0.0),
-                )
-            })
-            .into_iter()
-            .collect();
         let context = StepContext {
             map: &world.map,
             policy: MotionPolicy {
@@ -2753,11 +2779,25 @@ mod tests {
                 pos: v(10.0, 10.0),
                 radius,
             },
-            neighbours: &neighbours,
+            neighbours,
             hull: None,
             surround: Some(Some(EntityId(99))),
             scan_range: SimScalar::from_num(5.5),
         };
+        Ok(probe(&context, &mut world.pathfinder))
+    }
+
+    /// Whether the spent walk of the unit of [`on_walk_context`], having walked `walked` world
+    /// units with its kept side -y (`flank_left` false), re-arms on that side; `blocker` is a
+    /// friend holding its ground that far below the unit's edge, if any.
+    fn reopens(walked: f64, blocker: Option<f64>) -> Result<bool, Box<dyn std::error::Error>> {
+        use super::closed_side_reopens;
+        use crate::entity::MovementMemory;
+        use sim_types::EntityId;
+        let neighbours: Vec<_> = blocker
+            .map(|gap| holder(v(10.0, 10.0 - 0.75 - gap)))
+            .into_iter()
+            .collect();
         let memory = MovementMemory {
             flank_spent: true,
             flank_reversed: true,
@@ -2766,15 +2806,146 @@ mod tests {
             flank_target: Some(EntityId(99)),
             ..MovementMemory::default()
         };
-        let next = v(20.0, 10.0);
-        Ok(closed_side_reopens(
-            &context,
-            &mut world.pathfinder,
-            &memory,
-            v(1.0, 0.0),
-            next,
-            Some(EntityId(99)),
-        )?)
+        Ok(on_walk_context(&neighbours, |context, pathfinder| {
+            closed_side_reopens(
+                context,
+                pathfinder,
+                &memory,
+                v(1.0, 0.0),
+                v(20.0, 10.0),
+                Some(EntityId(99)),
+            )
+        })??)
+    }
+
+    /// One tick of an active surround walk for the unit of [`on_walk_context`], whose steering
+    /// step is the whole straight step (so only the walk's end test decides), with a friend
+    /// holding its ground `gap` ahead of its edge on its way in and `retreat` world units of
+    /// retreat on its walk. Returns the step and the memory after the tick.
+    fn walk_tick(
+        gap: f64,
+        retreat: f64,
+    ) -> Result<(SimVec2, crate::entity::MovementMemory), Box<dyn std::error::Error>> {
+        use super::{surround_walk, MotionProposal};
+        use crate::entity::MovementMemory;
+        use sim_types::{AnimState, EntityId};
+        let neighbours = [holder(v(10.0 + 0.75 + gap, 10.0))];
+        let mut proposal = MotionProposal {
+            position: v(10.0, 10.0),
+            velocity: v(0.0, 0.0),
+            heading: SimAngle::ZERO,
+            anim: AnimState::Walk,
+            clear_route: false,
+            replacement: None,
+            remove_prefix: 0,
+            pop_order: false,
+            retarget: None,
+            clear_target: false,
+            memory: MovementMemory {
+                flank_active: true,
+                flank_left: true,
+                flank_walked: SimScalar::from_num(0.5),
+                flank_retreat: SimScalar::from_num(retreat),
+                flank_target: Some(EntityId(99)),
+                ..MovementMemory::default()
+            },
+        };
+        let step = on_walk_context(&neighbours, |context, pathfinder| {
+            surround_walk(
+                context,
+                pathfinder,
+                &mut proposal,
+                v(20.0, 10.0),
+                v(0.126, 0.0),
+                Some(EntityId(99)),
+            )
+        })??;
+        Ok((step, proposal.memory))
+    }
+
+    /// Plan `2026-11-19-crowd-edge-steering-2` D-1.2: with no retreat, a walk in progress ends
+    /// exactly when the whole straight step is free less `STANDING_DRIFT` (0.126 - 1/64 =
+    /// 0.110 375), as friendly-blocking Amendment 7 has it; with a retreat, the straight way must
+    /// also hold the retreat. An ended walk steps straight in and clears its retreat; a walk
+    /// that goes on keeps it.
+    #[test]
+    fn a_walk_ends_only_on_room_beyond_its_retreat() -> Result<(), Box<dyn std::error::Error>> {
+        for (gap, retreat, ends) in [
+            (0.110, 0.0, false),
+            (0.1104, 0.0, true),
+            (0.5, 0.0, true),
+            (0.1104, 0.05, false),
+            (0.160, 0.05, false),
+            (0.1604, 0.05, true),
+            (0.5, 0.05, true),
+        ] {
+            let (step, memory) = walk_tick(gap, retreat)?;
+            assert_eq!(!memory.flank_active, ends, "gap {gap}, retreat {retreat}");
+            if ends {
+                assert_eq!(step, v(0.126, 0.0), "gap {gap}: the unit steps straight in");
+                assert_eq!(
+                    memory.flank_retreat,
+                    SimScalar::ZERO,
+                    "cleared by the forward step"
+                );
+            } else {
+                assert_eq!(
+                    memory.flank_retreat,
+                    SimScalar::from_num(retreat),
+                    "gap {gap}"
+                );
+                assert!(
+                    step.y > SimScalar::ZERO,
+                    "it walks on its left side: {step:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// D-1.1: the retreat sums only the backward parts of the walk's steps along the way in.
+    #[test]
+    fn the_retreat_sums_only_backward_parts() -> Result<(), Box<dyn std::error::Error>> {
+        use super::add_retreat;
+        let ahead = v(1.0, 0.0);
+        let mut retreat = SimScalar::ZERO;
+        for step in [
+            v(-0.03, 0.12),
+            v(0.05, 0.11),
+            v(0.0, -0.126),
+            v(-0.02, -0.12),
+        ] {
+            retreat = add_retreat(retreat, step, ahead)?;
+        }
+        assert_eq!(
+            retreat,
+            SimScalar::from_num(0.03).saturating_add(SimScalar::from_num(0.02))
+        );
+        assert_eq!(
+            add_retreat(SimScalar::MAX, v(-1.0, 0.0), ahead)?,
+            SimScalar::MAX,
+            "saturating"
+        );
+        Ok(())
+    }
+
+    /// D-1.1: the retreat is cleared when the walk ends ([`super::end_surround_walk`]) and by a
+    /// new order ([`crate::entity::MovementMemory::restart`]).
+    #[test]
+    fn the_retreat_is_cleared_by_the_end_of_the_walk_and_a_new_order() {
+        use crate::entity::MovementMemory;
+        let walking = MovementMemory {
+            flank_active: true,
+            flank_walked: SimScalar::from_num(1.0),
+            flank_retreat: SimScalar::from_num(0.2),
+            ..MovementMemory::default()
+        };
+        let mut ended = walking;
+        super::end_surround_walk(&mut ended);
+        assert_eq!(ended.flank_retreat, SimScalar::ZERO);
+        let mut restarted = walking;
+        restarted.restart();
+        assert_eq!(restarted.flank_retreat, SimScalar::ZERO);
     }
 
     /// Plan `2026-11-19-crowd-edge-steering-2` D-2: a walk spent because its sides closed
