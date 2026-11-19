@@ -654,5 +654,7 @@ Branch `footprint-flags-plan` (the plan named `footprint-flags`), on `main` `bf4
 - `check_flags` takes no `knowledge` argument: neither modelled flag depends on it.
 - The rings are parsed in the new `catalog/placement_rules.rs`; their validation is in `catalog/validation.rs` as D-2
   says.
+- `battle_card_path_tests::gas_through_the_card_extractor_snap_harvest_and_income` also named the moved showcase
+  geyser; found by the package gate and fixed in place under Amendment 1 (gas cell `(15, 6)`, corner `(14, 5)`).
 - A catalog built from unit and structure text alone carries `PlacementRules::NONE` (no ring), as it carries
   `MovementRules::PER_UNIT`; the runtime loader always reads the file.
