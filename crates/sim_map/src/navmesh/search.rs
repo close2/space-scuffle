@@ -84,6 +84,10 @@ pub struct MeshRoute {
     pub turns: Vec<(LatticePoint, Side)>,
     /// Whether a funnel leg failed the segment predicate and the portal midpoints were used.
     pub fallback: bool,
+    /// Whether the zero-room retry (plan `2026-11-19-funnel-fallbacks` D-2) produced the route:
+    /// every pull with a corner margin failed, and the route passes a pinch with no room to
+    /// spare. A diagnostic, read by the tests that hold these routes to the oracle (Amendment 2).
+    pub zero_room: bool,
     /// Search nodes expanded.
     pub expansions: u32,
 }
@@ -766,6 +770,7 @@ fn route(
         total_length: start.distance(goal),
         turns: Vec::new(),
         fallback: false,
+        zero_room: false,
         expansions,
     };
     let lane = restriction.map(|r| LaneQuery {
@@ -818,10 +823,11 @@ fn route(
     } else {
         search.fitted_retry(&query, start_triangle, route)
     };
-    let (route, legal) = if legal {
-        (route, true)
+    let (route, legal, zero_room) = if legal {
+        (route, true, false)
     } else {
-        search.zero_room_retry(&query, start_triangle, route)
+        let (route, legal) = search.zero_room_retry(&query, start_triangle, route);
+        (route, legal, legal)
     };
     let turns = route
         .anchors
@@ -846,6 +852,7 @@ fn route(
         total_length,
         turns,
         fallback,
+        zero_room,
         expansions,
     })
 }

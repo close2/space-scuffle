@@ -210,11 +210,12 @@ fn test_performance_quality_gate() {
 /// replayed on every target. Every draw is a fixed-width integer range.
 ///
 /// Re-recorded for plan `2026-11-19-funnel-fallbacks` WP3 (D-2, the zero-room retry, with
-/// Amendment 1's runs; was `0xc0d5_fbfd_292f_37a4`, which the tree reproduces with D-2 switched
-/// off, D-3 alone leaving it unchanged). Two of the 1,000 requests change, both class E zero-room
-/// pinches at r 0.5 that fell back to the portal midpoints and are now legal: (8.75, 4.0) ->
-/// (27.5, 59.0), 95.67 -> 63.46 long, and (8.75, 6.25) -> (8.75, 49.5), 115.55 -> 63.68. The new
-/// value is the same in native debug and release and in `wasm32-wasip1` release and debug.
+/// Amendments 1 and 2: runs only where needed, arcs bisected to a thirty-second of a turn; was
+/// `0xc0d5_fbfd_292f_37a4`, which the tree reproduces with D-2 switched off, D-3 alone leaving it
+/// unchanged). Two of the 1,000 requests change, both class E zero-room pinches at r 0.5 that fell
+/// back to the portal midpoints and are now legal: (8.75, 4.0) -> (27.5, 59.0), 95.67 -> 63.41
+/// long, and (8.75, 6.25) -> (8.75, 49.5), 115.55 -> 63.63. The new value is the same in native
+/// debug and release and in `wasm32-wasip1` release and debug.
 #[test]
 fn contour_route_checksum() {
     let mut map = arena::default_arena();
@@ -277,6 +278,6 @@ fn contour_route_checksum() {
     }
     let checksum = hasher.digest();
     eprintln!("contour route checksum: 0x{checksum:016x}");
-    const CONTOUR_ROUTE_CHECKSUM: u64 = 0xb426_7a12_8c3a_f1b1;
+    const CONTOUR_ROUTE_CHECKSUM: u64 = 0x7ac0_f0b9_f8b4_2057;
     assert_eq!(checksum, CONTOUR_ROUTE_CHECKSUM, "contour routes diverged");
 }

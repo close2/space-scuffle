@@ -85,13 +85,13 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// that falls back both ways through another channel's midpoints (B-146). The new value is the
 /// same in native debug, native release and `wasm32-wasip1` release.
 ///
-/// Re-recorded for WP3 of the same plan (D-2, the zero-room retry, with Amendment 1's runs; was
+/// Re-recorded for WP3 of the same plan (D-2, the zero-room retry, with Amendments 1 and 2; was
 /// `0x6637_d70a_80d8_a859`, which the tree reproduces with D-2 switched off, and
 /// `0x9069_95c7_29b7_3498` with D-2 and D-3 off). One of the 500 requests changes: a class E
 /// zero-room pinch on the showcase under partial knowledge, r 1.0, (34.5, 23.5) -> (50.0, 47.5),
-/// which fell back to the portal midpoints (91.45 long) and is now legal (51.42). The new value
+/// which fell back to the portal midpoints (91.45 long) and is now legal (51.27). The new value
 /// is the same in native debug and release and in `wasm32-wasip1` release and debug.
-const CONTOUR_PATH_GOLDEN: u64 = 0xab3f_b3c9_d6ae_df40;
+const CONTOUR_PATH_GOLDEN: u64 = 0x36ff_bf4b_e967_0683;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;

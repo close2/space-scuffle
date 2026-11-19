@@ -591,13 +591,27 @@ fn emit_waypoints(
     points
 }
 
-/// `cos 45°` floored to the raw grid: the zero-room emission bisects any step between two
-/// consecutive arc lines wider than an eighth turn (D-2.4), so a corner of the circumscribed
-/// polygon lies at most `rho / cos 22.5°` from the vertex.
-const COS_EIGHTH_TURN: SimScalar = SimScalar::from_raw(3_037_000_499);
+/// The finest step of a zero-room arc, as a fraction of a turn: `1 / 2^ZERO_ROOM_ARC_SPLITS`
+/// (plan `2026-11-19-funnel-fallbacks` Amendment 2).
+const ZERO_ROOM_ARC_SPLITS: u32 = 5;
 
-/// Bound on the bisections and on the redundancy passes of one circumscribed arc.
-const ARC_MAX_LINES: usize = 64;
+/// `cos(2π / 32)` floored to the raw grid: the zero-room emission bisects any step between two
+/// consecutive arc lines wider than a thirty-second of a turn (D-2.4 as Amendment 2 sets it).
+// PERFORMANCE RATIONALE:
+// Why: A circumscribed polygon whose sides each span an angle `θ` is `tan(θ/2) / (θ/2)` times
+// the arc it replaces, so a route that rounds many corners in a row is longer than the exact
+// route by that factor: 1.0548 for an eighth of a turn, 1.0130 for a sixteenth, 1.0032 for a
+// thirty-second. The oracle bound the routes are held to is 1.01.
+// What: The step is the largest power-of-two fraction of a turn whose factor is at most 1.01,
+// a thirty-second (`zero_room_arc_step_is_the_largest_within_the_oracle_bound` computes it), and
+// a lookup constant instead of a cosine computed at run time.
+// Trade-off: Up to 32 lines per full turn of arc instead of 8, in the zero-room retry only (the
+// other pulls emit inscribed arcs and never reach this code), which runs in no measured battle.
+const ZERO_ROOM_ARC_STEP_COS: SimScalar = SimScalar::from_raw(4_212_440_703);
+
+/// Bound on the bisections and on the redundancy passes of one circumscribed arc: a full turn
+/// at the finest step needs 32 lines and 31 bisections, with gates besides.
+const ARC_MAX_LINES: usize = 4 << ZERO_ROOM_ARC_SPLITS;
 
 /// The tolerance within which a gate's normal counts as the arc's end normal: a gate
 /// exactly at an end of the arc is kept, not lost to the rounding of `diamond`.
@@ -733,7 +747,8 @@ fn gate_line(c: SimVec2, f: SimVec2, order: u32) -> Option<ArcLine> {
 /// Fills `lines` with the circumscribed arc of the vertex `c` from the unit normal `n_in` to
 /// `n_out` in the sense `arc_sign` (D-2.4): its two tangent lines at `rho`, the gate line of
 /// every feature whose normal lies in the arc, and bisecting lines at `rho` wherever two
-/// consecutive normals are more than an eighth turn apart, in angular order. Of lines with
+/// consecutive normals are more than a thirty-second of a turn apart (Amendment 2), in angular
+/// order. Of lines with
 /// one normal the nearest is kept.
 fn arc_lines(
     (c, rho): (SimVec2, SimScalar),
@@ -788,7 +803,7 @@ fn arc_lines(
         }
         let (a, b) = (lines[k].normal, lines[k + 1].normal);
         let short = a.cross_2d(b) * arc_sign >= SimScalar::ZERO;
-        if short && a.dot(b) >= COS_EIGHTH_TURN {
+        if short && a.dot(b) >= ZERO_ROOM_ARC_STEP_COS {
             k += 1;
             continue;
         }
@@ -1287,5 +1302,26 @@ mod tests {
                 assert_eq!(all_keep_r, !diagonal, "offset {offset:?}, sense {arc_sign}");
             }
         }
+    }
+
+    /// Amendment 2: the zero-room arc's step is the largest power-of-two fraction of a turn whose
+    /// circumscribed length factor `tan(θ/2) / (θ/2)` is at most the oracle bound 1.01, and the
+    /// constant is its cosine floored to the raw grid.
+    #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the raw constant is below 2^33, exact in an f64"
+    )]
+    fn zero_room_arc_step_is_the_largest_within_the_oracle_bound() {
+        let factor = |splits: u32| {
+            let half = std::f64::consts::PI / f64::from(1_u32 << splits);
+            half.tan() / half
+        };
+        let splits = (2..16).find(|&k| factor(k) <= 1.01).unwrap_or(0);
+        assert_eq!(splits, ZERO_ROOM_ARC_SPLITS);
+        assert!(factor(splits) < 1.0033 && factor(splits - 1) > 1.01);
+        let step = 2.0 * std::f64::consts::PI / f64::from(1_u32 << splits);
+        let raw = (step.cos() * 4_294_967_296.0).floor();
+        assert!((raw - ZERO_ROOM_ARC_STEP_COS.raw() as f64).abs() < 0.5);
     }
 }
