@@ -82,6 +82,71 @@ pub struct EffectInstance {
     /// The clip window every layer without a clip of its own is cut to: where the fog begins
     /// across an area the viewer sees in part (WP10); no clip otherwise.
     pub fog_clip: super::particles::LineClip,
+    /// What its line gives every instance alike, kept in step with `line` (plan
+    /// `2026-11-19-retained-effect-instances` D-3).
+    pub line_frame: LineFrame,
+    /// The decal slots its unended decal layers held at the last recount, and until when that
+    /// count holds ([`MarksCache`]).
+    pub marks: MarksCache,
+}
+
+/// The per-effect constants of an effect's line: its clip window and its ground direction's
+/// yaw, computed once when the line is set instead of for every instance every frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineFrame {
+    /// [`super::runtime::line_clip_window`] of the line; no clip without a line.
+    pub window: super::particles::LineClip,
+    /// The decal yaw along the line, `atan2(-dz, dx)` radians, when the line has a horizontal
+    /// length; `None` otherwise (and without a line).
+    pub yaw: Option<f32>,
+}
+
+impl LineFrame {
+    /// The constants of `line`.
+    #[must_use]
+    pub fn of(line: Option<WorldLine>) -> Self {
+        let Some(line) = line else {
+            return Self {
+                window: [0.0; 4],
+                yaw: None,
+            };
+        };
+        let direction = line.to - line.from;
+        Self {
+            window: super::runtime::line_clip_window(line),
+            yaw: (direction.x.abs() + direction.z.abs() > f32::EPSILON)
+                .then(|| (-direction.z).atan2(direction.x)),
+        }
+    }
+}
+
+/// The cached count of the decal slots an effect's unended decal layers hold
+/// (`held_marks`), and the span of time it stays valid: it is recounted when the effect's age
+/// leaves `[from_age, until_age]`, when a released effect's age since release passes
+/// `until_exit`, or when an API that changes its inputs clears `valid`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarksCache {
+    /// Whether the count is set.
+    pub valid: bool,
+    /// The count.
+    pub count: u32,
+    /// The effect's age (seconds, as the recount computes it) at the recount.
+    pub from_age: f32,
+    /// The earliest end, in the same age, of a counted decal layer that is not held.
+    pub until_age: f32,
+    /// The shortest exit of a counted held decal layer of a released effect, seconds.
+    pub until_exit: f32,
+}
+
+impl MarksCache {
+    /// No count yet.
+    pub const UNSET: Self = Self {
+        valid: false,
+        count: 0,
+        from_age: 0.0,
+        until_age: 0.0,
+        until_exit: 0.0,
+    };
 }
 
 /// A slot: its generation and its instance, if live.
@@ -232,6 +297,12 @@ impl EffectInstancePool {
             .filter_map(|(index, slot)| slot.instance.as_ref().map(|instance| (index, instance)))
     }
 
+    /// The live instance in slot `index`.
+    #[must_use]
+    pub fn slot(&self, index: usize) -> Option<&EffectInstance> {
+        self.slots.get(index)?.instance.as_ref()
+    }
+
     /// The live instance in slot `index`, mutably.
     pub fn slot_mut(&mut self, index: usize) -> Option<&mut EffectInstance> {
         self.slots.get_mut(index)?.instance.as_mut()
@@ -274,6 +345,8 @@ mod tests {
             held_exit: 0.0,
             oneshot_end: 0.0,
             fog_clip: [0.0; 4],
+            line_frame: LineFrame::of(None),
+            marks: MarksCache::UNSET,
         }
     }
 

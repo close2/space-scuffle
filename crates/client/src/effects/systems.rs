@@ -724,13 +724,13 @@ fn camera_view(
     let viewport = camera
         .physical_viewport_size()
         .map_or(Vec2::new(1280.0, 720.0), |size| size.as_vec2());
-    Some(CameraView {
-        position: transform.translation(),
-        forward: transform.forward().as_vec3(),
-        fov_y: perspective.fov,
-        viewport_px: viewport.y.max(1.0),
-        aspect: viewport.x / viewport.y.max(1.0),
-    })
+    Some(CameraView::new(
+        transform.translation(),
+        transform.forward().as_vec3(),
+        perspective.fov,
+        viewport.y.max(1.0),
+        viewport.x / viewport.y.max(1.0),
+    ))
 }
 
 /// Ages the effects and rebuilds this frame's instances.

@@ -152,13 +152,13 @@ fn splash(
 /// A camera 20 units above and behind the origin, looking at it.
 fn camera() -> CameraView {
     let position = Vec3::new(0.0, 20.0, 20.0);
-    CameraView {
+    CameraView::new(
         position,
-        forward: (-position).normalize(),
-        fov_y: std::f32::consts::FRAC_PI_4,
-        viewport_px: 720.0,
-        aspect: 16.0 / 9.0,
-    }
+        (-position).normalize(),
+        std::f32::consts::FRAC_PI_4,
+        720.0,
+        16.0 / 9.0,
+    )
 }
 
 /// Spawns `event` at `now` through the production lookup.

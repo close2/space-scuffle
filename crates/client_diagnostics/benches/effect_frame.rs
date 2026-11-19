@@ -286,13 +286,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     // The frame budget's camera pose: 75 units out at the battle camera's pitch.
     let target = Vec3::new(64.5, 0.0, 72.5);
     let position = target + Vec3::new(0.0, 75.0 * 0.85, 75.0 * 0.53);
-    let camera = CameraView {
+    let camera = CameraView::new(
         position,
-        forward: (target - position).normalize(),
-        fov_y: std::f32::consts::FRAC_PI_4,
-        viewport_px: 720.0,
-        aspect: 16.0 / 9.0,
-    };
+        (target - position).normalize(),
+        std::f32::consts::FRAC_PI_4,
+        720.0,
+        16.0 / 9.0,
+    );
     let (mut spawn_cpu, mut build_cpu) = (Duration::ZERO, Duration::ZERO);
     let (mut owed, mut sequence) = (0.0, 0_u64);
     let (mut digest, mut window_digest) = (FNV_OFFSET, FNV_OFFSET);

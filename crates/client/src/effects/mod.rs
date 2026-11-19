@@ -43,6 +43,8 @@ pub mod runtime;
 pub mod stance;
 pub mod struck;
 pub mod systems;
+#[cfg(test)]
+pub mod test_streams;
 
 use bevy::prelude::*;
 
