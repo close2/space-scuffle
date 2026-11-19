@@ -262,8 +262,9 @@ pub struct MovementMemory {
     /// Whether the surround walk has already turned back once, its first side having closed.
     pub flank_reversed: bool,
     /// Whether the surround walk has ended without a way in (both sides closed, or a full circle
-    /// walked); the unit then waits until its way forward opens, its goal changes or
-    /// `FLANK_RETRY_TICKS` pass (D-3, plan Amendment 4).
+    /// walked); the unit then waits until its way forward opens, the side that closed last opens
+    /// for a whole step (a walk spent by closed sides only), it gains ground, or its goal changes
+    /// (plan `2026-11-19-crowd-edge-steering-2` D-2).
     pub flank_spent: bool,
     /// Consecutive ticks the surround walk's side has been closed (`FLANK_REVERSE_TICKS`).
     pub flank_blocked_ticks: u16,

@@ -12,7 +12,7 @@
 //! 2. A synthetic arc: ten ranged units in two rows attack-move past an immobile pillar, and all
 //!    ten reach range by tick 300 with no reversals and no give-ups.
 //! 3. No room: units in a corridor two cells wide queue behind those that reach range, and
-//!    those that cannot reach it stand, without give-ups or reversals (both still ignored). Standing is the simulation's own: an achieved step of at most
+//!    those that cannot reach it stand, without give-ups (the reversals bound is still ignored). Standing is the simulation's own: an achieved step of at most
 //!    `STANDING_DRIFT` (1/64 world units).
 //! 4. Walkers at a crowd's edge: short-ranged units behind a firing line walk round it without
 //!    ending and restarting their walk every other tick (plan Amendment 7).
@@ -341,10 +341,10 @@ impl CorridorRun {
 ///    the pillar. Those that cannot reach range stand on at least 95 % of the ticks after they
 ///    first stand, nobody gives up and some are left out. Ticks exactly still are reported only,
 ///    since contact eases a pressed body apart by ever smaller steps that reach zero only after
-///    tens of ticks (plan `2026-11-19-crowd-edge-steering` D-6, §2.7). The standing bound needs
-///    D-3, which Amendment 3 moved to a new plan: the timed retry still walks the queue.
+///    tens of ticks (plan `2026-11-19-crowd-edge-steering` D-6, §2.7). The timed retry of a spent
+///    walk walked the queue every 24 ticks (rear units on 65 to 88 %); without it (plan
+///    `2026-11-19-crowd-edge-steering-2` D-2) they stand on 96 to 99.7 %.
 #[test]
-#[ignore = "crowd-edge Amendment 3: the standing bound needs D-3 (new plan); with D-4 alone 0 give-ups and 2 of 6 in range, but rear units 3, 4, 5, 7 stand on 88, 88, 69, 65 % (B-103)"]
 fn no_room_means_waiting_still() -> TestResult {
     let run = CorridorRun::play()?;
     let report = run.report();

@@ -36,10 +36,10 @@ use super::math::{
     direction, distance, within_distance,
 };
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, FLANK_RETRY_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
-    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
-    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD,
-    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
+    ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
+    STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON,
+    WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
@@ -596,7 +596,9 @@ fn note_progress(
 
 /// [`note_progress`] for a unit that may be queued: on a `queued` tick that gained nothing, the
 /// stall count stays where it was and the best distance is kept (plan
-/// `2026-11-19-crowd-edge-steering` D-4). Returns the stall count.
+/// `2026-11-19-crowd-edge-steering` D-4). A tick that gains ground re-arms a spent surround walk
+/// on the side it last walked: the crowd in front of the unit has moved (plan
+/// `2026-11-19-crowd-edge-steering-2` D-2). Returns the stall count.
 fn note_queued_progress(
     memory: &mut MovementMemory,
     position: SimVec2,
@@ -606,6 +608,9 @@ fn note_queued_progress(
 ) -> Result<u16, MovementMathError> {
     let before = memory.stalled_ticks;
     let gained = note_progress(memory, position, route, goal)? == 0;
+    if gained && memory.flank_spent {
+        end_surround_walk(memory);
+    }
     if queued && !gained {
         memory.stalled_ticks = before;
     }
@@ -2236,11 +2241,14 @@ fn is_waiting(velocity: SimVec2, speed: SimScalar) -> bool {
 /// blocker changes or the walk pauses. A side closed by a body or terrain for
 /// [`FLANK_REVERSE_TICKS`] is given up for the other once; when that closes too, or the unit has
 /// walked one full circle round `next` (D-3; for an attack-move without a target, its scan
-/// range), the walk is spent: the unit waits [`FLANK_RETRY_TICKS`] and then walks afresh. Only a
-/// free straight way in pauses a walk in progress, and the unit then steps forward; the sides
-/// tried and the distance walked count for the whole approach to one target, and a walk toward
-/// another target, or under a new order, starts afresh. Returns the step to take; zero means
-/// wait (plan Amendment 4 records the changes to D-2 and D-3).
+/// range), the walk is spent and the unit waits. A walk spent because both sides closed walks
+/// again when the side that closed last opens for a whole step ([`closed_side_reopens`]); any
+/// spent walk walks again when the unit gains ground ([`note_queued_progress`]) or its target or
+/// order changes (plan `2026-11-19-crowd-edge-steering-2` D-2). Only a free straight way in pauses
+/// a walk in progress, and the unit then steps forward; the sides tried and the distance walked
+/// count for the whole approach to one target, and a walk toward another target, or under a new
+/// order, starts afresh. Returns the step to take; zero means wait (friendly-blocking plan
+/// Amendment 4 records the changes to D-2 and D-3).
 fn surround_walk(
     context: &StepContext<'_>,
     pathfinder: &mut Pathfinder,
@@ -2274,7 +2282,7 @@ fn surround_walk(
         // edge, whose straight step is clipped to between the two, keeps walking instead of
         // stepping in and out of contact every tick (friendly-blocking plan Amendment 7).
         let straight = remove_blocked_velocity(body, checked_vec_scale(ahead, speed)?, neighbours)?;
-        forward_free = checked_dot(straight, ahead)? >= speed.saturating_sub(STANDING_DRIFT);
+        forward_free = admits_whole_step(straight, ahead, speed)?;
     } else if forward_free && memory.flank_walked > SimScalar::ZERO {
         // A unit that has walked round this crowd goes in straight while its walk pauses:
         // steering's step can lead back across the walk, and the next blocked tick sends the unit
@@ -2293,10 +2301,9 @@ fn surround_walk(
         return Ok(velocity);
     }
     if memory.flank_spent {
-        // A spent walk waits, then looks again: the crowd round a target changes as units die
-        // and leave, and a unit that never looked again would stand behind it for good.
-        memory.flank_blocked_ticks = memory.flank_blocked_ticks.saturating_add(1);
-        if memory.flank_blocked_ticks < FLANK_RETRY_TICKS {
+        // A spent walk waits until the crowd beside it changes: the side that closed against it
+        // opens, it gains ground, or its target changes. A boxed-in unit stands (Q0074).
+        if !closed_side_reopens(context, pathfinder, memory, ahead, next, target)? {
             return Ok(SimVec2::ZERO);
         }
         end_surround_walk(memory);
@@ -2307,12 +2314,7 @@ fn surround_walk(
             memory.flank_left = surround_side(body, next, target, neighbours)?;
         }
     }
-    let left = SimVec2::new(-ahead.y, ahead.x);
-    let across = if memory.flank_left {
-        left
-    } else {
-        checked_vec_sub(SimVec2::ZERO, left)?
-    };
+    let across = across_on_side(ahead, memory.flank_left)?;
     let step = remove_blocked_velocity(body, checked_vec_scale(across, speed)?, neighbours)?;
     let open = !is_waiting(step, speed)
         && probe_permits(
@@ -2328,11 +2330,7 @@ fn surround_walk(
         // A chase walks at most one circle round its target (D-3). An attack-move without a
         // target walks to bring an enemy ahead into scan; one that has walked its scan range
         // sideways and still sees none would only stretch the line (Amendment 4).
-        let bound = match target {
-            Some(_) => distance(body.pos, next)?.saturating_mul(SimScalar::TWO_PI),
-            None => context.scan_range,
-        };
-        if memory.flank_walked >= bound {
+        if memory.flank_walked >= walk_bound(context, next, target)? {
             memory.flank_active = false;
             memory.flank_spent = true;
         }
@@ -2350,6 +2348,85 @@ fn surround_walk(
         }
     }
     Ok(SimVec2::ZERO)
+}
+
+/// The distance a surround walk toward `next` may walk before it is spent, in world units: one
+/// circle round `next` for a chase of `target` (D-3), the unit's scan range for an attack-move
+/// without one (friendly-blocking plan Amendment 4).
+fn walk_bound(
+    context: &StepContext<'_>,
+    next: SimVec2,
+    target: Option<EntityId>,
+) -> Result<SimScalar, MovementMathError> {
+    Ok(match target {
+        Some(_) => distance(context.body.pos, next)?.saturating_mul(SimScalar::TWO_PI),
+        None => context.scan_range,
+    })
+}
+
+/// The unit vector across the way `ahead` (a unit vector) on the walk's side: left of it when
+/// `left` is true.
+fn across_on_side(ahead: SimVec2, left: bool) -> Result<SimVec2, MovementMathError> {
+    let across = SimVec2::new(-ahead.y, ahead.x);
+    if left {
+        Ok(across)
+    } else {
+        checked_vec_sub(SimVec2::ZERO, across)
+    }
+}
+
+/// Whether the admissible step `step` keeps the whole of a step of `reach` world units along the
+/// unit vector `direction`, short by at most what contact nudges a standing body
+/// ([`STANDING_DRIFT`]): the test that ends a walk in progress (friendly-blocking plan
+/// Amendment 7) and re-arms a spent one ([`closed_side_reopens`]).
+fn admits_whole_step(
+    step: SimVec2,
+    direction: SimVec2,
+    reach: SimScalar,
+) -> Result<bool, MovementMathError> {
+    Ok(checked_dot(step, direction)? >= reach.saturating_sub(STANDING_DRIFT))
+}
+
+/// Whether a spent surround walk re-arms because the side that closed last opens (plan
+/// `2026-11-19-crowd-edge-steering-2` D-2).
+///
+/// Only a walk spent by closed sides qualifies: one that walked its bound ([`walk_bound`])
+/// re-arms only on ground gained or a new target, since an open side would start the same circle
+/// again. The side is the one the walk kept, [`MovementMemory::flank_left`], which is the side
+/// that closed last; the other closed earlier and the unit has walked away from it, so it says
+/// nothing about the crowd. The side opens when the across step of a whole `speed` keeps all but
+/// [`STANDING_DRIFT`] of itself past the bodies ([`admits_whole_step`]) and the terrain permits
+/// it: a body eased off a wall or a friend by contact gains slivers, never a whole step, so contact
+/// creep does not re-arm the walk.
+fn closed_side_reopens(
+    context: &StepContext<'_>,
+    pathfinder: &mut Pathfinder,
+    memory: &MovementMemory,
+    ahead: SimVec2,
+    next: SimVec2,
+    target: Option<EntityId>,
+) -> Result<bool, MovementMathError> {
+    let StepContext {
+        map,
+        policy,
+        speed,
+        body,
+        neighbours,
+        ..
+    } = *context;
+    if memory.flank_walked >= walk_bound(context, next, target)? {
+        return Ok(false);
+    }
+    let across = across_on_side(ahead, memory.flank_left)?;
+    let step = remove_blocked_velocity(body, checked_vec_scale(across, speed)?, neighbours)?;
+    Ok(admits_whole_step(step, across, speed)?
+        && probe_permits(
+            map,
+            pathfinder,
+            policy,
+            body.pos,
+            checked_vec_add(body.pos, step)?,
+        ))
 }
 
 /// Clears the surround walk for a new target, keeping the side last walked.
@@ -2627,6 +2704,106 @@ mod tests {
                 refused: true
             }
         );
+    }
+
+    /// A unit of radius 0.375 and step 0.126 at (10, 10) on open ground, chasing entity 99 at
+    /// (20, 10): its walk's sides are ±y, the kept side (`flank_left` false) is -y. `blocker` is a
+    /// friend holding its ground that far below the unit's edge, if any. Returns whether its
+    /// spent walk, having walked `walked` world units, re-arms on its closed side.
+    fn reopens(walked: f64, blocker: Option<f64>) -> Result<bool, Box<dyn std::error::Error>> {
+        use super::{closed_side_reopens, MotionPolicy, MovementLayer, StepContext};
+        use crate::entity::MovementMemory;
+        use crate::steering::{ContactBody, SteeringObstacle};
+        use sim_types::{EntityId, PlayerId};
+        let map = sim_map::GameMap::new(
+            40,
+            40,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 0x0CE_2D2);
+        let radius = SimScalar::from_num(0.375);
+        let neighbours: Vec<SteeringObstacle> = blocker
+            .map(|gap| SteeringObstacle {
+                owner: PlayerId(0),
+                push_priority: 10,
+                anchored: true,
+                idle: false,
+                ..SteeringObstacle::new(
+                    EntityId(2),
+                    v(10.0, 10.0 - 0.75 - gap),
+                    radius,
+                    v(0.0, 0.0),
+                )
+            })
+            .into_iter()
+            .collect();
+        let context = StepContext {
+            map: &world.map,
+            policy: MotionPolicy {
+                layer: MovementLayer::Ground,
+                radius,
+                terrain: radius,
+                burrowed: false,
+            },
+            speed: SimScalar::from_num(0.126),
+            body: ContactBody {
+                id: EntityId(1),
+                owner: PlayerId(0),
+                push_priority: 10,
+                pos: v(10.0, 10.0),
+                radius,
+            },
+            neighbours: &neighbours,
+            hull: None,
+            surround: Some(Some(EntityId(99))),
+            scan_range: SimScalar::from_num(5.5),
+        };
+        let memory = MovementMemory {
+            flank_spent: true,
+            flank_reversed: true,
+            flank_left: false,
+            flank_walked: SimScalar::from_num(walked),
+            flank_target: Some(EntityId(99)),
+            ..MovementMemory::default()
+        };
+        let next = v(20.0, 10.0);
+        Ok(closed_side_reopens(
+            &context,
+            &mut world.pathfinder,
+            &memory,
+            v(1.0, 0.0),
+            next,
+            Some(EntityId(99)),
+        )?)
+    }
+
+    /// Plan `2026-11-19-crowd-edge-steering-2` D-2: a walk spent because its sides closed
+    /// re-arms when the side it kept frees a whole step; one spent by walking its circle round
+    /// the target (2π × 10 world units here) does not, however open its side, since re-arming it
+    /// would start the same circle again.
+    #[test]
+    fn a_walk_spent_by_its_circle_does_not_re_arm_on_an_open_side(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        assert!(reopens(1.0, None)?, "closed sides, side now open");
+        assert!(!reopens(62.9, None)?, "circle walked (2π × 10 = 62.83)");
+        assert!(!reopens(70.0, None)?, "beyond the circle");
+        Ok(())
+    }
+
+    /// D-2.3: the kept side opens only for a whole step. A friend holding a sliver below the
+    /// unit's edge keeps it closed even where the sliver is above the waiting share (prototype
+    /// K3's test); room for the whole step less `STANDING_DRIFT` opens it.
+    #[test]
+    fn a_closed_side_opens_only_for_a_whole_step() -> Result<(), Box<dyn std::error::Error>> {
+        // The waiting share is 0.126 / 8 = 0.01575; the whole step less the drift is
+        // 0.126 - 1/64 = 0.110 375.
+        for sliver in [0.0, 0.01, 0.03, 0.08, 0.11] {
+            assert!(!reopens(1.0, Some(sliver))?, "gap {sliver}");
+        }
+        for room in [0.111, 0.126, 0.5] {
+            assert!(reopens(1.0, Some(room))?, "gap {room}");
+        }
+        Ok(())
     }
 
     /// The shipped slow hull rate, 20.16° per tick, in binary units.

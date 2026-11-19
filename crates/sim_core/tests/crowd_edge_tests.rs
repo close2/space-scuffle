@@ -1,10 +1,12 @@
 //! # Integration Test: A Queue That Stands (B-103)
 //!
-//! Plan `2026-11-19-crowd-edge-steering`, WP4 as Amendment 3 restates it. A tick spent queued
+//! Plan `2026-11-19-crowd-edge-steering`, WP4 as Amendment 3 restates it: a tick spent queued
 //! behind a friend that holds its ground is not a stalled tick, so an attack order is kept (D-4,
 //! the owner's answer to Q0089), while a plain `Move` into a blocked spot is still given up
-//! (CE-9). CE-7 and CE-8 belong to D-3, the re-arm of a spent walk without the timed retry, which
-//! Amendment 3 moved to a new plan; they are kept here, ignored, with their figures.
+//! (CE-9). Plan `2026-11-19-crowd-edge-steering-2` D-2: a spent surround walk has no timed retry;
+//! it re-arms when the side that closed last opens for a whole step (CE-10), when the unit gains
+//! ground (CE-8) or when its target changes, and never on the slivers contact eases a pressed unit
+//! by (CE-11), so a queued chaser stands (CE-7).
 //!
 //! The tests use scratch archetypes written in this file (C5), so a rebalance of the shipped
 //! catalog cannot break them. Positions are converted to `f64` for measurement only.
@@ -190,10 +192,10 @@ fn standing(world: &SimWorld, unit: EntityId) -> bool {
 /// CE-7 (D-4): in the corridor, two short-ranged shooters fire at the pillar side by side, filling
 /// its face, and a chaser ordered onto the pillar queues behind them. Over 600 ticks, beyond the 250-tick stall rule and the
 /// 50-tick abandoned-target wait, the chaser never gives its target up and stands on at least
-/// 95 % of its ticks after it first stands. Before D-3 and D-4 it walked every 24 ticks; with
-/// only the timed retry removed it would give up 250 ticks after its first stop.
+/// 95 % of its ticks after it first stands. Under the timed retry it walked every 24 ticks
+/// (standing on 386 of 580 ticks); with only the retry removed and no D-4 it would give up 250
+/// ticks after its first stop.
 #[test]
-#[ignore = "crowd-edge Amendment 3: needs D-3 (moved to a new plan); with D-4 alone the chaser keeps its target but stands on 386 of 580 ticks, walking on the timed retry (B-103)"]
 fn a_queued_chaser_keeps_its_target() -> TestResult {
     let mut world = corridor()?;
     let pillar = EntityId(1);
@@ -264,13 +266,13 @@ fn edge_to_pillar(world: &SimWorld, unit: EntityId) -> f64 {
     ) - 2.875
 }
 
-/// CE-8 (D-3, a guard): in the corridor two short-ranged shooters fire at the pillar side by side
-/// and a third queues behind them until its surround walk is spent, both sides closed by the corridor's
-/// walls and the pair. One of the pair is then killed: the queued unit gains ground, which re-arms its
-/// walk (`flank_spent` clears), and it reaches range within 200 ticks. In the open walkers layout
-/// of `second_line_tests.rs` no walk is spent within 600 ticks, so the corridor stands in for it.
+/// CE-8 (plan `2026-11-19-crowd-edge-steering-2` D-2, a guard): in the corridor two short-ranged
+/// shooters fire at the pillar side by side and a third queues behind them until its surround walk
+/// is spent, both sides closed by the corridor's walls and the pair. One of the pair is then
+/// killed: the queued unit gains ground, which re-arms its walk (`flank_spent` clears) within six
+/// ticks, and it reaches range within 200 ticks. In the open walkers layout of
+/// `second_line_tests.rs` no walk is spent within 600 ticks, so the corridor stands in for it.
 #[test]
-#[ignore = "crowd-edge Amendment 3: D-3's re-arm on ground gained moved to a new plan; with the timed retry the unit reaches range but its walk does not re-arm within 6 ticks (B-103)"]
 fn a_spent_walk_resumes_when_the_way_opens() -> TestResult {
     let mut world = corridor()?;
     let front = spawn(&mut world, SHORT, BLUE, at(36.6, 31.45))?;
@@ -297,22 +299,30 @@ fn a_spent_walk_resumes_when_the_way_opens() -> TestResult {
     }
     world.entities.get_mut(&front).ok_or("front")?.hp = SimScalar::ZERO;
     let killed_at = world.current_tick;
-    let (mut rearmed, mut reached) = (false, None);
+    let (mut rearmed, mut rearmed_at, mut reached) = (false, None, None);
     while world.current_tick < killed_at + 200 && reached.is_none() {
         step(&mut world, &mut meter, Vec::new());
         assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
-        rearmed |= !world.entities[&queued].movement.flank_spent;
+        if !rearmed && !world.entities[&queued].movement.flank_spent {
+            rearmed = true;
+            rearmed_at = Some(world.current_tick);
+        }
         if edge_to_pillar(&world, queued) <= 0.5 + 1e-4 {
             reached = Some(world.current_tick);
         }
     }
     let report = format!(
-        "spent until tick {killed_at}; at tick {} it is {} from range; {:?}",
+        "spent until tick {killed_at}, re-armed at {rearmed_at:?}; at tick {} it is {} from \
+         range; {:?}",
         world.current_tick,
         edge_to_pillar(&world, queued) - 0.5,
         world.entities[&queued].movement
     );
     assert!(rearmed, "{report}");
+    assert!(
+        rearmed_at.is_some_and(|tick| tick <= killed_at + 6),
+        "the walk must re-arm within six ticks of the way opening: {report}"
+    );
     assert!(reached.is_some(), "{report}");
     Ok(())
 }
@@ -365,5 +375,170 @@ fn a_blocked_move_is_still_given_up() -> TestResult {
                 None | Some(UnitOrder::Idle)
             )
     );
+    Ok(())
+}
+
+/// The edge-to-edge gap between two units, world units.
+fn edge_gap(world: &SimWorld, a: EntityId, b: EntityId) -> f64 {
+    f64::from(
+        (world.entities[&a].position - world.entities[&b].position)
+            .length()
+            .to_f32(),
+    ) - 0.75
+}
+
+/// The CE-10 world: the world, its meter, the chaser and the friends beside it (below, above).
+type BoxedChaser = (SimWorld, BlockingMeter, EntityId, [EntityId; 2]);
+
+/// The CE-10 layout on open ground: two long-ranged shooters hold and fire at the pillar, a
+/// short-ranged chaser ordered onto the pillar stands in the notch behind them, and two friends
+/// hold beside the chaser, one on each side, so both sides of its surround walk close and the
+/// walk is spent (on tick 26). Returns the world, the meter, the chaser and the two friends.
+fn boxed_chaser() -> Result<BoxedChaser, Box<dyn std::error::Error>> {
+    let mut world = scratch_world(GameMap::new(
+        64,
+        64,
+        MapCell::default_ground(CliffLevel(0)),
+    )?)?;
+    let pillar = spawn(&mut world, PILLAR, RED, at(40.0, 32.0))?;
+    let shooters = [
+        spawn(&mut world, SHOOTER, BLUE, at(35.8, 31.55))?,
+        spawn(&mut world, SHOOTER, BLUE, at(35.8, 32.45))?,
+    ];
+    let chaser = spawn(&mut world, SHORT, BLUE, at(35.2, 32.0))?;
+    let beside = [
+        spawn(&mut world, SHORT, BLUE, at(35.05, 31.25))?,
+        spawn(&mut world, SHORT, BLUE, at(35.05, 32.75))?,
+    ];
+    let mut meter = BlockingMeter::new();
+    let mut commands = order(&shooters, UnitOrder::HoldPosition);
+    commands.extend(order(&beside, UnitOrder::HoldPosition));
+    commands.extend(order(
+        &[chaser],
+        UnitOrder::AttackTarget {
+            target: pillar,
+            origin: AttackOrigin::Explicit,
+        },
+    ));
+    step(&mut world, &mut meter, commands);
+    Ok((world, meter, chaser, beside))
+}
+
+/// CE-10 (plan `2026-11-19-crowd-edge-steering-2` D-2): a chaser whose walk is spent because
+/// both its sides closed, the side it kept closed by a friend holding beside it, stays spent for
+/// 40 ticks while that friend stands; then the friend is ordered away across the chaser's way,
+/// and the walk re-arms on the tick the side frees a whole step, and not before. Under the timed
+/// retry it re-armed 24 ticks after it was spent, whatever the friend did.
+#[test]
+fn a_spent_walk_re_arms_when_its_closed_side_opens() -> TestResult {
+    const SPEED: f64 = 0.126;
+    let (mut world, mut meter, chaser, beside) = boxed_chaser()?;
+    while !world.entities[&chaser].movement.flank_spent {
+        step(&mut world, &mut meter, Vec::new());
+        assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
+        assert!(world.current_tick < 100, "the walk was never spent");
+    }
+    let spent_at = world.current_tick;
+    let memory = world.entities[&chaser].movement;
+    assert!(
+        memory.flank_reversed,
+        "spent by its two closed sides: {memory:?}"
+    );
+    // The walk's sides are across the way to the pillar (+x): `flank_left` is +y. The friend
+    // below the chaser (lower y) closes the right side, the friend above it the left.
+    let (kept, other) = if memory.flank_left {
+        (beside[1], beside[0])
+    } else {
+        (beside[0], beside[1])
+    };
+    while world.current_tick < spent_at + 40 {
+        step(&mut world, &mut meter, Vec::new());
+        assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
+        assert!(
+            world.entities[&chaser].movement.flank_spent,
+            "re-armed at tick {} while its closed side stands closed: {:?}",
+            world.current_tick, world.entities[&chaser].movement
+        );
+    }
+    let away = world.entities[&kept].position.y - world.entities[&chaser].position.y;
+    let target = at(35.05, if away > SimScalar::ZERO { 44.0 } else { 20.0 });
+    // Each tick decides from the positions it starts with: (tick, gap at its start).
+    let mut gaps = Vec::new();
+    let mut commands = order(&[kept], UnitOrder::Move { target });
+    let mut rearmed_at = None;
+    while world.current_tick < spent_at + 140 && rearmed_at.is_none() {
+        gaps.push((world.current_tick + 1, edge_gap(&world, chaser, kept)));
+        step(&mut world, &mut meter, std::mem::take(&mut commands));
+        assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
+        if !world.entities[&chaser].movement.flank_spent {
+            rearmed_at = Some(world.current_tick);
+        }
+    }
+    // A whole step free: the side keeps all but `STANDING_DRIFT` of a step of `SPEED` (the
+    // friend leaves straight across the chaser's way, so the edge gap is the room on that side).
+    let opened_at = gaps
+        .iter()
+        .find(|(_, gap)| *gap >= SPEED - STANDING_DRIFT)
+        .map(|(tick, _)| *tick);
+    let report = format!(
+        "spent at {spent_at}, re-armed at {rearmed_at:?}, side whole from {opened_at:?}; (tick, \
+         gap at its start) to the kept side's friend {gaps:?}; other friend {other:?}; {:?}",
+        world.entities[&chaser].movement
+    );
+    assert!(opened_at.is_some(), "{report}");
+    assert_eq!(rearmed_at, opened_at, "{report}");
+    assert!(
+        world.entities[&chaser].movement.flank_walked > SimScalar::ZERO,
+        "the re-armed walk walks: {report}"
+    );
+    Ok(())
+}
+
+/// CE-11 (plan `2026-11-19-crowd-edge-steering-2` D-2.3, a guard): six short-ranged units in
+/// single file attack-move along the corridor onto the pillar that plugs it. The rear units' walks
+/// are spent against the corridor's walls and the units ahead, and the friends behind press them,
+/// so contact eases each off the wall and its friends by slivers. Over 400 ticks, a spent walk
+/// re-arms only on a tick its unit gains ground: a sliver of room is not a side that opens. Under
+/// a re-arm on any admissible across step above the waiting share (prototype K3) the queue
+/// re-armed eight times without gaining ground.
+#[test]
+fn contact_creep_does_not_re_arm_a_walk() -> TestResult {
+    let mut world = corridor()?;
+    let file: Vec<EntityId> = (0..6)
+        .map(|i| spawn(&mut world, SHORT, BLUE, at(30.0 - 0.8 * i as f32, 32.0)))
+        .collect::<Result<_, _>>()?;
+    let mut meter = BlockingMeter::new();
+    let attack = UnitOrder::AttackMove {
+        target: at(55.0, 32.0),
+    };
+    step(&mut world, &mut meter, order(&file, attack));
+    let mut before: Vec<_> = file.iter().map(|u| world.entities[u].movement).collect();
+    let (mut spent, mut on_ground, mut on_side) = (0, Vec::new(), Vec::new());
+    while world.current_tick < 400 {
+        step(&mut world, &mut meter, Vec::new());
+        assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
+        for (unit, before) in file.iter().zip(&mut before) {
+            let now = world.entities[unit].movement;
+            spent += u32::from(!before.flank_spent && now.flank_spent);
+            if before.flank_spent && !now.flank_spent {
+                let gained = now.progress_best < before.progress_best
+                    || now.flank_target != before.flank_target;
+                let event = (world.current_tick, *unit);
+                if gained {
+                    on_ground.push(event);
+                } else {
+                    on_side.push(event);
+                }
+            }
+            *before = now;
+        }
+    }
+    let report = format!(
+        "walks spent {spent}; re-armed on ground gained {on_ground:?}; without it {on_side:?}; \
+         {:?}",
+        meter.of_owner(BLUE)
+    );
+    assert!(spent > 0, "the corridor must spend walks: {report}");
+    assert_eq!(on_side, [], "{report}");
     Ok(())
 }
