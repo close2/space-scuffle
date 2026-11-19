@@ -31,7 +31,8 @@ use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
 use super::funnel::{
-    portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side, ARC_CHORD_DIP,
+    portal_midpoints, radius_funnel, Anchor, FunnelRoute, FunnelScratch, Obstacles, PullStrategy,
+    Side, ARC_CHORD_DIP,
 };
 use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
@@ -99,6 +100,8 @@ pub struct MeshSearch {
     /// Reachable cells of [`nearest_reachable_point`]: `(distance squared, cell index, x)`.
     candidates: Vec<(u64, u32, u32)>,
     pub(crate) segment: SegmentScratch,
+    /// Buffers of the funnel's refinement (plan `2026-11-19-funnel-fallbacks` D-3).
+    funnel: FunnelScratch,
     /// Word trie and word-keyed visit lists of the lane-restricted search (D-5 of plan
     /// `2026-11-10-group-routing`).
     lanes: LaneScratch,
@@ -458,6 +461,11 @@ impl MeshSearch {
                 ARC_CHORD_DIP,
                 PullStrategy::Pinned,
             ),
+            &mut Obstacles {
+                access: query.access,
+                segment: &mut self.segment,
+                scratch: &mut self.funnel,
+            },
         );
         if self.is_legal(query, &pinned) {
             (pinned, true)
@@ -492,6 +500,11 @@ impl MeshSearch {
                 &self.portals,
                 &[s[0], s[1], s[2], g[0], g[1], g[2]],
                 (query.radius + margin, margin / 2, strategy),
+                &mut Obstacles {
+                    access: query.access,
+                    segment: &mut self.segment,
+                    scratch: &mut self.funnel,
+                },
             );
             if self.is_legal(query, &route) {
                 return (route, true);
@@ -569,6 +582,11 @@ impl MeshSearch {
                     &self.portals,
                     &end_vertices,
                     (rho, ARC_CHORD_DIP, PullStrategy::Shrunk),
+                    &mut Obstacles {
+                        access: query.access,
+                        segment: &mut self.segment,
+                        scratch: &mut self.funnel,
+                    },
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));

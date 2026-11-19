@@ -20,10 +20,17 @@
 //!   that edge cross only edges within `r` of the segment, so a flood from the start triangle
 //!   across non-blocking edges within `r` reaches it (or a nearer blocking edge first).
 //! - Allocation-free in steady state: the flood reuses [`SegmentScratch`].
+//! - The same flood, run to completion, lists the obstacle vertices near a funnel leg
+//!   ([`obstacle_vertices_near`], plan `2026-11-19-funnel-fallbacks` D-3): an obstacle vertex is an
+//!   end of a blocking edge, and the short path from the segment to a vertex within reach crosses
+//!   only edges within reach, so the flood meets the vertex's blocking edge, or a blocking edge
+//!   between the segment and the vertex first.
 
 use sim_types::{SimScalar, SimVec2};
 
-use super::predicates::{segments_within, LatticePoint, QPoint, LATTICE_BITS, Q_BITS};
+use super::predicates::{
+    point_segment_distance_sq, segments_within, LatticePoint, QPoint, LATTICE_BITS, Q_BITS,
+};
 use super::{next, prev, Access, NavMesh};
 
 /// Reusable flood state for [`segment_clear`].
@@ -118,6 +125,75 @@ pub(crate) fn segment_clear(
         }
     }
     true
+}
+
+/// The obstacle vertices within `rho` of the segment `[a, b]` under `access` (plan
+/// `2026-11-19-funnel-fallbacks` D-3), in index order and without repeats, into `out` (cleared
+/// first).
+///
+/// The flood is [`segment_clear`]'s, seeded in the triangle of `a`, or of `b` when `a`'s is
+/// closed or off the mesh, and run to completion: it crosses every open edge within reach of the
+/// segment and keeps each end of a blocking edge it meets that lies within reach. The reach is
+/// `rho` rounded up to the Q16 grid plus two Q16 units, which covers the rounding of `a` and `b`
+/// down to the grid, so the list is a superset of the obstacle vertices strictly within `rho` that
+/// the segment sees; the funnel measures each exactly. A vertex hidden behind a blocking edge
+/// nearer the segment is not listed: that edge is the obstacle there. Both ends closed or off the
+/// mesh: the list is empty, and such a leg fails the segment predicate anyway.
+///
+/// Cost: O(triangles within `rho` of the segment), with no allocation once `out` and `scratch`
+/// have grown.
+// PERFORMANCE RATIONALE:
+// Why: The funnel's refinement asks this once per leg per round on every channel TA* pulls,
+// and a scan of every obstacle vertex of the mesh made the prototype's routes five times slower.
+// What: A flood bounded by the leg's neighbourhood, the segment predicate's own, instead of a
+// scan of the mesh's vertices.
+// Trade-off: Vertices behind a nearer blocking edge are not listed (documented above), and the
+// flood shares the predicate's completeness argument instead of a simpler exhaustive one.
+pub(crate) fn obstacle_vertices_near(
+    mesh: &NavMesh,
+    access: &Access<'_>,
+    scratch: &mut SegmentScratch,
+    (a, b): (SimVec2, SimVec2),
+    rho: SimScalar,
+    out: &mut Vec<u32>,
+) {
+    out.clear();
+    let Some(start) = [a, b]
+        .into_iter()
+        .find_map(|p| mesh.locate(p).filter(|&t| access.open(t)))
+    else {
+        return;
+    };
+    let (qa, qb) = (QPoint::from_sim(a), QPoint::from_sim(b));
+    let reach = radius_q(rho).saturating_add(2);
+    scratch.begin(mesh.triangle_count());
+    scratch.visit(start);
+    while let Some(t) = scratch.stack.pop() {
+        let corners = mesh.triangle_vertices(t);
+        for k in 0..3 {
+            let n = mesh.triangle_neighbors(t)[k];
+            let blocks = mesh.edge_blocks(t, k, |x| access.open(x));
+            if !blocks && scratch.seen(n) {
+                continue;
+            }
+            let (u, v) = (corners[next(k)], corners[prev(k)]);
+            let (uq, vq) = (mesh.vertex(u).to_q(), mesh.vertex(v).to_q());
+            if !segments_within(qa, qb, uq, vq, reach) {
+                continue;
+            }
+            if !blocks {
+                scratch.visit(n);
+                continue;
+            }
+            for (w, wq) in [(u, uq), (v, vq)] {
+                if point_segment_distance_sq(wq, qa, qb).is_below(reach) {
+                    out.push(w);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
 }
 
 /// Where a disc touches the walls: the nearest point of the blocking edges within its radius
@@ -296,4 +372,144 @@ pub(crate) fn nearest_blocking_point_exhaustive(
         }
     }
     best
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "tests: a seeded map that does not build is a failed test"
+)]
+mod tests {
+    use super::super::predicates::segments_touch as segments_touch_q;
+    use super::*;
+    use crate::footprint::StructureFootprint;
+    use crate::grid::{CellFlags, CliffLevel, GameMap, MapCell};
+    use crate::pathfinding::PathRequestWithVision;
+    use proptest::prelude::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+    use sim_types::EntityId;
+
+    /// A 24 × 24 ground map with seeded unpassable cells and seeded structures, and how many
+    /// structures it holds.
+    fn seeded_map(seed: u64) -> (GameMap, u32) {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut map = GameMap::new(24, 24, MapCell::default_ground(CliffLevel(1)))
+            .expect("invariant: 24 × 24 is a valid map size");
+        for _ in 0..rng.gen_range::<u32, _>(10..60) {
+            let (x, y) = (
+                rng.gen_range::<u32, _>(0..24),
+                rng.gen_range::<u32, _>(0..24),
+            );
+            if let Ok(cell) = map.cell_mut(x, y) {
+                cell.flags = CellFlags::empty();
+            }
+        }
+        let mut placed = 0;
+        for id in 0..rng.gen_range::<u32, _>(0..6) {
+            let size = u8::try_from(rng.gen_range::<u32, _>(1..4)).unwrap_or(1);
+            let cell = (
+                rng.gen_range::<u32, _>(0..21),
+                rng.gen_range::<u32, _>(0..21),
+            );
+            // A refused placement leaves the map as it was.
+            if map
+                .place_structure(EntityId(id), cell, StructureFootprint::square(size, size))
+                .is_ok()
+            {
+                placed += 1;
+            }
+        }
+        (map, placed)
+    }
+
+    /// The point of `[a, b]` nearest `p` on the Q16 grid, rounded down.
+    fn nearest_q(p: QPoint, a: QPoint, b: QPoint) -> QPoint {
+        let (dx, dy) = (i128::from(b.x - a.x), i128::from(b.y - a.y));
+        let length_sq = dx * dx + dy * dy;
+        let along = i128::from(p.x - a.x) * dx + i128::from(p.y - a.y) * dy;
+        if length_sq == 0 || along <= 0 {
+            return a;
+        }
+        if along >= length_sq {
+            return b;
+        }
+        let step = |d: i128| i64::try_from((along * d).div_euclid(length_sq)).unwrap_or(0);
+        QPoint {
+            x: a.x + step(dx),
+            y: a.y + step(dy),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// D-3: the flood lists exactly the obstacle vertices within reach of the segment that it
+        /// sees. Against an exhaustive scan of every vertex: each listed vertex is an obstacle
+        /// vertex within reach, and each obstacle vertex well within reach that is not listed is
+        /// hidden, its straight line to the segment's nearest point touching a blocking edge
+        /// that does not end at it.
+        #[test]
+        fn outside_vertices_match_the_exhaustive_scan(
+            seed in 0_u64..1_000_000,
+            ends in proptest::array::uniform4(0_u32..24 * 64),
+            rho_sixteenths in 5_i64..20,
+            partial in proptest::bool::ANY,
+        ) {
+            let (map, _structures) = seeded_map(seed);
+            let mesh = NavMesh::build(&map).expect("invariant: a valid map builds a mesh");
+            let point = |x: u32, y: u32| {
+                SimVec2::new(
+                    SimScalar::from_raw(i64::from(x) << 26),
+                    SimScalar::from_raw(i64::from(y) << 26),
+                )
+            };
+            let (a, b) = (point(ends[0], ends[1]), point(ends[2], ends[3]));
+            let known: Vec<bool> = (0..24 * 24).map(|i| !partial || i % 3 != 0).collect();
+            let request = PathRequestWithVision {
+                start: a,
+                goal: b,
+                radius: SimScalar::from_raw(rho_sixteenths << 28),
+                vision: None,
+                block_unexplored_ramps: false,
+                known_structures: partial.then_some(known.as_slice()),
+            };
+            let access = Access::new(&mesh, &map, &request);
+            let rho = request.radius;
+            let mut scratch = SegmentScratch::default();
+            prop_assume!(segment_clear(&mesh, &access, &mut scratch, a, b, SimScalar::ZERO));
+            let mut listed = Vec::new();
+            obstacle_vertices_near(&mesh, &access, &mut scratch, (a, b), rho, &mut listed);
+            let (qa, qb) = (QPoint::from_sim(a), QPoint::from_sim(b));
+            let reach = radius_q(rho) + 2;
+            let open = |t: u32| access.open(t);
+            let count = u32::try_from(mesh.vertex_count()).unwrap_or(u32::MAX);
+            for &w in &listed {
+                prop_assert!(mesh.vertex_blocks(w, open), "{w} is no obstacle vertex");
+                let wq = mesh.vertex(w).to_q();
+                prop_assert!(point_segment_distance_sq(wq, qa, qb).is_below(reach));
+            }
+            let triangles = u32::try_from(mesh.triangle_count()).unwrap_or(u32::MAX);
+            for w in (0..count).filter(|&w| mesh.vertex_blocks(w, open)) {
+                let wq = mesh.vertex(w).to_q();
+                if listed.binary_search(&w).is_ok()
+                    || !point_segment_distance_sq(wq, qa, qb).is_below(reach - 4)
+                {
+                    continue;
+                }
+                let q = nearest_q(wq, qa, qb);
+                let hidden = (0..triangles).filter(|&t| access.open(t)).any(|t| {
+                    let corners = mesh.triangle_vertices(t);
+                    (0..3).any(|k| {
+                        let (u, v) = (corners[next(k)], corners[prev(k)]);
+                        u != w
+                            && v != w
+                            && mesh.edge_blocks(t, k, open)
+                            && segments_touch_q(q, wq, mesh.vertex(u).to_q(), mesh.vertex(v).to_q())
+                    })
+                });
+                prop_assert!(hidden, "vertex {w} at {:?} within reach is neither listed nor hidden", mesh.vertex(w));
+            }
+        }
+    }
 }

@@ -749,16 +749,16 @@ fn a_one_wide_zigzag_is_walked_down_its_middle() {
 
 /// M1 (plan §3.3): the straight leg to the goal passes 0.5996 from the corner (40, 6) of a 2×2
 /// at cell (38, 6), inside the radius 0.625, and that corner belongs to no triangle of the
-/// channel. The route rounds it on the right.
+/// channel. The route rounds it with the corner on the walker's left (north of the eastward leg;
+/// the plan's §3.3 says "on the right", a slip: `Side::Left` is the vertex on the walker's left).
 #[test]
-#[ignore = "B-141, WP2"]
 fn an_outside_corner_is_rounded() {
     let map = b141_map(&[((38, 6), (2, 2), None)]);
     let route = b141_route(&map, at(27.5, 2.5), at(40.5, 5.5), 0.625);
     assert!(
         route
             .turns
-            .contains(&(LatticePoint::cell_corner(40, 6), Side::Right)),
+            .contains(&(LatticePoint::cell_corner(40, 6), Side::Left)),
         "{route:?}"
     );
     assert_length_near(&route, 13.350);

@@ -77,7 +77,14 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// Digest of every path result over a corpus with seeded 5.0.14 contour structures (plan
 /// `2026-11-18-contour-footprints` WP3), pinned when the contour cut landed. Its draws use only
 /// fixed-width integer ranges, so the same corpus is drawn on 32-bit and 64-bit targets.
-const CONTOUR_PATH_GOLDEN: u64 = 0x9069_95c7_29b7_3498;
+///
+/// Re-recorded for plan `2026-11-19-funnel-fallbacks` WP2 (D-3, obstacle vertices near a leg;
+/// was `0x9069_95c7_29b7_3498`, which the tree reproduces with D-3 switched off). Two of the 500
+/// requests change: a wedged start on the showcase (r 0.75) now rounds an obstacle vertex outside
+/// its channel, legal both ways, 53.72 -> 53.54 long; and a partial-knowledge request (r 0.625)
+/// that falls back both ways through another channel's midpoints (B-146). The new value is the
+/// same in native debug, native release and `wasm32-wasip1` release.
+const CONTOUR_PATH_GOLDEN: u64 = 0x6637_d70a_80d8_a859;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;

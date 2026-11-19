@@ -20,13 +20,18 @@
 //!   (plan Amendment 2), where the dip is half the margin ([`ARC_CHORD_DIP`] at the full margin).
 //!   The polyline is therefore never longer than the tangent-and-arc route, and every leg keeps
 //!   at least `r + margin / 2` from the vertices it rounds.
+//! - The refinement's candidates are the channel's portal vertices, the start and goal triangles'
+//!   vertices, and every obstacle vertex within `r + margin` of the leg under test, found by a
+//!   flood around the leg (plan `2026-11-19-funnel-fallbacks` D-3): a structure corner beyond an
+//!   edge of the start or goal triangle bounds the route as much as the channel's own vertices.
 //! - The margin is [`CORNER_SAFETY_MARGIN`], except in the search's fitted retry (plan
 //!   `2026-11-18-contour-footprints` Amendment 1): a channel narrower than the disc plus two
 //!   margins is pulled once more with the margin it has room for, `(w_min - 2r) / 2`.
 
 use sim_types::{SimScalar, SimVec2};
 
-use super::NavMesh;
+use super::segment::{obstacle_vertices_near, SegmentScratch};
+use super::{Access, NavMesh};
 use crate::pathfinding::CORNER_SAFETY_MARGIN;
 
 /// The side of the route on which a channel vertex lies.
@@ -111,6 +116,27 @@ fn tangent(mesh: &NavMesh, from: Anchor, to: Anchor, rho: SimScalar) -> Tangent 
     }
 }
 
+/// Reusable buffers of the funnel's refinement (plan `2026-11-19-funnel-fallbacks` D-3).
+#[derive(Debug, Default)]
+pub struct FunnelScratch {
+    /// The obstacle vertices near the leg under test.
+    near: Vec<u32>,
+    /// The distinct vertices outside the channel and its end triangles that the refinement has
+    /// inserted, in index order; each widens its round bound.
+    outside: Vec<u32>,
+}
+
+/// A request's obstacles, from which the refinement draws the obstacle vertices near a leg
+/// (plan `2026-11-19-funnel-fallbacks` D-3).
+pub(crate) struct Obstacles<'a, 'b> {
+    /// The triangles the request may enter.
+    pub access: &'a Access<'b>,
+    /// The flood state of the segment predicate, reused.
+    pub segment: &'a mut SegmentScratch,
+    /// The refinement's own buffers.
+    pub scratch: &'a mut FunnelScratch,
+}
+
 /// How the funnel orders the turns before making them exact for circles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullStrategy {
@@ -130,14 +156,16 @@ pub enum PullStrategy {
 /// `rho` is the unit's radius plus its corner margin ([`crate::CORNER_SAFETY_MARGIN`], or the
 /// fitted margin of the search's last retry) and `dip` half that margin: how far an arc's chords
 /// may dip inside the circle of `rho`. `extra` lists the vertices of the start and goal
-/// triangles, which bound the route but belong to no portal.
+/// triangles, which bound the route but belong to no portal; `obstacles` gives the refinement
+/// every other obstacle vertex near a leg (D-3).
 #[must_use]
-pub fn radius_funnel(
+pub(crate) fn radius_funnel(
     mesh: &NavMesh,
     (start, goal): (SimVec2, SimVec2),
     portals: &[(u32, u32)],
     extra: &[u32],
     (rho, dip, strategy): (SimScalar, SimScalar, PullStrategy),
+    obstacles: &mut Obstacles<'_, '_>,
 ) -> FunnelRoute {
     let mut items: Vec<(Anchor, Anchor)> = Vec::with_capacity(portals.len() + 2);
     items.push((Anchor::Point(start), Anchor::Point(start)));
@@ -148,7 +176,7 @@ pub fn radius_funnel(
         )
     }));
     items.push((Anchor::Point(goal), Anchor::Point(goal)));
-    let anchors = string_pull(mesh, &items, extra, rho, strategy);
+    let anchors = string_pull(mesh, (&items, extra), (rho, strategy), obstacles);
     let waypoints = emit_waypoints(mesh, &anchors, rho, dip);
     let mut length = SimScalar::ZERO;
     for pair in waypoints.windows(2) {
@@ -182,14 +210,13 @@ fn triarea2(a: SimVec2, b: SimVec2, c: SimVec2) -> SimScalar {
 ///
 /// Step 1 pulls a point through the portals shrunk by `rho` (Mononen's Simple Stupid Funnel),
 /// which orders the turns robustly even where circles overlap the apex. Step 2 makes the turns
-/// exact for circles: a turn that bends against its side is dropped, and a channel vertex
+/// exact for circles: a turn that bends against its side is dropped, and a candidate vertex
 /// closer than `rho` to a tangent leg is inserted, until neither happens.
 fn string_pull(
     mesh: &NavMesh,
-    items: &[(Anchor, Anchor)],
-    extra: &[u32],
-    rho: SimScalar,
-    strategy: PullStrategy,
+    (items, extra): (&[(Anchor, Anchor)], &[u32]),
+    (rho, strategy): (SimScalar, PullStrategy),
+    obstacles: &mut Obstacles<'_, '_>,
 ) -> Vec<Anchor> {
     let points: Vec<(SimVec2, SimVec2)> = items
         .iter()
@@ -236,7 +263,7 @@ fn string_pull(
     }
     path.push(items[items.len() - 1].0);
     path.dedup();
-    refine(mesh, items, extra, path, (rho, strategy))
+    refine(mesh, (items, extra), path, (rho, strategy), obstacles)
 }
 
 /// Whether `turn` (a cross product of travel directions) bends in the sense `side` requires.
@@ -289,24 +316,34 @@ fn distance_to_segment(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
     p.distance(a + d * t)
 }
 
-/// The channel vertex deepest inside `rho` of the tangent leg from `anchors[j]` to
-/// `anchors[j + 1]`, if any.
+/// The candidate vertex deepest inside `rho` of the tangent leg from `anchors[j]` to
+/// `anchors[j + 1]`, if any, and whether it is an obstacle vertex outside the channel and its end
+/// triangles (D-3). The candidates are, in this order, the portal vertices, the start and goal
+/// triangles' vertices, and the obstacle vertices near the leg; of equally deep ones the first
+/// wins, so a vertex of the channel keeps its portal side.
 fn deepest_violation(
     mesh: &NavMesh,
-    items: &[(Anchor, Anchor)],
-    extra: &[u32],
+    (items, extra): (&[(Anchor, Anchor)], &[u32]),
     anchors: &[Anchor],
-    j: usize,
-    rho: SimScalar,
-) -> Option<Anchor> {
+    (j, rho): (usize, SimScalar),
+    obstacles: &mut Obstacles<'_, '_>,
+) -> Option<(Anchor, bool)> {
     let leg = tangent(mesh, anchors[j], anchors[j + 1], rho);
+    obstacle_vertices_near(
+        mesh,
+        obstacles.access,
+        obstacles.segment,
+        (leg.from, leg.to),
+        rho,
+        &mut obstacles.scratch.near,
+    );
     let rounded = |v: u32| {
         anchors
             .iter()
             .any(|a| matches!(*a, Anchor::Vertex(w, _) if w == v))
     };
-    // The start and goal triangles' own vertices are in no portal; their side is the side of
-    // the leg they lie on.
+    // The start and goal triangles' own vertices and the obstacle vertices near the leg are in
+    // no portal; their side is the side of the leg they lie on.
     let side_of = |v: u32| {
         if leg.direction.cross_2d(mesh.vertex(v).to_sim() - leg.from) > SimScalar::ZERO {
             Side::Left
@@ -314,49 +351,94 @@ fn deepest_violation(
             Side::Right
         }
     };
+    let channel = 2 * (items.len() - 2) + extra.len();
     let candidates = items[1..items.len() - 1]
         .iter()
         .flat_map(|&(l, r)| [l, r])
-        .chain(extra.iter().map(|&v| Anchor::Vertex(v, side_of(v))));
-    let mut worst: Option<(SimScalar, Anchor)> = None;
-    for candidate in candidates {
+        .chain(extra.iter().map(|&v| Anchor::Vertex(v, side_of(v))))
+        .chain(
+            obstacles
+                .scratch
+                .near
+                .iter()
+                .map(|&v| Anchor::Vertex(v, side_of(v))),
+        );
+    let mut worst: Option<(SimScalar, Anchor, bool)> = None;
+    for (index, candidate) in candidates.enumerate() {
         let Anchor::Vertex(v, _) = candidate else {
             continue;
         };
         if rounded(v) {
             continue;
         }
-        let distance = distance_to_segment(centre(mesh, candidate), leg.from, leg.to);
+        let p = centre(mesh, candidate);
+        let distance = distance_to_segment(p, leg.from, leg.to);
+        let outside = index >= channel;
+        if outside && approached_at_an_end(p, distance, (anchors[j], anchors[j + 1])) {
+            continue;
+        }
         // A hair inside the circle is rounding, not a collision.
-        if distance + SimScalar::from_raw(1 << 12) < rho && worst.is_none_or(|(d, _)| distance < d)
+        if distance + SimScalar::from_raw(1 << 12) < rho
+            && worst.is_none_or(|(d, _, _)| distance < d)
         {
-            worst = Some((distance, candidate));
+            worst = Some((distance, candidate, outside));
         }
     }
-    worst.map(|(_, anchor)| anchor)
+    worst.map(|(_, anchor, outside)| (anchor, outside))
+}
+
+/// Whether a vertex at `p`, `distance` from a leg, comes nearest the leg at one of its ends that
+/// is the start or the goal (`ends`, the leg's two anchors). The disc stands at that point
+/// already, fitting or wedged, so the approach is not the leg's to fix, and rounding the vertex
+/// would only circle it (plan `2026-11-19-funnel-fallbacks` D-2.2; applied to the obstacle
+/// vertices of D-3 in every pull, evidence WP2).
+fn approached_at_an_end(p: SimVec2, distance: SimScalar, ends: (Anchor, Anchor)) -> bool {
+    [ends.0, ends.1]
+        .into_iter()
+        .any(|end| matches!(end, Anchor::Point(q) if p.distance(q) <= distance))
 }
 
 /// Step 2 of [`string_pull`]: drops turns against their side and inserts violated vertices.
+///
+/// At most `4 (items + outside) + 8` rounds, where `outside` counts the distinct vertices outside
+/// the channel and its end triangles inserted so far (D-3): each candidate may be inserted and
+/// dropped a bounded number of times, and the outside candidates are finite, so the loop ends.
 fn refine(
     mesh: &NavMesh,
-    items: &[(Anchor, Anchor)],
-    extra: &[u32],
+    (items, extra): (&[(Anchor, Anchor)], &[u32]),
     mut anchors: Vec<Anchor>,
     (rho, strategy): (SimScalar, PullStrategy),
+    obstacles: &mut Obstacles<'_, '_>,
 ) -> Vec<Anchor> {
-    for _ in 0..4 * items.len() + 8 {
+    obstacles.scratch.outside.clear();
+    let mut round = 0;
+    while round < 4 * (items.len() + obstacles.scratch.outside.len()) + 8 {
+        round += 1;
         if let Some(j) = (1..anchors.len().saturating_sub(1))
             .find(|&j| !turns_with_side(mesh, &anchors, j, (rho, strategy)))
         {
             anchors.remove(j);
             continue;
         }
-        let violation = (0..anchors.len() - 1)
-            .find_map(|j| deepest_violation(mesh, items, extra, &anchors, j, rho).map(|v| (j, v)));
-        match violation {
-            Some((j, vertex)) => anchors.insert(j + 1, vertex),
-            None => break,
+        let mut violation = None;
+        for j in 0..anchors.len() - 1 {
+            if let Some(found) =
+                deepest_violation(mesh, (items, extra), &anchors, (j, rho), obstacles)
+            {
+                violation = Some((j, found));
+                break;
+            }
         }
+        let Some((j, (vertex, outside))) = violation else {
+            break;
+        };
+        if let (true, Anchor::Vertex(v, _)) = (outside, vertex) {
+            let known = &mut obstacles.scratch.outside;
+            if let Err(at) = known.binary_search(&v) {
+                known.insert(at, v);
+            }
+        }
+        anchors.insert(j + 1, vertex);
     }
     anchors
 }
