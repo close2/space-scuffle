@@ -123,15 +123,24 @@ Runs agree to within 2 parts in 10⁷. The `--digest` of WP6 (the decals the Rus
 the frame list held them) equals WP5's on both streams, S `a4afd00c954b7095` and P `14a7fd038cc8d77e`: the D-8 time
 split changes no decal of these streams.
 
-**D-10 check 1, record parity** (`decal_age_gpu_tests`, identity scene; the GPU's aged buffer read back every frame
-beside `decal_table::age_decal` of the same rows, time and camera):
+**D-10 check 1, record parity** (`decal_age_gpu_tests`, identity scene). Every frame, the GPU's aged buffer is read
+back beside `decal_table::age_decal` of the same rows, time and camera. Figures from one run per driver after review
+round 2: `~/scratch/retained-decals/wp6/age-radv-r2.log` and `age-lvp-r2.log`. Captures and `*_parity.txt` are under
+`~/scratch/retained-decals/wp6/captures2/`.
 
 | Driver | Child | Frames | Row-frames | Drawn rows | Bit-identical | Boundary flips | Outside tolerance |
 |---|---|---:|---:|---:|---:|---:|---:|
-| radv | gpu | 207 | 16 904 | 11 952 | 11 952 | 0 | 0 |
-| radv | resync (2 + 42 full copies) | 210 | 17 021 | 12 012 | 12 012 | 0 | 0 |
-| lavapipe | gpu | 203 | 16 900 | 11 948 | 11 948 | 0 | 0 |
-| lavapipe | resync (41 full copies) | 203 | 16 900 | 11 948 | 11 948 | 0 | 0 |
+| radv | gpu | 210 | 17 034 | 12 044 | 12 044 | 0 | 0 |
+| radv | resync (44 full copies) | 210 | 17 234 | 12 169 | 12 169 | 0 | 0 |
+| lavapipe | gpu | 204 | 16 930 | 11 940 | 11 940 | 0 | 0 |
+| lavapipe | resync (43 full copies) | 205 | 16 848 | 11 884 | 11 884 | 0 | 0 |
+
+The children's crowd adds the first shipped held look with a held decal layer, released at 4.5 s and placed far behind
+the camera, so its rows are compared but draw nothing. Drawn row-frames per branch, radv gpu child (lavapipe within a
+few): a released held layer 3; retired detail 126; retired marks 151; variant sets 12 044; rows hidden by level of
+detail 665. The **fitted-flipbook branch is drawn by no row**: every shipped decal element is a variant set, so that
+branch of the port is checked by review only. The released held branch is covered by 3 row-frames (its exit is about
+three frames long).
 
 The first port missed the tolerance on one frame. On 12 rows the intensity was 18 to 40 ulp off: radv's `/` left `life`
 one ulp low, and a steep curve amplified it. The port's divisions are now correctly rounded (Amendment 2, decision 1),
@@ -140,8 +149,10 @@ and the parity is exact.
 **D-10 check 2, same run.** All 16 captures of the GPU child equal the CPU-source child's (`EffectDecalSource::Cpu`)
 pixel for pixel, on radv and lavapipe. All 16 captures of the resync child equal the GPU child's.
 
-**D-10 check 3, against the base.** The head's 16 radv captures equal WP5's (`~/scratch/retained-decals/base-wp5/radv`)
-byte for byte. [Sheet](retained_decals_wp6_radv.jpg): captures 2 and 9, base, head and the difference × 16 (black).
+**D-10 check 3, against the base.** The plain child renders the identity scene unchanged, aged on the GPU. Its 16 radv
+captures equal WP5's (`~/scratch/retained-decals/base-wp5/radv`) byte for byte. [Sheet](retained_decals_wp6_radv.jpg):
+captures 2 and 9, base, head and the difference × 16 (black). Against WP1's base the same captures carry WP5's tie
+re-baseline (below).
 
 **Determinism (D-9).** `decal_identity_gpu_tests` renders the scene identically twice on radv and lavapipe. Its
 level-of-detail counter now counts cards only (D-15): radv 2 171, lavapipe 2 157 (2 894 with decals at WP5).
