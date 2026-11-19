@@ -45,7 +45,8 @@ a quiet-machine figure.
 
 **Verdict: the bar is missed.** With fewer than 4 quiet pairs the verdict takes the CPU-time route (D-14). The bar is
 5 % of max(14.02, 11.86) ms, that is **0.70 ms**. S is at +3.69 ms and P at +5.18 ms, five and seven times the bar. The
-wall route says the same: the one quiet pair (S, load ≤ 16 at both runs' ends) is at a p50 ratio of 1.165, and every
+wall route says the same: the one quiet pair (S pair 3, load ≤ 16 at both runs' starts and ends) is at a p50 ratio of
+1.165, and every
 pair's ratio is above 1.05 but one of P's (1.013).
 
 **How firm the verdict is.** The pairs' CPU differences spread from −4.3 to +9.7 ms (S) and −4.7 to +10.5 ms (P),
@@ -83,7 +84,10 @@ this risk "low", at about 50 µs for 6 144 keys. It is now the second-largest ph
 it.
 
 **In the client** (`perf record -F 997 -g` of one S and one B run, series recipe, whole record): `client::effects`
-functions take 4.5 % of S's samples and 1.1 % of B's. Most of the difference is the card path and the order re-sort
+functions take about 4.6 % of S's samples and 1.3 % of B's (independent review round 2 recount). That difference,
+roughly 1.2 to 1.5 ms of a 36 to 45 ms per frame process CPU time, is **only a part of the +3.7 ms CPU difference**;
+the rest lies outside the effect code: the render world, the driver, libc copies and the kernel, which this profile does
+not attribute further. Within the effect functions, most of the difference is the card path and the order re-sort
 above, with `GpuDecalRecord::of` (the patches) at about 0.1 %.
 
 ## The GPU (one `--render-diagnostics` P run)
@@ -94,13 +98,15 @@ above, with `GpuDecalRecord::of` (the patches) at about 0.1 %.
 | `main_transparent_pass_3d` | 0.666 | 1.234 | 1.266 |
 | Effect passes over DB | — | +0.57 | **+0.63** |
 
-The effect passes, the aging pass included, stay far under §10.3's 1.5 ms.
+The effect passes, the aging pass included, stay far under §10.3's 1.5 ms. The DB figure comes from WP14's session,
+not this one.
 
 ## The kernel's buffer validation (D-12)
 
 Amendment 34 found about 2 800 extra kernel samples of command submission and buffer validation in S over B
 (`amdgpu_cs_ioctl` → `ttm_bo_validate`). With the decals no longer uploaded every frame (only the patches and the
-order), the two arms are now close:
+order), one perf run per arm on the loaded host shows the two arms close. This is an observation in shares of each run's
+samples, not the same metric as Amendment 34's sample counts:
 
 | Inclusive share of all samples | S | B |
 |---|---:|---:|
@@ -118,10 +124,14 @@ owner or orchestrator to choose from (this hand-back does not choose):
 
 1. **Parallel card build.** Evaluate slots in fixed chunks on Bevy's `ComputeTaskPool` into per-chunk retained
    buffers, concatenated in chunk order, so the emitted order is unchanged. The cards are about half of the remaining
-   build.
+   build. It shortens the main world's critical path (the wall route), but it spreads CPU time over threads rather than
+   reducing it. So it **cannot move the CPU-time verdict** this series had to take, and its success can only be shown
+   by a wall series with quiet pairs, or by a main-world CPU measurement.
 2. **Budget data first** (§10.3: "a miss shrinks budgets in data first"). Shorter-lived Detail cards and a lower
-   `min_screen_px`. This changes looks, so it needs Q0080 review rounds and the owner's look sign-off.
-3. **Retained cards** (a plan of its own).
+   `min_screen_px`. This changes looks, so it needs Q0080 review rounds and the owner's look sign-off. It reduces work,
+   so it can move both verdict routes.
+3. **Retained cards** (a plan of its own). It reduces work, so it can move both routes, but only for the effect code's
+   share. Most of the CPU difference lies outside the effect functions (above).
 
 Observations beside the ranked list:
 - The per-frame re-sort of the decal order (a fifth to a quarter of the build) is a cost inside this plan's own design.

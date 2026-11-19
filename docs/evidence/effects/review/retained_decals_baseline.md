@@ -151,7 +151,8 @@ pixel for pixel, on radv and lavapipe. All 16 captures of the resync child equal
 
 **D-10 check 3, against the base.** The plain child renders the identity scene unchanged, aged on the GPU. Its 16 radv
 captures equal WP5's (`~/scratch/retained-decals/base-wp5/radv`) byte for byte. [Sheet](retained_decals_wp6_radv.jpg):
-captures 2 and 9, base, head and the difference × 16 (black). Against WP1's base the same captures carry WP5's tie
+captures 2 and 9, base, head and the difference × 16 (black). The sheet's head captures come from the first
+GPU run at `0552a43c` (`age-radv-base.log`), which equal WP5's as the plain child's do. Against WP1's base the same captures carry WP5's tie
 re-baseline (below).
 
 **Determinism (D-9).** `decal_identity_gpu_tests` renders the scene identically twice on radv and lavapipe. Its
