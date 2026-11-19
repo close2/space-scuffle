@@ -904,3 +904,10 @@ to R-C plan.
    - Add the throughput figures to the evidence.
    - The WP5 storyboard re-check applies only if the showcase moves.
 3. The side branches stay until the new plan is filed.
+
+## Amendment 4 (orchestrator, 2026-11-19): open items carried to plan crowd-edge-steering-2
+
+R-A to R-D, the walk's re-arm (this plan's D-3, risk K-6) and the corridor's standing are carried by plan
+[`2026-11-19-crowd-edge-steering-2`](2026-11-19-crowd-edge-steering-2.md). The side branches `crowd-edge-wp2-wip`,
+`crowd-edge-wp3-wip` and `crowd-edge-wp4-wip` are kept as diffs under `~/scratch/crowd-edge-2/patches/` and are
+deleted once that plan's WP0 is merged.

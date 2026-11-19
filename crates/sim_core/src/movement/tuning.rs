@@ -54,11 +54,6 @@ pub(crate) const STANDING_DRIFT: SimScalar = ratio(1, 64);
 /// not a sourced one (U-23).
 pub(crate) const FLANK_REVERSE_TICKS: u16 = 12;
 
-/// Ticks a unit whose surround walk ended without a way in waits before it walks again, two
-/// side reversals' worth (plan `2026-11-09-friendly-blocking` D-3, Amendment 4). A named tuning
-/// value of our own, not a sourced one (U-23).
-pub(crate) const FLANK_RETRY_TICKS: u16 = 24;
-
 /// Route length a unit must gain to count as progress.
 pub(crate) const STALL_PROGRESS: SimScalar = ratio(1, 10);
 /// Ticks without progress before a unit rebuilds its route, one second.
