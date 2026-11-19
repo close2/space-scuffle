@@ -37,6 +37,12 @@ pub struct FrameSample {
     pub frame: u32,
     /// Wall time since the previous frame's `First` schedule, in microseconds: what the player sees.
     pub interval_us: u64,
+    /// CPU time every thread of the process spent between the previous frame's `First` schedule
+    /// and this frame's, in microseconds (`CLOCK_PROCESS_CPUTIME_ID`; plan
+    /// `2026-11-19-retained-effect-instances` D-14): unlike the interval, it does not grow while
+    /// a thread waits for a core on a loaded host. 0 in a report written before it existed.
+    #[serde(default)]
+    pub process_cpu_us: u64,
     /// Wall time from this frame's `First` schedule to its `Last` schedule, in microseconds: the
     /// main world's CPU work.
     pub update_us: u64,
@@ -169,6 +175,19 @@ pub struct FrameStatistics {
     pub update_ms: CentralPercentiles,
     /// Simulation time.
     pub simulation_ms: CentralPercentiles,
+    /// Process CPU time per frame (every thread, [`FrameSample::process_cpu_us`]); zero in a
+    /// report written before it existed.
+    #[serde(default)]
+    pub process_cpu_ms: CpuPerFrame,
+}
+
+/// Process CPU time per frame, in milliseconds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct CpuPerFrame {
+    /// Nearest-rank 50th percentile.
+    pub p50: f64,
+    /// Mean over the frames.
+    pub mean: f64,
 }
 
 /// Statistics over the whole window and over the combat window.
@@ -323,7 +342,13 @@ impl FrameStatistics {
         let interval = column(|frame| frame.interval_us);
         let update = column(|frame| frame.update_us);
         let simulation = column(|frame| frame.simulation_us);
+        let cpu = column(|frame| frame.process_cpu_us);
         let at = |values: &[u64], p| nearest_rank(values, p).map(milliseconds);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a frame count and a CPU time in microseconds are far below 2^52"
+        )]
+        let cpu_mean = milliseconds(cpu.iter().sum::<u64>()) / frames.len().max(1) as f64;
         Ok(Self {
             frames: frames.len(),
             ticks: frames
@@ -343,6 +368,10 @@ impl FrameStatistics {
             simulation_ms: CentralPercentiles {
                 p50: at(&simulation, 50)?,
                 p95: at(&simulation, 95)?,
+            },
+            process_cpu_ms: CpuPerFrame {
+                p50: at(&cpu, 50)?,
+                mean: cpu_mean,
             },
         })
     }
@@ -454,7 +483,8 @@ impl FrameBudgetReport {
              - CPUs: {}; load before: {}; load after: {}\n\
              - Warm-up: {} frames; window: {}\n\n\
              | Window | Frames | Ticks | Interval p50 | p95 | p99 | max | Update p50 | p95 | \
-             Simulation p50 | p95 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+             Simulation p50 | p95 | CPU p50 | CPU mean |\n\
+             |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
             self.scenario,
             self.expected_units,
             environment.commit,
@@ -638,7 +668,8 @@ fn gpu_table(passes: &[GpuPassTiming], sum_ms: f64) -> String {
 /// One Markdown table row of `statistics`, times in milliseconds.
 fn table_row(label: &str, statistics: &FrameStatistics) -> String {
     format!(
-        "| {label} | {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
+        "| {label} | {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} \
+         | {:.2} |\n",
         statistics.frames,
         statistics.ticks,
         statistics.interval_ms.p50,
@@ -649,6 +680,8 @@ fn table_row(label: &str, statistics: &FrameStatistics) -> String {
         statistics.update_ms.p95,
         statistics.simulation_ms.p50,
         statistics.simulation_ms.p95,
+        statistics.process_cpu_ms.p50,
+        statistics.process_cpu_ms.mean,
     )
 }
 
@@ -667,6 +700,7 @@ mod tests {
         FrameSample {
             frame,
             interval_us: u64::from(frame + 1) * 1000,
+            process_cpu_us: u64::from(frame + 1) * 2000,
             update_us: 500,
             simulation_us: 100,
             ticks_executed: 1,

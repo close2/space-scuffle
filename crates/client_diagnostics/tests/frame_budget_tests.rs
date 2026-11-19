@@ -383,6 +383,14 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
             frame.units_in_view,
             frame.live_units
         );
+        // The process CPU clock is read at every `First`: each row's share is positive, so the
+        // clock rose strictly across the window (plan `2026-11-19-retained-effect-instances`
+        // D-14).
+        assert!(
+            frame.process_cpu_us > 0,
+            "frame {}: no process CPU time recorded",
+            frame.frame
+        );
     }
     let summary = &report.summary.all;
     assert_eq!(summary.frames, SMOKE_FRAMES as usize);
@@ -396,10 +404,13 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
         summary.update_ms.p95,
         summary.simulation_ms.p50,
         summary.simulation_ms.p95,
+        summary.process_cpu_ms.p50,
+        summary.process_cpu_ms.mean,
     ] {
         assert!(value.is_finite() && value >= 0.0, "{summary:?}");
     }
     assert!(summary.interval_ms.p50 > 0.0, "{summary:?}");
+    assert!(summary.process_cpu_ms.mean > 0.0, "{summary:?}");
     assert_ne!(report.environment.adapter, "");
     assert_eq!(report.environment.display_path, declared);
     let recorded = |name: &str| {
@@ -454,4 +465,192 @@ fn a_contradicting_display_path_is_refused_before_anything_is_written() -> Resul
     let left: Vec<_> = std::fs::read_dir(work.path())?.collect();
     assert!(left.is_empty(), "the work directory holds {left:?}");
     Ok(())
+}
+
+// --- The interleaved series (plan `2026-11-19-retained-effect-instances` D-14) ----------------
+
+mod series {
+    use client_diagnostics::frame_budget::series::{
+        balanced_order, median, pair_statistics, verdict, RunFigures, RunRecord, SeriesReport,
+        Slot, Verdict, CPU_SHARE_BAR, RECORDED_B_P50_MS,
+    };
+
+    /// A successful run of `arm` in `pair` at `load`, with a p50 of `p50` ms (p99 twice it) and
+    /// `cpu` ms of process CPU per frame.
+    fn run(arm: &str, pair: u32, load: f64, p50: f64, cpu: f64) -> RunRecord {
+        RunRecord {
+            arm: arm.to_owned(),
+            pair,
+            load_start: load,
+            load_end: load,
+            outcome: Ok(RunFigures {
+                frames: 4000,
+                interval_p50: p50,
+                interval_p99: p50 * 2.0,
+                update_p50: p50 * 0.8,
+                cpu_mean: cpu,
+                cpu_p50: cpu,
+            }),
+        }
+    }
+
+    #[test]
+    fn the_order_is_balanced_b_first_then_reversed() {
+        let order = balanced_order(3, 4);
+        let arms: Vec<usize> = order.iter().map(|slot| slot.arm).collect();
+        assert_eq!(arms, [0, 1, 2, 2, 1, 0, 0, 1, 2, 2, 1, 0]);
+        assert_eq!(order[3], Slot { arm: 2, pair: 1 });
+        for arm in 0..3 {
+            assert_eq!(order.iter().filter(|slot| slot.arm == arm).count(), 4);
+        }
+        assert_eq!(balanced_order(3, 0).len(), 0);
+    }
+
+    #[test]
+    fn the_median_takes_the_middle_or_the_mean_of_the_middle_two() {
+        assert_eq!(median(&[]), None);
+        assert_eq!(median(&[3.0, 1.0, 2.0]), Some(2.0));
+        assert_eq!(median(&[4.0, 1.0, 2.0, 3.0]), Some(2.5));
+    }
+
+    #[test]
+    fn a_pair_is_quiet_only_when_both_runs_stayed_at_or_below_sixteen() {
+        let mut runs = vec![
+            run("B", 0, 16.0, 10.0, 20.0),
+            run("P", 0, 12.0, 10.4, 20.3),
+            run("B", 1, 10.0, 10.0, 20.0),
+            run("P", 1, 10.0, 10.4, 20.3),
+        ];
+        runs[3].load_end = 16.5;
+        let pairs = pair_statistics(&runs, "B", "P");
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs[0].quiet, "a load of exactly 16 is quiet");
+        assert!(!pairs[1].quiet, "a load above 16 at the end is not");
+        assert!((pairs[0].p50_ratio - 1.04).abs() < 1e-9);
+        assert!((pairs[0].cpu_diff - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_failed_run_leaves_its_pair_out() {
+        let mut runs = vec![
+            run("B", 0, 5.0, 10.0, 20.0),
+            run("P", 0, 5.0, 10.4, 20.3),
+            run("B", 1, 5.0, 10.0, 20.0),
+            run("P", 1, 5.0, 10.4, 20.3),
+        ];
+        runs[2].outcome = Err("crashed".into());
+        let pairs = pair_statistics(&runs, "B", "P");
+        assert_eq!(pairs.iter().map(|pair| pair.pair).collect::<Vec<_>>(), [0]);
+    }
+
+    #[test]
+    fn four_quiet_pairs_give_the_wall_verdict_on_the_median_ratios() {
+        let mut runs = Vec::new();
+        for (pair, ratio) in [1.02, 1.04, 1.08, 1.03].into_iter().enumerate() {
+            let pair = u32::try_from(pair).expect("a small index");
+            runs.push(run("B", pair, 8.0, 10.0, 20.0));
+            runs.push(run("P", pair, 8.0, 10.0 * ratio, 25.0));
+        }
+        let pairs = pair_statistics(&runs, "B", "P");
+        let Verdict::Wall {
+            quiet_pairs,
+            median_p50_ratio,
+            met,
+            ..
+        } = verdict(&pairs, &[10.0; 4])
+        else {
+            panic!("four quiet pairs take the wall route");
+        };
+        assert_eq!(quiet_pairs, 4);
+        assert!((median_p50_ratio - 1.035).abs() < 1e-9);
+        assert!(met, "1.035 is within +5 %, whatever the CPU says");
+        runs[7] = run("P", 3, 8.0, 11.0, 25.0);
+        runs[5] = run("P", 2, 8.0, 11.0, 25.0);
+        let pairs = pair_statistics(&runs, "B", "P");
+        assert!(matches!(
+            verdict(&pairs, &[10.0; 4]),
+            Verdict::Wall { met: false, .. }
+        ));
+    }
+
+    #[test]
+    fn too_few_quiet_pairs_give_the_cpu_verdict_against_the_recorded_floor() {
+        let mut runs = Vec::new();
+        for pair in 0..6 {
+            runs.push(run("B", pair, 40.0, 9.0, 20.0));
+            runs.push(run("P", pair, 40.0, 30.0, 20.5));
+        }
+        let pairs = pair_statistics(&runs, "B", "P");
+        let Verdict::Cpu {
+            pairs: judged,
+            quiet_pairs,
+            median_cpu_diff,
+            bar,
+            met,
+        } = verdict(&pairs, &[9.0; 6])
+        else {
+            panic!("six loaded pairs take the CPU route");
+        };
+        assert_eq!((judged, quiet_pairs), (6, 0));
+        assert!((median_cpu_diff - 0.5).abs() < 1e-9);
+        assert!(
+            (bar - CPU_SHARE_BAR * RECORDED_B_P50_MS).abs() < 1e-9,
+            "a B p50 below the recorded 11.86 ms uses the recorded figure"
+        );
+        assert!(met, "0.5 ms is within 5 % of 11.86 ms");
+        let higher = verdict(&pairs, &[20.0; 6]);
+        assert!(
+            matches!(higher, Verdict::Cpu { bar, .. } if (bar - 1.0).abs() < 1e-9),
+            "a higher session B p50 raises the bar: {higher:?}"
+        );
+    }
+
+    #[test]
+    fn too_few_pairs_for_either_route_are_insufficient() {
+        let runs: Vec<RunRecord> = (0..5)
+            .flat_map(|pair| {
+                [
+                    run("B", pair, 40.0, 10.0, 20.0),
+                    run("P", pair, 40.0, 10.0, 20.0),
+                ]
+            })
+            .collect();
+        assert_eq!(
+            verdict(&pair_statistics(&runs, "B", "P"), &[10.0; 5]),
+            Verdict::Insufficient {
+                pairs: 5,
+                quiet_pairs: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_series_report_judges_every_arm_against_the_base() {
+        let mut report = SeriesReport {
+            arms: vec!["B".into(), "S".into(), "P".into()],
+            pairs_requested: 1,
+            extra: Vec::new(),
+            runs: vec![
+                run("B", 0, 5.0, 10.0, 20.0),
+                run("S", 0, 5.0, 10.2, 20.1),
+                run("P", 0, 5.0, 10.4, 20.3),
+            ],
+            base_p50_median: None,
+            comparisons: Vec::new(),
+        };
+        report.judge();
+        assert_eq!(report.base_p50_median, Some(10.0));
+        assert_eq!(
+            report
+                .comparisons
+                .iter()
+                .map(|comparison| comparison.arm.as_str())
+                .collect::<Vec<_>>(),
+            ["S", "P"]
+        );
+        assert!(report
+            .comparisons
+            .iter()
+            .all(|comparison| comparison.pairs.len() == 1));
+    }
 }
