@@ -49,7 +49,7 @@ fn boundary_values_preserve_every_raw_bit() -> TestResult {
 fn seeded_full_width_values_round_trip_exactly() -> TestResult {
     let mut rng = ChaCha8Rng::seed_from_u64(0x5153_3232_5345_5244);
     for _ in 0..10_000 {
-        assert_exact_round_trip(rng.gen())?;
+        assert_exact_round_trip(rng.gen::<i64>())?;
     }
     Ok(())
 }

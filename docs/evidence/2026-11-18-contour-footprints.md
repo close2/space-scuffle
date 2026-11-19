@@ -832,3 +832,75 @@ on the showcase and caster rows.
 | 64x64, 67 casters, 400 | 219 / 233 / 164 | 219 | 238 / 237 / 216 | 237 |
 
 Every scenario stays far above 25 ticks per second; the candidate is not slower than the base on any row.
+
+## 8. Amendment 5: B-140 fixed in the test corpora; B-143 is a test defect
+
+**Audit of every RNG draw (item 1).** Every `gen_range`, `gen`, `gen_bool`, `choose`, `shuffle`, `next_u32`,
+`next_u64` and `sample` in `sim_types`, `sim_map`, `sim_core` and `sim_fixtures` (sources, tests, examples, benches)
+was listed and typed. **No platform-width draw in simulation code.** The simulation draws twice, both over `i64`:
+`sim_core/src/combat.rs` `charge_random_delay` (`min.raw()..=max.raw()`) and `sim_core/src/world/abilities.rs`
+`mode_channel_ticks` (`0..=max.raw()`). `sim_fixtures` draws nothing. The `usize` draws were all in tests:
+
+| File | `usize` draws | Pinned? |
+|---|---|---|
+| `sim_map/tests/validation_golden_tests.rs` | every index into a collection or a value table (cells, items, entity IDs, start locations, rows, columns, invalid characters, widths, heights, terrains, ramps, flags, player slots, tower radii, the path corpus's radius) | yes: validation, decode, path |
+| `sim_map/tests/pathfinding_properties.rs` | `mesh_route_lengths_are_within_one_percent_of_the_oracle`, the pair's two centre indices | no (thresholds) |
+
+Every other test draw was already a fixed width by inference (`i32` literals, `u32` map sizes, `u8` levels and
+footprints, `i64`, `f64`).
+
+**The fix (item 2).** Every `gen_range` and `gen` in those crates now names its type with a turbofish
+(`rng.gen_range::<u32, _>(0..n)`), which changes no draw except the `usize` ones. An index is drawn by
+`sim_map/tests/support/draw.rs` `draw_index`, a `u32` range converted after the draw. One addition, recorded as a
+decision: on the fixed corpus no seeded document has unreachable starts (the old `wasm32` corpus had none either), so
+the test's coverage assertion for check 22 failed. The validation corpus gains a fourth fixed document, the default
+arena walled in two by an abyss band on rows 20 and 21, so check 22 is reached by construction rather than by a seed.
+
+| Pin | Before | After | Native debug | Native release | `wasm32-wasip1` release |
+|---|---|---|---|---|---|
+| `VALIDATION_GOLDEN` | `0xc8fc_3cbd_495d_5177` | `0x3527_8c7f_a705_ba2c` | same | same | same |
+| `DECODE_GOLDEN` | `0x56c4_3eea_8701_94bd` | `0x4c32_25d2_ef3a_fc87` | same | same | same |
+| `PATH_GOLDEN` | `0xa1a3_327e_2a30_f8b7` | `0xa243_924f_8125_f760` | same | same | same |
+| `CONTOUR_PATH_GOLDEN` (unchanged) | `0x9069_95c7_29b7_3498` | `0x9069_95c7_29b7_3498` | same | same | same |
+
+Validation counts, identical on all three: 13 and 14 together in 15 reports, unreachable in 1, 2,496 warnings. Logs:
+`~/scratch/sim-map-corpora/native-debug-3.log`, `native-release-3.log`, `wasm-release-3.log`.
+
+**The old validation-count difference (item 3) was a different corpus.** Before the walled document was added, the
+fixed-width corpus gave, natively, decode `0xef65_8b0a_0d4e_7fe9` and path `0xa243_924f_8125_f760`, exactly B-140's
+`wasm32` values, and validation `0x2245_2ac5_06b6_d828` with unreachable in 0 reports and 2,487 warnings, exactly the
+`wasm32` counts. The old test file run today on `wasm32-wasip1` release gives that same `0x2245_2ac5_06b6_d828`
+(`wasm-old-validate.log`) and natively the old pin `0xc8fc_3cbd_495d_5177` with 4 and 2,362
+(`native-old-validate.log`). So `wasm32` validated the corpus that `u32` draws produce, and the native counts (4
+against 0, 2,362 against 2,487) came from the native corpus's different documents; no `validate_map` difference
+remains. B-140's recorded `wasm32` validation value `0x01e3_8765_0693_1dd7` predates WP2's D-5 rule, which changes
+the text of 17 reports (`UnbuildableTerrain` to `UnpathableTerrain`) but no count.
+
+**Guard (item 4).** Charter check C25 (`crates/workspace_checks/src/rng_draws.rs`, listed in
+`docs/guides/charter-checks.md`): every `gen_range` and `gen` call in `sim_types`, `sim_map`, `sim_core` and
+`sim_fixtures`, tests, examples and benches included, names its type with a turbofish, and that type is not `usize` or
+`isize`. Its unit tests plant untyped, `usize` and `isize` draws (reported) and typed draws, comments, literals,
+definitions and other crates (passed). Its limit: it reads text, so a draw through a generic helper whose caller
+picks the type, or a `rand::distributions` object, is a reviewer's call; neither is used in these crates.
+
+**B-143 traced: a test defect, in the oracle's smooth length.** Scratch trace (the shrunk mask of §6e, radius 0.26,
+(11.5, 12.5) to (6.5, 7.5), `rho` = 0.31):
+
+| Quantity | Value |
+|---|---|
+| Mesh route turns | (11, 12), (8, 9), (7, 8), all on the left; the three corners lie on one line, `y = x + 1` |
+| Mesh polyline | 7.2069 (not a fallback, 18 expansions; the reverse route is its mirror) |
+| Oracle at `r + margin` / at `r` | 7.2093 / 7.1678 |
+| `smooth_length` of the turns | 9.1571, ratio 1.270 |
+| `smooth_length` − oracle | 1.9478 = 2π · 0.31, one whole circle |
+
+The middle turn sweeps nothing: the route leaves the circle round (8, 9) along the same tangent it arrived on.
+`smooth_length` computed that sweep as `atan2` of the outgoing tangent point minus that of the incoming one, which
+rounding left a hair below zero, and `rem_euclid(2π)` turned it into a full circle. At radii 0.25, 0.27 and 0.30 the
+same three corners give a ratio of 1.0000 (the rounding falls the other way), so the route and the routing are right;
+only the measure was wrong. Fix (`sim_map/tests/support/oracle.rs` `turn_sweep`): an angle within 10⁻⁶ rad of a full
+turn counts as no sweep. Deterministic regression test:
+`pathfinding_properties::a_straight_pass_round_collinear_corners_sweeps_no_circle` (the §6e case; ratio 1 within
+10⁻⁹, and the route still turns round the three collinear corners). With `turn_sweep` reverted it fails with ratio
+1.2701775. `funnel_tests` (the other user of `smooth_length`) and every `pathfinding_properties` test pass with the
+fix. Nothing in `sim_map/src` changed.

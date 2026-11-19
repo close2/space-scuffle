@@ -31,3 +31,4 @@ holds the paths named in this table to existence, as it does for the charter and
 | C22 | `crates/gate/suites.ron` names existing targets, classes every GPU and valgrind test, and covers every tracked path |
 | C23 | Smog production code calls no host transcendental function outside `crates/client/src/smog/math.rs` |
 | C24 | `README.md` exists, its links resolve, and its showcase image and link use the site of `.github/workflows/showcase.yml` and the file names `showcase assemble` writes |
+| C25 | Every `gen_range` and `gen` draw in the simulation crates and `sim_fixtures`, tests included, names its type with a turbofish, and that type is not `usize` or `isize` (B-140) |

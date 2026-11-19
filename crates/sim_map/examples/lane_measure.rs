@@ -43,8 +43,8 @@ fn load(file: &str) -> Result<GameMap, Box<dyn Error>> {
 fn standable(map: &GameMap, rng: &mut ChaCha8Rng) -> SimVec2 {
     loop {
         let (x, y) = (
-            rng.gen_range(0..map.width()),
-            rng.gen_range(0..map.height()),
+            rng.gen_range::<u32, _>(0..map.width()),
+            rng.gen_range::<u32, _>(0..map.height()),
         );
         if map.terrain_step_is_connected((x, y), (x, y)) {
             return SimVec2::new(

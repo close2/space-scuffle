@@ -8,12 +8,13 @@
 //! code before the split.
 //!
 //! # Corpus
-//! - Validation: both shipped maps unchanged, the default arena with one cell missing, then 200
-//!   documents derived from `assets/maps/default_arena.scmap.ron` by a `ChaCha8Rng`-seeded
-//!   mutator that flips terrain, ramps, cliff levels and flags, moves start slots, footprints,
-//!   resources and watchtowers, zeroes amounts and radii, and duplicates entity IDs. Every
-//!   report's `Debug` text is hashed in corpus order.
-//! - Decoding: the 202 well-shaped documents of that corpus encoded to `MapFile`, damaged at the file level (bad
+//! - Validation: both shipped maps unchanged, the default arena with one cell missing, the
+//!   default arena walled in two by an abyss band, then 200 documents derived from
+//!   `assets/maps/default_arena.scmap.ron` by a `ChaCha8Rng`-seeded mutator that flips terrain,
+//!   ramps, cliff levels and flags, moves start slots, footprints, resources and watchtowers,
+//!   zeroes amounts and radii, and duplicates entity IDs. Every report's `Debug` text is hashed
+//!   in corpus order.
+//! - Decoding: the 203 well-shaped documents of that corpus encoded to `MapFile`, damaged at the file level (bad
 //!   dimensions, missing or overlong rows, invalid characters), serialised to RON and parsed back,
 //!   then decoded. Every result's `Debug` text is hashed.
 //! - Pathfinding: 250 seeded requests on each shipped map, with structures placed, mixing plain
@@ -21,7 +22,9 @@
 //!   structure mask. Waypoints and lengths are hashed by their raw fixed-point bits.
 //!
 //! # Invariants
-//! - The corpus is a pure function of the seeds below and the shipped map files.
+//! - The corpus is a pure function of the seeds below and the shipped map files, on every
+//!   target: every draw names a fixed-width type, and an index is drawn as a `u32` and converted
+//!   after the draw (B-140; charter check C25).
 //! - Coverage assertions prove the corpus reaches the checks a split could reorder, so a golden
 //!   match is meaningful (for example, at least one report holds both a blocked start footprint
 //!   and two starts that are too close, the adjacent checks 13 and 14).
@@ -42,6 +45,10 @@
 )]
 #[path = "support/arena.rs"]
 mod arena;
+
+#[path = "support/draw.rs"]
+mod draw;
+use draw::draw_index;
 
 #[path = "support/radii.rs"]
 mod radii;
@@ -71,6 +78,9 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// `2026-11-18-contour-footprints` WP3), pinned when the contour cut landed. Its draws use only
 /// fixed-width integer ranges, so the same corpus is drawn on 32-bit and 64-bit targets.
 const CONTOUR_PATH_GOLDEN: u64 = 0x9069_95c7_29b7_3498;
+/// Documents at the head of the validation corpus: both shipped maps, the short grid and the
+/// walled arena.
+const FIXED_DOCUMENTS: usize = 4;
 /// Number of mutated documents derived from the default arena.
 const MUTATED_DOCUMENTS: usize = 200;
 /// Path requests issued on each shipped map.
@@ -82,30 +92,53 @@ const PATH_REQUESTS_PER_MAP: usize = 250;
 /// `UnbuildableTerrain` (8 of start 30, 9 of start 31) are now refused as `UnpathableTerrain`;
 /// no start footprint is newly refused, and every other report is unchanged. A scratch build
 /// without the rule reproduces the old value.
-const VALIDATION_GOLDEN: u64 = 0xc8fc_3cbd_495d_5177;
-/// Digest of every decode result over the corpus, recorded before the step 9.2 split.
-const DECODE_GOLDEN: u64 = 0x56c4_3eea_8701_94bd;
+///
+/// Re-recorded for B-140 (plan `2026-11-18-contour-footprints` Amendment 5; before,
+/// `0xc8fc_3cbd_495d_5177`): the corpus indexed with `usize` draws, which `rand` samples by the
+/// pointer width, so 64-bit targets and `wasm32` validated different corpora. Every index is
+/// now a `u32` draw, and the walled arena reaches check 22 by construction (the new corpus,
+/// like the old `wasm32` one, has no seeded document with unreachable starts). Native debug,
+/// native release and `wasm32-wasip1` release produce this same value, with the same counts:
+/// 13 and 14 together in 15 reports, unreachable in 1, 2,496 warnings.
+const VALIDATION_GOLDEN: u64 = 0x3527_8c7f_a705_ba2c;
+/// Digest of every decode result over the corpus, recorded before the step 9.2 split
+/// (`0x56c4_3eea_8701_94bd`). Re-recorded for B-140 (plan `2026-11-18-contour-footprints`
+/// Amendment 5): the document and damage draws are `u32` instead of `usize`, and the corpus
+/// gains the walled arena. Native debug, native release and `wasm32-wasip1` release produce
+/// this same value.
+const DECODE_GOLDEN: u64 = 0x4c32_25d2_ef3a_fc87;
 /// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
 /// come from the navigation mesh at the request's radius (before, the grid corridor:
 /// `0x52cf_7f61_9e6e_88b1`, recorded before the step 9.2 split). Re-recorded under Amendment 4:
 /// the switch commit's `0x574b_ceb4_0a08_2c4d` was recorded before the last edits of that
 /// commit, whose own tree already produced this value.
-const PATH_GOLDEN: u64 = 0xa1a3_327e_2a30_f8b7;
+///
+/// Re-recorded for B-140 (plan `2026-11-18-contour-footprints` Amendment 5; before,
+/// `0xa1a3_327e_2a30_f8b7`): the radius index is a `u32` draw instead of a `usize` one. The new
+/// value is the one `wasm32-wasip1` already produced on the old corpus, since `rand` drew that
+/// `usize` as a `u32` there: routing never differed, the corpus did. Native debug, native
+/// release and `wasm32-wasip1` release produce this same value.
+const PATH_GOLDEN: u64 = 0xa243_924f_8125_f760;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {
     let base = arena::load_document(arena::DEFAULT_ARENA_FILE);
     let mut short_grid = base.clone();
     short_grid.cells.pop();
+    // An abyss band across the whole map between the two starts (rows 20 and 21; the starts'
+    // footprints cover rows 4 to 8 and 52 to 56), so check 22 is reached by construction.
+    let mut walled = base.clone();
+    paint_band(&mut walled, CliffLevel(0), true, true, 20, 2);
     let mut corpus = vec![
         base.clone(),
         arena::load_document(arena::SHOWCASE_CANYON_FILE),
         short_grid,
+        walled,
     ];
     let mut rng = ChaCha8Rng::seed_from_u64(DOCUMENT_SEED);
     for _ in 0..MUTATED_DOCUMENTS {
         let mut doc = base.clone();
-        let mutations = rng.gen_range(1..=4);
+        let mutations = rng.gen_range::<i32, _>(1..=4);
         for _ in 0..mutations {
             mutate_document(&mut doc, &mut rng);
         }
@@ -114,54 +147,64 @@ fn document_corpus() -> Vec<MapDocument> {
     corpus
 }
 
+/// Terrain kinds a mutation paints on one cell.
+const MUTATED_TERRAINS: [TerrainKind; 4] = [
+    TerrainKind::Grass,
+    TerrainKind::MetalPlate,
+    TerrainKind::Dirt,
+    TerrainKind::Abyss,
+];
+/// Ramp directions (or none) a mutation sets on one cell.
+const MUTATED_RAMPS: [Option<RampDir>; 5] = [
+    None,
+    Some(RampDir::North),
+    Some(RampDir::South),
+    Some(RampDir::East),
+    Some(RampDir::West),
+];
+/// Cell flags a mutation toggles on one cell.
+const MUTATED_FLAGS: [CellFlags; 4] = [
+    CellFlags::BUILDABLE,
+    CellFlags::GROUND_PATHABLE,
+    CellFlags::LOS_BLOCKER,
+    CellFlags::SPEED_ZONE,
+];
+
 /// Applies one seeded mutation to `doc`.
 fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
     let width = doc.width;
     let height = doc.height;
-    match rng.gen_range(0..20) {
+    match rng.gen_range::<i32, _>(0..20) {
         0 => {
-            let terrain = [
-                TerrainKind::Grass,
-                TerrainKind::MetalPlate,
-                TerrainKind::Dirt,
-                TerrainKind::Abyss,
-            ][rng.gen_range(0..4)];
+            let terrain = MUTATED_TERRAINS[draw_index(rng, MUTATED_TERRAINS.len())];
             random_cell(doc, rng).terrain = terrain;
         }
         1 => {
-            let ramp = [
-                None,
-                Some(RampDir::North),
-                Some(RampDir::South),
-                Some(RampDir::East),
-                Some(RampDir::West),
-            ][rng.gen_range(0..5)];
+            let ramp = MUTATED_RAMPS[draw_index(rng, MUTATED_RAMPS.len())];
             random_cell(doc, rng).ramp = ramp;
         }
-        2 => random_cell(doc, rng).level = CliffLevel(rng.gen_range(0..=3)),
+        2 => random_cell(doc, rng).level = CliffLevel(rng.gen_range::<u8, _>(0..=3)),
         3 => {
-            let flag = [
-                CellFlags::BUILDABLE,
-                CellFlags::GROUND_PATHABLE,
-                CellFlags::LOS_BLOCKER,
-                CellFlags::SPEED_ZONE,
-            ][rng.gen_range(0..4)];
+            let flag = MUTATED_FLAGS[draw_index(rng, MUTATED_FLAGS.len())];
             random_cell(doc, rng).flags.toggle(flag);
         }
         4 => {
             if let Some(start) = pick(&mut doc.start_locations, rng) {
-                start.cell = (rng.gen_range(0..width + 6), rng.gen_range(0..height + 6));
+                start.cell = (
+                    rng.gen_range::<u32, _>(0..width + 6),
+                    rng.gen_range::<u32, _>(0..height + 6),
+                );
             }
         }
         5 => {
             if let Some(start) = pick(&mut doc.start_locations, rng) {
-                start.footprint = (rng.gen_range(0..9), rng.gen_range(0..9));
+                start.footprint = (rng.gen_range::<u8, _>(0..9), rng.gen_range::<u8, _>(0..9));
             }
         }
         6 => {
             if let Some(start) = pick(&mut doc.start_locations, rng) {
                 // Slots 0 and 1 are the shipped ones, so these duplicate a slot or leave the range.
-                start.player_slot = [0, 1, 7, 8, 200][rng.gen_range(0..5)];
+                start.player_slot = [0, 1, 7, 8, 200][draw_index(rng, 5)];
             }
         }
         7 => {
@@ -169,7 +212,10 @@ fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
             if let Some(resource) = pick(&mut doc.resources, rng) {
                 resource.cell = match occupied {
                     Some(cell) if rng.gen_bool(0.3) => cell,
-                    _ => (rng.gen_range(0..width + 4), rng.gen_range(0..height + 4)),
+                    _ => (
+                        rng.gen_range::<u32, _>(0..width + 4),
+                        rng.gen_range::<u32, _>(0..height + 4),
+                    ),
                 };
             }
         }
@@ -181,18 +227,21 @@ fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
         9 => duplicate_entity_id(doc, rng),
         10 => {
             if let Some(tower) = pick(&mut doc.watchtowers, rng) {
-                tower.capture_radius_tenths = [0, 1, 30, 400][rng.gen_range(0..4)];
-                tower.reveal_radius_tenths = [0, 120, 4000, u16::MAX][rng.gen_range(0..4)];
+                tower.capture_radius_tenths = [0, 1, 30, 400][draw_index(rng, 4)];
+                tower.reveal_radius_tenths = [0, 120, 4000, u16::MAX][draw_index(rng, 4)];
             }
         }
         11 => {
             if let Some(tower) = pick(&mut doc.watchtowers, rng) {
-                tower.cell = (rng.gen_range(0..width + 4), rng.gen_range(0..height + 4));
+                tower.cell = (
+                    rng.gen_range::<u32, _>(0..width + 4),
+                    rng.gen_range::<u32, _>(0..height + 4),
+                );
             }
         }
         12 => {
             if !doc.start_locations.is_empty() {
-                let index = rng.gen_range(0..doc.start_locations.len());
+                let index = draw_index(rng, doc.start_locations.len());
                 doc.start_locations.remove(index);
             }
         }
@@ -203,9 +252,12 @@ fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
         17 => {
             // The shipped ramp spans x 30..34, y 30..34; break the level of one of its cells.
             let cell = doc
-                .cell_mut(rng.gen_range(30..34), rng.gen_range(31..34))
+                .cell_mut(
+                    rng.gen_range::<u32, _>(30..34),
+                    rng.gen_range::<u32, _>(31..34),
+                )
                 .expect("invariant: the shipped ramp lies inside the 64x64 grid");
-            cell.level = CliffLevel(rng.gen_range(0..=3));
+            cell.level = CliffLevel(rng.gen_range::<u8, _>(0..=3));
         }
         18 => {
             let cell = random_cell(doc, rng);
@@ -214,7 +266,7 @@ fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
         }
         _ => {
             if let Some(tower) = pick(&mut doc.watchtowers, rng) {
-                tower.id = MapEntityId(u32::MAX - rng.gen_range(0..4));
+                tower.id = MapEntityId(u32::MAX - rng.gen_range::<u32, _>(0..4));
             }
         }
     }
@@ -222,7 +274,7 @@ fn mutate_document(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
 
 /// A uniformly chosen cell of `doc`.
 fn random_cell<'d>(doc: &'d mut MapDocument, rng: &mut ChaCha8Rng) -> &'d mut sim_map::MapCellSpec {
-    let index = rng.gen_range(0..doc.cells.len());
+    let index = draw_index(rng, doc.cells.len());
     &mut doc.cells[index]
 }
 
@@ -231,7 +283,7 @@ fn pick<'v, T>(items: &'v mut [T], rng: &mut ChaCha8Rng) -> Option<&'v mut T> {
     if items.is_empty() {
         None
     } else {
-        let index = rng.gen_range(0..items.len());
+        let index = draw_index(rng, items.len());
         Some(&mut items[index])
     }
 }
@@ -248,8 +300,8 @@ fn duplicate_entity_id(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
     if ids.is_empty() {
         return;
     }
-    let id = ids[rng.gen_range(0..ids.len())];
-    match rng.gen_range(0..3) {
+    let id = ids[draw_index(rng, ids.len())];
+    match rng.gen_range::<i32, _>(0..3) {
         0 => {
             if let Some(resource) = pick(&mut doc.resources, rng) {
                 resource.id = id;
@@ -270,12 +322,26 @@ fn duplicate_entity_id(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
 
 /// Paints a full-width or full-height band of one cliff level, which can wall bases apart.
 fn paint_level_band(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
-    let level = CliffLevel(rng.gen_range(0..=3));
+    let level = CliffLevel(rng.gen_range::<u8, _>(0..=3));
     let abyss = rng.gen_bool(0.5);
     let horizontal = rng.gen_bool(0.5);
     let span = if horizontal { doc.height } else { doc.width };
-    let at = rng.gen_range(0..span);
-    let thickness = rng.gen_range(1..=3);
+    let at = rng.gen_range::<u32, _>(0..span);
+    let thickness = rng.gen_range::<u32, _>(1..=3);
+    paint_band(doc, level, abyss, horizontal, at, thickness);
+}
+
+/// Paints `thickness` full lines of one cliff level from line `at`: rows when `horizontal`,
+/// columns otherwise, as abyss when `abyss`. Lines past the grid are skipped.
+fn paint_band(
+    doc: &mut MapDocument,
+    level: CliffLevel,
+    abyss: bool,
+    horizontal: bool,
+    at: u32,
+    thickness: u32,
+) {
+    let span = if horizontal { doc.height } else { doc.width };
     for offset in 0..thickness {
         let line = at + offset;
         if line >= span {
@@ -307,14 +373,20 @@ fn crowd_starts(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
         return;
     }
     let anchor = doc.start_locations[0].cell;
-    let dx = rng.gen_range(0..12);
-    let dy = rng.gen_range(0..12);
+    let dx = rng.gen_range::<u32, _>(0..12);
+    let dy = rng.gen_range::<u32, _>(0..12);
     let moved = &mut doc.start_locations[1];
     moved.cell = (anchor.0.saturating_add(dx), anchor.1.saturating_add(dy));
     if rng.gen_bool(0.5) {
         // Onto the ramp and cliff band, so the footprint is also blocked.
-        moved.cell = (rng.gen_range(26..34), rng.gen_range(26..34));
-        doc.start_locations[0].cell = (rng.gen_range(20..30), rng.gen_range(20..30));
+        moved.cell = (
+            rng.gen_range::<u32, _>(26..34),
+            rng.gen_range::<u32, _>(26..34),
+        );
+        doc.start_locations[0].cell = (
+            rng.gen_range::<u32, _>(20..30),
+            rng.gen_range::<u32, _>(20..30),
+        );
     }
 }
 
@@ -323,9 +395,9 @@ fn resource_into_start(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
     if doc.start_locations.is_empty() || doc.resources.is_empty() {
         return;
     }
-    let start = doc.start_locations[rng.gen_range(0..doc.start_locations.len())].clone();
-    let dx = rng.gen_range(0..u32::from(start.footprint.0.max(1)));
-    let dy = rng.gen_range(0..u32::from(start.footprint.1.max(1)));
+    let start = doc.start_locations[draw_index(rng, doc.start_locations.len())].clone();
+    let dx = rng.gen_range::<u32, _>(0..u32::from(start.footprint.0.max(1)));
+    let dy = rng.gen_range::<u32, _>(0..u32::from(start.footprint.1.max(1)));
     if let Some(resource) = pick(&mut doc.resources, rng) {
         resource.cell = (start.cell.0 + dx, start.cell.1 + dy);
     }
@@ -333,9 +405,9 @@ fn resource_into_start(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
 
 /// Paints a pathable north-facing ramp column of a seeded length, possibly over the run limit.
 fn ramp_column(doc: &mut MapDocument, rng: &mut ChaCha8Rng) {
-    let x = rng.gen_range(0..doc.width);
-    let length = rng.gen_range(2..14);
-    let y0 = rng.gen_range(0..doc.height - length);
+    let x = rng.gen_range::<u32, _>(0..doc.width);
+    let length = rng.gen_range::<u32, _>(2..14);
+    let y0 = rng.gen_range::<u32, _>(0..doc.height - length);
     for y in y0..y0 + length {
         let cell = doc
             .cell_mut(x, y)
@@ -359,7 +431,7 @@ fn variant_name(error: &MapValidationError) -> String {
 #[test]
 fn validate_map_matches_the_recorded_corpus_digest() {
     let corpus = document_corpus();
-    assert_eq!(corpus.len(), MUTATED_DOCUMENTS + 3);
+    assert_eq!(corpus.len(), MUTATED_DOCUMENTS + FIXED_DOCUMENTS);
 
     let mut hasher = Xxh64::new(0);
     let mut seen = BTreeSet::new();
@@ -439,34 +511,34 @@ fn validate_map_matches_the_recorded_corpus_digest() {
 /// Applies one seeded file-level defect, or none.
 fn damage_file(file: &mut MapFile, rng: &mut ChaCha8Rng) {
     const INVALID: [char; 6] = ['4', 'Z', 'n', '?', 'x', ' '];
-    let layer = rng.gen_range(0..4);
+    let layer = rng.gen_range::<i32, _>(0..4);
     let rows = match layer {
         0 => &mut file.levels,
         1 => &mut file.terrain,
         2 => &mut file.ramps,
         _ => &mut file.flags,
     };
-    match rng.gen_range(0..8) {
+    match rng.gen_range::<i32, _>(0..8) {
         0 => {
-            let row = rng.gen_range(0..rows.len());
+            let row = draw_index(rng, rows.len());
             let mut chars: Vec<char> = rows[row].chars().collect();
-            let column = rng.gen_range(0..chars.len());
-            chars[column] = INVALID[rng.gen_range(0..INVALID.len())];
+            let column = draw_index(rng, chars.len());
+            chars[column] = INVALID[draw_index(rng, INVALID.len())];
             rows[row] = chars.into_iter().collect();
         }
         1 => {
             rows.pop();
         }
         2 => {
-            let row = rng.gen_range(0..rows.len());
+            let row = draw_index(rng, rows.len());
             rows[row].push('0');
         }
         3 => {
-            let row = rng.gen_range(0..rows.len());
+            let row = draw_index(rng, rows.len());
             rows[row].pop();
         }
-        4 => file.width = [0, 15, 257, 65][rng.gen_range(0..4)],
-        5 => file.height = [0, 15, 257, 63][rng.gen_range(0..4)],
+        4 => file.width = [0, 15, 257, 65][draw_index(rng, 4)],
+        5 => file.height = [0, 15, 257, 63][draw_index(rng, 4)],
         _ => {}
     }
 }
@@ -486,7 +558,7 @@ fn decoded_corpus() -> Vec<Result<MapDocument, MapFormatError>> {
             Err(MapFormatError::CellCountMismatch { .. }) => continue,
             Err(error) => panic!("a corpus document must encode: {error}"),
         };
-        for _ in 0..rng.gen_range(0..=2) {
+        for _ in 0..rng.gen_range::<i32, _>(0..=2) {
             damage_file(&mut file, &mut rng);
         }
         let text = file.to_ron_string().expect("an encoded map serialises");
@@ -564,7 +636,7 @@ fn encode_accepts_every_document_decode_produces() {
         assert_eq!(reloaded, doc, "a decoded corpus document round-trips");
         decoded += 1;
     }
-    // 91 of the 202 damaged files decode today; the bound only guards against an empty loop.
+    // 91 of the 202 damaged files decoded when this bound was set; the bound only guards against an empty loop.
     assert!(
         decoded >= 50,
         "the corpus decodes enough documents: {decoded}"
@@ -574,10 +646,10 @@ fn encode_accepts_every_document_decode_produces() {
 /// Places a few seeded structures, so known-structure and occupancy paths are exercised.
 fn place_seeded_structures(map: &mut GameMap, rng: &mut ChaCha8Rng) {
     for index in 0..8 {
-        let x = rng.gen_range(0..map.width().saturating_sub(4));
-        let y = rng.gen_range(0..map.height().saturating_sub(4));
-        let w = rng.gen_range(2..=4);
-        let h = rng.gen_range(2..=4);
+        let x = rng.gen_range::<u32, _>(0..map.width().saturating_sub(4));
+        let y = rng.gen_range::<u32, _>(0..map.height().saturating_sub(4));
+        let w = rng.gen_range::<u8, _>(2..=4);
+        let h = rng.gen_range::<u8, _>(2..=4);
         // Blocked placements are part of the seeded outcome and are simply skipped.
         let _ = map.place_structure(
             EntityId(9_000 + index),
@@ -599,7 +671,7 @@ fn seeded_vision(map: &GameMap, rng: &mut ChaCha8Rng) -> PlayerVisionMap {
             } else {
                 MoverType::Ground
             },
-            sight_radius: SimScalar::from_num(rng.gen_range(4..12)),
+            sight_radius: SimScalar::from_num(rng.gen_range::<i32, _>(4..12)),
             is_detector: false,
         };
         vision.apply_vision_source(map, &source);
@@ -610,10 +682,10 @@ fn seeded_vision(map: &GameMap, rng: &mut ChaCha8Rng) -> PlayerVisionMap {
 
 /// A seeded world point inside `map`, on a cell centre or at a quarter offset.
 fn random_point(map: &GameMap, rng: &mut ChaCha8Rng) -> SimVec2 {
-    let quarter = SimScalar::from_num(rng.gen_range(0..4)) / SimScalar::from_num(4);
+    let quarter = SimScalar::from_num(rng.gen_range::<i32, _>(0..4)) / SimScalar::from_num(4);
     SimVec2::new(
-        SimScalar::from_num(rng.gen_range(0..map.width())) + quarter,
-        SimScalar::from_num(rng.gen_range(0..map.height())) + SimScalar::HALF,
+        SimScalar::from_num(rng.gen_range::<u32, _>(0..map.width())) + quarter,
+        SimScalar::from_num(rng.gen_range::<u32, _>(0..map.height())) + SimScalar::HALF,
     )
 }
 
@@ -653,13 +725,13 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
             .collect();
         let mut pathfinder = Pathfinder::new(&map);
         for _ in 0..PATH_REQUESTS_PER_MAP {
-            let radius = [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS][rng.gen_range(0..3)];
+            let radius = [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS][draw_index(&mut rng, 3)];
             let base = PathRequest {
                 start: random_point(&map, &mut rng),
                 goal: random_point(&map, &mut rng),
                 radius,
             };
-            let outcome = match rng.gen_range(0..4) {
+            let outcome = match rng.gen_range::<i32, _>(0..4) {
                 0 => pathfinder.find_path(&map, &base),
                 mode => {
                     let mut request: PathRequestWithVision<'_> = base.into();
@@ -697,10 +769,10 @@ const CONTOURS: [(u8, u16, u16); 5] = [(5, 10, 6), (3, 6, 2), (3, 6, 3), (2, 4, 
 fn place_seeded_contours(map: &mut GameMap, rng: &mut ChaCha8Rng) -> u32 {
     let mut placed_contours = 0;
     for index in 0..12_u32 {
-        let pick = rng.gen_range(0..5_u32);
+        let pick = rng.gen_range::<u32, _>(0..5);
         let (size, half, chamfer) = CONTOURS[usize::try_from(pick).unwrap_or(0)];
-        let x = rng.gen_range(0..map.width().saturating_sub(5));
-        let y = rng.gen_range(0..map.height().saturating_sub(5));
+        let x = rng.gen_range::<u32, _>(0..map.width().saturating_sub(5));
+        let y = rng.gen_range::<u32, _>(0..map.height().saturating_sub(5));
         let footprint = sim_map::StructureFootprint {
             width: size,
             height: size,
@@ -740,14 +812,14 @@ fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
             .collect();
         let mut pathfinder = Pathfinder::new(&map);
         for _ in 0..PATH_REQUESTS_PER_MAP {
-            let pick = rng.gen_range(0..6_u32);
+            let pick = rng.gen_range::<u32, _>(0..6);
             let radius = SimScalar::from_raw(RADII[usize::try_from(pick).unwrap_or(0)] << 28);
             let base = PathRequest {
                 start: random_point(&map, &mut rng),
                 goal: random_point(&map, &mut rng),
                 radius,
             };
-            let outcome = if rng.gen_range(0..2_u32) == 0 {
+            let outcome = if rng.gen_range::<u32, _>(0..2) == 0 {
                 pathfinder.find_path(&map, &base)
             } else {
                 let mut request: PathRequestWithVision<'_> = base.into();

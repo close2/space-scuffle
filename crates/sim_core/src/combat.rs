@@ -598,7 +598,7 @@ pub fn charge_random_delay(entity: &mut Entity, weapon: &WeaponSpec, rng: &mut i
     let delay = if min == max {
         min
     } else {
-        SimScalar::from_raw(rng.gen_range(min.raw()..=max.raw()))
+        SimScalar::from_raw(rng.gen_range::<i64, _>(min.raw()..=max.raw()))
     };
     let carried = entity.weapon_delay_carry.saturating_add(delay);
     // Q32.32: the whole ticks are the raw value shifted down by 32 (rounding towards −∞).
