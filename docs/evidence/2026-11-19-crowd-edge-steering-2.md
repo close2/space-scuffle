@@ -82,7 +82,7 @@ gained, or on a new target or order. No new constant and no new state.
 **Tests first (red on WP1).** On WP1's code, with WP2's tests: CE-7 `a_queued_chaser_keeps_its_target`, CE-8
 `a_spent_walk_resumes_when_the_way_opens` (with its new assertion: the walk re-arms within six ticks of the way
 opening), CE-10 `a_spent_walk_re_arms_when_its_closed_side_opens` (re-armed by the timer while its side stood
-closed), CE-11 `contact_creep_does_not_re_arm_a_walk` (20 walks spent, 17 or more re-armed without ground gained)
+closed), CE-11 `contact_creep_does_not_re_arm_a_walk` (20 walks spent, 17 re-armed by the timer without ground gained)
 and `no_room_means_waiting_still` fail; CE-9 passes. The unit tests `a_walk_spent_by_its_circle_does_not_re_arm_on_an_open_side`
 and `a_closed_side_opens_only_for_a_whole_step` test the new function. CE-11 also fails under prototype K3's test (any
 admissible across step above the waiting share): 8 re-arms without ground gained. On WP2 every test passes.
