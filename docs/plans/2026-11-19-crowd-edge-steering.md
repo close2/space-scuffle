@@ -26,7 +26,7 @@ steering, locomotion and collision phases.
 | [Q0079](../questions/closed/0079-group-consistent-routing.md) group lanes (S-7) | Untouched. One reversal class (R-F) comes from route adoption, which is that plan's ground | §10 |
 | Q0061 hand back after `cargo gate quick`; a verifier runs `package` | Standing rule | §6 |
 | Q0002 scoping is the agent's call if written down | Standing rule | §10 |
-| **OQ-1 (new, in this plan only)** may a unit queued behind its own fighting friends keep its attack order indefinitely? | Default **yes** (D-4). Filed as a question file only if the orchestrator wants the owner to decide | D-4 |
+| **OQ-1, filed as [Q0089](../questions/open/0089-queued-attacker-keeps-order.md)** may a unit queued behind its own fighting friends keep its attack order indefinitely? | Default **yes** (D-4). Filed as a question file only if the orchestrator wants the owner to decide | D-4 |
 
 ---
 
