@@ -474,7 +474,9 @@ fn capture(directory: &Path, name: &str) -> TestResult<image::RgbImage> {
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "window coordinates are small and positive"
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    reason = "window coordinates and sheet cells are small and positive"
 )]
 fn write_evidence(directory: &Path, geometry: Geometry) -> TestResult {
     let Some(target) = std::env::var_os(EVIDENCE_VAR) else {
