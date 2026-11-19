@@ -3066,3 +3066,32 @@ says how to read the step's time from the first run; if it exceeds 35 min, short
   pair of spikes recorded as a deviation of the look.
 - The WP14 budget lines (≤ $8.80 Veo, ≤ $20 images) stay unspent and available to a polish round that needs a new
   texture.
+
+## Amendment 33: B-120, B-121 and B-137 (2026-11-19, orchestrator, short note, charter §6)
+
+Three items from Amendment 32's list. Each is presentation only: no simulation crate, golden or checksum changes.
+
+**B-120: the low-health glitch reads as a fault.** The bubble shader's `FLAG_CRT_GLITCH` rainbow speckle of
+chromatic aberration is replaced by a damage look that reads as damage, such as a flicker or dimming of the dome's
+own colours with no hue split. The threshold stays at `hp_ratio` 0.35, and no new tuning constant is introduced
+without its rationale. Shader tests and the existing look tests are updated, and before/after renders on radv go to
+the review folder.
+
+**B-121: the Abduct tether turns round on arrival.** Follow the register's suggested fix. Once the caster-to-victim
+line is shorter than the grip, the grip and the caster's swelling fade or shrink, so the line never flips and never
+paints over both units. A test pins the arrival geometry: two touching bubbles draw no flipped line.
+
+**B-137: splash stream frame cost.** In this order:
+
+1. A quiet B/S/P series on radv. B, S and P are the measurement legs named in
+   [`frame_budget_wp14.md`](../evidence/effects/review/frame_budget_wp14.md).
+2. A profile of the splash path, for example with `perf` on the 400-unit battle at 200 splashes a second.
+3. Fix the dominant cost if it has a single cause and the fix is presentation-only: per-frame allocations,
+   O(N²) work or redundant work. The charter's zero-allocation steady-state rule applies.
+4. Re-record the frame-budget baseline, and hold the plan's §10.3 stress to +5 % (p50) against that new baseline.
+
+If the cost has no single cause, or a fix would need a design change, record the profile and a proposal in the
+evidence and B-137's row, and hand back.
+
+**Review (Q0080).** B-120 and B-121 each get an independent effects review of the before and after takes, up to
+five rounds.
