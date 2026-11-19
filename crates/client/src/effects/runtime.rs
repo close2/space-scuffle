@@ -31,17 +31,19 @@
 
 use super::binding::{resolve_value, BoundValues};
 use super::budget::{
-    burst_count, crowd_factor, layer_admitted, lod_skips, particle_scale, projected_px,
-    retire_fade, retirement_candidate, RetireCandidate,
+    burst_count, crowd_factor, layer_admitted, lod_skips, particle_scale, projected_px_with,
+    retire_fade,
 };
 use super::catalog::schema::{
-    Binding, CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping,
+    Binding, CardShape, EffectClass, EventKind, Orient, ParticleOrient, Priority, RingMapping,
     RotationDef,
 };
 use super::catalog::{
-    Block, Breakup, CardLook, CurveId, DecalLook, DistortionLook, EffectCatalog, EffectId,
-    ElementRef, Layer, Pool, RibbonLook,
+    Block, Breakup, CardLook, CurveId, DistortionLook, EffectCatalog, EffectId, ElementRef, Layer,
+    Pool, RibbonLook,
 };
+use super::decal_table::{decal_at, decal_clock, DecalTable};
+use super::indices::{OldestHeap, RecentLines};
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_CRESCENT, FLAG_DARKEN,
     FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON,
@@ -51,14 +53,15 @@ use super::instances::{
 use super::ledger::{mark_fade, BudgetLedger, MARK_RETIRE_SECS};
 use super::particles::{Burst, LineClip, ParticlePool};
 use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
-use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
+use super::pool::{EffectHandle, EffectInstance, EffectInstancePool, LineFrame, MarksCache};
 use bevy::math::{Vec2, Vec3};
 use bevy::prelude::Resource;
 
 /// Soft-step width of the erosion threshold of an element without breakup.
 const DEFAULT_SOFTNESS: f32 = 0.08;
 
-/// The camera the frame is built for.
+/// The camera the frame is built for. Made by [`CameraView::new`], which caches the tangent of
+/// half its field of view (plan `2026-11-19-retained-effect-instances` D-3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraView {
     /// Position in world space.
@@ -71,9 +74,36 @@ pub struct CameraView {
     pub viewport_px: f32,
     /// Viewport width over height.
     pub aspect: f32,
+    /// `tan(fov_y / 2)`, computed once.
+    // PERFORMANCE RATIONALE:
+    // Why: `pixels` and `sees` computed `tan(fov_y / 2)` per call, several times per instance.
+    // What: Computed once in `new`; `fov_y` stays public for reading.
+    // Trade-off: Assigning `fov_y` after `new` would leave it stale; cameras are made by `new`.
+    half_tan: f32,
 }
 
 impl CameraView {
+    /// A camera at `position` (world space) looking along the unit `forward`, with vertical
+    /// field of view `fov_y` (radians), a viewport `viewport_px` pixels high and `aspect` its
+    /// width over its height.
+    #[must_use]
+    pub fn new(position: Vec3, forward: Vec3, fov_y: f32, viewport_px: f32, aspect: f32) -> Self {
+        Self {
+            position,
+            forward,
+            fov_y,
+            viewport_px,
+            aspect,
+            half_tan: (fov_y * 0.5).tan(),
+        }
+    }
+
+    /// `tan(fov_y / 2)`.
+    #[must_use]
+    pub const fn half_tan(&self) -> f32 {
+        self.half_tan
+    }
+
     /// Depth of `point` along the view direction.
     #[must_use]
     pub fn depth(&self, point: Vec3) -> f32 {
@@ -83,7 +113,7 @@ impl CameraView {
     /// Projected height in pixels of a world length `size` at `point`.
     #[must_use]
     pub fn pixels(&self, size: f32, point: Vec3) -> f32 {
-        projected_px(size, self.depth(point), self.fov_y, self.viewport_px)
+        projected_px_with(size, self.depth(point), self.half_tan, self.viewport_px)
     }
 
     /// Whether `point` is inside the view cone.
@@ -94,7 +124,7 @@ impl CameraView {
             return false;
         }
         let lateral = (point - self.position - self.forward * depth).length();
-        let half_height = depth * (self.fov_y * 0.5).tan();
+        let half_height = depth * self.half_tan;
         lateral <= half_height * self.aspect.max(1.0) * 1.05
     }
 }
@@ -130,8 +160,8 @@ pub struct EffectFrame {
     cards: Vec<SpriteInstance>,
     /// Depth of each card along the view.
     depth: Vec<f32>,
-    /// Retained sort order of `cards`.
-    order: Vec<u32>,
+    /// Retained sort keys of `cards`: [`card_sort_key`] of each card's depth and index.
+    order: Vec<u64>,
     /// Cards back to front: what the renderer uploads.
     pub sorted: Vec<SpriteInstance>,
     /// Decals.
@@ -196,8 +226,9 @@ impl EffectFrame {
 /// The session's live effects.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct EffectRuntime {
-    /// Live effect instances.
-    pub pool: EffectInstancePool,
+    /// Live effect instances: private, so that every change of an effect goes through the
+    /// runtime's API, which marks its decal rows dirty (D-5); read through [`Self::pool`].
+    pool: EffectInstancePool,
     /// Live particles.
     pub particles: ParticlePool,
     /// Effects spawned since the runtime was made; seeds the layers' hash.
@@ -211,11 +242,56 @@ pub struct EffectRuntime {
     /// Time of the last build, seconds.
     last_build: Option<f64>,
     /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
-    /// lab and the GPU tests isolate the `Critical` layers to measure their footprint).
-    pub only: Option<Priority>,
+    /// lab and the GPU tests isolate the `Critical` layers to measure their footprint); set
+    /// through [`Self::set_only`].
+    only: Option<Priority>,
     /// Effects spawned or held since the runtime was made, by effect id (diagnostics and tests:
     /// which effect a death or a status laid).
     pub spawned_per_effect: Vec<u32>,
+    /// The spawn path's bounded indices (D-4).
+    indices: SpawnIndices,
+    /// The retained decal rows (D-5).
+    table: DecalTable,
+}
+
+/// The live effects the spawn path asks for, indexed (plan
+/// `2026-11-19-retained-effect-instances` D-4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpawnIndices {
+    /// Live line effects a line request may join.
+    lines: RecentLines,
+    /// Oldest burning effect per class, by [`EffectClass::index`].
+    fire: [OldestHeap; 3],
+    /// Oldest effect holding decal slots.
+    marks: OldestHeap,
+    /// Oldest effect drawing detail.
+    detail: OldestHeap,
+}
+
+impl SpawnIndices {
+    /// Empty indices for a pool of `capacity` slots.
+    fn with_capacity(capacity: u32) -> Self {
+        Self {
+            lines: RecentLines::with_capacity(capacity),
+            fire: [
+                OldestHeap::with_capacity(capacity),
+                OldestHeap::with_capacity(capacity),
+                OldestHeap::with_capacity(capacity),
+            ],
+            marks: OldestHeap::with_capacity(capacity),
+            detail: OldestHeap::with_capacity(capacity),
+        }
+    }
+
+    /// Removes every entry.
+    fn clear(&mut self) {
+        self.lines.clear();
+        for heap in &mut self.fire {
+            heap.clear();
+        }
+        self.marks.clear();
+        self.detail.clear();
+    }
 }
 
 /// Where and how an effect is spawned.
@@ -254,7 +330,56 @@ impl EffectRuntime {
             last_build: None,
             only: None,
             spawned_per_effect: vec![0; catalog.effects.len()],
+            indices: SpawnIndices::with_capacity(budget.effects),
+            table: DecalTable::with_capacity(budget.decals, budget.effects),
         }
+    }
+
+    /// The live effect instances.
+    #[must_use]
+    pub const fn pool(&self) -> &EffectInstancePool {
+        &self.pool
+    }
+
+    /// The priority filter: when set, only layers of this priority are drawn and fired.
+    #[must_use]
+    pub const fn only(&self) -> Option<Priority> {
+        self.only
+    }
+
+    /// Sets the priority filter; every effect's decal rows are rewritten at the next frame.
+    pub fn set_only(&mut self, only: Option<Priority>) {
+        if self.only != only {
+            self.only = only;
+            self.table.mark_all();
+        }
+    }
+
+    /// The retained decal rows.
+    #[must_use]
+    pub const fn decal_table(&self) -> &DecalTable {
+        &self.table
+    }
+
+    /// Marks every effect's decal rows dirty, so the next frame rewrites the whole table
+    /// (tests: a table rebuilt from scratch).
+    pub fn rewrite_all_decals(&mut self) {
+        self.table.mark_all();
+    }
+
+    /// Address and capacity of every index of the spawn path, which an allocation would change
+    /// (tests: the indices never grow).
+    #[must_use]
+    pub fn index_buffers(&self) -> [(usize, usize); 6] {
+        let indices = &self.indices;
+        [
+            indices.lines.buffer(),
+            indices.fire[0].buffer(),
+            indices.fire[1].buffer(),
+            indices.fire[2].buffer(),
+            indices.marks.buffer(),
+            indices.detail.buffer(),
+        ]
     }
 
     /// How many instances of `effect` were spawned or held since the runtime was made.
@@ -319,8 +444,10 @@ impl EffectRuntime {
             held_exit: 0.0,
             oneshot_end: birth,
             fog_clip: NO_CLIP,
+            line_frame: LineFrame::of(request.line),
+            marks: MarksCache::UNSET,
         };
-        self.place(&instance)
+        self.place(&instance, effect.event == EventKind::Line)
     }
 
     /// The held effect `handle`, if it is still live (held or eroding out after release).
@@ -329,11 +456,20 @@ impl EffectRuntime {
         self.pool.get(handle).filter(|instance| instance.held)
     }
 
-    /// Places `instance` in the pool and advances the spawn sequence.
-    fn place(&mut self, instance: &EffectInstance) -> Option<EffectHandle> {
+    /// Places `instance` in the pool and in the spawn path's indices (in the line index when it
+    /// is an effect of a `line` event), and advances the spawn sequence.
+    fn place(&mut self, instance: &EffectInstance, line: bool) -> Option<EffectHandle> {
         self.sequence = self.sequence.wrapping_add(1);
         let effect = usize::from(instance.effect.0);
         if let Ok(handle) = self.pool.spawn(*instance) {
+            let (pool, indices) = (&self.pool, &mut self.indices);
+            indices.fire[instance.class.index()].push(handle, instance.birth, pool);
+            indices.marks.push(handle, instance.birth, pool);
+            indices.detail.push(handle, instance.birth, pool);
+            if line {
+                indices.lines.push(handle, pool);
+            }
+            self.table.mark(handle.index);
             self.stats.spawned += 1;
             if let Some(count) = self.spawned_per_effect.get_mut(effect) {
                 *count = count.saturating_add(1);
@@ -402,8 +538,10 @@ impl EffectRuntime {
             held_exit: effect.held_exit,
             oneshot_end: birth + f64::from(effect.lifetime),
             fog_clip: NO_CLIP,
+            line_frame: LineFrame::of(request.line),
+            marks: MarksCache::UNSET,
         };
-        self.place(&instance)
+        self.place(&instance, effect.event == EventKind::Line)
     }
 
     /// Moves the held effect `handle` to `anchor` (world space) with the values `bound`; a
@@ -411,8 +549,15 @@ impl EffectRuntime {
     pub fn update_held(&mut self, handle: EffectHandle, anchor: Vec3, bound: BoundValues) -> bool {
         match self.pool.get_mut(handle) {
             Some(instance) if instance.held && instance.released_at.is_none() => {
-                instance.anchor = anchor;
-                instance.bound = bound;
+                if instance.anchor != anchor {
+                    instance.anchor = anchor;
+                    self.table.mark(handle.index);
+                }
+                if instance.bound != bound {
+                    instance.bound = bound;
+                    instance.marks.valid = false;
+                    self.table.mark(handle.index);
+                }
                 true
             }
             _ => false,
@@ -430,9 +575,21 @@ impl EffectRuntime {
     ) -> bool {
         match self.pool.get_mut(handle) {
             Some(instance) if instance.held && instance.released_at.is_none() => {
-                instance.anchor = line.from;
-                instance.line = Some(line);
-                instance.bound = bound;
+                if instance.anchor != line.from {
+                    instance.anchor = line.from;
+                    self.table.mark(handle.index);
+                }
+                if instance.line != Some(line) {
+                    instance.line = Some(line);
+                    instance.line_frame = LineFrame::of(Some(line));
+                    instance.marks.valid = false;
+                    self.table.mark(handle.index);
+                }
+                if instance.bound != bound {
+                    instance.bound = bound;
+                    instance.marks.valid = false;
+                    self.table.mark(handle.index);
+                }
                 true
             }
             _ => false,
@@ -445,7 +602,10 @@ impl EffectRuntime {
     pub fn move_anchor(&mut self, handle: EffectHandle, anchor: Vec3) -> bool {
         match self.pool.get_mut(handle) {
             Some(instance) => {
-                instance.anchor = anchor;
+                if instance.anchor != anchor {
+                    instance.anchor = anchor;
+                    self.table.mark(handle.index);
+                }
                 true
             }
             None => false,
@@ -457,14 +617,20 @@ impl EffectRuntime {
     /// nothing.
     pub fn set_fog_clip(&mut self, handle: EffectHandle, clip: LineClip) {
         if let Some(instance) = self.pool.get_mut(handle) {
-            instance.fog_clip = clip;
+            if instance.fog_clip.map(f32::to_bits) != clip.map(f32::to_bits) {
+                instance.fog_clip = clip;
+                self.table.mark(handle.index);
+            }
         }
     }
 
     /// Ends the live effect `handle` at once: nothing of it is drawn from this frame (a tether
     /// whose end the viewer stopped seeing, WP10). A stale handle does nothing.
     pub fn retire(&mut self, handle: EffectHandle) {
-        self.pool.free(handle);
+        if self.pool.get(handle).is_some() {
+            self.pool.free(handle);
+            self.table.mark(handle.index);
+        }
     }
 
     /// Releases the held effect `handle` at `now`: its held layers erode out over their exit
@@ -479,6 +645,8 @@ impl EffectRuntime {
         }
         let exit_end = now + f64::from(instance.held_exit);
         instance.released_at = Some(now);
+        instance.marks.valid = false;
+        self.table.mark(handle.index);
         instance.end = exit_end.max(instance.oneshot_end);
         if instance.decal_end.is_infinite() {
             instance.decal_end = exit_end.max(instance.oneshot_end);
@@ -490,12 +658,12 @@ impl EffectRuntime {
     /// [`LINE_MERGE_SLACK`]); returns whether there was. A later attack along the very same
     /// line (a unit firing again from where it stands) is a new effect.
     // PERFORMANCE RATIONALE:
-    // Why: A line request must find the live effect of its line, if any; an index keyed by
-    // line would be a second structure to keep in step with the pool's slots.
-    // What: A linear scan over the pool's fixed slots, once per line request (one per line
-    // per frame after `LineAssembly`), comparing two indices and a point.
-    // Trade-off: O(capacity) per line request (2 048 slots, a few microseconds) in exchange
-    // for no extra state and no allocation.
+    // Why: A line request must find the live effect of its line, if any; a scan of the pool's
+    // 6 144 slots per request was a share of the spawn path at 200 splashes a second (B-137).
+    // What: A scan of the recent line effects only ([`RecentLines`], pruned once a frame of
+    // effects past their merge window), in ascending slot order as the pool scan went.
+    // Trade-off: A second structure kept in step with the pool in exchange for scanning the
+    // last second's lines instead of every slot.
     fn merge_line(
         &mut self,
         catalog: &EffectCatalog,
@@ -507,29 +675,51 @@ impl EffectRuntime {
         // firing twice at a target that stands still) are two shots (plan WP11).
         let Some(layers) = catalog
             .effect(effect)
-            .filter(|effect| effect.event == super::catalog::schema::EventKind::Line)
+            .filter(|effect| effect.event == EventKind::Line)
             .map(|effect| &effect.layers)
         else {
             return false;
         };
-        for slot in 0..self.pool.capacity() as usize {
-            let Some(instance) = self.pool.slot_mut(slot) else {
-                continue;
-            };
-            let birth = instance.birth;
-            let Some(live) = instance.line.as_mut() else {
-                continue;
-            };
-            let window = f64::from(max_line_delay(layers, Some(*live)) + LINE_MERGE_SLACK);
-            if instance.effect == effect
-                && live.to.distance(line.to) <= SAME_LINE_END
-                && now - birth <= window
-            {
-                live.seen |= line.seen;
-                return true;
-            }
+        let joins = |instance: &EffectInstance| {
+            instance.line.is_some_and(|live| {
+                let window = f64::from(max_line_delay(layers, Some(live)) + LINE_MERGE_SLACK);
+                instance.effect == effect
+                    && live.to.distance(line.to) <= SAME_LINE_END
+                    && now - instance.birth <= window
+            })
+        };
+        let pool = &self.pool;
+        let found = self
+            .indices
+            .lines
+            .in_slot_order()
+            .iter()
+            .copied()
+            .find(|handle| pool.get(*handle).is_some_and(joins));
+        #[cfg(test)]
+        {
+            assert_eq!(
+                found.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_merge(&self.pool, joins),
+                "the recent lines choose as the pool scan did"
+            );
+            super::indices::tests::compared(0);
         }
-        false
+        let Some(handle) = found else {
+            return false;
+        };
+        let Some(live) = self
+            .pool
+            .get_mut(handle)
+            .and_then(|instance| instance.line.as_mut())
+        else {
+            return false;
+        };
+        if live.seen | line.seen != live.seen {
+            live.seen |= line.seen;
+            self.table.mark(handle.index);
+        }
+        true
     }
 
     /// Removes every effect and particle and restarts the spawn sequence, so the next effects
@@ -552,6 +742,8 @@ impl EffectRuntime {
         self.frame.darkening_cards = 0;
         self.frame.darkening_decals = 0;
         self.ledger.clear();
+        self.indices.clear();
+        self.table.clear();
         self.last_build = None;
     }
 
@@ -566,11 +758,15 @@ impl EffectRuntime {
             .last_build
             .map_or(0.0, |last| (now - last).max(0.0) as f32);
         self.last_build = Some(now);
-        self.pool.free_ended(now);
+        let table = &mut self.table;
+        self.pool.free_ended(now, |slot| table.mark(slot));
+        self.prune_lines(catalog, now);
         self.settle_ledger(catalog, now);
         self.fire_bursts(catalog, now, camera);
         self.particles.step(dt, &catalog.emitters);
         self.spawn_landings(catalog, now);
+        self.table.expire(&self.pool, now);
+        self.table.rewrite(&self.pool, catalog, now, self.only);
         self.frame.cards.clear();
         self.frame.depth.clear();
         self.frame.decals.clear();
@@ -580,8 +776,11 @@ impl EffectRuntime {
         self.frame.card_count = 0;
         self.frame.darkening_cards = 0;
         self.frame.darkening_decals = 0;
-        let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
-        let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
+        let decals = self.write_decals(catalog, now, camera);
+        let overflowed_critical =
+            self.write_layers(catalog, now, camera, Priority::Critical) + decals[0];
+        let overflowed_detail =
+            self.write_layers(catalog, now, camera, Priority::Detail) + decals[1];
         self.stats.critical_overflow += u64::from(overflowed_critical);
         self.stats.detail_skipped += u64::from(overflowed_detail);
         if overflowed_detail > 0 {
@@ -589,6 +788,19 @@ impl EffectRuntime {
         }
         self.write_particles(catalog, camera);
         self.sort_cards();
+    }
+
+    /// Drops from the line index the effects past their merge window at `now`: a request at
+    /// `now` or later can no longer join them.
+    fn prune_lines(&mut self, catalog: &EffectCatalog, now: f64) {
+        self.indices.lines.prune(&self.pool, |instance| {
+            let (Some(effect), Some(line)) = (catalog.effect(instance.effect), instance.line)
+            else {
+                return false;
+            };
+            let window = f64::from(max_line_delay(&effect.layers, Some(line)) + LINE_MERGE_SLACK);
+            now - instance.birth <= window
+        });
     }
 
     /// Spawns the `land` effect of every particle that landed in the last step, at its
@@ -620,11 +832,12 @@ impl EffectRuntime {
             let eroded = instance
                 .marks_retired_at
                 .is_some_and(|retired| now - retired >= f64::from(MARK_RETIRE_SECS));
-            if now > instance.decal_end || eroded {
+            if (now > instance.decal_end || eroded) && instance.decal_slots > 0 {
                 instance.decal_slots = 0;
+                self.table.mark(u32::try_from(slot).unwrap_or(u32::MAX));
             }
             let held = match catalog.effect(instance.effect) {
-                Some(effect) if instance.decal_slots > 0 => held_marks(effect, instance, now),
+                Some(effect) if instance.decal_slots > 0 => cached_marks(effect, instance, now),
                 _ => 0,
             };
             let burning =
@@ -641,29 +854,38 @@ impl EffectRuntime {
     /// Retires the detail of the oldest burning effect of `class`; returns whether there was
     /// one.
     // PERFORMANCE RATIONALE:
-    // Why: Over a class cap the oldest burning effect must be found among the live ones; an
-    // age-ordered index per class would be a second structure to keep in step with the pool.
-    // What: A linear scan over the pool's fixed slots, only for a spawn over its class cap.
-    // Trade-off: O(capacity) per such spawn (2 048 slots, a few microseconds) in exchange for
-    // no extra state and no allocation.
+    // Why: Over a class cap the oldest burning effect must be found among the live ones; a scan
+    // of the pool's 6 144 slots per such spawn was a share of the spawn path (B-137).
+    // What: The class's [`OldestHeap`], whose entries that stopped burning are dropped as they
+    // reach the top.
+    // Trade-off: A heap per class kept in step with the pool in exchange for O(log n) per
+    // spawn over the cap.
     fn retire_oldest_fire(&mut self, class: EffectClass, now: f64) -> bool {
-        let oldest = self
-            .pool
-            .iter()
-            .filter(|(_, instance)| {
-                instance.class == class
-                    && !instance.held
-                    && instance.has_detail
-                    && instance.detail_retired_at.is_none()
-                    && now < instance.fire_end
-            })
-            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
-            .map(|(index, _)| index);
-        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+        let burning = |instance: &EffectInstance| {
+            instance.class == class
+                && !instance.held
+                && instance.has_detail
+                && instance.detail_retired_at.is_none()
+                && now < instance.fire_end
+        };
+        let oldest = self.indices.fire[class.index()].oldest(&self.pool, burning);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                oldest.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_fire(&self.pool, class, now),
+                "the class heap chooses as the pool scan did"
+            );
+            super::indices::tests::compared(1);
+        }
+        let Some(instance) = oldest.and_then(|handle| self.pool.get_mut(handle)) else {
             return false;
         };
         instance.detail_retired_at = Some(now);
         self.ledger.quench(class);
+        if let Some(handle) = oldest {
+            self.table.mark(handle.index);
+        }
         self.stats.retired += 1;
         true
     }
@@ -695,45 +917,68 @@ impl EffectRuntime {
     /// Retires the oldest lasting marks still holding decal slots: they erode out over
     /// [`MARK_RETIRE_SECS`] and then give their slots back. Returns whether there were any.
     // PERFORMANCE RATIONALE:
-    // Why: Making room needs the oldest effect holding decal slots; an age-ordered index
-    // would be a second structure to keep in step with the pool.
-    // What: A linear scan over the pool's fixed slots, only while the decal pool is above its
-    // pressure mark.
-    // Trade-off: O(capacity) per retirement (2 048 slots, a few microseconds), rare below the
-    // stress load, in exchange for no extra state and no allocation.
+    // Why: Making room needs the oldest effect holding decal slots; a scan of the pool's 6 144
+    // slots per retirement ran on every spawn above the pressure mark at 200 splashes a second.
+    // What: The marks' [`OldestHeap`], whose entries that gave their slots up or began eroding
+    // are dropped as they reach the top.
+    // Trade-off: A heap kept in step with the pool in exchange for O(log n) per retirement.
     fn retire_oldest_mark(&mut self, now: f64) -> bool {
-        let oldest = self
-            .pool
-            .iter()
-            .filter(|(_, instance)| {
-                instance.decal_slots > 0 && instance.marks_retired_at.is_none() && !instance.held
-            })
-            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
-            .map(|(index, _)| index);
-        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+        let holding = |instance: &EffectInstance| {
+            instance.decal_slots > 0 && instance.marks_retired_at.is_none() && !instance.held
+        };
+        let oldest = self.indices.marks.oldest(&self.pool, holding);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                oldest.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_mark(&self.pool),
+                "the marks heap chooses as the pool scan did"
+            );
+            super::indices::tests::compared(2);
+        }
+        let Some(instance) = oldest.and_then(|handle| self.pool.get_mut(handle)) else {
             return false;
         };
         instance.marks_retired_at = Some(now);
         self.ledger.retire_marks(instance.decal_slots);
+        if let Some(handle) = oldest {
+            self.table.mark(handle.index);
+        }
         self.stats.marks_retired += 1;
         true
     }
 
-    /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it.
+    /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it: the
+    /// choice of `budget::retirement_candidate` (the oldest by birth, the lowest slot among
+    /// equal births), from the detail heap.
+    // PERFORMANCE RATIONALE:
+    // Why: Every frame whose detail overflowed scanned the pool's 6 144 slots for the oldest
+    // detail (B-137).
+    // What: The detail [`OldestHeap`], whose entries that retired their detail are dropped as
+    // they reach the top.
+    // Trade-off: A heap kept in step with the pool in exchange for O(log n) per retirement.
     fn retire_one(&mut self, now: f64) {
-        let candidate = retirement_candidate(self.pool.iter().map(|(index, instance)| {
-            (
-                index,
-                RetireCandidate {
-                    class: instance.class,
-                    birth: instance.birth,
-                    detail_retired: instance.detail_retired_at.is_some(),
-                    has_detail: instance.has_detail && !instance.held,
-                },
-            )
-        }));
-        if let Some(instance) = candidate.and_then(|index| self.pool.slot_mut(index)) {
+        let drawing = |instance: &EffectInstance| {
+            instance.class != EffectClass::Major
+                && instance.has_detail
+                && !instance.held
+                && instance.detail_retired_at.is_none()
+        };
+        let candidate = self.indices.detail.oldest(&self.pool, drawing);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                candidate.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_detail(&self.pool),
+                "the detail heap chooses as retirement_candidate did"
+            );
+            super::indices::tests::compared(3);
+        }
+        if let Some(instance) = candidate.and_then(|handle| self.pool.get_mut(handle)) {
             instance.detail_retired_at = Some(now);
+            if let Some(handle) = candidate {
+                self.table.mark(handle.index);
+            }
             self.stats.retired += 1;
         }
     }
@@ -754,8 +999,14 @@ impl EffectRuntime {
                 catalog.budget.crowd_threshold,
             )
         });
-        for slot in 0..self.pool.capacity() as usize {
-            let Some(instance) = self.pool.slot_mut(slot) else {
+        let Self {
+            pool,
+            particles,
+            only,
+            ..
+        } = self;
+        for slot in 0..pool.capacity() as usize {
+            let Some(instance) = pool.slot_mut(slot) else {
                 continue;
             };
             #[expect(
@@ -768,95 +1019,159 @@ impl EffectRuntime {
                 continue;
             }
             instance.bursts_through = age;
-            let instance = *instance;
+            let instance = &*instance;
             let Some(effect) = catalog.effect(instance.effect) else {
                 continue;
             };
             for (index, layer) in effect.layers.iter().enumerate() {
-                let shown = self.only.is_none_or(|only| only == layer.priority);
-                if matches!(layer.block, Block::Particles(_)) && layer.start <= age && shown {
-                    let window = (through, age);
-                    self.burst(catalog, &instance, layer, index, crowd, camera, window);
+                let shown = only.is_none_or(|only| only == layer.priority);
+                if !matches!(layer.block, Block::Particles(_)) || layer.start > age || !shown {
+                    continue;
                 }
+                // Every burst of the layer fell due at or before `through`: none is due now
+                // (D-3: skipped before any placement).
+                let last_due =
+                    layer.start + max_placed_delay(layer, &instance.bound, instance.line);
+                if last_due <= through {
+                    continue;
+                }
+                let window = (through, age);
+                let lod = (crowd, camera);
+                burst(particles, catalog, instance, (layer, index), lod, window);
             }
         }
     }
+}
 
-    /// Spawns the bursts of one particle layer's placed instances that fall due in
-    /// `window` (exclusive start, inclusive end, seconds of the effect's age).
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the burst's effect, layer, level-of-detail factors and time window"
-    )]
-    fn burst(
+/// Spawns into `particles` the bursts of one particle layer's placed instances that fall due
+/// in `window` (exclusive start, inclusive end, seconds of the effect's age).
+fn burst(
+    particles: &mut ParticlePool,
+    catalog: &EffectCatalog,
+    instance: &EffectInstance,
+    (layer, layer_index): (&Layer, usize),
+    (crowd, camera): (f32, Option<&CameraView>),
+    window: (f32, f32),
+) {
+    let Block::Particles(emitter_id) = layer.block else {
+        return;
+    };
+    let Some(emitter) = catalog.emitters.get(usize::from(emitter_id.0)) else {
+        return;
+    };
+    if layer.priority == Priority::Detail && instance.detail_retired_at.is_some() {
+        return;
+    }
+    let radius = resolve_value(&layer.size, &instance.bound);
+    let size_scale = camera.map_or(1.0, |camera| {
+        particle_scale(
+            camera.pixels(radius * 2.0, instance.anchor),
+            catalog.budget.full_particle_px,
+        )
+    });
+    let crowd = if layer.priority == Priority::Detail {
+        crowd
+    } else {
+        1.0
+    };
+    let count = burst_count(&emitter.count, radius, size_scale * crowd);
+    let layer_salt = u32::try_from(layer_index).unwrap_or(0);
+    for (placement_index, placement) in layer.placements.iter().enumerate() {
+        let placement_salt = u32::try_from(placement_index).unwrap_or(0);
+        for index in 0..instance_count(placement, &instance.bound, instance.line) {
+            if !placed_seen(placement, index, instance.line, &instance.bound) {
+                continue;
+            }
+            let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
+            #[cfg(test)]
+            PLACE_CALLS.with(|calls| calls.set(calls.get() + 1));
+            let placed = place(placement, index, seed, &instance.bound, instance.line);
+            let due = layer.start + placed.delay;
+            if due <= window.0 || due > window.1 {
+                continue;
+            }
+            let clip = with_fog(
+                clip_window(
+                    instance,
+                    layer.clip_to_line,
+                    instance.anchor + placed.offset,
+                ),
+                instance.fog_clip,
+            );
+            let burst = Burst {
+                emitter: emitter_id,
+                origin: instance.anchor + placed.offset,
+                radius,
+                count,
+                seed,
+                clip,
+            };
+            particles.spawn(&burst, emitter);
+        }
+    }
+}
+
+impl EffectRuntime {
+    /// Ages every decal row in order into the frame's decals: the `Critical` rows, then the
+    /// `Detail` rows, each layer's admitted while its pool had room when the layer began, as
+    /// `write_layer` admitted them. Returns how many found no room, per pass.
+    fn write_decals(
         &mut self,
         catalog: &EffectCatalog,
-        instance: &EffectInstance,
-        layer: &Layer,
-        layer_index: usize,
-        crowd: f32,
+        now: f64,
         camera: Option<&CameraView>,
-        window: (f32, f32),
-    ) {
-        let Block::Particles(emitter_id) = layer.block else {
-            return;
-        };
-        let Some(emitter) = catalog.emitters.get(usize::from(emitter_id.0)) else {
-            return;
-        };
-        if layer.priority == Priority::Detail && instance.detail_retired_at.is_some() {
-            return;
-        }
-        let radius = resolve_value(&layer.size, &instance.bound);
-        let size_scale = camera.map_or(1.0, |camera| {
-            particle_scale(
-                camera.pixels(radius * 2.0, instance.anchor),
-                catalog.budget.full_particle_px,
-            )
-        });
-        let crowd = if layer.priority == Priority::Detail {
-            crowd
-        } else {
-            1.0
-        };
-        let count = burst_count(&emitter.count, radius, size_scale * crowd);
-        let layer_salt = u32::try_from(layer_index).unwrap_or(0);
-        for (placement_index, placement) in layer.placements.iter().enumerate() {
-            let placement_salt = u32::try_from(placement_index).unwrap_or(0);
-            for index in 0..instance_count(placement, &instance.bound, instance.line) {
-                if !placed_seen(placement, index, instance.line, &instance.bound) {
-                    continue;
-                }
-                let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
-                let placed = place(placement, index, seed, &instance.bound, instance.line);
-                let due = layer.start + placed.delay;
-                if due <= window.0 || due > window.1 {
-                    continue;
-                }
-                let clip = with_fog(
-                    clip_window(
-                        instance.line,
-                        layer.clip_to_line,
-                        &instance.bound,
-                        instance.anchor + placed.offset,
-                    ),
-                    instance.fog_clip,
-                );
-                let burst = Burst {
-                    emitter: emitter_id,
-                    origin: instance.anchor + placed.offset,
-                    radius,
-                    count,
-                    seed,
-                    clip,
-                };
-                self.particles.spawn(&burst, emitter);
+    ) -> [u32; 2] {
+        let mut overflow = [0, 0];
+        let capacity = catalog.budget.decals;
+        let frame = &mut self.frame;
+        let mut group = None;
+        let mut free = 0;
+        for &row in self.table.order() {
+            let (Some(record), Some(key)) = (self.table.record(row), self.table.key(row)) else {
+                continue;
+            };
+            // A layer's admission is counted from the room left when its first instance is
+            // written: the key without its placement and instance fields.
+            let layer_group = key >> 30;
+            if group != Some(layer_group) {
+                group = Some(layer_group);
+                free = capacity.saturating_sub(len32(frame.decals.len()));
             }
+            let Some(clock) = decal_clock(record, now) else {
+                continue;
+            };
+            let priority = if record.detail {
+                Priority::Detail
+            } else {
+                Priority::Critical
+            };
+            let pass = usize::from(record.detail);
+            if !layer_admitted(priority, free) {
+                overflow[pass] += 1;
+                continue;
+            }
+            let Some(decal) = decal_at(record, clock, catalog, camera) else {
+                self.stats.lod_skipped += 1;
+                continue;
+            };
+            if frame.decals.len() == frame.decals.capacity() {
+                overflow[pass] += 1;
+                continue;
+            }
+            frame.decal_owners.push(record.slot);
+            frame.decals.push(decal);
+            if decal.darken != 0.0 {
+                frame.darkening_decals += 1;
+            }
+            free = free.saturating_sub(1);
         }
+        self.stats.critical_overflow += self.table.failed;
+        self.table.failed = 0;
+        overflow
     }
 
-    /// Writes every live effect's layers of `priority`; returns how many instances found
-    /// their pool full.
+    /// Writes every live effect's layers of `priority` but its decals; returns how many
+    /// instances found their pool full.
     fn write_layers(
         &mut self,
         catalog: &EffectCatalog,
@@ -866,13 +1181,26 @@ impl EffectRuntime {
     ) -> u32 {
         let mut overflow = 0;
         let budget = &catalog.budget;
-        for slot in 0..self.pool.capacity() as usize {
-            let Some(instance) = self.pool.slot_mut(slot).copied() else {
+        let Self {
+            pool,
+            frame,
+            stats,
+            only,
+            ..
+        } = self;
+        let mut writer = Writer { frame, stats };
+        for slot in 0..pool.capacity() as usize {
+            let Some(instance) = pool.slot(slot) else {
                 continue;
             };
             let Some(effect) = catalog.effect(instance.effect) else {
                 continue;
             };
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "an effect's age in seconds fits f32"
+            )]
+            let age = (now - instance.birth) as f32;
             let fade = match (priority, instance.detail_retired_at) {
                 (Priority::Detail, Some(retired)) => {
                     #[expect(
@@ -888,38 +1216,53 @@ impl EffectRuntime {
                 continue;
             }
             for (layer_index, layer) in effect.layers.iter().enumerate() {
-                if layer.priority != priority || self.only.is_some_and(|only| only != priority) {
+                if layer.priority != priority || only.is_some_and(|only| only != priority) {
                     continue;
                 }
+                let frame = &writer.frame;
                 let free = match layer.block.pool() {
-                    Pool::Sprites => budget.sprites.saturating_sub(self.frame.card_count),
-                    Pool::Decals => budget.decals.saturating_sub(len32(self.frame.decals.len())),
-                    Pool::Lights => budget.lights.saturating_sub(len32(self.frame.lights.len())),
+                    Pool::Sprites => budget.sprites.saturating_sub(frame.card_count),
+                    Pool::Lights => budget.lights.saturating_sub(len32(frame.lights.len())),
                     Pool::Distortions => budget
                         .distortions
-                        .saturating_sub(len32(self.frame.distortions.len())),
-                    Pool::Particles | Pool::Bubble => continue,
+                        .saturating_sub(len32(frame.distortions.len())),
+                    // Decals are written from the retained table (`write_decals`).
+                    Pool::Decals | Pool::Particles | Pool::Bubble => continue,
                 };
-                let Some(fade) = marks_fade(&instance, layer, fade, now) else {
+                if layer_ended(layer, instance, age) {
+                    continue;
+                }
+                let Some(fade) = marks_fade(instance, layer, fade, now) else {
                     continue;
                 };
                 let context = LayerContext {
                     catalog,
-                    instance: &instance,
-                    slot: u32::try_from(slot).unwrap_or(u32::MAX),
+                    instance,
                     layer,
                     layer_index,
                     now,
                     fade,
                     camera,
-                    exit: layer_clock(layer, &instance, now, 0.0).map_or(0.0, |clock| clock.exit),
+                    exit: layer_clock(layer, instance, now, 0.0).map_or(0.0, |clock| clock.exit),
                 };
-                overflow += self.write_layer(&context, free);
+                overflow += writer.write_layer(&context, free);
             }
         }
         overflow
     }
+}
 
+/// The frame being written and the counters, borrowed apart from the pool so that a live
+/// effect is read in place while its instances are written (D-3: no copy of an
+/// [`EffectInstance`] per effect per frame).
+struct Writer<'a> {
+    /// The frame.
+    frame: &'a mut EffectFrame,
+    /// The budget counters.
+    stats: &'a mut EffectStats,
+}
+
+impl Writer<'_> {
     /// Writes one layer's placed instances while `free` lasts; returns those that found no
     /// room (critical ones are written past the soft cap up to the hard capacity).
     fn write_layer(&mut self, context: &LayerContext<'_>, mut free: u32) -> u32 {
@@ -934,6 +1277,8 @@ impl EffectRuntime {
                     continue;
                 }
                 let seed = placed_seed(instance.seed, layer_index, placement_index, index);
+                #[cfg(test)]
+                PLACE_CALLS.with(|calls| calls.set(calls.get() + 1));
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 let Some(clock) = layer_clock(layer, instance, context.now, placed.delay) else {
                     continue;
@@ -1022,9 +1367,6 @@ impl EffectRuntime {
                 seed,
                 RingShape::of(context, life),
             ),
-            Block::Decal(look) => {
-                self.push_decal(context, look, position, extent, life, intensity, seed)
-            }
             Block::Ribbon(look) => self.push_ribbon(context, look, extent, age, life, intensity),
             Block::Distortion(look) => {
                 self.push_distortion(look, position, extent, age, intensity, seed)
@@ -1045,7 +1387,8 @@ impl EffectRuntime {
                 });
                 Written::Yes
             }
-            Block::Particles(_) | Block::Shell(_) => Written::Skipped,
+            // Decals are written from the retained table (`write_decals`).
+            Block::Decal(_) | Block::Particles(_) | Block::Shell(_) => Written::Skipped,
         }
     }
 
@@ -1119,8 +1462,8 @@ impl EffectRuntime {
         // the line's own ends cut it; ground-hugging cards end where the fog begins.
         let clip = with_fog(
             match line {
-                Some(line) if standing && look.clip_to_line => line_clip_window(line),
-                _ => clip_window(line, look.clip_to_line, &context.instance.bound, position),
+                Some(_) if standing && look.clip_to_line => context.instance.line_frame.window,
+                _ => clip_window(context.instance, look.clip_to_line, position),
             },
             context.instance.fog_clip,
         );
@@ -1245,7 +1588,12 @@ impl EffectRuntime {
         let clip = if line.seen == u64::MAX {
             context.instance.fog_clip
         } else {
-            seen_clip_window(line, spacing, Vec2::new(seen_at.x, seen_at.z))
+            seen_clip_window_in(
+                context.instance.line_frame.window,
+                line.seen,
+                spacing,
+                Vec2::new(seen_at.x, seen_at.z),
+            )
         };
         let catalog = context.catalog;
         let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, context.instance.seed)
@@ -1306,79 +1654,9 @@ impl EffectRuntime {
         self.frame.cards.push(card);
         self.frame.depth.push(depth);
     }
+}
 
-    /// Pushes a decal box.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the evaluated values of one decal, each a separate input of its record"
-    )]
-    fn push_decal(
-        &mut self,
-        context: &LayerContext<'_>,
-        look: &DecalLook,
-        position: Vec3,
-        extent: f32,
-        life: f32,
-        intensity: f32,
-        seed: u32,
-    ) -> Written {
-        if self.frame.decals.len() == self.frame.decals.capacity() {
-            return Written::Full;
-        }
-        let catalog = context.catalog;
-        let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, seed)
-            .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
-        let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
-        let line = context.instance.line;
-        let clip = with_fog(
-            clip_window(line, look.clip_to_line, &context.instance.bound, position),
-            context.instance.fog_clip,
-        );
-        let yaw = match (look.yaw, line) {
-            (DecalYaw::AlongLine, Some(line)) => {
-                let direction = line.to - line.from;
-                if direction.x.abs() + direction.z.abs() > f32::EPSILON {
-                    (-direction.z).atan2(direction.x)
-                } else {
-                    random_yaw
-                }
-            }
-            _ => random_yaw,
-        };
-        self.frame.decal_owners.push(context.slot);
-        self.frame.decals.push(DecalInstance {
-            center: position.to_array(),
-            yaw,
-            half_extents: [extent, look.depth, extent * look.width],
-            grazing: look.grazing,
-            layer_a,
-            layer_b,
-            frame_mix,
-            ramp_row: u32::from(look.ramp.0),
-            intensity,
-            erosion: catalog.sample(look.erosion, life, 0.0).max(context.exit),
-            ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-            clip_min: clip[2],
-            clip_max: clip[3],
-            clip_axis: [clip[0], clip[1]],
-            clip_feather: look.clip_feather,
-            relief: look.liquid.map_or(0.0, |liquid| liquid.relief),
-            sheen: look.liquid.map_or(0.0, |liquid| liquid.sheen),
-            gloss: look.liquid.map_or(1.0, |liquid| liquid.gloss),
-            value_noise: look.liquid.map_or(0.0, |liquid| liquid.value_noise),
-            dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
-            outline_noise: look.outline.map_or(0.0, |outline| outline.edge_noise),
-            outline_fill: look.outline.map_or(0.0, |outline| outline.fill),
-            outline_soft: look.outline.map_or(0.0, |outline| outline.soft),
-            darken: if look.darken { 1.0 } else { 0.0 },
-            ..Surface::of(look.breakup.as_ref(), seed).decal()
-        });
-        if look.darken {
-            self.frame.darkening_decals += 1;
-        }
-        Written::Yes
-    }
-
+impl EffectRuntime {
     /// Writes every live particle as a card.
     fn write_particles(&mut self, catalog: &EffectCatalog, camera: Option<&CameraView>) {
         let Self {
@@ -1436,19 +1714,32 @@ impl EffectRuntime {
     }
 
     /// Sorts the cards back to front into `sorted`.
+    // PERFORMANCE RATIONALE:
+    // Why: An index sort whose comparison reads two depths through the indices costs a cache
+    // miss pair per comparison on 1 800 cards a frame (B-137).
+    // What: One `u64` key per card, its depth mapped to an order-preserving integer (farthest
+    // first) above its index, sorted directly; keys are unique, so the order is total.
+    // Trade-off: Equal depths now keep build order (the old unstable sort left their order to
+    // the sort); a retained key vector of 8 bytes per card.
     fn sort_cards(&mut self) {
         let frame = &mut self.frame;
         frame.order.clear();
-        frame.order.extend(0..len32(frame.cards.len()));
-        let depth = &frame.depth;
-        frame
-            .order
-            .sort_unstable_by(|a, b| depth[*b as usize].total_cmp(&depth[*a as usize]));
+        frame.order.extend(
+            frame
+                .depth
+                .iter()
+                .zip(0..len32(frame.cards.len()))
+                .map(|(depth, index)| card_sort_key(*depth, index)),
+        );
+        frame.order.sort_unstable();
         frame.sorted.clear();
         let cards = &frame.cards;
-        frame
-            .sorted
-            .extend(frame.order.iter().map(|index| cards[*index as usize]));
+        frame.sorted.extend(
+            frame
+                .order
+                .iter()
+                .map(|key| cards[(*key & 0xFFFF_FFFF) as usize]),
+        );
     }
 }
 
@@ -1538,8 +1829,6 @@ struct LayerContext<'a> {
     catalog: &'a EffectCatalog,
     /// The live effect.
     instance: &'a EffectInstance,
-    /// Its pool slot.
-    slot: u32,
     /// The layer.
     layer: &'a Layer,
     /// Its index in the effect.
@@ -1574,8 +1863,98 @@ fn marks_fade(instance: &EffectInstance, layer: &Layer, fade: f32, now: f64) -> 
     }))
 }
 
+/// [`held_marks`] of `instance` at `now`, from its [`MarksCache`] while that holds, otherwise
+/// recounted and cached with the span it holds for.
+///
+/// The count changes only when a counted layer ends: a layer that is not held ends once the
+/// effect's age passes its `start + span + max_line_delay`, a held layer of a released effect
+/// once the time since release passes its exit. An uncounted layer stays uncounted while time
+/// runs forward. So the cache holds while the age stays in `[from_age, until_age]` and the time
+/// since release within `until_exit`; the APIs that change the inputs (`update_held`,
+/// `update_held_line`, `release`) clear it.
+fn cached_marks(effect: &super::catalog::Effect, instance: &mut EffectInstance, now: f64) -> u32 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "an effect's age in seconds fits f32"
+    )]
+    let age = (now - instance.birth) as f32;
+    let cache = instance.marks;
+    let released_ok = match instance.released_at {
+        Some(released) => now - released <= f64::from(cache.until_exit),
+        None => true,
+    };
+    let count = if cache.valid && age >= cache.from_age && age <= cache.until_age && released_ok {
+        cache.count
+    } else {
+        let (count, until_age, until_exit) = held_marks_until(effect, instance, now);
+        instance.marks = MarksCache {
+            valid: true,
+            count,
+            from_age: age,
+            until_age,
+            until_exit,
+        };
+        count
+    };
+    #[cfg(test)]
+    assert_eq!(
+        count,
+        held_marks(effect, instance, now),
+        "the cached decal ledger equals the recount"
+    );
+    count
+}
+
+/// [`held_marks`] with the span it holds for: the earliest end of a counted layer that is not
+/// held (in the effect's age as [`held_marks`] computes it) and the shortest exit of a counted
+/// held layer (infinite when there is none).
+fn held_marks_until(
+    effect: &super::catalog::Effect,
+    instance: &EffectInstance,
+    now: f64,
+) -> (u32, f32, f32) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "an effect's age in seconds fits f32"
+    )]
+    let age = (now - instance.birth) as f32;
+    let (mut count, mut until_age, mut until_exit) = (0, f32::INFINITY, f32::INFINITY);
+    for layer in effect
+        .layers
+        .iter()
+        .filter(|layer| layer.block.pool() == Pool::Decals)
+    {
+        if layer.held && instance.held {
+            let counted = instance
+                .released_at
+                .is_none_or(|released| now - released <= f64::from(layer.exit));
+            if !counted {
+                continue;
+            }
+            if instance.released_at.is_some() {
+                until_exit = until_exit.min(layer.exit);
+            }
+        } else {
+            let end = layer.start
+                + layer.span(&instance.bound)
+                + max_line_delay(std::slice::from_ref(layer), instance.line);
+            if age > end {
+                continue;
+            }
+            until_age = until_age.min(end);
+        }
+        count += layer
+            .placements
+            .iter()
+            .map(|placement| instance_count(placement, &instance.bound, instance.line))
+            .sum::<u32>();
+    }
+    (count, until_age, until_exit)
+}
+
 /// The decal slots `instance` of `effect` holds at `now`: those of its decal layers that have
-/// not ended yet.
+/// not ended yet (the reference [`cached_marks`] keeps).
+#[cfg(test)]
 fn held_marks(effect: &super::catalog::Effect, instance: &EffectInstance, now: f64) -> u32 {
     #[expect(
         clippy::cast_possible_truncation,
@@ -1810,7 +2189,7 @@ pub const NO_CLIP: LineClip = [0.0; 4];
 
 /// `clip`, or the effect's fog clip when the layer has none of its own: a line's own clip
 /// already ends where the fog begins (WP10: an area seen in part is cut where the fog begins).
-const fn with_fog(clip: LineClip, fog: LineClip) -> LineClip {
+pub(super) const fn with_fog(clip: LineClip, fog: LineClip) -> LineClip {
     if clip[0] == 0.0 && clip[1] == 0.0 {
         fog
     } else {
@@ -1896,22 +2275,171 @@ pub fn fit_inside_line(line: WorldLine, position: Vec3, extent: f32) -> (Vec3, f
     (position + Vec3::new(x, 0.0, z) * (centre - along), fitted)
 }
 
-/// The clip window of an instance at `position` of a layer that `clips` to the event's
-/// `line`: [`seen_clip_window`] with the line's bound spacing, or no clip.
-fn clip_window(
-    line: Option<WorldLine>,
-    clips: bool,
-    bound: &BoundValues,
-    position: Vec3,
-) -> LineClip {
-    match line {
-        Some(line) if clips => seen_clip_window(
-            line,
-            bound.get(Binding::LineSpacing),
+/// The clip window of an instance at `position` of a layer of `instance` that `clips` to the
+/// event's line: [`seen_clip_window`] with the line's bound spacing (from the effect's cached
+/// [`LineFrame`]), or no clip.
+pub(super) fn clip_window(instance: &EffectInstance, clips: bool, position: Vec3) -> LineClip {
+    match instance.line {
+        Some(line) if clips => seen_clip_window_in(
+            instance.line_frame.window,
+            line.seen,
+            instance.bound.get(Binding::LineSpacing),
             Vec2::new(position.x, position.z),
         ),
         _ => NO_CLIP,
     }
+}
+
+/// [`seen_clip_window`] of a line whose [`line_clip_window`] is `whole` and whose seen mask is
+/// `seen`, with the seen run around the instance's point found by bit operations
+/// ([`seen_run`]) instead of a walk: the same window, bit for bit.
+#[must_use]
+pub fn seen_clip_window_in(whole: LineClip, seen: u64, spacing: f32, position: Vec2) -> LineClip {
+    if whole == NO_CLIP || seen == u64::MAX || spacing <= f32::EPSILON {
+        return whole;
+    }
+    let [x, z, start, end] = whole;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a point index of a line of at most a few hundred spacings, clamped at 0"
+    )]
+    let (point, last) = (
+        ((position.dot(Vec2::new(x, z)) - start) / spacing)
+            .round()
+            .max(0.0) as u32,
+        ((end - start) / spacing + 1e-3).floor().max(0.0) as u32,
+    );
+    let point = point.min(last);
+    let (low, high) = seen_run(seen, last, point);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a small point index is exact in f32"
+    )]
+    let (low_at, high_at) = (
+        if low == 0 {
+            start
+        } else {
+            start + (low as f32 - 0.5) * spacing
+        },
+        if high == last {
+            end
+        } else {
+            start + (high as f32 + 0.5) * spacing
+        },
+    );
+    [x, z, low_at, high_at]
+}
+
+/// The run of points around `point` (at most `last`) whose neighbours toward it are seen, on
+/// a line whose seen mask is `seen` (points from 63 on share bit 63, as
+/// [`WorldLine::sees_point`] reads it): `(low, high)`, where every point in `low..point` and in
+/// `point + 1..=high` is seen and the next one beyond each end is not (or is past the line).
+/// This is the walk of [`seen_clip_window`], done with bit counts.
+// PERFORMANCE RATIONALE:
+// Why: The walk ran outward bit by bit from every clipped instance's point every frame.
+// What: Two shifts and a leading- or trailing-ones count per end.
+// Trade-off: Bit arithmetic in place of an obvious loop, tied to it by a test over every point
+// of 10 000 random lines.
+#[must_use]
+pub fn seen_run(seen: u64, last: u32, point: u32) -> (u32, u32) {
+    // Consecutive seen points from bit `bit` downward.
+    let ones_down = |bit: u32| (seen << (63 - bit)).leading_ones();
+    let low = if point == 0 {
+        0
+    } else if point - 1 < 63 {
+        point - ones_down(point - 1)
+    } else if seen >> 63 == 1 {
+        63 - ones_down(62)
+    } else {
+        point
+    };
+    let high = if point >= last {
+        point
+    } else if point + 1 < 63 {
+        let run = (seen >> (point + 1)).trailing_ones();
+        if run == 64 - (point + 1) {
+            last
+        } else {
+            (point + run).min(last)
+        }
+    } else if seen >> 63 == 1 {
+        last
+    } else {
+        point
+    };
+    (low, high)
+}
+
+/// Whether `layer` of `instance` has no instance with a clock at the effect's age `age`
+/// (seconds, `(now - birth) as f32`): a layer that is not held, whose latest-placed instance
+/// ended too. [`layer_clock`] computes each instance's age as `age - start - delay` and refuses
+/// it past the layer's span; this evaluates the same expression with the largest delay any
+/// placement gives ([`max_placed_delay`]), and IEEE subtraction is monotone, so when it is
+/// past the span every instance's is (D-3: skipped before placement, bit-identical).
+// PERFORMANCE RATIONALE:
+// Why: An effect lives until its last mark ends, and its ended fire layers were placed instance
+// by instance every frame before their clocks refused them.
+// What: One test per layer with its largest placed delay, before any placement.
+// Trade-off: A second expression of a layer's end, which must bound `place`'s delays.
+pub(super) fn layer_ended(layer: &Layer, instance: &EffectInstance, age: f32) -> bool {
+    if layer.held && instance.held {
+        return false;
+    }
+    let latest = age - layer.start - max_placed_delay(layer, &instance.bound, instance.line);
+    latest > layer.span(&instance.bound)
+}
+
+/// The largest delay [`place`] gives any instance of `layer`'s placements for an effect bound to
+/// `bound` on `line`, evaluated as `place` evaluates it at its farthest point (so no placed
+/// delay exceeds it, in floating point as in exact arithmetic): a line placement's travel time
+/// to its last point plus its whole delay jitter; 0 for the others.
+fn max_placed_delay(layer: &Layer, bound: &BoundValues, line: Option<WorldLine>) -> f32 {
+    let Some(line) = line else {
+        return 0.0;
+    };
+    layer
+        .placements
+        .iter()
+        .map(|placement| match placement {
+            super::catalog::schema::PlacementDef::Line {
+                spacing,
+                travel,
+                between,
+                per_point,
+                delay_jitter,
+                ..
+            } => {
+                let count = instance_count(placement, bound, Some(line));
+                let point = count.saturating_sub(1) / (*per_point).max(1);
+                #[expect(clippy::cast_precision_loss, reason = "point is below 32")]
+                let steps = point as f32 + if *between { 0.5 } else { 0.0 };
+                let distance = resolve_value(spacing, bound) * steps;
+                let delay = if *travel > f32::EPSILON {
+                    distance / travel
+                } else {
+                    0.0
+                };
+                delay + *delay_jitter
+            }
+            _ => 0.0,
+        })
+        .fold(0.0, f32::max)
+}
+
+/// The effect's age (seconds, `(now - birth) as f32`) by which the instances of `layer` of
+/// `instance`, not held, have all ended, as one expression; [`layer_ended`] decides exactly.
+pub(super) fn layer_end_age(layer: &Layer, instance: &EffectInstance) -> f32 {
+    layer.start
+        + max_placed_delay(layer, &instance.bound, instance.line)
+        + layer.span(&instance.bound)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Calls of [`place`] by the frame build, counted for the test that ended layers are never
+    /// placed.
+    static PLACE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The clip window of an instance at `position` (XZ) on `line`, whose search points lie
@@ -1985,7 +2513,7 @@ fn spread_offset(spread: f32, from_anchor: Vec3, life: f32, seed: u32) -> Vec3 {
 /// The breakup fields of one card or decal: its noise layer and parameters and its own noise
 /// phase drawn from its hash.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Surface {
+pub(super) struct Surface {
     /// Noise phase in tiles.
     offset: [f32; 2],
     /// Noise repeats.
@@ -2012,7 +2540,7 @@ impl Surface {
     };
 
     /// The fields of `breakup` with a phase drawn from `seed`.
-    fn of(breakup: Option<&Breakup>, seed: u32) -> Self {
+    pub(super) fn of(breakup: Option<&Breakup>, seed: u32) -> Self {
         breakup.map_or(Self::NONE, |breakup| Self {
             offset: [
                 unit_float(hash3(seed, 0x4015_E001, 0)),
@@ -2040,7 +2568,7 @@ impl Surface {
     }
 
     /// A decal with these fields and every other field zero.
-    fn decal(self) -> DecalInstance {
+    pub(super) fn decal(self) -> DecalInstance {
         DecalInstance {
             noise_offset: self.offset,
             noise_scale: self.scale,
@@ -2201,6 +2729,20 @@ pub fn flipbook_frame(
     (element.first_layer + whole, element.first_layer + next, mix)
 }
 
+/// The sort key of card `index` at sort depth `depth`: the depth mapped to an integer whose
+/// order is `f32::total_cmp`'s, inverted so the farthest card sorts first, above the index, so
+/// that equal depths keep build order (D-3: `(key, index)` order).
+#[must_use]
+pub fn card_sort_key(depth: f32, index: u32) -> u64 {
+    let bits = depth.to_bits();
+    let ascending = if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | (1 << 31)
+    };
+    (u64::from(!ascending) << 32) | u64::from(index)
+}
+
 /// The sort depth of every darkening card: above every other card's ([`sort_depth`]), so the
 /// darkening cards lead the sorted cards.
 const DARKENING_DEPTH: f32 = f32::MAX;
@@ -2218,9 +2760,265 @@ fn sort_depth(depth: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "a failed test is a panic")]
 mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
+    use crate::effects::test_streams::{run_stream, shipped_catalog, StreamKind};
+
+    /// A deterministic `SplitMix64` step for the randomized tests.
+    fn next(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// A float in `[lo, hi)` from `state`.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "24 random bits are exact in f32"
+    )]
+    fn uniform(state: &mut u64, lo: f32, hi: f32) -> f32 {
+        lo + (hi - lo) * ((next(state) >> 40) as f32 / (1u64 << 24) as f32)
+    }
+
+    #[test]
+    fn the_keyed_card_sort_is_back_to_front_and_equals_the_indirect_sort_on_distinct_depths() {
+        let mut state = 0x50E7_0003;
+        for round in 0..2000 {
+            let count = 1 + (next(&mut state) % 300) as usize;
+            let ties = round % 2 == 1;
+            let depths: Vec<f32> = (0..count)
+                .map(|_| {
+                    if ties {
+                        f32::from(u8::try_from(next(&mut state) % 7).unwrap_or(0)) - 2.0
+                    } else {
+                        uniform(&mut state, -50.0, 200.0)
+                    }
+                })
+                .map(sort_depth)
+                .collect();
+            let mut keys: Vec<u64> = depths
+                .iter()
+                .zip(0..u32::try_from(count).unwrap_or(0))
+                .map(|(depth, index)| card_sort_key(*depth, index))
+                .collect();
+            keys.sort_unstable();
+            let order: Vec<usize> = keys
+                .iter()
+                .map(|key| (*key & 0xFFFF_FFFF) as usize)
+                .collect();
+            assert!(
+                order
+                    .windows(2)
+                    .all(|pair| depths[pair[0]] >= depths[pair[1]]),
+                "back to front"
+            );
+            if ties {
+                assert!(
+                    order
+                        .windows(2)
+                        .all(|pair| depths[pair[0]] > depths[pair[1]] || pair[0] < pair[1]),
+                    "equal depths keep build order"
+                );
+            } else {
+                let mut indirect: Vec<usize> = (0..count).collect();
+                indirect.sort_unstable_by(|a, b| depths[*b].total_cmp(&depths[*a]));
+                let distinct = depths.windows(2).count() == 0 || {
+                    let mut sorted = depths.clone();
+                    sorted.sort_by(f32::total_cmp);
+                    sorted
+                        .windows(2)
+                        .all(|pair| pair[0].to_bits() != pair[1].to_bits())
+                };
+                if distinct {
+                    assert_eq!(order, indirect, "distinct depths sort as before");
+                }
+            }
+        }
+        let darkening = card_sort_key(DARKENING_DEPTH, 5);
+        assert!(
+            darkening < card_sort_key(sort_depth(f32::MAX), 0),
+            "darkening cards lead"
+        );
+    }
+
+    #[test]
+    fn the_seen_run_lookup_equals_the_walk_bit_for_bit() {
+        let mut state = 0x5EE4_0001;
+        let mut compared = 0_u32;
+        for _ in 0..10_000 {
+            let seen = match next(&mut state) % 4 {
+                0 => next(&mut state),
+                1 => u64::MAX << (next(&mut state) % 64),
+                2 => !(1 << (next(&mut state) % 64)) & next(&mut state) | (1 << 63),
+                _ => next(&mut state) & next(&mut state),
+            };
+            let spacing = uniform(&mut state, 0.05, 1.5);
+            let length = uniform(&mut state, 0.0, 80.0);
+            let angle = uniform(&mut state, 0.0, std::f32::consts::TAU);
+            let from = Vec3::new(
+                uniform(&mut state, -50.0, 50.0),
+                0.0,
+                uniform(&mut state, -50.0, 50.0),
+            );
+            let line = WorldLine {
+                from,
+                to: from + Vec3::new(angle.cos(), 0.0, angle.sin()) * length,
+                seen,
+            };
+            let whole = line_clip_window(line);
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a few hundred points"
+            )]
+            let points = (length / spacing) as u32 + 2;
+            for point in 0..points {
+                #[expect(clippy::cast_precision_loss, reason = "a small point index")]
+                let at = from + (line.to - from).normalize_or_zero() * spacing * point as f32;
+                let position = Vec2::new(at.x, at.z);
+                let walked = seen_clip_window(line, spacing, position);
+                let looked_up = seen_clip_window_in(whole, seen, spacing, position);
+                assert_eq!(
+                    walked.map(f32::to_bits),
+                    looked_up.map(f32::to_bits),
+                    "seen {seen:#x}, length {length}, spacing {spacing}, point {point}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > 100_000, "{compared} points compared");
+    }
+
+    #[test]
+    fn the_cached_half_tangent_projects_and_culls_bit_for_bit() {
+        let mut state = 0xCA3E_0002;
+        for _ in 0..1000 {
+            let position = Vec3::new(
+                uniform(&mut state, -50.0, 50.0),
+                uniform(&mut state, 1.0, 90.0),
+                uniform(&mut state, -50.0, 50.0),
+            );
+            let forward = Vec3::new(
+                uniform(&mut state, -1.0, 1.0),
+                uniform(&mut state, -1.0, -0.1),
+                uniform(&mut state, -1.0, 1.0),
+            )
+            .normalize();
+            let fov_y = uniform(&mut state, 0.3, 1.6);
+            let (viewport_px, aspect) = (
+                uniform(&mut state, 200.0, 2200.0),
+                uniform(&mut state, 0.5, 3.0),
+            );
+            let camera = CameraView::new(position, forward, fov_y, viewport_px, aspect);
+            for _ in 0..20 {
+                let point = Vec3::new(
+                    uniform(&mut state, -80.0, 80.0),
+                    uniform(&mut state, 0.0, 3.0),
+                    uniform(&mut state, -80.0, 80.0),
+                );
+                let size = uniform(&mut state, 0.01, 10.0);
+                let reference = super::super::budget::projected_px(
+                    size,
+                    camera.depth(point),
+                    fov_y,
+                    viewport_px,
+                );
+                assert_eq!(camera.pixels(size, point).to_bits(), reference.to_bits());
+                let depth = camera.depth(point);
+                let sees = depth > 0.0 && {
+                    let lateral = (point - position - forward * depth).length();
+                    lateral <= depth * (fov_y * 0.5).tan() * aspect.max(1.0) * 1.05
+                };
+                assert_eq!(camera.sees(point), sees);
+            }
+        }
+    }
+
+    /// The decal layers' slots counted in time: `cached_marks` asserts in tests that its cached
+    /// count equals the recount on every call, so every frame of both streams checks it.
+    #[test]
+    fn the_cached_ledger_equals_the_recount_over_both_streams() {
+        for kind in [StreamKind::Splashes, StreamKind::Plan] {
+            let mut marks = 0_u64;
+            run_stream(kind, 600, |_, runtime, _| {
+                marks += u64::from(runtime.ledger.marks_reserved());
+            });
+            assert!(marks > 0, "{kind:?}: the stream holds decal slots");
+        }
+    }
+
+    #[test]
+    fn an_ended_layer_of_a_live_effect_is_never_placed() {
+        let catalog = shipped_catalog();
+        // A shipped look whose every layer is placed without a line and whose lasting decal
+        // outlives some other layer.
+        let bound = BoundValues::default()
+            .with(Binding::SplashFull, 0.6)
+            .with(Binding::SplashMid, 0.9)
+            .with(Binding::SplashReach, 1.2)
+            .with(Binding::UnitRadius, 0.5);
+        let ends = |layer: &Layer| layer.start + layer.span(&bound);
+        let (id, effect) = catalog
+            .effects
+            .iter()
+            .enumerate()
+            .find(|(_, effect)| {
+                effect.event == EventKind::Splash
+                    && effect.layers.iter().all(|layer| !layer.held)
+                    && effect
+                        .layers
+                        .iter()
+                        .any(|layer| layer.block.pool() == Pool::Decals)
+                    && effect.layers.iter().any(|layer| {
+                        layer.block.pool() != Pool::Decals && ends(layer) < 0.6 * effect.lifetime
+                    })
+            })
+            .expect("a splash look with a lasting mark");
+        let id = EffectId(u16::try_from(id).expect("a small vocabulary"));
+        let mut runtime = EffectRuntime::new(&catalog);
+        let request = SpawnRequest {
+            effect: id,
+            anchor: Vec3::ZERO,
+            bound,
+            line: None,
+            delay: 0.0,
+        };
+        runtime.spawn(&catalog, &request, 0.0).expect("spawned");
+        runtime.build_frame(&catalog, 0.0, None);
+        let late = f64::from(0.6 * effect.lifetime);
+        let previous = late - 1.0 / 60.0;
+        runtime.build_frame(&catalog, previous, None);
+        PLACE_CALLS.with(|calls| calls.set(0));
+        runtime.build_frame(&catalog, late, None);
+        let placed = PLACE_CALLS.with(std::cell::Cell::get);
+        #[expect(clippy::cast_possible_truncation, reason = "seconds fit f32")]
+        let (age, through) = (late as f32, previous as f32);
+        let count = |layer: &Layer| -> u64 {
+            layer
+                .placements
+                .iter()
+                .map(|placement| u64::from(instance_count(placement, &bound, None)))
+                .sum()
+        };
+        let expected: u64 = effect
+            .layers
+            .iter()
+            .filter(|layer| match layer.block.pool() {
+                Pool::Particles => layer.start <= age && layer.start > through,
+                // Decals are placed only when their effect's rows are rewritten (WP4).
+                Pool::Bubble | Pool::Decals => false,
+                _ => age - layer.start <= layer.span(&bound),
+            })
+            .map(count)
+            .sum();
+        let every: u64 = effect.layers.iter().map(count).sum();
+        assert_eq!(placed, expected, "only the layers still drawing are placed");
+        assert!(expected < every, "some layer of {} has ended", effect.name);
+    }
 
     /// A held shell layer of one second with `strength`.
     fn shell_layer(strength: Option<crate::effects::catalog::schema::StrengthDef>) -> Layer {

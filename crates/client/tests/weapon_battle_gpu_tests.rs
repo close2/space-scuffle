@@ -1074,7 +1074,7 @@ fn count(staging: &mut Staging, runtime: &EffectRuntime, now: f64) {
         // for from its birth, not from its spawn request.
         let born = subject.looks[1].is_some_and(|(id, _)| {
             runtime
-                .pool
+                .pool()
                 .iter()
                 .any(|(_, instance)| instance.effect == id && instance.birth <= now)
         });
@@ -1099,7 +1099,7 @@ fn record_launch(
             continue;
         }
         let first = runtime
-            .pool
+            .pool()
             .iter()
             .filter(|(_, instance)| instance.effect == travel && instance.birth >= opened)
             .filter_map(|(_, instance)| instance.line.map(|line| (instance.birth, line.from)))
@@ -2122,7 +2122,7 @@ fn record_beam(
         .map(|(target, shooter)| outline_point(camera, target.1, target.2, shooter.1));
     let youngest = staging.burn.and_then(|burn| {
         runtime
-            .pool
+            .pool()
             .iter()
             .filter(|(_, instance)| instance.effect == burn && instance.birth <= now)
             .map(|(_, instance)| ((now - instance.birth) as f32, instance.anchor))
@@ -2137,7 +2137,7 @@ fn record_beam(
         target_shown,
         held: beams.slots().len(),
         live: runtime
-            .pool
+            .pool()
             .iter()
             .filter(|(_, instance)| instance.effect == look)
             .count(),

@@ -32,8 +32,16 @@ pub const MIN_PARTICLE_SCALE: f32 = 0.25;
 /// `viewport_px` pixels high.
 #[must_use]
 pub fn projected_px(size: f32, distance: f32, fov_y: f32, viewport_px: f32) -> f32 {
+    projected_px_with(size, distance, (fov_y * 0.5).tan(), viewport_px)
+}
+
+/// [`projected_px`] for a camera whose `tan(fov_y / 2)` is `half_tan`, computed once per camera
+/// (plan `2026-11-19-retained-effect-instances` D-3): the same expression on the same operands,
+/// so the same bits.
+#[must_use]
+pub fn projected_px_with(size: f32, distance: f32, half_tan: f32, viewport_px: f32) -> f32 {
     let distance = distance.max(1e-3);
-    let visible_height = 2.0 * distance * (fov_y * 0.5).tan();
+    let visible_height = 2.0 * distance * half_tan;
     if visible_height <= f32::EPSILON {
         return f32::INFINITY;
     }
