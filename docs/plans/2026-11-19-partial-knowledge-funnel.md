@@ -7,6 +7,8 @@ unknown footprint, pinches appear where there is room, and some routes fall back
 **Status of this document.** This is a Stage 1 blueprint under charter §6, written on 2026-11-19 against `main` at
 `3c2f4c65` (checksum schema 31). Line numbers drift, so search for the quoted symbol. Claims not confirmed while
 planning are marked **verify**. Later decisions are appended as `## Amendment N (orchestrator, YYYY-MM-DD): …`.
+The TA* budget item was drafted as B-147; that number and B-148 went to the structure-placement plan
+(`2026-11-19-footprint-flags`), so WP0 registers it as **B-149** and this text uses that number.
 
 **Why a full plan (charter §6).** The fix changes routes under fog of war, so it can move battle outcomes and golden
 replays. It re-pins two `sim_map` digests, one of which (`PATH_GOLDEN`) the previous funnel plan held fixed. The
@@ -73,7 +75,7 @@ prototype (§4) moved no battle, but the stop rules must still hold in the clean
    - A stress search of known and unknown contour pairs: 496 fallbacks → 10, of which 2 are new (§4.3, R-2).
    - Oracle (squares, whole knowledge): 94.6 % → 99.1 % within 1.01, worst 1.396 → 1.134, none shorter. The 16 routes
      still above 1.01 are TA*'s anytime budget over the many small triangles of an unknown footprint, out of scope
-     (**B-147** proposed).
+     (**B-149** proposed).
    - The matrix, battle 33 (68 runs), battle 31 (100 runs), the showcase on nine seeds and both golden replays are
      **bit-identical**.
    - Path-search cost on the partial-knowledge corpora: 97.4 G → 46.9 G instructions (−52 %): the zigzag and the
@@ -292,7 +294,7 @@ at free corners: TA* settled on a channel round the unknown footprint's outline 
 anytime budget unbounded and 64 visits per state (scratch), 1,817 of 1,820 are within 1.01 and the worst is 1.040.
 The many small triangles of an unknown footprint exhaust `NAV_TA_STAR_EXTRA_EXPANSIONS` (256) and
 `NAV_TA_STAR_TRIANGLE_VISITS` (4), which were measured on known terrain only (pathfinding WP8). Out of scope (§9),
-proposed as **B-147**.
+proposed as **B-149**.
 
 ### 4.5 Battles and goldens
 
@@ -492,7 +494,7 @@ divergent tick, entity and request) and the rule that changed it.
    - no route this plan changes gets longer than on base by more than 0.5 %, except where D-3 rounds a free vertex
      that is a real gap's corner, each such case listed;
    - `MESH_RATIO_BOUND` (1.10) on routes this plan changes; the unchanged TA* residual above it (one route, 1.134,
-     `main` 1.396) is B-147's and is reported, not stopped on.
+     `main` 1.396) is B-149's and is reported, not stopped on.
 9. **Fallbacks.**
    - No request of the golden corpora or of §4.3's layouts falls back that did not on base.
    - Fitting-start fallbacks: 0 in both golden corpora and in the whole-knowledge square layouts; at most 1 in the
@@ -516,7 +518,7 @@ change needs; a verifier runs `cargo gate package` on the final tree (Q0061). Ea
 - `DESIGN.md` §4, B-146: the pointer becomes this plan; the diagnosis is restated (free vertices rounded, shrunk,
   inserted and measured; zigzag, false pinches and fallbacks: 13 of 21 and 8 of 13 from fitting starts in the two
   golden corpora; the wedged starts that round a free vertex included).
-- `DESIGN.md` §4: register **B-147** (proposed, open): "under partial knowledge TA* settles on a channel round an
+- `DESIGN.md` §4: register **B-149** (proposed, open): "under partial knowledge TA* settles on a channel round an
   unknown footprint instead of across it: its many small triangles exhaust the anytime budget and the visit cap
   (`NAV_TA_STAR_EXTRA_EXPANSIONS`, `NAV_TA_STAR_TRIANGLE_VISITS`), which were measured on known terrain; 16 of 1,820
   routes of a partial-knowledge layout corpus above 1.01 of the oracle, worst 1.134". Pointer: this plan §4.4 and §9.
@@ -588,7 +590,7 @@ the known mask from a list of known structure ids.
 
 - Evidence: the final D-8 figures, the corpus tables of §4 recomputed, throughput, the pins with their headers.
 - `DESIGN.md` B-146 leaves the register as fixed, with the figures and residuals (wedged starts on wall lines; the
-  per-cell and stress residuals). B-147 stays open.
+  per-cell and stress residuals). B-149 stays open.
 - `docs/plans/README.md`: this plan's row updated.
 - No storyboard check is needed unless the showcase moved.
 
@@ -598,7 +600,7 @@ the known mask from a list of known structure ids.
 
 | Area | Files | WP |
 |---|---|---|
-| Records | `DESIGN.md` §4 (B-146, B-147), `docs/plans/README.md`, funnel-fallbacks pointer amendment | WP0, WP5 |
+| Records | `DESIGN.md` §4 (B-146, B-149), `docs/plans/README.md`, funnel-fallbacks pointer amendment | WP0, WP5 |
 | Evidence | `docs/evidence/2026-11-19-partial-knowledge-funnel.md` (new) | WP1 to WP5 |
 | D-1, D-4 | `crates/sim_map/src/navmesh/funnel.rs` (`FunnelScratch`, `sigma`, `tangent`, `shrink`, `deepest_violation`, emission) | WP2 |
 | D-5 | `crates/sim_map/src/navmesh/search.rs` (`channel_width`) | WP2 |
@@ -632,7 +634,7 @@ header. `sim_core` is untouched.
 
 | Item | State | Why not here |
 |---|---|---|
-| **B-147 (proposed): TA*'s channel under partial knowledge** | Open (WP0 registers it) | The anytime budget (256) and the visit cap (4) were measured on known terrain. An unknown footprint adds many small triangles, and TA* settles on a channel round it: 16 of 1,820 routes above 1.01 of the oracle, worst 1.134 (with an unbounded budget and 64 visits: 3, worst 1.040). Changing budgets changes every route's search; it needs its own measurement |
+| **B-149 (proposed): TA*'s channel under partial knowledge** | Open (WP0 registers it) | The anytime budget (256) and the visit cap (4) were measured on known terrain. An unknown footprint adds many small triangles, and TA* settles on a channel round it: 16 of 1,820 routes above 1.01 of the oracle, worst 1.134 (with an unbounded budget and 64 visits: 3, worst 1.040). Changing budgets changes every route's search; it needs its own measurement |
 | **Wedged starts on a wall line** (5 in the golden corpora) | Unchanged | Pathfinding D-3: the counted fallback is by design (§3.6) |
 | The stress search's 2 new fallbacks and per-cell residuals | Traced in WP3, recorded in B-146's row | No variant measured removed them without adding others; the shapes are flush contour pairs and ragged per-cell knowledge, harsher than vision |
 | The knowledge model itself (whether unknown structures are walked through) | Unchanged | Pathfinding D-2; StarCraft II's behaviour **verify** |
