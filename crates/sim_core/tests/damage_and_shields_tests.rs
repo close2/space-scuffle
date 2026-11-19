@@ -99,6 +99,7 @@ fn dummy_target_archetype(
         armor_class: None,
         modes: Vec::new(),
         effects: sim_core::catalog::ArchetypeEffects::default(),
+        placement_excludes: sim_types::PlacementFlags::empty(),
     }
 }
 

@@ -42,6 +42,7 @@ fn bundle_with_added_unit(root: &Path) -> Result<AddedUnit, Box<dyn Error>> {
         "structures.ron",
         "upgrades.ron",
         "movement_rules.ron",
+        "placement_rules.ron",
         "statuses.ron",
         "ability_effects.ron",
     ] {

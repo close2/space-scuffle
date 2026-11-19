@@ -15,13 +15,14 @@ use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// The rule files a bundle holds; `factions.ron` is last so the indices of the others are stable.
-const FILES: [&str; 7] = [
+const FILES: [&str; 8] = [
     "units.ron",
     "structures.ron",
     "upgrades.ron",
     "movement_rules.ron",
     "statuses.ron",
     "ability_effects.ron",
+    "placement_rules.ron",
     "factions.ron",
 ];
 
@@ -258,6 +259,40 @@ fn missing_and_malformed_selected_files_fail_with_exact_path() -> TestResult {
         );
         bundle.restore()?;
     }
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-19-footprint-flags` WP1 (charter §3.3, C6): `placement_rules.ron` is read at run
+/// time, so an edited ring changes the loaded reach without recompiling.
+#[test]
+fn an_edited_placement_rule_changes_the_loaded_reach() -> TestResult {
+    let bundle = Bundle::new("placement-rules")?;
+    let shipped = bundle.load()?;
+    let reach = |catalogs: &RuntimeCatalogs| {
+        catalogs
+            .units
+            .placement_rules()
+            .reach(sim_types::ResourceKind::Mineral)
+            .map(|reach| reach.cells.len())
+    };
+    assert_eq!(reach(&shipped), Some(45));
+    let path = bundle.directory.join(FILES[6]);
+    let text = std::fs::read_to_string(&path)?;
+    let start = text.find("(kind: Mineral,").ok_or("the mineral ring")?;
+    let end = start + text[start..].find("]),").ok_or("its end")? + "]),".len();
+    let edited = format!(
+        "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"]),{}",
+        &text[..start],
+        &text[end..]
+    );
+    std::fs::write(&path, edited)?;
+    assert_eq!(reach(&bundle.load()?), Some(1));
+    std::fs::write(&path, text.replace("anchor: (3, 3)", "anchor: (0, 0)"))?;
+    assert!(matches!(
+        bundle.load(),
+        Err(CatalogLoadError::Invalid { path: failed, source: SimCoreError::CatalogInvalidValue { .. } }) if failed == path
+    ));
     bundle.finish()?;
     Ok(())
 }
