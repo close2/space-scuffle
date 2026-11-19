@@ -35,3 +35,9 @@ Evidence: `docs/evidence/effects/review/frame_budget_b137_retained.md`.
 **Option (d) combined with Option (a)'s quiet-machine check — relax the §10.3 synthetic 200-splash/s stress bar to a realistic real-time bar (`p50 <= 16.67 ms` / 60 FPS and `+20%` p50 over baseline on a quiet host), take a quiet-machine confirmation when convenient, and close `B-137` and `Q0090` without further optimization or visual budget cuts.**
 
 **Performance & engineering insight:** Cutting effect-frame build instructions by 55% (`10.10 M → 4.51 M` instructions/frame) and moving persistent decals to a bit-identical GPU compute pass already delivered the high-ROI win: on the quietest pair (`B-03` vs `S-03`, load ~9–12), 400 fighting units plus an extreme synthetic stream of 200 multi-layered splash explosions per second already runs at `13.77 ms` wall p50 (~73 FPS, +16.5% over `11.82 ms` baseline), well inside a 60 FPS frame budget. Because only `1.2–1.5 ms` of the remaining multi-thread CPU delta sits inside `space-scuffle`'s effect code while the rest sits inside Bevy's render world, Mesa `radv`, and kernel scheduling scaling with drawn instance count, neither Option (c) (retained GPU cards) can reach `+0.70 ms` (+5%) nor should Option (b) degrade visual quality to chase an over-tight synthetic `+5%` stress bar.
+
+## Resolution (2026-11-19)
+
+Applied as effect visualization plan Amendment 36 and retained-instances plan Amendment 4. §10.3's stress bar is
+p50 ≤ 16.67 ms and at most +20 % p50 on a quiet host. The quietest measured pair already meets it, at +16.5 % and
+13.77 ms. B-137 is closed, and a quiet-host confirmation series is taken when the host is idle.
