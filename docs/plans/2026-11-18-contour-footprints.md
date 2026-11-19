@@ -780,3 +780,14 @@ samples by the pointer width. So the native and `wasm32` builds draw different c
 - **A routing defect:** TA*, the funnel or the mesh is wrong. Do not change routing under this note, since that
   can move battles and needs a full plan. Record the trace, the cause and a proposed fix in the evidence and in
   B-143's row, and hand back.
+
+**Result (implementation, 2026-11-19; evidence §8).** The audit found no platform-width draw in simulation code (its
+two draws are `i64`); the `usize` draws were all in `sim_map` tests. Every `gen_range` and `gen` in the simulation
+crates and `sim_fixtures` now names a fixed-width type, an index is a `u32` draw (`tests/support/draw.rs`), and
+charter check C25 holds this. Decision: the fixed-width corpus has no seeded document with unreachable starts (nor
+had the old `wasm32` one), so the validation corpus gains a walled arena that reaches check 22 by construction. The
+three pins are re-recorded (validation `0x3527_8c7f_a705_ba2c`, decode `0x4c32_25d2_ef3a_fc87`, path
+`0xa243_924f_8125_f760`, the old `wasm32` path value), each identical in native debug, native release and
+`wasm32-wasip1` release, with identical counts. B-143 is a test defect: the oracle's `smooth_length` counted a whole
+circle for a turn that sweeps nothing (three collinear corners), fixed with a deterministic regression case; routing
+is unchanged. B-140 and B-143 leave the register as fixed.
