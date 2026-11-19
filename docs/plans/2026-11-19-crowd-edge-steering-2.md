@@ -680,3 +680,40 @@ stops the WP. A slow but progressing siege is reported as rule-caused.
 
 **Housekeeping.** The prototype worktrees under `~/scratch/crowd-edge-2/` and their target directories are removed
 once WP3 is measured. WP0 deletes the three `crowd-edge-wp*-wip` side branches, as planned.
+
+## Amendment 2 (orchestrator, 2026-11-19): two survivor ranges restated; WP3 and WP4 land
+
+**Why.** WP3 stopped on `every_battle_keeps_its_recorded_outcome_on_every_seed`, which the plan's stop rules did
+not name. Two seeds of record leave the battle's survivor range without a winner flip:
+
+- **Battle 26, seed 33:** the colossi win with 2 left, against at least 4.
+- **Battle 36b, seed 22:** the marines win with 12 left, against 9 to 11.
+
+Both are traced to D-1 (evidence on `crowd-edge-2-wp3-wip`). With D-1 off, the matrix reproduces WP2 byte for byte.
+In both, a unit's walk continues where it used to step forward. This is the rule as designed. WP3 otherwise holds
+every amended stop rule:
+
+- reversals of record fall from 6,154 to 4,659, below the placebo floor;
+- give-ups are 2 / 5;
+- no overall matrix flip;
+- battle 31 on 100 runs gives blue 49 / 17 against the base's 46 / 22;
+- the showcase default seed holds;
+- seed 6's change is a slow, progressing siege.
+
+**Decision: option 1.** The two ranges are restated, each with its trace in the fixture comment, as the fixture's
+header asks.
+
+- **Battle 26** (`26_100_lings_vs_6_colossi`): red `(2, 999)`. The claim "six colossi vaporize a hundred zerglings"
+  still holds on every seed of record, and the colossi win on all four. A zergling crowd that surrounds instead of
+  retreating is closer to the game.
+  - **Watch item:** on all seeds the zerglings win seed 16 (not a seed of record) with 8 left. That is recorded in
+    the B-103 row and the evidence. If a later change makes the zerglings win a seed of record, the claim itself
+    must be re-examined, not the range widened again.
+- **Battle 36b** (`36b_marines_beat_zealots_without_storm`): red `(9, 12)`. Its range was empirical: the control's
+  recorded spread, not a StarCraft II figure.
+- **The other misses outside the seeds of record** (battle 26 seeds 4, 10 and 16; battle 33 seeds 8 and 9; battle
+  36b seed 8; battle 38a seed 2) are listed in the evidence. They are not bounds of the test.
+
+WP3 and WP4 then land from `crowd-edge-2-wp3-wip` onto `crowd-edge-2-plan`. The plan's stop rules gain one line for
+future movement plans: a seed of record leaving a battle's survivor range is a stop, like a flip, and is decided by
+amendment.
