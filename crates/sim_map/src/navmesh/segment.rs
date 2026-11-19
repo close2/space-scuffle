@@ -28,6 +28,7 @@
 
 use sim_types::{SimScalar, SimVec2};
 
+use super::cdt::NONE;
 use super::predicates::{
     point_segment_distance_sq, segments_within, LatticePoint, QPoint, LATTICE_BITS, Q_BITS,
 };
@@ -194,6 +195,94 @@ pub(crate) fn obstacle_vertices_near(
     }
     out.sort_unstable();
     out.dedup();
+}
+
+/// A point of a blocking edge near a vertex: where a gate line of the zero-room retry comes from
+/// (plan `2026-11-19-funnel-fallbacks` D-2.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NearFeature {
+    /// The edge's point nearest the vertex, in world units: exact at an edge's end and on an
+    /// axis-aligned edge, rounded towards negative infinity to the raw grid otherwise.
+    pub point: SimVec2,
+    /// Its squared distance from the vertex in raw Q32.32 units squared, rounded down.
+    pub distance_sq: i128,
+}
+
+/// The open triangles that have mesh vertex `v` as a corner, marked in `scratch` and pushed on
+/// its flood stack: the fan of `v`, walked both ways from `v`'s recorded triangle until the
+/// mesh's border or the walk closes.
+fn seed_open_fan(mesh: &NavMesh, access: &Access<'_>, scratch: &mut SegmentScratch, v: u32) {
+    let start = mesh.vertex_triangle[v as usize];
+    for turn in [next, prev] {
+        let mut t = start;
+        for _ in 0..mesh.triangles.len() {
+            let Some(i) = mesh.triangles[t as usize].iter().position(|&w| w == v) else {
+                break;
+            };
+            if access.open(t) {
+                scratch.visit(t);
+            }
+            t = mesh.adjacent[t as usize][turn(i)];
+            if t == NONE || t == start {
+                break;
+            }
+        }
+    }
+}
+
+/// The nearest points of the blocking edges that do not end at mesh vertex `v` and come
+/// closer than `reach` to it, in order of position and without repeats, into `out` (cleared
+/// first): the features across a pinch at `v` (plan `2026-11-19-funnel-fallbacks` D-2.3).
+///
+/// The flood is [`nearest_blocking_point`]'s for the point `v`, seeded in every open triangle of
+/// `v`'s fan and run to completion; it crosses open edges within `reach` of `v` (plus two Q16
+/// units) and measures each blocking edge it meets exactly. The straight line from `v` to a
+/// feature crosses only open edges nearer than it, so every feature `v` sees is listed.
+// PERFORMANCE RATIONALE:
+// Why: The zero-room retry needs the features near each vertex it rounds, and a scan of every
+// blocking edge of the mesh per vertex is linear in the mesh.
+// What: The segment predicate's flood around the vertex, bounded by `reach`.
+// Trade-off: Features hidden behind a nearer blocking edge are not listed; that edge is listed
+// instead and bounds the route there.
+pub(crate) fn blocking_features_near(
+    mesh: &NavMesh,
+    access: &Access<'_>,
+    scratch: &mut SegmentScratch,
+    (v, reach): (u32, SimScalar),
+    out: &mut Vec<NearFeature>,
+) {
+    out.clear();
+    let centre = mesh.vertex(v);
+    let (p, qv) = (centre.to_sim(), centre.to_q());
+    let reach_q = radius_q(reach).saturating_add(2);
+    let reach_sq = radius_sq_raw(reach);
+    scratch.begin(mesh.triangle_count());
+    seed_open_fan(mesh, access, scratch, v);
+    while let Some(t) = scratch.stack.pop() {
+        let corners = mesh.triangle_vertices(t);
+        for k in 0..3 {
+            let n = mesh.triangle_neighbors(t)[k];
+            let blocks = mesh.edge_blocks(t, k, |x| access.open(x));
+            if !blocks && scratch.seen(n) {
+                continue;
+            }
+            let (a, b) = (corners[next(k)], corners[prev(k)]);
+            let (u, w) = (mesh.vertex(a), mesh.vertex(b));
+            if !segments_within(qv, qv, u.to_q(), w.to_q(), reach_q) {
+                continue;
+            }
+            if !blocks {
+                scratch.visit(n);
+            } else if a != v && b != v {
+                let (point, distance_sq) = nearest_on_lattice_segment(p, u, w);
+                if distance_sq < reach_sq {
+                    out.push(NearFeature { point, distance_sq });
+                }
+            }
+        }
+    }
+    out.sort_unstable_by_key(|f| (f.point.x, f.point.y));
+    out.dedup_by_key(|f| f.point);
 }
 
 /// Where a disc touches the walls: the nearest point of the blocking edges within its radius

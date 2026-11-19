@@ -672,22 +672,21 @@ fn assert_length_near(route: &sim_map::MeshRoute, expected: f64) {
 
 /// E1 (plan §3.2): the route bends round the west face `x = 2` of a 2×2 at cell (2, 49), between
 /// the face and the map border `x = 0`, exactly `2r = 2` wide. The only legal shape runs on the
-/// pinch's tangent line `x = 1`.
+/// pinch's tangent line `x = 1`: one leg lies on `x == 1` exactly and spans the whole face,
+/// `y` from 49 to 51. (Restated with Amendment 1: without unneeded gate runs the leg's ends lie
+/// just beyond the face, at `y` 48.90 and 51.05, not on it.)
 #[test]
-#[ignore = "B-141, WP3"]
 fn an_exact_border_pinch_is_rounded_on_its_tangent() {
     let map = b141_map(&[((2, 49), (2, 2), None)]);
     let route = b141_route(&map, at(1.5, 56.5), at(3.5, 36.5), 1.0);
-    let beside: Vec<SimVec2> = route
-        .waypoints
-        .iter()
-        .copied()
-        .filter(|p| p.y >= SimScalar::from_num(49) && p.y <= SimScalar::from_num(51))
-        .collect();
-    assert!(beside.len() >= 2, "{route:?}");
+    let (low, high) = (SimScalar::from_num(49), SimScalar::from_num(51));
     assert!(
-        beside.iter().all(|p| p.x == SimScalar::ONE),
-        "waypoints beside the face off x = 1: {beside:?}"
+        route.waypoints.windows(2).any(|leg| {
+            leg.iter().all(|p| p.x == SimScalar::ONE)
+                && leg[0].y.max(leg[1].y) >= high
+                && leg[0].y.min(leg[1].y) <= low
+        }),
+        "no leg on x = 1 beside the face: {route:?}"
     );
     assert_length_near(&route, 20.272);
 }
@@ -695,7 +694,6 @@ fn an_exact_border_pinch_is_rounded_on_its_tangent() {
 /// E2 (plan §3.2): the goal sits exactly between the corner (10, 29) of a 3×2 at cell (7, 27)
 /// and the cliff edge `y = 30`, an edge of the goal triangle. The last leg runs on `y = 29.5`.
 #[test]
-#[ignore = "B-141, WP3"]
 fn a_goal_in_a_pinch_is_reached_along_the_pinch() {
     let map = b141_map(&[((7, 27), (3, 2), None)]);
     let route = b141_route(&map, at(60.5, 45.5), at(9.5, 29.5), 0.5);
@@ -712,7 +710,6 @@ fn a_goal_in_a_pinch_is_reached_along_the_pinch() {
 /// corridor `x` in `[27, 28]` between the structures at cells (25, 44) and (28, 43) is exactly
 /// one cell wide, and the route walks down its middle `x = 27.5`.
 #[test]
-#[ignore = "B-141, WP3"]
 fn a_one_wide_zigzag_is_walked_down_its_middle() {
     let map = b141_map(&[
         ((57, 52), (5, 5), None),
@@ -768,7 +765,6 @@ fn an_outside_corner_is_rounded() {
 /// face of the structure at cell (21, 49) at exactly the radius 0.5. The route must not circle
 /// that structure's corner (21.5, 49) to leave (plan D-2.2's exemption).
 #[test]
-#[ignore = "B-141, WP3"]
 fn a_start_touching_a_corner_does_not_circle_it() {
     let map = b141_map(&[
         ((21, 49), (2, 2), Some((4, 4, 2))),

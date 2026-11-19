@@ -202,3 +202,56 @@ The two pins would move to `contour_route_checksum` `0xf390_68c2_2c01_2b87` and 
 WP2's). Not re-recorded and not proven on other targets, since WP3 commits nothing; throughput not measured. The
 branch `funnel-fallbacks-wp3-wip` (`97765727`, on WP2) holds the code; its two pin tests fail by design until an
 amendment decides the run.
+
+## WP3 resumed under Amendment 1: D-2 lands
+
+**Change on top of the stopped tree** (Amendment 1, conditional gate runs): the zero-room emission records every gate
+run's end it emits, and, in route order, drops each one whose two neighbouring waypoints are joined by a leg the
+segment predicate passes for the disc (`drop_unneeded_runs`); a meeting point within a run is replaced by the run's
+end only when the neighbouring leg through it would pass within `r` of the gate's feature (`leg_needs_run`, the
+predicate's exact Q16 point test). Two arcs that share a gate (a pinch between two rounded vertices) no longer walk
+it forth and back. Measuring the new test corpus of WP4 found two more rounding cases, fixed here as part of D-2.5's
+"a run on the side of a start or goal point that lies on the gate stops at that point":
+
+- a start or goal lying on an axis gate next to its own tangent line is that line's meeting point with the gate,
+  not its rounded image (which lay 0.0002 beyond the start, towards the map border);
+- an inner waypoint closer than `ZERO_ROOM_SLACK` to the start or the goal is dropped (a rounded meeting point of a
+  line through that end, a hair beyond it).
+
+E1's test is restated test-only for Amendment 1: without unneeded runs its leg on `x == 1` ends just beyond the face
+(`y` 48.90 and 51.05), so the test asserts one leg on `x == 1` spanning the whole face instead of waypoints on it.
+
+**Fallback corpora (final tree):** 0 / 0 on the 150, 1,000 and 2,000 flush layouts (1,729 / 1,722, 11,932 / 11,838,
+23,890 / 23,717 routes), no illegal leg.
+
+**Stop rule 8 (oracle at `r − 10⁻⁵`, routes that fell back on `main`, square layouts):**
+
+| Corpus | Within 1.01 | Max ratio | Fixed shorter than the oracle |
+|---|---|---|---|
+| 150 layouts | 14 / 14 | 1.0023 | never |
+| 1,000 layouts (contains the 150) | 29 / 30 | 1.0258 (layout 563, TA*'s channel, Amendment 1) | never |
+| 2,000 flush layouts | 94 / 94 | 1.0071 | never |
+| All, distinct | **123 / 124 (99.2 %)** | 1.0258 | never (nearest 0.00075 longer) |
+
+**D-5 battle set (`~/scratch/funnel-fallbacks/wp3`): bit-identical to `main`** (matrix file, battles 31 and 33
+`seeds.csv`, showcase `units.csv` on nine seeds); reversals of record 4,659, give-ups 2 / 5, no flip. Control: with D-2
+switched off by a scratch flag the same set is identical again (it equals WP2's and `main`'s). Rules 1 to 5 hold.
+
+**Pins (rule 6), with proof headers:**
+
+| Pin | Old | New | Requests that change |
+|---|---|---|---|
+| `contour_route_checksum` | `0xc0d5_fbfd_292f_37a4` | `0xb426_7a12_8c3a_f1b1` | 2 of 1,000, class E at r 0.5, fallback to legal (95.67 → 63.46; 115.55 → 63.68) |
+| `CONTOUR_PATH_GOLDEN` | `0x6637_d70a_80d8_a859` | `0xab3f_b3c9_d6ae_df40` | 1 of 500, class E at r 1.0 under partial knowledge, fallback to legal (91.45 → 51.42) |
+
+Both new values are identical in native debug, native release, `wasm32-wasip1` release and `wasm32-wasip1` debug
+(wasmtime with the worktree mapped by `--dir`). With D-2 off the tree reproduces WP2's values, with D-2 and D-3 off
+`main`'s. `golden_replay_tests` passes unchanged in all four builds. `PATH_GOLDEN`, `VALIDATION_GOLDEN`,
+`DECODE_GOLDEN`, `EXPECTED_CHECKSUM` and `SHOWCASE_MESH_DIGEST` do not move (the `sim_map` and `sim_core` suites pass).
+
+**Rule 7 (instructions retired, `perf stat -e instructions:u`, the host still loaded):** throughput per scenario
+against `main`: +0.0004 %, −0.002 %, +0.0001 %, −0.002 %, +0.00003 %, **+0.55 %** (showcase, as in WP2), +0.0005 %;
+path-cost bench 37.48 G against 35.85 G, **+4.5 %** (WP2 +4.1 %). The retry fires in no battle.
+
+**Unit tests** (WP1's two, plan §6): `zero_room_legs_keep_the_disc_radius`, `gate_runs_keep_the_feature_across`, and
+`a_circumscribed_arc_passes_an_exact_pinch` (the diagonal pinch keeps its counted fallback, Amendment 1 point 4).

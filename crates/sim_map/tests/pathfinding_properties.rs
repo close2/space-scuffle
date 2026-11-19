@@ -121,6 +121,10 @@ fn oracle_clearance(walls: &[(i64, i64)], x: i64, y: i64) -> u8 {
     u8::try_from((16 * best.unsigned_abs()).isqrt()).unwrap_or(u8::MAX)
 }
 
+/// Fallbacks from a wedged start that `funnel_paths_are_legal_and_no_shorter_than_a_straight_line`
+/// exempted, counted across its cases.
+static WEDGED_FALLBACKS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -174,8 +178,10 @@ proptest! {
 
     /// Every returned path joins its endpoints through legal segments, and reporting is honest.
     /// A start where the disc does not fit may always be left (plan D-3), so its first leg is
-    /// held to the predicate only when the disc fits at the start; a counted fallback to portal
-    /// midpoints is exempt.
+    /// held to the predicate only when the disc fits at the start. A counted fallback to portal
+    /// midpoints is exempt only from a wedged start (plan `2026-11-19-funnel-fallbacks` §9; these
+    /// requests know every structure, so B-146's partial knowledge does not arise), and each
+    /// exempted case is counted in the test's output.
     #[test]
     fn funnel_paths_are_legal_and_no_shorter_than_a_straight_line(
         blocked in obstacle_mask(8),
@@ -194,6 +200,13 @@ proptest! {
         let found = pathfinder.find_path(&map, &request);
         // A counted fallback through portal midpoints (plan D-6, R-2) is exempt from legality.
         let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+        let start_fits =
+            pathfinder.segment_is_passable(&map, &request.into(), request.start, request.start);
+        prop_assert!(!fell_back || !start_fits, "fallback from a fitting start: {:?}", request);
+        if fell_back {
+            let exempted = WEDGED_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            eprintln!("wedged-start fallback {exempted}: {request:?}");
+        }
         if let Ok(path) = found {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
             prop_assert_eq!(path.waypoints.last(), Some(&request.goal));
