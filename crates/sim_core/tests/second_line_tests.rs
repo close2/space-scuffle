@@ -198,7 +198,7 @@ const SHOWCASE_RESIDUAL_REVERSALS: [u32; 2] = [0, 3];
 ///    and reversals per owner within the out-of-scope residual (plan
 ///    `2026-11-19-crowd-edge-steering` D-6). Attackers in range at tick 900 are reported only.
 #[test]
-#[ignore = "crowd-edge-2 WP3: 8 and 9 reversals (proposal 4 and 5, contact 4 and 4), 0 give-ups, player 1 wins at tick 1,935; R-B, R-C, R-D, the walk's start retreat and R-E open (B-103)"]
+#[ignore = "parked-body-aim WP2: 8 and 5 reversals (proposal 5 and 4, contact 3 and 1), 0 give-ups, player 1 wins at tick 2,622; R-B, R-C, R-D, the walk's start retreat and R-E open (B-103)"]
 fn showcase_crowd_edges_do_not_reverse() -> TestResult {
     let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
     let mut meter = BlockingMeter::new();
@@ -452,7 +452,6 @@ fn walkers_at_the_crowds_edge_do_not_toggle() -> TestResult {
 ///    blocking meter's test, a cosine of at least -0.3). On `bf4252cf` they were (0.126, 0) and
 ///    (-0.066, 0.108). The unit is found by owner and start position, not by entity id.
 #[test]
-#[ignore = "parked-body-aim WP1: red until WP2 lands D-1; on bf4252cf the steps are (0.126, 0) then (-0.066, 0.108)"]
 fn showcase_parked_corner_aim_does_not_flip() -> TestResult {
     let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
     let start = at(58.5, 56.5);

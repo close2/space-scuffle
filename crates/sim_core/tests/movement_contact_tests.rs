@@ -716,7 +716,6 @@ fn along(corner: SimVec2, direction: (f64, f64), offset: f64) -> SimVec2 {
 /// occupied: its proposed steps over the first 10 ticks never reverse, and it reaches its goal.
 /// On `bf4252cf` the corner was handed off on tick 2 and the proposed step reversed.
 #[test]
-#[ignore = "parked-body-aim WP1: red until WP2 lands D-1; on bf4252cf the proposed step reverses on tick 2"]
 fn a_rounding_begun_is_kept_when_the_body_walks() -> TestResult {
     let ParkedCornerScene {
         mut world,

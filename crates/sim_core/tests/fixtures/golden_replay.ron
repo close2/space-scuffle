@@ -324,6 +324,14 @@
 // from its goal, keeps walking at tick 44 where its walk used to end on the room its retreat
 // made (D-1). Proof: a scratch build of WP3 with D-1 off, `flank_retreat` unhashed and schema
 // 30 reproduces the previous checksums at every checkpoint.
+// Re-recorded for plan 2026-11-19-parked-body-aim WP2 (B-145): checkpoint 6 (ticks 251 to 300)
+// first changed. Entity 34 ("red_siege") rounds entity 35, parked on its corner; at tick 273
+// entity 35 starts to walk and entity 34 keeps rounding it where it used to turn back to the
+// corner (D-1). Its hashed state differs on that tick and its pose from tick 282; the two runs
+// meet again by tick 350 (checkpoint 7 unchanged) and part for good at tick 352, where entity 34
+// holds a rounding of entity 33 (checkpoints 8 to 20 changed). Over the replay a rounding is held
+// by a walking body on 70 unit-ticks (entity 34 on 4, entity 35 on 66). Proof: a scratch build
+// with `rounding` forced false reproduces the previous checksums at every checkpoint.
 (
     checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
@@ -356,20 +364,20 @@
         0xe90b33fd925756d9,
         0xd708959a99a9640d,
         0x72860ae262f456fa,
-        0x89c71afb2f658532,
+        0xc7b0baee18235426,
         0xcdf61288b15f9174,
-        0x9e91aaac82b69404,
-        0xadbed1ed05f287de,
-        0x21bacecca067bdeb,
-        0x268cd7cfde896214,
-        0xf89c2dfa7aa05321,
-        0xbdaee2d8de7bc832,
-        0x8585dcf19795560a,
-        0x50fd6bb13994705e,
-        0xeccde5435d341db3,
-        0x51db11382f73cbed,
-        0x780a27f319f2e690,
-        0x8e3fb7d7654bf26a,
-        0x38062afe5ca87b2d,
+        0x499485940f22cbe7,
+        0xdd70fb730a442bb7,
+        0xbdfe7dede23e9eb3,
+        0x86e9e8a15d0a3b10,
+        0x7c30c34c9aeff751,
+        0xb021e89bc4102b7a,
+        0x651d01b332b74d2e,
+        0xf8f6f36529282c01,
+        0x90a63229e77f859a,
+        0x0906bb1019769484,
+        0x854b8b397cada31b,
+        0x766923c90a01550b,
+        0xf4e76e26caed3b92,
     ],
 )

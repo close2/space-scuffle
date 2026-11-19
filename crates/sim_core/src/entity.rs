@@ -254,7 +254,9 @@ pub struct MovementMemory {
     /// Sense in which this unit rounds a body parked on its next corner: `1` counter-clockwise
     /// round the body, `-1` clockwise, `0` none chosen. Chosen when the unit first aims past the
     /// body and kept until the corner is passed or the route replaced, so the unit does not swap
-    /// sides while it rounds the body (plan `2026-11-09-sc2-pathfinding` D-9 A3).
+    /// sides while it rounds the body (plan `2026-11-09-sc2-pathfinding` D-9 A3). While it is
+    /// set, the decision to round is held too: any non-yielding body touching the corner, moving
+    /// or not, keeps the unit rounding it (plan `2026-11-19-parked-body-aim` D-1).
     pub corner_round: i8,
     /// Whether this unit is walking round a crowd that blocks its way to its goal, on the side
     /// `flank_left` keeps (the surround walk, plan `2026-11-09-friendly-blocking` D-2).
