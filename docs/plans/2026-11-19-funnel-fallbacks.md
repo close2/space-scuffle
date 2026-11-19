@@ -658,3 +658,40 @@ comes from TA*'s channel choice, not from the funnel. It is reported and counts 
 3. Throughput on a loaded host is judged on instructions retired per scenario. A wall-clock run on a quiet host
    stays an open confirmation item, not a blocker.
 4. WP1's two unit tests land with WP3. The diagonal exact pinch keeps its counted fallback, as plan §9 anticipated.
+
+## Amendment 2 (orchestrator, 2026-11-19): the zero-room arcs are bisected to a derived bound; the exact-fit test uses rule 8's measure
+
+**Why.** WP4's `exact_fit_routes_agree_with_the_oracle` agrees with the oracle on existence for all 293 routes,
+with no fallback, no illegal leg and none shorter. But only 128 of the 159 zero-room routes come within 1.01; the
+worst is 1.049.
+
+The cause is the arc bisection. A corner whose arc is bisected only above an eighth of a turn is emitted as a
+circumscribed polygon. That polygon's length is `tan(θ/2)/(θ/2)` times the arc:
+
+| Turn per segment | Length factor |
+|---|---|
+| 1/8 | 1.0548 |
+| 1/16 | 1.0130 |
+| 1/32 | 1.0032 |
+
+A route of many consecutive corners therefore exceeds the oracle's 1.01 by construction.
+
+**Decision.**
+
+1. **The bisection bound is derived, not tuned.** In the zero-room retry only, the arc is bisected until each
+   segment spans at most the largest power-of-two fraction of a turn whose circumscribed factor is at most the
+   oracle bound 1.01. That is 1/32 of a turn. The derivation goes in the code's rationale block and in a unit test
+   that computes it.
+   - The other pulls are unchanged, so every route that is legal today keeps its bytes. Battles stay bit-identical,
+     and the controls must show it.
+   - Re-measure all four corpora and re-pin with proof headers on all four builds.
+2. **The test is restated on stop rule 8's measure,** applied to every route that only an exact fit allows:
+   - at least 95 % within 1.01;
+   - none beyond `MESH_RATIO_BOUND`;
+   - none shorter than the oracle;
+   - existence agrees on every pair.
+   Telling the retry's routes apart in the test may use a test-visible `MeshRoute` flag, if one is needed and
+   documented.
+3. **Trace whatever is still above 1.01** after item 1 (six routes were at 1.018 to 1.045 with a sixteenth turn).
+   Record each trace in the evidence, and classify each as the TA* channel choice or a defect. A defect is a stop.
+4. Then WP5.
