@@ -91,7 +91,14 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// zero-room pinch on the showcase under partial knowledge, r 1.0, (34.5, 23.5) -> (50.0, 47.5),
 /// which fell back to the portal midpoints (91.45 long) and is now legal (51.27). The new value
 /// is the same in native debug and release and in `wasm32-wasip1` release and debug.
-const CONTOUR_PATH_GOLDEN: u64 = 0x36ff_bf4b_e967_0683;
+///
+/// Re-recorded for plan `2026-11-19-partial-knowledge-funnel` WP2 (D-1, D-4, D-5; before,
+/// `0x36ff_bf4b_e967_0683`, which the tree reproduces with the rules switched off). 43 of the 500
+/// requests change, all under partial knowledge: 12 fallbacks become legal routes, one wedged-start
+/// fallback falls back through another channel's midpoints, and 30 legal routes get shorter (least
+/// 0.913, median 0.9989); none gets longer and none starts to fall back. The new value is the
+/// same in native debug and release and in `wasm32-wasip1` release and debug.
+const CONTOUR_PATH_GOLDEN: u64 = 0x01f9_a949_e9c0_77ef;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;
@@ -132,7 +139,14 @@ const DECODE_GOLDEN: u64 = 0x4c32_25d2_ef3a_fc87;
 /// value is the one `wasm32-wasip1` already produced on the old corpus, since `rand` drew that
 /// `usize` as a `u32` there: routing never differed, the corpus did. Native debug, native
 /// release and `wasm32-wasip1` release produce this same value.
-const PATH_GOLDEN: u64 = 0xa243_924f_8125_f760;
+///
+/// Re-recorded for plan `2026-11-19-partial-knowledge-funnel` WP2 (D-1 free portal vertices
+/// pulled as points, D-4, D-5; before, `0xa243_924f_8125_f760`, which the tree reproduces with
+/// the rules switched off). 49 of the 500 requests change, all under partial knowledge: 11
+/// fallbacks become legal routes (2 from wedged starts), and 38 legal routes get shorter (least
+/// 0.823 of their length, median 0.9967); none gets longer and none starts to fall back. The new
+/// value is the same in native debug and release and in `wasm32-wasip1` release and debug.
+const PATH_GOLDEN: u64 = 0x254e_64e8_49c1_5bd2;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {

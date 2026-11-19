@@ -768,3 +768,99 @@ proptest! {
         }
     }
 }
+
+/// Side of the maps of `free_vertices_carry_no_circle`, in cells.
+const KNOWLEDGE_SIDE: u32 = 24;
+
+/// A flat `KNOWLEDGE_SIDE`² map with the full-square structures `structures` (`(x, y, size,
+/// known)`) placed where they fit, and the known-structure mask that knows the cells of the
+/// placed structures marked known.
+fn knowledge_map(
+    structures: &[(u32, u32, u8, bool)],
+) -> Result<(GameMap, Vec<bool>), TestCaseError> {
+    let side = KNOWLEDGE_SIDE;
+    let mut map = GameMap::new(side, side, MapCell::default_ground(CliffLevel(1)))
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+    let mut known = vec![false; (side * side) as usize];
+    for (id, &(x, y, size, is_known)) in (50_000_u32..).zip(structures) {
+        let footprint = sim_map::StructureFootprint::square(size, size);
+        // A refused placement leaves the map as it was.
+        if map
+            .place_structure(sim_types::EntityId(id), (x, y), footprint)
+            .is_ok()
+            && is_known
+        {
+            for cy in y..y + u32::from(size) {
+                for cx in x..x + u32::from(size) {
+                    known[(cy * side + cx) as usize] = true;
+                }
+            }
+        }
+    }
+    Ok((map, known))
+}
+
+/// Whether the cell corner `(x, y)` lies at least `rho` from every obstacle of the request: the
+/// map border and every cell of a known structure. Such a corner of an unknown structure is a
+/// free vertex that no clamp or kept circle concerns (plan `2026-11-19-partial-knowledge-funnel`
+/// D-2, D-3): it bounds nothing within the disc's clearance.
+fn clear_of_obstacles(known: &[bool], (x, y): (i32, i32), rho: f64) -> bool {
+    let side = f64::from(KNOWLEDGE_SIDE);
+    let (px, py) = (f64::from(x), f64::from(y));
+    let border = px.min(py).min(side - px).min(side - py);
+    border >= rho
+        && (0..KNOWLEDGE_SIDE * KNOWLEDGE_SIDE)
+            .filter(|&i| known[i as usize])
+            .all(|i| {
+                let (cx, cy) = (f64::from(i % KNOWLEDGE_SIDE), f64::from(i / KNOWLEDGE_SIDE));
+                let dx = (cx - px).max(0.0).max(px - (cx + 1.0));
+                let dy = (cy - py).max(0.0).max(py - (cy + 1.0));
+                dx.hypot(dy) >= rho
+            })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// Plan `2026-11-19-partial-knowledge-funnel` D-1: under partial knowledge (half the
+    /// structures unknown) every route is legal or a counted fallback, and a turn at a free
+    /// vertex that lies at least `rho` from every obstacle is a point bend: the vertex itself is
+    /// a waypoint, once, where a rounded vertex's waypoints all lie on its circle.
+    #[test]
+    fn free_vertices_carry_no_circle(
+        structures in vec((0_u32..KNOWLEDGE_SIDE - 4, 0_u32..KNOWLEDGE_SIDE - 4, 1_u8..5, proptest::bool::ANY), 2..10),
+        start in (0..KNOWLEDGE_SIDE, 0..KNOWLEDGE_SIDE),
+        goal in (0..KNOWLEDGE_SIDE, 0..KNOWLEDGE_SIDE),
+        tier_index in 0_u8..3,
+    ) {
+        let (map, known) = knowledge_map(&structures)?;
+        let mut pathfinder = Pathfinder::new(&map);
+        let request = PathRequestWithVision {
+            known_structures: Some(&known),
+            ..mesh_request(centre(start.0, start.1), centre(goal.0, goal.1), tier(tier_index))
+        };
+        let Ok(route) = pathfinder.find_route_mesh(&map, &request) else {
+            return Ok(());
+        };
+        prop_assert!(
+            route.fallback || route_is_legal(&mut pathfinder, &map, &request, &route.waypoints),
+            "illegal route {:?}", route
+        );
+        if route.fallback {
+            return Ok(());
+        }
+        let rho = f64::from((request.radius + CORNER_SAFETY_MARGIN).to_f32());
+        for &(corner, _) in &route.turns {
+            let (x, y) = (corner.x, corner.y);
+            if x % 4 != 0 || y % 4 != 0 || !clear_of_obstacles(&known, (x / 4, y / 4), rho) {
+                continue;
+            }
+            let vertex = corner.to_sim();
+            prop_assert_eq!(
+                route.waypoints.iter().filter(|&&w| w == vertex).count(),
+                1,
+                "the free turn {:?} is not a point bend: {:?}", vertex, route
+            );
+        }
+    }
+}

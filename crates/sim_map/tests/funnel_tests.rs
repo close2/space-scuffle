@@ -859,7 +859,6 @@ fn pkf_route(
 /// route is as long as the prototype's (before the plan, r 0.75 rounded five lattice points and
 /// was 20.898 long).
 #[test]
-#[ignore = "B-146, WP2"]
 fn a_route_crosses_an_unknown_footprint_without_zigzag() {
     let layout = pkf_map(
         24,
@@ -891,7 +890,6 @@ fn a_route_crosses_an_unknown_footprint_without_zigzag() {
 /// one cell from the known face `x = 11` is no pinch: the route takes the full margin round the
 /// known structure (before the plan, the zero-room retry zigzagged between the two, 10.274).
 #[test]
-#[ignore = "B-146, WP2"]
 fn an_unknown_neighbour_makes_no_pinch() {
     let layout = pkf_map(
         24,
@@ -905,7 +903,6 @@ fn an_unknown_neighbour_makes_no_pinch() {
 /// N3 (plan §3.4): an unknown 3×3 at (12, 8), one cell east of a known 3×3 at (8, 8). The gap is
 /// open ground beside an unknown structure, not a pinch: one turn, at the known corner (11, 8).
 #[test]
-#[ignore = "B-146, WP2"]
 fn open_ground_is_not_a_gap() {
     let layout = pkf_map(
         24,
@@ -949,7 +946,6 @@ fn a_free_end_inside_the_clearance_is_clamped_out() {
 /// clearance of r 0.75 and 1.0. The disc cannot pass between them, so the route passes the free
 /// corner on its far side and turns at no anchor there (before the plan it fell back).
 #[test]
-#[ignore = "B-146, WP3"]
 fn a_free_end_across_a_narrow_portal_is_passed_on_its_far_side() {
     // Row-major from the structure's top-left cell (30, 45): the corpus's knowledge draw.
     const KNOWN: [bool; 25] = [

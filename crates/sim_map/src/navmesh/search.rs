@@ -23,6 +23,10 @@
 //!   index order, so the result is a pure function of the mesh and the request.
 //! - The start triangle is entered whatever its width (D-3); every later triangle passed through
 //!   must admit the disc between its entry and exit edges.
+//! - A vertex at which no edge blocks the request (a free vertex, such as a corner of a structure
+//!   the request does not know) bounds nothing: the width test treats it as unbounded, the funnel
+//!   pulls it as a point, and the fitted retry's channel width leaves it out (plan
+//!   `2026-11-19-partial-knowledge-funnel` D-1, D-5).
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -859,7 +863,8 @@ fn route(
 
 /// The narrowest width of the channel `portals`, in cells squared: the least distance between
 /// an obstacle on its left and one on its right. Left obstacles are the portals' left vertices
-/// and the blocking edges of channel triangles on the left; right obstacles likewise. The
+/// that block the request (a free vertex bounds nothing, plan `2026-11-19-partial-knowledge-funnel`
+/// D-5) and the blocking edges of channel triangles on the left; right obstacles likewise. The
 /// triangle corner widths TA* tests (Demyen and Buro, D-4) can miss a pair that lies in two
 /// different triangles, such as a structure's face across from a long wall edge (plan
 /// `2026-11-18-contour-footprints` Amendment 1), so the retry measures the pairs themselves. The
@@ -908,8 +913,17 @@ fn channel_width(query: &Query<'_>, portals: &[(u32, u32)]) -> SquaredWidth {
             }
         }
     }
-    let left: Vec<LatticePoint> = portals.iter().map(|&(l, _)| mesh.vertex(l)).collect();
-    let right: Vec<LatticePoint> = portals.iter().map(|&(_, r)| mesh.vertex(r)).collect();
+    let obstacle = |v: u32| mesh.vertex_blocks(v, |u| query.access.open(u));
+    let left: Vec<LatticePoint> = portals
+        .iter()
+        .filter(|&&(l, _)| obstacle(l))
+        .map(|&(l, _)| mesh.vertex(l))
+        .collect();
+    let right: Vec<LatticePoint> = portals
+        .iter()
+        .filter(|&&(_, r)| obstacle(r))
+        .map(|&(_, r)| mesh.vertex(r))
+        .collect();
     let mut width = SquaredWidth::UNBOUNDED;
     for &l in &left {
         for &r in &right {

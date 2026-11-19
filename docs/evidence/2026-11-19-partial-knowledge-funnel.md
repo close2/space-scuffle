@@ -44,3 +44,162 @@ The golden counting test shares each corpus's generator with its digest test (`p
 `contour_path_corpus`); both digests are unchanged by that refactor. The unit tests `free_vertices_are_points` and
 `the_clamp_clears_every_disc` exercise the free list and the clamp, which do not exist before WP2 and WP3; they land
 with those work packages.
+
+## How to reproduce
+
+The measurement tree is the implementation with a scratch patch, never committed
+(`~/scratch/pkf/impl/measure.diff` for WP2, `measure3.diff` for WP3): environment switches that turn each rule off
+(`PKF_OFF_D1`, `PKF_OFF_D2`, `PKF_OFF_D3`, `PKF_OFF_D5`, all at once with `PKF_OFF=1`), the planner's per-request
+probes (`PKF_PROBE`: a fallback's class and anchors; `PKF_LOG`: one line per routed request), and the planner's
+scratch tests (`zz_pkf_corpus.rs`, `zz_pkf_probe.rs`) with funnel-fallbacks' all-known corpus
+(`zz_b141_probe.rs`), copied to `~/scratch/pkf/impl/`. `~/scratch/pkf/impl/variant.sh <tag> [env…]` runs every
+`sim_map` corpus of D-8 for one variant; `cmpcorpus.py` compares two layout corpora route by route. The battle set is
+the planner's `~/scratch/pkf/scripts/measure.sh` with release `matchup_trace` and `route_trace` built from the
+measurement tree, compared with `summary.py` against the planner's base (`~/scratch/pkf/base`, `main`'s code at
+`3c2f4c65`; `bf4252cf`, this branch's base, differs from it in documents only). Throughput is the bench with a scratch
+`BENCH_ONLY=<index>` switch (`bench-only.diff`), built from `main` and from each work package's tree without the
+measurement patch, under `perf stat -e instructions:u`.
+
+**Control.** With every rule off (`PKF_OFF=1`) the measurement tree reproduces `main` exactly: both path digests
+(`PATH_GOLDEN`, `CONTOUR_PATH_GOLDEN`), every per-request line of both golden corpora, the layout corpora (fitting-start
+fallbacks 11, 14, 17, 32; oracle 1,711 of 1,809 within 1.01, worst 1.3959), the stress search (496), and the battle
+set byte for byte (`matrix.csv`, battle 33 and battle 31 `seeds.csv`, the showcase `units.csv` on all nine seeds).
+
+## WP2: D-1, D-4 and D-5
+
+**Change.** `funnel.rs`: the free list (`FunnelScratch::free`, sorted, filled once per `radius_funnel` call over the
+distinct portal and end-triangle vertices); `sigma`, `tangent` and the emission read it, so a free vertex is a point,
+emitted once with no arc and no gate; `shrink` takes per-end flags; `deepest_violation` skips free candidates.
+`search.rs`: `channel_width` keeps only portal vertices that block the request. The two path pins move; with the rules
+off the tree reproduces the old values.
+
+**Path pins.** `PATH_GOLDEN` `0x254e_64e8_49c1_5bd2`, `CONTOUR_PATH_GOLDEN` `0x01f9_a949_e9c0_77ef`, the same values as
+the prototype's D-1 and D-5 switches. Re-recorded in this WP with proof headers (the four builds below).
+
+**Golden corpora** (the expectation is the plan's §4.2 "D-1 alone" row):
+
+| Corpus | Fallbacks | Fitting-start | Wedged (free anchor) | New fallbacks | Changed: fallback → legal | Legal → legal shorter / longer |
+|---|---|---|---|---|---|---|
+| `CONTOUR_PATH_GOLDEN`, `main` | 21 | 13 | 8 (5) | — | — | — |
+| `CONTOUR_PATH_GOLDEN`, WP2 | 9 | 2 | 7 (2) | 0 | 12 (and 1 wedged fallback → fallback) | 30 (least 0.913, median 0.9989) / **0** |
+| `PATH_GOLDEN`, `main` | 13 | 8 | 5 (3) | — | — | — |
+| `PATH_GOLDEN`, WP2 | 2 | 0 | 2 (0) | 0 | 11 | 38 (least 0.823, median 0.9967) / **0** |
+
+Every changed request is under partial knowledge.
+
+**Partial-knowledge layouts (§4.3), fitting-start fallbacks:** whole-structure squares 11 → 0, contours 14 → 1;
+per-cell squares 17 → 4, per-cell contours 32 → 10. **New against `main`:** 0, 0, 2 (layouts 71 q 4 and 143 q 6,
+r 1.0) and 5 (layouts 67 q 6, 128 q 3, 128 q 14, 134 q 6, 145 q 5). **Stress search:** 496 → 29 fallbacks, 10 new.
+The all-known corpora stay at 0 (150 layouts: 1,729 and 1,722 routes; 1,000: 11,932 and 11,838; 2,000 flush: 23,890
+and 23,717).
+
+**Reading against rule 9.** The new per-cell and stress fallbacks are those of D-1 without D-2 and D-3: a free end
+pulled as a point inside an obstacle's clearance (the plan's §4.2 and §4.3 measured D-1 with the swallow variants,
+which had 8 new stress fallbacks; D-2 and D-3 are the plan's answer to them). The plan gives no "D-1 alone" figure for
+the layouts or the stress search, so WP2 is judged on the golden corpora's row (met: 0 new, 2 and 0 fitting-start
+fallbacks) and every new fallback is carried to WP3, which must remove them (the WP3 tree does: 0 of the 7 layout and 0 of the 10
+stress fallbacks remain new except the plan's 2 named ones and one per-cell case the plan's own prototype has, see the
+WP3 stop below). **Flagged for the
+orchestrator:** the WP2 tree on its own adds 7 layout fallbacks and 10 stress fallbacks that `main` did not have.
+
+**Oracle (§4.4's corpus):** 1,805 of 1,820 within 1.01 (99.2 %), worst 1.1343, none shorter than the oracle. Against
+`main` 235 routes get shorter and 2 longer, by 0.38 % (layout 86 q 10, r 0.5, (4.5, 40.5) → (49.5, 0.5),
+65.521 → 65.773) and 0.04 % (layout 8 q 6, r 0.5, (46.5, 25.5) → (40.5, 61.5), 46.379 → 46.397). **Traces:** both
+take another channel. Layout 86 q 10 turns at (30, 34) on `main` and at (30, 34), (34, 30) and (41, 20) with D-1;
+layout 8 q 6 passes (35, 29) on its left on `main` and on its right with D-1 (147 expansions against 336). D-1 changes
+the funnel lengths of the channels TA* compares, so its incumbent and the anytime budget's cut-off change; the
+channel `main` took is not reached within the budget. This is B-149's class (TA*'s budget), within rule 8's 0.5 %.
+
+**Battles.** The matrix (1,160 runs), battle 33 (68 runs), battle 31 (100 runs) and the showcase on nine seeds are
+**bit-identical** to the base (`matrix.csv`, `seeds.csv`, `units.csv` on every seed): no winner flips, reversals of
+record 4,659, give-ups 2 of record and 5 over all seeds, showcase 174 reversals. The control build (`PKF_OFF=1`) is
+bit-identical too. Rules 1 to 5 hold.
+
+**Path-search cost** (§4.6's corpus: the 150 partial-knowledge layouts, whole-knowledge squares and contours and
+per-cell contours, one release binary of the measurement tree, `perf stat -e instructions:u`):
+
+| Variant | Squares | Contours | Per-cell contours | Total | Against `main` |
+|---|---|---|---|---|---|
+| `main` (`PKF_OFF=1`) | 20.61 G | 33.68 G | 41.10 G | 95.39 G | — |
+| WP2 (D-1, D-4, D-5) | 11.56 G | 12.99 G | 18.71 G | 43.26 G | −54.6 % |
+| WP3 tree (D-1 to D-5) | 12.38 G | 14.49 G | 19.98 G | 46.85 G | −50.9 % |
+
+Rule 7's path-cost bound (no worse than `main` by more than 10 %) holds.
+
+**Pins, four builds.** With `PATH_GOLDEN` `0x254e_64e8_49c1_5bd2` and `CONTOUR_PATH_GOLDEN` `0x01f9_a949_e9c0_77ef`,
+`validation_golden_tests` passes in native debug, native release, `wasm32-wasip1` release and `wasm32-wasip1` debug
+(runner `wasmtime --dir=<worktree>`); `VALIDATION_GOLDEN` and `DECODE_GOLDEN` are unchanged.
+
+**Tests.** N1, N2, N3 and the far-side case are un-ignored (the far-side case passes with D-1 alone, as the prototype
+showed, so it lands here rather than in WP3); `free_vertices_are_points` (unit) and the proptest
+`free_vertices_carry_no_circle` (64 cases, 24 × 24 maps, two to nine full-square structures each known at random) are
+added. The proptest's property is that a turn at a free vertex at least `rho` from every obstacle (the border and every
+known structure cell) is emitted as the vertex itself, once; the plan's "no waypoint strictly inside `rho` of a free
+anchor" would also catch another obstacle's arc points passing near a free corner, which is legal, so it is not used.
+On `main`'s funnel (the prototype with its switches off) the proptest fails on its first case.
+
+## WP3 stopped: the clean `Anchor::Pass` costs one stress-search route (trace and proposed amendment)
+
+The WP3 tree (D-2, D-3, `Anchor::Pass` as the plan's §5 D-2 states it) is kept on the side branch
+`partial-knowledge-funnel-wp3-wip`, not committed here (stop rule 9 and the hand-back rule).
+
+**What the WP3 tree measures** (D-1 to D-5; the plan's "adopted" row is the expectation):
+
+| Measure | Plan (prototype) | WP3 tree | Rule |
+|---|---|---|---|
+| `PATH_GOLDEN`, `CONTOUR_PATH_GOLDEN` | `0x4062_b0b6_83dd_1afb`, `0x1da8_6365_bcbd_3b37` | the same | — |
+| Golden fallbacks, fitting-start / wedged (free) | 0 / 3 (1); 0 / 6 (2) | the same | 9: met |
+| Golden changed routes longer | 0 | 0 | 8: met |
+| Layouts, fitting-start fallbacks (squares, contours, per-cell squares, per-cell contours) | 0, 1, 1, 5 | 0, 1, 1, 5 | 9: met |
+| Layouts, new against `main` | 0 (§4.3 does not list any) | 1: per-cell contours layout 58 q 13 (the prototype has it too) | 9 first bullet: see finding 2 |
+| Stress search fallbacks (new) | 10 (2) | **11** (2, the plan's named ones) | 9: **at most 10, breached** |
+| Oracle within 1.01 / worst / shorter | 1,804 of 1,820 / 1.134 / 0 | 1,804 of 1,820 / 1.1343 / 0 | 8: met |
+| All-known corpora | 0 | 0 on 150, 1,000 and 2,000 flush layouts | 9: met |
+| Battles (matrix, battle 33, battle 31, showcase nine seeds) | bit-identical | bit-identical to the base | 1 to 5: met |
+
+**Finding 1 (the stop).** The eleventh stress fallback is K2/U4 offset (1, 1), r 0.75, (8.5, 8.5) → (20.5, 20.5)
+(known 3 × 3 contour `6, 6, 3` at (10, 10), unknown 5 × 5 contour `10, 10, 6` at (13, 11), flat 28 × 28 map). It
+falls back on `main` too, so it is not new; the prototype routes it legally through the zero-room retry (18.29,
+waypoints round (12.25, 10), (13, 10.75), (13, 12.25)). The difference is the plan's clean form of D-2: a clamped
+free end is an `Anchor::Pass`, which `approached_at_an_end` does not take for an end, where the prototype marked it
+`Anchor::Point`. In the zero-room pulls that exemption covers every candidate (funnel-fallbacks D-2.2), so the clean
+form inserts a vertex the prototype skipped there, and the last retry fails. Traced by switching: treating `Pass` as
+an end in `approached_at_an_end` alone restores the plan's 10 (and leaves both pins, the per-cell layouts and the
+golden corpora unchanged); treating it as an end in `emit_zero_room`'s inside test alone does not (11).
+
+**Finding 2 (a plan inconsistency, not caused by the implementation).** Rule 9's first bullet says no request of the
+§4.3 layouts falls back that did not on base, but the plan's adopted prototype (`~/scratch/pkf/v-clampnear`) has one
+such request, per-cell contours layout 58 q 13, r 0.9375, (42.5, 44.5) → (52.5, 7.5), and the WP3 tree reproduces it.
+Class: no free anchor; the route's anchors are R(36.5, 37), a clamped point (37.29, 36.41), L(34, 34) and L(34, 30):
+the clamp moves a free portal end next to (36.5, 37), and no pull with a margin, nor the zero-room retry, passes the
+segment predicate there. `main` routes it legally. It is R-2's class (a clamped point leaves no legal pull).
+
+**Finding 3 (the clamp's ties).** Plan D-2 says ties of `|t|` go "to the positive", D-7 that the candidates are
+sorted by `(|t|, t)` (ties to the negative); the prototype sorts by `|t|` stably, in the flood's vertex order with each
+disc's positive exit first. Exact ties occur on the lattice. Measured: "positive first" moves two golden requests
+(one wedged fallback, and one legal route 41.143 → 41.114), raises the per-cell contour layouts to 6 fitting-start
+fallbacks and the stress search to 11; `(|t|, t)` gives 6 and 2 fitting-start per-cell fallbacks and 12 stress
+fallbacks. The WP3 tree uses the prototype's order, documented on `clamp`, which reproduces the plan's pins and
+figures.
+
+**The other WP3 measures.** D-3 off (D-1, D-2, D-5): one golden request starts to fall back (`CONTOUR_PATH_GOLDEN`,
+75.77 → fallback), one golden route gets 0.48 % longer, per-cell contour layouts gain 3 new fallbacks, stress search 8
+fallbacks with 3 new. D-2 off (D-1, D-3, D-5): per-cell contours 7 fitting-start fallbacks (1 new), stress 21 (4 new).
+So D-3 and D-2 each remove new fallbacks the other leaves, as the plan measured; the decision to keep D-3 holds. The
+other new stress fallbacks of WP2 are gone; the remaining stress residuals are flush contour pairs where the route
+must pass between a known contour's chamfer and an unknown one (all class N), the 2 new ones the plan's named
+K2/U1 (1, 0) r 0.75 and K2/U4 (1, 1) r 0.75 (7.5, 12.5) → (22.5, 13.5). Unit test `the_clamp_clears_every_disc`
+passes (1,800 seeded ends at the nine shipped radii); N4 routes in 15.510 and the far-side case passes;
+`golden_corpora_fall_back_only_from_wedged_starts` passes.
+
+### Proposed amendment
+
+1. **D-2's anchor kind.** `Anchor::Pass` is an end for `approached_at_an_end` (the exemption from rounding a candidate
+   that comes nearest a leg at that leg's end), as the prototype's point was; it stays no end for `emit_zero_room`'s
+   inside test and for `MeshRoute::turns`. Measured: every figure of the plan's adopted row, both pins. Or, if the
+   orchestrator prefers the plan's text as written, raise rule 9's stress bound to 11 with this route named (it
+   falls back on `main` too).
+2. **Rule 9's first bullet** names layout 58 q 13 (per-cell contours) as an accepted residual of the adopted design,
+   traced above, or the plan says what removes it.
+3. **D-2 and D-7's tie rule** read: candidates sorted stably by `|t|`, in the order of the obstacle vertices by index
+   with each disc's positive exit first.
