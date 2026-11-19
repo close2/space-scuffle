@@ -262,13 +262,20 @@ pub struct MovementMemory {
     /// Whether the surround walk has already turned back once, its first side having closed.
     pub flank_reversed: bool,
     /// Whether the surround walk has ended without a way in (both sides closed, or a full circle
-    /// walked); the unit then waits until its way forward opens, its goal changes or
-    /// `FLANK_RETRY_TICKS` pass (D-3, plan Amendment 4).
+    /// walked); the unit then waits until its way forward opens, the side that closed last opens
+    /// for a whole step (a walk spent by closed sides only), it gains ground, or its goal changes
+    /// (plan `2026-11-19-crowd-edge-steering-2` D-2).
     pub flank_spent: bool,
     /// Consecutive ticks the surround walk's side has been closed (`FLANK_REVERSE_TICKS`).
     pub flank_blocked_ticks: u16,
     /// Distance walked round the crowd on this walk, in world units.
     pub flank_walked: SimScalar,
+    /// Distance the surround walk has stepped back from its goal since it last became active, in
+    /// world units: the sum of each walk step's backward part along the way in. A walk in
+    /// progress ends only when the straight way in is free for a step plus this distance, so it
+    /// does not end on the room its own retreat made (plan `2026-11-19-crowd-edge-steering-2`
+    /// D-1). Cleared when the unit steps forward, when the walk ends and on a new order.
+    pub flank_retreat: SimScalar,
     /// The target the surround walk approaches; `None` for an attack-move without one. A walk
     /// for another goal starts afresh.
     pub flank_target: Option<EntityId>,

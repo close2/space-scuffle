@@ -865,7 +865,14 @@
         // searches across the attack (liberty EffectData:2373-2412), a band 2.8 long, where the
         // stand-in circle reached 3.0 around the target. The colossi still win every seed, but the
         // fight lasts about 313 ticks instead of 89, and on 2 of 20 seeds the zerglings kill two.
-        expect: (blue: (0, 0), red: (4, 999)),
+        // Restated for plan 2026-11-19-crowd-edge-steering-2 Amendment 2 (B-103, D-1: a surround
+        // walk does not end on the room its own retreat made): the zerglings surround instead of
+        // stepping back and forth at the crowd's edge. On seed 33 (of record) zergling entity 91's
+        // walk goes on at tick 2 where it used to step forward; the colossi still win, with 2 left
+        // (4 before). They win every seed of record. Watch item: over the matrix's 20 seeds the
+        // zerglings win seed 16 (not of record) with 8 left; should they win a seed of record, the
+        // claim itself is re-examined, not this range widened again.
+        expect: (blue: (0, 0), red: (2, 999)),
     ),
     (
         name: "27_100_lings_vs_8_ultralisks",
@@ -1103,6 +1110,10 @@
     ),
     // Control of 36a (plan 2026-11-10-spellcaster-mechanics §10.2): no cast. The marines win on all
     // 20 matrix seeds with 9 to 11 left (1, 8 and 11 seeds), ending on ticks 345 to 368.
+    // Restated for plan 2026-11-19-crowd-edge-steering-2 Amendment 2 (B-103, D-1): on seed 22 (of
+    // record) marine entity 8 keeps walking at tick 118 where it used to step forward, and the
+    // marines win with 12 left (11 before); the range was the control's measured spread, not a
+    // StarCraft II figure.
     (
         name: "36b_marines_beat_zealots_without_storm",
         claim: "Control of 36a: without the storm the same marines beat the zealots and the High Templar analogue",
@@ -1122,7 +1133,7 @@
             ],
             order: AttackMove(46, 45),
         ),
-        expect: (blue: (0, 0), red: (9, 11)),
+        expect: (blue: (0, 0), red: (9, 12)),
     ),
     // Battles 37a/37b (plan 2026-11-10-spellcaster-mechanics §10.2, Amendment 6): Abduct's own
     // effect. Two sieged tanks 6 apart hold behind four marines; the Viper analogue waits on the

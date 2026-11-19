@@ -317,8 +317,15 @@
 // behind such a friend is not stalled (D-4); its pose first differs at tick 397, where it no
 // longer drops its route for a stall repath. Proof: a scratch build of WP4 with D-4 off
 // reproduces the previous checksums at every checkpoint.
+// Re-recorded for plan 2026-11-19-crowd-edge-steering-2 WP3 (B-103, checksum schema 30 -> 31):
+// each unit's movement memory now holds its surround walk's retreat (`flank_retreat`, hashed),
+// so every checkpoint changed. Behaviour changed too: checkpoint 1 (ticks 1 to 50) first
+// changed; entity 30, attack-moving at (43.50, 49.71) with a walk that has stepped back 0.1727
+// from its goal, keeps walking at tick 44 where its walk used to end on the room its retreat
+// made (D-1). Proof: a scratch build of WP3 with D-1 off, `flank_retreat` unhashed and schema
+// 30 reproduces the previous checksums at every checkpoint.
 (
-    checksum_schema: 30,
+    checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -344,25 +351,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x04554f8fce25aa53,
-        0xbedb0218fcc761b5,
-        0xc3ce293c35bf01e2,
-        0xfff0ca5bbfef5240,
-        0x61eee38632fe60ce,
-        0x17886ebc5d3aff5d,
-        0x5b8ac6ed48fb5b85,
-        0x79a3e4e7db869714,
-        0xac13e24f66629acd,
-        0x1c6e4fd080797e60,
-        0xab381736787def25,
-        0x8b1513b52222ef7e,
-        0x7fa6985718554e3f,
-        0x18b3ef4e0e2b9b38,
-        0x12c4ff14fe99a826,
-        0x67388c019bc5e001,
-        0xa7e2f506e663ad59,
-        0x42cd5e9ad769ec83,
-        0x28b5129fe5bae6c5,
-        0x287c4155f319a967,
+        0xa08848e1b44e3859,
+        0xbb5bb963a878a603,
+        0xe90b33fd925756d9,
+        0xd708959a99a9640d,
+        0x72860ae262f456fa,
+        0x89c71afb2f658532,
+        0xcdf61288b15f9174,
+        0x9e91aaac82b69404,
+        0xadbed1ed05f287de,
+        0x21bacecca067bdeb,
+        0x268cd7cfde896214,
+        0xf89c2dfa7aa05321,
+        0xbdaee2d8de7bc832,
+        0x8585dcf19795560a,
+        0x50fd6bb13994705e,
+        0xeccde5435d341db3,
+        0x51db11382f73cbed,
+        0x780a27f319f2e690,
+        0x8e3fb7d7654bf26a,
+        0x38062afe5ca87b2d,
     ],
 )
