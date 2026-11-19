@@ -928,6 +928,16 @@ impl Resolver<'_> {
         self.fraction(at, "size_jitter", layer.size_jitter)?;
         if let Some(strength) = layer.strength {
             self.unit_range(at, "strength.floor", strength.floor, 0.0)?;
+            // The negated comparison also refuses NaN.
+            if !(strength.span > 0.0 && strength.span.is_finite()) {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: at.clone(),
+                    field: "strength.span",
+                    value: strength.span,
+                    rule: "it must be a positive, finite value",
+                });
+            }
             self.require(at, event, strength.bind)?;
         }
         for placement in &placements {

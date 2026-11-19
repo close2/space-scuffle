@@ -973,6 +973,7 @@ impl EffectRuntime {
         let jitter = 1.0 + layer.size_jitter * (2.0 * unit_float(hash3(seed, 0x51CE, 0)) - 1.0);
         let size = resolve_value(&layer.size, &context.instance.bound)
             * catalog.sample(layer.size_curve, life, 1.0)
+            * layer_size_strength(layer, &context.instance.bound)
             * jitter;
         let extent = match &layer.block {
             Block::Ring { .. } => layer.radius.map_or(size, |radius| {
@@ -1739,9 +1740,19 @@ pub fn one_shot_lifetime(effect: &super::catalog::Effect, bound: &BoundValues) -
 #[must_use]
 pub fn layer_strength(layer: &Layer, bound: &BoundValues) -> f32 {
     layer.strength.map_or(1.0, |strength| {
-        let value = bound.get(strength.bind).clamp(0.0, 1.0);
+        let value = (bound.get(strength.bind) / strength.span).clamp(0.0, 1.0);
         strength.floor + (1.0 - strength.floor) * value
     })
+}
+
+/// The factor `layer`'s bound strength puts on its size: [`layer_strength`] when the strength
+/// scales the size too, otherwise 1.
+#[must_use]
+pub fn layer_size_strength(layer: &Layer, bound: &BoundValues) -> f32 {
+    match layer.strength {
+        Some(strength) if strength.size => layer_strength(layer, bound),
+        _ => 1.0,
+    }
 }
 
 /// The seed of the effect instance spawned as number `sequence` of the runtime, for an effect
@@ -2211,10 +2222,10 @@ mod tests {
     use super::*;
     use crate::effects::catalog::ElementRef;
 
-    #[test]
-    fn a_bound_strength_scales_the_intensity_down_to_its_floor() {
-        use crate::effects::catalog::schema::{Binding, StrengthDef};
-        let layer = |strength: Option<StrengthDef>| Layer {
+    /// A held shell layer of one second with `strength`.
+    fn shell_layer(strength: Option<crate::effects::catalog::schema::StrengthDef>) -> Layer {
+        use crate::effects::catalog::schema::Binding;
+        Layer {
             block: Block::Shell(super::super::catalog::ShellLook {
                 sink: 0.0,
                 tint: bevy::math::Vec4::ZERO,
@@ -2245,12 +2256,20 @@ mod tests {
             exit: 0.3,
             strength,
             lasts: None,
-        };
+        }
+    }
+
+    #[test]
+    fn a_bound_strength_scales_the_intensity_down_to_its_floor() {
+        use crate::effects::catalog::schema::{Binding, StrengthDef};
+        let layer = shell_layer;
         let bound = |ratio: f32| BoundValues::default().with(Binding::BarrierRatio, ratio);
         assert_eq!(layer_strength(&layer(None), &bound(0.2)), 1.0);
         let barrier = layer(Some(StrengthDef {
             bind: Binding::BarrierRatio,
             floor: 0.4,
+            span: 1.0,
+            size: false,
         }));
         assert!((layer_strength(&barrier, &bound(1.0)) - 1.0).abs() < 1e-6);
         assert!((layer_strength(&barrier, &bound(0.5)) - 0.7).abs() < 1e-6);
@@ -2259,6 +2278,39 @@ mod tests {
             (layer_strength(&barrier, &bound(3.0)) - 1.0).abs() < 1e-6,
             "the value is read as a fraction"
         );
+        assert_eq!(
+            layer_size_strength(&barrier, &bound(0.5)),
+            1.0,
+            "a strength without `size` leaves the size alone"
+        );
+    }
+
+    #[test]
+    fn a_strength_over_a_span_reaches_one_at_the_span_and_can_scale_the_size() {
+        use crate::effects::catalog::schema::{Binding, StrengthDef};
+        let grip = Layer {
+            strength: Some(StrengthDef {
+                bind: Binding::LinkLength,
+                floor: 0.0,
+                span: 0.5,
+                size: true,
+            }),
+            ..shell_layer(None)
+        };
+        let length = |value: f32| BoundValues::default().with(Binding::LinkLength, value);
+        assert_eq!(
+            layer_strength(&grip, &length(0.0)),
+            0.0,
+            "a touching tether"
+        );
+        assert!((layer_strength(&grip, &length(0.25)) - 0.5).abs() < 1e-6);
+        assert_eq!(layer_strength(&grip, &length(0.5)), 1.0);
+        assert_eq!(
+            layer_strength(&grip, &length(7.0)),
+            1.0,
+            "at any longer range"
+        );
+        assert!((layer_size_strength(&grip, &length(0.1)) - 0.2).abs() < 1e-6);
     }
 
     #[test]
