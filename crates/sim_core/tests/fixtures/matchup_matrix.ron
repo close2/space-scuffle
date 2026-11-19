@@ -872,6 +872,11 @@
         // (4 before). They win every seed of record. Watch item: over the matrix's 20 seeds the
         // zerglings win seed 16 (not of record) with 8 left; should they win a seed of record, the
         // claim itself is re-examined, not this range widened again.
+        // Measured for plan 2026-11-19-crowd-slide (§2.3, D-2) on 6b922732: a placebo build that
+        // adds one raw unit (2^-32) to PUSH_RELAXATION makes the zerglings win seed 33 (of record)
+        // with 2 left at tick 566. So the claim "six colossi vaporize a hundred zerglings" is
+        // within noise on seed 33: a miss on it is a stop only if no placebo of the same base shows
+        // the same miss, and any re-examination of the claim starts from this finding.
         expect: (blue: (0, 0), red: (2, 999)),
     ),
     (

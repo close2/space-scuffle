@@ -521,3 +521,10 @@ Nothing left out is accepted as a deviation by being left out; each stays under 
   `~/scratch/crowd-slide/probe-out/{base,all85}/`.
 - The scratch worktrees and their target directories were removed at hand-back; the diffs above rebuild them on
   `6b922732`.
+
+## Amendment 1 (orchestrator, 2026-11-19): accepted; D-2 adopted; WP0 lands
+
+No rule package is run. D-2 is adopted: a survivor-range miss stops a plan only if no placebo on the same base shows
+the same miss; it is stated as a measurement rule in plan `2026-11-19-crowd-edge-steering-2` Amendment 3. WP0 sets this
+plan's row to `Done`, restates B-103, and records battle 26 seed 33's placebo finding in the B-103 row and in the
+comment of battle 26 in `crates/sim_core/tests/fixtures/matchup_matrix.ron` (comment only, range unchanged).
