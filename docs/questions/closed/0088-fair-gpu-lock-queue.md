@@ -35,3 +35,10 @@ as ours.
 **Option (a) — Approved.**
 
 The owner will deploy `~/scratch/gpu-ledger/proposal/with-gpu-lock` to `/usr/local/bin/with-gpu-lock` (along with a `tmpfiles.d` entry `d /run/lock/gpu.queue 1777 root root -` so `/run/lock/gpu.queue` is pre-created owned by `root` across reboots) via the `infrastructure` project (`quorra`'s owner is the same owner and `quorra` already calls `/usr/local/bin/with-gpu-lock` directly). It may take a short while until the `infrastructure` playbook run applies it: once `grep -q gpu.queue /usr/local/bin/with-gpu-lock` succeeds on this VM, drop the temporary 60 s spacing rule in `docs/guides/gpu-and-disk.md` and close `B-136` and `Q0088`.
+
+## Resolution (2026-11-19)
+
+The owner installed the queued script through the `infrastructure` project. `/usr/local/bin/with-gpu-lock` names
+`/run/lock/gpu.queue`, and it differs from the proposal only in its header comments and two shellcheck directives.
+The harness therefore queues by itself. The 60 s spacing rule is removed from `docs/guides/gpu-and-disk.md`, and
+B-136 is fixed and removed from the register (plan `docs/plans/2026-11-17-gpu-test-readback.md` Amendment 7).

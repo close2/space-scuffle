@@ -1365,3 +1365,11 @@ evidence (`docs/evidence/2026-11-17-gpu-test-readback.md`, section "WP5") and th
   370 to 452 s) are 50 to 57 % of the radv lane. Merging each slice subject's three children (§12, setup
   evaluation 7(d)) and letting the GPU lane run during the exclusive valgrind phase (§12, 7(c); `X` is 295 to 375 s)
   are the next candidates for a follow-up note.
+
+## Amendment 7: the fair lock is installed, B-136 fixed (2026-11-19, orchestrator, short note, charter §6)
+
+Q0088 was answered with option (a), and the owner has installed the queued `with-gpu-lock`. It differs from
+Amendment 5 §C's proposal only in comments. The harness's queue code (WP4) switches on by itself, because the
+installed script names `/run/lock/gpu.queue`. The temporary 60 s rule is dropped from the GPU guide, and B-136
+leaves the `DESIGN.md` §4 register as fixed. No code changes. The next package gate exercises the queue; a GPU child
+that times out on the lock while the GPU is busy would reopen B-136.
