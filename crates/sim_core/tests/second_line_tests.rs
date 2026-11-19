@@ -17,6 +17,9 @@
 //! 4. Walkers at a crowd's edge: short-ranged units behind a firing line walk round it without
 //!    ending and restarting their walk every other tick (plan Amendment 7), at most three
 //!    reversals each (plan `2026-11-19-crowd-edge-steering-2` D-1).
+//! 5. A rounding once begun is held: the showcase's unit that starts to round a friend parked on
+//!    its first corner keeps rounding it when the friend walks on the next tick (plan
+//!    `2026-11-19-parked-body-aim` D-1, B-145).
 //!
 //! The synthetic tests use scratch archetypes written in this file (C5), so a rebalance of the
 //! shipped catalog cannot break them.
@@ -32,7 +35,9 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::scenario::load_scenario_battle;
 use sim_core::SimWorld;
-use sim_fixtures::trace::blocking::{attackers_in_range, BlockingMeter, STANDING_DRIFT};
+use sim_fixtures::trace::blocking::{
+    attackers_in_range, is_reversal, BlockingMeter, STANDING_DRIFT,
+};
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -436,5 +441,49 @@ fn walkers_at_the_crowds_edge_do_not_toggle() -> TestResult {
     // A few single reversals at the crowd's edge remain (B-103); a toggling walk made dozens.
     assert!(per_walker.iter().all(|&count| count <= 3), "{report}");
     assert!(per_walker.iter().sum::<u32>() <= 16, "{report}");
+    Ok(())
+}
+
+/// 5. The showcase's rhino beetle that starts at (58.5, 56.5) for player 1 (plan
+///    `2026-11-19-parked-body-aim` T1, B-145): on the order's first tick a friend stands on its
+///    first corner, so it starts to round that friend on the outside of the turn
+///    (`corner_round` set); on the second the friend walks, and the unit keeps rounding instead of
+///    turning back to the corner, so its achieved steps of ticks 1 and 2 do not reverse (the
+///    blocking meter's test, a cosine of at least -0.3). On `bf4252cf` they were (0.126, 0) and
+///    (-0.066, 0.108). The unit is found by owner and start position, not by entity id.
+#[test]
+#[ignore = "parked-body-aim WP1: red until WP2 lands D-1; on bf4252cf the steps are (0.126, 0) then (-0.066, 0.108)"]
+fn showcase_parked_corner_aim_does_not_flip() -> TestResult {
+    let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
+    let start = at(58.5, 56.5);
+    let unit = world
+        .entities
+        .iter()
+        .find(|(_, entity)| entity.owner == RED && entity.position == start)
+        .map(|(&id, _)| id)
+        .ok_or("the showcase has no player 1 unit at (58.5, 56.5)")?;
+    let mut meter = BlockingMeter::new();
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        step(&mut world, &mut meter, Vec::new());
+        let entity = &world.entities[&unit];
+        steps.push((
+            f64::from(entity.velocity.x.to_f32()),
+            f64::from(entity.velocity.y.to_f32()),
+        ));
+        if world.current_tick == 1 {
+            assert_ne!(entity.movement.corner_round, 0, "no rounding on tick 1");
+        }
+    }
+    assert_eq!(world.diagnostics(), []);
+    assert!(
+        !is_reversal(steps[0], steps[1]) && !is_reversal(steps[1], steps[2]),
+        "steps of ticks 1 to 3: {steps:?}"
+    );
+    assert_eq!(
+        meter.reversals_of(unit),
+        0,
+        "steps of ticks 1 to 3: {steps:?}"
+    );
     Ok(())
 }

@@ -8,7 +8,9 @@
 //! # How it fits
 //! This suite covers remediation Phase 4 (M-1 to M-18). Reproductions r03, r04, r07 and r09 from
 //! the plan's Appendix A appear here unchanged in setup. Lower-level arithmetic and legacy
-//! boundary behaviour live in `checked_movement_tests.rs`.
+//! boundary behaviour live in `checked_movement_tests.rs`. Next to M-5, T2 and T3 of plan
+//! `2026-11-19-parked-body-aim` hold that a rounding of a body on a corner, once begun, is kept
+//! when the body walks, and that a body already walking starts none.
 //!
 //! # Invariants
 //! - Units are chosen by capability from the shipped catalog; no archetype is named here.
@@ -17,6 +19,7 @@
 
 use sim_core::movement::RouteOutcomeKind;
 use sim_core::SimWorld;
+use sim_fixtures::trace::blocking::is_reversal;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, MapFile, RampDir};
 use sim_types::{
     EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
@@ -638,6 +641,217 @@ fn route_continues_past_a_blocker_on_its_corner_waypoint() -> TestResult {
     );
     assert_eq!(world.diagnostics(), []);
     Ok(())
+}
+
+/// The scene of the parked-corner tests (plan `2026-11-19-parked-body-aim` T2, T3): M-5's map,
+/// the smallest armed ground unit's first route corner on its way from (8.5, 24.5) to (24.5,
+/// 24.5) through the gap, and the unit direction of the leg into that corner. The corner turns
+/// round the wall's end above the gap, so the outside of the turn is south-west of it.
+fn parked_corner_scene() -> Result<ParkedCornerScene, Box<dyn std::error::Error>> {
+    let mut world = sim_fixtures::world(wall_with_gap(32, 16, 12..16)?, SEED);
+    let kind = small_unit(&world)?;
+    let start = at(8.5, 24.5);
+    let probe = spawn(&mut world, kind, BLUE, start)?;
+    order(
+        &mut world,
+        BLUE,
+        &[probe],
+        UnitOrder::Move {
+            target: parked_goal(),
+        },
+    );
+    let corner = *world.entities[&probe]
+        .current_funnel_waypoints
+        .first()
+        .ok_or("the probe has no route")?;
+    let delta = corner - start;
+    let (x, y) = (f64::from(delta.x.to_f32()), f64::from(delta.y.to_f32()));
+    let length = x.hypot(y);
+    Ok(ParkedCornerScene {
+        world: sim_fixtures::world(wall_with_gap(32, 16, 12..16)?, SEED),
+        kind,
+        corner,
+        into: (x / length, y / length),
+    })
+}
+
+/// A fresh world of the parked-corner tests, with what [`parked_corner_scene`] found on a probe.
+struct ParkedCornerScene {
+    /// M-5's map, empty.
+    world: SimWorld,
+    /// The smallest armed ground unit.
+    kind: UnitTypeId,
+    /// Its route's first corner.
+    corner: SimVec2,
+    /// The unit direction of the leg into the corner.
+    into: (f64, f64),
+}
+
+/// The goal of the parked-corner tests' unit, beyond the gap.
+fn parked_goal() -> SimVec2 {
+    at(24.5, 24.5)
+}
+
+/// Where the friend of the parked-corner tests walks: south-west, away from the corner.
+fn friend_goal() -> SimVec2 {
+    at(4.5, 4.5)
+}
+
+/// How far before its corner, along the leg into it, the parked-corner tests place the unit:
+/// within one body radius (0.375) of the corner.
+const UNIT_BEFORE_CORNER: f64 = 0.3;
+/// How far beyond the corner, along the same line, they place the friend: the two bodies of
+/// radius 0.375 are 0.85 apart, and the friend touches the corner with both radii (0.75).
+const FRIEND_BEYOND_CORNER: f64 = 0.55;
+
+/// The point `offset` world units from `corner` along the unit direction `direction`.
+fn along(corner: SimVec2, direction: (f64, f64), offset: f64) -> SimVec2 {
+    corner + at(direction.0 * offset, direction.1 * offset)
+}
+
+/// T2 (plan `2026-11-19-parked-body-aim` D-1, B-145): a unit within one body radius of its
+/// route's first corner, ordered on the same tick as a friend standing on the corner beyond it,
+/// starts to round that friend on the outside of the turn (the friend stands in the tick-1
+/// snapshot). When the friend walks from tick 2, the unit keeps rounding it while the corner is
+/// occupied: its proposed steps over the first 10 ticks never reverse, and it reaches its goal.
+/// On `bf4252cf` the corner was handed off on tick 2 and the proposed step reversed.
+#[test]
+#[ignore = "parked-body-aim WP1: red until WP2 lands D-1; on bf4252cf the proposed step reverses on tick 2"]
+fn a_rounding_begun_is_kept_when_the_body_walks() -> TestResult {
+    let ParkedCornerScene {
+        mut world,
+        kind,
+        corner,
+        into,
+    } = parked_corner_scene()?;
+    let unit = spawn(
+        &mut world,
+        kind,
+        BLUE,
+        along(corner, into, -UNIT_BEFORE_CORNER),
+    )?;
+    let friend = spawn(
+        &mut world,
+        kind,
+        BLUE,
+        along(corner, into, FRIEND_BEYOND_CORNER),
+    )?;
+    tick(
+        &mut world,
+        vec![
+            PlayerCommand {
+                player_id: BLUE,
+                entities: vec![unit],
+                order: UnitOrder::Move {
+                    target: parked_goal(),
+                },
+                queue: false,
+            },
+            PlayerCommand {
+                player_id: BLUE,
+                entities: vec![friend],
+                order: UnitOrder::Move {
+                    target: friend_goal(),
+                },
+                queue: false,
+            },
+        ],
+    );
+    assert_ne!(
+        world.entities[&unit].movement.corner_round, 0,
+        "no rounding on tick 1"
+    );
+    let mut steps = vec![proposed(&world, unit)?];
+    for _ in 1..10 {
+        tick(&mut world, Vec::new());
+        steps.push(proposed(&world, unit)?);
+    }
+    assert!(
+        steps.windows(2).all(|pair| !is_reversal(pair[0], pair[1])),
+        "proposed steps of ticks 1 to 10: {steps:?}"
+    );
+    run_until_settled(&mut world, &[unit], 800)?;
+    assert!(
+        distance_to(&world, unit, parked_goal()) < 0.2,
+        "stopped {} from the goal",
+        distance_to(&world, unit, parked_goal())
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// T3 (plan `2026-11-19-parked-body-aim`, the guard of plan `2026-11-09-sc2-pathfinding`'s
+/// deviation "A3 acts only on parked bodies"): T2's scene, but the friend is ordered one tick
+/// before the unit, so it is already walking when the unit first reaches the corner. A moving
+/// body does not start a rounding: `corner_round` stays 0 and the unit's first step heads for
+/// the corner. It reaches its goal.
+#[test]
+fn a_body_walking_at_first_sight_is_not_rounded() -> TestResult {
+    let ParkedCornerScene {
+        mut world,
+        kind,
+        corner,
+        into,
+    } = parked_corner_scene()?;
+    let start = along(corner, into, -UNIT_BEFORE_CORNER);
+    let unit = spawn(&mut world, kind, BLUE, start)?;
+    let friend = spawn(
+        &mut world,
+        kind,
+        BLUE,
+        along(corner, into, FRIEND_BEYOND_CORNER),
+    )?;
+    order(
+        &mut world,
+        BLUE,
+        &[friend],
+        UnitOrder::Move {
+            target: friend_goal(),
+        },
+    );
+    assert_ne!(
+        world.entities[&friend].velocity,
+        SimVec2::ZERO,
+        "the friend must be walking"
+    );
+    order(
+        &mut world,
+        BLUE,
+        &[unit],
+        UnitOrder::Move {
+            target: parked_goal(),
+        },
+    );
+    let first = proposed(&world, unit)?;
+    let to_corner = corner - start;
+    let heading =
+        first.0 * f64::from(to_corner.x.to_f32()) + first.1 * f64::from(to_corner.y.to_f32());
+    assert!(
+        heading > 0.0,
+        "first step {first:?} turns away from the corner"
+    );
+    for _ in 0..10 {
+        assert_eq!(
+            world.entities[&unit].movement.corner_round, 0,
+            "tick {}",
+            world.current_tick
+        );
+        tick(&mut world, Vec::new());
+    }
+    run_until_settled(&mut world, &[unit], 800)?;
+    assert!(
+        distance_to(&world, unit, parked_goal()) < 0.2,
+        "stopped {} from the goal",
+        distance_to(&world, unit, parked_goal())
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// The step `id` proposed this tick, world units per tick.
+fn proposed(world: &SimWorld, id: EntityId) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+    let step = world.proposed_step(id).ok_or("no proposed step")?;
+    Ok((f64::from(step.x.to_f32()), f64::from(step.y.to_f32())))
 }
 
 /// M-6: a walled-in mover reports zero achieved velocity and eventually gives up.
