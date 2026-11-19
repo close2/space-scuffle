@@ -45,6 +45,7 @@ pub mod effect_stress;
 pub mod fixture;
 pub mod recorder;
 pub mod report;
+pub mod series;
 
 use bevy::prelude::*;
 use bevy::window::{PresentMode, PrimaryWindow};

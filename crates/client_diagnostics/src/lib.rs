@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cpu_clock;
 pub mod effect_lab;
 pub mod frame_budget;
 pub mod hdr_bloom;

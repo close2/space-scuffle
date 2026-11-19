@@ -167,6 +167,86 @@ impl LabSubject {
     }
 }
 
+/// Further effects a take shows beside its subject, each with its own spawn time and the
+/// changes a battle makes to a live effect (plan `2026-11-19-retained-effect-instances` WP1: the
+/// identity scene). Optional: a lab without it shows its subject alone. Every take of the
+/// program spawns the whole crowd afresh, at the same ages.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct LabCrowd {
+    /// The members.
+    pub members: Vec<LabCrowdMember>,
+    /// Growth of the camera's distance per second of a take, as a share of the take's zoom
+    /// distance (0 keeps it): a camera stepping outward, so that level of detail drops layers.
+    pub dolly_per_second: f32,
+}
+
+/// One effect of a [`LabCrowd`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabCrowdMember {
+    /// The effect, its bindings, anchor and line; its `fog_below_x` and `repeat` are not used.
+    pub subject: LabSubject,
+    /// Age of the take at which it is spawned (or held), seconds.
+    pub at: f32,
+    /// Whether it is held ([`crate::effects::runtime::EffectRuntime::hold`]) instead of spawned.
+    pub held: bool,
+    /// Age of the take at which a held member is released, seconds.
+    pub release_at: Option<f32>,
+    /// Drift of its anchor, world units per second: a held member follows it through
+    /// `update_held` (a tether's two ends move apart along it through `update_held_line`), any
+    /// other through `move_anchor`.
+    pub velocity: Vec3,
+    /// A fog clip set on it every frame, sweeping across it.
+    pub fog_sweep: Option<LabFogSweep>,
+}
+
+/// A fog clip that sweeps: the clip window `[axis, from + speed · age, to]` of
+/// [`crate::effects::runtime::EffectRuntime::set_fog_clip`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LabFogSweep {
+    /// Unit direction of the clip in the ground plane (world x, z).
+    pub axis: Vec2,
+    /// The clip's near end at age 0, world units along `axis`.
+    pub from: f32,
+    /// The clip's far end, world units along `axis`.
+    pub to: f32,
+    /// How fast the near end moves along `axis`, world units per second.
+    pub speed: f32,
+}
+
+impl LabCrowdMember {
+    /// The member's anchor at `age` seconds of the take.
+    #[must_use]
+    pub fn anchor_at(&self, age: f32) -> Vec3 {
+        self.subject.anchor + self.velocity * age
+    }
+
+    /// The member's line end at `age` seconds: a held member's tether end moves against its
+    /// anchor, so the two ends move apart.
+    #[must_use]
+    pub fn line_to_at(&self, age: f32) -> Option<Vec3> {
+        self.subject.line_to.map(|to| {
+            if self.held {
+                to - self.velocity * age
+            } else {
+                to + self.velocity * age
+            }
+        })
+    }
+}
+
+impl LabFogSweep {
+    /// The clip window at `age` seconds of the take.
+    #[must_use]
+    pub fn clip_at(self, age: f32) -> [f32; 4] {
+        [
+            self.axis.x,
+            self.axis.y,
+            self.from + self.speed * age,
+            self.to,
+        ]
+    }
+}
+
 /// One capture of a take.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LabShot {
@@ -361,6 +441,29 @@ mod tests {
             fog_below_x: None,
             repeat: None,
         }
+    }
+
+    #[test]
+    fn a_crowd_member_drifts_and_a_held_tether_stretches() {
+        let mut member = LabCrowdMember {
+            subject: subject(),
+            at: 0.5,
+            held: true,
+            release_at: Some(2.0),
+            velocity: Vec3::new(0.5, 0.0, 0.0),
+            fog_sweep: None,
+        };
+        assert_eq!(member.anchor_at(2.0), Vec3::new(-3.0, 0.0, 0.0));
+        assert_eq!(member.line_to_at(2.0), Some(Vec3::new(3.0, 0.0, 0.0)));
+        member.held = false;
+        assert_eq!(member.line_to_at(2.0), Some(Vec3::new(5.0, 0.0, 0.0)));
+        let sweep = LabFogSweep {
+            axis: Vec2::X,
+            from: -1.0,
+            to: 4.0,
+            speed: 0.5,
+        };
+        assert_eq!(sweep.clip_at(2.0), [1.0, 0.0, 0.0, 4.0]);
     }
 
     #[test]

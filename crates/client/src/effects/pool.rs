@@ -82,6 +82,82 @@ pub struct EffectInstance {
     /// The clip window every layer without a clip of its own is cut to: where the fog begins
     /// across an area the viewer sees in part (WP10); no clip otherwise.
     pub fog_clip: super::particles::LineClip,
+    /// What its line gives every instance alike, kept in step with `line` (plan
+    /// `2026-11-19-retained-effect-instances` D-3).
+    pub line_frame: LineFrame,
+    /// The decal slots its unended decal layers held at the last recount, and until when that
+    /// count holds ([`MarksCache`]).
+    pub marks: MarksCache,
+}
+
+/// The per-effect constants of an effect's line: its clip window and its ground direction's
+/// yaw, computed once when the line is set instead of for every instance every frame.
+// PERFORMANCE RATIONALE:
+// Why: The line's clip window (a normalisation) and its yaw (an `atan2`) were recomputed for
+// every instance of every layer every frame, though they change only with the line.
+// What: Both are computed when the line is set (spawn, `update_held_line`) and read after.
+// Trade-off: 20 bytes per effect, kept in step with `line` by the two places that set it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineFrame {
+    /// [`super::runtime::line_clip_window`] of the line; no clip without a line.
+    pub window: super::particles::LineClip,
+    /// The decal yaw along the line, `atan2(-dz, dx)` radians, when the line has a horizontal
+    /// length; `None` otherwise (and without a line).
+    pub yaw: Option<f32>,
+}
+
+impl LineFrame {
+    /// The constants of `line`.
+    #[must_use]
+    pub fn of(line: Option<WorldLine>) -> Self {
+        let Some(line) = line else {
+            return Self {
+                window: [0.0; 4],
+                yaw: None,
+            };
+        };
+        let direction = line.to - line.from;
+        Self {
+            window: super::runtime::line_clip_window(line),
+            yaw: (direction.x.abs() + direction.z.abs() > f32::EPSILON)
+                .then(|| (-direction.z).atan2(direction.x)),
+        }
+    }
+}
+
+/// The cached count of the decal slots an effect's unended decal layers hold
+/// (`held_marks`), and the span of time it stays valid: it is recounted when the effect's age
+/// leaves `[from_age, until_age]`, when a released effect's age since release passes
+/// `until_exit`, or when an API that changes its inputs clears `valid`.
+// PERFORMANCE RATIONALE:
+// Why: The ledger recounted every effect's decal layers' placements every frame, though the
+// count changes only when one of them ends or the effect is changed.
+// What: The count with the span of time it holds for; recounted only outside it.
+// Trade-off: 20 bytes per effect and three APIs that must clear it, checked against the
+// recount by a test-only assertion on every call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarksCache {
+    /// Whether the count is set.
+    pub valid: bool,
+    /// The count.
+    pub count: u32,
+    /// The effect's age (seconds, as the recount computes it) at the recount.
+    pub from_age: f32,
+    /// The earliest end, in the same age, of a counted decal layer that is not held.
+    pub until_age: f32,
+    /// The shortest exit of a counted held decal layer of a released effect, seconds.
+    pub until_exit: f32,
+}
+
+impl MarksCache {
+    /// No count yet.
+    pub const UNSET: Self = Self {
+        valid: false,
+        count: 0,
+        from_age: 0.0,
+        until_age: 0.0,
+        until_exit: 0.0,
+    };
 }
 
 /// A slot: its generation and its instance, if live.
@@ -197,8 +273,8 @@ impl EffectInstancePool {
         }
     }
 
-    /// Frees every effect whose `end` is before `now`.
-    pub fn free_ended(&mut self, now: f64) {
+    /// Frees every effect whose `end` is before `now`, telling `freed` each freed slot.
+    pub fn free_ended(&mut self, now: f64, mut freed: impl FnMut(u32)) {
         for index in 0..self.slots.len() {
             let slot = &self.slots[index];
             if let Some(instance) = slot.instance {
@@ -208,6 +284,7 @@ impl EffectInstancePool {
                         generation: slot.generation,
                     };
                     self.free(handle);
+                    freed(handle.index);
                 }
             }
         }
@@ -230,6 +307,12 @@ impl EffectInstancePool {
             .iter()
             .enumerate()
             .filter_map(|(index, slot)| slot.instance.as_ref().map(|instance| (index, instance)))
+    }
+
+    /// The live instance in slot `index`.
+    #[must_use]
+    pub fn slot(&self, index: usize) -> Option<&EffectInstance> {
+        self.slots.get(index)?.instance.as_ref()
     }
 
     /// The live instance in slot `index`, mutably.
@@ -274,6 +357,8 @@ mod tests {
             held_exit: 0.0,
             oneshot_end: 0.0,
             fog_clip: [0.0; 4],
+            line_frame: LineFrame::of(None),
+            marks: MarksCache::UNSET,
         }
     }
 
@@ -322,7 +407,7 @@ mod tests {
         pool.spawn(instance(EffectClass::Minor, 0.5)).expect("free");
         pool.spawn(instance(EffectClass::Minor, 2.0)).expect("free");
         let capacity = (pool.slots.capacity(), pool.free.capacity());
-        pool.free_ended(1.0);
+        pool.free_ended(1.0, |_| {});
         assert_eq!(pool.live(EffectClass::Minor), 1);
         for _ in 0..100 {
             let handle = pool

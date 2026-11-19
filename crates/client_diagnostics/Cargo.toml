@@ -24,6 +24,14 @@ path = "src/bin/palette_fixture.rs"
 name = "renderer_shutdown_probe"
 path = "src/bin/renderer_shutdown_probe.rs"
 
+[[bin]]
+name = "frame_budget_series"
+path = "src/bin/frame_budget_series.rs"
+
+[[bench]]
+name = "effect_frame"
+harness = false
+
 [lints]
 workspace = true
 
@@ -44,6 +52,10 @@ blake3 = "1.8.7"
 bytemuck = { version = "1.25", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+
+# The kernel's CPU-time clocks (`cpu_clock`), through a safe wrapper: the crate forbids `unsafe`.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["time"] }
 
 [dev-dependencies]
 # The shipped catalogs and worlds, embedded for tests only; production loads them from disk.

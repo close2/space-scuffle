@@ -146,7 +146,7 @@ fn a_projectile_flies_its_path_for_its_flight_and_ends_with_it() {
     assert_eq!(request.bound.get(Binding::FlightTime), flight);
     let mut runtime = EffectRuntime::new(&catalog);
     // Only the `Critical` layers: the body that rides the path.
-    runtime.only = Some(Priority::Critical);
+    runtime.set_only(Some(Priority::Critical));
     runtime
         .spawn(&catalog, &request, 0.0)
         .expect("the pool takes it");
@@ -173,7 +173,7 @@ fn a_projectile_flies_its_path_for_its_flight_and_ends_with_it() {
         "the body is gone once it lands"
     );
     assert_eq!(
-        runtime.pool.live_total(),
+        runtime.pool().live_total(),
         0,
         "the effect ends with its flight"
     );
@@ -197,7 +197,7 @@ fn two_shots_along_one_path_are_two_effects() {
         runtime.spawn(&catalog, &request, 0.0).is_some(),
         "the second shot is not merged into the first"
     );
-    assert_eq!(runtime.pool.live_total(), 2);
+    assert_eq!(runtime.pool().live_total(), 2);
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn a_spell_missile_holds_its_look_and_lands_its_impact_where_it_ends() {
     assert_eq!(runtime.spawned_of(look), 1, "one look held for the flight");
     assert_eq!(runtime.spawned_of(impact), 1, "one impact where it ended");
     let landed = runtime
-        .pool
+        .pool()
         .iter()
         .find(|(_, instance)| instance.effect == impact)
         .map(|(_, instance)| *instance)
@@ -1182,7 +1182,7 @@ fn a_held_beams_burns_follow_its_end() {
         );
         let end = held_line(&runtime, beams.slots()[0].handle).to;
         for burn in &burns {
-            let anchor = runtime.pool.get(*burn).expect("the burn lives").anchor;
+            let anchor = runtime.pool().get(*burn).expect("the burn lives").anchor;
             assert!(
                 anchor.distance(end) < 1e-4,
                 "step {step}: {anchor:?} vs {end:?}"

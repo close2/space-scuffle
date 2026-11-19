@@ -31,7 +31,9 @@ pub mod binding;
 pub mod budget;
 pub mod catalog;
 pub mod curve;
+pub mod decal_table;
 pub mod front;
+pub mod indices;
 pub mod instances;
 pub mod lab;
 pub mod ledger;
@@ -43,6 +45,8 @@ pub mod runtime;
 pub mod stance;
 pub mod struck;
 pub mod systems;
+#[cfg(test)]
+pub mod test_streams;
 
 use bevy::prelude::*;
 
