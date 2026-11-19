@@ -7,7 +7,7 @@
 // - Directional indicator re-engineered as a sleek rim arc confined strictly to outer Fresnel annulus [0.86, 0.98]
 // - Dynamic video texture array sampling with spherical lens magnification
 // - Flipbook layer chosen from the shared flipbook clock and per-bubble lanes, with frame blending
-// - Voronoi spiderweb glass fractures & CRT scanlines
+// - Voronoi spiderweb glass fractures, worn scanlines and the critical brown-out (B-120)
 
 // - Effect shell (plan 2026-11-09-effect-visualization WP8, binding 4): the vertex stage sinks the
 //   bubble into the ground (the terrain's depth hides what is below it); the fragment stage stains
@@ -117,7 +117,7 @@ const FLAG_GLARE: u32 = 4u;           // 1 << 2: Studio crescent rim specular re
 const FLAG_FRESNEL: u32 = 8u;         // 1 << 3: Iridescent thin-film Fresnel rim
 const FLAG_INNER_WARP: u32 = 16u;     // 1 << 4: View-aligned spherical lens warp
 const FLAG_CRACKS: u32 = 32u;         // 1 << 5: Voronoi glass cracks & electrical arcing
-const FLAG_CRT_GLITCH: u32 = 64u;     // 1 << 6: CRT scanlines & chromatic aberration
+const FLAG_CRT_GLITCH: u32 = 64u;     // 1 << 6: damage look: worn scanlines, critical brown-out
 const FLAG_SPEED_BOOSTED: u32 = 128u; // 1 << 7: Pulsing rim trailing a boosted unit
 const FLAG_FACING_STRIPE: u32 = 256u; // 1 << 8: Rim-confined facing indicator
 const FLAG_ATTACK_APERTURE: u32 = 512u;// 1 << 9: Target-lock weapon aperture
@@ -180,11 +180,38 @@ fn flipbook_select(
 }
 
 // One media sample of layer `layer`, with the CRT channel split by `uv_offset`.
-fn sample_media(uv: vec2<f32>, uv_offset: vec2<f32>, layer: u32) -> vec3<f32> {
-    let sample_r = textureSample(video_texture, video_sampler, uv + uv_offset, layer).r;
-    let sample_g = textureSample(video_texture, video_sampler, uv, layer).g;
-    let sample_b = textureSample(video_texture, video_sampler, uv - uv_offset, layer).b;
-    return vec3<f32>(sample_r, sample_g, sample_b);
+fn sample_media(uv: vec2<f32>, layer: u32) -> vec3<f32> {
+    return textureSample(video_texture, video_sampler, uv, layer).rgb;
+}
+
+// Critical damage's brown-out (plan 2026-11-09-effect-visualization Amendment 33, B-120): below
+// the critical health the dome's own media flickers darker, as a failing light does, with every
+// colour channel sampled at the same point (no hue split; the old chromatic aberration read as a
+// rendering fault). The light level eases between hashed levels, one new level per beat.
+// Beats a second: fast enough to read as a flicker at the battle's 25 ticks a second, slow enough
+// that one beat spans several frames at 60 frames a second, so it never strobes frame to frame.
+const BROWNOUT_BEATS_PER_SECOND: f32 = 7.0;
+// Darkest and brightest share of the media's light: never so dark the unit's art is lost (the
+// cracks' glow and the HUD still name it), never full, so a critical bubble always reads dimmed.
+const BROWNOUT_FLOOR: f32 = 0.5;
+const BROWNOUT_CEILING: f32 = 0.9;
+
+// A uniform value in [0, 1] from an integer (PCG hash): exact on every driver at any beat count,
+// where a `fract(sin(x))` hash loses its spread at large arguments.
+fn hash_unit(value: u32) -> f32 {
+    let state = value * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return f32((word >> 22u) ^ word) / 4294967295.0;
+}
+
+// The brown-out's share of light at `time` seconds for a bubble seeded by `seed` (its animation
+// origin, so neighbouring damaged units do not flicker in step).
+fn brownout(time: f32, seed: u32) -> f32 {
+    let beat = time * BROWNOUT_BEATS_PER_SECOND;
+    // Knuth's multiplicative hash spreads neighbouring seeds far apart in the sequence.
+    let index = u32(beat) + ((seed * 2654435761u) >> 12u);
+    let level = mix(hash_unit(index), hash_unit(index + 1u), smoothstep(0.0, 1.0, fract(beat)));
+    return mix(BROWNOUT_FLOOR, BROWNOUT_CEILING, level);
 }
 
 // Procedural 2D hash for Voronoi glass cracks
@@ -289,16 +316,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lens_mask = 1.0 - smoothstep(0.88, 0.99, r);
     let glass_depth_tint = 1.0 - smoothstep(0.80, 0.99, r) * 0.40;
 
-    // CRT Scanlines & Glitch Aberration
+    // Damage look: scanlines on a worn bubble, and below the critical health the brown-out of
+    // the media's own colours (B-120), multiplied into the media's light.
     var scanline_mult = 1.0;
-    var uv_offset = vec2<f32>(0.0);
     if ((bubble.feature_flags & FLAG_CRT_GLITCH) != 0u) {
         if (bubble.hp_ratio < 0.50) {
             scanline_mult = 0.85 + 0.15 * sin(lens_uv.y * 240.0);
         }
         if (bubble.hp_ratio < 0.35) {
-            let glitch_jitter = sin(globals.time * 40.0) * 0.015;
-            uv_offset = vec2<f32>(0.02 + glitch_jitter, 0.0);
+            scanline_mult *= brownout(globals.time, bubble.anim_origin);
         }
     }
 
@@ -313,7 +339,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         bubble.anim_mode,
         bubble.anim_offset,
     );
-    var media = sample_media(lens_uv, uv_offset, flipbook.layer);
+    var media = sample_media(lens_uv, flipbook.layer);
     // Frame blending (plan D-6): a loop that asks for it, on a material with the feature on, mixes
     // in the next layer by the sub-frame time. The condition reads only the bubble uniform, so the
     // three extra samples stay in uniform control flow and cost nothing for other bubbles.
@@ -324,7 +350,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         && bubble.frame_count != 0u;
     if (blend_frames) {
         let weight = f32(flipbook.blend_numerator) / f32(flipbook.blend_denominator);
-        media = mix(media, sample_media(lens_uv, uv_offset, flipbook.next_layer), weight);
+        media = mix(media, sample_media(lens_uv, flipbook.next_layer), weight);
     }
     var video_color = media * exp2(bubble.optics_media.x) * scanline_mult * lens_mask * glass_depth_tint;
 
