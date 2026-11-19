@@ -791,3 +791,8 @@ three pins are re-recorded (validation `0x3527_8c7f_a705_ba2c`, decode `0x4c32_2
 `wasm32-wasip1` release, with identical counts. B-143 is a test defect: the oracle's `smooth_length` counted a whole
 circle for a turn that sweeps nothing (three collinear corners), fixed with a deterministic regression case; routing
 is unchanged. B-140 and B-143 leave the register as fixed.
+
+## Amendment 6 (orchestrator, 2026-11-19): B-141's follow-up is the funnel-fallbacks plan
+
+R-2's residual, B-141 (the funnel's fallbacks between fitting endpoints), is diagnosed and fixed by plan
+[`2026-11-19-funnel-fallbacks`](2026-11-19-funnel-fallbacks.md); this plan's fitted retry stays as it is.
