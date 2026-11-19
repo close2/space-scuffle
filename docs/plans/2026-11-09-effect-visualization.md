@@ -3138,3 +3138,16 @@ another user's builds kept the machine's load between 30 and 620 for the hour an
 open for a quiet machine (the profiles count CPU samples and do not depend on it). The proposal, for a plan of its own: retained lasting marks
 aged on the GPU, then skipping idle layers (tested: exact, 6 to 10 %), then per-frame constants hoisted out of the
 instance loop; then the baseline is re-recorded and the §10.3 stress held to +5 % (p50).
+
+## Amendment 35: §10.3 baseline re-recorded under plan 2026-11-19-retained-effect-instances (2026-11-19, short note, charter §6)
+
+Amendment 33 step 4 asked for the frame-budget baseline to be re-recorded before the stress is judged. Plan
+[`2026-11-19-retained-effect-instances`](2026-11-19-retained-effect-instances.md) (WP7) did this with an interleaved
+series on the shared host ([`frame_budget_b137_retained.md`](../evidence/effects/review/frame_budget_b137_retained.md)):
+
+- **Baseline:** B's median p50 is 14.02 ms at a one-minute load of 9 to 41. The quiet-machine series stays open.
+- **Verdict:** §10.3's stress (P) misses +5 % by D-14's CPU-time verdict, at +5.18 ms per frame against 0.70 ms; the
+  splashes alone (S) are at +3.69 ms.
+- **GPU:** the effect passes stay at +0.63 ms, under 1.5 ms.
+
+B-137 stays open; the next step is that plan's decision gate (its Amendment 3).

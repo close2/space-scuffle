@@ -592,12 +592,22 @@ fn capture_stressed_frame(
     mut commands: Commands<'_, '_>,
     mut stress: ResMut<'_, EffectStress>,
     session: Res<'_, BattleSession>,
-    runtime: Option<Res<'_, EffectRuntime>>,
+    (runtime, catalog): (
+        Option<Res<'_, EffectRuntime>>,
+        Option<Res<'_, EffectCatalog>>,
+    ),
     cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
     beams: Option<Res<'_, client::effects::beams::HeldBeams>>,
     mix: Option<Res<'_, super::effect_mix::EffectMix>>,
 ) {
     stress.publish_counters(runtime.as_deref(), beams.as_deref(), mix.as_deref());
+    // The decals the frame draws, aged by the Rust reference (the renderer ages them on the
+    // GPU, plan 2026-11-19-retained-effect-instances D-15); only on the capture frames.
+    let drawn_decals = |runtime: &EffectRuntime| {
+        catalog
+            .as_deref()
+            .map_or_else(Vec::new, |catalog| runtime.current_decals(catalog))
+    };
     let Some(path) = stress.config.capture.clone() else {
         return;
     };
@@ -614,7 +624,7 @@ fn capture_stressed_frame(
             let (stats, decals) = runtime
                 .as_deref()
                 .map_or((EffectStats::default(), 0), |runtime| {
-                    (runtime.stats, runtime.frame.decals.len())
+                    (runtime.stats, drawn_decals(runtime).len())
                 });
             info!(
                 "frame_budget: consecutive capture {} at tick {tick}: {} ({decals} decals; so far \
@@ -647,17 +657,12 @@ fn capture_stressed_frame(
             .map_or((0, 0, 0, Coverage::default()), |runtime| {
                 let project = |point: Vec3| camera.world_to_viewport(transform, point).ok();
                 let view = ViewAxes::of(transform);
+                let decals = drawn_decals(runtime);
                 (
                     runtime.pool().live_total(),
                     u32::try_from(runtime.frame.sorted.len()).unwrap_or(u32::MAX),
-                    u32::try_from(runtime.frame.decals.len()).unwrap_or(u32::MAX),
-                    effect_coverage(
-                        &runtime.frame.sorted,
-                        &runtime.frame.decals,
-                        view,
-                        viewport,
-                        project,
-                    ),
+                    u32::try_from(decals.len()).unwrap_or(u32::MAX),
+                    effect_coverage(&runtime.frame.sorted, &decals, view, viewport, project),
                 )
             });
     commands

@@ -1216,6 +1216,61 @@ fn effect_shaders_compose_and_validate() {
     );
 }
 
+/// The decal aging compute shader (plan `2026-11-19-retained-effect-instances` WP6) composes
+/// with the shared import, validates strictly, has both compute entry points, and reads the
+/// record, patch, key and uniform structs at the sizes of their Rust twins.
+#[test]
+fn decal_age_shader_composes_and_validates() {
+    let read = |name: &str| shader_ir::shipped_source(&format!("effects/{name}"));
+    let modules = [("effects/common.wgsl", read("common.wgsl"))];
+    let validated =
+        shader_ir::compose_with_modules("decal_age.wgsl", &read("decal_age.wgsl"), &[], &modules)
+            .unwrap_or_else(|error| panic!("decal_age.wgsl failed:\n{error}"));
+    validated.entry_point(naga::ShaderStage::Compute, "apply_patches");
+    validated.entry_point(naga::ShaderStage::Compute, "age");
+    let module = &validated.module;
+    let size_of_struct = |name: &str| {
+        module
+            .types
+            .iter()
+            // An imported struct's name is mangled with its module's after the name.
+            .find(|(_, ty)| ty.name.as_deref().is_some_and(|ty| ty.starts_with(name)))
+            .map_or_else(
+                || panic!("decal_age.wgsl declares {name}"),
+                |(handle, _)| module.types[handle].inner.size(module.to_ctx()),
+            )
+    };
+    let twins = [
+        (
+            "DecalRecord",
+            size_of::<client::effects::decal_table::GpuDecalRecord>(),
+        ),
+        (
+            "DecalPatch",
+            size_of::<client::effects::render::GpuDecalPatch>(),
+        ),
+        (
+            "CurveKey",
+            size_of::<client::effects::decal_table::GpuCurveKey>(),
+        ),
+        (
+            "DecalAgeParams",
+            size_of::<client::effects::render::DecalAgeUniform>(),
+        ),
+        (
+            "DecalInstance",
+            size_of::<client::effects::instances::DecalInstance>(),
+        ),
+    ];
+    for (name, rust) in twins {
+        assert_eq!(
+            size_of_struct(name) as usize,
+            rust,
+            "{name} has the size of its Rust twin"
+        );
+    }
+}
+
 /// A child's log timestamps are read in UTC with their fraction, and lines without one are not
 /// records.
 #[test]

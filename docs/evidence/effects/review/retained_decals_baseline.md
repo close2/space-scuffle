@@ -107,6 +107,68 @@ order. Per D-3 the `(key, index)` order is the definition from WP5 on:
 
 WP5's captures (`~/scratch/retained-decals/base-wp5/`) are the base WP6's D-10 check 3 is compared with.
 
+## WP6: GPU aging
+
+The decal rows are aged by `assets/shaders/effects/decal_age.wgsl` in the compute node `EffectDecalAgeNode`; the main
+world writes only the rows of changed effects (plan Amendment 2).
+
+**Instructions** (same method, WP5 and WP6 binaries alternating, load 60 to 190):
+
+| Stream | Base (WP1) | WP5 | WP6 | WP6 against the base |
+|---|---:|---:|---:|---:|
+| S | 10.10 M | 6.01 M | **4.51 M** | −55 % |
+| P | 11.89 M | 7.38 M | **5.88 M** | −51 % |
+
+Runs agree to within 2 parts in 10⁷. The `--digest` of WP6 (the decals the Rust reference ages from the rows, hashed as
+the frame list held them) equals WP5's on both streams, S `a4afd00c954b7095` and P `14a7fd038cc8d77e`: the D-8 time
+split changes no decal of these streams.
+
+**D-10 check 1, record parity** (`decal_age_gpu_tests`, identity scene). Every frame, the GPU's aged buffer is read
+back beside `decal_table::age_decal` of the same rows, time and camera. Figures from one run per driver after review
+round 2: `~/scratch/retained-decals/wp6/age-radv-r2.log` and `age-lvp-r2.log`. Captures and `*_parity.txt` are under
+`~/scratch/retained-decals/wp6/captures2/`.
+
+| Driver | Child | Frames | Row-frames | Drawn rows | Bit-identical | Boundary flips | Outside tolerance |
+|---|---|---:|---:|---:|---:|---:|---:|
+| radv | gpu | 210 | 17 034 | 12 044 | 12 044 | 0 | 0 |
+| radv | resync (44 full copies) | 210 | 17 234 | 12 169 | 12 169 | 0 | 0 |
+| lavapipe | gpu | 204 | 16 930 | 11 940 | 11 940 | 0 | 0 |
+| lavapipe | resync (43 full copies) | 205 | 16 848 | 11 884 | 11 884 | 0 | 0 |
+
+The children's crowd adds the first shipped held look with a held decal layer, released at 4.5 s and placed far behind
+the camera, so its rows are compared but draw nothing. Drawn row-frames per branch, radv gpu child (lavapipe within a
+few): a released held layer 3; retired detail 126; retired marks 151; variant sets 12 044; rows hidden by level of
+detail 665. The **fitted-flipbook branch is drawn by no row**: every shipped decal element is a variant set, so that
+branch of the port is checked by review only. The released held branch is covered by 3 row-frames (its exit is about
+three frames long).
+
+The first port missed the tolerance on one frame. On 12 rows the intensity was 18 to 40 ulp off: radv's `/` left `life`
+one ulp low, and a steep curve amplified it. The port's divisions are now correctly rounded (Amendment 2, decision 1),
+and the parity is exact.
+
+**D-10 check 2, same run.** All 16 captures of the GPU child equal the CPU-source child's (`EffectDecalSource::Cpu`)
+pixel for pixel, on radv and lavapipe. All 16 captures of the resync child equal the GPU child's.
+
+**D-10 check 3, against the base.** The plain child renders the identity scene unchanged, aged on the GPU. Its 16 radv
+captures equal WP5's (`~/scratch/retained-decals/base-wp5/radv`) byte for byte. [Sheet](retained_decals_wp6_radv.jpg):
+captures 2 and 9, base, head and the difference × 16 (black). The sheet's head captures come from the first
+GPU run at `0552a43c` (`age-radv-base.log`), which equal WP5's as the plain child's do. Against WP1's base the same captures carry WP5's tie
+re-baseline (below).
+
+**Determinism (D-9).** `decal_identity_gpu_tests` renders the scene identically twice on radv and lavapipe. Its
+level-of-detail counter now counts cards only (D-15): radv 2 171, lavapipe 2 157 (2 894 with decals at WP5).
+
+**Lavapipe identity of WP2 to WP5 (Amendment 1's open item).** Lavapipe's head captures against its WP1 base: 13 of 16
+differ, in 67 to 337 pixels, with peaks of 3 to 8 levels and 66 in capture 5. These are the same captures, of nearly the
+same sizes, as radv's (66 to 359 pixels, peak 65): WP5's tie re-baseline, which is identical across drivers, with no
+other change.
+
+**Allocations.** `sync_allocation_count_tests` (valgrind): the effect stream's window allocates 0 blocks over 64 frames
+(difference 0), as before. `sync_steady_state_tests` covers the frame's `aged_decals` and the table's patch list. The
+render world's staged patches are a unit test (`staged_patches_never_outgrow_their_retained_vector`).
+
+**Goldens.** The 21 `effect_slice_gpu_tests` stills pass unchanged on radv.
+
 ## Tests run per WP
 
 - WP1: `frame_budget_tests` series statistics (8 tests), `cpu_clock` test, the identity test on radv and lavapipe,
@@ -123,3 +185,9 @@ WP5's captures (`~/scratch/retained-decals/base-wp5/`) are the base WP6's D-10 c
   retirement, mark retirement, only), each mutation-checked (removing the API's mark fails its test);
   `effect_runtime_tests`, `sync_steady_state_tests` (with the table's and the indices' buffers), `weapon_look_tests`.
 - WP5: the keyed sort over 2 000 random depth sets with and without ties.
+- WP6: `decal_age_gpu_tests` on radv and lavapipe (checks 1 and 2, resync), with the base comparison on radv;
+  `gpu_validation_tests` (`decal_age.wgsl` composes and validates, struct sizes equal their Rust twins);
+  `decal_identity_gpu_tests` on both drivers; `effect_slice_gpu_tests`; the bare-picture GPU tests (status, stance,
+  area and link, weapon battle); unit tests of the split time, the patch copy over missed frames, a clear, the grant
+  clamp, the aligned aging, the GPU record and the staged patches; `effect_runtime_tests`, `weapon_look_tests`,
+  `sync_steady_state_tests`, `sync_allocation_count_tests`; the `--decal-source` option.

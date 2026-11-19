@@ -552,7 +552,8 @@ fn verify_combat_effect_visible(world: &mut World) -> Result<(), CaptureError> {
                         )
                     })
             });
-            combat && (!runtime.frame.sorted.is_empty() || !runtime.frame.decals.is_empty())
+            combat
+                && (!runtime.frame.sorted.is_empty() || !runtime.current_decals(catalog).is_empty())
         }
         _ => false,
     };

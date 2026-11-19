@@ -7,16 +7,23 @@
 //! each by layer, placement and instance. Also owns the record writer ([`write_rows`]), which
 //! runs the per-instance work `push_decal` ran (placement, clip, hashes, the yaw, the surface)
 //! once when an effect's decal inputs change, and [`age_decal`], the pure function of a record,
-//! the time and the camera that gives the decal's [`DecalInstance`] of a frame.
+//! the time and the camera that gives the decal's [`DecalInstance`] of a frame: the reference
+//! that `assets/shaders/effects/decal_age.wgsl` ports (D-2, D-10), and the table's GPU form
+//! ([`GpuDecalRecord`], [`GpuCurveKey`]) the render world copies the rows into.
 //!
 //! # How it fits
 //! [`super::runtime::EffectRuntime`] marks an effect dirty whenever an API changes one of its
 //! decal inputs (spawn, hold, a merged line, a release, a move, a fog clip, a retirement of its
 //! detail or marks, its end, a change of `only`) and when one of its decal layers ends; once a
-//! frame [`DecalTable::rewrite`] frees each dirty effect's rows and writes them anew. The frame
-//! build then ages every row in order into the frame's decals. So the picture is the same pure
-//! function of the event stream and `Time<Virtual>` as before, with the per-frame work of a
-//! decal reduced to its aging.
+//! frame [`DecalTable::rewrite`] frees each dirty effect's rows and writes them anew. Each
+//! rewrite lists the rows it wrote ([`DecalTable::patches`]) under a new
+//! [`DecalTable::generation`]; the render world copies those rows (or every live row after a
+//! gap in the generations, [`DecalTable::copy_since`]) into its retained row buffer, and a
+//! compute pass ages the rows in [`DecalTable::order`] into the decal buffer the unchanged
+//! `decal.wgsl` draws (`super::render`). So the picture is the same pure function of the event
+//! stream and `Time<Virtual>` as before, and the main world's per-frame work for a decal is
+//! nothing unless its effect changed. Tests and tools age the rows on the CPU with the same
+//! reference ([`DecalTable::evaluate`], [`DecalTable::age_rows`]).
 //!
 //! # Invariants
 //! - Every vector is allocated at construction, at the decal budget's or the pool's capacity,
@@ -27,18 +34,26 @@
 //!   changed.
 //! - Time runs forward (`Time<Virtual>` never goes back; the lab resets the runtime between
 //!   takes): a layer dropped at a rewrite because it ended is never brought back by a later,
-//!   earlier `now`.
-//! - Rows fit when an effect's placed decals never outnumber the decal slots it was granted at
-//!   birth; a held line lengthened under a held line-placed decal layer could break this, and
-//!   the shipped vocabulary has none. A row that finds no room is counted as a critical
-//!   overflow, never dropped silently.
+//!   earlier `now`. The aging itself is a pure function of `now` (a frozen or jumping `now`
+//!   draws what the reference draws for it); only the rows' lifetimes assume forward time, so
+//!   a backward step without a reset (no client path makes one, plan D-8) could leave a layer
+//!   that ended undrawn.
+//! - An effect never has more rows than the decal slots it was granted at birth: a placed
+//!   decal past its grant (a held line lengthened under a line-placed decal layer; the shipped
+//!   vocabulary has none) gets no row and is counted in [`DecalTable::failed`], which the
+//!   runtime adds to its critical overflow, never dropped silently. As the ledger never grants
+//!   more slots than the decal budget holds, the live rows fit the budget's capacity, and so
+//!   does the GPU's decal buffer, which has one decal per row of the order.
+//! - Every time is aged through [`split_time`] and [`split_seconds`] (D-8), in Rust and in
+//!   WGSL alike, so the GPU, which has no `f64`, computes the same ages as the reference.
 
 use super::binding::{resolve_value, BoundValues};
-use super::budget::{lod_skips, retire_fade};
+use super::budget::{lod_skips, retire_fade, RETIRE_SECS};
 use super::catalog::schema::{DecalYaw, Priority};
 use super::catalog::{Block, CurveId, EffectCatalog, ElementRef, Layer, Pool};
+use super::curve::easing_code;
 use super::instances::DecalInstance;
-use super::ledger::mark_fade;
+use super::ledger::{mark_fade, MARK_RETIRE_SECS};
 use super::placement::{hash3, instance_count, place, placed_seen, unit_float};
 use super::pool::{EffectInstance, EffectInstancePool};
 use super::runtime::{
@@ -46,6 +61,7 @@ use super::runtime::{
     variant_frame, with_fog, CameraView, Surface,
 };
 use bevy::math::Vec3;
+use bytemuck::{Pod, Zeroable};
 
 /// No row.
 const NONE: u32 = u32::MAX;
@@ -127,24 +143,51 @@ fn seconds(now: f64, since: f64) -> f32 {
     (now - since) as f32
 }
 
+/// A time of `Time<Virtual>` (seconds, `f64`) as two `f32`: its nearest `f32` and the rest
+/// (D-8). WGSL has no `f64`, so the GPU receives every time in this form.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the split is the point: hi is the nearest f32, lo the rounding rest"
+)]
+pub fn split_time(time: f64) -> [f32; 2] {
+    let hi = time as f32;
+    let lo = (time - f64::from(hi)) as f32;
+    [hi, lo]
+}
+
+/// Seconds from `since` to `now`, both split by [`split_time`]: the difference of the high
+/// parts, exact by Sterbenz's lemma while `since` is within a factor of two of `now`, plus the
+/// difference of the small rests (D-8). The expression `decal_age.wgsl` evaluates.
+#[must_use]
+pub fn split_seconds(now: [f32; 2], since: [f32; 2]) -> f32 {
+    (now[0] - since[0]) + (now[1] - since[1])
+}
+
+/// Seconds from `since` to `now` through the split form.
+fn aged_seconds(now: [f32; 2], since: f64) -> f32 {
+    split_seconds(now, split_time(since))
+}
+
 /// The clock of `record` at `now`, or `None` when it draws nothing: its effect's detail faded
 /// out, not started, past its span, or eroded out after a release. The same expressions, in
 /// the same order, as `write_layers`, `marks_fade` and `layer_clock`.
 #[must_use]
 pub fn decal_clock(record: &DecalRecord, now: f64) -> Option<DecalClock> {
+    let now = split_time(now);
     let detail_fade = match (record.detail, record.detail_retired_at) {
-        (true, Some(retired)) => retire_fade(seconds(now, retired)),
+        (true, Some(retired)) => retire_fade(aged_seconds(now, retired)),
         _ => 1.0,
     };
     if detail_fade <= 0.0 {
         return None;
     }
     let fade = record.marks_retired_at.map_or(detail_fade, |retired| {
-        detail_fade * mark_fade(seconds(now, retired))
+        detail_fade * mark_fade(aged_seconds(now, retired))
     });
-    let since_birth = seconds(now, record.birth) - record.start;
+    let since_birth = aged_seconds(now, record.birth) - record.start;
     let released_exit = || match record.released_at {
-        Some(released) => (seconds(now, released) / record.exit.max(1e-3)).max(0.0),
+        Some(released) => (aged_seconds(now, released) / record.exit.max(1e-3)).max(0.0),
         None => 0.0,
     };
     let exit_floor = if since_birth - 0.0 < 0.0 || !record.held {
@@ -245,6 +288,248 @@ pub fn age_decal(
     decal_at(record, decal_clock(record, now)?, catalog, camera)
 }
 
+/// How near a row is to a boundary of its visibility at a time: where the GPU's arithmetic,
+/// which may round differently from the reference by a few ulp, can flip it on or off (D-10
+/// check 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AgeMargins {
+    /// Seconds to the nearest start or end of its drawing: its start, the end of its span, the
+    /// end of a released held layer's exit, of its detail fade or of its marks' fade.
+    pub seconds: f32,
+    /// Pixels between its projected size and the level-of-detail threshold; infinite without a
+    /// camera or when it has no clock.
+    pub pixels: f32,
+}
+
+/// [`AgeMargins`] of `record` at `now` from `camera` (exact `f64` ages, so the margins measure
+/// the distance to the boundary rather than one rounding of it).
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "margins are reported in f32 seconds"
+)]
+pub fn age_margins(
+    record: &DecalRecord,
+    now: f64,
+    catalog: &EffectCatalog,
+    camera: Option<&CameraView>,
+) -> AgeMargins {
+    let since_birth = now - record.birth - f64::from(record.start);
+    let age = since_birth - f64::from(record.delay);
+    let mut seconds = age.abs();
+    if !record.held {
+        seconds = seconds.min((age - f64::from(record.span)).abs());
+    }
+    if let Some(released) = record.released_at {
+        let exit = f64::from(record.exit.max(1e-3));
+        seconds = seconds.min((now - released - exit).abs());
+    }
+    if let (true, Some(retired)) = (record.detail, record.detail_retired_at) {
+        seconds = seconds.min((now - retired - f64::from(RETIRE_SECS)).abs());
+    }
+    if let Some(retired) = record.marks_retired_at {
+        seconds = seconds.min((now - retired - f64::from(MARK_RETIRE_SECS)).abs());
+    }
+    let pixels = match (camera, decal_clock(record, now)) {
+        (Some(camera), Some(clock)) => {
+            let extent = record.size
+                * catalog.sample(record.size_curve, clock.life, 1.0)
+                * record.size_strength
+                * record.jitter;
+            let position = Vec3::from_array(record.template.center);
+            (camera.pixels(extent * 2.0, position) - catalog.budget.min_screen_px).abs()
+        }
+        _ => f32::INFINITY,
+    };
+    AgeMargins {
+        seconds: seconds as f32,
+        pixels,
+    }
+}
+
+/// The decal the GPU writes for a row that draws nothing at a frame: every field zero, so its
+/// box has no extent and rasterises nothing (D-5).
+#[must_use]
+pub fn hidden_decal() -> DecalInstance {
+    DecalInstance::zeroed()
+}
+
+/// Bits of [`GpuDecalRecord::flags`].
+pub mod record_flags {
+    /// The row's layer is held.
+    pub const HELD: u32 = 1;
+    /// The row's layer is `Detail`.
+    pub const DETAIL: u32 = 2;
+    /// Its held effect was released ([`super::GpuDecalRecord::released`] is set).
+    pub const RELEASED: u32 = 4;
+    /// Its effect's detail was retired.
+    pub const DETAIL_RETIRED: u32 = 8;
+    /// Its effect's lasting marks were retired.
+    pub const MARKS_RETIRED: u32 = 16;
+    /// Its flipbook is fitted to its life (not a variant set).
+    pub const FLIPBOOK: u32 = 32;
+}
+
+/// [`GpuDecalRecord::curves`] entry of a layer without that curve.
+pub const NO_CURVE: u32 = u32::MAX;
+
+/// A row of the table as the GPU reads it: `DecalRecord` in `decal_age.wgsl`'s layout, every
+/// time split by [`split_time`] (D-8), every option a flag.
+// PERFORMANCE RATIONALE:
+// Why: The compute pass reads one record per live decal per frame from a storage buffer.
+// What: A `Pod` record of sixteen 16-byte rows (the decal template, then 28 scalars and three
+// pad words) matching the WGSL struct, so a row is copied as bytes.
+// Trade-off: Options become flags and absent curves a sentinel, and the record is wider than
+// its information (256 bytes) to keep WGSL's 16-byte struct alignment.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
+pub struct GpuDecalRecord {
+    /// [`DecalRecord::template`].
+    pub template: DecalInstance,
+    /// Its effect's birth, split.
+    pub birth: [f32; 2],
+    /// When its held effect was released, split (zero unless [`record_flags::RELEASED`]).
+    pub released: [f32; 2],
+    /// When its effect's detail was retired, split.
+    pub detail_retired: [f32; 2],
+    /// When its effect's marks were retired, split.
+    pub marks_retired: [f32; 2],
+    /// Its layer's start, seconds.
+    pub start: f32,
+    /// Its placement's delay, seconds.
+    pub delay: f32,
+    /// Its layer's span, seconds.
+    pub span: f32,
+    /// Its layer's exit, seconds.
+    pub exit: f32,
+    /// Its layer's bound strength factor on the intensity.
+    pub strength: f32,
+    /// Its layer's resolved size, world units.
+    pub size: f32,
+    /// Its layer's bound strength factor on the size.
+    pub size_strength: f32,
+    /// Its own size jitter factor.
+    pub jitter: f32,
+    /// Its look's box depth, world units.
+    pub depth: f32,
+    /// Its look's width over its length.
+    pub width: f32,
+    /// The first array layer of its fitted flipbook.
+    pub flipbook_first: u32,
+    /// The frames of its fitted flipbook.
+    pub flipbook_frames: u32,
+    /// Its intensity, size, erosion and ramp curves, or [`NO_CURVE`].
+    pub curves: [u32; 4],
+    /// [`record_flags`] bits.
+    pub flags: u32,
+    /// Padding to a whole 16-byte row.
+    pub pad: [u32; 3],
+}
+
+impl GpuDecalRecord {
+    /// The GPU form of `record`.
+    #[must_use]
+    pub fn of(record: &DecalRecord) -> Self {
+        let time = |at: Option<f64>| at.map_or([0.0, 0.0], split_time);
+        let flag = |set: bool, bit: u32| if set { bit } else { 0 };
+        let curve = |id: Option<CurveId>| id.map_or(NO_CURVE, |id| u32::from(id.0));
+        let flipbook = record.flipbook.unwrap_or(ElementRef {
+            first_layer: 0,
+            frames: 1,
+            duration_secs: None,
+        });
+        Self {
+            template: record.template,
+            birth: split_time(record.birth),
+            released: time(record.released_at),
+            detail_retired: time(record.detail_retired_at),
+            marks_retired: time(record.marks_retired_at),
+            start: record.start,
+            delay: record.delay,
+            span: record.span,
+            exit: record.exit,
+            strength: record.strength,
+            size: record.size,
+            size_strength: record.size_strength,
+            jitter: record.jitter,
+            depth: record.depth,
+            width: record.width,
+            flipbook_first: flipbook.first_layer,
+            flipbook_frames: flipbook.frames,
+            curves: [
+                curve(record.curve),
+                curve(record.size_curve),
+                curve(record.erosion_curve),
+                curve(record.ramp_curve),
+            ],
+            flags: flag(record.held, record_flags::HELD)
+                | flag(record.detail, record_flags::DETAIL)
+                | flag(record.released_at.is_some(), record_flags::RELEASED)
+                | flag(
+                    record.detail_retired_at.is_some(),
+                    record_flags::DETAIL_RETIRED,
+                )
+                | flag(
+                    record.marks_retired_at.is_some(),
+                    record_flags::MARKS_RETIRED,
+                )
+                | flag(record.flipbook.is_some(), record_flags::FLIPBOOK),
+            pad: [0; 3],
+        }
+    }
+}
+
+/// One key of the GPU curve table: `decal_age.wgsl`'s `CurveKey`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
+pub struct GpuCurveKey {
+    /// The key's normalised time.
+    pub time: f32,
+    /// Its value.
+    pub value: f32,
+    /// [`easing_code`] of its easing to the next key.
+    pub easing: u32,
+    /// Padding to 16 bytes.
+    pub pad: u32,
+}
+
+/// The GPU curve table of `catalog`: per curve, in [`CurveId`] order, its first key and key
+/// count, and every curve's keys after one another. Written once per vocabulary.
+#[must_use]
+pub fn curve_table(catalog: &EffectCatalog) -> (Vec<[u32; 2]>, Vec<GpuCurveKey>) {
+    let mut ranges = Vec::with_capacity(catalog.curves.len());
+    let mut keys = Vec::new();
+    for curve in &catalog.curves {
+        let first = u32::try_from(keys.len()).unwrap_or(u32::MAX);
+        keys.extend(
+            curve
+                .keys()
+                .iter()
+                .map(|&(time, value, easing)| GpuCurveKey {
+                    time,
+                    value,
+                    easing: easing_code(easing),
+                    pad: 0,
+                }),
+        );
+        let count = u32::try_from(curve.keys().len()).unwrap_or(u32::MAX);
+        ranges.push([first, count]);
+    }
+    (ranges, keys)
+}
+
+/// What a copy of the table that last took generation `applied` must copy to equal it (the
+/// render world's row buffer, D-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowCopy {
+    /// It is current.
+    Nothing,
+    /// It took the previous generation: the last rewrite's [`DecalTable::patches`].
+    Patches,
+    /// It missed a generation, or never took one: every live row ([`DecalTable::order`]).
+    Every,
+}
+
 /// The retained decal rows of the live effects.
 // PERFORMANCE RATIONALE:
 // Why: Half the frame build's instructions went to re-placing, re-clipping and re-hashing every
@@ -278,7 +563,16 @@ pub struct DecalTable {
     /// Per slot: the earliest end of a row's layer that is not held, in the effect's age, and
     /// the shortest exit of a row's held layer after its release (the rows change then).
     expiry: Vec<(f32, f32)>,
-    /// Rows that found no free row (a sizing defect).
+    /// Rows written by the last rewrite, in the order written: what the render world copies.
+    patches: Vec<u32>,
+    /// Rewrites so far; a clear skips one, so the render world sees a gap and copies every row.
+    generation: u64,
+    /// Sorts of the order so far (and clears): the render world copies the order when it moved.
+    order_generation: u64,
+    /// Live rows whose decal darkens what lies under it.
+    darkening: u32,
+    /// Placed decals that got no row: the table was full, or their effect's grant was used up
+    /// (a sizing defect, counted as a critical overflow).
     pub failed: u64,
 }
 
@@ -299,6 +593,10 @@ impl DecalTable {
             dirty_bits: vec![0; slots.div_ceil(64)],
             dirty: Vec::with_capacity(slots),
             expiry: vec![(f32::INFINITY, f32::INFINITY); slots],
+            patches: Vec::with_capacity(rows),
+            generation: 0,
+            order_generation: 0,
+            darkening: 0,
             failed: 0,
         }
     }
@@ -322,8 +620,15 @@ impl DecalTable {
         }
     }
 
-    /// Removes every row.
+    /// Removes every row. The generation skips one, so the render world copies the whole
+    /// (empty) table at its next extraction rather than patches.
     pub fn clear(&mut self) {
+        self.patches.clear();
+        // Two: a copy that took the generation before the clear sees a gap even before the
+        // next rewrite (independent review round 2, S2).
+        self.generation += 2;
+        self.order_generation += 1;
+        self.darkening = 0;
         self.records.clear();
         self.keys.clear();
         self.next.clear();
@@ -369,6 +674,8 @@ impl DecalTable {
         now: f64,
         only: Option<Priority>,
     ) {
+        self.patches.clear();
+        self.generation += 1;
         for index in 0..self.dirty.len() {
             let slot = self.dirty[index];
             self.free_chain(slot);
@@ -398,6 +705,7 @@ impl DecalTable {
             );
             self.order.sort_unstable_by_key(|row| keys[*row as usize]);
             self.order_stale = false;
+            self.order_generation += 1;
         }
     }
 
@@ -413,6 +721,9 @@ impl DecalTable {
         while row != NONE {
             self.free.push(row);
             self.live_rows[row as usize] = false;
+            if self.records[row as usize].template.darken != 0.0 {
+                self.darkening = self.darkening.saturating_sub(1);
+            }
             row = self.next[row as usize];
         }
         self.order_stale = true;
@@ -441,12 +752,95 @@ impl DecalTable {
         self.next[row as usize] = *head;
         *head = row;
         self.order_stale = true;
+        if record.template.darken != 0.0 {
+            self.darkening += 1;
+        }
+        // At most one push per row per rewrite: a row is freed only with its effect's chain,
+        // which a rewrite frees once, before writing that effect's rows. So the list (at the
+        // rows' capacity) never fills; were it to, the row is counted as a failure and the
+        // next copy takes every row, never leaving a stale row on the GPU.
+        if self.patches.len() < self.patches.capacity() {
+            self.patches.push(row);
+        } else {
+            self.failed += 1;
+            self.generation += 1;
+        }
     }
 
     /// Live rows, in key order: the order the frame's decals are written in.
     #[must_use]
     pub fn order(&self) -> &[u32] {
         &self.order
+    }
+
+    /// The rows the last rewrite wrote (their records are current): the patches the render
+    /// world copies into its row buffer when it saw the previous generation.
+    #[must_use]
+    pub fn patches(&self) -> &[u32] {
+        &self.patches
+    }
+
+    /// Rewrites so far. The render world applies [`Self::patches`] only on top of the previous
+    /// generation; after a gap (a missed frame, a clear) it copies every live row.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// What a copy that last took generation `applied` (`None`: never) copies now.
+    #[must_use]
+    pub fn copy_since(&self, applied: Option<u64>) -> RowCopy {
+        match applied {
+            Some(applied) if applied == self.generation => RowCopy::Nothing,
+            Some(applied) if applied + 1 == self.generation => RowCopy::Patches,
+            _ => RowCopy::Every,
+        }
+    }
+
+    /// Changes of the order so far: the render world copies [`Self::order`] when it moved.
+    #[must_use]
+    pub const fn order_generation(&self) -> u64 {
+        self.order_generation
+    }
+
+    /// Live rows whose decal darkens what lies under it (the renderer queues its darkening
+    /// item while there is one).
+    #[must_use]
+    pub const fn darkening(&self) -> u32 {
+        self.darkening
+    }
+
+    /// Ages every row of the order at `now` from `camera` into `out`, one decal per row in
+    /// order, a row that draws nothing as [`hidden_decal`]: what the compute pass writes, and
+    /// what [`super::render::EffectDecalSource::Cpu`] uploads in its place.
+    pub fn age_rows(
+        &self,
+        now: f64,
+        catalog: &EffectCatalog,
+        camera: Option<&CameraView>,
+        out: &mut Vec<DecalInstance>,
+    ) {
+        out.clear();
+        out.extend(self.order.iter().map(|&row| {
+            age_decal(&self.records[row as usize], now, catalog, camera)
+                .unwrap_or_else(hidden_decal)
+        }));
+    }
+
+    /// The decals the rows draw at `now` from `camera`, in order, each with its effect's pool
+    /// slot: the CPU reference of a frame's decals for tests and tools (D-15).
+    pub fn evaluate(
+        &self,
+        now: f64,
+        catalog: &EffectCatalog,
+        camera: Option<&CameraView>,
+        out: &mut Vec<(u32, DecalInstance)>,
+    ) {
+        out.clear();
+        out.extend(self.order.iter().filter_map(|&row| {
+            let record = &self.records[row as usize];
+            age_decal(record, now, catalog, camera).map(|decal| (record.slot, decal))
+        }));
     }
 
     /// The record of `row`.
@@ -477,7 +871,7 @@ impl DecalTable {
 
     /// Address and capacity of every retained vector, which an allocation would change.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 9] {
+    pub fn buffers(&self) -> [(usize, usize); 10] {
         [
             (self.records.as_ptr() as usize, self.records.capacity()),
             (self.keys.as_ptr() as usize, self.keys.capacity()),
@@ -491,6 +885,7 @@ impl DecalTable {
             ),
             (self.dirty.as_ptr() as usize, self.dirty.capacity()),
             (self.expiry.as_ptr() as usize, self.expiry.capacity()),
+            (self.patches.as_ptr() as usize, self.patches.capacity()),
         ]
     }
 }
@@ -530,6 +925,7 @@ fn write_rows(
     }
     let age = seconds(now, instance.birth);
     let (mut until_age, mut until_exit) = (f32::INFINITY, f32::INFINITY);
+    let mut grant = instance.decal_slots;
     for (layer_index, layer) in effect.layers.iter().enumerate() {
         let Block::Decal(_) = &layer.block else {
             continue;
@@ -551,19 +947,22 @@ fn write_rows(
         } else {
             until_age = until_age.min(super::runtime::layer_end_age(layer, instance));
         }
-        write_layer_rows(table, slot, instance, (layer, layer_index));
+        write_layer_rows(table, slot, instance, (layer, layer_index), &mut grant);
     }
     if let Some(expiry) = table.expiry.get_mut(slot as usize) {
         *expiry = (until_age, until_exit);
     }
 }
 
-/// Writes the rows of one decal layer of `instance`.
+/// Writes the rows of one decal layer of `instance`, at most `grant` of them (the decal slots
+/// its effect has left of its grant, decreased by each row written); a placed decal past the
+/// grant gets no row and is counted in [`DecalTable::failed`].
 fn write_layer_rows(
     table: &mut DecalTable,
     slot: u32,
     instance: &EffectInstance,
     (layer, layer_index): (&Layer, usize),
+    grant: &mut u32,
 ) {
     let Block::Decal(look) = &layer.block else {
         return;
@@ -577,6 +976,11 @@ fn write_layer_rows(
             if !placed_seen(placement, index, instance.line, bound) {
                 continue;
             }
+            if *grant == 0 {
+                table.failed += 1;
+                continue;
+            }
+            *grant -= 1;
             let seed = placed_seed(instance.seed, layer_salt, placement_salt, index);
             let placed = place(placement, index, seed, bound, instance.line);
             let position = instance.anchor + placed.offset;
@@ -651,7 +1055,7 @@ fn write_layer_rows(
 mod tests {
     use super::*;
     use crate::effects::catalog::schema::{Binding, EventKind};
-    use crate::effects::catalog::EffectId;
+    use crate::effects::catalog::{CurveId, EffectId, ElementRef, Pool};
     use crate::effects::placement::WorldLine;
     use crate::effects::pool::EffectHandle;
     use crate::effects::runtime::{EffectRuntime, SpawnRequest};
@@ -821,12 +1225,19 @@ mod tests {
             assert!(!expected.is_empty(), "{api}: the scene draws decals");
             let bits =
                 |decals: &[DecalInstance]| -> Vec<u8> { bytemuck::cast_slice(decals).to_vec() };
+            let mut evaluated = Vec::new();
+            self.runtime
+                .evaluate_decals(&self.catalog, self.now, Some(&camera), &mut evaluated);
+            let (decals, slots): (Vec<DecalInstance>, Vec<u32>) = evaluated
+                .into_iter()
+                .map(|(slot, decal)| (decal, slot))
+                .unzip();
             assert_eq!(
-                bits(&self.runtime.frame.decals),
+                bits(&decals),
                 bits(&expected),
                 "{api}: the retained rows draw what rows rebuilt from scratch draw"
             );
-            assert_eq!(self.runtime.frame.decal_owners, owners);
+            assert_eq!(slots, owners);
         }
     }
 
@@ -982,6 +1393,274 @@ mod tests {
         }
         assert!(scene.runtime.stats.marks_retired > 0, "marks were retired");
         scene.assert_next_frame_matches_scratch("mark retirement");
+    }
+
+    /// D-8: aging through the split times gives the `f64` difference cast to `f32`, or a
+    /// neighbouring `f32` in rare cases (about 1 %), over session times up to a day.
+    #[test]
+    fn split_seconds_equal_the_f64_difference_within_one_ulp() {
+        let mut state = 0x5EED_u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            f64::from(u32::try_from(state >> 32).expect("32 bits")) / f64::from(u32::MAX)
+        };
+        let (mut exact, mut total) = (0_u32, 0_u32);
+        for _ in 0..200_000 {
+            let now = next() * 86_400.0;
+            // Events from the last minute (the table's rows), and from the session's start.
+            let since = if next() < 0.9 {
+                now - next() * 60.0
+            } else {
+                next() * now
+            };
+            #[expect(clippy::cast_possible_truncation, reason = "the reference cast")]
+            let reference = (now - since) as f32;
+            let split = split_seconds(split_time(now), split_time(since));
+            let ulps = (i64::from(reference.to_bits().cast_signed())
+                - i64::from(split.to_bits().cast_signed()))
+            .abs();
+            assert!(
+                ulps <= 1,
+                "{now} - {since}: {split} against {reference} ({ulps} ulp)"
+            );
+            exact += u32::from(ulps == 0);
+            total += 1;
+        }
+        // Measured: 197 766 of 200 000 exact (98.9 %); the rest one ulp apart.
+        assert!(
+            exact * 100 >= total * 98,
+            "all but rare cases are exact: {exact} of {total}"
+        );
+        let time = 1_234.567_890_123;
+        let [hi, lo] = split_time(time);
+        assert!(
+            (f64::from(hi) + f64::from(lo) - time).abs() < 1e-11,
+            "the rest carries what the nearest f32 leaves"
+        );
+    }
+
+    /// D-5: a copy fed the table's patches after every rewrite, and every live row after a
+    /// missed frame, holds the table's rows, so the GPU's row buffer does.
+    #[test]
+    fn a_copy_fed_the_patches_holds_the_tables_rows_over_both_streams() {
+        for kind in [StreamKind::Splashes, StreamKind::Plan] {
+            let mut copy: Vec<GpuDecalRecord> = Vec::new();
+            let mut applied: Option<u64> = None;
+            let (mut frame, mut patched, mut live, mut resyncs) = (0_u32, 0_usize, 0_usize, 0);
+            run_stream_with(
+                kind,
+                900,
+                |_| {},
+                |catalog, runtime, _| {
+                    let table = runtime.decal_table();
+                    if copy.is_empty() {
+                        copy = vec![GpuDecalRecord::zeroed(); catalog.budget.decals as usize];
+                    }
+                    frame += 1;
+                    // Every 97th frame the copy misses its extraction.
+                    if frame % 97 == 0 {
+                        return;
+                    }
+                    let rows: &[u32] = match table.copy_since(applied) {
+                        RowCopy::Nothing => &[],
+                        RowCopy::Patches => table.patches(),
+                        RowCopy::Every => {
+                            resyncs += 1;
+                            table.order()
+                        }
+                    };
+                    for &row in rows {
+                        copy[row as usize] =
+                            GpuDecalRecord::of(table.record(row).expect("a written row"));
+                    }
+                    applied = Some(table.generation());
+                    patched += table.patches().len();
+                    live += table.live();
+                    for &row in table.order() {
+                        let record = table.record(row).expect("a live row");
+                        assert_eq!(
+                            copy[row as usize],
+                            GpuDecalRecord::of(record),
+                            "{kind:?}, frame {frame}: row {row} is current"
+                        );
+                    }
+                    let darkening = table
+                        .rows()
+                        .filter(|(_, record)| record.template.darken != 0.0)
+                        .count();
+                    assert_eq!(table.darkening() as usize, darkening, "darkening rows");
+                },
+            );
+            println!(
+                "{kind:?}: {patched} rows patched against {live} live row-frames, {resyncs} \
+                 full copies"
+            );
+            assert!(
+                resyncs >= 9,
+                "{kind:?}: every missed frame forced a full copy"
+            );
+            assert!(
+                patched * 5 < live,
+                "{kind:?}: patches are a small share of the rows ({patched} of {live})"
+            );
+        }
+    }
+
+    /// A clear leaves a gap in the generations, so the next copy takes every row.
+    #[test]
+    fn a_clear_makes_the_next_copy_take_every_row() {
+        let mut scene = Scene::new(|_| {});
+        let generation = scene.runtime.decal_table().generation();
+        assert_eq!(
+            scene.runtime.decal_table().copy_since(Some(generation)),
+            RowCopy::Nothing
+        );
+        scene.runtime.clear();
+        assert_eq!(
+            scene.runtime.decal_table().copy_since(Some(generation)),
+            RowCopy::Every,
+            "right after the clear"
+        );
+        scene.frame();
+        assert_eq!(
+            scene.runtime.decal_table().copy_since(Some(generation)),
+            RowCopy::Every,
+            "and after the next rewrite"
+        );
+        assert_eq!(scene.runtime.decal_table().copy_since(None), RowCopy::Every);
+    }
+
+    /// Amendment 1's open item: an effect never has more rows than the decal slots it was
+    /// granted; a placed decal past the grant is counted, not given a row.
+    #[test]
+    fn an_effects_rows_never_exceed_its_grant() {
+        let catalog = shipped_catalog();
+        let mut runtime = EffectRuntime::new(&catalog);
+        for (index, effect) in catalog.effects.iter().enumerate() {
+            if effect
+                .layers
+                .iter()
+                .any(|layer| layer.block.pool() == Pool::Decals)
+                && matches!(
+                    effect.event,
+                    EventKind::Splash | EventKind::Point | EventKind::Line
+                )
+            {
+                let id = EffectId(u16::try_from(index).expect("a small vocabulary"));
+                let anchor = Vec3::new(4.0 * f32::from(id.0 % 8), 0.0, 4.0 * f32::from(id.0 / 8));
+                runtime.spawn(&catalog, &request(id, anchor, Some(u64::MAX)), 0.0);
+            }
+        }
+        runtime.build_frame(&catalog, 0.05, None);
+        let table = runtime.decal_table();
+        let (slot, rows) = (0..runtime.pool().capacity())
+            .map(|slot| (slot, table.rows().filter(|(_, r)| r.slot == slot).count()))
+            .max_by_key(|(_, rows)| *rows)
+            .expect("a slot");
+        assert!(rows >= 2, "a shipped look places several decals");
+        let mut pool = runtime.pool().clone();
+        pool.slot_mut(slot as usize).expect("live").decal_slots = 1;
+        let mut fresh = DecalTable::with_capacity(catalog.budget.decals, pool.capacity());
+        fresh.mark_all();
+        fresh.rewrite(&pool, &catalog, 0.05, None);
+        let kept = fresh.rows().filter(|(_, r)| r.slot == slot).count();
+        assert_eq!(kept, 1, "the rows stop at the grant");
+        assert_eq!(
+            fresh.failed,
+            (rows - 1) as u64,
+            "every decal past it is counted"
+        );
+    }
+
+    /// The rows aged in order hold one decal per row, a row that draws nothing as the zero
+    /// decal, and the rest are the reference's decals in order.
+    #[test]
+    fn aged_rows_align_with_the_order_and_hide_what_draws_nothing() {
+        let (mut hidden, mut drawn) = (0, 0);
+        run_stream_with(
+            StreamKind::Plan,
+            300,
+            |_| {},
+            |catalog, runtime, now| {
+                let table = runtime.decal_table();
+                let camera = stream_camera();
+                let (mut aged, mut evaluated) = (Vec::new(), Vec::new());
+                table.age_rows(now, catalog, Some(&camera), &mut aged);
+                table.evaluate(now, catalog, Some(&camera), &mut evaluated);
+                assert_eq!(aged.len(), table.order().len());
+                let shown: Vec<DecalInstance> = aged
+                    .iter()
+                    .copied()
+                    .filter(|d| *d != hidden_decal())
+                    .collect();
+                let expected: Vec<DecalInstance> = evaluated.iter().map(|(_, d)| *d).collect();
+                assert_eq!(shown, expected);
+                hidden += aged.len() - shown.len();
+                drawn += shown.len();
+            },
+        );
+        assert!(
+            drawn > 0 && hidden > 0,
+            "both kinds occur: {drawn} drawn, {hidden} hidden"
+        );
+        assert!(bytemuck::bytes_of(&hidden_decal())
+            .iter()
+            .all(|byte| *byte == 0));
+    }
+
+    /// The GPU form carries every input: options as flags, times split.
+    #[test]
+    fn gpu_records_carry_every_input() {
+        let catalog = shipped_catalog();
+        let scene = Scene::new(|_| {});
+        let record = *scene.runtime.decal_table().rows().next().expect("a row").1;
+        let plain = GpuDecalRecord::of(&DecalRecord {
+            held: false,
+            detail: false,
+            released_at: None,
+            detail_retired_at: None,
+            marks_retired_at: None,
+            flipbook: None,
+            curve: None,
+            ..record
+        });
+        assert_eq!(plain.flags, 0);
+        assert_eq!(plain.curves[0], NO_CURVE);
+        assert_eq!(plain.birth, split_time(record.birth));
+        let full = GpuDecalRecord::of(&DecalRecord {
+            held: true,
+            detail: true,
+            released_at: Some(1.5),
+            detail_retired_at: Some(2.5),
+            marks_retired_at: Some(3.5),
+            flipbook: Some(ElementRef {
+                first_layer: 7,
+                frames: 4,
+                duration_secs: None,
+            }),
+            curve: Some(CurveId(3)),
+            ..record
+        });
+        assert_eq!(full.flags, 63, "every flag");
+        assert_eq!(
+            (full.released, full.detail_retired, full.marks_retired),
+            ([1.5, 0.0], [2.5, 0.0], [3.5, 0.0])
+        );
+        assert_eq!((full.flipbook_first, full.flipbook_frames), (7, 4));
+        assert_eq!(full.curves[0], 3);
+        let (ranges, keys) = curve_table(&catalog);
+        assert_eq!(ranges.len(), catalog.curves.len());
+        for (range, curve) in ranges.iter().zip(&catalog.curves) {
+            let [first, count] = *range;
+            let span = &keys[first as usize..(first + count) as usize];
+            assert!(span
+                .iter()
+                .zip(curve.keys())
+                .all(|(gpu, key)| gpu.time.to_bits() == key.0.to_bits()
+                    && gpu.value.to_bits() == key.1.to_bits()));
+        }
     }
 
     #[test]

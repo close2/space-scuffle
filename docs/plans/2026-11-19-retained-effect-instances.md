@@ -846,3 +846,118 @@ caches and the bit arithmetic. Notes kept open: correctness assumes time runs fo
 docs; D-8's "any `now` sequence" no longer holds for a backward step without a reset); WP2 to WP5 were compared on
 radv only (lavapipe at the base); the bench binaries were built minutes before their commits, so the digests cover
 the trees built, not the commit hashes.
+
+## Amendment 2 (2026-11-19): WP6 implemented (GPU aging)
+
+**State.** WP6 is on branch `retained-decals-plan`; figures in
+[`retained_decals_baseline.md`](../evidence/effects/review/retained_decals_baseline.md) § WP6. The lasting decals are aged
+by `assets/shaders/effects/decal_age.wgsl` in the compute node `EffectDecalAgeNode`; the main world writes only the
+rows of changed effects. Record parity (D-10 check 1) holds **bit for bit** on radv and lavapipe (every drawn row of
+every frame identical to `decal_table::age_decal`), the same-run pixel check (check 2) is exact (every capture of the GPU
+aging equals the CPU source's), and the head's radv captures equal WP5's base byte for byte (check 3).
+
+**Verify items (D-5, D-14).** Bevy 0.15.3 has `Node3d::Prepass` and `Node3d::MainOpaquePass`; a plain render-graph
+`Node` added to `Core3d` between them runs per camera view, and the node ages only for the view `queue_effects` chose
+(`graph.get_view_entity()`). A custom node can open a GPU span: `RenderContext::diagnostic_recorder().pass_span` on its
+compute pass (`effect_decal_age`), so the plan's own-timestamp fallback was not needed.
+
+**Implementation decisions** (Q0002):
+
+1. **Correctly rounded division in WGSL.** The first port missed check 1 by 18 to 40 ulp of intensity on 12 rows: WGSL's
+   `/` is a reciprocal and a product on radv, `life = age / span` came out one ulp off, and a steep curve (slope about 20)
+   multiplied that. `fma` cannot repair it there: radv on the RX 580 (GFX8) splits `fma` into a rounded product and a
+   sum, and its optimizer simplifies across float arithmetic. `div` takes one residual step computed with Dekker's
+   two-product (only `*` and `-`), behind an optimization barrier (`opaque`: an XOR with the uniform's `zero_bits`, 0).
+   The port then agrees with Rust's IEEE division, and the parity is exact rather than within D-10's tolerance.
+2. **D-8 in the reference.** `age_decal` ages through `split_time`/`split_seconds`, as the shader does. Over 200 000
+   random pairs it equals the `f64` difference cast to `f32` in 98.9 %, one ulp off otherwise; the `effect_frame`
+   digests of the S and P streams are unchanged from WP5.
+3. **`start` and `delay` stay two offsets** (D-2 said one): the reference subtracts them one after the other.
+4. **No `only` in the uniform:** a change of `only` already rewrites every row.
+5. **No admission on the GPU.** An effect's rows are clamped to its grant (Amendment 1's open item), and the ledger grants
+   no more than the budget. So the live rows never outnumber the pool, `write_layer`'s `Detail` admission could never
+   refuse a row, and the per-frame `write_decals` is gone; `EffectStats::critical_overflow` counts rows that found no
+   room (`DecalTable::failed`), tested never to happen on the streams and counted when a grant is exceeded
+   (`an_effects_rows_never_exceed_its_grant`).
+6. **Patches are row indices.** The records are converted to `GpuDecalRecord` at extraction into a retained
+   render-world vector (`stage_patches`); the order is written straight from the main world's slice, so it needs no
+   render-world copy. The sync harness has no render world, so the staging vector's retention is a unit test in
+   `render.rs` (`staged_patches_never_outgrow_their_retained_vector`) rather than a line of `sync_steady_state_tests`.
+7. **The applied generation is set by the node** (an atomic the node stores after it dispatched). A frame the node did
+   not run (no view, pipelines compiling) therefore leaves a gap, and the next extraction copies every row.
+   `DecalTable::copy_since` decides Nothing/Patches/Every; a copy fed its patches, with every 97th frame missed, equals
+   the table over both streams (`a_copy_fed_the_patches_holds_the_tables_rows_over_both_streams`).
+8. **The missed-generation test is a fault injection.** `EffectDecalProbe::forget_every` makes every fifth extraction
+   forget the applied generation, so that frame copies every row. The resync child's captures equal the GPU child's bit
+   for bit, and its parity is exact.
+9. **Three children, not one** (D-10 check 2): gpu (with read-back), cpu (`EffectDecalSource::Cpu`) and resync, for the
+   reason of Amendment 1's decision 2.
+10. **Test instrumentation in `render.rs`:** `EffectDecalProbe` (read-back and fault injection) is a public resource
+    that production never inserts. Its render-world systems are registered only by `EffectDecalProbePlugin`, which only
+    tests add (review round 2, S3).
+11. **The decals are drawn once the aging pipelines are compiled.** A pipeline that fails is reported once (`error!`),
+    and the decals are then never drawn; nothing falls back.
+12. **D-15.** `EffectFrame::decals` and `decal_owners` are removed. Tests and tools use
+    `EffectRuntime::evaluate_decals` (with owners) or `current_decals`. A bare picture clears `EffectFrame::draw_decals`.
+    `aged_decals` holds the CPU source's rows (one per row of the order). `darkening_decals` is the table's live
+    darkening count. `effect_frame --digest` hashes the reference's drawn decals and their darkening count, as the frame
+    list held them, so digests stay comparable with WP1 to WP5.
+13. **The identity scene is unchanged**, so check 3 compares with WP5's captures. The aging test's gpu, cpu and resync
+    children add the first shipped held look with a held decal layer, released at 4.5 s and placed far behind the camera,
+    so the release's exit is compared (review round 2, S1). The added spawn shifts the spawn sequence, which seeds later
+    effects, so a fourth child, **plain**, renders the unchanged scene for the comparison with the base. The parity
+    report counts drawn rows per branch, and the parent asserts each branch occurred. No shipped decal uses a fitted
+    flipbook (all are variant sets), so that branch is asserted only when the vocabulary has one; it is checked by review.
+14. **Time.** The aging is a pure function of `now`; the rows' lifetimes still assume forward time (decal table docs).
+
+**Open (Amendment 1's items).** Item 1 (D-8 split) done; item 2 (clamp) done; item 3 (lavapipe identity of WP2 to WP5)
+done: lavapipe's head captures differ from its WP1 base in the same 13 of 16 captures as radv's (67 to 337 pixels, peak
+66 levels in capture 5), the WP5 tie re-baseline; item 4 (valgrind) done, zero allocations in the effect stream's window;
+item 5 kept in the table's docs.
+
+## Amendment 3 (2026-11-19): WP7 measured, the bar missed; WP8 review and bookkeeping
+
+**WP8 review** (Q0080's process applied to the identity claim; the reviewer saw the evidence, the captures and the code,
+not the implementer's account).
+
+- **Round 1** found one blocker and four should-fix items, all fixed:
+  - **B1.** A shader still loading (`ShaderNotLoaded`, `ShaderImportNotYetAvailable`) was latched as a failed aging
+    pipeline. These states are now treated as temporary, as `runtime_battle::verification` treats them.
+  - **S1.** The released held branch was not exercised. Fixed by the added look and the branch counts of Amendment 2,
+    decision 13.
+  - **S2.** `DecalTable::clear` adds 2 to the generation, so a copy sees a gap even before the next rewrite.
+  - **S3.** The probe moved into `EffectDecalProbePlugin`.
+  - **S4.** A patch that finds the list full counts as a failure and forces a full copy. A listed row without a record is
+    reported, never dropped silently.
+  - The evidence now cites one run per driver.
+- **Round 2** confirmed every fix. Its should-fix items are fixed in the WP7 evidence:
+  - The effect functions explain only about 1.2 to 1.5 ms of the +3.7 ms CPU difference.
+  - The quiet-pair rule is starts and ends.
+  - The parallel card build cannot move the CPU-time verdict, because it spreads CPU over threads. The gate now says
+    which verdict route each option can satisfy.
+
+  Its notes are kept: the released held branch is covered by only about three frames; the fitted-flipbook branch by
+  review only; and the kernel and GPU comparisons are observations across sessions.
+
+**WP7, the series of record** ([`frame_budget_b137_retained.md`](../evidence/effects/review/frame_budget_b137_retained.md)).
+18 runs of B, S and P on the WP6 binaries; one quiet pair.
+
+- **Re-recorded baseline:** B's median wall p50 is **14.02 ms** (load 9 to 41).
+- **CPU-time verdict:** the median CPU per frame over B is **+3.69 ms (S)** and **+5.18 ms (P)**, against a bar of
+  0.70 ms. **The bar is missed.** The median p50 ratios are 1.15 (S) and 1.17 (P).
+- **The pairs' spread** is −4.3 to +10.5 ms, much wider than the bar, and the medians equal WP1's (+3.62 and +5.17 ms).
+  The series cannot resolve the build's saving, which the instruction counts show (S −5.6 M a frame from WP1).
+- **GPU:** the effect passes, the aging pass included (0.034 ms), are +0.63 ms over WP14's no-effects run. This is under
+  1.5 ms.
+- **Kernel validation:** S and B are now within 0.1 % of samples (`ttm_bo_validate` 0.68 % against 0.57 %).
+
+**Decision gate (D-13): not chosen here.** B-137 stays open with these figures. The ranked options are:
+
+1. the parallel card build;
+2. budget data first (a look change: Q0080 rounds and the owner's sign-off);
+3. retained cards.
+
+Beside them, the remaining build per phase (S): cards about 49 %, and the per-frame re-sort of the decal order about
+24 %. The effect functions as a whole explain only about 1.2 to 1.5 ms of the +3.7 ms CPU difference, and option 1
+cannot move the CPU-time verdict. The re-sort is inside this plan's own design and could be removed without a look change, but this hand-back does not
+choose it.
