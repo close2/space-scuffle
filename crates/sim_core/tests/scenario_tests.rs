@@ -1148,3 +1148,110 @@ fn enter_modes_queues_behind_earlier_orders() {
         Err(ScenarioError::NoModeSwitches { slot: 1 })
     ));
 }
+
+/// Every shipped map document under `assets/maps/`, with its file name.
+fn shipped_maps() -> Vec<(String, MapDocument)> {
+    let mut maps: Vec<(String, MapDocument)> = std::fs::read_dir(resolve_path("../../assets/maps"))
+        .expect("the maps directory")
+        .map(|entry| entry.expect("a map entry").path())
+        .filter(|path| path.to_string_lossy().ends_with(".scmap.ron"))
+        .map(|path| {
+            let doc = MapFile::load(&path)
+                .expect("a shipped map loads")
+                .decode()
+                .expect("a shipped map decodes");
+            (path.display().to_string(), doc)
+        })
+        .collect();
+    maps.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(!maps.is_empty());
+    maps
+}
+
+/// Plan `2026-11-19-footprint-flags` WP4 (guard, D-7): start town halls are placed without the
+/// flag check, so every shipped map keeps each start's town hall cells (every town hall
+/// analogue, centred in the start footprint as scenario setup places it) out of every resource
+/// node's ring, read from the shipped `placement_rules.ron`.
+#[test]
+fn every_shipped_start_clears_every_resource_reach() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
+    let halls: Vec<(u32, u32)> = catalogs
+        .units
+        .archetypes()
+        .filter(|arch| {
+            arch.placement_excludes
+                .has(sim_types::PlacementFlag::NearResources)
+        })
+        .filter_map(|arch| match arch.shape {
+            ShapeKind::BuildingDome {
+                footprint_w,
+                footprint_h,
+                ..
+            } => Some((u32::from(footprint_w), u32::from(footprint_h))),
+            ShapeKind::UnitSphere => None,
+        })
+        .collect();
+    assert!(!halls.is_empty());
+    let mut checked = 0;
+    for (name, doc) in shipped_maps() {
+        for start in &doc.start_locations {
+            for &(width, height) in &halls {
+                let left = start.cell.0 + (u32::from(start.footprint.0) - width) / 2;
+                let bottom = start.cell.1 + (u32::from(start.footprint.1) - height) / 2;
+                for y in bottom..bottom + height {
+                    for x in left..left + width {
+                        for node in &doc.resources {
+                            let reach = rules.reach(node.kind);
+                            let dx = i64::from(x) - i64::from(node.cell.0);
+                            let dy = i64::from(y) - i64::from(node.cell.1);
+                            assert!(
+                                !reach.is_some_and(|reach| reach.covers(dx, dy)),
+                                "{name}: start {} hall cell ({x}, {y}) lies in the reach of the {:?} node at {:?}",
+                                start.player_slot,
+                                node.kind,
+                                node.cell
+                            );
+                        }
+                    }
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 4, "every start of both maps was checked");
+}
+
+/// Plan `2026-11-19-footprint-flags` WP4: every gas node of every shipped map still takes each
+/// extractor analogue centred on it, on a fresh world of that map.
+#[test]
+fn every_shipped_gas_node_takes_an_extractor() {
+    let mut checked = 0;
+    for (name, doc) in shipped_maps() {
+        let map = doc.to_game_map().expect("a shipped map converts");
+        let world = sim_fixtures::world(map, 1);
+        let extractors: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|arch| arch.capabilities.is_gas_extractor)
+            .map(|arch| arch.unit_type_id)
+            .collect();
+        assert!(!extractors.is_empty());
+        for node in doc
+            .resources
+            .iter()
+            .filter(|node| node.kind == ResourceKind::Gas)
+        {
+            for &extractor in &extractors {
+                assert_eq!(
+                    world.preview_site(PlayerId(0), extractor, node.cell.0 - 1, node.cell.1 - 1),
+                    Ok(()),
+                    "{name}: gas node at {:?}",
+                    node.cell
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0);
+}

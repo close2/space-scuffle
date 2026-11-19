@@ -1147,6 +1147,47 @@ fn a_town_hall_near_resources_shows_refused_and_says_why() {
     );
 }
 
+/// Plan `2026-11-19-footprint-flags` §8 and WP4: on the shipped map the player's own start keeps
+/// every resource ring off its town hall's cells, so with the starting hall gone the same town
+/// hall's ghost on the start is green.
+#[test]
+fn a_town_hall_on_its_own_start_shows_legal() {
+    let mut harness = skirmish();
+    let (worker, _) = worker_and_site(&mut harness);
+    let hall = town_hall(&harness, worker);
+    let home = harness.local_structure();
+    let start = harness.world().map.structures()[&home].top_left;
+    let at = harness.simulated_position(home);
+    // Another structure keeps the player in the match while the starting hall is removed.
+    let keeper = slug(&harness, STRUCTURE);
+    harness
+        .world_mut()
+        .spawn_structure(keeper, LOCAL_PLAYER, SITE_CORNER, SITE_CORNER)
+        .expect("a structure stands on the open site");
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&home)
+        .expect("the hall")
+        .hp = sim_types::SimScalar::ZERO;
+    harness.resume();
+    harness.step(5);
+    harness.pause();
+    assert!(
+        !harness.world().entities.contains_key(&home),
+        "the hall is gone"
+    );
+
+    arm_placement(&mut harness, hall);
+    harness.look_at(at);
+    let on_screen = harness.ground_on_screen(at);
+    harness.move_cursor(on_screen);
+    harness.step(1);
+    assert_eq!(preview(&harness).cell, Some(start));
+    assert_eq!(preview(&harness).verdict, Some(Ok(())));
+    assert_ghost_is(&mut harness, true);
+}
+
 #[test]
 fn a_hidden_enemy_structure_does_not_turn_the_preview_red() {
     let mut harness = skirmish();
