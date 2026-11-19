@@ -541,7 +541,7 @@ fn verify_combat_effect_visible(world: &mut World) -> Result<(), CaptureError> {
     ) {
         (Some(runtime), Some(catalog)) => {
             let now = world.resource::<Time<Virtual>>().elapsed_secs_f64();
-            let combat = runtime.pool.iter().any(|(_, instance)| {
+            let combat = runtime.pool().iter().any(|(_, instance)| {
                 now < instance.fire_end
                     && catalog.effect(instance.effect).is_some_and(|effect| {
                         matches!(

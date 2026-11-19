@@ -337,13 +337,17 @@ impl EffectMix {
         }
     }
 
-    /// Finds the sources once and writes their lines into the summary (allocates once).
-    fn load(
+    /// Finds the sources once and writes their lines into the summary (allocates once); a
+    /// mix whose sources are loaded already is left as it is.
+    pub fn load(
         &mut self,
         units: &sim_core::catalog::UnitCatalog,
         tables: &UnitEffectTables,
         effects: &EffectCatalog,
     ) {
+        if self.sources.is_some() {
+            return;
+        }
         let sources = mix_sources(units, tables, effects);
         self.summary.shot_sources = sources
             .shots
@@ -511,33 +515,49 @@ fn stream_mix(
     else {
         return;
     };
-    if mix.sources.is_none() {
-        mix.load(&units.0, &tables, &effects);
-    }
+    mix.load(&units.0, &tables, &effects);
     if lab.battle_paused || session.world().is_none() {
         return;
     }
-    let mix = &mut *mix;
-    let bubbles = session.frames.presented().bubbles.as_slice();
-    if bubbles.is_empty() {
-        return;
-    }
-    let delta = time.delta_secs_f64();
-    // Moved out for the frame (no allocation) so the helpers can borrow the rest of the mix.
-    let Some(sources) = mix.sources.take() else {
-        return;
-    };
-    send_shots(mix, &sources, bubbles, delta, &mut events);
     let mut keep = Keep {
         catalog: &effects,
         tables: &tables,
         runtime: &mut runtime,
         now: time.elapsed_secs_f64(),
-        delta,
+        delta: time.delta_secs_f64(),
     };
-    keep_held_views(mix, &sources, bubbles, &mut keep);
-    keep_unit_looks(mix, bubbles, &mut keep);
-    mix.sources = Some(sources);
+    mix.step(
+        session.frames.presented().bubbles.as_slice(),
+        &mut keep,
+        &mut |event| {
+            events.send(CombatVisualEvent(event));
+        },
+    );
+}
+
+impl EffectMix {
+    /// Runs one frame of the mix over the live units of `bubbles`: hands this frame's shots and
+    /// deaths to `send` (the production event wiring in a battle, the offline `effect_frame`
+    /// bench's own spawner otherwise), then keeps the held areas, tethers, missiles and unit
+    /// looks through `keep`. Does nothing before [`Self::load`] or without a unit.
+    pub fn step(
+        &mut self,
+        bubbles: &[BubbleRenderInstance],
+        keep: &mut Keep<'_>,
+        send: &mut dyn FnMut(CombatEventVisual),
+    ) {
+        if bubbles.is_empty() {
+            return;
+        }
+        // Moved out for the frame (no allocation) so the helpers can borrow the rest of the mix.
+        let Some(sources) = self.sources.take() else {
+            return;
+        };
+        send_shots(self, &sources, bubbles, keep.delta, send);
+        keep_held_views(self, &sources, bubbles, keep);
+        keep_unit_looks(self, bubbles, keep);
+        self.sources = Some(sources);
+    }
 }
 
 /// Sends the shots and deaths owed this frame.
@@ -546,7 +566,7 @@ fn send_shots(
     sources: &MixSources,
     bubbles: &[BubbleRenderInstance],
     delta: f64,
-    events: &mut EventWriter<'_, CombatVisualEvent>,
+    send: &mut dyn FnMut(CombatEventVisual),
 ) {
     mix.shots_owed += delta * f64::from(mix.config.shots_per_second);
     while mix.shots_owed >= 1.0 && !sources.shots.is_empty() {
@@ -563,7 +583,7 @@ fn send_shots(
         if from.entity_id == to.entity_id {
             continue;
         }
-        events.send(CombatVisualEvent(shot_event(shot, from, to)));
+        send(shot_event(shot, from, to));
     }
     mix.deaths_owed += delta * f64::from(mix.config.deaths_per_second);
     while mix.deaths_owed >= 1.0 && !sources.deaths.is_empty() {
@@ -575,13 +595,13 @@ fn send_shots(
         let Some(at) = live_from(bubbles, hash_mix(sequence ^ 0x4445_4154)) else {
             continue;
         };
-        events.send(CombatVisualEvent(CombatEventVisual::BubbleShatter {
+        send(CombatEventVisual::BubbleShatter {
             pos: at.world_pos,
             radius: at.radius,
             is_dome: false,
             owner: at.owner,
             unit_type,
-        }));
+        });
     }
     mix.summary.shots_sent = mix.shots_sent;
     mix.summary.deaths_sent = mix.deaths_sent;

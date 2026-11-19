@@ -251,6 +251,9 @@ pub enum RecordingError {
     /// The window needs more rows than were preallocated.
     #[error("the window needs more than the {0} preallocated frames")]
     CapacityExceeded(usize),
+    /// The process CPU-time clock could not be read.
+    #[error("the process CPU-time clock: {0}")]
+    CpuClock(#[from] crate::cpu_clock::CpuClockError),
     /// The production camera is missing.
     #[error("the production camera is missing")]
     MissingCamera,
@@ -324,6 +327,10 @@ pub struct FrameRecorder {
     previous_first: Option<Instant>,
     frame_started: Instant,
     interval: Duration,
+    /// Process CPU time at the previous `First`, or why it could not be read.
+    previous_cpu: Result<Duration, crate::cpu_clock::CpuClockError>,
+    /// Process CPU time between the previous `First` and this one.
+    cpu: Result<Duration, crate::cpu_clock::CpuClockError>,
     simulation_started: Instant,
     simulation: Duration,
     tick_before: u32,
@@ -351,6 +358,8 @@ pub fn install(app: &mut App, config: RecorderConfig) -> RecorderHandle {
         previous_first: None,
         frame_started: now,
         interval: Duration::ZERO,
+        previous_cpu: crate::cpu_clock::process_cpu_time(),
+        cpu: Ok(Duration::ZERO),
         simulation_started: now,
         simulation: Duration::ZERO,
         tick_before: 0,
@@ -390,6 +399,12 @@ fn world_tick(session: &BattleSession) -> Option<u32> {
 
 fn begin_frame(mut recorder: ResMut<'_, FrameRecorder>) {
     let now = Instant::now();
+    let cpu = crate::cpu_clock::process_cpu_time();
+    recorder.cpu = match (cpu, recorder.previous_cpu) {
+        (Ok(cpu), Ok(previous)) => Ok(cpu.saturating_sub(previous)),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    };
+    recorder.previous_cpu = cpu;
     recorder.interval = recorder
         .previous_first
         .map_or(Duration::ZERO, |previous| now - previous);
@@ -609,6 +624,7 @@ fn measure(
     let sample = FrameSample {
         frame,
         interval_us: micros(recorder.interval),
+        process_cpu_us: micros(recorder.cpu?),
         update_us: micros(update),
         simulation_us: micros(recorder.simulation),
         ticks_executed: recorder.ticks_executed,

@@ -152,13 +152,13 @@ fn splash(
 /// A camera 20 units above and behind the origin, looking at it.
 fn camera() -> CameraView {
     let position = Vec3::new(0.0, 20.0, 20.0);
-    CameraView {
+    CameraView::new(
         position,
-        forward: (-position).normalize(),
-        fov_y: std::f32::consts::FRAC_PI_4,
-        viewport_px: 720.0,
-        aspect: 16.0 / 9.0,
-    }
+        (-position).normalize(),
+        std::f32::consts::FRAC_PI_4,
+        720.0,
+        16.0 / 9.0,
+    )
 }
 
 /// Spawns `event` at `now` through the production lookup.
@@ -237,7 +237,7 @@ fn a_splash_draws_every_block_sized_by_its_zones() {
     assert_eq!(runtime.frame.decals.len(), 1, "the decal lingers");
     runtime.build_frame(&catalog, 5.5, Some(&camera()));
     assert!(runtime.frame.decals.is_empty() && runtime.frame.sorted.is_empty());
-    assert_eq!(runtime.pool.live_total(), 0, "the effect ended");
+    assert_eq!(runtime.pool().live_total(), 0, "the effect ended");
 }
 
 #[test]
@@ -574,7 +574,7 @@ fn lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole() {
         let mut owners: Vec<(u32, u64, usize)> = Vec::new();
         for slot in &runtime.frame.decal_owners {
             let birth = runtime
-                .pool
+                .pool()
                 .iter()
                 .find(|(index, _)| *index == *slot as usize)
                 .map(|(_, instance)| instance.birth.to_bits())
@@ -599,7 +599,7 @@ fn lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole() {
                 continue;
             }
             let instance = runtime
-                .pool
+                .pool()
                 .iter()
                 .find(|(index, instance)| {
                     *index == *slot as usize && instance.birth.to_bits() == *birth
@@ -1326,7 +1326,7 @@ fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid()
     }
     assert_eq!(looks.held(), (1, 0));
     let clips: Vec<_> = runtime
-        .pool
+        .pool()
         .iter()
         .map(|(_, instance)| instance.fog_clip)
         .collect();
@@ -1344,11 +1344,11 @@ fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid()
     let moved = [0.0, 1.0, 9.6, 100.0];
     assert_ne!(moved, clip);
     frame(&mut looks, &mut runtime, 11, AreaSight::Part(moved));
-    let laid_under_a = runtime.pool.iter().count();
+    let laid_under_a = runtime.pool().iter().count();
     assert!(laid_under_a >= 4, "effects laid under A are still live");
     assert!(
         runtime
-            .pool
+            .pool()
             .iter()
             .all(|(_, instance)| instance.fog_clip == moved),
         "every live effect of the area follows the new clip on its first frame"
@@ -1357,7 +1357,7 @@ fn an_area_the_viewer_stops_seeing_is_cut_to_nothing_at_once_with_what_it_laid()
     assert_eq!(looks.held(), (0, 0), "the unseen area is released");
     assert!(
         runtime
-            .pool
+            .pool()
             .iter()
             .all(|(_, instance)| instance.fog_clip == CLIP_NOTHING),
         "nothing of it is drawn from the frame the viewer stops seeing it"
@@ -1429,7 +1429,7 @@ fn a_tether_whose_end_leaves_sight_is_removed_at_once() {
             |bubble| shown || bubble.entity_id != EntityId(9),
             &mut keep,
         );
-        (looks.held(), keep.runtime.pool.iter().count())
+        (looks.held(), keep.runtime.pool().iter().count())
     };
     for index in 1..=3 {
         assert_eq!(

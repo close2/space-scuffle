@@ -31,8 +31,8 @@ pub mod scene;
 
 pub use driver::{LabDriver, LabPhase, LabRenderIdle};
 pub use program::{
-    LabGround, LabProgram, LabProgramError, LabRepeat, LabShot, LabSubject, LabTake, LabZoom,
-    CONTACT_AGES, SEQUENCE_STEP,
+    LabCrowd, LabCrowdMember, LabFogSweep, LabGround, LabProgram, LabProgramError, LabRepeat,
+    LabShot, LabSubject, LabTake, LabZoom, CONTACT_AGES, SEQUENCE_STEP,
 };
 pub use scene::{LabScene, LabSceneError};
 
@@ -58,6 +58,7 @@ impl Plugin for EffectLabPlugin {
         let idle = LabRenderIdle::default();
         app.insert_resource(self.program.clone())
             .insert_resource(LabDriver::default())
+            .init_resource::<driver::LabCrowdState>()
             .insert_resource(idle.clone())
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
             .add_systems(Startup, setup_stage)

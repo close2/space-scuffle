@@ -387,6 +387,33 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
         for (name, (address, capacity)) in names.into_iter().zip(runtime.frame.buffers()) {
             found.push((name, address, capacity));
         }
+        // The retained decal table and the spawn path's indices (plan
+        // 2026-11-19-retained-effect-instances D-4, D-11).
+        let table = [
+            "effects.table.records",
+            "effects.table.keys",
+            "effects.table.next",
+            "effects.table.head",
+            "effects.table.free",
+            "effects.table.order",
+            "effects.table.dirty_bits",
+            "effects.table.dirty",
+            "effects.table.expiry",
+        ];
+        for (name, (address, capacity)) in table.into_iter().zip(runtime.decal_table().buffers()) {
+            found.push((name, address, capacity));
+        }
+        let indices = [
+            "effects.lines",
+            "effects.fire.major",
+            "effects.fire.minor",
+            "effects.fire.ambient",
+            "effects.marks",
+            "effects.detail",
+        ];
+        for (name, (address, capacity)) in indices.into_iter().zip(runtime.index_buffers()) {
+            found.push((name, address, capacity));
+        }
     }
     let smog = world.resource::<SmogGrid3d>();
     found.extend(smog.retained_byte_buffers());
@@ -1234,25 +1261,29 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
             .resource::<EffectRuntime>()
             .stats
             .spawned;
-        let buffers = harness
-            .app
-            .world()
-            .resource::<EffectRuntime>()
-            .frame
-            .buffers();
+        let runtime = harness.app.world().resource::<EffectRuntime>();
+        let buffers = (
+            runtime.frame.buffers(),
+            runtime.decal_table().buffers(),
+            runtime.index_buffers(),
+        );
         harness.step(COMBAT_FRAMES);
         let runtime = harness.app.world().resource::<EffectRuntime>();
         let spawned = runtime.stats.spawned - spawned_before;
         eprintln!(
             "effect window {window}: {} combat events, {spawned} effects spawned, {} live, {} particles",
             tallies(&harness).combat_events,
-            runtime.pool.live_total(),
+            runtime.pool().live_total(),
             runtime.particles.len()
         );
         assert_eq!(
-            runtime.frame.buffers(),
+            (
+                runtime.frame.buffers(),
+                runtime.decal_table().buffers(),
+                runtime.index_buffers()
+            ),
             buffers,
-            "an effect buffer moved or grew"
+            "an effect buffer, the decal table or a spawn-path index moved or grew"
         );
         assert_eq!(
             harness.app.world().resource::<EffectLightPool>().lights,

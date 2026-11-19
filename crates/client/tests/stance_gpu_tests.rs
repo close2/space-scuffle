@@ -1289,8 +1289,8 @@ fn apply_effect_view(view: Res<'_, EffectView>, runtime: Option<ResMut<'_, Effec
         return;
     };
     let only = view.critical_only.then_some(Priority::Critical);
-    if runtime.only != only {
-        runtime.only = only;
+    if runtime.only() != only {
+        runtime.set_only(only);
     }
     if view.bare {
         runtime.frame.sorted.clear();
