@@ -292,3 +292,66 @@ Every route of the new test is legal; the defect is length only.
 3. Trace the six remaining routes above 1.018 before deciding the bound.
 
 WP5 (bookkeeping) waits for WP4.
+
+## WP3 under Amendment 2: zero-room arcs bisected to a thirty-second of a turn
+
+**Change.** The zero-room emission bisects a step between two consecutive arc lines wider than `1/32` of a turn
+(`ZERO_ROOM_ARC_STEP_COS`, `cos(2π/32)` floored to the raw grid), the largest power-of-two fraction whose
+circumscribed factor `tan(θ/2)/(θ/2)` (1.0032) is at most the oracle bound 1.01 (1/16: 1.0130; 1/8: 1.0548). The
+derivation is in its `PERFORMANCE RATIONALE` block and in the unit test
+`zero_room_arc_step_is_the_largest_within_the_oracle_bound`, which computes it. The inscribed emission of every other
+pull never reaches this code. `MeshRoute` gains `zero_room` (documented as a diagnostic): whether the zero-room retry
+produced the route, which the restated WP4 test reads.
+
+**Corpora (final tree):** fallbacks 0 / 0 on the 150, 1,000 and 2,000 flush layouts; no fixed route has an illegal
+leg or is shorter than the oracle.
+
+| Square corpus, routes that fell back on `main` | Within 1.01 | Max ratio |
+|---|---|---|
+| 150 layouts | 14 / 14 | 1.0001 |
+| 1,000 layouts | 29 / 30 | 1.0251 (layout 563) |
+| 2,000 flush layouts | 94 / 94 | 1.0025 |
+| All, distinct | **123 / 124 (99.2 %)** | 1.0251 |
+
+**Battle set (`~/scratch/funnel-fallbacks/wp3`): bit-identical to `main`**, and the control with D-2 off is
+bit-identical too. Every route legal before keeps its bytes.
+
+**Pins, re-recorded with proof headers** (identical in native debug, native release, `wasm32-wasip1` release and
+`wasm32-wasip1` debug; with D-2 off the tree gives WP2's values, with D-2 and D-3 off `main`'s; the same requests
+change as before, lengths a little shorter):
+
+| Pin | WP2 value | New |
+|---|---|---|
+| `contour_route_checksum` | `0xc0d5_fbfd_292f_37a4` | `0x7ac0_f0b9_f8b4_2057` (2 class E routes now legal: 63.41 and 63.63 long) |
+| `CONTOUR_PATH_GOLDEN` | `0x6637_d70a_80d8_a859` | `0x36ff_bf4b_e967_0683` (1 class E route now legal: 51.27 long) |
+
+`golden_replay_tests` passes unchanged in all four builds.
+
+**Rule 7 (instructions retired, host loaded):** per scenario against `main` +0.0004 %, −0.002 %, +0.0002 %,
+−0.002 %, +0.000004 %, **+0.55 %** (showcase), +0.001 %; path-cost bench 37.50 G against 35.85 G, **+4.6 %**.
+
+## WP4: tests and the oracle
+
+- `mesh_route_lengths_are_within_one_percent_of_the_oracle` asserts zero fallbacks (was "at most 2 %"): 522 of 523
+  within 1 %, worst 1.0220, 0 fallbacks.
+- `exact_fit_routes_agree_with_the_oracle`, restated on stop rule 8's measure (Amendment 2): 60 seeded 16 × 16 maps,
+  r 0.5 and 1.0, 293 routes between centres where the disc fits, oracle at `r − 10⁻⁵`. Existence agrees on every
+  pair, no fallback, no illegal leg, none shorter than the oracle, worst 1.0443 (within `MESH_RATIO_BOUND`); of the
+  159 zero-room routes **153 (96.2 %) are within 1 %** (at the eighth-turn bisection: 128).
+
+**The residual routes above 1.01, traced** (scratch: the oracle's shortest path reconstructed as its sequence of
+rounded corners with their sides, against the mesh route's turns):
+
+| Route | Ratio | Oracle rounds | Mesh rounds | Class |
+|---|---|---|---|---|
+| 1,000-layout 563 q 15, r 1.0 | 1.0251 | (40, 39) on the left | (49, 38), (43, 36), (40, 36) on the right | TA* channel: the other side of a structure |
+| test map 12, (2.5, 13.5) → (11.5, 4.5) | 1.0192 | (6, 12), (6, 11), (7, 10), (8, 8) | (4, 12), (5, 11), (5, 10), (6, 8) | TA* channel |
+| test map 16, (3.5, 1.5) → (2.5, 8.5) | 1.0241 | (3, 2), (3, 3) | (4, 3), (5, 4), (4, 4) | TA* channel |
+| test map 16, (14.5, 5.5) → (9.5, 9.5) | 1.0443 | the gaps (13, 8)–(12, 8) and (12, 9)–(11, 9) | (12, 6), (12, 7), (11, 6), (11, 7), (10, 8), (9, 9), (10, 9) | TA* channel |
+| test map 30, (5.5, 1.5) → (12.5, 13.5) | 1.0179 | (6, 4), (7, 7), (7, 8), (8, 8), (9, 9) | (10, 4), (11, 6), (11, 7), (12, 10) | TA* channel |
+| test map 36, (12.5, 14.5) → (12.5, 0.5) | 1.0437 | (11, 9), (12, 7), (13, 4), (13, 3) | (10, 11), (10, 9), (10, 8), (10, 5), (10, 4), (12, 3) ... | TA* channel |
+| test map 44, (2.5, 14.5) → (7.5, 6.5) | 1.0208 | (5, 10), (6, 9), (7, 8) | (4, 10), (5, 9), (5, 8), (5, 7), (6, 8), (6, 7) | TA* channel |
+
+In each, the oracle passes through other gaps than the mesh route: TA* ranks channels by their pull with the corner
+margin, and these channels need no margin only on the oracle's side. None is a defect of the funnel (the funnel's
+own routes through their channels gain nothing from finer bisection: 1.0451 → 1.0443 for the worst). No stop.
