@@ -156,8 +156,8 @@ pub struct EffectFrame {
     cards: Vec<SpriteInstance>,
     /// Depth of each card along the view.
     depth: Vec<f32>,
-    /// Retained sort order of `cards`.
-    order: Vec<u32>,
+    /// Retained sort keys of `cards`: [`card_sort_key`] of each card's depth and index.
+    order: Vec<u64>,
     /// Cards back to front: what the renderer uploads.
     pub sorted: Vec<SpriteInstance>,
     /// Decals.
@@ -1710,19 +1710,32 @@ impl EffectRuntime {
     }
 
     /// Sorts the cards back to front into `sorted`.
+    // PERFORMANCE RATIONALE:
+    // Why: An index sort whose comparison reads two depths through the indices costs a cache
+    // miss pair per comparison on 1 800 cards a frame (B-137).
+    // What: One `u64` key per card, its depth mapped to an order-preserving integer (farthest
+    // first) above its index, sorted directly; keys are unique, so the order is total.
+    // Trade-off: Equal depths now keep build order (the old unstable sort left their order to
+    // the sort); a retained key vector of 8 bytes per card.
     fn sort_cards(&mut self) {
         let frame = &mut self.frame;
         frame.order.clear();
-        frame.order.extend(0..len32(frame.cards.len()));
-        let depth = &frame.depth;
-        frame
-            .order
-            .sort_unstable_by(|a, b| depth[*b as usize].total_cmp(&depth[*a as usize]));
+        frame.order.extend(
+            frame
+                .depth
+                .iter()
+                .zip(0..len32(frame.cards.len()))
+                .map(|(depth, index)| card_sort_key(*depth, index)),
+        );
+        frame.order.sort_unstable();
         frame.sorted.clear();
         let cards = &frame.cards;
-        frame
-            .sorted
-            .extend(frame.order.iter().map(|index| cards[*index as usize]));
+        frame.sorted.extend(
+            frame
+                .order
+                .iter()
+                .map(|key| cards[(*key & 0xFFFF_FFFF) as usize]),
+        );
     }
 }
 
@@ -2702,6 +2715,20 @@ pub fn flipbook_frame(
     (element.first_layer + whole, element.first_layer + next, mix)
 }
 
+/// The sort key of card `index` at sort depth `depth`: the depth mapped to an integer whose
+/// order is `f32::total_cmp`'s, inverted so the farthest card sorts first, above the index, so
+/// that equal depths keep build order (D-3: `(key, index)` order).
+#[must_use]
+pub fn card_sort_key(depth: f32, index: u32) -> u64 {
+    let bits = depth.to_bits();
+    let ascending = if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | (1 << 31)
+    };
+    (u64::from(!ascending) << 32) | u64::from(index)
+}
+
 /// The sort depth of every darkening card: above every other card's ([`sort_depth`]), so the
 /// darkening cards lead the sorted cards.
 const DARKENING_DEPTH: f32 = f32::MAX;
@@ -2741,6 +2768,67 @@ mod tests {
     )]
     fn uniform(state: &mut u64, lo: f32, hi: f32) -> f32 {
         lo + (hi - lo) * ((next(state) >> 40) as f32 / (1u64 << 24) as f32)
+    }
+
+    #[test]
+    fn the_keyed_card_sort_is_back_to_front_and_equals_the_indirect_sort_on_distinct_depths() {
+        let mut state = 0x50E7_0003;
+        for round in 0..2000 {
+            let count = 1 + (next(&mut state) % 300) as usize;
+            let ties = round % 2 == 1;
+            let depths: Vec<f32> = (0..count)
+                .map(|_| {
+                    if ties {
+                        f32::from(u8::try_from(next(&mut state) % 7).unwrap_or(0)) - 2.0
+                    } else {
+                        uniform(&mut state, -50.0, 200.0)
+                    }
+                })
+                .map(sort_depth)
+                .collect();
+            let mut keys: Vec<u64> = depths
+                .iter()
+                .zip(0..u32::try_from(count).unwrap_or(0))
+                .map(|(depth, index)| card_sort_key(*depth, index))
+                .collect();
+            keys.sort_unstable();
+            let order: Vec<usize> = keys
+                .iter()
+                .map(|key| (*key & 0xFFFF_FFFF) as usize)
+                .collect();
+            assert!(
+                order
+                    .windows(2)
+                    .all(|pair| depths[pair[0]] >= depths[pair[1]]),
+                "back to front"
+            );
+            if ties {
+                assert!(
+                    order
+                        .windows(2)
+                        .all(|pair| depths[pair[0]] > depths[pair[1]] || pair[0] < pair[1]),
+                    "equal depths keep build order"
+                );
+            } else {
+                let mut indirect: Vec<usize> = (0..count).collect();
+                indirect.sort_unstable_by(|a, b| depths[*b].total_cmp(&depths[*a]));
+                let distinct = depths.windows(2).count() == 0 || {
+                    let mut sorted = depths.clone();
+                    sorted.sort_by(f32::total_cmp);
+                    sorted
+                        .windows(2)
+                        .all(|pair| pair[0].to_bits() != pair[1].to_bits())
+                };
+                if distinct {
+                    assert_eq!(order, indirect, "distinct depths sort as before");
+                }
+            }
+        }
+        let darkening = card_sort_key(DARKENING_DEPTH, 5);
+        assert!(
+            darkening < card_sort_key(sort_depth(f32::MAX), 0),
+            "darkening cards lead"
+        );
     }
 
     #[test]

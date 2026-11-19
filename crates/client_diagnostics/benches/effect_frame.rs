@@ -97,6 +97,9 @@ struct Options {
     stream: Stream,
     digest: bool,
     frames: u32,
+    /// Print every measured frame's digest, and the digest with the darkening cards in a
+    /// canonical order (they multiply the ground, so their order draws nothing different).
+    frame_digests: bool,
 }
 
 /// Reads the command line (cargo bench adds `--bench`, which is ignored).
@@ -105,6 +108,7 @@ fn options() -> Result<Options, Box<dyn Error>> {
         stream: Stream::Splashes,
         digest: false,
         frames: MEASURED_FRAMES,
+        frame_digests: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -117,6 +121,7 @@ fn options() -> Result<Options, Box<dyn Error>> {
                 };
             }
             "--digest" => options.digest = true,
+            "--frame-digests" => options.frame_digests = true,
             "--frames" => {
                 options.frames = args
                     .next()
@@ -158,6 +163,24 @@ fn frame_digest(hash: u64, runtime: &EffectRuntime) -> u64 {
     hash = fnv(hash, bytemuck::cast_slice(&frame.distortions));
     hash = fnv(hash, &frame.darkening_cards.to_le_bytes());
     fnv(hash, &frame.darkening_decals.to_le_bytes())
+}
+
+/// [`frame_digest`] of one frame, with its darkening cards (the first `darkening_cards` of
+/// `sorted`) taken in byte order instead of sort order.
+fn canonical_digest(runtime: &EffectRuntime) -> u64 {
+    let frame = &runtime.frame;
+    let prefix = (frame.darkening_cards as usize).min(frame.sorted.len());
+    let mut darkening: Vec<&[u8]> = frame.sorted[..prefix]
+        .iter()
+        .map(bytemuck::bytes_of)
+        .collect();
+    darkening.sort_unstable();
+    let mut hash = FNV_OFFSET;
+    for card in darkening {
+        hash = fnv(hash, card);
+    }
+    hash = fnv(hash, bytemuck::cast_slice(&frame.sorted[prefix..]));
+    fnv(hash, bytemuck::cast_slice(&frame.decals))
 }
 
 /// The synthetic units of the `p` stream at `now`: a grid, each circling its own cell slowly.
@@ -253,8 +276,8 @@ fn thread_now() -> Result<Duration, Box<dyn Error>> {
     Ok(thread_cpu_time()?)
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let options = options()?;
+/// The catalogs, the stream's sources and a fresh runtime.
+fn load_world() -> Result<World, Box<dyn Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../assets")
         .canonicalize()?;
@@ -275,7 +298,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..MixConfig::at_rate(0)
     });
     mix.load(units, &tables, &catalog);
-    let mut world = World {
+    let world = World {
         runtime: EffectRuntime::new(&catalog),
         catalog,
         tables,
@@ -283,6 +306,35 @@ fn main() -> Result<(), Box<dyn Error>> {
         mix,
         units: Vec::with_capacity((UNITS_PER_SIDE * UNITS_PER_SIDE) as usize),
     };
+    Ok(world)
+}
+
+/// Spawns frame `now`'s effects of `stream` into the world.
+fn spawn_frame(
+    world: &mut World,
+    stream: Stream,
+    (owed, sequence): (&mut f64, &mut u64),
+    now: f64,
+) {
+    spawn_splashes(world, owed, sequence, now);
+    if stream == Stream::Plan {
+        units_at(&mut world.units, now);
+        let mut keep = Keep {
+            catalog: &world.catalog,
+            tables: &world.tables,
+            runtime: &mut world.runtime,
+            now,
+            delta: FRAME_STEP,
+        };
+        world
+            .mix
+            .step(&world.units, &mut keep, &mut |_: CombatEventVisual| {});
+    }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let options = options()?;
+    let mut world = load_world()?;
     // The frame budget's camera pose: 75 units out at the battle camera's pitch.
     let target = Vec3::new(64.5, 0.0, 72.5);
     let position = target + Vec3::new(0.0, 75.0 * 0.85, 75.0 * 0.53);
@@ -299,20 +351,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for frame in 0..WARM_FRAMES + options.frames {
         let now = f64::from(frame) * FRAME_STEP;
         let started = thread_now()?;
-        spawn_splashes(&mut world, &mut owed, &mut sequence, now);
-        if options.stream == Stream::Plan {
-            units_at(&mut world.units, now);
-            let mut keep = Keep {
-                catalog: &world.catalog,
-                tables: &world.tables,
-                runtime: &mut world.runtime,
-                now,
-                delta: FRAME_STEP,
-            };
-            world
-                .mix
-                .step(&world.units, &mut keep, &mut |_: CombatEventVisual| {});
-        }
+        spawn_frame(&mut world, options.stream, (&mut owed, &mut sequence), now);
         let spawned = thread_now()?;
         world
             .runtime
@@ -323,6 +362,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         spawn_cpu += spawned.saturating_sub(started);
         build_cpu += built.saturating_sub(spawned);
+        if options.frame_digests {
+            println!(
+                "frame {frame:>5}: {:016x} {:016x}",
+                frame_digest(FNV_OFFSET, &world.runtime),
+                canonical_digest(&world.runtime)
+            );
+        }
         if options.digest {
             digest = frame_digest(digest, &world.runtime);
             window_digest = frame_digest(window_digest, &world.runtime);
