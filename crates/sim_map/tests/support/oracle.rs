@@ -439,7 +439,26 @@ pub fn smooth_length(start: P, goal: P, turns: &[(P, i8)], rho: f64) -> f64 {
         if sigma > 0 {
             sweep = -sweep;
         }
-        total += sweep.rem_euclid(std::f64::consts::TAU) * rho;
+        total += turn_sweep(sweep) * rho;
     }
     total
+}
+
+/// Angles closer than this to a full turn, in radians, are a straight pass rounded below zero.
+const STRAIGHT_PASS_EPS: f64 = 1e-6;
+
+/// The arc swept round one turn, in `[0, 2π)` radians, from the signed angle between the
+/// incoming and outgoing tangent points (positive in the turn's own direction).
+///
+/// A turn on a corner that lies on the straight line between its neighbours (three collinear
+/// corners passed on one side) sweeps nothing; rounding can make that angle a hair below zero,
+/// which `rem_euclid` would turn into a whole circle (bug B-143: 2π · 0.31 = 1.95 added to a
+/// 7.21 route, ratio 1.270). Such an angle counts as no sweep.
+fn turn_sweep(signed: f64) -> f64 {
+    let sweep = signed.rem_euclid(std::f64::consts::TAU);
+    if std::f64::consts::TAU - sweep < STRAIGHT_PASS_EPS {
+        0.0
+    } else {
+        sweep
+    }
 }

@@ -65,7 +65,7 @@ fn mode_channel_ticks(spec: &UnitModeSpec, leaving: bool, rng: &mut impl Rng) ->
     if max <= SimScalar::ZERO {
         return base;
     }
-    let extra = SimScalar::from_raw(rng.gen_range(0..=max.raw()));
+    let extra = SimScalar::from_raw(rng.gen_range::<i64, _>(0..=max.raw()));
     // Q32.32: adding one half and shifting down by 32 rounds half up to whole ticks.
     let whole = extra.saturating_add(SimScalar::HALF).raw() >> 32;
     u16::try_from(i64::from(base).saturating_add(whole)).unwrap_or(u16::MAX)

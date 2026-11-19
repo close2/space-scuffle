@@ -27,6 +27,10 @@
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[path = "support/draw.rs"]
+mod draw;
+use draw::draw_index;
+
 #[path = "support/radii.rs"]
 mod radii;
 use radii::{required_clearance, LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
@@ -476,12 +480,14 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
     let (mut within, mut total, mut worst, mut fallbacks) = (0u32, 0u32, 1.0f64, 0u32);
     let mut maps = 0;
     while maps < 120 {
-        let radius_f = 0.25 + f64::from(rng.gen_range(0u32..=75)) * 0.01;
+        let radius_f = 0.25 + f64::from(rng.gen_range::<u32, _>(0..=75)) * 0.01;
         if !radius_is_unambiguous(radius_f) {
             continue;
         }
         maps += 1;
-        let blocked: Vec<bool> = (0..CELLS).map(|_| rng.gen_range(0..5) == 0).collect();
+        let blocked: Vec<bool> = (0..CELLS)
+            .map(|_| rng.gen_range::<i32, _>(0..5) == 0)
+            .collect();
         let Ok(map) = build_map(&blocked) else {
             continue;
         };
@@ -497,8 +503,8 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
         let mut pathfinder = Pathfinder::new(&map);
         for _ in 0..6 {
             let pair = (
-                centres[rng.gen_range(0..centres.len())],
-                centres[rng.gen_range(0..centres.len())],
+                centres[draw_index(&mut rng, centres.len())],
+                centres[draw_index(&mut rng, centres.len())],
             );
             let outcome = compare_with_oracle(&map, &mut pathfinder, &tight, &padded, pair, radius);
             assert!(outcome.is_ok(), "{pair:?} at r {radius_f}: {outcome:?}");
@@ -519,6 +525,71 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
     assert!(fallbacks * 50 <= total, "{fallbacks}/{total} fell back");
     assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
     assert!(share >= 0.95, "only {within}/{total} within 1 %");
+}
+
+/// B-143's shrunk case (plan `2026-11-18-contour-footprints` Amendment 5, evidence §6e): the
+/// route from (11.5, 12.5) to (6.5, 7.5) at radius 0.26 turns left round three collinear
+/// corners, (11, 12), (8, 9) and (7, 8). The middle turn sweeps nothing, and the smooth length
+/// once counted a whole circle for it (ratio 1.270); the route equals the oracle's.
+#[test]
+fn a_straight_pass_round_collinear_corners_sweeps_no_circle() -> Result<(), TestCaseError> {
+    const MASK: [&str; 16] = [
+        "......#....#....",
+        ".#......##....#.",
+        ".......##..##...",
+        ".#.....#...#....",
+        "..#.....##......",
+        "#..#...#.....#..",
+        ".##..#....#....#",
+        "#....#.#....##..",
+        ".....#..#......#",
+        ".##..##.......#.",
+        ".......#...#....",
+        "#.#...#....##..#",
+        "..#.............",
+        "##...........#..",
+        "..............#.",
+        "#........#.#..##",
+    ];
+    let blocked: Vec<bool> = MASK
+        .iter()
+        .flat_map(|row| row.bytes().map(|c| c == b'#'))
+        .collect();
+    let map = build_map(&blocked)?;
+    let radius = SimScalar::from_num(0.26);
+    let rho = f64::from((radius + CORNER_SAFETY_MARGIN).to_f32());
+    let walls = oracle::walls_of(&map);
+    let tight = oracle::Oracle::new(walls.clone(), f64::from(radius.to_f32()));
+    let padded = oracle::Oracle::new(walls, rho);
+    let pair = (centre(11, 12), centre(6, 7));
+    let mut pathfinder = Pathfinder::new(&map);
+    let ratio = compare_with_oracle(&map, &mut pathfinder, &tight, &padded, pair, radius)
+        .map_err(TestCaseError::fail)?;
+    let Some(ratio) = ratio else {
+        return Err(TestCaseError::fail(
+            "the oracle and the mesh both find a route",
+        ));
+    };
+    assert!((ratio - 1.0).abs() < 1e-9, "ratio {ratio}");
+    let route = pathfinder
+        .find_route_mesh(&map, &mesh_request(pair.0, pair.1, radius))
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+    // Lattice points are in quarter cells.
+    let corners: Vec<(i32, i32, Side)> = route
+        .turns
+        .iter()
+        .map(|&(p, side)| (p.x, p.y, side))
+        .collect();
+    assert_eq!(
+        corners,
+        [
+            (44, 48, Side::Left),
+            (32, 36, Side::Left),
+            (28, 32, Side::Left)
+        ],
+        "the case still turns round three collinear corners"
+    );
+    Ok(())
 }
 
 /// The legality law of `funnel_paths_are_legal_and_no_shorter_than_a_straight_line`, for one

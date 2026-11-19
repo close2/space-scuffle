@@ -213,8 +213,11 @@ fn the_flood_equals_the_exhaustive_reference_on_both_shipped_maps() {
         let (width, height) = (f64::from(map.width()), f64::from(map.height()));
         let mut touching = 0;
         for _ in 0..2_000 {
-            let p = at(rng.gen_range(0.0..width), rng.gen_range(0.0..height));
-            let radius = s(rng.gen_range(0.25..1.5));
+            let p = at(
+                rng.gen_range::<f64, _>(0.0..width),
+                rng.gen_range::<f64, _>(0.0..height),
+            );
+            let radius = s(rng.gen_range::<f64, _>(0.25..1.5));
             let request = request(p, radius);
             let found = pathfinder.wall_contact(&map, &request, p);
             let reference = pathfinder.wall_contact_exhaustive(&map, &request, p);
@@ -253,7 +256,10 @@ fn the_early_out_never_hides_a_wall_on_both_shipped_maps() {
             let mut placed = 0_u32;
             if with_structures {
                 for _ in 0..40 {
-                    let (x, y) = (rng.gen_range(1..width - 3), rng.gen_range(1..height - 3));
+                    let (x, y) = (
+                        rng.gen_range::<u32, _>(1..width - 3),
+                        rng.gen_range::<u32, _>(1..height - 3),
+                    );
                     if map
                         .place_structure(
                             EntityId(1_000 + placed),
@@ -275,8 +281,11 @@ fn the_early_out_never_hides_a_wall_on_both_shipped_maps() {
             let (fw, fh) = (f64::from(width), f64::from(height));
             let mut free = 0;
             for _ in 0..2_000 {
-                let p = at(rng.gen_range(0.0..fw), rng.gen_range(0.0..fh));
-                let radius = s(rng.gen_range(0.25..1.5));
+                let p = at(
+                    rng.gen_range::<f64, _>(0.0..fw),
+                    rng.gen_range::<f64, _>(0.0..fh),
+                );
+                let radius = s(rng.gen_range::<f64, _>(0.25..1.5));
                 let request = request(p, radius);
                 let reference = pathfinder.wall_contact_exhaustive(&map, &request, p);
                 let found = pathfinder.wall_contact(&map, &request, p);

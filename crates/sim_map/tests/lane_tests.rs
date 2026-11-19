@@ -125,8 +125,8 @@ fn arena_map() -> GameMap {
 fn standable(map: &GameMap, rng: &mut ChaCha8Rng) -> SimVec2 {
     loop {
         let (x, y) = (
-            rng.gen_range(0..map.width()),
-            rng.gen_range(0..map.height()),
+            rng.gen_range::<u32, _>(0..map.width()),
+            rng.gen_range::<u32, _>(0..map.height()),
         );
         if map.terrain_step_is_connected((x, y), (x, y)) {
             return half(2 * x as i32 + 1, 2 * y as i32 + 1);
@@ -346,8 +346,9 @@ fn the_canyon_routes_west_and_east_of_the_plateau_have_different_words() {
 
 /// A random point on the 1/256-cell grid inside a `side`-cell map.
 fn grid_point(rng: &mut ChaCha8Rng, side: u32) -> SimVec2 {
-    let coordinate =
-        |rng: &mut ChaCha8Rng| SimScalar::from_raw(i64::from(rng.gen_range(0..side * 256)) << 24);
+    let coordinate = |rng: &mut ChaCha8Rng| {
+        SimScalar::from_raw(i64::from(rng.gen_range::<u32, _>(0..side * 256)) << 24)
+    };
     SimVec2::new(coordinate(rng), coordinate(rng))
 }
 
@@ -364,7 +365,7 @@ fn splitting_a_leg_never_changes_its_word() {
             );
             let whole = pathfinder.lane_word(&[p, q]);
             crossing_legs += usize::from(!whole.is_empty());
-            let sixteenths = rng.gen_range(1..16);
+            let sixteenths = rng.gen_range::<i64, _>(1..16);
             let split = p + (q - p) * SimScalar::from_raw(sixteenths << 28);
             assert_eq!(
                 pathfinder.lane_word(&[p, split, q]),
