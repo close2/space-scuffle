@@ -630,3 +630,29 @@ node cells, and none shows a change in simulation behaviour.
 - Re-measure the matrix, battle 33 and the showcase on the tree that includes main's funnel changes (`bf4252cf` or
   later), against main's own run, not against `41fa340d`.
 - Run the GPU targets that read the shipped maps: `runtime_battle_tests`, `editor_app_tests` and `terrain_tests`.
+
+## As built
+
+Branch `footprint-flags-plan` (the plan named `footprint-flags`), on `main` `bf4252cf`. Evidence:
+[`2026-11-19-footprint-flags`](../evidence/2026-11-19-footprint-flags.md).
+
+| WP | Commit | What landed |
+|---|---|---|
+| WP0 | `851e21a3` | B-139 restated; B-147 (F-1, with D-3's minor difference) and B-148 (D-6) registered; B-146 belongs to funnel-fallbacks |
+| WP1 | `299090dc` | `sim_types::PlacementFlag` and `PlacementFlags`; `assets/catalog/placement_rules.ron` (the mineral and void-rounded geyser rings, 45 and 69 cells) loaded at run time into `UnitCatalog::placement_rules()`; required `placement_excludes` on all 49 rows, each citing its placement footprint. Bit-identical |
+| WP2 | `5b3f2cf3` | `check_flags` after the node rule; `BuildRejection::FlaggedSite { flag, cell }`; `SiteRefusal::NearResources` and `NotVisible`; F-1 to F-10. Bit-identical. `can_raise_matches_admission_for_every_catalog_pair` re-derived as §6.1 predicted |
+| WP3 | `7546795e` | Client tests: the status reasons and the red ghost with "too close to resources" |
+| WP4 | `2e2d782f` | D-8's five geyser moves; the two guards; goldens re-recorded with the proof; Amendment 1's `full_match_tests` data fix and `sim_map` digest re-records; the own-start ghost is green. Hashed state only: 205 of 205 outputs byte-identical to `41fa340d` and, after the merge, to `main`'s own run |
+| WP5 | this commit | `DESIGN.md` (B-139 fixed, the Economy row), the evidence, this section |
+
+**Deviations from the plan as written.**
+- The client's two status arms landed with the variants in WP2, because the matches must stay exhaustive; WP3 holds
+  the client tests.
+- The own-start ghost test of §8 landed with WP4, since it is red until the maps move.
+- An unknown flag name fails with serde's typed RON error (line and column), not wrapped in the catalog's per-row
+  `invalid(slug, …)`, whose reason must be a static string.
+- `check_flags` takes no `knowledge` argument: neither modelled flag depends on it.
+- The rings are parsed in the new `catalog/placement_rules.rs`; their validation is in `catalog/validation.rs` as D-2
+  says.
+- A catalog built from unit and structure text alone carries `PlacementRules::NONE` (no ring), as it carries
+  `MovementRules::PER_UNIT`; the runtime loader always reads the file.
