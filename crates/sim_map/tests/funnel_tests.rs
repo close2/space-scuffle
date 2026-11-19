@@ -786,3 +786,203 @@ fn a_start_touching_a_corner_does_not_circle_it() {
         "the route circles (21.5, 49): {route:?}"
     );
 }
+
+// --- Free portal vertices (plan `2026-11-19-partial-knowledge-funnel`, B-146): a structure the
+// request does not know is open ground, but its outline and interior cell lines stay mesh edges,
+// and their ends are free vertices that bound nothing. Each case is red before the plan's WP2 or
+// WP3.
+
+/// A structure for [`pkf_map`]: its cell, its `Place` size, its contour as `(half-width,
+/// half-height, chamfer)` in quarter cells (`None` for the full square), and whether the request
+/// knows it.
+type PkfStructure = ((u32, u32), (u8, u8), Option<(u16, u16, u16)>, bool);
+
+/// A flat `size` × `size` map with `structures` placed in order, and the known-structure mask
+/// that knows exactly the cells of the structures marked known.
+fn pkf_map(size: u32, structures: &[PkfStructure]) -> (GameMap, Vec<bool>) {
+    let mut map = GameMap::new(size, size, MapCell::default_ground(CliffLevel(1))).unwrap();
+    let mut known = vec![false; (size * size) as usize];
+    for (id, &(cell, (width, height), shape, is_known)) in (41_000u32..).zip(structures) {
+        let footprint = match shape {
+            None => sim_map::StructureFootprint::square(width, height),
+            Some((half_width_q, half_height_q, chamfer_q)) => sim_map::StructureFootprint {
+                width,
+                height,
+                shape: sim_types::FootprintShape {
+                    half_width_q,
+                    half_height_q,
+                    chamfer_q,
+                },
+            },
+        };
+        map.place_structure(EntityId(id), cell, footprint).unwrap();
+        if is_known {
+            for y in cell.1..cell.1 + u32::from(height) {
+                for x in cell.0..cell.0 + u32::from(width) {
+                    known[(y * size + x) as usize] = true;
+                }
+            }
+        }
+    }
+    (map, known)
+}
+
+/// Routes `start -> goal` for a disc of `radius` under the knowledge `known`, and asserts that
+/// the funnel did not fall back and that every leg passes the segment predicate.
+fn pkf_route(
+    (map, known): &(GameMap, Vec<bool>),
+    start: SimVec2,
+    goal: SimVec2,
+    radius: f64,
+) -> sim_map::MeshRoute {
+    let mut pathfinder = Pathfinder::new(map);
+    let request = PathRequestWithVision {
+        known_structures: Some(known),
+        ..mesh_request(start, goal, SimScalar::from_num(radius))
+    };
+    let route = pathfinder
+        .find_route_mesh(map, &request)
+        .expect("a route exists");
+    assert!(!route.fallback, "r {radius}: funnel fell back: {route:?}");
+    for pair in route.waypoints.windows(2) {
+        assert!(
+            pathfinder.segment_is_passable(map, &request, pair[0], pair[1]),
+            "r {radius}: leg {pair:?} of {route:?}"
+        );
+    }
+    route
+}
+
+/// N1 (plan §3.4): a known 2×8 at cell (6, 2) bends the route, and an unknown 4×4 at (9, 9) lies
+/// across it. The route crosses the unknown footprint as open ground: a turn at one of its
+/// lattice points is a point bend, emitted as the vertex itself with no arc round it, and the
+/// route is as long as the prototype's (before the plan, r 0.75 rounded five lattice points and
+/// was 20.898 long).
+#[test]
+#[ignore = "B-146, WP2"]
+fn a_route_crosses_an_unknown_footprint_without_zigzag() {
+    let layout = pkf_map(
+        24,
+        &[((6, 2), (2, 8), None, true), ((9, 9), (4, 4), None, false)],
+    );
+    for (radius, expected) in [(0.5, 16.975), (0.75, 17.192), (1.0, 17.432)] {
+        let route = pkf_route(&layout, at(3.5, 4.5), at(15.5, 14.5), radius);
+        let rho = SimScalar::from_num(radius) + CORNER_SAFETY_MARGIN;
+        let inside = |p: LatticePoint| (36..=52).contains(&p.x) && (36..=52).contains(&p.y);
+        for &(corner, _) in route.turns.iter().filter(|&&(p, _)| inside(p)) {
+            let vertex = corner.to_sim();
+            assert!(
+                route.waypoints.contains(&vertex),
+                "r {radius}: the free turn {vertex:?} is not a waypoint: {route:?}"
+            );
+            assert!(
+                route
+                    .waypoints
+                    .iter()
+                    .all(|&w| w == vertex || w.distance(vertex) >= rho),
+                "r {radius}: an arc round the free vertex {vertex:?}: {route:?}"
+            );
+        }
+        assert_length_near(&route, expected);
+    }
+}
+
+/// N2 (plan §3.4): an unknown 3×3 flush east of a known 3×3 at (8, 8). The free column `x = 12`
+/// one cell from the known face `x = 11` is no pinch: the route takes the full margin round the
+/// known structure (before the plan, the zero-room retry zigzagged between the two, 10.274).
+#[test]
+#[ignore = "B-146, WP2"]
+fn an_unknown_neighbour_makes_no_pinch() {
+    let layout = pkf_map(
+        24,
+        &[((8, 8), (3, 3), None, true), ((11, 8), (3, 3), None, false)],
+    );
+    let route = pkf_route(&layout, at(9.5, 5.5), at(9.5, 14.5), 0.5);
+    assert!(!route.zero_room, "{route:?}");
+    assert_length_near(&route, 10.329);
+}
+
+/// N3 (plan §3.4): an unknown 3×3 at (12, 8), one cell east of a known 3×3 at (8, 8). The gap is
+/// open ground beside an unknown structure, not a pinch: one turn, at the known corner (11, 8).
+#[test]
+#[ignore = "B-146, WP2"]
+fn open_ground_is_not_a_gap() {
+    let layout = pkf_map(
+        24,
+        &[((8, 8), (3, 3), None, true), ((12, 8), (3, 3), None, false)],
+    );
+    let route = pkf_route(&layout, at(9.5, 5.5), at(12.5, 14.5), 0.5);
+    assert!(!route.zero_room, "{route:?}");
+    assert_eq!(
+        route.turns.iter().map(|&(p, _)| p).collect::<Vec<_>>(),
+        vec![LatticePoint::cell_corner(11, 8)],
+        "{route:?}"
+    );
+    assert_length_near(&route, 9.829);
+}
+
+/// N4 (plan §3.4): a known 3×3 contour at (10, 10) and an unknown 2×2 contour at (13, 10). The
+/// unknown contour's corner (13.5, 10) is 0.707 from the known chamfer corner (13, 10.5), inside
+/// the clearance of r 0.75: pulled as a point it would lead the disc into the known structure, so
+/// it is clamped out of that clearance (D-2) and kept round (D-3). Before the plan the route fell
+/// back on this map (on a 28 × 28 map it was legal but zigzagged through the unknown contour,
+/// 21.03 long). The expected length is the prototype's (its adopted build gives 15.510 on both
+/// maps; the plan's 15.614 is not what that build produces, evidence WP1).
+#[test]
+#[ignore = "B-146, WP3"]
+fn a_free_end_inside_the_clearance_is_clamped_out() {
+    let layout = pkf_map(
+        24,
+        &[
+            ((10, 10), (3, 3), Some((6, 6, 2)), true),
+            ((13, 10), (2, 2), Some((4, 4, 2)), false),
+        ],
+    );
+    let route = pkf_route(&layout, at(12.5, 7.5), at(12.5, 22.5), 0.75);
+    assert_length_near(&route, 15.510);
+}
+
+/// The far-side case (plan §3.5): request 1 of the `CONTOUR_PATH_GOLDEN` corpus's showcase
+/// fallbacks, rebuilt with the one structure it meets, the corpus's 5×5 contour at (30, 45) with
+/// the corpus's per-cell knowledge. The chamfer corner (35, 46.5) is free (its cells are unknown)
+/// and 0.707 from the known cut point (34.5, 46), its partner across a portal, which is inside the
+/// clearance of r 0.75 and 1.0. The disc cannot pass between them, so the route passes the free
+/// corner on its far side and turns at no anchor there (before the plan it fell back).
+#[test]
+#[ignore = "B-146, WP3"]
+fn a_free_end_across_a_narrow_portal_is_passed_on_its_far_side() {
+    // Row-major from the structure's top-left cell (30, 45): the corpus's knowledge draw.
+    const KNOWN: [bool; 25] = [
+        false, true, false, false, true, //
+        true, true, false, false, false, //
+        false, false, true, true, false, //
+        true, false, false, false, true, //
+        false, false, false, false, true,
+    ];
+    let mut map = arena::load_game_map(arena::SHOWCASE_CANYON_FILE);
+    let footprint = sim_map::StructureFootprint {
+        width: 5,
+        height: 5,
+        shape: sim_types::FootprintShape {
+            half_width_q: 10,
+            half_height_q: 10,
+            chamfer_q: 6,
+        },
+    };
+    map.place_structure(EntityId(9_107), (30, 45), footprint)
+        .unwrap();
+    let width = map.width() as usize;
+    let mut known = vec![false; width * map.height() as usize];
+    for (index, _) in KNOWN.iter().enumerate().filter(|&(_, &k)| k) {
+        known[(45 + index / 5) * width + 30 + index % 5] = true;
+    }
+    let free = LatticePoint::new(140, 186);
+    let layout = (map, known);
+    for radius in [0.75, 1.0] {
+        let route = pkf_route(&layout, at(42.75, 49.5), at(26.25, 19.5), radius);
+        assert!(
+            route.turns.iter().all(|&(p, _)| p != free),
+            "r {radius}: the route turns at the free corner (35, 46.5): {route:?}"
+        );
+    }
+}
