@@ -717,3 +717,17 @@ header asks.
 WP3 and WP4 then land from `crowd-edge-2-wp3-wip` onto `crowd-edge-2-plan`. The plan's stop rules gain one line for
 future movement plans: a seed of record leaving a battle's survivor range is a stop, like a flip, and is decided by
 amendment.
+
+## Amendment 3 (orchestrator, 2026-11-19): R-B and R-D carried to plan `2026-11-19-crowd-slide`; survivor misses read against the placebos
+
+**Pointer.** R-B and R-D (§9) were taken up by plan [`2026-11-19-crowd-slide`](2026-11-19-crowd-slide.md). It
+measured nine candidates: the settle with and without a lane-exit slide in locomotion, the slide at proposal time,
+and a second proposal pass for the R-B pairs. None holds the stop rules, so both classes stay open under B-103 with
+that plan's figures.
+
+**Measurement rule for later movement plans (that plan's D-2).** Amendment 2's stop rule, "a seed of record leaving
+a battle's survivor range is a stop", is read against the placebo builds of the same base. A candidate's survivor miss
+on a seed of record is a stop **unless a placebo on the same base shows the same miss**; such a seed is reported, not
+stopped on. Reason: on `6b922732` the placebo that adds 2⁻³² to `PUSH_RELAXATION` makes the zerglings of battle 26
+win seed 33 (of record) with 2 left, so that seed is decided by noise. The battle's claim is re-examined only for a
+miss no placebo shows, and any such re-examination starts from this finding (recorded in the fixture's comment).
