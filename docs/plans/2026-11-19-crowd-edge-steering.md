@@ -26,7 +26,7 @@ steering, locomotion and collision phases.
 | [Q0079](../questions/closed/0079-group-consistent-routing.md) group lanes (S-7) | Untouched. One reversal class (R-F) comes from route adoption, which is that plan's ground | §10 |
 | Q0061 hand back after `cargo gate quick`; a verifier runs `package` | Standing rule | §6 |
 | Q0002 scoping is the agent's call if written down | Standing rule | §10 |
-| **OQ-1, filed as [Q0089](../questions/open/0089-queued-attacker-keeps-order.md)** may a unit queued behind its own fighting friends keep its attack order indefinitely? | Default **yes** (D-4). Filed as a question file only if the orchestrator wants the owner to decide | D-4 |
+| **OQ-1, filed as [Q0089](../questions/closed/0089-queued-attacker-keeps-order.md)** may a unit queued behind its own fighting friends keep its attack order indefinitely? | Default **yes** (D-4). Filed as a question file only if the orchestrator wants the owner to decide | D-4 |
 
 ---
 
@@ -838,3 +838,38 @@ is therefore withdrawn. Its side branch `crowd-edge-wp2-wip` is kept for referen
    - Reversals are compared against WP1's base, per the plan.
    - The walkers test keeps 17 of 17. If D-2 or D-4 costs reach there, that is a stop with a trace.
    - The arc and corridor tests are judged on their D-6 restatements.
+
+## Amendment 2 (orchestrator, 2026-11-19): D-2 withdrawn; WP4 (D-3, D-4) runs on WP1's tree; R-A to R-C go to a new plan
+
+**Why.** WP3 stopped on stop rule 1: matrix battle 31's overall winner flips (evidence §3, on `crowd-edge-wp3-wip`).
+
+- The flip is rule-caused: a marauder no longer walks into a friend that has just stopped.
+- D-2 does not pay for that flip. Reversals of record rise from 6,154 to 7,013, with proposal-caused reversals up
+  ×1.3. Battles 26 to 29 rise.
+- Showcase seeds 2, 6 and 8 flip, and seeds 1 and 3 do not end by tick 3,000.
+- The corridor gets worse: 1 of 6 in range and 2 give-ups.
+
+The flip is therefore not accepted, and D-2 as written is withdrawn. With D-1 withdrawn too (Amendment 1), the
+plan's diagnosis stands but its rules for R-A, R-B and R-C do not. These classes go to a new Stage 1 plan, written
+from evidence §2 and §3 after this package merges. Its starting points:
+
+- the walk's end test (§2d);
+- why shortened steps raise proposal reversals (§3);
+- whether a contact-stage rule can stop units walking into stopped friends without changing battle outcomes.
+
+**Q0089 is answered (a).** A unit queued behind fighting friends keeps its attack order. A plain `Move` stall-out
+and the 21 acquisition leash stay. The question is closed.
+
+**Decision.**
+
+1. **WP4 (D-3 and D-4) runs next, on WP1's tree (`6874f25f` plus the main merge),** without D-1 or D-2. D-4
+   implements Q0089's answer. D-3 replaces the timed retry, which was what kept corridor units from giving up and
+   which D-4 now makes unnecessary.
+   - Restate any WP4 test or acceptance figure that assumed D-1 or D-2 from WP1's own measurement first, and record
+     it. Never loosen a bound.
+   - The stop rules are unchanged. A winner flip stops the package with a trace, as before.
+2. **WP5 then closes the package.**
+   - Bring evidence §2 and §3 onto the branch from the two side branches, as documentation only.
+   - The B-103 row is restated: what WP4 fixed, R-A to R-C open with the measured residuals, and a pointer to the
+     new plan.
+   - The side branches stay until the new plan is written. Then they are deleted.
