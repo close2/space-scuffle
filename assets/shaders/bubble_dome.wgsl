@@ -50,6 +50,10 @@ struct BubbleUniform {
     frame_count: u32,            // Layers in the slice
     anim_mode: u32,              // Mode in bits 0-1 (ANIM_MODE_*), blend request in bit 2
     anim_offset: u32,            // Loop phase offset in clock units, below anim_period
+    seed: u32,                   // The bubble's entity id: a stable per-bubble seed (offset 176)
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 };
 
 // The shared flipbook clock (client/src/flipbook_clock.rs), written in place once per frame.
@@ -187,14 +191,18 @@ fn sample_media(uv: vec2<f32>, layer: u32) -> vec3<f32> {
 // Critical damage's brown-out (plan 2026-11-09-effect-visualization Amendment 33, B-120): below
 // the critical health the dome's own media flickers darker, as a failing light does, with every
 // colour channel sampled at the same point (no hue split; the old chromatic aberration read as a
-// rendering fault). The light level eases between hashed levels, one new level per beat.
-// Beats a second: fast enough to read as a flicker at the battle's 25 ticks a second, slow enough
-// that one beat spans several frames at 60 frames a second, so it never strobes frame to frame.
+// rendering fault). Each beat draws a new hashed light level; the light drops to a lower level
+// quickly and recovers to a higher one slowly, so it reads as a sagging supply, not a wobble.
+// Beats a second: about 140 ms a beat, several frames at 60 frames a second (it never strobes
+// frame to frame) and below the band of about 10 Hz where a flicker irritates.
 const BROWNOUT_BEATS_PER_SECOND: f32 = 7.0;
-// Darkest and brightest share of the media's light: never so dark the unit's art is lost (the
-// cracks' glow and the HUD still name it), never full, so a critical bubble always reads dimmed.
-const BROWNOUT_FLOOR: f32 = 0.5;
+// Darkest and brightest share of the media's light: the darkest beats leave about a third, dark
+// enough to read at the battle's zoom, while the unit's art stays recognisable; never full, so a
+// critical bubble always reads dimmed (B-120 review round 1).
+const BROWNOUT_FLOOR: f32 = 0.35;
 const BROWNOUT_CEILING: f32 = 0.9;
+// Share of a beat a drop takes; a recovery takes the whole beat.
+const BROWNOUT_DROP_SHARE: f32 = 0.2;
 
 // A uniform value in [0, 1] from an integer (PCG hash): exact on every driver at any beat count,
 // where a `fract(sin(x))` hash loses its spread at large arguments.
@@ -204,13 +212,16 @@ fn hash_unit(value: u32) -> f32 {
     return f32((word >> 22u) ^ word) / 4294967295.0;
 }
 
-// The brown-out's share of light at `time` seconds for a bubble seeded by `seed` (its animation
-// origin, so neighbouring damaged units do not flicker in step).
+// The brown-out's share of light at `time` seconds for a bubble seeded by `seed` (its entity id,
+// so neighbouring damaged units do not flicker in step).
 fn brownout(time: f32, seed: u32) -> f32 {
     let beat = time * BROWNOUT_BEATS_PER_SECOND;
     // Knuth's multiplicative hash spreads neighbouring seeds far apart in the sequence.
     let index = u32(beat) + ((seed * 2654435761u) >> 12u);
-    let level = mix(hash_unit(index), hash_unit(index + 1u), smoothstep(0.0, 1.0, fract(beat)));
+    let previous = hash_unit(index);
+    let next = hash_unit(index + 1u);
+    let span = select(1.0, BROWNOUT_DROP_SHARE, next < previous);
+    let level = mix(previous, next, smoothstep(0.0, span, fract(beat)));
     return mix(BROWNOUT_FLOOR, BROWNOUT_CEILING, level);
 }
 
@@ -324,7 +335,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             scanline_mult = 0.85 + 0.15 * sin(lens_uv.y * 240.0);
         }
         if (bubble.hp_ratio < 0.35) {
-            scanline_mult *= brownout(globals.time, bubble.anim_origin);
+            scanline_mult *= brownout(globals.time, bubble.seed);
         }
     }
 

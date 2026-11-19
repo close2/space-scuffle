@@ -25,7 +25,8 @@
 //! - Inside the bubble's media, each colour channel of a critical shot lines up with the same
 //!   channel of the pristine shot at the same horizontal shift: no channel is displaced from the
 //!   others (normalised cross-correlation, so dimming does not change the match).
-//! - Every critical shot is dimmer than the pristine one, and never darker than the look's floor.
+//! - No critical shot is brighter than the brown-out's ceiling allows or darker than its floor,
+//!   the darkest is clearly dimmed, and the shots, at least two beats apart, spread: it flickers.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -64,9 +65,12 @@ const CHILD_TEST: &str = "windowed_damage_child";
 const GEOMETRY_FILE: &str = "geometry.ron";
 /// Frame cap that makes the media policy strict. The GPU run's own deadline ends a stuck child.
 const CHILD_FRAME_LIMIT: u64 = 100_000;
-/// Consecutive ready frames between writing a uniform and capturing it. Consecutive critical
-/// shots are this many frames apart, so they catch the flicker at different times.
+/// Consecutive ready frames between writing a uniform and capturing it.
 const SETTLE_FRAMES: u32 = 8;
+/// Least time between two shots, seconds of the app's clock (the shader's `globals.time`): two
+/// beats of the brown-out's 7 a second, so consecutive critical shots sample independent levels
+/// whatever the frame rate.
+const SHOT_SPACING_S: f64 = 0.3;
 
 /// Health of the pristine shot.
 const PRISTINE_HP: f32 = 1.0;
@@ -117,16 +121,21 @@ const INTERIOR_SHARE: f32 = 0.7;
 /// Largest horizontal shift, in pixels, searched when lining a channel up. The old look shifted
 /// red and blue by about 4 % of the bubble's radius each way plus a jitter, a few pixels here.
 const MAX_SHIFT_PX: i32 = 8;
-/// Largest mean luma ratio of a critical shot to the pristine one: below it the bubble reads
-/// as dimmed. The shader's brown-out never rises above 0.9 of the media's light, and the worn
-/// scanlines take about 5 % more (the old look, scanlines alone, measured 0.947 to 0.952 on radv
-/// on 2026-11-19, so it fails this bound as well as the hue check); tone mapping compresses the
-/// ratio towards 1, so the brown-out's brightest beat measured at most 0.88.
+/// The darkest of the critical shots must lie below this mean luma ratio to the pristine shot:
+/// the bubble reads as dimmed. The old look (worn scanlines alone) measured 0.947 to 0.952 on
+/// radv on 2026-11-19, so it fails this bound as well as the hue check; six independent beats of
+/// the brown-out (light 0.35 to 0.9, compressed towards 1 by tone mapping) all above it are
+/// vanishingly unlikely.
 const DIMMED_BELOW: f32 = 0.92;
-/// Smallest mean luma ratio: the brown-out never falls below 0.5 of the media's light (about
-/// 0.6 after tone mapping); a darker shot means some other darkening. The brown-out measured at
-/// least 0.77 on radv on 2026-11-19.
-const DIMMED_FLOOR: f32 = 0.4;
+/// No critical shot may be brighter than this ratio: the brown-out never gives full light.
+const NEVER_ABOVE: f32 = 0.97;
+/// Nor darker than this: the brown-out keeps at least 0.35 of the media's light (more after tone
+/// mapping), so a darker shot means some other darkening.
+const DIMMED_FLOOR: f32 = 0.3;
+/// The six critical shots' ratios must spread by at least this much: the look flickers, it is
+/// not a constant dimming (B-120 review round 1; measured 0.11 for the first brown-out). Six
+/// independent beats all within it are about a thousandth as likely.
+const FLICKER_SPREAD: f64 = 0.02;
 
 /// The warning windowed runs logged on lavapipe before Mesa 25. It concerns the swapchain, not
 /// this shader, so it gives this test no reason to fail.
@@ -157,6 +166,8 @@ struct Stage {
     settled_frames: u32,
     /// Whether a screenshot was requested and has not arrived.
     capture_pending: bool,
+    /// The app's clock at the last screenshot request, seconds.
+    last_shot_at: f64,
 }
 
 /// The snapshot record of an idle, full-health bubble of `archetype` at [`CENTRE`].
@@ -275,6 +286,7 @@ fn run_shots(
     palette: Res<'_, PlayerPalette>,
     status: Res<'_, BattleRenderStatus>,
     cameras: Query<'_, '_, (&Camera, &GlobalTransform), With<RtsCamera>>,
+    time: Res<'_, Time>,
     mut exit: EventWriter<'_, AppExit>,
 ) {
     let (Some(registry), Some((handle, instance))) = (registry, stage.staged.clone()) else {
@@ -302,10 +314,12 @@ fn run_shots(
         sync_bubble_material(&mut materials, &handle, &uniform, texture);
     }
     stage.settled_frames += 1;
-    if stage.settled_frames < SETTLE_FRAMES {
+    let now = time.elapsed_secs_f64();
+    if stage.settled_frames < SETTLE_FRAMES || now - stage.last_shot_at < SHOT_SPACING_S {
         return;
     }
     stage.capture_pending = true;
+    stage.last_shot_at = now;
     let path = stage.directory.join(format!("{name}.png"));
     commands.spawn(Screenshot::primary_window()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>, mut stage: ResMut<'_, Stage>| {
@@ -544,6 +558,7 @@ fn a_critically_damaged_bubble_dims_its_own_colours_without_a_hue_split() -> Tes
     );
     let reference_luma = mean_luma(&pristine, &pixels);
     let mut failures = Vec::new();
+    let mut ratios = Vec::new();
     for (name, kind) in SHOTS {
         if kind != Kind::Measured {
             continue;
@@ -559,12 +574,27 @@ fn a_critically_damaged_bubble_dims_its_own_colours_without_a_hue_split() -> Tes
                 "{name}: the channels line up at different shifts {shifts:?}: a hue split"
             ));
         }
-        if !(f64::from(DIMMED_FLOOR)..f64::from(DIMMED_BELOW)).contains(&ratio) {
+        if !(f64::from(DIMMED_FLOOR)..f64::from(NEVER_ABOVE)).contains(&ratio) {
             failures.push(format!(
                 "{name}: luma ratio {ratio:.3} to the pristine shot, outside \
-                 [{DIMMED_FLOOR}, {DIMMED_BELOW})"
+                 [{DIMMED_FLOOR}, {NEVER_ABOVE})"
             ));
         }
+        ratios.push(ratio);
+    }
+    let darkest = ratios.iter().copied().fold(f64::INFINITY, f64::min);
+    let brightest = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    eprintln!("luma ratios from {darkest:.3} to {brightest:.3}");
+    if darkest >= f64::from(DIMMED_BELOW) {
+        failures.push(format!(
+            "no critical shot is dimmed below {DIMMED_BELOW}: the darkest is {darkest:.3}"
+        ));
+    }
+    if brightest - darkest < FLICKER_SPREAD {
+        failures.push(format!(
+            "the critical shots spread by {:.3}, under {FLICKER_SPREAD}: no flicker",
+            brightest - darkest
+        ));
     }
     assert!(failures.is_empty(), "the low-health look: {failures:#?}");
     Ok(())

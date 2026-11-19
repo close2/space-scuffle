@@ -1,7 +1,7 @@
 //! Automated headless integration tests for the Space Scuffle client crate.
 //!
 //! # Invariants Verified
-//! - Uniform memory packing is strictly 176 bytes and 16-byte aligned.
+//! - Uniform memory packing is strictly 192 bytes and 16-byte aligned.
 //! - RTS Camera perspective pitch is 58°, distance clamps to [3.0, 48.0], and bookmarks round-trip.
 //! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, glitch < 35%).
 //! - Headless 60-frame simulation synchronization steps deterministically without panics.
@@ -61,7 +61,7 @@ fn test_camera_invariants() {
 #[test]
 fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     // Assert struct size matches WGSL BubbleUniform layout exactly
-    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
+    assert_eq!(size_of::<BubbleUniformGpu>(), 192);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 
     let instance = BubbleRenderInstance {
@@ -117,6 +117,22 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(gpu_uniform.radius, 0.75);
     assert_eq!(gpu_uniform.world_pos, Vec3::new(10.0, 1.5, 20.0));
     assert_eq!(gpu_uniform.hp_ratio, 0.65);
+    // The brown-out's seed is the entity id (B-120 review round 1): stable per bubble, whatever
+    // its flipbook lanes, so two damaged units never share it.
+    assert_eq!(gpu_uniform.seed, instance.entity_id.0);
+    let other = BubbleUniformGpu::from_instance(
+        &BubbleRenderInstance {
+            entity_id: EntityId(instance.entity_id.0 + 1),
+            ..instance.clone()
+        },
+        definition.palette.resolve(instance.owner)?,
+        client::bubble_shader::still_frame_lanes(None, instance.anim_state),
+    );
+    assert_ne!(other.seed, gpu_uniform.seed);
+    assert_eq!(
+        gpu_uniform.anim_origin, other.anim_origin,
+        "the lanes alone would collide"
+    );
 
     // The flipbook lanes are packed verbatim and read back unchanged.
     let span = client::flipbook_clock::FlipbookSpan::new(24, 10, 4096)?;

@@ -30,7 +30,7 @@ fn shipped_style_and_exact_uniform_offsets_match() -> Result<(), Box<dyn std::er
             uniform.optics_signals
         ]
     );
-    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
+    assert_eq!(size_of::<BubbleUniformGpu>(), 192);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
     assert_eq!(offset_of!(BubbleUniformGpu, anim_origin), 52);
     assert_eq!(offset_of!(BubbleUniformGpu, frame_base), 92);
@@ -42,6 +42,7 @@ fn shipped_style_and_exact_uniform_offsets_match() -> Result<(), Box<dyn std::er
     assert_eq!(offset_of!(BubbleUniformGpu, frame_count), 164);
     assert_eq!(offset_of!(BubbleUniformGpu, anim_mode), 168);
     assert_eq!(offset_of!(BubbleUniformGpu, anim_offset), 172);
+    assert_eq!(offset_of!(BubbleUniformGpu, seed), 176);
     Ok(())
 }
 
@@ -300,7 +301,11 @@ fn shipped_wgsl_uniform_member_offsets_match_rust_layout() -> Result<(), Box<dyn
         anim_period,
         frame_count,
         anim_mode,
-        anim_offset
+        anim_offset,
+        seed,
+        pad0,
+        pad1,
+        pad2
     ];
     assert_eq!(*span as usize, size_of::<BubbleUniformGpu>());
     assert_eq!(members.len(), expected.len());

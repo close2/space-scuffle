@@ -208,8 +208,8 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
         "fragment must derive its basis from view.world_from_view"
     );
 
-    // Verify memory layout exactly equals 176 bytes and 16-byte alignment
-    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
+    // Verify memory layout exactly equals 192 bytes and 16-byte alignment
+    assert_eq!(size_of::<BubbleUniformGpu>(), 192);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 
