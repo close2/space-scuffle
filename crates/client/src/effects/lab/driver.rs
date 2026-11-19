@@ -278,7 +278,7 @@ fn start(
         material.0 = material_of(scene, take.ground);
     }
     runtime.reset();
-    runtime.only = take.only;
+    runtime.set_only(take.only);
     let now = world.time.elapsed_secs_f64();
     if take.effect {
         match program.subject.repeat {

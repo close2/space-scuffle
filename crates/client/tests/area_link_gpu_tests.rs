@@ -1189,7 +1189,7 @@ fn after_shot(world: &mut World, shot: usize) {
     world.resource_scope(|world, mut staging: Mut<'_, Staging>| {
         world.resource_mut::<EffectView>().bare = false;
         if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
-            runtime.only = None;
+            runtime.set_only(None);
         }
         if next == shot_count() {
             staging.phase = Phase::Draining;
@@ -1312,7 +1312,7 @@ fn prepare_shot(world: &mut World, index: usize) {
     let bare = matches!(shot, Shot::AreasBare | Shot::TetherBare | Shot::FogBare);
     world.resource_mut::<EffectView>().bare = bare;
     if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
-        runtime.only = critical.then_some(Priority::Critical);
+        runtime.set_only(critical.then_some(Priority::Critical));
     }
 }
 
@@ -1564,7 +1564,7 @@ fn stage(
             commands.queue(|world: &mut World| {
                 world.resource_mut::<Time<Virtual>>().pause();
                 if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
-                    runtime.only = Some(Priority::Critical);
+                    runtime.set_only(Some(Priority::Critical));
                 }
             });
             Phase::ImpactShot {
@@ -3078,7 +3078,7 @@ fn viewer_impact(
         .iter()
         .filter_map(|effect| effect.impact)
         .collect();
-    runtime.pool.iter().find_map(|(_, instance)| {
+    runtime.pool().iter().find_map(|(_, instance)| {
         let at = Vec2::new(instance.anchor.x, instance.anchor.z);
         let age = now - instance.birth;
         (impacts.contains(&instance.effect)
@@ -3148,7 +3148,7 @@ fn after_impact_shot(world: &mut World, bare: bool) {
     }
     world.resource_mut::<EffectView>().bare = true;
     if let Some(mut runtime) = world.get_resource_mut::<EffectRuntime>() {
-        runtime.only = None;
+        runtime.set_only(None);
     }
     world.resource_mut::<Staging>().phase = Phase::ImpactShot {
         bare: true,

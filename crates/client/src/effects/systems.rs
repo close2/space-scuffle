@@ -747,7 +747,7 @@ pub fn build_effect_frame(
     let (Some(catalog), Some(mut runtime)) = (catalog, runtime) else {
         return;
     };
-    if runtime.pool.live_total() == 0
+    if runtime.pool().live_total() == 0
         && runtime.particles.is_empty()
         && runtime.frame.sorted.is_empty()
         && runtime.frame.decals.is_empty()

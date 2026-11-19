@@ -262,8 +262,8 @@ impl EffectInstancePool {
         }
     }
 
-    /// Frees every effect whose `end` is before `now`.
-    pub fn free_ended(&mut self, now: f64) {
+    /// Frees every effect whose `end` is before `now`, telling `freed` each freed slot.
+    pub fn free_ended(&mut self, now: f64, mut freed: impl FnMut(u32)) {
         for index in 0..self.slots.len() {
             let slot = &self.slots[index];
             if let Some(instance) = slot.instance {
@@ -273,6 +273,7 @@ impl EffectInstancePool {
                         generation: slot.generation,
                     };
                     self.free(handle);
+                    freed(handle.index);
                 }
             }
         }
@@ -395,7 +396,7 @@ mod tests {
         pool.spawn(instance(EffectClass::Minor, 0.5)).expect("free");
         pool.spawn(instance(EffectClass::Minor, 2.0)).expect("free");
         let capacity = (pool.slots.capacity(), pool.free.capacity());
-        pool.free_ended(1.0);
+        pool.free_ended(1.0, |_| {});
         assert_eq!(pool.live(EffectClass::Minor), 1);
         for _ in 0..100 {
             let handle = pool

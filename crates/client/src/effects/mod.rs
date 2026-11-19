@@ -31,6 +31,7 @@ pub mod binding;
 pub mod budget;
 pub mod catalog;
 pub mod curve;
+pub mod decal_table;
 pub mod front;
 pub mod indices;
 pub mod instances;

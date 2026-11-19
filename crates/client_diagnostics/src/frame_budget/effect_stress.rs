@@ -648,7 +648,7 @@ fn capture_stressed_frame(
                 let project = |point: Vec3| camera.world_to_viewport(transform, point).ok();
                 let view = ViewAxes::of(transform);
                 (
-                    runtime.pool.live_total(),
+                    runtime.pool().live_total(),
                     u32::try_from(runtime.frame.sorted.len()).unwrap_or(u32::MAX),
                     u32::try_from(runtime.frame.decals.len()).unwrap_or(u32::MAX),
                     effect_coverage(

@@ -342,7 +342,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         options.frames,
         per_frame(spawn_cpu),
         per_frame(build_cpu),
-        runtime.pool.live_total(),
+        runtime.pool().live_total(),
         runtime.frame.sorted.len(),
         runtime.frame.decals.len(),
         runtime.frame.lights.len(),

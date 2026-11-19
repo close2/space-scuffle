@@ -1117,7 +1117,7 @@ mod tests {
     /// The anchors of the live instances of `effect`.
     fn anchors_of(runtime: &EffectRuntime, effect: EffectId) -> Vec<Vec3> {
         runtime
-            .pool
+            .pool()
             .iter()
             .filter(|(_, instance)| instance.effect == effect)
             .map(|(_, instance)| instance.anchor)
@@ -1158,7 +1158,7 @@ mod tests {
             vec![Vec3::new(7.25, 0.3, 4.5)]
         );
         let instance = runtime
-            .pool
+            .pool()
             .iter()
             .find(|(_, instance)| instance.effect == impact)
             .map(|(_, instance)| instance.bound)
