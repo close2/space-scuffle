@@ -624,7 +624,9 @@ impl DecalTable {
     /// (empty) table at its next extraction rather than patches.
     pub fn clear(&mut self) {
         self.patches.clear();
-        self.generation += 1;
+        // Two: a copy that took the generation before the clear sees a gap even before the
+        // next rewrite (independent review round 2, S2).
+        self.generation += 2;
         self.order_generation += 1;
         self.darkening = 0;
         self.records.clear();
@@ -754,9 +756,14 @@ impl DecalTable {
             self.darkening += 1;
         }
         // At most one push per row per rewrite: a row is freed only with its effect's chain,
-        // which a rewrite frees once, before writing that effect's rows.
+        // which a rewrite frees once, before writing that effect's rows. So the list (at the
+        // rows' capacity) never fills; were it to, the row is counted as a failure and the
+        // next copy takes every row, never leaving a stale row on the GPU.
         if self.patches.len() < self.patches.capacity() {
             self.patches.push(row);
+        } else {
+            self.failed += 1;
+            self.generation += 1;
         }
     }
 
@@ -1511,10 +1518,16 @@ mod tests {
             RowCopy::Nothing
         );
         scene.runtime.clear();
+        assert_eq!(
+            scene.runtime.decal_table().copy_since(Some(generation)),
+            RowCopy::Every,
+            "right after the clear"
+        );
         scene.frame();
         assert_eq!(
             scene.runtime.decal_table().copy_since(Some(generation)),
-            RowCopy::Every
+            RowCopy::Every,
+            "and after the next rewrite"
         );
         assert_eq!(scene.runtime.decal_table().copy_since(None), RowCopy::Every);
     }

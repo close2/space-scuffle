@@ -97,11 +97,11 @@ use bevy::render::render_resource::{
     BlendFactor, BlendOperation, BlendState, Buffer, BufferDescriptor, BufferUsages,
     CachedComputePipelineId, CachedPipelineState, ColorTargetState, ColorWrites, CompareFunction,
     ComputePassDescriptor, ComputePipelineDescriptor, DepthStencilState, Extent3d, Face,
-    FragmentState, Maintain, MapMode, MultisampleState, PipelineCache, PrimitiveState,
-    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-    SpecializedRenderPipeline, SpecializedRenderPipelines, TextureDataOrder, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    FragmentState, Maintain, MapMode, MultisampleState, PipelineCache, PipelineCacheError,
+    PrimitiveState, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
+    ShaderStages, SpecializedRenderPipeline, SpecializedRenderPipelines, TextureDataOrder,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -147,13 +147,9 @@ impl Plugin for EffectRenderPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<EffectPipeline>>()
             .init_resource::<EffectRuns>()
-            .init_resource::<DecalProbeState>()
             .add_render_command::<Transparent3d, DrawEffects>()
             .add_render_command::<Transmissive3d, DrawEffects>()
-            .add_systems(
-                ExtractSchedule,
-                (extract_decal_probe, extract_effects).chain(),
-            )
+            .add_systems(ExtractSchedule, extract_effects)
             .add_render_graph_node::<EffectDecalAgeNode>(Core3d, EffectDecalAgeLabel)
             .add_render_graph_edges(
                 Core3d,
@@ -170,7 +166,6 @@ impl Plugin for EffectRenderPlugin {
                         .in_set(RenderSet::PhaseSort)
                         .before(sort_phase_system::<Transmissive3d>),
                     prepare_effect_view_bind_groups.in_set(RenderSet::PrepareBindGroups),
-                    read_decal_probe.in_set(RenderSet::Cleanup),
                 ),
             );
     }
@@ -381,7 +376,8 @@ pub struct DecalProbeFrame {
 }
 
 /// Test instrumentation of the decal aging (`decal_age_gpu_tests`, D-10). A main-world
-/// resource that production never inserts: it waits for the GPU and allocates per frame.
+/// resource that production never inserts, read only by [`EffectDecalProbePlugin`]'s systems,
+/// which wait for the GPU and allocate per frame.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct EffectDecalProbe {
     /// With `read_back`, every frame whose decals were aged on the GPU appends a
@@ -423,6 +419,24 @@ enum AgePipelines {
     Ready,
     /// One failed; reported once, and the decals are never drawn.
     Failed,
+}
+
+/// Test instrumentation of the decal aging: registers [`EffectDecalProbe`]'s render-world
+/// systems (read-back after the frame's submission, fault injection). Only tests add it, after
+/// the effect plugins; the production renderer has none of it (independent review round 2,
+/// S3).
+pub struct EffectDecalProbePlugin;
+
+impl Plugin for EffectDecalProbePlugin {
+    fn build(&self, app: &mut App) {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .init_resource::<DecalProbeState>()
+            .add_systems(ExtractSchedule, extract_decal_probe.before(extract_effects))
+            .add_systems(Render, read_decal_probe.in_set(RenderSet::Cleanup));
+    }
 }
 
 /// GPU resources of the loaded vocabulary and this frame's counts.
@@ -756,7 +770,7 @@ fn extract_effects(
     version: Extract<'_, '_, Option<Res<'_, EffectCatalogVersion>>>,
     runtime: Extract<'_, '_, Option<Res<'_, EffectRuntime>>>,
     source: Extract<'_, '_, Option<Res<'_, EffectDecalSource>>>,
-    (mut gpu, mut probe): (ResMut<'_, EffectGpu>, ResMut<'_, DecalProbeState>),
+    (mut gpu, mut probe): (ResMut<'_, EffectGpu>, Option<ResMut<'_, DecalProbeState>>),
     pipeline: Res<'_, EffectPipeline>,
     age_pipeline: Res<'_, DecalAgePipeline>,
     (device, queue): (Res<'_, RenderDevice>, Res<'_, RenderQueue>),
@@ -800,11 +814,11 @@ fn extract_effects(
     if let (Some(buffer), false) = (&gpu.distortions, frame.distortions.is_empty()) {
         queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.distortions));
     }
-    if probe.forget {
+    if probe.as_ref().is_some_and(|probe| probe.forget) {
         gpu.applied_generation.store(0, Ordering::Relaxed);
     }
     let full_copy = extract_decal_rows(gpu, runtime, catalog, &queue);
-    if let Some(pending) = &mut probe.pending {
+    if let Some(pending) = probe.as_mut().and_then(|probe| probe.pending.as_mut()) {
         pending.full_copy = full_copy;
     }
     gpu.centers.clear();
@@ -833,7 +847,10 @@ fn extract_decal_rows(
         .load(Ordering::Relaxed)
         .checked_sub(1);
     let copy = table.copy_since(applied);
-    stage_patches(table, copy, &mut gpu.patch_staging);
+    let missing = stage_patches(table, copy, &mut gpu.patch_staging);
+    if missing > 0 {
+        error!("effect decals: {missing} listed decal rows have no record (a table defect)");
+    }
     let resync = copy == RowCopy::Every;
     if let (Some(buffer), false) = (&gpu.patches, gpu.patch_staging.is_empty()) {
         queue.write_buffer(buffer, 0, bytemuck::cast_slice(&gpu.patch_staging));
@@ -866,21 +883,27 @@ fn extract_decal_rows(
 
 /// Writes into `staging` the rows `copy` asks for, in the GPU's form: the table's patches, or
 /// every live row. `staging` is retained at the decal budget's capacity, which neither can
-/// exceed, so this allocates nothing.
-fn stage_patches(table: &DecalTable, copy: RowCopy, staging: &mut Vec<GpuDecalPatch>) {
-    let patch = |row: u32| {
-        table.record(row).map(|record| GpuDecalPatch {
-            row,
-            pad: [0; 3],
-            record: GpuDecalRecord::of(record),
-        })
+/// exceed, so this allocates nothing. Returns how many listed rows had no record (none can:
+/// the table lists only its own rows; a defect is reported, not dropped silently).
+fn stage_patches(table: &DecalTable, copy: RowCopy, staging: &mut Vec<GpuDecalPatch>) -> usize {
+    let rows = match copy {
+        RowCopy::Every => table.order(),
+        RowCopy::Patches => table.patches(),
+        RowCopy::Nothing => &[],
     };
     staging.clear();
-    match copy {
-        RowCopy::Every => staging.extend(table.order().iter().filter_map(|&row| patch(row))),
-        RowCopy::Patches => staging.extend(table.patches().iter().filter_map(|&row| patch(row))),
-        RowCopy::Nothing => {}
+    let mut missing = 0;
+    for &row in rows {
+        match table.record(row) {
+            Some(record) => staging.push(GpuDecalPatch {
+                row,
+                pad: [0; 3],
+                record: GpuDecalRecord::of(record),
+            }),
+            None => missing += 1,
+        }
     }
+    missing
 }
 
 /// Under [`EffectDecalProbe`]: decides whether this extraction forgets the generation the
@@ -1071,10 +1094,19 @@ fn report_decal_age_pipelines(
         cache.get_compute_pipeline_state(pipeline.age),
     ];
     for state in states {
-        if let CachedPipelineState::Err(error) = state {
-            error!("effect decals: the aging pipeline ({DECAL_AGE_SHADER}) failed: {error}");
-            gpu.age_pipelines = AgePipelines::Failed;
-            return;
+        match state {
+            // A shader still loading is retried by the cache's next pass (independent review
+            // round 2, B1): not a failure.
+            CachedPipelineState::Err(
+                PipelineCacheError::ShaderNotLoaded(_)
+                | PipelineCacheError::ShaderImportNotYetAvailable,
+            ) => return,
+            CachedPipelineState::Err(error) => {
+                error!("effect decals: the aging pipeline ({DECAL_AGE_SHADER}) failed: {error}");
+                gpu.age_pipelines = AgePipelines::Failed;
+                return;
+            }
+            _ => {}
         }
     }
     if states
@@ -1138,7 +1170,9 @@ impl Node for EffectDecalAgeNode {
         }
         gpu.applied_generation
             .store(gpu.pending_generation + 1, Ordering::Relaxed);
-        let probe = world.resource::<DecalProbeState>();
+        let Some(probe) = world.get_resource::<DecalProbeState>() else {
+            return Ok(());
+        };
         if let (Some(_), Some(staging), Some(decals), true) =
             (&probe.pending, &probe.staging, &gpu.decals, rows > 0)
         {
@@ -1752,7 +1786,11 @@ mod tests {
                     } else {
                         table.copy_since(Some(table.generation() - 1))
                     };
-                    stage_patches(table, copy, staging);
+                    assert_eq!(
+                        stage_patches(table, copy, staging),
+                        0,
+                        "every row has a record"
+                    );
                     staged += staging.len();
                     let now = (staging.as_ptr() as usize, staging.capacity());
                     assert_eq!(*buffer.get_or_insert(now), now, "{kind:?}: no growth");

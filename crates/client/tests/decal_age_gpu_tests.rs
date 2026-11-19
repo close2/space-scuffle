@@ -13,11 +13,19 @@
 //! - **resync**: the production path, but every fifth extraction forgets which generation the
 //!   GPU's rows hold, so it copies every live row instead of the patches.
 //!
+//! Each child's crowd also holds, far behind the camera, the first shipped held look with a held
+//! decal layer, released mid-take: its rows are aged every frame but draw no pixel, so the
+//! release's exit is compared while the captures stay those of the identity scene. The probe's
+//! render systems come from `EffectDecalProbePlugin`, which only tests add.
+//!
 //! The parent then checks:
 //! 1. **Record parity** (D-10 check 1), over every frame of the gpu and resync children: integer
 //!    fields equal; float fields within 4 ulp or 1e-6; a flipbook frame index one apart only where
 //!    the blend sits within 1e-5 of a whole frame; visibility equal except rows within 1e-5 s of
-//!    a start or end or 1e-4 px of the level-of-detail threshold, at most 1 per 10 000 row-frames.
+//!    a start or end or 1e-4 px of the level-of-detail threshold, at most 1 per 10 000 row-frames;
+//!    and every branch of the aging (a released held layer, retired detail, retired marks, a
+//!    variant, a row hidden by level of detail, and a fitted flipbook when the vocabulary has a
+//!    decal on one: the shipped one has none) occurs among the rows.
 //! 2. **Pixel identity in the same run** (check 2): every gpu capture against the cpu capture of
 //!    the same shot has ≥ 99.9 % of pixels bit-identical, every channel within 2/255 and a mean
 //!    absolute difference ≤ 0.02/255.
@@ -29,8 +37,9 @@
 //! (`decal_identity_gpu_tests`, D-9).
 //!
 //! With [`BASE_VAR`] naming a directory of the identity scene's earlier captures (`a_NN.png`, WP1
-//! and WP5 evidence), the gpu captures are also held to check 2's numbers against them (check 3)
-//! and the figures printed; with [`SAVE_VAR`] the captures are copied there for the evidence.
+//! and WP5 evidence), a fourth child, **plain**, renders the identity scene without the further
+//! look below, aged on the GPU, and its captures are held to check 2's numbers against those
+//! (check 3) and the figures printed; with [`SAVE_VAR`] the captures are copied there for the evidence.
 //!
 //! # Invariants verified
 //! As listed; the parity and pixel figures are printed for the evidence.
@@ -59,13 +68,21 @@ mod effect_subjects;
 #[path = "support/decal_identity_scene.rs"]
 mod decal_identity_scene;
 
+use bevy::math::Vec3;
 use client::effects::catalog::EffectCatalog;
+use client::effects::catalog::{Block, Pool};
+use client::effects::decal_table::decal_clock;
 use client::effects::decal_table::{age_margins, hidden_decal};
 use client::effects::instances::DecalInstance;
+use client::effects::lab::LabCrowdMember;
 use client::effects::lab::{lab_app, LabSurface};
-use client::effects::render::{DecalProbeFrame, EffectDecalProbe, EffectDecalSource};
+use client::effects::render::{
+    DecalProbeFrame, EffectDecalProbe, EffectDecalProbePlugin, EffectDecalSource,
+};
 use client::ResolvedAssetsRoot;
-use decal_identity_scene::{scene, tightened_vocabulary, SHOTS, SIZE};
+use decal_identity_scene::{
+    bound_of, held_kind, scene, shipped, subject, tightened_vocabulary, SHOTS, SIZE,
+};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -81,6 +98,11 @@ const BASE_VAR: &str = "SPACE_SCUFFLE_DECAL_AGE_BASE";
 const SAVE_VAR: &str = "SPACE_SCUFFLE_DECAL_AGE_SAVE";
 /// The children, in the order they run.
 const MODES: [&str; 3] = ["gpu", "cpu", "resync"];
+/// The child that renders the identity scene exactly as `decal_identity_gpu_tests` does (no
+/// further look), aged on the GPU: run only with [`BASE_VAR`], whose captures it is compared with
+/// (the released held look the other children add shifts the spawn sequence, which seeds every
+/// later effect's randomness, so their captures are not the identity scene's).
+const PLAIN: &str = "plain";
 /// Every this-many-th extraction of the resync child copies every row.
 const FORGET_EVERY: u32 = 5;
 /// Float fields agree within this many ulp ...
@@ -107,7 +129,10 @@ fn decal_age_child() {
     let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
     let mode = std::env::var(MODE_VAR).expect("the parent names the mode");
     let vocabulary = tightened_vocabulary(&out);
-    let (program, crowd) = scene(out.clone(), &mode);
+    let (program, mut crowd) = scene(out.clone(), &mode);
+    if mode != PLAIN {
+        crowd.members.push(released_held_member());
+    }
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
     let mut app = lab_app(
         root.clone(),
@@ -119,24 +144,93 @@ fn decal_age_child() {
     .expect("the lab app builds");
     app.insert_resource(crowd);
     let probe = EffectDecalProbe {
-        read_back: mode != "cpu",
+        read_back: mode != "cpu" && mode != PLAIN,
         forget_every: if mode == "resync" { FORGET_EVERY } else { 0 },
         ..EffectDecalProbe::default()
     };
     let frames = probe.frames.clone();
     app.insert_resource(probe);
+    app.add_plugins(EffectDecalProbePlugin);
     if mode == "cpu" {
         app.insert_resource(EffectDecalSource::Cpu);
     }
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
-    if mode == "cpu" {
+    if mode == "cpu" || mode == PLAIN {
         return;
     }
     let catalog = EffectCatalog::load(&vocabulary, root.as_path()).expect("the copy loads");
     let frames = frames.lock().expect("the probe's frames");
-    let report = parity(&frames, &catalog);
+    let mut report = parity(&frames, &catalog);
+    report.flipbook_looks = catalog
+        .effects
+        .iter()
+        .flat_map(|effect| &effect.layers)
+        .filter(|layer| match &layer.block {
+            Block::Decal(look) => !look.element.is_variant_set(),
+            _ => false,
+        })
+        .count();
     std::fs::write(out.join(format!("{mode}_parity.txt")), report.render())
         .expect("the report writes");
+}
+
+/// Where the released held look stands: far behind the battle camera (which looks towards
+/// -z), so its rows are aged and compared every frame (its depth is negative, so the level of
+/// detail never hides it) while it draws no pixel of the captures, which stay comparable with
+/// the identity scene's earlier ones.
+const BEHIND_CAMERA: Vec3 = Vec3::new(0.0, 0.0, 2000.0);
+/// When the released held look is held, seconds.
+const HELD_AT: f32 = 0.1;
+/// When it is released, seconds.
+const RELEASED_AT: f32 = 4.5;
+
+/// The first shipped held look with a held decal layer (found from the catalog, none named),
+/// held at [`HELD_AT`] and released at [`RELEASED_AT`] (independent review round 2, S1: the
+/// identity scene releases no held decal, so the exit branch of the aging went untested).
+fn released_held_member() -> LabCrowdMember {
+    let catalog = shipped();
+    let effect = catalog
+        .effects
+        .iter()
+        .find(|effect| {
+            held_kind(effect.event)
+                && effect
+                    .layers
+                    .iter()
+                    .any(|layer| layer.held && layer.block.pool() == Pool::Decals)
+        })
+        .expect("a shipped held look with a held decal layer");
+    let splashes = effect_subjects::splash_subjects();
+    LabCrowdMember {
+        subject: subject(
+            &effect.name,
+            effect.event,
+            BEHIND_CAMERA,
+            bound_of(&effect.name, &splashes),
+        ),
+        at: HELD_AT,
+        held: true,
+        release_at: Some(RELEASED_AT),
+        velocity: Vec3::ZERO,
+        fog_sweep: None,
+    }
+}
+
+/// Drawn row-frames per branch of the aging, so that the parity is known to have run each.
+#[derive(Debug, Default)]
+struct Branches {
+    /// A held layer after its release (`exit`, `exit_floor`).
+    released_held: usize,
+    /// A `Detail` layer fading after its effect's detail was retired.
+    detail_retired: usize,
+    /// A mark fading after its effect's marks were retired.
+    marks_retired: usize,
+    /// A flipbook fitted to the life.
+    flipbook: usize,
+    /// A variant set (the frame fixed in the template).
+    variant: usize,
+    /// Rows with a clock hidden by the level of detail.
+    lod_hidden: usize,
 }
 
 /// What the record parity found over a child's frames.
@@ -158,6 +252,11 @@ struct Parity {
     frame_flips: usize,
     /// Visibility flips at a boundary.
     boundary_flips: usize,
+    /// Drawn row-frames per branch.
+    branches: Branches,
+    /// Decal layers of the vocabulary whose element is a fitted flipbook, not a variant set
+    /// (the shipped vocabulary has none, so its flipbook branch is drawn by no row).
+    flipbook_looks: usize,
     /// Rows outside the tolerance, described.
     failures: Vec<String>,
 }
@@ -167,7 +266,9 @@ impl Parity {
     fn render(&self) -> String {
         let mut text = format!(
             "frames {}\nfull_copies {}\nrow_frames {}\ndrawn {}\nidentical {}\nmax_ulps {}\n\
-             frame_flips {}\nboundary_flips {}\nfailures {}\n",
+             frame_flips {}\nboundary_flips {}\nreleased_held {}\ndetail_retired {}\n\
+             marks_retired {}\nflipbook {}\nvariant {}\nlod_hidden {}\nflipbook_looks {}\n\
+             failures {}\n",
             self.frames,
             self.full_copies,
             self.row_frames,
@@ -176,6 +277,13 @@ impl Parity {
             self.max_ulps,
             self.frame_flips,
             self.boundary_flips,
+            self.branches.released_held,
+            self.branches.detail_retired,
+            self.branches.marks_retired,
+            self.branches.flipbook,
+            self.branches.variant,
+            self.branches.lod_hidden,
+            self.flipbook_looks,
             self.failures.len()
         );
         for failure in self.failures.iter().take(20) {
@@ -224,9 +332,19 @@ fn parity(frames: &[DecalProbeFrame], catalog: &EffectCatalog) -> Parity {
                 continue;
             }
             if !expected_drawn {
+                if decal_clock(record, frame.now).is_some() {
+                    report.branches.lod_hidden += 1;
+                }
                 continue;
             }
             report.drawn += 1;
+            let branches = &mut report.branches;
+            branches.released_held += usize::from(record.held && record.released_at.is_some());
+            branches.detail_retired +=
+                usize::from(record.detail && record.detail_retired_at.is_some());
+            branches.marks_retired += usize::from(record.marks_retired_at.is_some());
+            branches.flipbook += usize::from(record.flipbook.is_some());
+            branches.variant += usize::from(record.flipbook.is_none());
             if expected == aged {
                 report.identical += 1;
                 continue;
@@ -371,6 +489,22 @@ fn assert_parity(directory: &Path, mode: &str, driver: &str) -> TestResult<Strin
         value(&report, "drawn") > 1000,
         "{driver} {mode}: rows drawn"
     );
+    let flipbook = value(&report, "flipbook_looks") > 0;
+    for branch in [
+        "released_held",
+        "detail_retired",
+        "marks_retired",
+        "variant",
+        "lod_hidden",
+    ]
+    .into_iter()
+    .chain(flipbook.then_some("flipbook"))
+    {
+        assert!(
+            value(&report, branch) > 0,
+            "{driver} {mode}: the parity covers the {branch} branch\n{report}"
+        );
+    }
     assert_eq!(
         failures, 0,
         "{driver} {mode}: rows outside the tolerance\n{report}"
@@ -390,7 +524,9 @@ fn the_gpu_ages_the_decal_rows_as_the_reference_does() -> TestResult {
     }
     let directory = tempfile::tempdir()?;
     let mut driver = None;
-    for mode in MODES {
+    let base = std::env::var_os(BASE_VAR).map(PathBuf::from);
+    let plain: &[&str] = if base.is_some() { &[PLAIN] } else { &[] };
+    for &mode in MODES.iter().chain(plain) {
         let mut command = gpu_run::offscreen_gpu_command(&std::env::current_exe()?);
         command.args(["--ignored", "--exact", "--nocapture", "decal_age_child"]);
         command.env(OUT_VAR, directory.path());
@@ -426,12 +562,11 @@ fn the_gpu_ages_the_decal_rows_as_the_reference_does() -> TestResult {
         );
     }
     println!("{driver}: worst capture gpu against cpu: {worst:?}");
-    if let Some(base) = std::env::var_os(BASE_VAR) {
-        let base = PathBuf::from(base);
+    if let Some(base) = &base {
         for shot in 0..SHOTS {
             let against_base =
-                pixel_diff(&path("gpu", shot), &base.join(format!("a_{shot:02}.png")))?;
-            println!("{driver}: capture {shot:02} gpu against the base: {against_base:?}");
+                pixel_diff(&path(PLAIN, shot), &base.join(format!("a_{shot:02}.png")))?;
+            println!("{driver}: capture {shot:02} plain against the base: {against_base:?}");
             assert!(
                 against_base.within(),
                 "{driver}: capture {shot} is outside D-10 check 2 against the base: \
@@ -442,7 +577,7 @@ fn the_gpu_ages_the_decal_rows_as_the_reference_does() -> TestResult {
     if let Some(save) = std::env::var_os(SAVE_VAR) {
         let target = PathBuf::from(save).join(driver);
         std::fs::create_dir_all(&target)?;
-        for mode in MODES {
+        for &mode in MODES.iter().chain(plain) {
             for shot in 0..SHOTS {
                 std::fs::copy(
                     path(mode, shot),
