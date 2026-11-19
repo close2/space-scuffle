@@ -3,7 +3,7 @@
 //! # Invariants Verified
 //! - Uniform memory packing is strictly 192 bytes and 16-byte aligned.
 //! - RTS Camera perspective pitch is 58°, distance clamps to [3.0, 48.0], and bookmarks round-trip.
-//! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, glitch < 35%).
+//! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, brown-out < 35%).
 //! - Headless 60-frame simulation synchronization steps deterministically without panics.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::assert_is_empty)]

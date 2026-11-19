@@ -127,7 +127,8 @@ const MAX_SHIFT_PX: i32 = 8;
 /// the brown-out (light 0.35 to 0.9, compressed towards 1 by tone mapping) all above it are
 /// vanishingly unlikely.
 const DIMMED_BELOW: f32 = 0.92;
-/// No critical shot may be brighter than this ratio: the brown-out never gives full light.
+/// No critical shot may be brighter than this ratio: the brown-out never gives full light. The
+/// old look (0.95) would pass this bound; the darkest-shot bound and the hue check fail it.
 const NEVER_ABOVE: f32 = 0.97;
 /// Nor darker than this: the brown-out keeps at least 0.35 of the media's light (more after tone
 /// mapping), so a darker shot means some other darkening.
