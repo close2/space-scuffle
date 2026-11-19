@@ -1444,3 +1444,88 @@ fn a_tether_whose_end_leaves_sight_is_removed_at_once() {
         "on the frame an end leaves sight the tether is gone, with no exit"
     );
 }
+
+/// Plan Amendment 33, B-121: when an Abduct pull arrives and the two bubbles touch, the shipped
+/// tether look draws nothing: no line runs across both units and turns round, and its grip and
+/// swelling, scaled and faded with the tether's length, are gone. At range it draws its tongue.
+#[test]
+fn a_shipped_tether_between_touching_bubbles_draws_no_line() {
+    use client::effects::areas::{keep_views_seen, AreaLooks, AreaSight, Keep};
+    use client::effects::catalog::schema::EventKind;
+    use sim_types::EntityId;
+    let root = ResolvedAssetsRoot::resolve().expect("assets root");
+    let catalog = EffectCatalog::load(&root.as_path().join("catalog/effects.ron"), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let units = sim_fixtures::shipped_catalogs().units;
+    let tables = UnitEffectTables::build(&units, &catalog).expect("tables");
+    let is_link = |name: &str| {
+        catalog
+            .effects
+            .iter()
+            .any(|effect| effect.name == name && effect.event == EventKind::Link)
+    };
+    let (caster, ability) = units
+        .archetypes()
+        .find_map(|archetype| {
+            archetype
+                .abilities
+                .iter()
+                .position(|ability| {
+                    archetype
+                        .effects
+                        .abilities
+                        .get(&ability.name)
+                        .is_some_and(|name| is_link(name))
+                })
+                .map(|index| (archetype.unit_type_id, index))
+        })
+        .expect("a shipped unit's block names a tether look");
+    let body = |id: u32, x: f32| {
+        let mut bubble = burrowed(PlayerId(0), caster, 0, x, 0.0);
+        bubble.entity_id = EntityId(id);
+        bubble.concealment = Concealment::None;
+        bubble.stance = sim_types::StanceView::default();
+        bubble
+    };
+    let link = sim_types::LinkView {
+        from: EntityId(3),
+        to: EntityId(9),
+        owner: PlayerId(0),
+        source: sim_types::AbilitySource {
+            unit_type: caster,
+            ability: u8::try_from(ability).expect("a small ability index"),
+        },
+    };
+    // Each gap is held for a second, so every layer has come in; the cards are counted then.
+    let cards_at = |gap: f32| {
+        let mut runtime = EffectRuntime::new(&catalog);
+        let mut looks = AreaLooks::default();
+        // Both bodies have radius 0.5: at a gap of 1.0 they touch.
+        let bubbles = [body(3, 1.0), body(9, 1.0 + gap)];
+        for frame in 1..=50 {
+            let now = f64::from(frame) * 0.02;
+            let mut keep = Keep {
+                catalog: &catalog,
+                tables: &tables,
+                runtime: &mut runtime,
+                now,
+                delta: 0.02,
+            };
+            keep_views_seen(
+                &mut looks,
+                (&[], &[link]),
+                &bubbles,
+                |_| AreaSight::Whole,
+                |_| true,
+                &mut keep,
+            );
+            runtime.build_frame(&catalog, now, Some(&camera()));
+        }
+        assert_eq!(looks.held(), (0, 1), "the tether is held at a gap of {gap}");
+        runtime.frame.sorted.len()
+    };
+    assert!(cards_at(4.0) > 0, "at range the tongue is drawn");
+    for gap in [1.0, 0.9, 0.5, 0.0] {
+        assert_eq!(cards_at(gap), 0, "bodies {gap} apart draw no tether card");
+    }
+}

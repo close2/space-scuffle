@@ -3066,3 +3066,75 @@ says how to read the step's time from the first run; if it exceeds 35 min, short
   pair of spikes recorded as a deviation of the look.
 - The WP14 budget lines (≤ $8.80 Veo, ≤ $20 images) stay unspent and available to a polish round that needs a new
   texture.
+
+## Amendment 33: B-120, B-121 and B-137 (2026-11-19, orchestrator, short note, charter §6)
+
+Three items from Amendment 32's list. Each is presentation only: no simulation crate, golden or checksum changes.
+
+**B-120: the low-health glitch reads as a fault.** The bubble shader's `FLAG_CRT_GLITCH` rainbow speckle of
+chromatic aberration is replaced by a damage look that reads as damage, such as a flicker or dimming of the dome's
+own colours with no hue split. The threshold stays at `hp_ratio` 0.35, and no new tuning constant is introduced
+without its rationale. Shader tests and the existing look tests are updated, and before/after renders on radv go to
+the review folder.
+
+**B-121: the Abduct tether turns round on arrival.** Follow the register's suggested fix. Once the caster-to-victim
+line is shorter than the grip, the grip and the caster's swelling fade or shrink, so the line never flips and never
+paints over both units. A test pins the arrival geometry: two touching bubbles draw no flipped line.
+
+**B-137: splash stream frame cost.** In this order:
+
+1. A quiet B/S/P series on radv. B, S and P are the measurement legs named in
+   [`frame_budget_wp14.md`](../evidence/effects/review/frame_budget_wp14.md).
+2. A profile of the splash path, for example with `perf` on the 400-unit battle at 200 splashes a second.
+3. Fix the dominant cost if it has a single cause and the fix is presentation-only: per-frame allocations,
+   O(N²) work or redundant work. The charter's zero-allocation steady-state rule applies.
+4. Re-record the frame-budget baseline, and hold the plan's §10.3 stress to +5 % (p50) against that new baseline.
+
+If the cost has no single cause, or a fix would need a design change, record the profile and a proposal in the
+evidence and B-137's row, and hand back.
+
+**Review (Q0080).** B-120 and B-121 each get an independent effects review of the before and after takes, up to
+five rounds.
+
+## Amendment 34: Amendment 33 as built (2026-11-19, short note, charter §6)
+
+**Decision note (charter §6, short note: presentation only).** Built on branch `effects-polish-b137`. No simulation
+crate, simulation golden, replay, checksum or media changes; nothing spent. The four smog system goldens, client
+presentation goldens that hash every bubble uniform's bytes, were re-recorded for the uniform's new row
+(`a2c08906`); hashing its first 176 bytes reproduced them, so no smog output changed.
+
+**B-120, fixed** (`a97b4f24`, `3f8a9b6b`, `a2c08906`). Below `hp_ratio` 0.35, `FLAG_CRT_GLITCH` no longer samples the media's
+red and blue channels at sideways offsets: the media browns out, easing between hashed light levels in
+[0.35, 0.9] of its own colours at 7 beats a second, dropping within a fifth of a beat and recovering over the whole
+beat; every channel is sampled at one point. The worn scanlines (below 0.5) and the cracks are unchanged. Review
+round 1 found the first seed (the flipbook origin) shared by every looping bubble, so a damaged army would flicker
+in step: the bubble uniform gains a `seed` lane, the entity id, in a new last row (176 → 192 bytes). Test:
+`client/damage_look_gpu_tests` (GPU class): each colour channel of a critical shot lines up with the pristine one at
+the same shift (the old look: red and blue 1 to 2 px apart), every critical shot's luma ratio is in [0.3, 0.97), the
+darkest below 0.92, and six shots 0.3 s apart spread by at least 0.02. Pictures:
+[`b120_damage_sheet_before_radv.jpg`](../evidence/effects/review/b120_damage_sheet_before_radv.jpg),
+[`b120_damage_sheet_after_r2_radv.jpg`](../evidence/effects/review/b120_damage_sheet_after_r2_radv.jpg).
+Independent review: REVISE (round 1: the shared seed; the test's bounds and a flicker assertion; sharper drops),
+REVISE (round 2: the smog system goldens not re-recorded), ACCEPT (round 3). Recorded, not done: the worn look (hp 0.5) is barely told from pristine at the lab's zoom
+(review round 1, finding 7); mid-health legibility is a polish item of its own.
+
+**B-121, fixed** (`f7509fed`, `b953471d`). Touching or overlapping bodies give a tether of no length at their
+contact (halfway between the surface points) instead of the segment between their centres, so the line shrinks to
+nothing and never turns round. A bound strength gains `span` (the value at which it reaches 1) and `size` (it also
+scales the layer's size); the tether's grip and swelling read `LinkLength` over 0.68 (the grip's width) with
+`size`. Tests: the `areas` unit tests, the strength unit test, `effect_runtime_tests`
+`a_shipped_tether_between_touching_bubbles_draws_no_line` (fails on the old geometry) and the `strength.span`
+refusals in `effect_catalog_tests`. Pictures:
+[`b121_tether_arrival_before_radv.jpg`](../evidence/effects/review/b121_tether_arrival_before_radv.jpg),
+[`b121_tether_arrival_after_radv.jpg`](../evidence/effects/review/b121_tether_arrival_after_radv.jpg). Independent
+review: REVISE (round 1: the span refusal untested), ACCEPT (round 2).
+
+**B-137, profiled; open by the stop rule.** [`frame_budget_b137.md`](../evidence/effects/review/frame_budget_b137.md):
+the splash stream's main-world cost is the effect runtime's per-frame rebuild of every live instance (an offline
+bench of the S arm's stream reproduces 3.4 to 3.6 ms a frame with about 760 live effects, 1 800 cards and 3 300
+lasting decals), spread along the per-instance path with no single function, allocation or O(N²) loop dominating.
+No runtime change was made and no baseline re-recorded. Step 1, the quiet B/S/P series, could not be taken:
+another user's builds kept the machine's load between 30 and 620 for the hour and a half it was awaited; it stays
+open for a quiet machine (the profiles count CPU samples and do not depend on it). The proposal, for a plan of its own: retained lasting marks
+aged on the GPU, then skipping idle layers (tested: exact, 6 to 10 %), then per-frame constants hoisted out of the
+instance loop; then the baseline is re-recorded and the §10.3 stress held to +5 % (p50).

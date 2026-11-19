@@ -3,7 +3,7 @@
 //! # Architectural Responsibilities
 //! This module provides a complete interactive inspection suite with three modes:
 //! 1. **Close-Up Visual Lab:** Scrutinize single-bubble materials, Voronoi damage cracks,
-//!    CRT scanlines, chromatic aberration, Fresnel rims, heading chevron, and turret focal lenses.
+//!    worn scanlines, the critical brown-out, Fresnel rims, heading chevron and turret lenses.
 //! 2. **Live Combat Sandbox:** Deterministic 2-army battlefield stepping `sim_core::SimWorld`
 //!    at 25 Hz with `StarCraft` II unit micro (Attack-Move, Kite, Hold, Stim).
 //! 3. **200-Bubble Swarm Stress Test:** High-density collision readability and frame rate stress test.
@@ -189,7 +189,7 @@ pub struct LabState {
     pub opt_inner_warp: bool,
     /// Voronoi spiderweb damage cracks flag (`FLAG_CRACKS`).
     pub opt_cracks: bool,
-    /// CRT scanlines and chromatic aberration flag (`FLAG_CRT_GLITCH`).
+    /// The damage look flag (`FLAG_CRT_GLITCH`): worn scanlines and the critical brown-out.
     pub opt_crt_glitch: bool,
     /// Equatorial hull facing chevron indicator flag.
     pub opt_facing_chevron: bool,
@@ -651,7 +651,7 @@ fn render_damage_section(
     if state.hp_ratio < 0.35 {
         ui.colored_label(
             egui::Color32::RED,
-            "Critical Damage: Red Arcing & CRT Glitch Active",
+            "Critical Damage: Red Arcing & Brown-out Active",
         );
     } else if state.hp_ratio < 0.75 {
         ui.colored_label(
@@ -711,7 +711,7 @@ fn render_visual_subsystems_section(ui: &mut egui::Ui, state: &mut LabState) {
         "Direct-on-Sphere Attack Aperture",
     );
     ui.checkbox(&mut state.opt_cracks, "Voronoi Damage Cracks");
-    ui.checkbox(&mut state.opt_crt_glitch, "CRT Scanlines & Glitch");
+    ui.checkbox(&mut state.opt_crt_glitch, "Damage Scanlines & Brown-out");
     ui.checkbox(
         &mut state.opt_selection_brackets,
         "SDF Selection Reticle & Overhead Bar",

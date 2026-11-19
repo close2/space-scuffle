@@ -106,6 +106,9 @@ SuiteCatalog(
         // three shots.
         "client/mode_atlas_gpu_tests": (class: Gpu),
         "client/dome_fill_tests": (class: Gpu),
+        // The low-health look (plan 2026-11-09-effect-visualization Amendment 33, B-120): one
+        // child, fourteen shots of one bubble.
+        "client/damage_look_gpu_tests": (class: Gpu),
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
         // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.
         "client/effect_gpu_tests": (class: Gpu),
