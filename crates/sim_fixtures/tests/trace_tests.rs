@@ -590,8 +590,19 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
     assert_eq!(
         lines[0],
         "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
-         red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups"
+         red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
+         proposal_reversals,contact_reversals"
     );
+    // The reversals split into proposal- and contact-caused ones that sum to them (plan
+    // `2026-11-19-crowd-edge-steering` D-5).
+    for line in &lines[1..] {
+        let cells: Vec<u32> = line
+            .split(',')
+            .skip(9)
+            .map(str::parse)
+            .collect::<Result<_, _>>()?;
+        assert_eq!(cells[1], cells[3] + cells[4], "{line}");
+    }
     assert_eq!(lines.len(), 7);
     let first_row: Vec<&str> = lines[1].split(',').collect();
     assert_eq!(&first_row[..3], ["marine_vs_roach", "3203386110", "true"]);
