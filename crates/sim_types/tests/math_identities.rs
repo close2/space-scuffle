@@ -12,9 +12,9 @@ fn test_exhaustive_math_identities() {
     let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE_BABE_1234_5678);
 
     for _ in 0..10_000 {
-        let raw_a = rng.gen_range(-1_000_000i64..1_000_000i64) << 16;
-        let raw_b = rng.gen_range(-1_000_000i64..1_000_000i64) << 16;
-        let raw_c = rng.gen_range(-1_000_000i64..1_000_000i64) << 16;
+        let raw_a = rng.gen_range::<i64, _>(-1_000_000..1_000_000) << 16;
+        let raw_b = rng.gen_range::<i64, _>(-1_000_000..1_000_000) << 16;
+        let raw_c = rng.gen_range::<i64, _>(-1_000_000..1_000_000) << 16;
 
         let a = SimScalar::from_raw(raw_a);
         let b = SimScalar::from_raw(raw_b);

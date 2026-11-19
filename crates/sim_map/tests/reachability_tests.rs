@@ -256,8 +256,8 @@ fn mesh_segment_predicate_never_crosses_terrain() {
             for _ in 0..10_000 {
                 let mut point = || {
                     at(
-                        rng.gen_range(0.0..f64::from(map.width())),
-                        rng.gen_range(0.0..f64::from(map.height())),
+                        rng.gen_range::<f64, _>(0.0..f64::from(map.width())),
+                        rng.gen_range::<f64, _>(0.0..f64::from(map.height())),
                     )
                 };
                 let (a, b) = (point(), point());

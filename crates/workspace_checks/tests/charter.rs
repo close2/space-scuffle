@@ -25,8 +25,8 @@ use workspace_checks::{
     host_math_in_smog, in_process_render_devices, module_docs, no_catalog_identities_in_code,
     no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics, no_work_markers,
     notebook_references, performance_rationale_format, plan_index, readme, render, repo_root,
-    simulation_clippy_config, test_subjects, tracked_files, typed_library_errors, Finding,
-    FloatAllowance, SIMULATION_CRATES,
+    seeded_draws_name_a_fixed_width, simulation_clippy_config, test_subjects, tracked_files,
+    typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
 };
 
 /// Fails with every finding of `check`, or passes when there are none.
@@ -244,5 +244,11 @@ fn c23_smog_code_calls_no_host_transcendental_function() -> Result<(), Box<dyn E
 fn c24_readme_exists_its_links_resolve_and_it_shows_the_published_showcase(
 ) -> Result<(), Box<dyn Error>> {
     assert_clean("C24", &readme(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c25_seeded_draws_in_the_simulation_crates_name_a_fixed_width() -> Result<(), Box<dyn Error>> {
+    assert_clean("C25", &seeded_draws_name_a_fixed_width(&repo_root())?);
     Ok(())
 }

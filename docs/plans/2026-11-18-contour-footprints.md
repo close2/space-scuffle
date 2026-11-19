@@ -752,3 +752,42 @@ in scope here, because it is what blocks this package's acceptance. Amendment 3 
    origin is given up.
 6. Then WP6's measurements are repeated in full under D-15. B-142 is marked fixed in `DESIGN.md` §4 when it lands.
    It also gets a one-line cross-reference in whatever plan owns pursuit (B-113's).
+
+## Amendment 5 (orchestrator, 2026-11-19): B-140 fixed in the test corpora; B-143 traced (short note, charter §6)
+
+**B-140.** `sim_map`'s `validation_golden_tests` draws its corpora with `gen_range` over `usize`, which `rand`
+samples by the pointer width. So the native and `wasm32` builds draw different corpora, and the digests cannot agree.
+
+1. **Audit every RNG draw first.** That covers the simulation crates (`sim_types`, `sim_map`, `sim_core`) and their
+   tests and fixtures. A draw whose width depends on the platform (`usize`, `isize`, or `gen::<usize>()`) inside
+   simulation code is a determinism defect against charter §3.1. If one is found, stop and report it with a trace;
+   do not fix it under this note.
+2. **The fix.** Every corpus is drawn with fixed-width ranges (`u32` or `u64`), converted to an index after the
+   draw. The three pins (decode, validation, path) are re-recorded once. Each gets a header naming B-140 and
+   recording that native debug, native release and `wasm32-wasip1` release produce the same new value.
+3. **Validation counts.** Explain the old validation-count difference (unreachable 0 against 4; 2,487 warnings
+   against 2,362) as a different corpus. After the fix, native and wasm must report identical counts.
+4. **Guard.** Add a check that keeps this from coming back, for example a C-check or clippy rule against
+   `gen_range` over `usize` in the simulation crates and their tests, if one can be stated precisely. Otherwise
+   record a review rule in `docs/guides/`.
+5. B-140 leaves the `DESIGN.md` §4 register as fixed.
+
+**B-143, a trace only.** Reproduce the shrunk case from evidence §6e and find why the mesh route exceeds
+`MESH_RATIO_BOUND` (ratio 1.270 at radius 0.26). Then classify the cause:
+
+- **A test defect:** the oracle, or the bound for that radius, is wrong. Fix the test, with a deterministic
+  regression case.
+- **A routing defect:** TA*, the funnel or the mesh is wrong. Do not change routing under this note, since that
+  can move battles and needs a full plan. Record the trace, the cause and a proposed fix in the evidence and in
+  B-143's row, and hand back.
+
+**Result (implementation, 2026-11-19; evidence §8).** The audit found no platform-width draw in simulation code (its
+two draws are `i64`); the `usize` draws were all in `sim_map` tests. Every `gen_range` and `gen` in the simulation
+crates and `sim_fixtures` now names a fixed-width type, an index is a `u32` draw (`tests/support/draw.rs`), and
+charter check C25 holds this. Decision: the fixed-width corpus has no seeded document with unreachable starts (nor
+had the old `wasm32` one), so the validation corpus gains a walled arena that reaches check 22 by construction. The
+three pins are re-recorded (validation `0x3527_8c7f_a705_ba2c`, decode `0x4c32_25d2_ef3a_fc87`, path
+`0xa243_924f_8125_f760`, the old `wasm32` path value), each identical in native debug, native release and
+`wasm32-wasip1` release, with identical counts. B-143 is a test defect: the oracle's `smooth_length` counted a whole
+circle for a turn that sweeps nothing (three collinear corners), fixed with a deterministic regression case; routing
+is unchanged. B-140 and B-143 leave the register as fixed.

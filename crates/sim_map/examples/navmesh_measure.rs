@@ -133,8 +133,8 @@ struct RouteStats {
 fn standable(map: &GameMap, rng: &mut ChaCha8Rng) -> SimVec2 {
     loop {
         let (x, y) = (
-            rng.gen_range(0..map.width()),
-            rng.gen_range(0..map.height()),
+            rng.gen_range::<u32, _>(0..map.width()),
+            rng.gen_range::<u32, _>(0..map.height()),
         );
         let open = map
             .cell(x, y)
@@ -205,10 +205,10 @@ fn seeded(map: &GameMap, count: u32, contour: bool) -> Result<(GameMap, u32), Bo
         if placed == count {
             break;
         }
-        let (size, half, chamfer) = CONTOURS[usize::try_from(rng.gen_range(0..5_u32))?];
+        let (size, half, chamfer) = CONTOURS[usize::try_from(rng.gen_range::<u32, _>(0..5))?];
         let cell = (
-            rng.gen_range(0..map.width() - 5),
-            rng.gen_range(0..map.height() - 5),
+            rng.gen_range::<u32, _>(0..map.width() - 5),
+            rng.gen_range::<u32, _>(0..map.height() - 5),
         );
         let footprint = if contour {
             sim_map::StructureFootprint {

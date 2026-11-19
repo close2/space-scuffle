@@ -43,12 +43,12 @@ fn test_cross_platform_determinism_checksum() {
     vision.begin_tick_update();
 
     for i in 0..1000 {
-        let sx = rng.gen_range(2..62);
-        let sy = rng.gen_range(2..62);
-        let gx = rng.gen_range(2..62);
-        let gy = rng.gen_range(2..62);
+        let sx = rng.gen_range::<i32, _>(2..62);
+        let sy = rng.gen_range::<i32, _>(2..62);
+        let gx = rng.gen_range::<i32, _>(2..62);
+        let gy = rng.gen_range::<i32, _>(2..62);
 
-        let radius = match rng.gen_range(0..3) {
+        let radius = match rng.gen_range::<i32, _>(0..3) {
             0 => SMALL_RADIUS,
             1 => MEDIUM_RADIUS,
             _ => LARGE_RADIUS,
@@ -75,9 +75,9 @@ fn test_cross_platform_determinism_checksum() {
             hasher.update(&res.total_length.raw().to_le_bytes());
         }
 
-        let vx = rng.gen_range(2..62);
-        let vy = rng.gen_range(2..62);
-        let r = rng.gen_range(4..14);
+        let vx = rng.gen_range::<i32, _>(2..62);
+        let vy = rng.gen_range::<i32, _>(2..62);
+        let r = rng.gen_range::<i32, _>(4..14);
         let mover = if rng.gen_bool(0.25) {
             MoverType::Air
         } else {
@@ -144,10 +144,10 @@ fn test_performance_quality_gate() {
     let mut successful_queries = 0;
 
     for _ in 0..100 {
-        let sx = rng.gen_range(2..62);
-        let sy = rng.gen_range(2..62);
-        let gx = rng.gen_range(2..62);
-        let gy = rng.gen_range(2..62);
+        let sx = rng.gen_range::<i32, _>(2..62);
+        let sy = rng.gen_range::<i32, _>(2..62);
+        let gx = rng.gen_range::<i32, _>(2..62);
+        let gy = rng.gen_range::<i32, _>(2..62);
 
         let req = PathRequest {
             start: SimVec2::new(
@@ -181,8 +181,8 @@ fn test_performance_quality_gate() {
     let vis_start = Instant::now();
     vision.begin_tick_update();
     for _ in 0..400 {
-        let vx = rng.gen_range(2..62);
-        let vy = rng.gen_range(2..62);
+        let vx = rng.gen_range::<i32, _>(2..62);
+        let vy = rng.gen_range::<i32, _>(2..62);
         let source = VisionSource {
             pos: SimVec2::new(
                 SimScalar::from_num(vx) + SimScalar::HALF,
@@ -241,12 +241,14 @@ fn contour_route_checksum() {
     for _ in 0..1000 {
         let point = |rng: &mut ChaCha8Rng| {
             SimVec2::new(
-                SimScalar::from_num(rng.gen_range(2..62_i32)) + quarter * rng.gen_range(0..4_i32),
-                SimScalar::from_num(rng.gen_range(2..62_i32)) + quarter * rng.gen_range(0..4_i32),
+                SimScalar::from_num(rng.gen_range::<i32, _>(2..62))
+                    + quarter * rng.gen_range::<i32, _>(0..4),
+                SimScalar::from_num(rng.gen_range::<i32, _>(2..62))
+                    + quarter * rng.gen_range::<i32, _>(0..4),
             )
         };
         let (start, goal) = (point(&mut rng), point(&mut rng));
-        let radius = SimScalar::from_raw(rng.gen_range(5..17_i64) << 28);
+        let radius = SimScalar::from_raw(rng.gen_range::<i64, _>(5..17) << 28);
         match pathfinder.find_path(
             &map,
             &PathRequest {
