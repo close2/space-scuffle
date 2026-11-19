@@ -338,3 +338,25 @@ holds each seed of record to the battle's survivor band). Not a defect of the im
    on this branch as measured above.
 2. *Or keep D-1 out:* only WP0 to WP2 land; R-A stays open under B-103 with WP3's figures (matrix of record 4,659,
    showcase 174, walkers 16, corridor 3) and this trace, for a plan that prices the survivor bands in.
+
+## Resolution (plan Amendment 2): the two ranges restated, WP3 and WP4 land
+
+The orchestrator took option 1. `crates/sim_core/tests/fixtures/matchup_matrix.ron` restates, each with its trace
+in the fixture comment:
+
+- battle 26 (`26_100_lings_vs_6_colossi`) to `red: (2, 999)`: the colossi still win every seed of record (2 left on
+  seed 33);
+- battle 36b (`36b_marines_beat_zealots_without_storm`) to `red: (9, 12)`: the marines still win every seed (12
+  left on seed 22); the range was the control's measured spread.
+
+**Watch item (battle 26 seed 16).** Over the matrix's 20 seeds, the zerglings win seed 16 (not of record) with 8
+left; the battle's overall winner is still red (1 / 19 / 0). If a later change makes the zerglings win a seed of
+record, the claim "six colossi vaporize a hundred zerglings" is re-examined, not the range widened again. Recorded
+in the B-103 row.
+
+**The other misses outside the seeds of record** (not bounds of the test): battle 26 seeds 4, 10 and 16; battle 33
+seeds 8 and 9; battle 36b seed 8; battle 38a seed 2.
+
+WP3 and WP4 are merged from `crowd-edge-2-wp3-wip`. With the restated ranges, the full matrix test
+`every_battle_keeps_its_recorded_outcome_on_every_seed` passes in release.
+
