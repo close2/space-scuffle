@@ -613,3 +613,180 @@ fn mesh_structures_touching_at_a_corner_block_every_radius_until_unknown() {
         "unknown structures are walked through"
     );
 }
+
+// --- Funnel fallbacks (plan `2026-11-19-funnel-fallbacks`, B-141): zero-room pinches (class E)
+// and obstacle corners outside the channel (class M). Each case fell back to the portal
+// midpoints before the plan's D-2 and D-3.
+
+/// A structure for [`b141_map`]: its cell, its `Place` size and, for a contour, its shape as
+/// `(half-width, half-height, chamfer)` in quarter cells (`None` for the full square).
+type B141Structure = ((u32, u32), (u8, u8), Option<(u16, u16, u16)>);
+
+/// The default arena with `structures` placed in order.
+fn b141_map(structures: &[B141Structure]) -> GameMap {
+    let mut map = arena::default_arena();
+    for (id, &(cell, (width, height), shape)) in (40_000u32..).zip(structures) {
+        let footprint = match shape {
+            None => sim_map::StructureFootprint::square(width, height),
+            Some((half_width_q, half_height_q, chamfer_q)) => sim_map::StructureFootprint {
+                width,
+                height,
+                shape: sim_types::FootprintShape {
+                    half_width_q,
+                    half_height_q,
+                    chamfer_q,
+                },
+            },
+        };
+        map.place_structure(EntityId(id), cell, footprint).unwrap();
+    }
+    map
+}
+
+/// Routes `start -> goal` for a disc of `radius` on `map` and asserts that the funnel did not
+/// fall back and that every leg passes the segment predicate.
+fn b141_route(map: &GameMap, start: SimVec2, goal: SimVec2, radius: f64) -> sim_map::MeshRoute {
+    let mut pathfinder = Pathfinder::new(map);
+    let request = mesh_request(start, goal, SimScalar::from_num(radius));
+    let route = pathfinder
+        .find_route_mesh(map, &request)
+        .expect("a route exists");
+    assert!(!route.fallback, "funnel fell back: {route:?}");
+    for pair in route.waypoints.windows(2) {
+        assert!(
+            pathfinder.segment_is_passable(map, &request, pair[0], pair[1]),
+            "leg {pair:?} of {route:?}"
+        );
+    }
+    route
+}
+
+/// Asserts that the route's polyline is within 0.1 % of `expected` world units.
+fn assert_length_near(route: &sim_map::MeshRoute, expected: f64) {
+    let length = f64::from(route.total_length.to_f32());
+    assert!(
+        (length - expected).abs() <= expected * 0.001,
+        "length {length} against {expected}: {route:?}"
+    );
+}
+
+/// E1 (plan §3.2): the route bends round the west face `x = 2` of a 2×2 at cell (2, 49), between
+/// the face and the map border `x = 0`, exactly `2r = 2` wide. The only legal shape runs on the
+/// pinch's tangent line `x = 1`.
+#[test]
+#[ignore = "B-141, WP3"]
+fn an_exact_border_pinch_is_rounded_on_its_tangent() {
+    let map = b141_map(&[((2, 49), (2, 2), None)]);
+    let route = b141_route(&map, at(1.5, 56.5), at(3.5, 36.5), 1.0);
+    let beside: Vec<SimVec2> = route
+        .waypoints
+        .iter()
+        .copied()
+        .filter(|p| p.y >= SimScalar::from_num(49) && p.y <= SimScalar::from_num(51))
+        .collect();
+    assert!(beside.len() >= 2, "{route:?}");
+    assert!(
+        beside.iter().all(|p| p.x == SimScalar::ONE),
+        "waypoints beside the face off x = 1: {beside:?}"
+    );
+    assert_length_near(&route, 20.272);
+}
+
+/// E2 (plan §3.2): the goal sits exactly between the corner (10, 29) of a 3×2 at cell (7, 27)
+/// and the cliff edge `y = 30`, an edge of the goal triangle. The last leg runs on `y = 29.5`.
+#[test]
+#[ignore = "B-141, WP3"]
+fn a_goal_in_a_pinch_is_reached_along_the_pinch() {
+    let map = b141_map(&[((7, 27), (3, 2), None)]);
+    let route = b141_route(&map, at(60.5, 45.5), at(9.5, 29.5), 0.5);
+    let n = route.waypoints.len();
+    let half = SimScalar::from_num(29.5);
+    assert!(
+        route.waypoints[n - 2].y == half && route.waypoints[n - 1].y == half,
+        "last leg off y = 29.5: {route:?}"
+    );
+    assert_length_near(&route, 55.736);
+}
+
+/// E3 (plan §3.2): seeded layout 23 of `navmesh_tests::fallback_counts`, full squares. The
+/// corridor `x` in `[27, 28]` between the structures at cells (25, 44) and (28, 43) is exactly
+/// one cell wide, and the route walks down its middle `x = 27.5`.
+#[test]
+#[ignore = "B-141, WP3"]
+fn a_one_wide_zigzag_is_walked_down_its_middle() {
+    let map = b141_map(&[
+        ((57, 52), (5, 5), None),
+        ((28, 43), (3, 2), None),
+        ((31, 13), (3, 3), None),
+        ((43, 11), (2, 2), None),
+        ((11, 37), (2, 2), None),
+        ((57, 6), (5, 5), None),
+        ((56, 0), (1, 1), None),
+        ((6, 43), (5, 5), None),
+        ((12, 26), (2, 2), None),
+        ((9, 41), (1, 1), None),
+        ((39, 26), (2, 2), None),
+        ((25, 44), (2, 2), None),
+    ]);
+    let route = b141_route(&map, at(25.5, 60.5), at(0.5, 0.5), 0.5);
+    let corridor: Vec<SimVec2> = route
+        .waypoints
+        .iter()
+        .copied()
+        .filter(|p| {
+            p.x > SimScalar::from_num(27)
+                && p.x < SimScalar::from_num(28)
+                && p.y > SimScalar::from_num(44)
+                && p.y < SimScalar::from_num(45)
+        })
+        .collect();
+    assert!(!corridor.is_empty(), "{route:?}");
+    assert!(
+        corridor.iter().all(|p| p.x == SimScalar::from_num(27.5)),
+        "corridor waypoints off its centre line: {corridor:?}"
+    );
+}
+
+/// M1 (plan §3.3): the straight leg to the goal passes 0.5996 from the corner (40, 6) of a 2×2
+/// at cell (38, 6), inside the radius 0.625, and that corner belongs to no triangle of the
+/// channel. The route rounds it on the right.
+#[test]
+#[ignore = "B-141, WP2"]
+fn an_outside_corner_is_rounded() {
+    let map = b141_map(&[((38, 6), (2, 2), None)]);
+    let route = b141_route(&map, at(27.5, 2.5), at(40.5, 5.5), 0.625);
+    assert!(
+        route
+            .turns
+            .contains(&(LatticePoint::cell_corner(40, 6), Side::Right)),
+        "{route:?}"
+    );
+    assert_length_near(&route, 13.350);
+}
+
+/// Flush layout 1138 of the plan's probe (contours): the start (21.5, 48.5) touches the bottom
+/// face of the structure at cell (21, 49) at exactly the radius 0.5. The route must not circle
+/// that structure's corner (21.5, 49) to leave (plan D-2.2's exemption).
+#[test]
+#[ignore = "B-141, WP3"]
+fn a_start_touching_a_corner_does_not_circle_it() {
+    let map = b141_map(&[
+        ((21, 49), (2, 2), Some((4, 4, 2))),
+        ((21, 51), (2, 2), Some((2, 2, 1))),
+        ((38, 25), (3, 3), Some((6, 6, 3))),
+        ((54, 46), (2, 2), Some((4, 4, 2))),
+        ((21, 40), (3, 3), Some((6, 6, 2))),
+        ((48, 20), (1, 1), Some((2, 2, 0))),
+        ((44, 13), (2, 2), Some((4, 4, 2))),
+        ((46, 13), (3, 3), Some((6, 6, 2))),
+        ((4, 28), (2, 2), Some((2, 2, 1))),
+        ((51, 14), (1, 1), Some((2, 2, 0))),
+        ((19, 45), (3, 2), Some((6, 4, 2))),
+    ]);
+    let route = b141_route(&map, at(21.5, 48.5), at(25.5, 16.5), 0.5);
+    let corner = LatticePoint::new(86, 196);
+    assert!(
+        route.turns.iter().all(|&(p, _)| p != corner),
+        "the route circles (21.5, 49): {route:?}"
+    );
+}
