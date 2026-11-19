@@ -634,3 +634,27 @@ start). `sim_core` is untouched.
   - `probe1.txt`, `probe1000.txt`, `probeflush.txt` and `residual.txt`: the probe dumps;
   - `ratios_flush.txt`: the oracle ratios.
 - The prototype worktree and its target directory were removed after measurement.
+
+## Amendment 1 (orchestrator, 2026-11-19): the gate run applies only where it is needed; WP2 deviations confirmed
+
+**WP3 (stop rule 8).** The derived `GATE_RUN(r)` lengthens six of seven over-ratio routes at r = 1 (2⁻⁵). Only 117 of
+124 fixed routes come within 1.01 of the oracle, where the rule needs at least 95 %.
+
+**Decision:** adopt the agent's proposal from the evidence. The derived run stays as defined, but a gate line is
+followed for it only where the leg leaving the gate would otherwise pass within `r` of the pinch's feature. That is
+an exact check under the plan's one touching rule, so no constant is introduced, and 2⁻⁸ is not adopted. Stop rule
+8 is not restated.
+
+WP3 then re-measures all three corpora and the battle set. Its pins are re-recorded on native debug and release,
+and on `wasm32-wasip1` release and debug, with proof headers. The seventh route (1,000-layout 563, ratio 1.0258)
+comes from TA*'s channel choice, not from the funnel. It is reported and counts in the 95 % rule as measured.
+
+**WP2 deviations, confirmed.**
+
+1. D-2.2's start and goal exemption also applies to D-3's outside vertices in every pull, so a disc already
+   overlapping a vertex at its start is not rounded around it. D-3.1 is amended accordingly, as the evidence
+   proposes.
+2. M1 rounds (40, 6) on `Side::Left`. The plan's "right" was a slip.
+3. Throughput on a loaded host is judged on instructions retired per scenario. A wall-clock run on a quiet host
+   stays an open confirmation item, not a blocker.
+4. WP1's two unit tests land with WP3. The diagonal exact pinch keeps its counted fallback, as plan §9 anticipated.
