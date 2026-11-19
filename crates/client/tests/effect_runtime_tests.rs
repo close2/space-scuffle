@@ -187,6 +187,7 @@ fn a_splash_draws_every_block_sized_by_its_zones() {
         0.0
     ));
     runtime.build_frame(&catalog, 0.5, Some(&camera()));
+    let decals = runtime.current_decals(&catalog);
     let frame = &runtime.frame;
     let sprite = frame
         .sorted
@@ -210,8 +211,8 @@ fn a_splash_draws_every_block_sized_by_its_zones() {
     );
     assert!((ring.ring_inner - 0.75).abs() < 1e-6);
     assert_eq!(ring.orient, ORIENT_GROUND);
-    assert_eq!(frame.decals.len(), 1);
-    assert_eq!(frame.decals[0].half_extents[0], 1.25);
+    assert_eq!(decals.len(), 1);
+    assert_eq!(decals[0].half_extents[0], 1.25);
     assert_eq!(frame.lights.len(), 1);
     assert!((frame.lights[0].range - 3.75).abs() < 1e-5);
     assert!(
@@ -234,9 +235,14 @@ fn a_splash_draws_every_block_sized_by_its_zones() {
             .all(|card| card.ring_inner == 0.0 && card.half_size < 1.0),
         "sprite and ring end at 1 s; only particles may remain"
     );
-    assert_eq!(runtime.frame.decals.len(), 1, "the decal lingers");
+    assert_eq!(
+        runtime.current_decals(&catalog).len(),
+        1,
+        "the decal lingers"
+    );
     runtime.build_frame(&catalog, 5.5, Some(&camera()));
-    assert!(runtime.frame.decals.is_empty() && runtime.frame.sorted.is_empty());
+    assert!(runtime.current_decals(&catalog).is_empty() && runtime.frame.sorted.is_empty());
+    assert_eq!(runtime.decal_table().live(), 0, "its rows are freed");
     assert_eq!(runtime.pool().live_total(), 0, "the effect ended");
 }
 
@@ -495,13 +501,10 @@ fn over_its_class_cap_the_oldest_burning_effect_gives_its_detail_up() {
         0.0
     ));
     runtime.build_frame(&catalog, 0.2, None);
-    assert_eq!(
-        runtime.frame.decals.len(),
-        1,
-        "one blast's detail decal is retired"
-    );
+    let decals = runtime.current_decals(&catalog);
+    assert_eq!(decals.len(), 1, "one blast's detail decal is retired");
     assert!(
-        runtime.frame.decals[0].center[0] > 4.0,
+        decals[0].center[0] > 4.0,
         "the newborn keeps its detail; the older blast gives it up"
     );
     let critical_cards = runtime
@@ -537,7 +540,7 @@ fn an_effect_whose_fire_has_ended_no_longer_counts_against_its_class_cap() {
     runtime.build_frame(&catalog, 2.1, None);
     assert_eq!(runtime.stats.retired, 0, "nothing gives its detail up");
     assert_eq!(
-        runtime.frame.decals.len(),
+        runtime.current_decals(&catalog).len(),
         2,
         "the lasting mark of the first and the detail of the second both draw"
     );
@@ -569,10 +572,16 @@ fn lasting_marks_at_the_decal_cap_never_flicker_and_draw_whole() {
             spawned += 1;
         }
         runtime.build_frame(&catalog, now, None);
-        assert!(runtime.frame.decals.len() <= 8, "the pool is never overrun");
+        let mut drawn = Vec::new();
+        runtime.evaluate_decals(&catalog, now, None, &mut drawn);
+        assert!(drawn.len() <= 8, "the pool is never overrun");
+        assert!(
+            runtime.decal_table().live() <= 8,
+            "the rows never outnumber the pool, so the GPU's decal buffer holds them"
+        );
         // Owners this frame, identified by slot and birth, with their decal counts.
         let mut owners: Vec<(u32, u64, usize)> = Vec::new();
-        for slot in &runtime.frame.decal_owners {
+        for (slot, _) in &drawn {
             let birth = runtime
                 .pool()
                 .iter()
@@ -645,6 +654,13 @@ fn layers_below_the_minimum_screen_size_are_skipped() {
         "the 1.15-unit ring (about 35 px) is skipped"
     );
     assert!(runtime.stats.lod_skipped > 0);
+    // A decal's level of detail is decided where it is aged (on the GPU, D-15): the
+    // 2.5-unit mark (about 75 px) has a row, and the CPU reference hides it.
+    assert!(runtime.decal_table().live() > 0, "the mark has its row");
+    assert!(
+        runtime.current_decals(&catalog).is_empty(),
+        "the mark below 100 px is hidden"
+    );
 }
 
 #[test]
@@ -829,8 +845,9 @@ fn thrown_particles_leave_their_landing_effect_where_they_land() {
         runtime.particles.is_empty(),
         "the globs ended where they landed"
     );
-    assert_eq!(runtime.frame.decals.len(), 6, "six flecks on the ground");
-    for decal in &runtime.frame.decals {
+    let decals = runtime.current_decals(&catalog);
+    assert_eq!(decals.len(), 6, "six flecks on the ground");
+    for decal in &decals {
         assert!(
             decal.center[1].abs() < 1e-5,
             "at the height the globs started at"

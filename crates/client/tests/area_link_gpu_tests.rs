@@ -369,8 +369,7 @@ fn apply_effect_view(view: Res<'_, EffectView>, runtime: Option<ResMut<'_, Effec
     };
     if view.bare {
         runtime.frame.sorted.clear();
-        runtime.frame.decals.clear();
-        runtime.frame.decal_owners.clear();
+        runtime.frame.draw_decals = false;
         runtime.frame.distortions.clear();
         runtime.frame.lights.clear();
     }

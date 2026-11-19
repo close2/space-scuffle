@@ -2,15 +2,20 @@
 //!
 //! # Responsibility
 //! Owns [`EffectRuntime`]: the [`EffectInstancePool`], the [`ParticlePool`], the spawn
-//! sequence and the retained [`EffectFrame`] (cards, decals and lights of this frame, the cards
-//! sorted back to front). [`EffectRuntime::spawn`] starts an effect; [`EffectRuntime::build_frame`]
-//! ages everything and rebuilds the frame from the effects' state.
+//! sequence, the retained [`EffectFrame`] (cards and lights of this frame, the cards sorted
+//! back to front) and the retained decal table ([`super::decal_table`]: one row per lasting
+//! decal, rewritten only when its effect changes). [`EffectRuntime::spawn`] starts an effect;
+//! [`EffectRuntime::build_frame`] ages everything, brings the decal rows up to date and
+//! rebuilds the cards from the effects' state. The decals themselves are aged where they are
+//! drawn, on the GPU (plan `2026-11-19-retained-effect-instances` D-5);
+//! [`EffectRuntime::evaluate_decals`] ages them with the Rust reference for tests and tools.
 //!
 //! # How it fits
 //! Layers keep no per-instance state: every frame each live effect's layers are evaluated from
 //! its birth time, bound values and seed, so the picture is a pure function of the event
 //! stream and `Time<Virtual>`. Particles are the exception (they integrate), held in their `SoA`
-//! pool. The renderer uploads the frame; the light pool applies its lights.
+//! pool. The renderer uploads the frame and the decal rows' changes; the light pool applies its
+//! lights.
 //!
 //! # Budget and level of detail
 //! `Critical` layers are written first, then `Detail` layers, each pool up to its budget. A
@@ -20,7 +25,9 @@
 //! and the oldest burning effect of its class gives its detail up instead (Amendment 7).
 //! Decals are reserved whole at birth ([`super::ledger`]): above the pool's pressure mark the
 //! oldest lasting marks erode out over 0.25 s to make room, an effect that still finds no room
-//! draws no decal at all, and a reserved decal is drawn every frame until it ends or erodes. Layers smaller than `min_screen_px` are skipped; bursts
+//! draws no decal at all, and a reserved decal is drawn every frame until it ends or erodes.
+//! Layers smaller than `min_screen_px` are skipped (a decal by the aging pass, which decides
+//! its level of detail every frame on the GPU); bursts
 //! scale with projected size and halve in a crowd of `Major` effects (`budget` functions).
 //!
 //! # Invariants
@@ -42,7 +49,7 @@ use super::catalog::{
     Block, Breakup, CardLook, CurveId, DistortionLook, EffectCatalog, EffectId, ElementRef, Layer,
     Pool, RibbonLook,
 };
-use super::decal_table::{decal_at, decal_clock, DecalTable};
+use super::decal_table::DecalTable;
 use super::indices::{OldestHeap, RecentLines};
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_CRESCENT, FLAG_DARKEN,
@@ -140,7 +147,9 @@ pub struct EffectStats {
     pub critical_overflow: u64,
     /// Detail instances skipped for want of room.
     pub detail_skipped: u64,
-    /// Instances skipped as too small on screen.
+    /// Card and particle instances skipped as too small on screen. Decals are not counted: their
+    /// level of detail is decided where they are aged, on the GPU, every frame (plan
+    /// `2026-11-19-retained-effect-instances` D-15).
     pub lod_skipped: u64,
     /// Effects whose detail was retired.
     pub retired: u64,
@@ -164,10 +173,15 @@ pub struct EffectFrame {
     order: Vec<u64>,
     /// Cards back to front: what the renderer uploads.
     pub sorted: Vec<SpriteInstance>,
-    /// Decals.
-    pub decals: Vec<DecalInstance>,
-    /// The pool slot of the effect each decal of `decals` belongs to (diagnostics and tests).
-    pub decal_owners: Vec<u32>,
+    /// Whether the decal rows are drawn this frame: set by every build; a test's bare picture
+    /// clears it after the build (the decals are aged on the GPU from the retained rows, so
+    /// there is no per-frame decal list to empty).
+    pub draw_decals: bool,
+    /// The rows of the decal table aged on the CPU, one per row of its order (a row that draws
+    /// nothing as [`super::decal_table::hidden_decal`]); filled only under
+    /// [`super::render::EffectDecalSource::Cpu`] by [`EffectRuntime::age_decals_on_cpu`], and
+    /// uploaded in place of the compute pass's output (D-10 check 2). Empty otherwise.
+    pub aged_decals: Vec<DecalInstance>,
     /// Point lights.
     pub lights: Vec<LightInstance>,
     /// Distortion discs (drawn in the transmissive phase, unsorted: each only bends the
@@ -178,7 +192,7 @@ pub struct EffectFrame {
     /// Cards this frame that darken what lies under them: the first this many of `sorted`
     /// (they sort as the farthest), which the renderer draws in its darkening item.
     pub darkening_cards: u32,
-    /// Decals this frame that darken what lies under them.
+    /// Live decal rows that darken what lies under them (the table's count, D-15).
     pub darkening_decals: u32,
 }
 
@@ -191,8 +205,8 @@ impl EffectFrame {
             depth: Vec::with_capacity(cards),
             order: Vec::with_capacity(cards),
             sorted: Vec::with_capacity(cards),
-            decals: Vec::with_capacity(decals),
-            decal_owners: Vec::with_capacity(decals),
+            draw_decals: true,
+            aged_decals: Vec::with_capacity(decals),
             lights: Vec::with_capacity(lights),
             distortions: Vec::with_capacity(distortions),
             card_count: 0,
@@ -203,21 +217,20 @@ impl EffectFrame {
 
     /// Address and capacity of every retained vector, which an allocation would change.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 8] {
+    pub fn buffers(&self) -> [(usize, usize); 7] {
         [
             (self.cards.as_ptr() as usize, self.cards.capacity()),
             (self.depth.as_ptr() as usize, self.depth.capacity()),
             (self.order.as_ptr() as usize, self.order.capacity()),
             (self.sorted.as_ptr() as usize, self.sorted.capacity()),
-            (self.decals.as_ptr() as usize, self.decals.capacity()),
+            (
+                self.aged_decals.as_ptr() as usize,
+                self.aged_decals.capacity(),
+            ),
             (self.lights.as_ptr() as usize, self.lights.capacity()),
             (
                 self.distortions.as_ptr() as usize,
                 self.distortions.capacity(),
-            ),
-            (
-                self.decal_owners.as_ptr() as usize,
-                self.decal_owners.capacity(),
             ),
         ]
     }
@@ -241,6 +254,8 @@ pub struct EffectRuntime {
     pub ledger: BudgetLedger,
     /// Time of the last build, seconds.
     last_build: Option<f64>,
+    /// The camera of the last build (the GPU ages the decal rows for it, D-5).
+    last_camera: Option<CameraView>,
     /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
     /// lab and the GPU tests isolate the `Critical` layers to measure their footprint); set
     /// through [`Self::set_only`].
@@ -328,6 +343,7 @@ impl EffectRuntime {
             stats: EffectStats::default(),
             ledger: BudgetLedger::default(),
             last_build: None,
+            last_camera: None,
             only: None,
             spawned_per_effect: vec![0; catalog.effects.len()],
             indices: SpawnIndices::with_capacity(budget.effects),
@@ -735,8 +751,7 @@ impl EffectRuntime {
         self.particles.clear();
         self.frame.cards.clear();
         self.frame.sorted.clear();
-        self.frame.decals.clear();
-        self.frame.decal_owners.clear();
+        self.frame.aged_decals.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
         self.frame.darkening_cards = 0;
@@ -745,6 +760,7 @@ impl EffectRuntime {
         self.indices.clear();
         self.table.clear();
         self.last_build = None;
+        self.last_camera = None;
     }
 
     /// Ages every effect to `now` and rebuilds the frame for `camera` (`None` draws every
@@ -758,6 +774,7 @@ impl EffectRuntime {
             .last_build
             .map_or(0.0, |last| (now - last).max(0.0) as f32);
         self.last_build = Some(now);
+        self.last_camera = camera.copied();
         let table = &mut self.table;
         self.pool.free_ended(now, |slot| table.mark(slot));
         self.prune_lines(catalog, now);
@@ -769,18 +786,17 @@ impl EffectRuntime {
         self.table.rewrite(&self.pool, catalog, now, self.only);
         self.frame.cards.clear();
         self.frame.depth.clear();
-        self.frame.decals.clear();
-        self.frame.decal_owners.clear();
+        self.frame.aged_decals.clear();
         self.frame.lights.clear();
         self.frame.distortions.clear();
         self.frame.card_count = 0;
         self.frame.darkening_cards = 0;
-        self.frame.darkening_decals = 0;
-        let decals = self.write_decals(catalog, now, camera);
-        let overflowed_critical =
-            self.write_layers(catalog, now, camera, Priority::Critical) + decals[0];
-        let overflowed_detail =
-            self.write_layers(catalog, now, camera, Priority::Detail) + decals[1];
+        self.frame.draw_decals = true;
+        self.frame.darkening_decals = self.table.darkening();
+        self.stats.critical_overflow += self.table.failed;
+        self.table.failed = 0;
+        let overflowed_critical = self.write_layers(catalog, now, camera, Priority::Critical);
+        let overflowed_detail = self.write_layers(catalog, now, camera, Priority::Detail);
         self.stats.critical_overflow += u64::from(overflowed_critical);
         self.stats.detail_skipped += u64::from(overflowed_detail);
         if overflowed_detail > 0 {
@@ -1112,62 +1128,62 @@ fn burst(
 }
 
 impl EffectRuntime {
-    /// Ages every decal row in order into the frame's decals: the `Critical` rows, then the
-    /// `Detail` rows, each layer's admitted while its pool had room when the layer began, as
-    /// `write_layer` admitted them. Returns how many found no room, per pass.
-    fn write_decals(
-        &mut self,
+    /// Ages every decal row of the last build on the CPU into [`EffectFrame::aged_decals`],
+    /// one decal per row of the order: what [`super::render::EffectDecalSource::Cpu`] uploads
+    /// in place of the compute pass's output (D-10 check 2). Production never calls it.
+    ///
+    /// No admission is needed here or on the GPU: `write_layer` admitted a `Detail` layer
+    /// while its pool had room, and the rows can never outnumber the pool (an effect has no
+    /// more rows than its grant, and the ledger grants no more than the budget), so every
+    /// layer's decals are admitted (D-5).
+    pub fn age_decals_on_cpu(&mut self, catalog: &EffectCatalog) {
+        let Some(now) = self.last_build else {
+            self.frame.aged_decals.clear();
+            return;
+        };
+        self.table.age_rows(
+            now,
+            catalog,
+            self.last_camera.as_ref(),
+            &mut self.frame.aged_decals,
+        );
+    }
+
+    /// The decals the table's rows draw at `now` from `camera`, in draw order, each with its
+    /// effect's pool slot: the CPU reference of the decals for tests and tools (D-15). The
+    /// renderer ages the rows on the GPU instead.
+    pub fn evaluate_decals(
+        &self,
         catalog: &EffectCatalog,
         now: f64,
         camera: Option<&CameraView>,
-    ) -> [u32; 2] {
-        let mut overflow = [0, 0];
-        let capacity = catalog.budget.decals;
-        let frame = &mut self.frame;
-        let mut group = None;
-        let mut free = 0;
-        for &row in self.table.order() {
-            let (Some(record), Some(key)) = (self.table.record(row), self.table.key(row)) else {
-                continue;
-            };
-            // A layer's admission is counted from the room left when its first instance is
-            // written: the key without its placement and instance fields.
-            let layer_group = key >> 30;
-            if group != Some(layer_group) {
-                group = Some(layer_group);
-                free = capacity.saturating_sub(len32(frame.decals.len()));
-            }
-            let Some(clock) = decal_clock(record, now) else {
-                continue;
-            };
-            let priority = if record.detail {
-                Priority::Detail
-            } else {
-                Priority::Critical
-            };
-            let pass = usize::from(record.detail);
-            if !layer_admitted(priority, free) {
-                overflow[pass] += 1;
-                continue;
-            }
-            let Some(decal) = decal_at(record, clock, catalog, camera) else {
-                self.stats.lod_skipped += 1;
-                continue;
-            };
-            if frame.decals.len() == frame.decals.capacity() {
-                overflow[pass] += 1;
-                continue;
-            }
-            frame.decal_owners.push(record.slot);
-            frame.decals.push(decal);
-            if decal.darken != 0.0 {
-                frame.darkening_decals += 1;
-            }
-            free = free.saturating_sub(1);
-        }
-        self.stats.critical_overflow += self.table.failed;
-        self.table.failed = 0;
-        overflow
+        out: &mut Vec<(u32, DecalInstance)>,
+    ) {
+        self.table.evaluate(now, catalog, camera, out);
+    }
+
+    /// [`Self::evaluate_decals`] at the last build's time and camera, without the owners, in a
+    /// new vector (tests and tools; it allocates).
+    #[must_use]
+    pub fn current_decals(&self, catalog: &EffectCatalog) -> Vec<DecalInstance> {
+        let Some(now) = self.last_build else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        self.evaluate_decals(catalog, now, self.last_camera.as_ref(), &mut out);
+        out.into_iter().map(|(_, decal)| decal).collect()
+    }
+
+    /// The time of the last build, seconds of `Time<Virtual>`, if there was one.
+    #[must_use]
+    pub const fn last_build(&self) -> Option<f64> {
+        self.last_build
+    }
+
+    /// The camera of the last build, if it had one.
+    #[must_use]
+    pub const fn last_camera(&self) -> Option<&CameraView> {
+        self.last_camera.as_ref()
     }
 
     /// Writes every live effect's layers of `priority` but its decals; returns how many

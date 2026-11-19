@@ -5,8 +5,19 @@
 //! # Responsibility
 //! - **Buffers.** One storage buffer of [`SpriteInstance`] (sprites, rings and particles) and
 //!   one of [`DecalInstance`], created once at the budget's capacity when the vocabulary is
-//!   loaded and written in place during extraction (`RenderQueue::write_buffer`), as
+//!   loaded; the cards are written in place during extraction (`RenderQueue::write_buffer`), as
 //!   `vfx::gpu_upload` writes its slots. No asset is created or modified per frame.
+//! - **Decal aging (plan `2026-11-19-retained-effect-instances` D-5).** The decals are not
+//!   uploaded per frame. The render world keeps a copy of the main world's decal table: a row
+//!   buffer of [`GpuDecalRecord`], the order of the rows, and the catalog's curve table. Each
+//!   extraction copies the rows the table's last rewrite wrote (its patches), or every live row
+//!   when it missed a generation, and the order when it moved. The compute node
+//!   [`EffectDecalAgeNode`] runs in the `Core3d` graph between the prepass and the main opaque
+//!   pass, for the view the effects draw in: `apply_patches` writes the patched rows,
+//!   `age` (`decal_age.wgsl`, the port of `decal_table::age_decal`) writes one decal per row of
+//!   the order into the decal buffer, which `decal.wgsl` draws unchanged.
+//!   [`EffectDecalSource::Cpu`] (tests and `frame_budget --decal-source cpu` only) uploads the
+//!   rows aged on the CPU into the same buffer instead and skips the aging dispatch.
 //! - **Textures.** The drawable texel array of every listed texture set
 //!   (`texture_2d_array`, mips included) and the ramp atlas (one 256-texel `Rgba32Float` row
 //!   per ramp, built from data), created once per vocabulary.
@@ -40,12 +51,26 @@
 //! - The view bind group needs the view's depth prepass; a view without one draws no effects.
 //! - Effects are not tone-mapped: ramps author display-linear colours (HDR and bloom are the
 //!   plan's D-11 decision, `WP6c`).
-//! - Runs are queued for the first 3D view with a depth prepass only.
+//! - Runs are queued for the first 3D view with a depth prepass only, and the decals are aged
+//!   for that view only.
+//! - The decal buffer holds one decal per row of the order: never more than the decal budget,
+//!   because an effect has no more rows than its grant (`decal_table`).
+//! - The rows on the GPU are the table's rows of the generation the node last applied; an
+//!   extraction that finds a gap (the node did not run, a clear, a new vocabulary) copies every
+//!   live row, so a missed frame never leaves a stale row drawn. A new `EffectRuntime` is made
+//!   only with a new vocabulary version (`systems::load_effect_catalog`), whose rebuild forgets
+//!   the applied generation, so the generations of two runtimes are never mixed.
 
+use super::budget::RETIRE_SECS;
 use super::catalog::EffectCatalog;
 use super::curve::RAMP_TEXELS;
+use super::decal_table::{
+    curve_table, split_time, DecalRecord, DecalTable, GpuCurveKey, GpuDecalRecord, RowCopy,
+};
 use super::instances::{DecalInstance, SpriteInstance};
-use super::runtime::EffectRuntime;
+use super::ledger::MARK_RETIRE_SECS;
+use super::runtime::{CameraView, EffectRuntime};
+use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
 use bevy::core_pipeline::core_3d::{
     Transmissive3d, Transparent3d, ViewTransmissionTexture, CORE_3D_DEPTH_FORMAT,
 };
@@ -55,29 +80,38 @@ use bevy::ecs::system::lifetimeless::{Read, SRes};
 use bevy::ecs::system::SystemParamItem;
 use bevy::image::BevyDefault;
 use bevy::prelude::*;
+use bevy::render::diagnostic::RecordDiagnostics;
+use bevy::render::render_graph::{
+    Node, NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel,
+};
 use bevy::render::render_phase::{
     sort_phase_system, AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex,
     RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::binding_types::{
-    sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, texture_depth_2d,
-    texture_depth_2d_multisampled, uniform_buffer,
+    sampler, storage_buffer_read_only_sized, storage_buffer_sized, texture_2d, texture_2d_array,
+    texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer, uniform_buffer_sized,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BlendComponent,
     BlendFactor, BlendOperation, BlendState, Buffer, BufferDescriptor, BufferUsages,
-    ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Extent3d, Face,
-    FragmentState, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor,
-    Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, SpecializedRenderPipeline,
-    SpecializedRenderPipelines, TextureDataOrder, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension, VertexState,
+    CachedComputePipelineId, CachedPipelineState, ColorTargetState, ColorWrites, CompareFunction,
+    ComputePassDescriptor, ComputePipelineDescriptor, DepthStencilState, Extent3d, Face,
+    FragmentState, Maintain, MapMode, MultisampleState, PipelineCache, PrimitiveState,
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+    SpecializedRenderPipeline, SpecializedRenderPipelines, TextureDataOrder, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSet};
+use bytemuck::{Pod, Zeroable};
+use std::num::NonZeroU64;
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Most `Transparent3d` items the cards are cut into per frame.
 pub const MAX_CARD_RUNS: usize = 64;
@@ -93,6 +127,10 @@ const DECAL_SHADER: &str = "shaders/effects/decal.wgsl";
 const DISTORTION_SHADER: &str = "shaders/effects/distortion.wgsl";
 /// Shared import of both.
 const COMMON_SHADER: &str = "shaders/effects/common.wgsl";
+/// Decal aging compute shader, below the assets root.
+const DECAL_AGE_SHADER: &str = "shaders/effects/decal_age.wgsl";
+/// Threads per workgroup of the aging entry points (`decal_age.wgsl`'s `WORKGROUP`).
+const AGE_WORKGROUP: u32 = 64;
 
 /// Bumped by every load of the vocabulary, so the render world rebuilds its resources.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -109,12 +147,22 @@ impl Plugin for EffectRenderPlugin {
         render_app
             .init_resource::<SpecializedRenderPipelines<EffectPipeline>>()
             .init_resource::<EffectRuns>()
+            .init_resource::<DecalProbeState>()
             .add_render_command::<Transparent3d, DrawEffects>()
             .add_render_command::<Transmissive3d, DrawEffects>()
-            .add_systems(ExtractSchedule, extract_effects)
+            .add_systems(
+                ExtractSchedule,
+                (extract_decal_probe, extract_effects).chain(),
+            )
+            .add_render_graph_node::<EffectDecalAgeNode>(Core3d, EffectDecalAgeLabel)
+            .add_render_graph_edges(
+                Core3d,
+                (Node3d::Prepass, EffectDecalAgeLabel, Node3d::MainOpaquePass),
+            )
             .add_systems(
                 Render,
                 (
+                    report_decal_age_pipelines.in_set(RenderSet::Queue),
                     queue_effects
                         .in_set(RenderSet::PhaseSort)
                         .before(sort_phase_system::<Transparent3d>),
@@ -122,6 +170,7 @@ impl Plugin for EffectRenderPlugin {
                         .in_set(RenderSet::PhaseSort)
                         .before(sort_phase_system::<Transmissive3d>),
                     prepare_effect_view_bind_groups.in_set(RenderSet::PrepareBindGroups),
+                    read_decal_probe.in_set(RenderSet::Cleanup),
                 ),
             );
     }
@@ -130,7 +179,9 @@ impl Plugin for EffectRenderPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        render_app.init_resource::<EffectPipeline>();
+        render_app
+            .init_resource::<EffectPipeline>()
+            .init_resource::<DecalAgePipeline>();
         let world = render_app.world_mut();
         let cards = (0..MAX_CARD_RUNS)
             .map(|index| {
@@ -220,6 +271,160 @@ struct EffectRuns {
     others: Vec<f32>,
 }
 
+/// Where the decals the renderer draws are aged (plan `2026-11-19-retained-effect-instances`
+/// D-10). A main-world resource the effect plugin inserts as [`Self::Gpu`]; only tests and
+/// `frame_budget --decal-source cpu` choose [`Self::Cpu`]. It is a diagnostic mode, never a
+/// fallback: a compute pipeline that fails is reported, not replaced.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EffectDecalSource {
+    /// The compute pass ages the retained rows (production).
+    #[default]
+    Gpu,
+    /// The main world ages the rows with the Rust reference ([`EffectRuntime::age_decals_on_cpu`])
+    /// and uploads them into the same decal buffer; the aging dispatch is skipped.
+    Cpu,
+}
+
+/// The aging pass's inputs of a frame: `decal_age.wgsl`'s `DecalAgeParams` byte for byte.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
+pub struct DecalAgeUniform {
+    /// The frame's time, seconds of `Time<Virtual>`, split by [`split_time`].
+    pub now: [f32; 2],
+    /// The level-of-detail threshold, pixels.
+    pub min_screen_px: f32,
+    /// 1 when the frame has a camera (level of detail applies), 0 when it has none.
+    pub has_camera: u32,
+    /// The camera's position, world space.
+    pub camera_position: [f32; 3],
+    /// `tan(fov_y / 2)` of the camera.
+    pub half_tan: f32,
+    /// The camera's unit view direction.
+    pub camera_forward: [f32; 3],
+    /// The viewport's height, pixels.
+    pub viewport_px: f32,
+    /// Patches to apply this frame.
+    pub patches: u32,
+    /// Rows of the order to age this frame.
+    pub rows: u32,
+    /// Curves in the curve table.
+    pub curves: u32,
+    /// Always 0: the shader's optimization barrier (`decal_age.wgsl`'s `opaque`) XORs it into
+    /// values the driver must not simplify across.
+    pub zero_bits: u32,
+    /// Seconds retired detail erodes out over ([`RETIRE_SECS`]).
+    pub retire_secs: f32,
+    /// Seconds retired marks erode out over ([`MARK_RETIRE_SECS`]).
+    pub mark_retire_secs: f32,
+    /// Padding to a whole 16-byte row.
+    pub pad: [u32; 2],
+}
+
+impl DecalAgeUniform {
+    /// The inputs for aging `rows` rows and applying `patches` patches at `now` from `camera`.
+    #[must_use]
+    pub fn new(
+        now: f64,
+        camera: Option<&CameraView>,
+        catalog: &EffectCatalog,
+        (patches, rows): (u32, u32),
+    ) -> Self {
+        Self {
+            now: split_time(now),
+            min_screen_px: catalog.budget.min_screen_px,
+            has_camera: u32::from(camera.is_some()),
+            camera_position: camera.map_or([0.0; 3], |camera| camera.position.to_array()),
+            half_tan: camera.map_or(0.0, CameraView::half_tan),
+            camera_forward: camera.map_or([0.0; 3], |camera| camera.forward.to_array()),
+            viewport_px: camera.map_or(0.0, |camera| camera.viewport_px),
+            patches,
+            rows,
+            curves: u32::try_from(catalog.curves.len()).unwrap_or(u32::MAX),
+            zero_bits: 0,
+            retire_secs: RETIRE_SECS,
+            mark_retire_secs: MARK_RETIRE_SECS,
+            pad: [0; 2],
+        }
+    }
+}
+
+/// One row the aging pass copies into the row buffer: `decal_age.wgsl`'s `DecalPatch`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
+pub struct GpuDecalPatch {
+    /// The row it writes.
+    pub row: u32,
+    /// Padding to the record's 16-byte alignment.
+    pub pad: [u32; 3],
+    /// The row's record.
+    pub record: GpuDecalRecord,
+}
+
+/// One frame's decal rows aged by the GPU, read back beside the Rust reference of the same
+/// rows, time and camera (D-10 check 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecalProbeFrame {
+    /// The frame's time, seconds of `Time<Virtual>`.
+    pub now: f64,
+    /// The frame's camera.
+    pub camera: Option<CameraView>,
+    /// The rows of the order, in order.
+    pub records: Vec<DecalRecord>,
+    /// `decal_table::age_decal` of each row (a row that draws nothing as
+    /// `decal_table::hidden_decal`).
+    pub expected: Vec<DecalInstance>,
+    /// What the compute pass wrote for each row.
+    pub aged: Vec<DecalInstance>,
+    /// Whether this frame copied every live row rather than the patches (a gap in the
+    /// generations).
+    pub full_copy: bool,
+}
+
+/// Test instrumentation of the decal aging (`decal_age_gpu_tests`, D-10). A main-world
+/// resource that production never inserts: it waits for the GPU and allocates per frame.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct EffectDecalProbe {
+    /// With `read_back`, every frame whose decals were aged on the GPU appends a
+    /// [`DecalProbeFrame`] here.
+    pub frames: Arc<Mutex<Vec<DecalProbeFrame>>>,
+    /// Whether frames are read back.
+    pub read_back: bool,
+    /// When above 0, every this-many-th extraction forgets which generation the GPU's rows
+    /// hold, as a render world that lost track of it, so that frame copies every live row:
+    /// the full resync D-5 promises draws the same pictures as the patches.
+    pub forget_every: u32,
+}
+
+/// The render world's side of [`EffectDecalProbe`].
+#[derive(Resource, Default)]
+struct DecalProbeState {
+    /// Where finished frames go.
+    sink: Option<Arc<Mutex<Vec<DecalProbeFrame>>>>,
+    /// This frame's reference, waiting for the GPU's output.
+    pending: Option<DecalProbeFrame>,
+    /// The mappable copy of the decal buffer.
+    staging: Option<Buffer>,
+    /// Extractions so far under a probe.
+    extractions: u64,
+    /// Whether this extraction forgets the generation the GPU's rows hold.
+    forget: bool,
+    /// Whether the node aged this frame's rows and copied them out (set by the node, which
+    /// reads the world immutably): a frame the node skipped, its pipelines still compiling,
+    /// is not read back.
+    copied: std::sync::atomic::AtomicBool,
+}
+
+/// The state of the aging pass's compute pipelines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgePipelines {
+    /// Not compiled yet: the decals are not drawn.
+    Compiling,
+    /// Both compiled.
+    Ready,
+    /// One failed; reported once, and the decals are never drawn.
+    Failed,
+}
+
 /// GPU resources of the loaded vocabulary and this frame's counts.
 #[derive(Resource)]
 struct EffectGpu {
@@ -252,6 +457,36 @@ struct EffectGpu {
     darkening_decals: bool,
     /// Card centres in draw order (retained), for the runs.
     centers: Vec<Vec3>,
+    /// The retained decal rows ([`GpuDecalRecord`]), at the decal budget's capacity.
+    rows: Option<Buffer>,
+    /// The order of the rows (`u32` row indices).
+    order: Option<Buffer>,
+    /// This frame's patches ([`GpuDecalPatch`]).
+    patches: Option<Buffer>,
+    /// The aging pass's [`DecalAgeUniform`].
+    age_uniform: Option<Buffer>,
+    /// Bind group of the aging pass.
+    age_group: Option<BindGroup>,
+    /// This frame's patches as the GPU reads them (retained, at the budget's capacity).
+    patch_staging: Vec<GpuDecalPatch>,
+    /// This frame's aging inputs.
+    uniform: DecalAgeUniform,
+    /// Whether the aging dispatch runs this frame (the rows changed or time moved, under
+    /// [`EffectDecalSource::Gpu`]).
+    age_rows: bool,
+    /// The table generation whose patches this frame applies.
+    pending_generation: u64,
+    /// One more than the table generation the node last applied (0: none): written by the
+    /// node, which reads the world immutably, and read at the next extraction.
+    applied_generation: AtomicU64,
+    /// The order generation the order buffer holds.
+    order_generation: Option<u64>,
+    /// Whether the aging pipelines are compiled (the decals are drawn only then) or failed.
+    age_pipelines: AgePipelines,
+    /// Under [`EffectDecalSource::Gpu`]; the decal buffer then holds the compute pass's output.
+    age_on_gpu: bool,
+    /// The render-world view the effects are drawn in this frame (the node ages for it only).
+    age_view: Option<Entity>,
 }
 
 impl EffectGpu {
@@ -282,6 +517,20 @@ impl EffectGpu {
             darkening_cards: 0,
             darkening_decals: false,
             centers: Vec::new(),
+            rows: None,
+            order: None,
+            patches: None,
+            age_uniform: None,
+            age_group: None,
+            patch_staging: Vec::new(),
+            uniform: DecalAgeUniform::default(),
+            age_rows: false,
+            pending_generation: 0,
+            applied_generation: AtomicU64::new(0),
+            order_generation: None,
+            age_pipelines: AgePipelines::Compiling,
+            age_on_gpu: true,
+            age_view: None,
         }
     }
 
@@ -291,7 +540,7 @@ impl EffectGpu {
         catalog: &EffectCatalog,
         device: &RenderDevice,
         queue: &RenderQueue,
-        layout: &BindGroupLayout,
+        (layout, age_layout): (&BindGroupLayout, &BindGroupLayout),
     ) {
         self.card_group = None;
         self.decal_group = None;
@@ -311,10 +560,15 @@ impl EffectGpu {
             "effect_cards",
             card_capacity * size_of::<SpriteInstance>() as u64,
         );
-        let decals = buffer(
-            "effect_decals",
-            decal_capacity * size_of::<DecalInstance>() as u64,
-        );
+        // Written by the aging pass (storage), by the CPU source (copy), and copied out by the
+        // decal probe.
+        let decals = device.create_buffer(&BufferDescriptor {
+            label: Some("effect_decals"),
+            size: decal_capacity * size_of::<DecalInstance>() as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        self.rebuild_aging(catalog, device, queue, age_layout, &decals);
         let distortions = buffer(
             "effect_distortions",
             u64::from(budget.distortions).max(1) * size_of::<SpriteInstance>() as u64,
@@ -343,6 +597,72 @@ impl EffectGpu {
         self.cards = Some(cards);
         self.decals = Some(decals);
         self.distortions = Some(distortions);
+    }
+
+    /// Builds the aging pass's buffers and bind group for `catalog`, writing `decals`: the row,
+    /// order and patch buffers at the decal budget's capacity, the curve table, the uniform.
+    /// The rows are copied in full at the next extraction.
+    fn rebuild_aging(
+        &mut self,
+        catalog: &EffectCatalog,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        layout: &BindGroupLayout,
+        decals: &Buffer,
+    ) {
+        let capacity = catalog.budget.decals.max(1);
+        let storage = |label: &'static str, size: usize| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some(label),
+                size: u64::try_from(size).unwrap_or(u64::MAX).max(16),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let rows = storage(
+            "effect_decal_rows",
+            capacity as usize * size_of::<GpuDecalRecord>(),
+        );
+        let order = storage("effect_decal_order", capacity as usize * size_of::<u32>());
+        let patches = storage(
+            "effect_decal_patches",
+            capacity as usize * size_of::<GpuDecalPatch>(),
+        );
+        let (ranges, keys) = curve_table(catalog);
+        let ranges_buffer = storage("effect_curve_ranges", ranges.len() * size_of::<[u32; 2]>());
+        let keys_buffer = storage("effect_curve_keys", keys.len() * size_of::<GpuCurveKey>());
+        if !ranges.is_empty() {
+            queue.write_buffer(&ranges_buffer, 0, bytemuck::cast_slice(&ranges));
+        }
+        if !keys.is_empty() {
+            queue.write_buffer(&keys_buffer, 0, bytemuck::cast_slice(&keys));
+        }
+        let uniform = device.create_buffer(&BufferDescriptor {
+            label: Some("effect_decal_age"),
+            size: size_of::<DecalAgeUniform>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.age_group = Some(device.create_bind_group(
+            "effect_decal_age",
+            layout,
+            &BindGroupEntries::sequential((
+                uniform.as_entire_binding(),
+                rows.as_entire_binding(),
+                order.as_entire_binding(),
+                patches.as_entire_binding(),
+                ranges_buffer.as_entire_binding(),
+                keys_buffer.as_entire_binding(),
+                decals.as_entire_binding(),
+            )),
+        ));
+        self.rows = Some(rows);
+        self.order = Some(order);
+        self.patches = Some(patches);
+        self.age_uniform = Some(uniform);
+        self.patch_staging = Vec::with_capacity(capacity as usize);
+        self.applied_generation.store(0, Ordering::Relaxed);
+        self.order_generation = None;
     }
 }
 
@@ -417,27 +737,32 @@ fn ramp_view(
     Some(texture.create_view(&TextureViewDescriptor::default()))
 }
 
-/// Copies this frame's cards and decals into the retained buffers.
+/// Copies this frame's cards and distortions into the retained buffers, and the decal
+/// table's changes into the aging pass's (D-5).
 // PERFORMANCE RATIONALE:
 // Why: Effects change every frame; recreating buffers or touching assets per frame would
 // allocate GPU memory and bind groups continuously (the vfx C-17 finding).
 // What: The buffers are made once per vocabulary at the budget's capacity; each frame writes
 // only the live prefix with one `write_buffer` per block and copies the card centres into a
-// retained vector.
+// retained vector. The decals are not uploaded: only the rows their table rewrote.
 // Trade-off: The capacity is reserved on the GPU even when few effects are live.
 #[expect(
     clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
+    clippy::too_many_arguments,
+    reason = "Bevy passes system parameters by value, each a separate declared dependency"
 )]
 fn extract_effects(
     catalog: Extract<'_, '_, Option<Res<'_, EffectCatalog>>>,
     version: Extract<'_, '_, Option<Res<'_, EffectCatalogVersion>>>,
     runtime: Extract<'_, '_, Option<Res<'_, EffectRuntime>>>,
-    mut gpu: ResMut<'_, EffectGpu>,
+    source: Extract<'_, '_, Option<Res<'_, EffectDecalSource>>>,
+    (mut gpu, mut probe): (ResMut<'_, EffectGpu>, ResMut<'_, DecalProbeState>),
     pipeline: Res<'_, EffectPipeline>,
-    device: Res<'_, RenderDevice>,
-    queue: Res<'_, RenderQueue>,
+    age_pipeline: Res<'_, DecalAgePipeline>,
+    (device, queue): (Res<'_, RenderDevice>, Res<'_, RenderQueue>),
 ) {
+    gpu.uniform.patches = 0;
+    gpu.age_rows = false;
     let (Some(catalog), Some(version), Some(runtime)) = (&*catalog, &*version, &*runtime) else {
         gpu.card_count = 0;
         gpu.decal_count = 0;
@@ -445,27 +770,42 @@ fn extract_effects(
         return;
     };
     if gpu.version != Some(version.0) {
-        gpu.rebuild(catalog, &device, &queue, &pipeline.resource_layout);
+        gpu.rebuild(
+            catalog,
+            &device,
+            &queue,
+            (&pipeline.resource_layout, &age_pipeline.layout),
+        );
         gpu.version = Some(version.0);
     }
     let frame = &runtime.frame;
     let gpu = &mut *gpu;
+    let table = runtime.decal_table();
+    gpu.age_on_gpu = source.as_deref().copied().unwrap_or_default() == EffectDecalSource::Gpu;
     gpu.card_count = u32::try_from(frame.sorted.len()).unwrap_or(0);
-    gpu.decal_count = u32::try_from(frame.decals.len()).unwrap_or(0);
+    gpu.decal_count = if frame.draw_decals {
+        u32::try_from(table.order().len()).unwrap_or(0)
+    } else {
+        0
+    };
     gpu.distortion_count = u32::try_from(frame.distortions.len()).unwrap_or(0);
     gpu.darkening_cards = frame.darkening_cards.min(gpu.card_count);
-    gpu.darkening_decals = frame.darkening_decals > 0;
+    gpu.darkening_decals = table.darkening() > 0;
     if !runtime.is_changed() {
         return;
     }
     if let (Some(buffer), false) = (&gpu.cards, frame.sorted.is_empty()) {
         queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.sorted));
     }
-    if let (Some(buffer), false) = (&gpu.decals, frame.decals.is_empty()) {
-        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.decals));
-    }
     if let (Some(buffer), false) = (&gpu.distortions, frame.distortions.is_empty()) {
         queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.distortions));
+    }
+    if probe.forget {
+        gpu.applied_generation.store(0, Ordering::Relaxed);
+    }
+    let full_copy = extract_decal_rows(gpu, runtime, catalog, &queue);
+    if let Some(pending) = &mut probe.pending {
+        pending.full_copy = full_copy;
     }
     gpu.centers.clear();
     gpu.centers.extend(
@@ -474,6 +814,340 @@ fn extract_effects(
             .iter()
             .map(|card| Vec3::from_array(card.center)),
     );
+}
+
+/// Copies the decal table's rows written since the generation the node last applied (its
+/// patches, or every live row after a gap), its order when it moved, and the frame's aging
+/// inputs; under [`EffectDecalSource::Cpu`] uploads the rows aged on the CPU instead of
+/// asking for the aging dispatch. Returns whether it copied every live row.
+fn extract_decal_rows(
+    gpu: &mut EffectGpu,
+    runtime: &EffectRuntime,
+    catalog: &EffectCatalog,
+    queue: &RenderQueue,
+) -> bool {
+    let table: &DecalTable = runtime.decal_table();
+    let generation = table.generation();
+    let applied = gpu
+        .applied_generation
+        .load(Ordering::Relaxed)
+        .checked_sub(1);
+    let copy = table.copy_since(applied);
+    stage_patches(table, copy, &mut gpu.patch_staging);
+    let resync = copy == RowCopy::Every;
+    if let (Some(buffer), false) = (&gpu.patches, gpu.patch_staging.is_empty()) {
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(&gpu.patch_staging));
+    }
+    if resync || gpu.order_generation != Some(table.order_generation()) {
+        if let (Some(buffer), false) = (&gpu.order, table.order().is_empty()) {
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(table.order()));
+        }
+        gpu.order_generation = Some(table.order_generation());
+    }
+    gpu.pending_generation = generation;
+    let rows = u32::try_from(table.order().len()).unwrap_or(0);
+    let patches = u32::try_from(gpu.patch_staging.len()).unwrap_or(0);
+    gpu.uniform = DecalAgeUniform::new(
+        runtime.last_build().unwrap_or(0.0),
+        runtime.last_camera(),
+        catalog,
+        (patches, rows),
+    );
+    if let Some(buffer) = &gpu.age_uniform {
+        queue.write_buffer(buffer, 0, bytemuck::bytes_of(&gpu.uniform));
+    }
+    gpu.age_rows = gpu.age_on_gpu && rows > 0;
+    let aged = &runtime.frame.aged_decals;
+    if let (false, Some(buffer), false) = (gpu.age_on_gpu, &gpu.decals, aged.is_empty()) {
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(aged));
+    }
+    resync
+}
+
+/// Writes into `staging` the rows `copy` asks for, in the GPU's form: the table's patches, or
+/// every live row. `staging` is retained at the decal budget's capacity, which neither can
+/// exceed, so this allocates nothing.
+fn stage_patches(table: &DecalTable, copy: RowCopy, staging: &mut Vec<GpuDecalPatch>) {
+    let patch = |row: u32| {
+        table.record(row).map(|record| GpuDecalPatch {
+            row,
+            pad: [0; 3],
+            record: GpuDecalRecord::of(record),
+        })
+    };
+    staging.clear();
+    match copy {
+        RowCopy::Every => staging.extend(table.order().iter().filter_map(|&row| patch(row))),
+        RowCopy::Patches => staging.extend(table.patches().iter().filter_map(|&row| patch(row))),
+        RowCopy::Nothing => {}
+    }
+}
+
+/// Under [`EffectDecalProbe`]: decides whether this extraction forgets the generation the
+/// GPU's rows hold, and with `read_back` keeps this frame's rows and their Rust reference for
+/// the GPU's output, which [`read_decal_probe`] reads back after the frame is submitted.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn extract_decal_probe(
+    probe: Extract<'_, '_, Option<Res<'_, EffectDecalProbe>>>,
+    catalog: Extract<'_, '_, Option<Res<'_, EffectCatalog>>>,
+    runtime: Extract<'_, '_, Option<Res<'_, EffectRuntime>>>,
+    source: Extract<'_, '_, Option<Res<'_, EffectDecalSource>>>,
+    device: Res<'_, RenderDevice>,
+    mut state: ResMut<'_, DecalProbeState>,
+) {
+    state.pending = None;
+    state.forget = false;
+    let (Some(probe), Some(catalog), Some(runtime)) = (&*probe, &*catalog, &*runtime) else {
+        return;
+    };
+    state.extractions += 1;
+    state.forget = probe.forget_every > 0
+        && state
+            .extractions
+            .is_multiple_of(u64::from(probe.forget_every));
+    state.sink = Some(probe.frames.clone());
+    let on_gpu = source.as_deref().copied().unwrap_or_default() == EffectDecalSource::Gpu;
+    let table = runtime.decal_table();
+    let Some(now) = runtime.last_build() else {
+        return;
+    };
+    if !probe.read_back || !on_gpu || !runtime.is_changed() || table.order().is_empty() {
+        return;
+    }
+    let bytes = u64::from(catalog.budget.decals.max(1)) * size_of::<DecalInstance>() as u64;
+    if state
+        .staging
+        .as_ref()
+        .is_none_or(|staging| staging.size() != bytes)
+    {
+        state.staging = Some(device.create_buffer(&BufferDescriptor {
+            label: Some("effect_decal_probe"),
+            size: bytes,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+    }
+    let mut expected = Vec::new();
+    table.age_rows(now, catalog, runtime.last_camera(), &mut expected);
+    let records = table
+        .order()
+        .iter()
+        .filter_map(|&row| table.record(row).copied())
+        .collect();
+    state.pending = Some(DecalProbeFrame {
+        now,
+        camera: runtime.last_camera().copied(),
+        records,
+        expected,
+        aged: Vec::new(),
+        full_copy: false,
+    });
+}
+
+/// Reads the probe's copy of the decal buffer once the frame's commands are done, and hands
+/// the frame to the test.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn read_decal_probe(device: Res<'_, RenderDevice>, mut state: ResMut<'_, DecalProbeState>) {
+    let Some(mut frame) = state.pending.take() else {
+        return;
+    };
+    if !state.copied.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let (Some(staging), Some(sink)) = (&state.staging, &state.sink) else {
+        return;
+    };
+    let bytes = (frame.expected.len() * size_of::<DecalInstance>()) as u64;
+    if bytes == 0 {
+        return;
+    }
+    let slice = staging.slice(0..bytes);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    slice.map_async(MapMode::Read, move |result| {
+        // The receiver waits below; a send fails only when it is gone, and then nobody reads.
+        sender.send(result).ok();
+    });
+    device.poll(Maintain::Wait);
+    match receiver.recv() {
+        Ok(Ok(())) => {
+            frame.aged = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+            staging.unmap();
+        }
+        Ok(Err(error)) => {
+            error!("effect decal probe: the readback failed to map: {error}");
+            return;
+        }
+        Err(error) => {
+            error!("effect decal probe: the readback never completed: {error}");
+            return;
+        }
+    }
+    match sink.lock() {
+        Ok(mut frames) => frames.push(frame),
+        Err(error) => error!("effect decal probe: the test's frame list is poisoned: {error}"),
+    }
+}
+
+/// The aging pass's layout and its two compute pipelines.
+#[derive(Resource)]
+struct DecalAgePipeline {
+    /// Uniform, rows, order, patches, curve ranges, curve keys, decals.
+    layout: BindGroupLayout,
+    /// `apply_patches`.
+    apply: CachedComputePipelineId,
+    /// `age`.
+    age: CachedComputePipelineId,
+}
+
+impl FromWorld for DecalAgePipeline {
+    fn from_world(world: &mut World) -> Self {
+        let device = world.resource::<RenderDevice>();
+        let layout = device.create_bind_group_layout(
+            "effect_decal_age",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::COMPUTE,
+                (
+                    uniform_buffer_sized(
+                        false,
+                        NonZeroU64::new(size_of::<DecalAgeUniform>() as u64),
+                    ),
+                    storage_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_sized(false, None),
+                ),
+            ),
+        );
+        let shader = world.resource::<AssetServer>().load(DECAL_AGE_SHADER);
+        let cache = world.resource::<PipelineCache>();
+        let compute = |entry: &'static str| {
+            cache.queue_compute_pipeline(ComputePipelineDescriptor {
+                label: Some(format!("effect_decal_{entry}").into()),
+                layout: vec![layout.clone()],
+                push_constant_ranges: Vec::new(),
+                shader: shader.clone(),
+                shader_defs: Vec::new(),
+                entry_point: entry.into(),
+                zero_initialize_workgroup_memory: false,
+            })
+        };
+        let apply = compute("apply_patches");
+        let age = compute("age");
+        Self { layout, apply, age }
+    }
+}
+
+/// Notes when the aging pipelines are compiled, so the decals are drawn only once the pass can
+/// age them, and reports a pipeline that failed (an error, not a reason to fall back: the
+/// decals are then never drawn).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn report_decal_age_pipelines(
+    cache: Res<'_, PipelineCache>,
+    pipeline: Res<'_, DecalAgePipeline>,
+    mut gpu: ResMut<'_, EffectGpu>,
+) {
+    if gpu.age_pipelines != AgePipelines::Compiling {
+        return;
+    }
+    // A queued pipeline enters the cache's list only when the cache next processes its queue;
+    // `get_compute_pipeline_state` indexes that list, so it is asked only once both are in it.
+    let listed = cache.pipelines().count();
+    if pipeline.apply.id().max(pipeline.age.id()) >= listed {
+        return;
+    }
+    let states = [
+        cache.get_compute_pipeline_state(pipeline.apply),
+        cache.get_compute_pipeline_state(pipeline.age),
+    ];
+    for state in states {
+        if let CachedPipelineState::Err(error) = state {
+            error!("effect decals: the aging pipeline ({DECAL_AGE_SHADER}) failed: {error}");
+            gpu.age_pipelines = AgePipelines::Failed;
+            return;
+        }
+    }
+    if states
+        .iter()
+        .all(|state| matches!(state, CachedPipelineState::Ok(_)))
+    {
+        gpu.age_pipelines = AgePipelines::Ready;
+    }
+}
+
+/// Label of [`EffectDecalAgeNode`] in the `Core3d` graph.
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub struct EffectDecalAgeLabel;
+
+/// The decal aging pass (D-5): between the prepass and the main opaque pass of the view the
+/// effects are drawn in, applies the frame's patches to the row buffer and ages the rows of
+/// the order into the decal buffer.
+#[derive(Default)]
+pub struct EffectDecalAgeNode;
+
+impl Node for EffectDecalAgeNode {
+    fn run<'w>(
+        &self,
+        graph: &mut RenderGraphContext<'_>,
+        render_context: &mut RenderContext<'w>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        let gpu = world.resource::<EffectGpu>();
+        if gpu.age_view.is_none() || graph.get_view_entity() != gpu.age_view {
+            return Ok(());
+        }
+        let pipeline = world.resource::<DecalAgePipeline>();
+        let cache = world.resource::<PipelineCache>();
+        let (Some(group), Some(apply), Some(age)) = (
+            &gpu.age_group,
+            cache.get_compute_pipeline(pipeline.apply),
+            cache.get_compute_pipeline(pipeline.age),
+        ) else {
+            return Ok(());
+        };
+        let patches = gpu.uniform.patches;
+        let rows = if gpu.age_rows { gpu.uniform.rows } else { 0 };
+        let diagnostics = render_context.diagnostic_recorder();
+        let encoder = render_context.command_encoder();
+        if patches > 0 || rows > 0 {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("effect_decal_age"),
+                timestamp_writes: None,
+            });
+            let span = diagnostics.pass_span(&mut pass, "effect_decal_age");
+            pass.set_bind_group(0, group, &[]);
+            if patches > 0 {
+                pass.set_pipeline(apply);
+                pass.dispatch_workgroups(patches.div_ceil(AGE_WORKGROUP), 1, 1);
+            }
+            if rows > 0 {
+                pass.set_pipeline(age);
+                pass.dispatch_workgroups(rows.div_ceil(AGE_WORKGROUP), 1, 1);
+            }
+            span.end(&mut pass);
+        }
+        gpu.applied_generation
+            .store(gpu.pending_generation + 1, Ordering::Relaxed);
+        let probe = world.resource::<DecalProbeState>();
+        if let (Some(_), Some(staging), Some(decals), true) =
+            (&probe.pending, &probe.staging, &gpu.decals, rows > 0)
+        {
+            let bytes = u64::from(rows) * size_of::<DecalInstance>() as u64;
+            encoder.copy_buffer_to_buffer(decals, 0, staging, 0, bytes);
+            probe.copied.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
 }
 
 /// The two effect pipelines' shared layouts and shaders.
@@ -682,7 +1356,7 @@ fn queue_effects(
     pipeline: Res<'_, EffectPipeline>,
     mut pipelines: ResMut<'_, SpecializedRenderPipelines<EffectPipeline>>,
     cache: Res<'_, PipelineCache>,
-    gpu: Res<'_, EffectGpu>,
+    mut gpu: ResMut<'_, EffectGpu>,
     entities: Option<Res<'_, EffectRunEntities>>,
     mut runs: ResMut<'_, EffectRuns>,
     mut phases: ResMut<'_, ViewSortedRenderPhases<Transparent3d>>,
@@ -692,6 +1366,7 @@ fn queue_effects(
         return;
     };
     let draw = draw_functions.read().id::<DrawEffects>();
+    gpu.age_view = None;
     let Some((view_entity, view, msaa, _)) = views
         .iter()
         .find(|(_, _, _, prepass)| prepass.depth.is_some())
@@ -701,6 +1376,7 @@ fn queue_effects(
     let Some(phase) = phases.get_mut(&view_entity) else {
         return;
     };
+    gpu.age_view = Some(view_entity);
     let key = |kind, darken| EffectPipelineKey {
         kind,
         samples: msaa.samples(),
@@ -737,7 +1413,11 @@ fn queue_effects(
     // The phase's sort is stable, so items of one distance keep the order they are added in
     // (WP8 review 3, E3-1: a darkening card queued at its run's distance multiplied whatever
     // transparent item sorted before it).
-    let decals = gpu.decal_count > 0 && gpu.decal_group.is_some();
+    // The decal buffer holds this frame's decals only once the aging pass can run (or the CPU
+    // source wrote them).
+    let decals = gpu.decal_count > 0
+        && gpu.decal_group.is_some()
+        && gpu.age_pipelines == AgePipelines::Ready;
     runs.decals = 0..gpu.decal_count;
     if decals && gpu.darkening_decals {
         ground(
@@ -1043,8 +1723,44 @@ impl<P: PhaseItem> RenderCommand<P> for DrawEffectRun {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "a failed test is a panic")]
 mod tests {
     use super::*;
+    use crate::effects::test_streams::{run_stream_with, StreamKind};
+
+    /// D-11: the render world's staged patches stay in the vector made at the decal budget's
+    /// capacity over both streams, with a full copy every 61st frame (the sync harness has no
+    /// render world, so this is the render half of `sync_steady_state_tests`).
+    #[test]
+    fn staged_patches_never_outgrow_their_retained_vector() {
+        for kind in [StreamKind::Splashes, StreamKind::Plan] {
+            let mut staging: Option<Vec<GpuDecalPatch>> = None;
+            let mut buffer = None;
+            let (mut frame, mut staged) = (0_u32, 0_usize);
+            run_stream_with(
+                kind,
+                600,
+                |_| {},
+                |catalog, runtime, _| {
+                    let staging = staging.get_or_insert_with(|| {
+                        Vec::with_capacity(catalog.budget.decals.max(1) as usize)
+                    });
+                    frame += 1;
+                    let table = runtime.decal_table();
+                    let copy = if frame % 61 == 0 {
+                        RowCopy::Every
+                    } else {
+                        table.copy_since(Some(table.generation() - 1))
+                    };
+                    stage_patches(table, copy, staging);
+                    staged += staging.len();
+                    let now = (staging.as_ptr() as usize, staging.capacity());
+                    assert_eq!(*buffer.get_or_insert(now), now, "{kind:?}: no growth");
+                },
+            );
+            assert!(staged > 0, "{kind:?}: rows were staged");
+        }
+    }
 
     fn cut(distances: &[f32], others: &[f32]) -> Vec<Range<u32>> {
         let mut runs = Vec::new();

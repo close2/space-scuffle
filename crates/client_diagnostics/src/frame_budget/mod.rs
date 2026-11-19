@@ -60,6 +60,27 @@ pub const SPEC_FORMAT_VERSION: u32 = 1;
 /// Variable through which the client finds its assets root.
 const ASSETS_VARIABLE: &str = "SPACE_SCUFFLE_ASSETS";
 
+/// `--decal-source`: where the effect decals are aged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum DecalSource {
+    /// The production compute pass.
+    #[default]
+    Gpu,
+    /// The Rust reference, uploaded in the compute pass's place.
+    Cpu,
+}
+
+impl DecalSource {
+    /// The client's resource for this choice.
+    #[must_use]
+    pub const fn resource(self) -> client::effects::render::EffectDecalSource {
+        match self {
+            Self::Gpu => client::effects::render::EffectDecalSource::Gpu,
+            Self::Cpu => client::effects::render::EffectDecalSource::Cpu,
+        }
+    }
+}
+
 /// Command line of the `frame_budget` binary.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "frame_budget")]
@@ -102,6 +123,11 @@ pub struct FrameBudgetOptions {
     /// run is never a figure of record.
     #[arg(long)]
     pub render_diagnostics: bool,
+    /// Where the effect decals are aged (plan `2026-11-19-retained-effect-instances` D-10):
+    /// `gpu`, the production compute pass, or `cpu`, the Rust reference uploaded in its place,
+    /// for attribution runs and the picture check against the reference only.
+    #[arg(long, value_enum, default_value_t = DecalSource::Gpu)]
+    pub decal_source: DecalSource,
     /// Effect stress mode (plan `2026-11-09-effect-visualization` §10.3): this many splash
     /// events per second of game time over the battle, round-robin over every weapon whose
     /// presentation block names a splash effect ([`effect_stress`]).
@@ -495,6 +521,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
     if options.render_diagnostics {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
+    app.insert_resource(options.decal_source.resource());
     let stressed = add_variant(&mut app, options, &spec);
     app.world_mut()
         .resource_mut::<client::LabState>()
@@ -801,6 +828,41 @@ mod tests {
         ] {
             assert!(refused.parse::<Resolution>().is_err(), "{refused:?}");
         }
+        Ok(())
+    }
+
+    /// `--decal-source` defaults to the production compute pass and selects the CPU reference
+    /// by name (plan `2026-11-19-retained-effect-instances` D-10).
+    #[test]
+    fn the_decal_source_defaults_to_the_gpu() -> Result<(), clap::Error> {
+        let base = [
+            "frame_budget",
+            "--display-path",
+            "kwin-virtual",
+            "--work-dir",
+            "/tmp/work",
+            "--scenario",
+            "400",
+            "--out",
+            "/tmp/out.ron",
+        ];
+        let plain = FrameBudgetOptions::try_parse_from(base)?;
+        assert_eq!(plain.decal_source, DecalSource::Gpu);
+        assert_eq!(
+            plain.decal_source.resource(),
+            client::effects::render::EffectDecalSource::Gpu
+        );
+        let cpu = FrameBudgetOptions::try_parse_from(
+            base.iter().copied().chain(["--decal-source", "cpu"]),
+        )?;
+        assert_eq!(
+            cpu.decal_source.resource(),
+            client::effects::render::EffectDecalSource::Cpu
+        );
+        assert!(FrameBudgetOptions::try_parse_from(
+            base.iter().copied().chain(["--decal-source", "fpga"])
+        )
+        .is_err());
         Ok(())
     }
 }
