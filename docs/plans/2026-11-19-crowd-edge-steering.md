@@ -808,3 +808,33 @@ Nothing left out is accepted as a deviation by being left out.
 - **The probe** stays scratch. Only the proposal/contact split is committed (D-5).
 - **The showcase test's tick-900 criterion** is replaced (D-6), because the scenario changed under it, not to make
   it pass.
+
+## Amendment 1 (orchestrator, 2026-11-19): WP2 (D-1) deferred to a re-plan; WP3 and WP4 run next on WP1's tree
+
+**Why.** WP2 stopped under the acceptance rule (evidence §2). The stop was caused by four things:
+
+- **T1:** D-1 forbids the only way out of a pocket behind a firing ring.
+- **T3:** the bounded cyclic projection does not close the sides D-1.2 says it closes, so the cost moves into
+  contact.
+- **T4:** CE-2's premise does not hold while the arc forms.
+- **T2:** the walkers' remaining reversals are walk against steering, which D-1 does not address.
+
+The exact projection and a changed walk-end test were tried as scratch variants, and both cost reach. D-1 as written
+is therefore withdrawn. Its side branch `crowd-edge-wp2-wip` is kept for reference, and it is not built on.
+
+**Decision.**
+
+1. **WP3 (D-2) is next, on WP1's tree.** D-2 does not depend on D-1. It targets R-B and R-C, the largest
+   contact-caused classes. WP3's own tests, controls and stop rules apply unchanged. The R-B-only control is kept.
+2. **WP4 (D-3, D-4) follows on WP3.** Q0089's default is yes. Where a WP4 test or acceptance figure assumed D-1's
+   effect, restate it from the WP3 tree's own measurement before the code changes, and record each restatement in
+   the evidence. Bounds are never loosened in the process: a figure is restated only when it was derived from D-1.
+3. **WP5 then closes the package without D-1.** R-A stays open under B-103 with the measured residuals. The B-103
+   row records the evidence §2 traces and the WP4 tree's figures.
+4. **A new D-1 is a separate Stage 1 plan,** written after this package merges, from the merged tree's
+   measurement. It starts from evidence §2d: a rule on the walk's end rather than on its retreat, CE-2 restated
+   from tick 98, and walk-against-steering reversals (T2).
+5. **Acceptance for WP3 and WP4.**
+   - Reversals are compared against WP1's base, per the plan.
+   - The walkers test keeps 17 of 17. If D-2 or D-4 costs reach there, that is a stop with a trace.
+   - The arc and corridor tests are judged on their D-6 restatements.
