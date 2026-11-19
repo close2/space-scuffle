@@ -961,3 +961,10 @@ Beside them, the remaining build per phase (S): cards about 49 %, and the per-fr
 24 %. The effect functions as a whole explain only about 1.2 to 1.5 ms of the +3.7 ms CPU difference, and option 1
 cannot move the CPU-time verdict. The re-sort is inside this plan's own design and could be removed without a look change, but this hand-back does not
 choose it.
+
+## Amendment 4 (orchestrator, 2026-11-19): the decision gate is closed by the owner (Q0090 (d))
+
+The owner relaxed the stress bar to p50 ≤ 16.67 ms and at most +20 % p50 on a quiet host. The quietest pair of
+WP7's series already meets it, at +16.5 % and 13.77 ms. None of the plan's ranked options is taken. B-137 is closed,
+and a quiet-host confirmation series stays as an item for when the host is idle (effect visualization plan,
+Amendment 36).
