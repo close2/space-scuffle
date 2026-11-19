@@ -255,3 +255,40 @@ path-cost bench 37.48 G against 35.85 G, **+4.5 %** (WP2 +4.1 %). The retry fire
 
 **Unit tests** (WP1's two, plan §6): `zero_room_legs_keep_the_disc_radius`, `gate_runs_keep_the_feature_across`, and
 `a_circumscribed_arc_passes_an_exact_pinch` (the diagonal pinch keeps its counted fallback, Amendment 1 point 4).
+
+## WP4 stopped: the exact-fit oracle test fails as the plan states it (trace and proposed amendment)
+
+**What was built** (branch `funnel-fallbacks-wp4-wip`, `af96746d`, on WP3; not on the plan's branch):
+
+- `mesh_route_lengths_are_within_one_percent_of_the_oracle` asserts zero fallbacks (it was "at most 2 %"). It
+  passes: 522 of 523 within 1 %, worst 1.0220, **0 fallbacks**.
+- `exact_fit_routes_agree_with_the_oracle`: 60 seeded 16 × 16 maps, one cell in six blocked, r 0.5 and 1.0
+  alternately, six pairs of cell centres where the disc fits per map, oracle at `r − 10⁻⁵` (comment naming §4.3's
+  reason). 293 routes; existence agrees on every pair, **no fallback, no illegal leg, none shorter than the oracle**,
+  worst ratio 1.0491 (within `MESH_RATIO_BOUND`). It **fails** the plan's "every route within 1.01 of the oracle":
+  routes with room keep the corner margin, so a margin-free oracle sees them longer (that part the test restates by
+  comparing them only from below); but the routes the zero-room retry produced fail it too.
+
+**Trace.** Among the 293 routes, 159 fell back with D-2 switched off (scratch flag), i.e. are the zero-room
+retry's routes. Of these, **128 (80.5 %) are within 1.01**, median 1.0046, worst 1.0491 (map 36, r 0.5,
+(12.5, 14.5) → (12.5, 0.5)). Dense grids of one-cell corridors make routes that round many corners in a row, and
+the circumscribed polygon is longer than the arc it replaces: with bisection above an eighth turn (D-2.4) each
+corner's polygon is up to `8 tan 22.5° / π ≈ 1.055` times its arc. A scratch switch that bisects above a sixteenth
+turn instead gives **153 of 159 (96.2 %)** within 1.01; the remaining six (1.0181 to 1.0451, all r 0.5) are not
+explained by the polygon and are not traced further here (candidates: TA*'s channel, as for layout 563, or the gate
+runs). In the layout corpora of stop rule 8 the same retry routes are 123 of 124 within 1.01: they round few corners.
+Every route of the new test is legal; the defect is length only.
+
+**Proposed amendment (for the plan's owner).**
+
+1. Restate WP4's exact-fit test with stop rule 8's measure: the zero-room retry's routes at least 95 % within 1.01 of
+   the oracle at `r − 10⁻⁵`, none beyond `MESH_RATIO_BOUND`, none shorter, no fallback; routes that keep the margin
+   compared from below only. A committed test cannot tell the retry's routes apart through the public API, so either
+   `MeshRoute` gains a flag for a route the zero-room retry produced, or the 95 % applies to every route of the test
+   that only an exact fit allows (the oracle with the margin finds none; 190 of 293 here).
+2. And/or bisect the zero-room arcs above a sixteenth turn instead of an eighth (D-2.4; polygon at most
+   `16 tan 11.25° / π ≈ 1.013` times the arc), measured above at 96.2 %. This changes the retry's routes, so the
+   pins and corpora would be measured again.
+3. Trace the six remaining routes above 1.018 before deciding the bound.
+
+WP5 (bookkeeping) waits for WP4.
