@@ -311,6 +311,12 @@
 // (corners cut by 1.5) changes their hashed clearance from checkpoint 1; entity state is
 // unchanged through tick 1000 (a scratch digest of only the entities, projectiles, players and
 // effects is identical on every tick with the full-square halls and with the contours).
+// Re-recorded for plan 2026-11-19-crowd-edge-steering WP4 (B-103, Q0089 answered yes):
+// checkpoint 4 (ticks 151 to 200) first changed; entity 34, attack-moving behind a friend that
+// holds its ground in combat, keeps its stall count at tick 172 (0, was 1), since a tick queued
+// behind such a friend is not stalled (D-4); its pose first differs at tick 397, where it no
+// longer drops its route for a stall repath. Proof: a scratch build of WP4 with D-4 off
+// reproduces the previous checksums at every checkpoint.
 (
     checksum_schema: 30,
     seed: 0x5EED_0F_5CAFF1E,
@@ -342,21 +348,21 @@
         0xbedb0218fcc761b5,
         0xc3ce293c35bf01e2,
         0xfff0ca5bbfef5240,
-        0x72561b02a393158c,
+        0x61eee38632fe60ce,
         0x17886ebc5d3aff5d,
-        0x354b1a6d93764787,
-        0x9c66083c4bb7d0b4,
-        0x0a6cd9d3deddec7a,
-        0x5cc5112d9140aaee,
-        0xe5522a675fe986a3,
-        0xad27db857ebc0b7b,
-        0x0e4069218a229db8,
-        0xbcedf91d781d83f0,
-        0x1b73034040c39fd4,
-        0x78fc3e0897b32335,
-        0xf85709f1cd8396d4,
-        0x675d2825ad1f351d,
-        0x75edc7d7a627fc3a,
-        0xfdfab7d382013cb2,
+        0x5b8ac6ed48fb5b85,
+        0x79a3e4e7db869714,
+        0xac13e24f66629acd,
+        0x1c6e4fd080797e60,
+        0xab381736787def25,
+        0x8b1513b52222ef7e,
+        0x7fa6985718554e3f,
+        0x18b3ef4e0e2b9b38,
+        0x12c4ff14fe99a826,
+        0x67388c019bc5e001,
+        0xa7e2f506e663ad59,
+        0x42cd5e9ad769ec83,
+        0x28b5129fe5bae6c5,
+        0x287c4155f319a967,
     ],
 )

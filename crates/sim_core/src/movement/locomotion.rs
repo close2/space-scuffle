@@ -594,6 +594,24 @@ fn note_progress(
     Ok(memory.stalled_ticks)
 }
 
+/// [`note_progress`] for a unit that may be queued: on a `queued` tick that gained nothing, the
+/// stall count stays where it was and the best distance is kept (plan
+/// `2026-11-19-crowd-edge-steering` D-4). Returns the stall count.
+fn note_queued_progress(
+    memory: &mut MovementMemory,
+    position: SimVec2,
+    route: &[SimVec2],
+    goal: SimVec2,
+    queued: bool,
+) -> Result<u16, MovementMathError> {
+    let before = memory.stalled_ticks;
+    let gained = note_progress(memory, position, route, goal)? == 0;
+    if queued && !gained {
+        memory.stalled_ticks = before;
+    }
+    Ok(memory.stalled_ticks)
+}
+
 impl SimWorld {
     pub(crate) fn motion_entry(&self, id: EntityId) -> Result<MotionEntry, MovementInvariant> {
         let actor = self
@@ -1398,9 +1416,17 @@ impl MotionDraft<'_> {
             ControlFlow::Break(()) => return Ok(()),
         };
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        // An attack-move queued behind a friend that holds its ground is not stalled (D-4); a
+        // plain move into a blocked spot still is.
+        let queued = attack_moving
+            && friend_holds_ahead(
+                &context,
+                direction(next, self.actor.position).map_err(self.fault())?,
+            )
+            .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
         if self
-            .check_progress(routes, on_last_leg, gap, map_news)?
+            .check_progress(routes, on_last_leg, gap, map_news, queued)?
             .is_break()
         {
             return Ok(());
@@ -1605,12 +1631,15 @@ impl MotionDraft<'_> {
 
     /// Progress check: gives the order up when the unit has stopped gaining ground, finishes it
     /// when the unit is stuck within reach of its goal, and drops the route on a stall to repath.
+    /// A `queued` tick, spent behind a friend that holds its ground, does not count as stalled
+    /// (plan `2026-11-19-crowd-edge-steering` D-4).
     fn check_progress(
         &mut self,
         outcomes: &mut Vec<RouteOutcome>,
         on_last_leg: bool,
         gap: SimScalar,
         map_news: bool,
+        queued: bool,
     ) -> Result<Stage, MovementInvariant> {
         if self.entry.speed > SimScalar::ZERO {
             if map_news || self.proposal.memory.flank_active {
@@ -1619,8 +1648,9 @@ impl MotionDraft<'_> {
             }
             let route = self.proposal.route(self.actor);
             let mut memory = self.proposal.memory;
-            let stalled = note_progress(&mut memory, self.actor.position, route, self.goal)
-                .map_err(self.fault())?;
+            let stalled =
+                note_queued_progress(&mut memory, self.actor.position, route, self.goal, queued)
+                    .map_err(self.fault())?;
             self.proposal.memory = memory;
             let stuck_at_goal =
                 on_last_leg && stalled >= STALL_REPATH_TICKS && gap <= STALL_ARRIVAL_REACH;
@@ -1719,12 +1749,21 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        // A chase queued behind a friend that holds its ground is not stalled (D-4).
+        let queued = friend_holds_ahead(
+            &context,
+            direction(next, self.actor.position).map_err(self.fault())?,
+        )
+        .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
         if self.beyond_leash(pursuit) {
             self.abandon_pursuit(routes, pursuit.target);
             return Ok(());
         }
-        if self.check_pursuit_progress(routes, pursuit)?.is_break() {
+        if self
+            .check_pursuit_progress(routes, pursuit, queued)?
+            .is_break()
+        {
             return Ok(());
         }
         let refused = step_toward(
@@ -1744,10 +1783,13 @@ impl MotionDraft<'_> {
     }
 
     /// Progress check for a chase: gives the target up when the pursuer stopped gaining ground.
+    /// A `queued` tick, spent behind a friend that holds its ground, does not count as stalled
+    /// (plan `2026-11-19-crowd-edge-steering` D-4).
     fn check_pursuit_progress(
         &mut self,
         outcomes: &mut Vec<RouteOutcome>,
         pursuit: &Pursuit,
+        queued: bool,
     ) -> Result<Stage, MovementInvariant> {
         if self.entry.speed > SimScalar::ZERO {
             if pursuit.target_moving || self.proposal.memory.flank_active {
@@ -1757,8 +1799,9 @@ impl MotionDraft<'_> {
             }
             let route = self.proposal.route(self.actor);
             let mut memory = self.proposal.memory;
-            let stalled = note_progress(&mut memory, self.actor.position, route, self.goal)
-                .map_err(self.fault())?;
+            let stalled =
+                note_queued_progress(&mut memory, self.actor.position, route, self.goal, queued)
+                    .map_err(self.fault())?;
             self.proposal.memory = memory;
             if stalled >= STALL_ABANDON_TICKS {
                 self.abandon_pursuit(outcomes, pursuit.target);
@@ -2324,11 +2367,32 @@ fn friend_blocks_ahead(
     context: &StepContext<'_>,
     ahead: SimVec2,
 ) -> Result<bool, MovementMathError> {
+    friend_ahead(context, ahead, SteeringObstacle::is_standing)
+}
+
+/// Whether a friend that holds its ground ([`SteeringObstacle::anchored`]: on hold, immobile, or
+/// anchored in combat) lies within one step of the unit's edge, on the side toward `ahead`: a
+/// tick the unit spends queued behind it is not a stalled tick (plan
+/// `2026-11-19-crowd-edge-steering` D-4, Q0089 answered yes).
+fn friend_holds_ahead(
+    context: &StepContext<'_>,
+    ahead: SimVec2,
+) -> Result<bool, MovementMathError> {
+    friend_ahead(context, ahead, |obstacle| obstacle.anchored)
+}
+
+/// Whether a friend of the unit for which `holds` is true, and that will not step aside, lies
+/// within one step of its edge, on the side toward `ahead` (a unit vector).
+fn friend_ahead(
+    context: &StepContext<'_>,
+    ahead: SimVec2,
+    holds: impl Fn(&SteeringObstacle) -> bool,
+) -> Result<bool, MovementMathError> {
     let (body, speed) = (context.body, context.speed);
     for obstacle in context.neighbours {
         if obstacle.id == body.id
             || obstacle.owner != body.owner
-            || !obstacle.is_standing()
+            || !holds(obstacle)
             || obstacle.yields_to(body.owner, body.push_priority)
         {
             continue;
