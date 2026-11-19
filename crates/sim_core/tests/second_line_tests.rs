@@ -3,13 +3,17 @@
 //! Plan `2026-11-09-friendly-blocking` (bugs B-103 to B-105). Attackers behind their own firing
 //! line used to flip direction every tick against two friends that would not yield, then give
 //! their orders up. These tests measure that with the blocking metrics of
-//! `sim_fixtures::trace::blocking` and hold the plan's acceptance (§7):
-//! 1. The showcase battle (`assets/scenarios/showcase.ron`): at tick 900 every attacker of both
-//!    sides has its target in range; no step reversals and no give-ups up to tick 1,300.
+//! `sim_fixtures::trace::blocking` and hold that plan's acceptance (§7), as plan
+//! `2026-11-19-crowd-edge-steering` D-6 restates it:
+//! 1. The showcase battle (`assets/scenarios/showcase.ron`), played to its end: no diagnostics,
+//!    no give-ups, and reversals per owner no more than the residual of the classes that plan
+//!    leaves out of scope (B-144, B-145). Attackers in range at tick 900 are reported only: the
+//!    armies now meet mid-map near tick 300, so that tick no longer measures B-103.
 //! 2. A synthetic arc: ten ranged units in two rows attack-move past an immobile pillar, and all
 //!    ten reach range by tick 300 with no reversals and no give-ups.
 //! 3. No room: units in a corridor two cells wide queue behind those that reach range, and
-//!    those that cannot reach it stand still, without reversals.
+//!    those that cannot reach it stand, without reversals or give-ups. Standing is the
+//!    simulation's own: an achieved step of at most `STANDING_DRIFT` (1/64 world units).
 //! 4. Walkers at a crowd's edge: short-ranged units behind a firing line walk round it without
 //!    ending and restarting their walk every other tick (plan Amendment 7).
 //!
@@ -27,7 +31,7 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::scenario::load_scenario_battle;
 use sim_core::SimWorld;
-use sim_fixtures::trace::blocking::{attackers_in_range, BlockingMeter};
+use sim_fixtures::trace::blocking::{attackers_in_range, BlockingMeter, STANDING_DRIFT};
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -178,15 +182,22 @@ fn assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }
 
-/// 1. The showcase battle: every attacker of both sides in range at tick 900; no reversals and
-///    no give-ups up to tick 1,300 (plan §7).
+/// Reversals per owner the showcase may still show: those of the classes plan
+/// `2026-11-19-crowd-edge-steering` leaves out of scope, a friend crossing the unit's path (R-E,
+/// B-144) and the change of aim or route between two ticks (R-F, B-145), as its probe classified
+/// them on the default seed (evidence §1: none for player 0; two R-F and one R-E for player 1).
+const SHOWCASE_RESIDUAL_REVERSALS: [u32; 2] = [0, 3];
+
+/// 1. The showcase battle, played to its end (at most 2,700 ticks): no diagnostics, no give-ups,
+///    and reversals per owner within the out-of-scope residual (plan
+///    `2026-11-19-crowd-edge-steering` D-6). Attackers in range at tick 900 are reported only.
 #[test]
-#[ignore = "friendly-blocking after WP6: 10 of 10 in range on both sides, no give-ups, but 11 and 8 reversals (B-103, evidence)"]
-fn showcase_second_line_reaches_range() -> TestResult {
+#[ignore = "crowd-edge WP1 base: 13 and 10 reversals (proposal 3 and 5, contact 10 and 5), 0 give-ups, player 1 wins at tick 1,946; R-A to R-D await WP2 to WP4 (B-103, evidence §1)"]
+fn showcase_crowd_edges_do_not_reverse() -> TestResult {
     let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
     let mut meter = BlockingMeter::new();
     let mut in_range = [(0, 0); 2];
-    while world.current_tick < 1_300 && !world.match_state.result.is_over() {
+    while world.current_tick < 2_700 && !world.match_state.result.is_over() {
         step(&mut world, &mut meter, Vec::new());
         assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
         if world.current_tick == 900 {
@@ -197,19 +208,23 @@ fn showcase_second_line_reaches_range() -> TestResult {
         }
     }
     let (blue, red) = (meter.of_owner(BLUE), meter.of_owner(RED));
-    let report = format!("in range at 900 {in_range:?}; blue {blue:?}; red {red:?}");
-    for (hit, of) in in_range {
-        assert!(of > 0 && hit == of, "{report}");
-    }
-    assert_eq!((blue.reversals, red.reversals), (0, 0), "{report}");
+    let report = format!(
+        "ended at {} {:?}; in range at 900 {in_range:?}; blue {blue:?}; red {red:?}",
+        world.current_tick, world.match_state.result
+    );
+    assert!(world.match_state.result.is_over(), "{report}");
     assert_eq!((blue.stall_giveups, red.stall_giveups), (0, 0), "{report}");
+    assert!(
+        blue.reversals <= SHOWCASE_RESIDUAL_REVERSALS[0]
+            && red.reversals <= SHOWCASE_RESIDUAL_REVERSALS[1],
+        "{report}"
+    );
     Ok(())
 }
 
 /// 2. Ten ranged units in two rows of five, 12 world units from an immobile pillar's edge,
 ///    attack-move past it: all ten reach range by tick 300, without a reversal or a give-up.
 #[test]
-#[ignore = "friendly-blocking after WP6: all in range by tick 98, no give-ups, but 3 reversals (B-103, evidence)"]
 fn ranged_block_reaches_the_arc() -> TestResult {
     let mut world = scratch_world(GameMap::new(
         64,
@@ -248,10 +263,13 @@ fn ranged_block_reaches_the_arc() -> TestResult {
 }
 
 /// 3. Six short-ranged units in single file attack-move along a corridor two cells wide onto a
-///    pillar that plugs it: those that cannot reach range stand still on at least 95 % of the
-///    ticks after they first stop, and nobody reverses.
+///    pillar that plugs it: those that cannot reach range stand on at least 95 % of the ticks
+///    after they first stop, nobody reverses and nobody gives up. A unit stands on a tick whose
+///    achieved step is at most [`STANDING_DRIFT`]; ticks exactly still are reported only, since
+///    contact eases a pressed body apart by ever smaller steps that reach zero only after tens of
+///    ticks (plan `2026-11-19-crowd-edge-steering` D-6, §2.7).
 #[test]
-#[ignore = "friendly-blocking after WP6: 5 reversals, no give-ups; rear units still on 73 to 85 % of ticks (B-103, evidence)"]
+#[ignore = "crowd-edge WP1 base: 21 reversals (18 proposal, 3 contact), 0 give-ups; rear units 3, 4, 5, 7 standing on 88, 88, 69, 65 % of ticks (B-103, evidence §1)"]
 fn no_room_means_waiting_still() -> TestResult {
     let mut map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
     for y in 0..64 {
@@ -268,19 +286,22 @@ fn no_room_means_waiting_still() -> TestResult {
         .collect::<Result<_, _>>()?;
     let mut meter = BlockingMeter::new();
     step(&mut world, &mut meter, attack_move(&file, at(55.0, 32.0)));
-    // Per unit: ticks still and ticks counted since its first stop, once it has stopped.
-    let mut since_stop: Vec<Option<(u32, u32)>> = vec![None; file.len()];
+    // Per unit, once it has first stopped: ticks standing, ticks exactly still and ticks counted.
+    let mut since_stop: Vec<Option<(u32, u32, u32)>> = vec![None; file.len()];
     while world.current_tick < 400 {
         step(&mut world, &mut meter, Vec::new());
         assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
         for (unit, record) in file.iter().zip(&mut since_stop) {
-            let still = world.entities[unit].velocity == SimVec2::ZERO;
+            let velocity = world.entities[unit].velocity;
+            let still = velocity == SimVec2::ZERO;
+            let standing = f64::from(velocity.length().to_f32()) <= STANDING_DRIFT;
             match record {
-                Some((stood, of)) => {
-                    *stood += u32::from(still);
+                Some((stood, exact, of)) => {
+                    *stood += u32::from(standing);
+                    *exact += u32::from(still);
                     *of += 1;
                 }
-                None if still && world.current_tick > 20 => *record = Some((1, 1)),
+                None if still && world.current_tick > 20 => *record = Some((1, 1, 1)),
                 None => {}
             }
         }
@@ -289,17 +310,17 @@ fn no_room_means_waiting_still() -> TestResult {
     let blue = meter.of_owner(BLUE);
     let per_unit: Vec<u32> = file.iter().map(|u| meter.reversals_of(*u)).collect();
     let report = format!(
-        "in range {in_range} of {attackers}; {blue:?}; reversals per unit {per_unit:?}; still \
-         since stop {since_stop:?}"
+        "in range {in_range} of {attackers}; {blue:?}; reversals per unit {per_unit:?}; \
+         (standing, exactly still, of) since stop {since_stop:?}"
     );
     assert!(
         in_range >= 1 && in_range < attackers,
         "the corridor must leave units out: {report}"
     );
-    assert_eq!(blue.reversals, 0, "{report}");
+    assert_eq!((blue.reversals, blue.stall_giveups), (0, 0), "{report}");
     // Units in range stand to fire, and the others wait: every one stands once it has stopped.
     for (unit, record) in file.iter().zip(&since_stop) {
-        let Some((stood, of)) = *record else {
+        let Some((stood, _, of)) = *record else {
             panic!("unit {unit:?} never stopped: {report}");
         };
         assert!(

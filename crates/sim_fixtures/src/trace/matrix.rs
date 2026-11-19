@@ -27,7 +27,9 @@
 //! - The blocking columns ([`super::blocking`], plan `2026-11-09-friendly-blocking` WP1) are a
 //!   measurement of the same run, not part of its outcome: two tables are compared on the outcome
 //!   columns only, and a table written before those columns existed ([`LEGACY_CSV_HEADER`]) is
-//!   still read, with no blocking figures.
+//!   still read, with no blocking figures. The last two columns split the reversals into
+//!   proposal-caused and contact-caused ones (plan `2026-11-19-crowd-edge-steering` D-5); a table
+//!   written before them ([`UNSPLIT_CSV_HEADER`]) is read with its reversals unsplit.
 
 use super::blocking::{BlockingMeter, BlockingMetrics};
 use super::cli::{
@@ -42,7 +44,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The header line of `matrix.csv`.
 pub const CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
-blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups";
+blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
+proposal_reversals,contact_reversals";
+
+/// The header of a `matrix.csv` written before the reversal split, still read by `--compare`.
+pub const UNSPLIT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
+red_survivors,blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,\
+stall_giveups";
 
 /// The header of a `matrix.csv` written before the blocking columns, still read by `--compare`.
 pub const LEGACY_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
@@ -51,8 +59,12 @@ red_survivors,blue_lead_hull,red_lead_hull,expectation_met";
 /// Outcome columns of `matrix.csv`, the whole of a legacy row.
 const OUTCOME_COLUMNS: usize = 9;
 
-/// Columns of `matrix.csv`: the outcome, then the three blocking counters.
-const CSV_COLUMNS: usize = 12;
+/// Columns of a `matrix.csv` written before the reversal split: the outcome, then the three
+/// blocking counters.
+const UNSPLIT_COLUMNS: usize = 12;
+
+/// Columns of `matrix.csv`: the outcome, the three blocking counters, then the reversal split.
+const CSV_COLUMNS: usize = 14;
 
 /// One battle played on one seed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +83,9 @@ pub struct MatrixRow {
     pub expectation_met: bool,
     /// Both sides' blocking counters over the run; `None` for a row read from a legacy table.
     pub blocking: Option<BlockingMetrics>,
+    /// Whether `blocking` splits its reversals into proposal- and contact-caused ones; `false`
+    /// for a row read from a table written before the split, whose split counters read zero.
+    pub reversal_split: bool,
 }
 
 impl MatrixRow {
@@ -87,7 +102,13 @@ impl MatrixRow {
                 )
             },
         );
-        format!("{},{blocking}", self.outcome_line())
+        let split = match self.blocking {
+            Some(b) if self.reversal_split => {
+                format!("{},{}", b.proposal_reversals, b.contact_reversals)
+            }
+            _ => ",".to_owned(),
+        };
+        format!("{},{blocking},{split}", self.outcome_line())
     }
 
     /// The outcome columns of the row, the part two tables are compared on.
@@ -108,25 +129,43 @@ impl MatrixRow {
         )
     }
 
-    /// Parses one line of `matrix.csv` (not the header): [`CSV_COLUMNS`] cells, or
-    /// [`OUTCOME_COLUMNS`] for a legacy table, whose row has no blocking figures.
+    /// Parses one line of `matrix.csv` (not the header): [`CSV_COLUMNS`] cells,
+    /// [`UNSPLIT_COLUMNS`] for a table written before the reversal split, or [`OUTCOME_COLUMNS`]
+    /// for a legacy table, whose row has no blocking figures.
     ///
     /// # Errors
     /// A description of the first malformed cell.
     pub fn from_csv_line(line: &str) -> Result<Self, String> {
         let cells: Vec<&str> = line.split(',').collect();
-        if cells.len() != CSV_COLUMNS && cells.len() != OUTCOME_COLUMNS {
+        if ![CSV_COLUMNS, UNSPLIT_COLUMNS, OUTCOME_COLUMNS].contains(&cells.len()) {
             return Err(format!("{} cells, expected {CSV_COLUMNS}", cells.len()));
         }
-        let blocking = match cells.get(OUTCOME_COLUMNS..) {
-            Some(["", "", ""]) => None,
-            Some(["", _, _]) => return Err("blocking cells: all empty or all filled".to_owned()),
-            Some([ticks, reversals, giveups]) => Some(BlockingMetrics {
-                blocked_attacker_ticks: cell(ticks, "blocked_attacker_ticks")?,
-                reversals: cell(reversals, "reversals")?,
-                stall_giveups: cell(giveups, "stall_giveups")?,
-            }),
-            _ => None,
+        let (blocking, split) = match cells.get(OUTCOME_COLUMNS..) {
+            Some([] | ["", "", ""] | ["", "", "", "", ""]) => (None, false),
+            Some([ticks, reversals, giveups, rest @ ..]) if !ticks.is_empty() => {
+                let split = match rest {
+                    [proposal, contact] if !(proposal.is_empty() && contact.is_empty()) => Some((
+                        cell(proposal, "proposal_reversals")?,
+                        cell(contact, "contact_reversals")?,
+                    )),
+                    _ => None,
+                };
+                let (proposal_reversals, contact_reversals) = split.unwrap_or((0, 0));
+                let metrics = BlockingMetrics {
+                    blocked_attacker_ticks: cell(ticks, "blocked_attacker_ticks")?,
+                    reversals: cell(reversals, "reversals")?,
+                    proposal_reversals,
+                    contact_reversals,
+                    stall_giveups: cell(giveups, "stall_giveups")?,
+                };
+                if split.is_some()
+                    && proposal_reversals.checked_add(contact_reversals) != Some(metrics.reversals)
+                {
+                    return Err("reversals: not the sum of the split".to_owned());
+                }
+                (Some(metrics), split.is_some())
+            }
+            _ => return Err("blocking cells: all empty or all filled".to_owned()),
         };
         Ok(Self {
             battle: cells[0].to_owned(),
@@ -141,6 +180,7 @@ impl MatrixRow {
             },
             expectation_met: cell(cells[8], "expectation_met")?,
             blocking,
+            reversal_split: split,
         })
     }
 }
@@ -186,7 +226,10 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
         reason,
     };
     let mut lines = text.lines();
-    if !matches!(lines.next(), Some(CSV_HEADER | LEGACY_CSV_HEADER)) {
+    if !matches!(
+        lines.next(),
+        Some(CSV_HEADER | UNSPLIT_CSV_HEADER | LEGACY_CSV_HEADER)
+    ) {
         return Err(error(1, format!("the header is not `{CSV_HEADER}`")));
     }
     lines
@@ -420,6 +463,7 @@ fn play_one(
         outcome,
         expectation_met: battle.expect.holds(&outcome),
         blocking: Some(meter.total()),
+        reversal_split: true,
     })
 }
 
@@ -569,11 +613,15 @@ pub fn matrix_markdown(
     out
 }
 
-/// Both sides' blocking counters summed over `rows`, or `None` if a row has none.
-fn blocking_sum<'a>(rows: impl IntoIterator<Item = &'a MatrixRow>) -> Option<BlockingMetrics> {
+/// Both sides' blocking counters summed over `rows`, or `None` if a row has none, with whether
+/// every row splits its reversals.
+fn blocking_sum<'a>(
+    rows: impl IntoIterator<Item = &'a MatrixRow>,
+) -> Option<(BlockingMetrics, bool)> {
     rows.into_iter()
-        .try_fold(BlockingMetrics::default(), |sum, row| {
-            row.blocking.map(|blocking| sum.plus(blocking))
+        .try_fold((BlockingMetrics::default(), true), |(sum, split), row| {
+            row.blocking
+                .map(|blocking| (sum.plus(blocking), split && row.reversal_split))
         })
 }
 
@@ -584,12 +632,17 @@ fn blocking_section(rows: &[MatrixRow], comparison: Option<&Comparison>) -> Stri
          over the seeds: unit-ticks out of range behind a friend that will not yield, step \
          reversals under an unchanged order (D-1.4), and orders given up for lack of progress.\n\n",
     );
-    let cell = |sum: Option<BlockingMetrics>| {
+    let cell = |sum: Option<(BlockingMetrics, bool)>| {
         sum.map_or_else(
-            || "— | — | —".to_owned(),
-            |b| {
+            || "— | — | — | — | —".to_owned(),
+            |(b, split)| {
+                let split = if split {
+                    format!("{} | {}", b.proposal_reversals, b.contact_reversals)
+                } else {
+                    "— | —".to_owned()
+                };
                 format!(
-                    "{} | {} | {}",
+                    "{} | {} | {split} | {}",
                     b.blocked_attacker_ticks, b.reversals, b.stall_giveups
                 )
             },
@@ -599,14 +652,16 @@ fn blocking_section(rows: &[MatrixRow], comparison: Option<&Comparison>) -> Stri
         push(
             &mut out,
             format_args!(
-                "All battles: {} before, {} now (blocked ticks | reversals | give-ups).\n\n",
+                "All battles: {} before, {} now (blocked ticks | reversals | proposal-caused | \
+                 contact-caused | give-ups).\n\n",
                 cell(blocking_sum(&comparison.before)),
                 cell(blocking_sum(rows))
             ),
         );
     }
     out.push_str(
-        "| Battle | Blocked attacker ticks | Reversals | Stall give-ups |\n|---|---|---|---|\n",
+        "| Battle | Blocked attacker ticks | Reversals | Proposal-caused | Contact-caused | Stall \
+         give-ups |\n|---|---|---|---|---|---|\n",
     );
     for name in battle_names(rows) {
         let sum = blocking_sum(rows.iter().filter(|row| row.battle == name));
@@ -738,8 +793,11 @@ mod tests {
             blocking: Some(BlockingMetrics {
                 blocked_attacker_ticks: 7,
                 reversals: 3,
+                proposal_reversals: 2,
+                contact_reversals: 1,
                 stall_giveups: 1,
             }),
+            reversal_split: true,
         }
     }
 
@@ -774,6 +832,33 @@ mod tests {
         assert_eq!(comparison.moved, Vec::<String>::new());
         let path = Path::new("m.csv");
         assert!(parse_matrix_csv(path, &format!("{LEGACY_CSV_HEADER}\n")).is_ok());
+        Ok(())
+    }
+
+    /// Plan `2026-11-19-crowd-edge-steering` D-5: a table written before the reversal split
+    /// still parses, with its reversals unsplit, and compares on its outcome; a split row whose
+    /// parts do not sum to its reversals is malformed.
+    #[test]
+    fn an_unsplit_row_reads_with_its_reversals_and_compares_on_its_outcome() -> Result<(), String> {
+        let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
+        let unsplit_line = format!("{},7,3,1", current.outcome_line());
+        let unsplit = MatrixRow::from_csv_line(&unsplit_line)?;
+        assert!(!unsplit.reversal_split);
+        assert_eq!(unsplit.blocking.map(|b| b.reversals), Some(3));
+        assert!(unsplit.csv_line().ends_with(",7,3,1,,"));
+        assert_eq!(MatrixRow::from_csv_line(&unsplit.csv_line())?, unsplit);
+        let comparison = Comparison::new(PathBuf::from("m.csv"), vec![unsplit], &[current]);
+        assert_eq!(comparison.moved, Vec::<String>::new());
+        let path = Path::new("m.csv");
+        let table = format!("{UNSPLIT_CSV_HEADER}\n{unsplit_line}\n");
+        assert_eq!(
+            parse_matrix_csv(path, &table)
+                .map_err(|e| e.to_string())?
+                .len(),
+            1
+        );
+        assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,3,0,2,0").is_err());
+        assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,3,0,2,").is_err());
         Ok(())
     }
 

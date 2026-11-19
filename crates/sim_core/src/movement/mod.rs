@@ -248,6 +248,10 @@ pub(crate) struct MovementWorkspace {
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
+    /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
+    /// the phase ends (plan `2026-11-19-crowd-edge-steering` D-5). Derived output for the
+    /// reversal meter: never read by the simulation, never hashed, snapshotted or replayed.
+    proposed_steps: Vec<(EntityId, SimVec2)>,
     /// Per player: knowledge of the map changed, so every route is looked at this tick.
     pub recheck_routes: PerPlayer<bool>,
     seen_nav_version: u32,
@@ -396,6 +400,20 @@ impl SimWorld {
     #[must_use]
     pub fn route_outcomes(&self) -> &[RouteOutcome] {
         &self.movement.route_outcomes
+    }
+
+    /// The step `id` proposed in the latest movement phase, world units per tick: the velocity of
+    /// its committed motion proposal, before collision corrected it (plan
+    /// `2026-11-19-crowd-edge-steering` D-5). `None` when `id` took no part in that phase, or
+    /// its action was a cast rather than a motion. Derived output, excluded from checksums and
+    /// never consulted by the simulation, like [`Self::route_outcomes`].
+    #[must_use]
+    pub fn proposed_step(&self, id: EntityId) -> Option<SimVec2> {
+        let steps = &self.movement.proposed_steps;
+        steps
+            .binary_search_by_key(&id, |&(entity, _)| entity)
+            .ok()
+            .map(|index| steps[index].1)
     }
 
     /// Total pathfinder searches this world has run. Derived output for tests and benchmarks.
@@ -785,6 +803,56 @@ mod tests {
             );
         }
         assert_eq!(world.diagnostics(), []);
+        Ok(())
+    }
+
+    /// Plan `2026-11-19-crowd-edge-steering` D-5 and §8: `proposed_step` returns each actor's
+    /// committed proposal of the latest movement phase, `None` for a body that took no part in
+    /// it, and reading it changes nothing a checksum sees.
+    #[test]
+    fn the_proposed_step_is_the_committed_proposal_and_is_not_state(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        type Built = (SimWorld, [EntityId; 3]);
+        let build = || -> Result<Built, Box<dyn std::error::Error>> {
+            let map = GameMap::new(
+                32,
+                32,
+                sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+            )?;
+            let mut world = crate::test_support::world(map, 44);
+            let kind = world
+                .catalog
+                .archetypes()
+                .find(|a| {
+                    a.mover_type == MoverType::Ground
+                        && !a.is_immobile_by_default()
+                        && a.max_speed > SimScalar::ZERO
+                })
+                .map(|a| a.unit_type_id)
+                .ok_or("Ground actor")?;
+            let walker = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+            let stander = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(20, 20))?;
+            let dead = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 20))?;
+            world.entities.get_mut(&dead).ok_or("dead")?.hp = SimScalar::ZERO;
+            let order = UnitOrder::Move {
+                target: SimVec2::from_i32(24, 8),
+            };
+            world.try_issue_movement(PlayerId(0), &[walker], &order, false)?;
+            world.step_movement_and_steering();
+            Ok((world, [walker, stander, dead]))
+        };
+        let (world, [walker, stander, dead]) = build()?;
+        let (twin, _) = build()?;
+        assert_eq!(world.diagnostics(), []);
+        // Before collision runs, the achieved velocity is the committed proposal's.
+        let walked = world.entities[&walker].velocity;
+        assert!(walked.x > SimScalar::ZERO, "{walked:?}");
+        assert_eq!(world.proposed_step(walker), Some(walked));
+        assert_eq!(world.proposed_step(stander), Some(SimVec2::ZERO));
+        assert_eq!(world.proposed_step(dead), None);
+        assert_eq!(world.proposed_step(EntityId(9_999)), None);
+        // One world was read and its twin not: their state is the same.
+        assert_eq!(world.compute_checksum(), twin.compute_checksum());
         Ok(())
     }
 

@@ -754,14 +754,10 @@ impl SimWorld {
         let mut casts = std::mem::take(&mut self.movement.casts);
         casts.clear();
         self.prepare_movement_snapshot(&mut entries);
+        self.movement.proposed_steps.clear();
         for &entry in &entries {
             match self.prepare_actor_motion(entry) {
-                Ok(MotionAction::Commit(mut proposal)) => {
-                    self.settle_proposal(entry, &mut proposal);
-                    if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor, entry.turn_rate);
-                    }
-                }
+                Ok(MotionAction::Commit(proposal)) => self.commit_motion(entry, proposal),
                 Ok(MotionAction::Pursue(target, origin)) => {
                     pursuits.push((entry, target, origin));
                 }
@@ -792,20 +788,37 @@ impl SimWorld {
         }
         for (entry, target, origin) in pursuits.drain(..) {
             match self.prepare_pursuit(entry, target, origin) {
-                Ok(mut proposal) => {
-                    self.settle_proposal(entry, &mut proposal);
-                    if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor, entry.turn_rate);
-                    }
-                }
+                Ok(proposal) => self.commit_motion(entry, proposal),
                 Err(error) => self.report_movement_invariant(error),
             }
         }
+        // PERFORMANCE RATIONALE:
+        // Why: The reversal meter looks up each unit's proposed step once per tick, and a map
+        // keyed by entity would allocate a node per mover every tick.
+        // What: Keep the steps in one retained vector, walks and pursuits appended in entity
+        // order each, and sort it once by entity so lookups are binary searches.
+        // Trade-off: An O(N log N) sort of an almost sorted vector per tick, for no allocation
+        // in steady state and O(log N) reads.
+        self.movement
+            .proposed_steps
+            .sort_unstable_by_key(|&(id, _)| id);
         self.movement.entries = entries;
         self.movement.entries_are_fresh = true;
         self.movement.pursuits = pursuits;
         self.movement.casts = casts;
         self.movement.recheck_routes = PerPlayer::from_array([false; MAX_PLAYERS]);
+    }
+
+    /// Settles `proposal` on the terrain, records its step as this tick's proposed step of
+    /// `entry` ([`SimWorld::proposed_step`]) and commits it to the actor.
+    fn commit_motion(&mut self, entry: MotionEntry, mut proposal: MotionProposal) {
+        self.settle_proposal(entry, &mut proposal);
+        if let Some(actor) = self.entities.get_mut(&entry.id) {
+            self.movement
+                .proposed_steps
+                .push((entry.id, proposal.velocity));
+            proposal.commit(actor, entry.turn_rate);
+        }
     }
 
     /// Settles the end of a walking proposal on the terrain before it is committed (plan
