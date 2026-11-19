@@ -353,9 +353,20 @@ const fn request(
 pub fn run_stream(
     kind: StreamKind,
     frames: u32,
+    check: impl FnMut(&EffectCatalog, &EffectRuntime, f64),
+) {
+    run_stream_with(kind, frames, |_| {}, check);
+}
+
+/// [`run_stream`] over the shipped vocabulary changed by `edit` first (a tighter budget).
+pub fn run_stream_with(
+    kind: StreamKind,
+    frames: u32,
+    edit: impl FnOnce(&mut EffectCatalog),
     mut check: impl FnMut(&EffectCatalog, &EffectRuntime, f64),
 ) {
     let mut stream = TestStream::new(kind);
+    edit(&mut stream.catalog);
     let mut runtime = EffectRuntime::new(&stream.catalog);
     let camera = stream_camera();
     for _ in 0..frames {

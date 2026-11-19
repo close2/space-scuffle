@@ -32,16 +32,17 @@
 use super::binding::{resolve_value, BoundValues};
 use super::budget::{
     burst_count, crowd_factor, layer_admitted, lod_skips, particle_scale, projected_px_with,
-    retire_fade, retirement_candidate, RetireCandidate,
+    retire_fade,
 };
 use super::catalog::schema::{
-    Binding, CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping,
-    RotationDef,
+    Binding, CardShape, DecalYaw, EffectClass, EventKind, Orient, ParticleOrient, Priority,
+    RingMapping, RotationDef,
 };
 use super::catalog::{
     Block, Breakup, CardLook, CurveId, DecalLook, DistortionLook, EffectCatalog, EffectId,
     ElementRef, Layer, Pool, RibbonLook,
 };
+use super::indices::{OldestHeap, RecentLines};
 use super::instances::{
     DecalInstance, LightInstance, SpriteInstance, FLAG_ARC, FLAG_CRESCENT, FLAG_DARKEN,
     FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_RIBBON,
@@ -240,6 +241,48 @@ pub struct EffectRuntime {
     /// Effects spawned or held since the runtime was made, by effect id (diagnostics and tests:
     /// which effect a death or a status laid).
     pub spawned_per_effect: Vec<u32>,
+    /// The spawn path's bounded indices (D-4).
+    indices: SpawnIndices,
+}
+
+/// The live effects the spawn path asks for, indexed (plan
+/// `2026-11-19-retained-effect-instances` D-4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpawnIndices {
+    /// Live line effects a line request may join.
+    lines: RecentLines,
+    /// Oldest burning effect per class, by [`EffectClass::index`].
+    fire: [OldestHeap; 3],
+    /// Oldest effect holding decal slots.
+    marks: OldestHeap,
+    /// Oldest effect drawing detail.
+    detail: OldestHeap,
+}
+
+impl SpawnIndices {
+    /// Empty indices for a pool of `capacity` slots.
+    fn with_capacity(capacity: u32) -> Self {
+        Self {
+            lines: RecentLines::with_capacity(capacity),
+            fire: [
+                OldestHeap::with_capacity(capacity),
+                OldestHeap::with_capacity(capacity),
+                OldestHeap::with_capacity(capacity),
+            ],
+            marks: OldestHeap::with_capacity(capacity),
+            detail: OldestHeap::with_capacity(capacity),
+        }
+    }
+
+    /// Removes every entry.
+    fn clear(&mut self) {
+        self.lines.clear();
+        for heap in &mut self.fire {
+            heap.clear();
+        }
+        self.marks.clear();
+        self.detail.clear();
+    }
 }
 
 /// Where and how an effect is spawned.
@@ -278,7 +321,23 @@ impl EffectRuntime {
             last_build: None,
             only: None,
             spawned_per_effect: vec![0; catalog.effects.len()],
+            indices: SpawnIndices::with_capacity(budget.effects),
         }
+    }
+
+    /// Address and capacity of every index of the spawn path, which an allocation would change
+    /// (tests: the indices never grow).
+    #[must_use]
+    pub fn index_buffers(&self) -> [(usize, usize); 6] {
+        let indices = &self.indices;
+        [
+            indices.lines.buffer(),
+            indices.fire[0].buffer(),
+            indices.fire[1].buffer(),
+            indices.fire[2].buffer(),
+            indices.marks.buffer(),
+            indices.detail.buffer(),
+        ]
     }
 
     /// How many instances of `effect` were spawned or held since the runtime was made.
@@ -346,7 +405,7 @@ impl EffectRuntime {
             line_frame: LineFrame::of(request.line),
             marks: MarksCache::UNSET,
         };
-        self.place(&instance)
+        self.place(&instance, effect.event == EventKind::Line)
     }
 
     /// The held effect `handle`, if it is still live (held or eroding out after release).
@@ -355,11 +414,19 @@ impl EffectRuntime {
         self.pool.get(handle).filter(|instance| instance.held)
     }
 
-    /// Places `instance` in the pool and advances the spawn sequence.
-    fn place(&mut self, instance: &EffectInstance) -> Option<EffectHandle> {
+    /// Places `instance` in the pool and in the spawn path's indices (in the line index when it
+    /// is an effect of a `line` event), and advances the spawn sequence.
+    fn place(&mut self, instance: &EffectInstance, line: bool) -> Option<EffectHandle> {
         self.sequence = self.sequence.wrapping_add(1);
         let effect = usize::from(instance.effect.0);
         if let Ok(handle) = self.pool.spawn(*instance) {
+            let (pool, indices) = (&self.pool, &mut self.indices);
+            indices.fire[instance.class.index()].push(handle, instance.birth, pool);
+            indices.marks.push(handle, instance.birth, pool);
+            indices.detail.push(handle, instance.birth, pool);
+            if line {
+                indices.lines.push(handle, pool);
+            }
             self.stats.spawned += 1;
             if let Some(count) = self.spawned_per_effect.get_mut(effect) {
                 *count = count.saturating_add(1);
@@ -431,7 +498,7 @@ impl EffectRuntime {
             line_frame: LineFrame::of(request.line),
             marks: MarksCache::UNSET,
         };
-        self.place(&instance)
+        self.place(&instance, effect.event == EventKind::Line)
     }
 
     /// Moves the held effect `handle` to `anchor` (world space) with the values `bound`; a
@@ -529,12 +596,12 @@ impl EffectRuntime {
     /// [`LINE_MERGE_SLACK`]); returns whether there was. A later attack along the very same
     /// line (a unit firing again from where it stands) is a new effect.
     // PERFORMANCE RATIONALE:
-    // Why: A line request must find the live effect of its line, if any; an index keyed by
-    // line would be a second structure to keep in step with the pool's slots.
-    // What: A linear scan over the pool's fixed slots, once per line request (one per line
-    // per frame after `LineAssembly`), comparing two indices and a point.
-    // Trade-off: O(capacity) per line request (2 048 slots, a few microseconds) in exchange
-    // for no extra state and no allocation.
+    // Why: A line request must find the live effect of its line, if any; a scan of the pool's
+    // 6 144 slots per request was a share of the spawn path at 200 splashes a second (B-137).
+    // What: A scan of the recent line effects only ([`RecentLines`], pruned once a frame of
+    // effects past their merge window), in ascending slot order as the pool scan went.
+    // Trade-off: A second structure kept in step with the pool in exchange for scanning the
+    // last second's lines instead of every slot.
     fn merge_line(
         &mut self,
         catalog: &EffectCatalog,
@@ -546,29 +613,44 @@ impl EffectRuntime {
         // firing twice at a target that stands still) are two shots (plan WP11).
         let Some(layers) = catalog
             .effect(effect)
-            .filter(|effect| effect.event == super::catalog::schema::EventKind::Line)
+            .filter(|effect| effect.event == EventKind::Line)
             .map(|effect| &effect.layers)
         else {
             return false;
         };
-        for slot in 0..self.pool.capacity() as usize {
-            let Some(instance) = self.pool.slot_mut(slot) else {
-                continue;
-            };
-            let birth = instance.birth;
-            let Some(live) = instance.line.as_mut() else {
-                continue;
-            };
-            let window = f64::from(max_line_delay(layers, Some(*live)) + LINE_MERGE_SLACK);
-            if instance.effect == effect
-                && live.to.distance(line.to) <= SAME_LINE_END
-                && now - birth <= window
-            {
-                live.seen |= line.seen;
-                return true;
-            }
+        let joins = |instance: &EffectInstance| {
+            instance.line.is_some_and(|live| {
+                let window = f64::from(max_line_delay(layers, Some(live)) + LINE_MERGE_SLACK);
+                instance.effect == effect
+                    && live.to.distance(line.to) <= SAME_LINE_END
+                    && now - instance.birth <= window
+            })
+        };
+        let pool = &self.pool;
+        let found = self
+            .indices
+            .lines
+            .in_slot_order()
+            .iter()
+            .copied()
+            .find(|handle| pool.get(*handle).is_some_and(joins));
+        #[cfg(test)]
+        {
+            assert_eq!(
+                found.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_merge(&self.pool, joins),
+                "the recent lines choose as the pool scan did"
+            );
+            super::indices::tests::compared(0);
         }
-        false
+        let Some(live) = found
+            .and_then(|handle| self.pool.get_mut(handle))
+            .and_then(|instance| instance.line.as_mut())
+        else {
+            return false;
+        };
+        live.seen |= line.seen;
+        true
     }
 
     /// Removes every effect and particle and restarts the spawn sequence, so the next effects
@@ -591,6 +673,7 @@ impl EffectRuntime {
         self.frame.darkening_cards = 0;
         self.frame.darkening_decals = 0;
         self.ledger.clear();
+        self.indices.clear();
         self.last_build = None;
     }
 
@@ -606,6 +689,7 @@ impl EffectRuntime {
             .map_or(0.0, |last| (now - last).max(0.0) as f32);
         self.last_build = Some(now);
         self.pool.free_ended(now);
+        self.prune_lines(catalog, now);
         self.settle_ledger(catalog, now);
         self.fire_bursts(catalog, now, camera);
         self.particles.step(dt, &catalog.emitters);
@@ -628,6 +712,19 @@ impl EffectRuntime {
         }
         self.write_particles(catalog, camera);
         self.sort_cards();
+    }
+
+    /// Drops from the line index the effects past their merge window at `now`: a request at
+    /// `now` or later can no longer join them.
+    fn prune_lines(&mut self, catalog: &EffectCatalog, now: f64) {
+        self.indices.lines.prune(&self.pool, |instance| {
+            let (Some(effect), Some(line)) = (catalog.effect(instance.effect), instance.line)
+            else {
+                return false;
+            };
+            let window = f64::from(max_line_delay(&effect.layers, Some(line)) + LINE_MERGE_SLACK);
+            now - instance.birth <= window
+        });
     }
 
     /// Spawns the `land` effect of every particle that landed in the last step, at its
@@ -680,25 +777,31 @@ impl EffectRuntime {
     /// Retires the detail of the oldest burning effect of `class`; returns whether there was
     /// one.
     // PERFORMANCE RATIONALE:
-    // Why: Over a class cap the oldest burning effect must be found among the live ones; an
-    // age-ordered index per class would be a second structure to keep in step with the pool.
-    // What: A linear scan over the pool's fixed slots, only for a spawn over its class cap.
-    // Trade-off: O(capacity) per such spawn (2 048 slots, a few microseconds) in exchange for
-    // no extra state and no allocation.
+    // Why: Over a class cap the oldest burning effect must be found among the live ones; a scan
+    // of the pool's 6 144 slots per such spawn was a share of the spawn path (B-137).
+    // What: The class's [`OldestHeap`], whose entries that stopped burning are dropped as they
+    // reach the top.
+    // Trade-off: A heap per class kept in step with the pool in exchange for O(log n) per
+    // spawn over the cap.
     fn retire_oldest_fire(&mut self, class: EffectClass, now: f64) -> bool {
-        let oldest = self
-            .pool
-            .iter()
-            .filter(|(_, instance)| {
-                instance.class == class
-                    && !instance.held
-                    && instance.has_detail
-                    && instance.detail_retired_at.is_none()
-                    && now < instance.fire_end
-            })
-            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
-            .map(|(index, _)| index);
-        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+        let burning = |instance: &EffectInstance| {
+            instance.class == class
+                && !instance.held
+                && instance.has_detail
+                && instance.detail_retired_at.is_none()
+                && now < instance.fire_end
+        };
+        let oldest = self.indices.fire[class.index()].oldest(&self.pool, burning);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                oldest.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_fire(&self.pool, class, now),
+                "the class heap chooses as the pool scan did"
+            );
+            super::indices::tests::compared(1);
+        }
+        let Some(instance) = oldest.and_then(|handle| self.pool.get_mut(handle)) else {
             return false;
         };
         instance.detail_retired_at = Some(now);
@@ -734,22 +837,26 @@ impl EffectRuntime {
     /// Retires the oldest lasting marks still holding decal slots: they erode out over
     /// [`MARK_RETIRE_SECS`] and then give their slots back. Returns whether there were any.
     // PERFORMANCE RATIONALE:
-    // Why: Making room needs the oldest effect holding decal slots; an age-ordered index
-    // would be a second structure to keep in step with the pool.
-    // What: A linear scan over the pool's fixed slots, only while the decal pool is above its
-    // pressure mark.
-    // Trade-off: O(capacity) per retirement (2 048 slots, a few microseconds), rare below the
-    // stress load, in exchange for no extra state and no allocation.
+    // Why: Making room needs the oldest effect holding decal slots; a scan of the pool's 6 144
+    // slots per retirement ran on every spawn above the pressure mark at 200 splashes a second.
+    // What: The marks' [`OldestHeap`], whose entries that gave their slots up or began eroding
+    // are dropped as they reach the top.
+    // Trade-off: A heap kept in step with the pool in exchange for O(log n) per retirement.
     fn retire_oldest_mark(&mut self, now: f64) -> bool {
-        let oldest = self
-            .pool
-            .iter()
-            .filter(|(_, instance)| {
-                instance.decal_slots > 0 && instance.marks_retired_at.is_none() && !instance.held
-            })
-            .min_by(|(_, a), (_, b)| a.birth.total_cmp(&b.birth))
-            .map(|(index, _)| index);
-        let Some(instance) = oldest.and_then(|index| self.pool.slot_mut(index)) else {
+        let holding = |instance: &EffectInstance| {
+            instance.decal_slots > 0 && instance.marks_retired_at.is_none() && !instance.held
+        };
+        let oldest = self.indices.marks.oldest(&self.pool, holding);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                oldest.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_mark(&self.pool),
+                "the marks heap chooses as the pool scan did"
+            );
+            super::indices::tests::compared(2);
+        }
+        let Some(instance) = oldest.and_then(|handle| self.pool.get_mut(handle)) else {
             return false;
         };
         instance.marks_retired_at = Some(now);
@@ -758,20 +865,33 @@ impl EffectRuntime {
         true
     }
 
-    /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it.
+    /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it: the
+    /// choice of `budget::retirement_candidate` (the oldest by birth, the lowest slot among
+    /// equal births), from the detail heap.
+    // PERFORMANCE RATIONALE:
+    // Why: Every frame whose detail overflowed scanned the pool's 6 144 slots for the oldest
+    // detail (B-137).
+    // What: The detail [`OldestHeap`], whose entries that retired their detail are dropped as
+    // they reach the top.
+    // Trade-off: A heap kept in step with the pool in exchange for O(log n) per retirement.
     fn retire_one(&mut self, now: f64) {
-        let candidate = retirement_candidate(self.pool.iter().map(|(index, instance)| {
-            (
-                index,
-                RetireCandidate {
-                    class: instance.class,
-                    birth: instance.birth,
-                    detail_retired: instance.detail_retired_at.is_some(),
-                    has_detail: instance.has_detail && !instance.held,
-                },
-            )
-        }));
-        if let Some(instance) = candidate.and_then(|index| self.pool.slot_mut(index)) {
+        let drawing = |instance: &EffectInstance| {
+            instance.class != EffectClass::Major
+                && instance.has_detail
+                && !instance.held
+                && instance.detail_retired_at.is_none()
+        };
+        let candidate = self.indices.detail.oldest(&self.pool, drawing);
+        #[cfg(test)]
+        {
+            assert_eq!(
+                candidate.map(|handle| handle.index as usize),
+                super::indices::tests::oracle_oldest_detail(&self.pool),
+                "the detail heap chooses as retirement_candidate did"
+            );
+            super::indices::tests::compared(3);
+        }
+        if let Some(instance) = candidate.and_then(|handle| self.pool.get_mut(handle)) {
             instance.detail_retired_at = Some(now);
             self.stats.retired += 1;
         }
@@ -2666,7 +2786,7 @@ mod tests {
             .iter()
             .enumerate()
             .find(|(_, effect)| {
-                effect.event == super::super::catalog::schema::EventKind::Splash
+                effect.event == EventKind::Splash
                     && effect.layers.iter().all(|layer| !layer.held)
                     && effect
                         .layers

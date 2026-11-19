@@ -32,6 +32,7 @@ pub mod budget;
 pub mod catalog;
 pub mod curve;
 pub mod front;
+pub mod indices;
 pub mod instances;
 pub mod lab;
 pub mod ledger;
