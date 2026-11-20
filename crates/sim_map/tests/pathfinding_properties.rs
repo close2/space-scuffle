@@ -27,6 +27,13 @@
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 #[path = "support/draw.rs"]
 mod draw;
 use draw::draw_index;
@@ -179,29 +186,44 @@ proptest! {
     /// Every returned path joins its endpoints through legal segments, and reporting is honest.
     /// A start where the disc does not fit may always be left (plan D-3), so its first leg is
     /// held to the predicate only when the disc fits at the start. A counted fallback to portal
-    /// midpoints is exempt only from a wedged start (plan `2026-11-19-funnel-fallbacks` §9; these
-    /// requests know every structure, so B-146's partial knowledge does not arise), and each
-    /// exempted case is counted in the test's output.
+    /// midpoints is exempt only from a wedged start (plan `2026-11-19-funnel-fallbacks` §9), and
+    /// each exempted case is counted in the test's output. Half the requests know only some of the
+    /// map's seeded structures, each known or not as a whole (plan
+    /// `2026-11-19-partial-knowledge-funnel` WP4: free portal vertices are pulled as points, so
+    /// partial knowledge needs no exemption).
     #[test]
     fn funnel_paths_are_legal_and_no_shorter_than_a_straight_line(
         blocked in obstacle_mask(8),
+        structures in vec((0..SIDE - 3, 0..SIDE - 3, 1_u8..4, proptest::bool::ANY), 0..5),
+        partial in proptest::bool::ANY,
         start in (0..SIDE, 0..SIDE),
         goal in (0..SIDE, 0..SIDE),
         tier_index in 0_u8..3,
     ) {
-        let map = build_map(&blocked)?;
+        let mut map = build_map(&blocked)?;
+        let mut known = vec![false; CELLS];
+        for (id, &(x, y, size, is_known)) in (60_000_u32..).zip(&structures) {
+            let footprint = sim_map::StructureFootprint::square(size, size);
+            // A refused placement leaves the map as it was.
+            if map.place_structure(sim_types::EntityId(id), (x, y), footprint).is_ok() && is_known {
+                for cy in y..y + u32::from(size) {
+                    for cx in x..x + u32::from(size) {
+                        known[(cy * SIDE + cx) as usize] = true;
+                    }
+                }
+            }
+        }
         let mut pathfinder = Pathfinder::new(&map);
-        let request = PathRequest {
-            start: centre(start.0, start.1),
-            goal: centre(goal.0, goal.1),
-            radius: tier(tier_index),
+        let request = PathRequestWithVision {
+            known_structures: partial.then_some(known.as_slice()),
+            ..mesh_request(centre(start.0, start.1), centre(goal.0, goal.1), tier(tier_index))
         };
         let fallbacks = pathfinder.mesh_funnel_fallbacks();
-        let found = pathfinder.find_path(&map, &request);
+        let found = pathfinder.find_path_with_vision(&map, &request);
         // A counted fallback through portal midpoints (plan D-6, R-2) is exempt from legality.
         let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
         let start_fits =
-            pathfinder.segment_is_passable(&map, &request.into(), request.start, request.start);
+            pathfinder.segment_is_passable(&map, &request, request.start, request.start);
         prop_assert!(!fell_back || !start_fits, "fallback from a fitting start: {:?}", request);
         if fell_back {
             let exempted = WEDGED_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -217,18 +239,18 @@ proptest! {
             // (9, 12), radius 0.625).
             let centre_only = PathRequestWithVision {
                 radius: SimScalar::ZERO,
-                ..request.into()
+                ..request
             };
             let mut wedged = true;
             let mut measured = SimScalar::ZERO;
             for pair in path.waypoints.windows(2) {
                 measured += pair[0].distance(pair[1]);
                 wedged = wedged
-                    && !pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[0]);
+                    && !pathfinder.segment_is_passable(&map, &request, pair[0], pair[0]);
                 let legal = if wedged {
                     pathfinder.segment_is_passable(&map, &centre_only, pair[0], pair[1])
                 } else {
-                    pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1])
+                    pathfinder.segment_is_passable(&map, &request, pair[0], pair[1])
                 };
                 prop_assert!(fell_back || legal, "illegal segment {:?} (wedged {})", pair, wedged);
             }
@@ -863,4 +885,124 @@ proptest! {
             );
         }
     }
+}
+
+/// One draw of the partial-knowledge layout corpus's generator (`SplitMix64`), below `bound`.
+fn layout_draw(state: &mut u64, bound: u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    z % bound
+}
+
+/// The `Place` sizes of the 5.0.14 footprints the layout corpus draws, as full squares.
+const LAYOUT_SIZES: [(u8, u8); 7] = [(5, 5), (3, 3), (3, 3), (2, 2), (2, 2), (1, 1), (3, 2)];
+
+/// The shipped terrain radii, in sixteenths of a cell.
+const LAYOUT_RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
+
+/// Plan `2026-11-19-partial-knowledge-funnel` WP4 (§4.4's corpus at a test's scale): 40 seeded
+/// layouts of the default arena with 2 to 13 full-square structures, each known or not as a
+/// whole, and 16 requests each between cells where the disc fits. The oracle runs on a map that
+/// holds only the known structures, which is the free space of the request. Every route from a
+/// fitting start is legal with no fallback, none is shorter than the oracle's by more than 10⁻³,
+/// and at least 95 % are within 1 % of it.
+///
+/// The oracle runs at `r - 10⁻⁵`, not at `r`: its float tolerance misses a passage exactly `2r`
+/// wide (plan `2026-11-19-funnel-fallbacks` §4.3), and a hair less finds it. Routes keep the
+/// corner margin, so they are compared with this margin-free oracle from below and by share.
+#[test]
+fn partial_knowledge_routes_agree_with_the_oracle() {
+    let (mut within, mut total, mut worst) = (0u32, 0u32, 1.0f64);
+    for layout in 0..40_u64 {
+        let mut state = layout.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5eed;
+        let mut map = arena::default_arena();
+        let mut known_map = arena::default_arena();
+        let count = 2 + u32::try_from(layout % 12).unwrap_or(0);
+        let mut placed = 0;
+        let mut known = vec![false; (map.width() * map.height()) as usize];
+        for attempt in 0..count * 6 {
+            if placed == count {
+                break;
+            }
+            let (width, height) = LAYOUT_SIZES[layout_draw(&mut state, 7) as usize];
+            let cell = (
+                layout_draw(&mut state, u64::from(map.width() - 5)) as u32,
+                layout_draw(&mut state, u64::from(map.height() - 5)) as u32,
+            );
+            let is_known = layout_draw(&mut state, 2) == 0;
+            let footprint = sim_map::StructureFootprint::square(width, height);
+            let id = sim_types::EntityId(40_000 + attempt);
+            if map.place_structure(id, cell, footprint).is_ok() {
+                placed += 1;
+                if is_known {
+                    assert!(known_map.place_structure(id, cell, footprint).is_ok());
+                    for y in cell.1..cell.1 + u32::from(height) {
+                        for x in cell.0..cell.0 + u32::from(width) {
+                            known[(y * map.width() + x) as usize] = true;
+                        }
+                    }
+                }
+            }
+        }
+        let mut pathfinder = Pathfinder::new(&map);
+        for _ in 0..16 {
+            let mut cell = || {
+                let x = layout_draw(&mut state, u64::from(map.width())) as u32;
+                let y = layout_draw(&mut state, u64::from(map.height())) as u32;
+                map.cell_to_world_center(x, y).ok()
+            };
+            let (Some(start), Some(goal)) = (cell(), cell()) else {
+                continue;
+            };
+            let sixteenths = LAYOUT_RADII[layout_draw(&mut state, 9) as usize];
+            let request = PathRequestWithVision {
+                known_structures: Some(&known),
+                ..mesh_request(start, goal, SimScalar::from_raw(sixteenths << 28))
+            };
+            let fits = |p: SimVec2, pathfinder: &mut Pathfinder| {
+                pathfinder.segment_is_passable(&map, &request, p, p)
+            };
+            if !fits(start, &mut pathfinder) || !fits(goal, &mut pathfinder) {
+                continue;
+            }
+            let Ok(route) = pathfinder.find_route_mesh(&map, &request) else {
+                continue;
+            };
+            assert!(!route.fallback, "layout {layout}: fallback {request:?}");
+            assert!(route_is_legal(
+                &mut pathfinder,
+                &map,
+                &request,
+                &route.waypoints
+            ));
+            let radius = f64::from(request.radius.to_f32());
+            let oracle = oracle::Oracle::new(oracle::walls_of(&known_map), radius - 1e-5);
+            let Some(reference) = oracle.shortest(to_f64(start), to_f64(goal)) else {
+                continue;
+            };
+            if reference <= 0.0 {
+                continue;
+            }
+            let length = f64::from(route.total_length.to_f32());
+            assert!(
+                length >= reference - 1e-3,
+                "layout {layout}: {length} shorter than the oracle's {reference}: {request:?}"
+            );
+            let ratio = length / reference;
+            total += 1;
+            within += u32::from(ratio <= 1.01);
+            worst = worst.max(ratio);
+        }
+    }
+    eprintln!(
+        "partial knowledge against the oracle: {within}/{total} within 1 %, worst {worst:.4}"
+    );
+    assert!(total >= 300, "only {total} routes compared");
+    assert!(
+        f64::from(within) >= 0.95 * f64::from(total),
+        "only {within}/{total} within 1 %"
+    );
 }

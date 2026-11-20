@@ -267,3 +267,15 @@ within 0.3 % on every scenario (showcase +0.29 %).
 
 **Tests.** N4 (15.510), `golden_corpora_fall_back_only_from_wedged_starts` (0 and 0) and the unit test
 `the_clamp_clears_every_disc` (200 seeded ends at each of the nine shipped radii) pass.
+
+## WP4: tests
+
+- `PATH_GOLDEN` and `CONTOUR_PATH_GOLDEN` were re-recorded in WP2 and WP3 with proof headers; nothing to re-record.
+- `funnel_paths_are_legal_and_no_shorter_than_a_straight_line` now places up to four seeded full-square structures
+  and, in half its cases, routes with a known mask that knows each structure or not as a whole. Its B-146 exemption
+  is gone: a fallback is exempt only from a wedged start. 64 cases pass.
+- `partial_knowledge_routes_agree_with_the_oracle`: §4.4's generator at 40 layouts (489 routes from fitting starts),
+  the oracle on the known-only map at `r − 10⁻⁵` (reason in its doc comment). 485 of 489 within 1.01 (99.2 %), worst
+  1.1343 (B-149's TA* residual, reported, not asserted against `MESH_RATIO_BOUND`), none shorter, no fallback. About
+  15 s in a debug build.
+- `crates/gate/suites.ron` needs no change: both tests are in an existing target.
