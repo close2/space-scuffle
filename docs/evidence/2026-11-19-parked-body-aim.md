@@ -132,3 +132,22 @@ movement memory is reset, and the step `(−0.0475, 0.0546)` continues the walk'
 steps forward `(0.0806, 0.0018)`. The probe labels it R-F because the tick-229 step carries no route tag (it comes
 from neither the walk nor the chase branch), so the route's length differs between the two ticks. It is a walk that ends when its target dies, not an aim change; it
 stays under B-145 as recorded, its cause now named.
+
+## WP3: bookkeeping and the storyboard
+
+- `DESIGN.md`: B-145 fixed for the aim flip with D-1's figures and the Viking trace; the Movement and pathfinding
+  row gains "and keeps rounding it while the corner stays occupied" and `movement_contact_tests.rs` in its test
+  files; B-103's showcase figures restated from WP2's probe (before D-1 in brackets): R-B 22 (31), R-D 20 (24),
+  R-C 10 (37), the walk's start retreat 51 (32), walk then forward 14 (10), R-E 14 (26); default seed 8 / 5
+  reversals, 132 over nine seeds.
+- `docs/plans/README.md`: the plan's row `Done` with its commits.
+
+**Storyboard** (the default seed's timeline moved: player 1 wins at 2,622, not 1,935; from `impl/route/units.csv`
+the viewer's last unit dies at tick 663 (622 before), its workers at 1,059 and 1,102 (1,007 and 1,033), and three
+of player 1's pulse bots survive (five before)). The `battle` take rendered on radv (RX 580, Mesa 25.0.7, one
+`with-gpu-lock` hold round `xvfb-run` with the environment `showcase render` sets, 182 s, revision `1f129416`;
+manifest `~/scratch/aim-flip/wp3/takes/battle.manifest.ron`): `advance` 251 to 305 (first shot), `clash` 305 to
+680, past the lane fight's last death (663), `march` 683 to 973 at 4x, ending on combat at the viewer's base, and
+`assault` from 973 at 2x (to about 1,373) over both workers' deaths. Every scene still covers its beat; no scene
+length changed, and the storyboard's comment gains the re-check. The hall's fall (2,622) is after the take, as the
+fall at 1,935 was. `showcase_storyboard_tests` and `showcase_tests` pass.

@@ -72,6 +72,13 @@
 // Render-checked on radv (revision c8cb9321): `clash` runs from tick 305 to 680, `march` ends on
 // combat at the viewer's base at tick 933, and `assault` covers both worker deaths; no scene
 // length changed. Scene ticks are in docs/evidence/2026-11-19-crowd-edge-steering-2.md (WP4).
+// Re-checked for plan 2026-11-19-parked-body-aim (B-145: a unit that has begun to round a friend on
+// its corner keeps rounding it when the friend walks). The lane fight still goes to player 1: the
+// viewer's last unit dies at tick 663, the enemy's three surviving pulse bots kill its workers
+// (ticks 1,059 and 1,102) and fire on its hall until it falls at tick 2,622. Render-checked on radv
+// (revision 1f129416): `clash` runs from tick 305 to 680, `march` ends on combat at the viewer's base
+// at tick 973, and `assault` (to about tick 1,373) covers both worker deaths; no scene length
+// changed. Scene ticks are in docs/evidence/2026-11-19-parked-body-aim.md (WP3).
 // Effects take added by plan 2026-11-09-effect-visualization WP14 (Amendment 31): a second battle
 // (scenarios/showcase_effects.ron), so the `battle` take's scenario and outcome are its own.
 // Player 0's siege line anchors and burrows where it spawns, in a row on the near side of its hall
