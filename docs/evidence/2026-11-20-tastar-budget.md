@@ -266,3 +266,53 @@ The showcase did not move, so no storyboard check is needed.
 
 The scratch trees `tab-base`, `tab-cand` and `tab-measure` and their target directories are removed; the measurement
 patch, scripts and results stay under `~/scratch/tab/impl/`.
+
+## Amendment 1: the G-1 trace and the measurement set
+
+The package gate on `4c1f2f76` failed on `group_routing_tests::g1_the_q0079_split_closes`. The trace, copied from
+`~/scratch/tab/impl/g1-trace.md`:
+
+Tree: tastar-budget-plan 4c1f2f76, measurement copy with the rule switches (scratch, removed).
+
+Bisection (release): all rules on FAILED; TAB_OFF_D1 ok; TAB_OFF_D2 FAILED; TAB_OFF_D3 FAILED; all off ok. D-1 alone causes it.
+
+What changes: player 1's group lane (leader EntityId(22), r 0.375, (58.5, 53.5) -> (5.5, 5.5), vision-aware request).
+- main: first pass, legal inscribed pull, 92.419, east of the plateau (x 38.4 at y 26..35), word [-1].
+- D-1: first pass, legal inscribed pull, 92.061 (-0.39 %), west of the plateau (x 25.6 at y 26..35), word [] (the
+  plateau's cut hangs below it, so the west side crosses no cut; player 0's lane is also west with word []).
+- main does not find the west channel even with no budget and 255 visits per state; TAB_STAT finds no node of the
+  west channel above its pull under the combined bound, so main's bound is admissible there and the channel is lost
+  to the visit cap among near-equal bounds (B-149's mechanism; B-154).
+Effect: the whole group still takes one lane (no split, every member's first route has the lane's word), but it is the
+west lane, player 0's. The armies meet head-on west of the plateau; after 600 ticks 4 of player 1's 10 are alive near
+(25, 37) and none has crossed y = 32. On main all 10 cross y = 32 on the east side.
+
+Failing assertions: line 779 `!lane.word.is_empty()` ("the lane passes a side of the plateau") and, past it, line ~809
+"every attacker crossed y = 32". The one-side and lane-word assertions would hold.
+
+Classification: rule-caused (D-1 finds a shorter legal route), not a defect. Q0079's intent (one lane for the group) is
+kept; the test encodes main's channel choice (the east lane, which avoids player 0's army).
+
+Proposed amendment (adopted as plan Amendment 1, in its first form): G-1 is a fixture of the pre-Amendment-5 showcase order whose expected side came
+from TA*'s choice between two lanes 0.4 % apart. Restate G-1 test-only, with this trace: assert the lane exists and
+every member's first route has its word, and that every member that crosses y = 32 within 600 ticks crosses on the
+lane's side (one side); drop "the word is non-empty" and "all ten cross" (which require the east lane), or move the
+crossing check to a fixture whose two lanes are not near-equal. Alternatively keep G-1 as is and pin player 1's
+target so the east lane is clearly shorter. No rule change proposed.
+
+Other suites: `cargo test --release -p sim_core -p sim_map --no-fail-fast` under the gate lock: 101 targets, only
+group_routing_tests fails (11 passed, 1 failed). Log: ~/scratch/tab/impl/suites-release.log.
+
+**As restated (plan Amendment 1).** G-1 asserts, test-only, Q0079's intent: the group has one lane, every member's
+first route carries the lane's word, and every member that crosses y = 32 within 600 ticks crosses on one side. The
+non-empty word and the ten crossings are dropped. With the branch's rules the group takes the west lane; G-1 and the
+other eleven tests of `group_routing_tests` pass.
+
+**The measurement set gains the group-routing fixtures.** `sim_core`'s `group_routing_tests` and its scenarios (the
+showcase with the pre-Amendment-5 player 1 order of G-1, the canyon script, the flat arena, the island fixture) join
+this plan's battle set, and the stop rules that later plans copy from it whenever a plan touches TA* or the funnel:
+the battle set of D-8 covered only the shipped showcase's mirrored targets, which is why the change was not seen.
+Plan `2026-11-09-sc2-pathfinding` Amendment 8 points here.
+
+**Whole suites** (`cargo test --release --no-fail-fast -p sim_core -p sim_map`, under `flock ~/scratch/gate.lock`):
+exit 0, 101 test targets, 1,288 passed, 0 failed, 3 ignored (the three B-103 tests ignored on `main`).

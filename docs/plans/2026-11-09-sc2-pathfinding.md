@@ -932,3 +932,7 @@ B-113 (Amendment 6, open) is fixed by plan [`2026-11-11-contact-and-missiles`](2
 D-5's anytime loop no longer stops on `NAV_TA_STAR_EXTRA_EXPANSIONS`: plan
 [`2026-11-20-tastar-budget`](2026-11-20-tastar-budget.md) (B-149) removes the budget and runs S11's own termination
 (no open node with `f` below the incumbent), bounded by the visit cap, and adds a channel-geodesic lower bound to `g`.
+
+Plan `2026-11-20-tastar-budget` Amendment 1 adds `sim_core`'s `group_routing_tests` and its scenarios to the
+measurement set and stop rules of any plan that touches TA* or the funnel: the G-1 lane follows TA*'s channel choice,
+which the shipped showcase's battle set does not exercise.
