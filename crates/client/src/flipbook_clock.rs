@@ -41,8 +41,8 @@
 //!   unchanged, and it advances by game time at every battle speed. It depends on ticks only, so
 //!   a capture that steps one tick per frame is reproducible.
 //! - A battle bubble's lanes depend on its presented record and its [`FlipbookPhase`] only, never
-//!   on the clock: Attack, Constructing and morph lanes come from the record alone, and a free
-//!   loop's lanes are constant while its action lasts.
+//!   on the clock: Attack (with or without a swing), Constructing and morph lanes come from the
+//!   record alone, and a free loop's lanes are constant while its action lasts.
 //! - The lanes constructors guarantee `count >= 1`, `period >= 1`, `offset < period` and
 //!   `period · count < 2³²`, so the arithmetic of a constructed lane never wraps except in the clock.
 
@@ -728,6 +728,7 @@ pub fn slice_period(meta: &FlipbookAtlasMeta, slice: &ActionSlice) -> u32 {
 /// | `phase.action` | lanes |
 /// |---|---|
 /// | `Attack` with a swing | a loop over the swing's period, aligned so the slice's first layer shows at the release tick |
+/// | `Attack` without a swing | a loop over the slice at its clip speed from clock time 0, as [`scene_lanes`] plays `Attack` (B-156) |
 /// | `Constructing` | the layer `start + min(⌊progress · count⌋, count − 1)` of the build progress |
 /// | any other | the slice at its clip speed from `phase.since`: a loop, or once as the manifest says |
 /// | no atlas or no slice | layer 0 |
@@ -764,6 +765,10 @@ pub fn battle_lanes(
                 slice.looping,
             ))
         }
+        // B-156: no swing publishes no release tick, and the tick the client saw the action
+        // begin depends on which ticks it presented. The record alone gives the scene's
+        // sustained swing on the shared clock: the slice at its clip speed, looped from clock 0.
+        (AnimState::Attack, None) => scene_lanes(Some(meta), AnimState::Attack, None, 0),
         (AnimState::Constructing, _) => construction_lanes(slice, record.build_or_queue_progress),
         _ => clip_lanes(meta, slice, clock_at_tick(i64::from(phase.since.0))),
     }
@@ -1559,6 +1564,27 @@ mod tests {
         let late = lanes_at(&record(AnimState::Attack, Some(swing(2))), 119, 0);
         assert_eq!(flipbook_layer(119 * 1024, &late), 20);
         assert_ne!(late, lanes);
+    }
+
+    #[test]
+    fn an_attack_without_a_swing_takes_its_lanes_from_the_record_alone() {
+        // B-156: a published Attack with no swing (a unit that walked through its swing and
+        // stopped) must not take its origin from the tick the client saw it start, or one-tick
+        // and five-tick frame grouping draw different lanes from identical records.
+        let attack = record(AnimState::Attack, None);
+        let lanes = lanes_at(&attack, 689, 674);
+        for (tick, since) in [(689, 679), (689, 689), (700, 674), (12_345, 12_000)] {
+            assert_eq!(lanes_at(&attack, tick, since), lanes, "at {tick} since {since}");
+        }
+        // It is the scene's sustained swing on the shared clock: the slice at its clip speed,
+        // looped from clock time 0, without blending for the fixture's one-shot slice.
+        assert_eq!(
+            lanes,
+            scene_lanes(Some(&atlas()), AnimState::Attack, None, 0)
+                .expect("invariant: the fixture's Attack slice is playable")
+        );
+        assert_eq!(lanes.mode, FlipbookMode::Loop as u32);
+        assert_eq!(flipbook_layer(0, &lanes), 20);
     }
 
     #[test]
