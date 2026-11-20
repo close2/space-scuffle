@@ -993,3 +993,33 @@ The miss is accepted for this package, and the cost is registered as **B-155**, 
 as its direction. That is an optimisation with no behaviour change, for its own short plan. The reversal figure
 reported under Amendment 1 (175 against 132, 34 within 1.5 of a node) is accepted as rule-caused, with B-152 as
 its register entry.
+
+## Amendment 4 (orchestrator, 2026-11-20): the three client failures that are not sites
+
+The package gate's five failing client targets were traced (on `aa6f2a29` and `resource-footprints-wp7-wip`).
+Three of them were sites on moved nodes and are fixed. The other three are decided here.
+
+1. **`battle_flipbook_tests::frame_grouping_does_not_change_attack`: a client defect the new battle exposes. It is
+   registered as B-156 and fixed in this package, option (b).**
+   - An `Attack` record without a swing takes its flipbook lanes from the tick the client observed it start. So a
+     unit that walks during its swing and then publishes `Attack` with no swing gets different lane origins at 1-tick
+     and 5-tick frame grouping, with identical simulation records (entity 24, ticks 674 to 689).
+   - The test states the right property: frame grouping must not change what is drawn. It is not weakened.
+   - The client keeps the last swing's lanes for an `Attack` without a swing, or derives the origin from published
+     records only, whichever the flipbook plan's D-5 supports. Then the lanes depend on the records, not on which
+     ticks were observed.
+   - This is a presentation change only. It is recorded with before and after evidence, and the other flipbook tests
+     must stay green.
+2. **`area_link_gpu_tests`.**
+   - The depth-first spot search from `resource-footprints-wp7-wip` is adopted. It is test support and finds a full
+     spot set where the greedy search could not.
+   - The fungal-growth child is re-staged so that no viewer unit's sight crosses the measured fog edge, with the
+     edge and the sight radii stated in the test. Its thresholds are unchanged.
+3. **`weapon_battle_gpu_tests::weapon_looks_fire_in_a_staged_battle`: a staging change first.**
+   - Wave 6's spots are chosen away from the re-laid nodes and the hall, on open ground like the other waves. The
+     bar (twice the blank plus the margin) is unchanged.
+   - If needle_volley + needle_hit still misses on open ground, stop. That would be a look too faint for this
+     shooter: a media item to register, not a test change.
+
+After these, run every client and `client_diagnostics` target that loads the shipped maps or stages a battle, one
+at a time, as asked before. All must pass.
