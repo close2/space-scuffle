@@ -373,3 +373,32 @@ sum on 0.1 % to 0.2 % of adversarial crowds), but the amendment's rule is binary
   set (K = 20 on the derivation set; 21 gives 2 in 1,000 on the confirmation set).
 - **Or more crowds.** Derive on 10,000 crowds and confirm on 10,000 fresh ones.
 - Either way D-α's 5 % stays as it is (Amendment 1, 2 (c)), and T7 bounds the overlap actually seen on the families.
+
+## 4. WP2 under Amendment 2: K = 21, confirmed
+
+Amendment 2 (`f0f5694d`) restates C-3 as a rate: at most 1 crowd in 1,000 ends a solve with a friendly moving pair
+above 5 %, and none ever above 8 %. K is the smallest count with at most 2 of the 2,000 seen crowds above 5 % and none
+above 8 %, confirmed once on unseen crowds.
+
+- **Derivation** on seeds 1 to 1,000 and 1,000,001 to 1,001,000 (the Verlet pair list of §3):
+
+  | K | 18 | 19 | 20 | 21 |
+  |---|---:|---:|---:|---:|
+  | Crowds of 2,000 above 5 % | 27 | 14 | 7 | 2 |
+  | Worst overlap | 0.068 | 0.065 | 0.063 | 0.060 |
+
+  **K = 21** (unchanged from §3).
+- **Confirmation**, once, on seeds 2,000,001 to 2,001,000 at K = 21: **0 crowds above 5 %, worst 4.95 %**. It holds.
+- The test `movement::solver::tests::k_iterations_bring_injected_overlap_below_the_moving_bound` is the derivation:
+  it requires the rule on the seen crowds, that K − 1 misses it, and the confirmation figures. The closed-form test
+  (`contact_solver_tests`) keeps K at least `⌈ln(δ_move / ρ) / ln(5/6)⌉` = 14.
+
+### 4.1 Schema 33 and the legacy pipeline
+
+- `golden_replay.ron`, `golden_replay_orders.ron` and `DEFAULT_SANDBOX_CHECKSUM` re-recorded for schema 33. Every
+  checkpoint changed; no behaviour did. Proof: a scratch build (`~/scratch/contact-solver/wp2-wip/schema32-proof.diff`)
+  that leaves `side_partner`, `side_left` and `slot` unhashed and holds the schema at 32 reproduces the previous
+  checksums at every checkpoint of both replays and the previous sandbox checksum, native debug and release.
+- The new list agrees on native debug and release and on `wasm32-wasip1` release and debug (runner
+  `wasmtime --dir=<worktree>`).
+- The harness's rows of seeds 1 to 20 of every scene family are byte-identical to WP1's with the WP2 code.

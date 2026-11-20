@@ -20,11 +20,12 @@
 // `docs/questions/closed/0052-sanctioned-sc2-deviations.md`).
 // - `pipeline`: the migration switch, Legacy (today's local movement) or Solver (intent steering
 //   and the contact solver). Removed when the legacy pipeline is deleted (the plan's WP7).
-// - `iterations` (C-3, plan Amendment 1): Jacobi iterations of the contact solver per tick: the
-//   smallest count after which no friendly pair of 1,000 generated crowds exceeds the moving bound,
-//   each crowd a 9 x 9 hexagonal crowd standing in contact with every body stepped by up to the
-//   catalog's worst injection rho (two jet_jumper bodies: (s_a + s_b) / (r_a + r_b) = 0.56, s the
-//   top speed times the largest speed multiplier); confirmed on 1,000 fresh crowds. The test
+// - `iterations` (C-3, plan Amendments 1 and 2): Jacobi iterations of the contact solver per tick:
+//   the smallest count with at most 2 of 2,000 generated crowds ending with a friendly pair above
+//   the moving bound and none above 8 %, each crowd a 9 x 9 hexagonal crowd standing in contact with
+//   every body stepped by up to the catalog's worst injection rho (two jet_jumper bodies:
+//   (s_a + s_b) / (r_a + r_b) = 0.56, s the top speed times the largest speed multiplier);
+//   confirmed once on 1,000 unseen crowds (none above 5 %, worst 4.95 %). The test
 //   `k_iterations_bring_injected_overlap_below_the_moving_bound` is its derivation. A second test
 //   requires it to stay at least the closed-form bound ceil(ln(moving / rho) / ln(5/6)) (14).
 // - `dead_band_permille` (C-4, D-alpha at rest): an overlap of at most this many thousandths of

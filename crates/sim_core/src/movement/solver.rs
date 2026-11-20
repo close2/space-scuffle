@@ -1009,14 +1009,34 @@ mod tests {
             .fold(0.0_f64, f64::max))
     }
 
-    /// The crowds K is derived on (plan Amendment 1, 2 (b)).
-    const DERIVATION_SEEDS: std::ops::RangeInclusive<u64> = 1..=1000;
-    /// The fresh, disjoint crowds that confirm K, never used to choose it.
-    const CONFIRMATION_SEEDS: std::ops::RangeInclusive<u64> = 1_000_001..=1_001_000;
+    /// The crowds K is derived on (plan Amendment 2, 2): the two sets measured under Amendment 1.
+    const DERIVATION_SEEDS: [std::ops::RangeInclusive<u64>; 2] = [1..=1000, 1_000_001..=1_001_000];
+    /// The unseen crowds that confirm K once (Amendment 2, 3).
+    const CONFIRMATION_SEEDS: std::ops::RangeInclusive<u64> = 2_000_001..=2_001_000;
+    /// D-α's moving bound and C-3's hard cap, shares of the radius sum (Amendment 2, 1).
+    const MOVING_BOUND: f64 = 0.05;
+    const HARD_CAP: f64 = 0.08;
 
-    /// C-3 (plan Amendment 1, 2 (b)): the shipped `contact.iterations` is the smallest count after
-    /// which no friendly pair of any derivation crowd ([`injected_crowd`]) exceeds `δ_move` (5 %):
-    /// it holds there and one iteration fewer does not; and it holds on the confirmation crowds.
+    /// Over the crowds of `seeds` solved with `iterations`: how many end above the moving bound,
+    /// and the worst overlap.
+    fn tally(
+        world: &mut crate::SimWorld,
+        seeds: impl Iterator<Item = u64>,
+        iterations: u8,
+    ) -> Result<(u32, f64), Box<dyn std::error::Error>> {
+        let (mut above, mut worst) = (0_u32, 0.0_f64);
+        for seed in seeds {
+            let w = worst_after(world, &injected_crowd(seed)?, iterations)?;
+            above += u32::from(w > MOVING_BOUND);
+            worst = worst.max(w);
+        }
+        Ok((above, worst))
+    }
+
+    /// C-3 as a rate (plan Amendment 2): the shipped `contact.iterations` is the smallest count with
+    /// at most 2 of the 2,000 derivation crowds ([`injected_crowd`]) above 5 % and none above 8 %
+    /// (one iteration fewer misses that), and on the 1,000 confirmation crowds at most 1 ends above
+    /// 5 % and none above 8 %.
     #[test]
     fn k_iterations_bring_injected_overlap_below_the_moving_bound(
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1026,42 +1046,34 @@ mod tests {
             .movement_rules()
             .contact()
             .iterations;
-        let mut fewer_fails = false;
-        for seed in DERIVATION_SEEDS {
-            let bodies = injected_crowd(seed)?;
-            let worst = worst_after(&mut world, &bodies, k)?;
-            assert!(
-                worst <= 0.05,
-                "derivation seed {seed}: worst overlap {worst:.4}"
-            );
-            fewer_fails |= worst_after(&mut world, &bodies, k - 1)? > 0.05;
-        }
-        assert!(fewer_fails, "K = {k} is not the smallest passing count");
-        for seed in CONFIRMATION_SEEDS {
-            let worst = worst_after(&mut world, &injected_crowd(seed)?, k)?;
-            assert!(
-                worst <= 0.05,
-                "confirmation seed {seed}: worst overlap {worst:.4}"
-            );
-        }
+        let seen = || DERIVATION_SEEDS.into_iter().flatten();
+        let (above, worst) = tally(&mut world, seen(), k)?;
+        assert!(
+            above <= 2 && worst <= HARD_CAP,
+            "K = {k}: {above} above 5 %, worst {worst:.4}"
+        );
+        let (fewer_above, fewer_worst) = tally(&mut world, seen(), k - 1)?;
+        assert!(
+            fewer_above > 2 || fewer_worst > HARD_CAP,
+            "K = {k} is not the smallest: K - 1 gives {fewer_above}, worst {fewer_worst:.4}"
+        );
+        let (above, worst) = tally(&mut world, CONFIRMATION_SEEDS, k)?;
+        assert!(
+            above <= 1 && worst <= HARD_CAP,
+            "confirmation: {above} above 5 %, worst {worst:.4}"
+        );
         Ok(())
     }
 
-    /// Scratch sweep of K over the derivation crowds (run by hand with `--ignored`).
+    /// Derivation sweep of K over the 2,000 derivation crowds (run by hand with `--ignored`).
     #[test]
     #[ignore = "derivation sweep, run by hand"]
     fn sweep_k_over_the_derivation_crowds() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(None)?;
-        for k in 14_u8..=30 {
-            let mut fails = 0;
-            let mut worst = 0.0_f64;
-            for seed in DERIVATION_SEEDS {
-                let w = worst_after(&mut world, &injected_crowd(seed)?, k)?;
-                fails += u32::from(w > 0.05);
-                worst = worst.max(w);
-            }
-            println!("K {k}: {fails} of 1000 above 5 %, worst {worst:.4}");
-            if fails == 0 {
+        for k in 18_u8..=30 {
+            let (above, worst) = tally(&mut world, DERIVATION_SEEDS.into_iter().flatten(), k)?;
+            println!("K {k}: {above} of 2000 above 5 %, worst {worst:.4}");
+            if above <= 2 && worst <= HARD_CAP {
                 break;
             }
         }
