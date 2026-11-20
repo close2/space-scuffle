@@ -75,6 +75,9 @@ SuiteCatalog(
         // threads (blueprint Amendments 2 and 4); every Veo batch raises these figures, so they
         // are re-measured when a binary's peak grows well past 6 GiB.
         "client/lib": (class: Slow),
+        // The movement harness plays five seeds of every family twice (about 65 s; plan
+        // 2026-11-20-contact-solver Amendment 1).
+        "sim_fixtures/harness_tests": (class: Slow),
         "client/battle_card_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_card_path_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_mode_tests": (class: Slow, test_threads: Some(2)),

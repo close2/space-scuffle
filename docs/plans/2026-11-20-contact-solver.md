@@ -1196,3 +1196,24 @@ must (a bug fix) lands on `main` first and this plan's next package rebases on i
 4. **Register rows.** The plan's two new rows, the mirror asymmetry and give-ups with room, take the next free
    numbers on main, with WP1's development-range figures.
 5. **Gate tier.** `harness_tests` (about 65 s) is reclassed from fast to slow in `crates/gate/suites.ron`.
+
+## Amendment 2 (orchestrator, 2026-11-20): C-3 is a rate with a hard cap; K is derived on the seen sets and confirmed on an unseen one
+
+**Why.** Amendment 1's rule failed its own confirmation (evidence §3.2 on `contact-solver-wp2-wip`). K = 21 passes
+the 1,000 derivation crowds; on the fresh set (seeds 1,000,001 to 1,001,000) two crowds end above 5 %, the worst at
+5.99 %. The worst-case tail of a fixed-iteration solver is heavy. A per-crowd worst case taken from one finite set
+is the wrong criterion: any larger sample contains a worse crowd.
+
+**Decision: option 2, made precise.**
+
+1. **C-3 is restated.** On generated crowds, at most 1 in 1,000 ends a solve with a friendly moving pair above
+   5 %, and no crowd ever ends above a hard cap of 8 %, which is 1.6 times the D-α bound. Enemy and terrain bounds
+   are unchanged. D-α ("about 5 %") is honoured as a rate, as its wording allows.
+2. **Derive K on the seen sets.** Both sets already measured are now the derivation set: seeds 1 to 1,000 and
+   1,000,001 to 1,001,000, 2,000 crowds in all. K is the smallest count with at most 2 crowds above 5 % and none
+   above 8 %.
+3. **Confirm on an unseen set:** seeds 2,000,001 to 2,001,000, run once with the chosen K. At most 1 crowd above
+   5 % and none above 8 % are allowed. If it fails, stop. No further restatement of C-3 follows. The next step is
+   then a different solver (for example Gauss–Seidel with a fixed, order-independent colouring), by amendment.
+4. **Cost.** Report the distribution of iterations actually used per tick on the harness, since early stopping
+   is the expected cost saver. Report instructions retired at WP3.
