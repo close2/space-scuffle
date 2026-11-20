@@ -65,7 +65,7 @@ fn world(
     arch.weapon = None;
     arch.ground_weapon = None;
     arch.air_weapon = None;
-    let world = SimWorld::with_catalogs(map, SEED, catalogs.units, catalogs.upgrades);
+    let world = SimWorld::with_catalogs(map, SEED, catalogs.units, catalogs.upgrades)?;
     Ok((world, kind))
 }
 
@@ -611,7 +611,7 @@ fn g8_a_member_too_large_for_the_lane_keeps_its_own_route() -> TestResult {
         arch.air_weapon = None;
     }
     let mut world =
-        SimWorld::with_catalogs(island(Some(1))?, SEED, catalogs.units, catalogs.upgrades);
+        SimWorld::with_catalogs(island(Some(1))?, SEED, catalogs.units, catalogs.upgrades)?;
     let mut ids = spawn_row(&mut world, small, &WEST_ROW)?;
     let big = world.spawn_unit(large, PlayerId(0), center(20, 8))?;
     ids.push(big);

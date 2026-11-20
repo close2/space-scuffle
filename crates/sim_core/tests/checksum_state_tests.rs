@@ -936,3 +936,32 @@ fn a_placed_structures_shape_is_hashed() {
     assert_eq!(place(square), place(square));
     assert_ne!(place(square), place(contour));
 }
+
+/// Plan `2026-11-20-resource-footprints` D-11 (schema 32): a node's placed footprint and its
+/// cells' resource occupant are hashed. Removing the fixture's field changes the checksum;
+/// placing it again restores it.
+#[test]
+fn a_nodes_footprint_is_hashed() {
+    let mut world = world();
+    let standing = world.compute_checksum();
+    assert!(
+        world.map.resources()[0].placed.is_some(),
+        "the world placed its field"
+    );
+    world
+        .map
+        .remove_resource_footprint(sim_types::ResourceNodeId(0))
+        .expect("the field stands");
+    let removed = world.compute_checksum();
+    assert_ne!(removed, standing);
+    let table = world
+        .catalog
+        .placement_rules()
+        .resource_footprints()
+        .clone();
+    world
+        .map
+        .place_one_resource_footprint(sim_types::ResourceNodeId(0), &table)
+        .expect("the field fits again");
+    assert_eq!(world.compute_checksum(), standing);
+}

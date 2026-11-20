@@ -32,8 +32,8 @@ pub use footprint::{
     FootprintOccupant, PlacedFootprint, ResourceFootprint, ResourceFootprints, StructureFootprint,
 };
 pub use grid::{
-    CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
-    ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
+    CellFlags, CliffLevel, GameMap, MapCell, PlacedResource, PlacedStructure, RampDir, RampProfile,
+    ResourceKind, ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
 };
 pub use map_format::{
     MapCellSpec, MapDocument, MapEntityId, MapFile, MapFormatError, MapLayer, MapMetadata,

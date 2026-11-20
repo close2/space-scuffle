@@ -68,9 +68,14 @@ pub(crate) fn ground_footprint_connected(
                 continue;
             }
             // The ground under a structure is walkable (D-5); structures are tested below.
+            // So is the ground under a resource node; its outline is tested below (plan
+            // `2026-11-20-resource-footprints` D-5 C2).
             let allowed = map.cell(cell.0, cell.1).is_ok_and(|c| {
-                c.flags
-                    .intersects(CellFlags::GROUND_PATHABLE | CellFlags::OCCUPIED_BY_STRUCTURE)
+                c.flags.intersects(
+                    CellFlags::GROUND_PATHABLE
+                        | CellFlags::OCCUPIED_BY_STRUCTURE
+                        | CellFlags::OCCUPIED_BY_RESOURCE,
+                )
             });
             if !allowed || !map.terrain_step_is_connected(cell, cell) {
                 return false;

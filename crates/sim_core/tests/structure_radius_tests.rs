@@ -110,7 +110,10 @@ fn scratch_structure(
                             .catalog
                             .get_by_slug(slug.trim_end_matches(',').trim_matches('"'))
                     })
-                    .is_some_and(&pick)
+                    // A gas extractor stands only exactly over a geyser (plan
+                    // `2026-11-20-resource-footprints` D-6), so it is never the open-ground
+                    // scratch structure.
+                    .is_some_and(|arch| !arch.capabilities.is_gas_extractor && pick(arch))
         })
         .expect("invariant: the shipped catalog has such a structure");
     let id = free_id(world);

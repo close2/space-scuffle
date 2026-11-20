@@ -779,10 +779,32 @@ impl GameMap {
     pub fn place_resource_footprints(&mut self, table: &ResourceFootprints) -> Result<()> {
         for index in 0..self.resources.len() {
             let node = ResourceNodeId(u32::try_from(index).unwrap_or(u32::MAX));
-            self.place_resource_footprint(node, index, table)
-                .map_err(|reason| MapError::ResourceFootprint { node, reason })?;
+            self.place_one_resource_footprint(node, table)?;
         }
         Ok(())
+    }
+
+    /// Places one resource node's footprint by `table`, as
+    /// [`Self::place_resource_footprints`] places each: a node removed from the map, or moved
+    /// while not placed, can stand again.
+    ///
+    /// # Errors
+    /// As [`Self::place_resource_footprints`] for this node; a node index beyond the map's
+    /// nodes is [`ResourceFootprintFailure::NotPlaced`].
+    pub fn place_one_resource_footprint(
+        &mut self,
+        node: ResourceNodeId,
+        table: &ResourceFootprints,
+    ) -> Result<()> {
+        let index = node.0 as usize;
+        if index >= self.resources.len() {
+            return Err(MapError::ResourceFootprint {
+                node,
+                reason: ResourceFootprintFailure::NotPlaced,
+            });
+        }
+        self.place_resource_footprint(node, index, table)
+            .map_err(|reason| MapError::ResourceFootprint { node, reason })
     }
 
     /// Places node `index` (identified as `node`) by `table`; on failure nothing changes.

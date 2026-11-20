@@ -183,7 +183,7 @@ fn build_world(
         config.seed,
         catalogs.units.clone(),
         catalogs.upgrades.clone(),
-    );
+    )?;
     let unit_type = world
         .catalog
         .id_by_slug(&config.unit_slug)
@@ -424,7 +424,7 @@ fn build_terrain_world(
         config.seed,
         catalogs.units.clone(),
         catalogs.upgrades.clone(),
-    );
+    )?;
     let unit_type = world
         .catalog
         .id_by_slug(&config.unit_slug)

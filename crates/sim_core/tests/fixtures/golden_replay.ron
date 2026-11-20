@@ -347,8 +347,14 @@
 // projectiles, players, effects, route groups; a scratch switch, not committed) is identical on
 // all 20 checkpoints on e58f1af1 with the old map and on this tree with the re-laid one. Native
 // debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-20-resource-footprints WP5 (B-147): schema 32 hashes each node's
+// footprint and each cell's resource occupant, and the nodes' outlines change the hashed
+// clearance and `nav_version`. Entity state is unchanged on every checkpoint. Proof: the
+// checksum that ends after the route groups, with the schema number held at 31 (a scratch
+// switch, not committed), is identical on all 20 checkpoints with WP4's tree and with this one.
+// Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 31,
+    checksum_schema: 32,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -374,25 +380,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x780c84c77f8f004b,
-        0x93103c5a12dbb610,
-        0xcf0d10e0fccb9dfd,
-        0xa6004af522db19b4,
-        0x12e54c044ce7c31e,
-        0x9de9e6146b950d3e,
-        0x3bb2e45380585288,
-        0x7e8db0a0f51b011d,
-        0x069a8e3727538208,
-        0x5faaf42f100a083b,
-        0x9638779d3bc47207,
-        0x932a546e4fcb9f4a,
-        0x3e16a2b07abe1844,
-        0xea11ad90b5928d55,
-        0xab1e7858c1a517a8,
-        0x6ace5c8d4b696c01,
-        0xee7015c6c64df4cb,
-        0x670578a7a9757f0f,
-        0xd07df9e9a46354c0,
-        0xfc7b14ec8a5dae1b,
+        0x7441b902c2ee141e,
+        0x185a2cdd8558852e,
+        0x119c6bcacbc62774,
+        0x2fc1e0c0d65cffa4,
+        0x80162fd4b960cf97,
+        0x0e4cf5d075cdacb3,
+        0x624b8d1ffa465967,
+        0xb4ce71cd71c1a5dc,
+        0x3ffb05121531265b,
+        0x6ce62b3a09511add,
+        0xf49cf916bdbe85a7,
+        0x3ed5422166bd42ec,
+        0x6c8ae9f5dfcec607,
+        0x30387f31d6cf4476,
+        0xca042ecb6e570516,
+        0x825509e70a091ee6,
+        0x8956391092378049,
+        0x51bd0b3615c9fa42,
+        0x8cd3775e69949176,
+        0xe847fe5d8c748838,
     ],
 )

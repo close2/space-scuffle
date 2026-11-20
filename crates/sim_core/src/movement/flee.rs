@@ -172,19 +172,35 @@ impl SimWorld {
     /// Every crossed terrain edge must be connected and every entered cell walkable. A cell
     /// that holds a structure refuses the segment only if the segment meets the structure's
     /// closed footprint shape (plan `2026-11-18-contour-footprints` D-8): the ground under a
-    /// structure is walkable (D-5), so a centre may cross the cut corner of a contour. This also
-    /// applies to long flee candidates and collision pushes.
+    /// structure is walkable (D-5), so a centre may cross the cut corner of a contour. A standing
+    /// resource node's cell is judged the same way by the node's outline (plan
+    /// `2026-11-20-resource-footprints` D-5 C1). This also applies to long flee candidates and
+    /// collision pushes.
     #[must_use]
     pub fn is_position_pathable(map: &SimMap, current_pos: SimVec2, target_pos: SimVec2) -> bool {
         map.ground_segment_is_connected(current_pos, target_pos, |_, next| {
             map.cell(next.0, next.1).is_ok_and(|cell| {
-                if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) {
-                    cell.occupying_structure
-                        .and_then(|id| map.structures().get(&id))
-                        .is_some_and(|placed| !placed.segment_meets(current_pos, target_pos))
-                } else {
-                    cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                let structure = cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
+                let resource = cell.flags.contains(CellFlags::OCCUPIED_BY_RESOURCE);
+                if !structure && !resource {
+                    return cell.flags.contains(CellFlags::GROUND_PATHABLE);
                 }
+                let clear_of_structure = !structure
+                    || cell
+                        .occupying_structure
+                        .and_then(|id| map.structures().get(&id))
+                        .is_some_and(|placed| !placed.segment_meets(current_pos, target_pos));
+                // A node's cell refuses a segment that meets its closed outline (plan
+                // `2026-11-20-resource-footprints` D-5 C1), as a structure's does.
+                let clear_of_resource = !resource
+                    || cell
+                        .occupying_resource
+                        .and_then(|node| map.resources().get(node.0 as usize))
+                        .and_then(|node| node.placed)
+                        .is_some_and(|placed| {
+                            !placed.footprint.segment_meets(current_pos, target_pos)
+                        });
+                clear_of_structure && clear_of_resource
             })
         })
     }

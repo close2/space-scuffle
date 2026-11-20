@@ -74,6 +74,10 @@ pub enum SimCoreError {
     /// Underlying map error occurred during pathfinding, placement, or terrain queries.
     #[error("Map error: {0}")]
     MapError(String),
+    /// A resource node of the world's map does not fit its kind's footprint (plan
+    /// `2026-11-20-resource-footprints` D-4): no world exists without its node footprints.
+    #[error("resource footprint: {0}")]
+    ResourceFootprint(Box<sim_map::MapError>),
 
     /// Catalog failed to deserialize from a RON string or asset file.
     #[error("RON deserialization error: {0}")]

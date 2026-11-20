@@ -67,7 +67,7 @@ fn world_on(
 ) -> Result<SimWorld, Box<dyn Error>> {
     let cells = vec![MapCell::default_ground(CliffLevel(0)); (SIDE * SIDE) as usize];
     let map = GameMap::from_cells(SIDE, SIDE, cells, nodes, Vec::new())?;
-    let mut world = SimWorld::with_catalogs(map, 11, catalogs.units, catalogs.upgrades);
+    let mut world = SimWorld::with_catalogs(map, 11, catalogs.units, catalogs.upgrades)?;
     let ids: Vec<UnitTypeId> = world.catalog.archetypes().map(|a| a.unit_type_id).collect();
     for id in ids {
         world.catalog.get_mut(id)?.requires_structures.clear();
@@ -234,7 +234,7 @@ fn the_mineral_reach_has_its_corners_cut() -> TestResult {
 }
 
 /// F-3: a one-cell row made to check `NearResources` is refused on exactly the 69 cells of the
-/// void-rounded geyser ring; on the node's own cell the node rule answers first.
+/// void-rounded geyser ring; on the geyser's own 3×3 the node rule answers first.
 #[test]
 fn the_geyser_reach_is_the_void_ring() -> TestResult {
     let mut world = world()?;
@@ -253,7 +253,9 @@ fn the_geyser_reach_is_the_void_ring() -> TestResult {
             let outcome = admit(&mut world, builder, probe, cell)?;
             let (ax, ay) = (dx.abs(), dy.abs());
             let in_ring = ax <= 4 && ay <= 4 && ax + ay <= 6 && !(ax == 4 && ay == 3);
-            if (dx, dy) == (0, 0) {
+            // Re-derived for plan `2026-11-20-resource-footprints` WP5: the geyser stands on
+            // its 3×3, so the node rule answers on all nine of its cells.
+            if ax <= 1 && ay <= 1 {
                 assert_eq!(
                     outcome,
                     Err(GameCommandError::Build(BuildRejection::CoversResource))
@@ -423,8 +425,21 @@ fn admission_arrival_and_preview_agree() -> TestResult {
     let site = offset(MINERAL, 8, -2)?;
     let worker = builder_for(&mut moved, hall, offset(site, 2, -3)?)?;
     assert!(admit(&mut moved, worker, hall, site)?.is_ok());
+    // The field leaves the map and stands again five cells east (plan
+    // `2026-11-20-resource-footprints` D-4: a node applies its ring while it stands).
     let cell = offset(MINERAL, 5, 0)?;
+    moved
+        .map
+        .remove_resource_footprint(sim_types::ResourceNodeId(0))?;
     moved.map.resources_mut()[0] = node(ResourceKind::Mineral, cell);
+    let table = moved
+        .catalog
+        .placement_rules()
+        .resource_footprints()
+        .clone();
+    moved
+        .map
+        .place_one_resource_footprint(sim_types::ResourceNodeId(0), &table)?;
     assert_eq!(
         arrival(&mut moved, hall)?,
         flagged(PlacementFlag::NearResources, site)
@@ -549,7 +564,15 @@ fn the_rule_reads_the_catalog() -> TestResult {
     )?;
     shipped.catalog.get_mut(production)?.placement_excludes = PlacementFlags::NEAR_RESOURCES;
     let builder = builder_for(&mut shipped, production, offset(MINERAL, 0, -10)?)?;
+    // Re-derived for plan `2026-11-20-resource-footprints` WP5: under the shipped rows the field
+    // is 2×1 (its anchor and the cell east of it), so the site one cell east of the anchor
+    // covers the field (`CoversResource`); one cell east of the field it is flagged.
     let site = offset(MINERAL, 1, -1)?;
+    assert_eq!(
+        admit(&mut shipped, builder, production, site)?,
+        Err(GameCommandError::Build(BuildRejection::CoversResource))
+    );
+    let site = offset(MINERAL, 2, -1)?;
     assert_eq!(
         admit(&mut shipped, builder, production, site)?,
         flagged(PlacementFlag::NearResources, site)

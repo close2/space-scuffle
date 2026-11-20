@@ -61,8 +61,10 @@ const OVERCLOCK_UPGRADE: &str = "overclock_stim";
 const GAS_CELL: (u32, u32) = (10, 1);
 const EXTRACTOR_CORNER: (u32, u32) = (GAS_CELL.0 - 1, GAS_CELL.1 - 1);
 
-/// Minimum corners of open plateau, clear of the home player's nodes.
-const RESEARCHER_CORNER: u32 = 2;
+/// Minimum corners of open plateau, clear of the home player's nodes. The researcher's corner
+/// moved from (2, 2) to (12, 2) when plan 2026-11-20-resource-footprints Amendment 1 put a geyser
+/// at (4, 1), whose 3×3 covers (3..5, 0..2).
+const RESEARCHER_CORNER: (u32, u32) = (12, 2);
 const MODULE_CORNER: (u32, u32) = (2, 7);
 
 /// More of either resource than any test can spend.
@@ -297,8 +299,8 @@ fn research_through_the_card_then_overclock_works() {
         .spawn_structure(
             researcher_type,
             LOCAL_PLAYER,
-            RESEARCHER_CORNER,
-            RESEARCHER_CORNER,
+            RESEARCHER_CORNER.0,
+            RESEARCHER_CORNER.1,
         )
         .expect("open plateau");
     let site = harness.open_ground(harness.simulated_position(worker), 3.0);

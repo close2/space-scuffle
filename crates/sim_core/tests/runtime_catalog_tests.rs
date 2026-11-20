@@ -157,8 +157,10 @@ fn same_binary_reload_uses_edited_external_vitals_and_upgrades() -> TestResult {
         .expect("edited source must change one loaded upgrade");
     let upgrade_id = upgrade.upgrade_id;
     assert_eq!(upgrade.research_ticks, 4321);
-    let mut old_world = SimWorld::with_catalogs(empty_map()?, 7, original.units, original.upgrades);
-    let mut new_world = SimWorld::with_catalogs(empty_map()?, 7, modified.units, modified.upgrades);
+    let mut old_world =
+        SimWorld::with_catalogs(empty_map()?, 7, original.units, original.upgrades)?;
+    let mut new_world =
+        SimWorld::with_catalogs(empty_map()?, 7, modified.units, modified.upgrades)?;
     let old_entity = old_world.spawn_unit(unit_type, PlayerId(0), SimVec2::ZERO)?;
     let new_entity = new_world.spawn_unit(unit_type, PlayerId(0), SimVec2::ZERO)?;
     assert_eq!(old_world.entities[&old_entity].hp, old_hp);
@@ -690,7 +692,8 @@ fn an_edited_effect_value_changes_a_storm_without_recompiling() -> TestResult {
         RuntimeCatalogs::load_from_directory(catalog_directory())?,
         bundle.load()?,
     ] {
-        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let mut world =
+            SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades)?;
         world.research_upgrade(PlayerId(0), "psionic_storm")?;
         let (caster_kind, index) = world
             .catalog
@@ -743,7 +746,8 @@ fn an_edited_flight_changes_an_abduct_without_recompiling() -> TestResult {
         RuntimeCatalogs::load_from_directory(catalog_directory())?,
         bundle.load()?,
     ] {
-        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let mut world =
+            SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades)?;
         let (caster_kind, index) = world
             .catalog
             .archetypes()
@@ -808,7 +812,8 @@ fn an_edited_status_changes_a_fungal_slow_without_recompiling() -> TestResult {
         RuntimeCatalogs::load_from_directory(catalog_directory())?,
         bundle.load()?,
     ] {
-        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let mut world =
+            SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades)?;
         let (caster_kind, index) = world
             .catalog
             .archetypes()
@@ -872,7 +877,8 @@ fn an_edited_status_changes_a_blinding_cloud_range_without_recompiling() -> Test
         RuntimeCatalogs::load_from_directory(catalog_directory())?,
         bundle.load()?,
     ] {
-        let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades);
+        let mut world =
+            SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades)?;
         let (caster_kind, index) = world
             .catalog
             .archetypes()

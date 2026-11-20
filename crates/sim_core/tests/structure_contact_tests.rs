@@ -113,12 +113,14 @@ fn structures_of_size(world: &SimWorld, size: u8) -> Vec<UnitTypeId> {
     world
         .catalog
         .archetypes()
+        // A gas extractor stands only exactly over a geyser (plan
+        // `2026-11-20-resource-footprints` D-6), so it cannot be spawned on this open ground.
         .filter(|a| {
             matches!(
                 a.shape,
                 ShapeKind::BuildingDome { footprint_w, footprint_h, .. }
                     if footprint_w == size && footprint_h == size
-            )
+            ) && !a.capabilities.is_gas_extractor
         })
         .map(|a| a.unit_type_id)
         .collect()

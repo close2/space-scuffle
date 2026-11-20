@@ -245,7 +245,7 @@ fn a_fourth_faction_added_in_data_builds_its_own_structure() -> TestResult {
     let (builder, dome): (UnitTypeId, UnitTypeId) = (builder.unit_type_id, dome.unit_type_id);
 
     let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::with_catalogs(map, 11, catalogs.units, catalogs.upgrades);
+    let mut world = SimWorld::with_catalogs(map, 11, catalogs.units, catalogs.upgrades)?;
     let worker = world.spawn_unit(builder, ME, at(12, 12))?;
     world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
     world.player_resources[PlayerSlot::ALL[0]].gas = 1000;
