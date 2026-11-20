@@ -123,3 +123,53 @@ Mononen's strict crossing tests give 48.88 on the same portals), `a_clamped_free
 byte-identical); control reproduces `main`; pins re-recorded on four builds, every other pin unmoved; throughput at most
 +0.35 %; path cost −7.7 %; oracle 1,814 / 1.0193 and 1,743 / 1,744, none shorter; longer routes as the prototype's
 D-1 row (7 fitting, at most +0.65 %); fallbacks: only 92 q 12, the stated exception; admissibility as base. **Held.**
+
+## WP3: D-2, S11's termination
+
+`NAV_TA_STAR_EXTRA_EXPANSIONS` is removed (its only reader was `search.rs`; no other crate, test or guide names it);
+the loop ends when the least open `f` is at least the incumbent's length. The work bound of D-2 is stated in the
+module's invariants and `ta_star`'s doc: `3 × NAV_TA_STAR_TRIANGLE_VISITS × T` expansions per pass; for a
+lane-restricted search per word, the words being at most `(|target| + 1) · (2H)^K` (plan `2026-11-10-group-routing`
+D-5, the plan's **verify**). The open list is left as the loop ends (`reset` clears it at the next search), so the unit
+test can read where the search stopped.
+
+**Method.** As WP2; base is the measurement binary with `TAB_OFF_D1=1 TAB_OFF_D2=1` (the budget restored). Control:
+every corpus file, the contour corpus, the golden-corpus logs and the battle set are byte-identical to WP2's control,
+hence to `main`. On the oracle corpus the routes are request for request the prototype's D-1 + D-2 recomputed form
+(`~/scratch/tab/o-TAB_FG_4_TAB_EXTRA_0.txt`).
+
+| Corpus | Base | D-1 + D-2 |
+|---|---|---|
+| Partial-knowledge oracle | 1,804 / 1,820, worst 1.1343 | **1,815**, worst **1.0193**, none shorter |
+| All 1,964 routed requests | — | 69 change: 63 shorter, 6 longer (5 fitting at most +0.24 %, 59 q 14; the wedged 81 q 10 +0.77 %) |
+| All-known oracle | 1,743 / 1,744 | identical; one wedged route changes, shorter |
+| Fallbacks from fitting starts (four layout corpora) | 0, 1, 1, 5 | 0, 1, 1, 5 (per-cell contours: 104 q 3 legal, **92 q 12** falls back, the exception until WP4) |
+| Stress search | 10 | 1 (among the 10) |
+| All-known corpora | 0 / 0 / 0 | 0 / 0 / 0 |
+| Layouts, routes longer (whole contours, per-cell squares, per-cell contours) | — | 10 (at most +1.225 %), 5 (at most +1.52 %), 15 (at most +4.305 %, T6) |
+| Golden corpora, `CONTOUR_ROUTE_CHECKSUM` corpus | — | as WP2, request for request; the three pins unchanged from WP2 |
+| Admissibility (`TAB_STAT`) | 1 | 1, base's start-node rounding (WP2) |
+| Path-search cost | 46.132 G | **45.010 G (−2.4 %)**; the prototype's D-1 + D-2 45.11 G |
+
+**Longer routes traced** (rule 8; with the cap at 64, D-1 and D-2 on): 32 of the 35 longer routes of the four layout
+corpora come back to at most their base length. The other three are named:
+- per-cell contours 46 q 0 (+0.053 %): the visit cap; at 255 visits the route is 65.817, below base's 65.854;
+- per-cell squares 115 q 14 (+0.325 %) and per-cell contours 43 q 0 (+0.338 %): base's route is a retry's repair of
+  an illegal inscribed pull (115 q 14 the zero-room retry, 43 q 0 the pinned retry: first pull 46.776, illegal,
+  pinned 46.362), while TA* ranks channels by their inscribed pulls; with D-1 and D-2 it finds a channel whose
+  inscribed pull is shorter than base's (46.519 for 43 q 0) and legal, so no retry runs. Unchanged at 255 visits.
+  This is the plan's §9 item "an illegal pull as incumbent in the normal search", kept.
+
+**Battles**: byte-identical to the control (matrix, battle 33, battle 31 on 100 seeds, showcase on nine seeds).
+
+**Throughput** (instructions, `tab-cand` at WP3 against `tab-base`): 64×64 0 units +0.06 %, 100 units +0.02 %, 400
+units +0.004 %, 128×128 +0.01 %, 256×256 +0.06 %, showcase canyon 53.76819 → 53.93817 G **+0.32 %**, casters
++0.002 %.
+
+**Tests.** `the_anytime_loop_runs_to_the_incumbent` (T7: 75.372) is un-ignored. Unit test
+`the_search_ends_on_the_incumbent` checks that the search ends with no open `f` below the route on T1 and T7.
+**Deviation:** the plan names T1 alone; with D-1 in place T1 ends on its own after 29 expansions, so the test is
+green with the budget back (`TAB_OFF_D2=1`), and T7 (red with the budget back: 185 open channels below 76.571) is
+added to hold D-2.
+
+**Stop rules (WP3's figures, the 92 q 12 exception):** held, as WP2.

@@ -25,9 +25,15 @@
 //! - Each node carries the point funnel of its channel (apex, path length, two sides), so a
 //!   child's bound costs one funnel step; the funnel is equal to the one recomputed from the
 //!   start through the node's portals.
-//! - The first channel to reach the goal sets the incumbent (its funnel length). The search goes
-//!   on while an open node's `f` is below the incumbent, for at most
-//!   [`NAV_TA_STAR_EXTRA_EXPANSIONS`] further expansions (S11's anytime loop).
+//! - The first channel to reach the goal sets the incumbent (its funnel length), and a shorter
+//!   one replaces it. The search ends when no open node's `f` is below the incumbent (S11's own
+//!   termination, plan `2026-11-20-tastar-budget` D-2); there is no expansion budget. The work
+//!   is bounded by the visit cap: every expansion is one of the first
+//!   [`NAV_TA_STAR_TRIANGLE_VISITS`] at its (triangle, entry edge) state, so a pass expands at
+//!   most `3 × NAV_TA_STAR_TRIANGLE_VISITS × T` nodes for a mesh of `T` triangles, each pushing at
+//!   most two children. A lane-restricted search counts per (state, word), and its words are the
+//!   prefixes of the target extended by at most `K` letters, at most `(|target| + 1) · (2H)^K` of
+//!   them for `H` cuts (plan `2026-11-10-group-routing` D-5), which multiplies that bound.
 //! - Ties break on `(f, triangle, node)`; every container is a `Vec` or `BinaryHeap` filled in
 //!   index order, so the result is a pure function of the mesh and the request.
 //! - The start triangle is entered whatever its width (D-3); every later triangle passed through
@@ -58,12 +64,6 @@ use super::{next, prev, Access, NavMesh};
 use crate::error::{MapError, Result};
 use crate::grid::GameMap;
 use crate::pathfinding::{PathRequestWithVision, CORNER_SAFETY_MARGIN};
-
-/// Expansions TA* may spend after its first route to the goal, looking for a shorter channel.
-///
-/// Measured in WP8 (`docs/evidence/2026-11-09-sc2-pathfinding.md`): on both shipped maps the
-/// best channel is found within this budget for every query of the differential run.
-pub const NAV_TA_STAR_EXTRA_EXPANSIONS: u32 = 256;
 
 /// How many search nodes may expand the same (triangle, entry edge) state (bounds TA*'s
 /// path-based node count; the first is always expanded, so no route is ever missed).
@@ -838,7 +838,10 @@ impl MeshSearch {
         (Some(first), false, spent + more)
     }
 
-    /// TA*: returns the best funnel route found and its channel in `self.portals`.
+    /// TA*: returns the best funnel route found and its channel in `self.portals`, and the nodes
+    /// expanded. It runs until no open node's `f` is below the best route's length (D-2 of plan
+    /// `2026-11-20-tastar-budget`), at most `3 × NAV_TA_STAR_TRIANGLE_VISITS × T` expansions on a
+    /// mesh of `T` triangles (per lane word for a restricted search, see the module invariants).
     fn ta_star(&mut self, query: &Query<'_>, start_triangle: u32) -> (Option<FunnelRoute>, u32) {
         let rho = query.radius + CORNER_SAFETY_MARGIN;
         let (s, g) = (
@@ -860,13 +863,15 @@ impl MeshSearch {
             funnel: PointFunnel::at(query.start),
         });
         let mut best: Option<(FunnelRoute, Vec<(u32, u32)>)> = None;
-        let (mut expansions, mut extra) = (0u32, 0u32);
+        let mut expansions = 0u32;
         while let Some(Reverse((f, _, id))) = self.open.pop() {
-            if let Some((route, _)) = &best {
-                if f >= route.length.raw() || extra >= NAV_TA_STAR_EXTRA_EXPANSIONS {
-                    break;
-                }
-                extra += 1;
+            // S11's termination (D-2): every open channel's bound is at least the incumbent's
+            // length, so none can be shorter. The open list is left as it ends; `reset` clears it.
+            if best
+                .as_ref()
+                .is_some_and(|(route, _)| f >= route.length.raw())
+            {
+                break;
             }
             let node = self.nodes[id as usize];
             if node.triangle == query.goal_triangle && node.parent != NONE {
@@ -921,7 +926,6 @@ impl MeshSearch {
             expansions += 1;
             self.expand(query, id);
         }
-        self.open.clear();
         match best {
             Some((route, portals)) => {
                 self.portals = portals;
@@ -991,8 +995,9 @@ pub struct LaneRestriction<'a> {
 /// `2026-11-10-group-routing`): TA* whose nodes carry the lane word of their portal-midpoint
 /// polyline, which accepts a channel only when its word is `lane.word`. Nodes whose word strays
 /// more than `lane.bound` letters from every prefix of the target are pruned, and the visit cap
-/// counts per (triangle, entry edge, word). Everything else is [`find_route`]'s: the anytime
-/// budget, both passes, the pinned retry, the legality check and the fallback.
+/// counts per (triangle, entry edge, word), which bounds the search's work as the cap bounds
+/// [`find_route`]'s (the module's invariants). Everything else is [`find_route`]'s: S11's
+/// anytime loop to the incumbent, both passes, the retries, the legality check and the fallback.
 ///
 /// # Errors
 /// As [`find_route`]; [`MapError::NoPathFound`] also when no channel of that lane admits the
@@ -1624,24 +1629,33 @@ mod tests {
         request: &PathRequestWithVision<'_>,
     ) -> Audit {
         let mut audit = Audit::default();
+        first_pass(mesh, search, map, request, |search, query, _| {
+            audit_search(search, query, request, &mut audit);
+        });
+        audit
+    }
+
+    /// Runs TA*'s first pass for `request` as `route` sets it up, then `then` with the search, the
+    /// query and the pass's route. Nothing runs for a request `route` answers without a search
+    /// (an invalid endpoint, one triangle, or a straight segment).
+    fn first_pass(
+        mesh: &NavMesh,
+        search: &mut MeshSearch,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        then: impl FnOnce(&mut MeshSearch, &Query<'_>, Option<FunnelRoute>),
+    ) {
         let access = Access::new(mesh, map, request);
         let Ok((start_triangle, goal_triangle)) =
             endpoints(mesh, &access, &mut search.segment, request)
         else {
-            return audit;
+            return;
         };
-        let (start, goal) = (request.start, request.goal);
+        let (start, goal, radius) = (request.start, request.goal, request.radius);
         if start_triangle == goal_triangle
-            || segment_clear(
-                mesh,
-                &access,
-                &mut search.segment,
-                start,
-                goal,
-                request.radius,
-            )
+            || segment_clear(mesh, &access, &mut search.segment, start, goal, radius)
         {
-            return audit;
+            return;
         }
         let query = Query {
             mesh,
@@ -1649,19 +1663,24 @@ mod tests {
             start,
             goal,
             goal_triangle,
-            radius: request.radius,
-            start_fits: segment_clear(
-                mesh,
-                &access,
-                &mut search.segment,
-                start,
-                start,
-                request.radius,
-            ),
+            radius,
+            start_fits: segment_clear(mesh, &access, &mut search.segment, start, start, radius),
             end_checks: false,
             lane: None,
         };
-        search.ta_star(&query, start_triangle);
+        let (route, _) = search.ta_star(&query, start_triangle);
+        then(search, &query, route);
+    }
+
+    /// The checks of [`audit_channels`] on the nodes of the search just run.
+    fn audit_search(
+        search: &mut MeshSearch,
+        query: &Query<'_>,
+        request: &PathRequestWithVision<'_>,
+        audit: &mut Audit,
+    ) {
+        let (mesh, start, goal) = (query.mesh, query.start, query.goal);
+        let (start_triangle, goal_triangle) = (search.nodes[0].triangle, query.goal_triangle);
         let (s, g) = (
             mesh.triangle_vertices(start_triangle),
             mesh.triangle_vertices(goal_triangle),
@@ -1671,7 +1690,7 @@ mod tests {
             let channel = search.portals.clone();
             let portals: Vec<BoundPortal> = channel
                 .iter()
-                .map(|&portal| search.bound_portal(&query, portal))
+                .map(|&portal| search.bound_portal(query, portal))
                 .collect();
             let mut recomputed = PointFunnel::at(start);
             recomputed.advance(&portals, 1);
@@ -1694,12 +1713,12 @@ mod tests {
                     PullStrategy::Shrunk,
                 ),
                 &mut Obstacles {
-                    access: &access,
+                    access: query.access,
                     segment: &mut search.segment,
                     scratch: &mut search.funnel,
                 },
             );
-            if !search.is_legal(&query, &route) {
+            if !search.is_legal(query, &route) {
                 continue;
             }
             audit.legal_channels += 1;
@@ -1714,7 +1733,6 @@ mod tests {
                 current = on.parent;
             }
         }
-        audit
     }
 
     /// T5 of plan `2026-11-20-tastar-budget` (per-cell squares layout 142 q 0, r 1.0, a route of
@@ -1780,6 +1798,51 @@ mod tests {
         let audit = audit_channels(&mesh, &mut search, &map, &request);
         assert!(audit.legal_channels > 0);
         assert!(audit.excess.is_empty(), "{:?}", audit.excess);
+        Ok(())
+    }
+
+    /// D-2 of plan `2026-11-20-tastar-budget` on T1 (whole squares layout 25 q 11) and T7 (113
+    /// q 1): after the first route the search runs until every open node's `f` is at least the
+    /// best route's length (S11's termination). On `main` the budget of 256 pops after the first
+    /// route ended both with open channels bounded below the route; with D-1, T1 ends on its own
+    /// after 29 expansions, while T7 still ran into the budget, so T7 is what holds D-2.
+    #[test]
+    fn the_search_ends_on_the_incumbent() -> std::result::Result<(), String> {
+        for (number, q) in [(25, 11), (113, 1)] {
+            let (map, known, requests) = layout(number, false, Knowledge::Whole)?;
+            let mesh = NavMesh::build(&map).map_err(|e| e.to_string())?;
+            let (start, goal, radius) = requests[q];
+            let request = PathRequestWithVision {
+                start,
+                goal,
+                radius,
+                vision: None,
+                block_unexplored_ramps: false,
+                known_structures: known.as_deref(),
+            };
+            let mut search = MeshSearch::default();
+            let mut routed = false;
+            first_pass(&mesh, &mut search, &map, &request, |search, _, route| {
+                let Some(route) = route else {
+                    return;
+                };
+                routed = true;
+                let below: Vec<f32> = search
+                    .open
+                    .iter()
+                    .filter(|Reverse((f, _, _))| *f < route.length.raw())
+                    .map(|Reverse((f, _, _))| SimScalar::from_raw(*f).to_f32())
+                    .collect();
+                assert!(
+                    below.is_empty(),
+                    "layout {number} q {q}: the search ended with {} open channels below the \
+                     route's {}: {below:?}",
+                    below.len(),
+                    route.length.to_f32()
+                );
+            });
+            assert!(routed, "layout {number} q {q} is routed by a search");
+        }
         Ok(())
     }
 

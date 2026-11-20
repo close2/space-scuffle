@@ -1087,7 +1087,6 @@ fn a_wedged_start_beside_unknown_cells_takes_the_short_channel() -> Result<(), M
 /// (45, 12): the first route comes after 97 expansions, and the better channel needs 1,041 more
 /// pops than the budget's 256, with the channel bound or without it.
 #[test]
-#[ignore = "B-149, WP3"]
 fn the_anytime_loop_runs_to_the_incumbent() -> Result<(), MapError> {
     let (_, route) = b149_case(
         (113, 1, LayoutKind::WHOLE_SQUARES),
