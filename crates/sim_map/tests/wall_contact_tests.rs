@@ -323,7 +323,7 @@ fn contact_against_a_chamfer_is_exact() {
         sim_map::StructureFootprint {
             width: 2,
             height: 2,
-            shape: sim_types::FootprintShape {
+            shape: sim_types::FootprintShape::Box {
                 half_width_q: 4,
                 half_height_q: 4,
                 chamfer_q: 2,

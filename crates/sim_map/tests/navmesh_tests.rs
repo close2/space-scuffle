@@ -447,7 +447,7 @@ fn footprint(index: usize, square: bool) -> sim_map::StructureFootprint {
     sim_map::StructureFootprint {
         width,
         height,
-        shape: sim_types::FootprintShape {
+        shape: sim_types::FootprintShape::Box {
             half_width_q: hw,
             half_height_q: hh,
             chamfer_q: c,
@@ -545,6 +545,11 @@ fn check_contour_labels(map: &GameMap, mesh: &NavMesh) -> Result<(), String> {
                     }
                 }
             }
+            TriangleKind::Resource(node) => {
+                return Err(format!(
+                    "triangle {t} is node {node:?}'s, but no node stands"
+                ));
+            }
             TriangleKind::Open | TriangleKind::Blocked => {
                 if !inside.is_empty() {
                     return Err(format!(
@@ -637,7 +642,9 @@ fn check_run_geometry(map: &GameMap, mesh: &NavMesh) -> Result<(), String> {
         }
         // Otherwise it must lie on some structure's contour.
         let on_contour = map.structures().values().any(|placed| {
-            let (vertices, count) = placed.contour();
+            let footprint = placed.footprint();
+            let vertices = footprint.contour();
+            let count = vertices.len();
             (0..count).any(|i| {
                 let (u, v) = (vertices[i], vertices[(i + 1) % count]);
                 let collinear = |p: LatticePoint| {
@@ -794,4 +801,104 @@ fn contours_add_no_funnel_fallbacks() {
     );
     assert!(contour_routed > 1_000 && square_routed > 1_000);
     assert_eq!((contour_fallbacks, square_fallbacks), (0, 0));
+}
+
+// ---- Plan `2026-11-20-resource-footprints` WP1: outline shapes. ----
+
+/// The 5.0.14 geyser outline (void Footprint:18-19, plan §2.2 rule 3) on a 3×3 footprint.
+fn geyser_footprint() -> sim_map::StructureFootprint {
+    let outline = sim_types::QuarterOutline::new(&[
+        (-2, -4),
+        (-3, -5),
+        (-5, -3),
+        (-4, -2),
+        (-4, 2),
+        (-5, 3),
+        (-3, 5),
+        (-2, 4),
+        (2, 4),
+        (3, 5),
+        (5, 3),
+        (4, 2),
+        (4, -2),
+        (5, -3),
+        (3, -5),
+        (2, -4),
+    ])
+    .expect("invariant: sixteen vertices fit");
+    sim_map::StructureFootprint {
+        width: 3,
+        height: 3,
+        shape: sim_types::FootprintShape::Outline(outline),
+    }
+}
+
+/// A structure with the non-convex 16-gon cuts the mesh: the build never errors, triangles are
+/// labelled by containment, and every constraint lies on a cell line or an outline, beside box
+/// structures, flush against one and on its own.
+#[test]
+fn an_outline_shape_cuts_the_mesh() {
+    let mut map = arena::default_arena();
+    let mut cells = vec![(12, 12), (15, 12), (12, 15), (20, 20)];
+    cells.retain(|&cell| {
+        map.place_structure(
+            EntityId(40_000 + cell.0 * 64 + cell.1),
+            cell,
+            geyser_footprint(),
+        )
+        .is_ok()
+    });
+    assert_eq!(cells.len(), 4, "every geyser cell is open ground");
+    map.place_structure(EntityId(41_000), (18, 12), footprint(1, false))
+        .expect("invariant: open ground east of the second geyser");
+    let mesh = mesh_of(&map);
+    check_mesh_laws(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_runs(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_contour_labels(&map, &mesh).unwrap_or_else(|e| panic!("{e}"));
+    check_run_geometry(&map, &mesh).unwrap_or_else(|e| panic!("{e}"));
+    // The middle of a recessed side is open ground, and the centre is the structure's.
+    // Points in sixteenths of a cell.
+    let label_at = |x: i64, y: i64| {
+        let point = SimVec2::new(SimScalar::from_raw(x << 28), SimScalar::from_raw(y << 28));
+        mesh.label(mesh.locate(point).expect("invariant: on the map"))
+            .kind
+    };
+    let id = EntityId(40_000 + 20 * 64 + 20);
+    // Centre (21.5, 21.5); the south recess at y = 20.5; the south-west lobe's diagonal on
+    // x + y = 41.
+    assert_eq!(label_at(344, 344), TriangleKind::Structure(id));
+    assert_eq!(
+        label_at(344, 326),
+        TriangleKind::Open,
+        "below the south recess"
+    );
+    assert_eq!(label_at(344, 330), TriangleKind::Structure(id), "above it");
+    assert_eq!(label_at(326, 326), TriangleKind::Open, "outside the lobe");
+    assert_eq!(
+        label_at(330, 330),
+        TriangleKind::Structure(id),
+        "in the lobe"
+    );
+}
+
+/// The digest of the showcase mesh with 24 seeded contour (chamfered box) structures, computed
+/// by this same test on `e58f1af1`, the tree before plan `2026-11-20-resource-footprints` WP1
+/// placed every shape as a general outline.
+const CONTOUR_STRUCTURES_MESH_DIGEST: u64 = 0x5e8c_93b7_2c28_94f5;
+
+/// Guard of WP1 (§7 rule 1): box shapes cut exactly the mesh they cut before the general
+/// outline, as `SHOWCASE_MESH_DIGEST`, `SQUARE_STRUCTURES_MESH_DIGEST` and the contour corpus
+/// pins (`CONTOUR_PATH_GOLDEN`, `contour_route_checksum`) also hold.
+#[test]
+fn box_shapes_cut_the_mesh_as_before() {
+    let mut map = showcase_map();
+    assert_eq!(place_seeded(&mut map, 0x0b0c5, 24, false), 24);
+    let mesh = mesh_of(&map);
+    check_mesh_laws(&mesh).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        mesh.digest(),
+        CONTOUR_STRUCTURES_MESH_DIGEST,
+        "digest {:#x}",
+        mesh.digest()
+    );
 }

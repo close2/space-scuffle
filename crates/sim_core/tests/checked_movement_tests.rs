@@ -53,7 +53,7 @@ impl Fixture {
             a.air_weapon = None;
         }
         let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))?;
-        let mut world = SimWorld::with_catalogs(map, 50, catalog, loaded.upgrades);
+        let mut world = SimWorld::with_catalogs(map, 50, catalog, loaded.upgrades)?;
         world.vision_aware_pathfinding = false;
         Ok(Self { world, air, ground })
     }

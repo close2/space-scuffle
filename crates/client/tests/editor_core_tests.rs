@@ -745,6 +745,7 @@ fn test_mirrored_start_placement_creates_slot_1() {
         },
         (2, 2),
         SymmetryMode::Rotate180,
+        &sim_map::ResourceFootprints::NONE,
     );
 
     match cmd {
@@ -1183,7 +1184,13 @@ fn test_entity_tool_selection_and_erasure() {
     let mut doc = fixture_document(16, 16);
 
     // Place mineral
-    let place_res = place_entity_command(&doc, EntityToolKind::Mineral, (3, 3), SymmetryMode::None);
+    let place_res = place_entity_command(
+        &doc,
+        EntityToolKind::Mineral,
+        (3, 3),
+        SymmetryMode::None,
+        &sim_map::ResourceFootprints::NONE,
+    );
     place_res.apply(&mut doc, &mut ChangeSet::empty());
 
     // Place start location for slot 0
@@ -1195,6 +1202,7 @@ fn test_entity_tool_selection_and_erasure() {
         },
         (5, 5),
         SymmetryMode::None,
+        &sim_map::ResourceFootprints::NONE,
     );
     place_start.apply(&mut doc, &mut ChangeSet::empty());
 
@@ -1461,7 +1469,13 @@ fn test_mirrored_start_creates_the_missing_partner_when_primary_exists() {
     doc.start_locations.push(start_location(1, 0, (2, 2)));
     let original = doc.clone();
 
-    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    let cmd = place_entity_command(
+        &doc,
+        START_TOOL,
+        (4, 4),
+        SymmetryMode::Rotate180,
+        &sim_map::ResourceFootprints::NONE,
+    );
     apply(&cmd, &mut doc);
 
     let primary = doc.start_locations.iter().find(|s| s.player_slot == 0);
@@ -1484,7 +1498,13 @@ fn test_mirrored_start_moves_a_lone_partner_without_duplicating_its_slot() {
     doc.start_locations.push(start_location(1, 1, (20, 20)));
     let original = doc.clone();
 
-    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    let cmd = place_entity_command(
+        &doc,
+        START_TOOL,
+        (4, 4),
+        SymmetryMode::Rotate180,
+        &sim_map::ResourceFootprints::NONE,
+    );
     apply(&cmd, &mut doc);
 
     let partners: Vec<_> = doc

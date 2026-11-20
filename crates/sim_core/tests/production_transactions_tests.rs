@@ -49,7 +49,7 @@ impl Fixture {
         let a = catalog.get_mut(producer_type)?;
         a.supply_provided = 20;
         let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
-        let mut world = SimWorld::with_catalogs(map, 4321, catalog, UpgradeCatalog::default());
+        let mut world = SimWorld::with_catalogs(map, 4321, catalog, UpgradeCatalog::default())?;
         let producer = world.spawn_structure(producer_type, PlayerId(0), 10, 10)?;
         Ok(Self {
             world,

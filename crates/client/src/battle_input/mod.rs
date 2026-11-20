@@ -706,3 +706,64 @@ pub fn draw_selection_box(
             egui::StrokeKind::Middle,
         );
 }
+
+/// Plan `2026-11-20-resource-footprints` D-12: a mineral field's billboard and pick sphere sit
+/// on the centre of its 2×1 footprint, and the pick radius covers both of its cells.
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::cast_precision_loss,
+    reason = "a broken pick law must fail the test loudly; test cells are below 2^10"
+)]
+mod footprint_pick_tests {
+    use super::NODE_PICK_RADIUS;
+    use crate::selection::ray_sphere_intersect;
+    use bevy::prelude::Vec3;
+    use sim_map::{
+        CliffLevel, GameMap, MapCell, ResourceFootprint, ResourceFootprints, ResourceKind,
+        ResourceNode,
+    };
+    use sim_types::{FootprintShape, SimScalar, SimVec2};
+
+    #[test]
+    fn a_mineral_field_is_picked_anywhere_on_its_footprint() {
+        let anchor = (3_u32, 14_u32);
+        let mut map = GameMap::from_cells(
+            24,
+            24,
+            vec![MapCell::default_ground(CliffLevel(0)); 24 * 24],
+            vec![ResourceNode {
+                pos: SimVec2::new(SimScalar::from_num(3.5), SimScalar::from_num(14.5)),
+                kind: ResourceKind::Mineral,
+                remaining: 1_500,
+                cell: anchor,
+                placed: None,
+            }],
+            Vec::new(),
+        )
+        .expect("invariant: 24 × 24 cells");
+        let table = ResourceFootprints::new(vec![(
+            ResourceKind::Mineral,
+            ResourceFootprint {
+                cells: (0, 0, 2, 1),
+                shape: FootprintShape::full(2, 1),
+                remove_when_empty: true,
+            },
+        )]);
+        map.place_resource_footprints(&table)
+            .expect("invariant: open ground");
+        // The billboard is centred on the node's position, which placement moved to the 2×1's
+        // centre; its height does not matter to a ray straight down.
+        let pos = map.resources()[0].pos;
+        let centre = Vec3::new(pos.x.to_f32(), 0.7, pos.y.to_f32());
+        assert_eq!((centre.x, centre.z), (4.0, 14.5));
+        for cell_x in [anchor.0, anchor.0 + 1] {
+            let above = Vec3::new(cell_x as f32 + 0.5, 30.0, anchor.1 as f32 + 0.5);
+            assert!(
+                ray_sphere_intersect(above, Vec3::NEG_Y, centre, NODE_PICK_RADIUS).is_some(),
+                "cell ({cell_x}, {})",
+                anchor.1
+            );
+        }
+    }
+}

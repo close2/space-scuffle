@@ -111,6 +111,7 @@ fn test_fixture_flat_4x4_exact_counts() {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     };
     let mut map = GameMap::new(4, 4, default_cell).expect("GameMap::new");
     for y in 0..4 {
@@ -792,6 +793,7 @@ fn spawned_chunks_cover_every_dual_cell() {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     };
     let mut world = World::new();
     world.init_resource::<Assets<Mesh>>();
@@ -1004,6 +1006,7 @@ fn test_picking_scenarios() {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     };
     let mut flat_map = GameMap::new(32, 32, default_cell_flat).expect("flat_map");
     for y in 0..32 {
@@ -1069,6 +1072,7 @@ fn test_picking_scenarios() {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     };
     let mut step_map = GameMap::new(16, 16, default_cell_step).expect("step_map");
     for y in 0..16 {

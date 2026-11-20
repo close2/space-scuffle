@@ -87,7 +87,7 @@ impl Fixture {
         }];
         let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
         Ok(Self {
-            world: SimWorld::with_catalogs(map, 51, catalog, UpgradeCatalog::default()),
+            world: SimWorld::with_catalogs(map, 51, catalog, UpgradeCatalog::default())?,
             kind,
             weapon,
         })

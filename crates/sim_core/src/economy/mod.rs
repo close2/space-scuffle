@@ -31,7 +31,7 @@ use crate::production::{ProductionAdmissionError, ProductionInvariant};
 use crate::scenario::ring_perimeter;
 use crate::transport::TransportAdmissionError;
 use crate::{Entity, SimWorld, UnitArchetype};
-use sim_map::{CellFlags, PlacedStructure};
+use sim_map::{CellFlags, PlacedFootprint, PlacedStructure};
 use sim_types::{
     AnimState, EntityId, PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, SimScalar, SimVec2,
     Tick, UnitOrder,
@@ -41,7 +41,9 @@ use thiserror::Error;
 /// Times a task may set off for a place before it concludes the place cannot be reached.
 pub(crate) const MAX_TASK_LEGS: u8 = 3;
 
-/// How far beyond its own radius a unit can work on something, in world units.
+/// How far beyond its own radius a unit can build, construct or board something, in world
+/// units. Harvesting does not use it: a worker gathers and delivers on contact (plan
+/// `2026-11-20-resource-footprints` D-7).
 const TASK_REACH: SimScalar = SimScalar::from_raw(3 << 30);
 
 /// A command that cannot be carried out, or corrupt state found while admitting it.
@@ -234,6 +236,16 @@ pub(crate) struct Footprint {
 }
 
 impl Footprint {
+    /// The cells of a placed footprint.
+    pub(crate) fn of_placed(placed: &PlacedFootprint) -> Self {
+        Self {
+            left: placed.top_left.0,
+            bottom: placed.top_left.1,
+            width: u32::from(placed.width),
+            height: u32::from(placed.height),
+        }
+    }
+
     pub(crate) fn of_structure(placed: &PlacedStructure) -> Self {
         Self {
             left: placed.top_left.0,
@@ -503,6 +515,71 @@ impl SimWorld {
             .is_some_and(|gap| gap <= radius + TASK_REACH)
     }
 
+    /// Whether `actor`'s body touches `shape`: the distance from its centre to the shape is at
+    /// most its collision radius, decided exactly on the Q16 grid as `capsule_meets` decides it
+    /// (plan `2026-11-20-resource-footprints` D-7).
+    fn touches(&self, actor: &Entity, shape: &PlacedFootprint) -> bool {
+        let Some(radius) = self.body_radius(actor) else {
+            return false;
+        };
+        // `capsule_meets` asks for strictly less than its radius; one Q16 step more makes it
+        // "at most".
+        let at_most = radius + SimScalar::from_raw(1 << 16);
+        shape.capsule_meets(actor.position, actor.position, at_most)
+    }
+
+    /// Where a worker walks to touch `shape` (D-7): the walkable cell beside `site` nearest
+    /// `from` ([`Self::approach_edge`]), drawn in to the unit's terrain radius from the point of
+    /// `shape` nearest that cell. The terrain radius is at most the collision radius (a catalog
+    /// invariant), so a leg that ends at its goal touches the shape.
+    fn contact_goal(
+        &self,
+        actor: &Entity,
+        site: Footprint,
+        shape: &PlacedFootprint,
+    ) -> Option<SimVec2> {
+        let ring = self.approach_edge(actor.position, site)?;
+        let terrain = self.catalog.get(actor.unit_type_id).ok()?.terrain_radius;
+        let nearest = nearest_on_outline(shape, ring);
+        let away = (ring - nearest).normalize_or_zero();
+        if away == SimVec2::ZERO {
+            return Some(ring);
+        }
+        // One Q16 step beyond the terrain radius: a body exactly at its terrain radius from an
+        // obstacle touches it, and the route's fit test asks for strictly more.
+        Some(nearest + away * (terrain + SimScalar::from_raw(1 << 16)))
+    }
+
+    /// Walks `id` until its body touches `shape`, whose cells are `site` (D-7): a harvest leg to
+    /// a node or an extractor, or a delivery leg to a depot.
+    pub(crate) fn approach_shape(
+        &mut self,
+        id: EntityId,
+        site: Footprint,
+        shape: &PlacedFootprint,
+    ) -> Approach {
+        let Some(actor) = self.entities.get(&id) else {
+            return Approach::Unreachable;
+        };
+        if self.touches(actor, shape) {
+            self.halt_task(id);
+            return Approach::Arrived;
+        }
+        if actor.task.goal.is_some() {
+            return Approach::Walking;
+        }
+        if actor.task.legs >= MAX_TASK_LEGS {
+            return Approach::Unreachable;
+        }
+        match self.contact_goal(actor, site, shape) {
+            Some(point) => {
+                self.set_task_goal(id, point);
+                Approach::Walking
+            }
+            None => Approach::Unreachable,
+        }
+    }
+
     /// Whether a ground unit can stand at the middle of this cell.
     fn cell_is_walkable(&self, x: u32, y: u32) -> bool {
         self.map.cell(x, y).is_ok_and(|cell| {
@@ -647,6 +724,30 @@ pub(crate) const fn fresh_leg(task: UnitTask) -> UnitTask {
         depot: None,
         last_node: task.last_node,
     }
+}
+
+/// The point of `shape`'s outline nearest `point`, in world units: the nearest of each edge's
+/// nearest points, the first edge winning a tie.
+fn nearest_on_outline(shape: &PlacedFootprint, point: SimVec2) -> SimVec2 {
+    let contour = shape.contour();
+    let count = contour.len();
+    let mut best: Option<(SimScalar, SimVec2)> = None;
+    for i in 0..count {
+        let (u, v) = (contour[i].to_sim(), contour[(i + 1) % count].to_sim());
+        let along = v - u;
+        let length_sq = along.dot(along);
+        let t = if length_sq > SimScalar::ZERO {
+            ((point - u).dot(along) / length_sq).clamp(SimScalar::ZERO, SimScalar::ONE)
+        } else {
+            SimScalar::ZERO
+        };
+        let candidate = u + along * t;
+        let gap = (point - candidate).dot(point - candidate);
+        if best.is_none_or(|(nearest, _)| gap < nearest) {
+            best = Some((gap, candidate));
+        }
+    }
+    best.map_or(point, |(_, candidate)| candidate)
 }
 
 #[cfg(test)]

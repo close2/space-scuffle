@@ -65,8 +65,10 @@ const STRUCTURE: &str = "assembly_bay_dome";
 /// A unit with an overclock that must be researched.
 const OVERCLOCKED: &str = "pulse_bot";
 
-/// Minimum corner of open plateau in the skirmish, clear of the home player's nodes.
-const SITE_CORNER: u32 = 2;
+/// Minimum corner of open plateau in the skirmish, clear of the home player's nodes. It moved
+/// from (2, 2) to (12, 2) when plan 2026-11-20-resource-footprints Amendment 2 put a geyser at
+/// (1, 1), whose 3×3 covers (0..2, 0..2).
+const SITE_CORNER: (u32, u32) = (12, 2);
 
 /// More minerals than any test can spend.
 const RICH: u32 = 100_000;
@@ -225,7 +227,7 @@ fn turn_to(harness: &mut Harness, structure: UnitTypeId) -> usize {
 fn worker_and_site(harness: &mut Harness) -> (EntityId, Vec2) {
     let worker = worker(harness);
     fund(harness);
-    let site = Vec2::new(SITE_CORNER as f32 + 1.5, SITE_CORNER as f32 + 1.5);
+    let site = Vec2::new(SITE_CORNER.0 as f32 + 1.5, SITE_CORNER.1 as f32 + 1.5);
     let worker_at = harness.simulated_position(worker);
     harness.look_at((worker_at + site) * 0.5);
     harness.select(worker);
@@ -272,8 +274,8 @@ fn assert_build_at_site(harness: &Harness, worker: EntityId, structure: UnitType
         orders[0].order,
         UnitOrder::Build {
             structure_type: structure,
-            cell_x: SITE_CORNER,
-            cell_y: SITE_CORNER,
+            cell_x: SITE_CORNER.0,
+            cell_y: SITE_CORNER.1,
         }
     );
 }
@@ -988,7 +990,7 @@ fn the_ghost_follows_the_pointer_and_hides_with_the_mode() {
     harness.move_cursor(on_screen);
     harness.step(1);
 
-    assert_eq!(preview(&harness).cell, Some((SITE_CORNER, SITE_CORNER)));
+    assert_eq!(preview(&harness).cell, Some(SITE_CORNER));
     assert_eq!(preview(&harness).verdict, Some(Ok(())));
     assert_ghost_is(&mut harness, true);
     let (_, transform, _) = ghost(&mut harness);
@@ -1015,7 +1017,7 @@ fn the_ghost_keeps_its_cell_while_the_pointer_is_over_a_panel() {
     harness.click(MouseButton::Left, over_panel);
     harness.step(1);
 
-    assert_eq!(preview(&harness).cell, Some((SITE_CORNER, SITE_CORNER)));
+    assert_eq!(preview(&harness).cell, Some(SITE_CORNER));
     assert_eq!(harness.pending_orders(), 0, "a click there places nothing");
     assert_eq!(mode(&harness), CommandMode::Place(structure));
 }
@@ -1162,7 +1164,7 @@ fn a_town_hall_on_its_own_start_shows_legal() {
     let keeper = slug(&harness, STRUCTURE);
     harness
         .world_mut()
-        .spawn_structure(keeper, LOCAL_PLAYER, SITE_CORNER, SITE_CORNER)
+        .spawn_structure(keeper, LOCAL_PLAYER, SITE_CORNER.0, SITE_CORNER.1)
         .expect("a structure stands on the open site");
     harness
         .world_mut()

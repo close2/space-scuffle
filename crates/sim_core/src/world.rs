@@ -46,7 +46,7 @@ use rand_chacha::ChaCha8Rng;
 use sim_map::{Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
     CombatEventVisual, EntityId, PerPlayer, PlayerId, PlayerUpgradeState, RenderSnapshot,
-    ShapeKind, SimAngle, SimScalar, SimVec2, TickBundle, UnitTypeId,
+    ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
 
@@ -167,14 +167,22 @@ impl SimWorld {
     /// Constructs a world on `map` using the supplied rule catalogs and RNG seed.
     ///
     /// Takes ownership of already loaded catalogs without reading files or replacing
-    /// them with embedded defaults. Coordinates remain fixed-point world units.
-    #[must_use]
+    /// them with embedded defaults. Coordinates remain fixed-point world units. Every resource
+    /// node of `map` is placed by its kind's footprint in the catalog's placement rules before
+    /// the pathfinder is built (plan `2026-11-20-resource-footprints` D-4).
+    ///
+    /// # Errors
+    /// [`SimCoreError::ResourceFootprint`] when a node cannot be placed: its kind has no
+    /// footprint in the catalog, or its footprint leaves the map, overlaps another node or a
+    /// structure, or stands on ground that is not open and buildable.
     pub fn with_catalogs(
-        map: SimMap,
+        mut map: SimMap,
         seed: u64,
         catalog: UnitCatalog,
         upgrade_catalog: UpgradeCatalog,
-    ) -> Self {
+    ) -> SimResult<Self> {
+        map.place_resource_footprints(catalog.placement_rules().resource_footprints())
+            .map_err(|error| SimCoreError::ResourceFootprint(Box::new(error)))?;
         let width = map.width();
         let height = map.height();
         let pathfinder = Pathfinder::new(&map);
@@ -231,7 +239,7 @@ impl SimWorld {
         };
 
         world.last_checksum = world.compute_checksum();
-        world
+        Ok(world)
     }
     /// Spawns a mobile unit entity at `pos`, facing +x (heading 0).
     ///
@@ -316,24 +324,57 @@ impl SimWorld {
             SimScalar::from_num(cell_y) + SimScalar::from_num(footprint_h) * SimScalar::HALF,
         );
         let prepared = self.prepare_spawn(structure_type, owner, pos, 0)?;
-        self.map
-            .place_structure(
-                prepared.entity.id,
-                (cell_x, cell_y),
-                sim_map::StructureFootprint {
-                    width: footprint_w,
-                    height: footprint_h,
-                    shape,
-                },
-            )
-            .map_err(|_| SimCoreError::InvalidBuildingPlacement {
-                x: cell_x,
-                y: cell_y,
-            })?;
+        let extractor = archetype.capabilities.is_gas_extractor;
+        self.place_structure_cells(
+            prepared.entity.id,
+            extractor,
+            (cell_x, cell_y),
+            sim_map::StructureFootprint {
+                width: footprint_w,
+                height: footprint_h,
+                shape,
+            },
+        )
+        .map_err(|_| SimCoreError::InvalidBuildingPlacement {
+            x: cell_x,
+            y: cell_y,
+        })?;
         let id = self.commit_spawn(prepared);
         self.pathfinder.recompute_clearance(&self.map);
         Ok(id)
     }
+    /// Places structure `id`'s cells and shape on the map (plan `2026-11-20-resource-footprints`
+    /// D-6): a gas extractor goes exactly over the standing gas node whose footprint has its
+    /// cells, every other structure through `place_structure`.
+    ///
+    /// # Errors
+    /// `None` for an extractor whose cells are no standing gas node's; otherwise the map's
+    /// refusal.
+    pub(crate) fn place_structure_cells(
+        &mut self,
+        id: EntityId,
+        extractor: bool,
+        cell: (u32, u32),
+        footprint: sim_map::StructureFootprint,
+    ) -> Result<(), Option<sim_map::MapError>> {
+        if !extractor {
+            return self.map.place_structure(id, cell, footprint).map_err(Some);
+        }
+        let node = (0_u32..)
+            .zip(self.map.resources())
+            .find_map(|(index, node)| {
+                let placed = node.placed?.footprint;
+                let exact = node.kind == ResourceKind::Gas
+                    && placed.top_left == cell
+                    && (placed.width, placed.height) == (footprint.width, footprint.height);
+                exact.then_some(ResourceNodeId(index))
+            });
+        let node = node.ok_or(None)?;
+        self.map
+            .place_structure_over_resource(id, node, footprint)
+            .map_err(Some)
+    }
+
     /// Advances the deterministic simulation by exactly one 25 Hz (40 ms) tick.
     /// Consumers must inspect [`Self::diagnostics`] afterward and report any failures
     /// before continuing the match. Invalid weapon rates suppress the affected attack

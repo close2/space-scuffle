@@ -631,7 +631,7 @@ fn b141_map(structures: &[B141Structure]) -> GameMap {
             Some((half_width_q, half_height_q, chamfer_q)) => sim_map::StructureFootprint {
                 width,
                 height,
-                shape: sim_types::FootprintShape {
+                shape: sim_types::FootprintShape::Box {
                     half_width_q,
                     half_height_q,
                     chamfer_q,
@@ -808,7 +808,7 @@ fn pkf_map(size: u32, structures: &[PkfStructure]) -> (GameMap, Vec<bool>) {
             Some((half_width_q, half_height_q, chamfer_q)) => sim_map::StructureFootprint {
                 width,
                 height,
-                shape: sim_types::FootprintShape {
+                shape: sim_types::FootprintShape::Box {
                     half_width_q,
                     half_height_q,
                     chamfer_q,
@@ -958,7 +958,7 @@ fn a_free_end_across_a_narrow_portal_is_passed_on_its_far_side() {
     let footprint = sim_map::StructureFootprint {
         width: 5,
         height: 5,
-        shape: sim_types::FootprintShape {
+        shape: sim_types::FootprintShape::Box {
             half_width_q: 10,
             half_height_q: 10,
             chamfer_q: 6,

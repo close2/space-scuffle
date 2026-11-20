@@ -5,12 +5,12 @@
 //! cell passability and buildability flags, building footprint placement and removal,
 //! and continuous altitude queries.
 
-use crate::error::{MapError, PlacementFailureReason, Result};
-use crate::footprint::StructureFootprint;
+use crate::error::{MapError, PlacementFailureReason, ResourceFootprintFailure, Result};
+use crate::footprint::{PlacedFootprint, ResourceFootprints, StructureFootprint};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 pub use sim_types::ResourceKind;
-use sim_types::{EntityId, FootprintShape, PlayerId, SimScalar, SimVec2};
+use sim_types::{EntityId, FootprintShape, PlayerId, ResourceNodeId, SimScalar, SimVec2};
 use std::collections::BTreeMap;
 
 /// Discrete cliff elevation plateau (0 to 3).
@@ -154,6 +154,9 @@ bitflags! {
         const RAMP                   = 1 << 5;
         /// Cell is an impassable cliff drop-off.
         const UNPASSABLE_CLIFF       = 1 << 6;
+        /// A standing resource node's footprint occupies this cell (runtime state, plan
+        /// `2026-11-20-resource-footprints` D-5).
+        const OCCUPIED_BY_RESOURCE   = 1 << 7;
     }
 }
 
@@ -170,6 +173,8 @@ pub struct MapCell {
     pub flags: CellFlags,
     /// Identifier of structure occupying this cell, if any.
     pub occupying_structure: Option<EntityId>,
+    /// The standing resource node whose footprint occupies this cell, if any (runtime state).
+    pub occupying_resource: Option<ResourceNodeId>,
 }
 
 impl MapCell {
@@ -182,21 +187,39 @@ impl MapCell {
             terrain_kind: TerrainKind::Grass,
             flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
             occupying_structure: None,
+            occupying_resource: None,
         }
     }
 }
 
 /// Natural resource node located on the map.
+///
+/// A node blocks exactly when it is placed (plan `2026-11-20-resource-footprints` D-4): its
+/// footprint, from the catalog's resource footprint of its kind, takes cells relative to its
+/// anchor `cell`, and its outline is cut into the navigation mesh.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceNode {
-    /// Continuous 2D world position.
+    /// Continuous 2D world position: the anchor cell's centre until the node is first placed,
+    /// the centre of its footprint from then on.
     pub pos: SimVec2,
     /// Type of resource.
     pub kind: ResourceKind,
     /// Remaining harvestable units.
     pub remaining: u32,
-    /// Discrete grid cell coordinate.
+    /// The anchor cell: the node's footprint is placed relative to it.
     pub cell: (u32, u32),
+    /// The node's placed footprint while it stands; `None` before placement and after removal.
+    pub placed: Option<PlacedResource>,
+}
+
+/// A standing resource node's footprint and the flags its cells had before it was placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacedResource {
+    /// The footprint's cells and outline.
+    pub footprint: PlacedFootprint,
+    /// Row-major flags of the footprint cells from before placement, restored on removal; slots
+    /// past the footprint's cell count are empty.
+    pub prior_flags: [CellFlags; 16],
 }
 
 /// Neutral observation tower that grants vision when occupied.
@@ -601,6 +624,16 @@ impl GameMap {
 
                 let cell = self.cell(cx, cy)?;
 
+                // Resource nodes are public map data (plan `2026-11-20-resource-footprints` D-9):
+                // no knowledge predicate excuses one.
+                if let Some(node) = cell.occupying_resource {
+                    return Err(MapError::PlacementBlocked {
+                        cell_x,
+                        cell_y,
+                        reason: PlacementFailureReason::OccupiedByResource(node),
+                    });
+                }
+
                 if cell.flags.contains(CellFlags::RAMP) {
                     return Err(MapError::PlacementBlocked {
                         cell_x,
@@ -729,6 +762,253 @@ impl GameMap {
         }
 
         Ok(placed)
+    }
+
+    /// Places every resource node's footprint, in node order, by the footprint of its kind in
+    /// `table` (plan `2026-11-20-resource-footprints` D-4, D-5): each footprint cell gains
+    /// `OCCUPIED_BY_RESOURCE` and the node as its occupant and loses `BUILDABLE` and
+    /// `GROUND_PATHABLE`, the prior flags are kept for removal, and the node's position becomes
+    /// the centre of its footprint. Placement stops at the first node that cannot be placed;
+    /// nodes before it stay placed.
+    ///
+    /// # Errors
+    /// [`MapError::ResourceFootprint`] naming the node: its kind has no footprint or an invalid
+    /// shape, a cell lies beyond the map, overlaps another node or a structure, is not walkable,
+    /// buildable, non-ramp ground or is on another cliff level than the anchor, or the node is
+    /// already placed.
+    pub fn place_resource_footprints(&mut self, table: &ResourceFootprints) -> Result<()> {
+        for index in 0..self.resources.len() {
+            let node = ResourceNodeId(u32::try_from(index).unwrap_or(u32::MAX));
+            self.place_one_resource_footprint(node, table)?;
+        }
+        Ok(())
+    }
+
+    /// Places one resource node's footprint by `table`, as
+    /// [`Self::place_resource_footprints`] places each: a node removed from the map, or moved
+    /// while not placed, can stand again.
+    ///
+    /// # Errors
+    /// As [`Self::place_resource_footprints`] for this node; a node index beyond the map's
+    /// nodes is [`ResourceFootprintFailure::NotPlaced`].
+    pub fn place_one_resource_footprint(
+        &mut self,
+        node: ResourceNodeId,
+        table: &ResourceFootprints,
+    ) -> Result<()> {
+        let index = node.0 as usize;
+        if index >= self.resources.len() {
+            return Err(MapError::ResourceFootprint {
+                node,
+                reason: ResourceFootprintFailure::NotPlaced,
+            });
+        }
+        self.place_resource_footprint(node, index, table)
+            .map_err(|reason| MapError::ResourceFootprint { node, reason })
+    }
+
+    /// Places node `index` (identified as `node`) by `table`; on failure nothing changes.
+    pub(crate) fn place_resource_footprint(
+        &mut self,
+        node: ResourceNodeId,
+        index: usize,
+        table: &ResourceFootprints,
+    ) -> std::result::Result<(), ResourceFootprintFailure> {
+        let resource = &self.resources[index];
+        if resource.placed.is_some() {
+            return Err(ResourceFootprintFailure::AlreadyPlaced);
+        }
+        let row = table
+            .get(resource.kind)
+            .ok_or(ResourceFootprintFailure::NoFootprint)?;
+        let footprint = row.footprint();
+        footprint
+            .validate()
+            .map_err(|_| ResourceFootprintFailure::InvalidShape)?;
+        let (left, bottom) = self.resource_cells_origin(resource.cell, row.cells)?;
+        let anchor_level = self
+            .cell(resource.cell.0, resource.cell.1)
+            .map_err(|_| ResourceFootprintFailure::OutOfBounds)?
+            .cliff_level;
+        let cells = Self::rectangle(left, bottom, footprint.width, footprint.height);
+        for (x, y) in cells.clone() {
+            let cell = &self.cells[self.index_of(x, y)];
+            if let Some(other) = cell.occupying_resource {
+                return Err(ResourceFootprintFailure::OverlapsNode(other));
+            }
+            if let Some(structure) = cell.occupying_structure {
+                return Err(ResourceFootprintFailure::OverlapsStructure(structure));
+            }
+            let open = cell
+                .flags
+                .contains(CellFlags::GROUND_PATHABLE | CellFlags::BUILDABLE)
+                && !cell.flags.contains(CellFlags::RAMP)
+                && cell.ramp.is_none();
+            if !open {
+                return Err(ResourceFootprintFailure::NotOpenGround { x, y });
+            }
+            if cell.cliff_level != anchor_level {
+                return Err(ResourceFootprintFailure::CliffLevelMismatch { x, y });
+            }
+        }
+        let mut prior_flags = [CellFlags::empty(); 16];
+        for (slot, (x, y)) in prior_flags.iter_mut().zip(cells) {
+            let at = self.index_of(x, y);
+            let cell = &mut self.cells[at];
+            *slot = cell.flags;
+            cell.flags.insert(CellFlags::OCCUPIED_BY_RESOURCE);
+            cell.flags
+                .remove(CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE);
+            cell.occupying_resource = Some(node);
+        }
+        let placed = PlacedFootprint::new((left, bottom), footprint);
+        let resource = &mut self.resources[index];
+        resource.pos = placed.centre().to_sim();
+        resource.placed = Some(PlacedResource {
+            footprint: placed,
+            prior_flags,
+        });
+        Ok(())
+    }
+
+    /// The bottom-left cell of a footprint whose cells are `(dx, dy, width, height)` from
+    /// `anchor`, if the whole rectangle lies on the map.
+    fn resource_cells_origin(
+        &self,
+        anchor: (u32, u32),
+        (dx, dy, width, height): (i8, i8, u8, u8),
+    ) -> std::result::Result<(u32, u32), ResourceFootprintFailure> {
+        let left = i64::from(anchor.0) + i64::from(dx);
+        let bottom = i64::from(anchor.1) + i64::from(dy);
+        let fits = left >= 0
+            && bottom >= 0
+            && left + i64::from(width) <= i64::from(self.width)
+            && bottom + i64::from(height) <= i64::from(self.height);
+        match (u32::try_from(left), u32::try_from(bottom)) {
+            (Ok(left), Ok(bottom)) if fits => Ok((left, bottom)),
+            _ => Err(ResourceFootprintFailure::OutOfBounds),
+        }
+    }
+
+    /// The cells of a `width` by `height` rectangle from `(left, bottom)`, row by row.
+    fn rectangle(
+        left: u32,
+        bottom: u32,
+        width: u8,
+        height: u8,
+    ) -> impl Iterator<Item = (u32, u32)> + Clone {
+        (0..u32::from(height))
+            .flat_map(move |dy| (0..u32::from(width)).map(move |dx| (left + dx, bottom + dy)))
+    }
+
+    /// The row-major index of an in-bounds cell.
+    fn index_of(&self, x: u32, y: u32) -> usize {
+        (y as usize) * (self.width as usize) + (x as usize)
+    }
+
+    /// Removes a standing resource node from the map (plan `2026-11-20-resource-footprints`
+    /// D-8): its cells get back their prior flags and lose it as their occupant, and it is no
+    /// longer placed. The node itself stays in [`Self::resources`].
+    ///
+    /// # Errors
+    /// [`MapError::ResourceFootprint`] with [`ResourceFootprintFailure::NotPlaced`] for a node
+    /// that does not stand (or does not exist), and
+    /// [`ResourceFootprintFailure::UnderStructure`] while a structure stands on it.
+    pub fn remove_resource_footprint(&mut self, node: ResourceNodeId) -> Result<()> {
+        let fail = |reason| MapError::ResourceFootprint { node, reason };
+        let placed = self
+            .resources
+            .get(node.0 as usize)
+            .and_then(|resource| resource.placed)
+            .ok_or(fail(ResourceFootprintFailure::NotPlaced))?;
+        let cells = Self::rectangle(
+            placed.footprint.top_left.0,
+            placed.footprint.top_left.1,
+            placed.footprint.width,
+            placed.footprint.height,
+        );
+        if cells.clone().any(|(x, y)| {
+            self.cells[self.index_of(x, y)]
+                .occupying_structure
+                .is_some()
+        }) {
+            return Err(fail(ResourceFootprintFailure::UnderStructure));
+        }
+        for (flags, (x, y)) in placed.prior_flags.iter().zip(cells) {
+            let at = self.index_of(x, y);
+            let cell = &mut self.cells[at];
+            cell.flags = *flags;
+            cell.occupying_resource = None;
+        }
+        if let Some(resource) = self.resources.get_mut(node.0 as usize) {
+            resource.placed = None;
+        }
+        Ok(())
+    }
+
+    /// Places structure `id` exactly over the standing resource node `node` (plan
+    /// `2026-11-20-resource-footprints` D-6: an extractor over a geyser). The cells then hold
+    /// both occupants: they gain `OCCUPIED_BY_STRUCTURE` and the structure, keep the node, and
+    /// the structure's prior flags are the node-occupied ones, so removing the structure leaves
+    /// the node standing.
+    ///
+    /// # Errors
+    /// [`MapError::InvalidFootprintShape`] for a shape outside its cells;
+    /// [`MapError::NotOverResource`] unless the node stands and `footprint` has exactly its
+    /// cells; [`MapError::PlacementBlocked`] with
+    /// [`PlacementFailureReason::OccupiedByStructure`] when a structure already stands there.
+    pub fn place_structure_over_resource(
+        &mut self,
+        id: EntityId,
+        node: ResourceNodeId,
+        footprint: StructureFootprint,
+    ) -> Result<()> {
+        footprint.validate()?;
+        let not_over = MapError::NotOverResource {
+            structure: id,
+            node,
+        };
+        let placed = self
+            .resources
+            .get(node.0 as usize)
+            .and_then(|resource| resource.placed)
+            .ok_or(not_over.clone())?
+            .footprint;
+        if (placed.width, placed.height) != (footprint.width, footprint.height) {
+            return Err(not_over);
+        }
+        let (left, bottom) = placed.top_left;
+        let cells = Self::rectangle(left, bottom, footprint.width, footprint.height);
+        for (x, y) in cells.clone() {
+            if let Some(other) = self.cells[self.index_of(x, y)].occupying_structure {
+                return Err(MapError::PlacementBlocked {
+                    cell_x: left,
+                    cell_y: bottom,
+                    reason: PlacementFailureReason::OccupiedByStructure(other),
+                });
+            }
+        }
+        let mut prior_flags =
+            Vec::with_capacity(usize::from(footprint.width) * usize::from(footprint.height));
+        for (x, y) in cells {
+            let at = self.index_of(x, y);
+            let cell = &mut self.cells[at];
+            prior_flags.push(cell.flags);
+            cell.flags.insert(CellFlags::OCCUPIED_BY_STRUCTURE);
+            cell.occupying_structure = Some(id);
+        }
+        self.structures.insert(
+            id,
+            PlacedStructure {
+                id,
+                top_left: (left, bottom),
+                width: footprint.width,
+                height: footprint.height,
+                prior_flags,
+                shape: footprint.shape,
+            },
+        );
+        Ok(())
     }
 
     /// Updates ownership of neutral watchtowers from the ground units currently near them.

@@ -125,9 +125,11 @@ pub(crate) mod test_support {
         RuntimeCatalogs { units, upgrades }
     }
 
-    /// A world on `map` with the shipped catalogs.
+    /// A world on `map` with the shipped catalogs; a unit-test map's resource nodes fit the
+    /// shipped footprints.
     pub(crate) fn world(map: sim_map::SimMap, seed: u64) -> SimWorld {
         let catalogs = shipped_catalogs();
         SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
+            .expect("invariant: unit-test maps place their resource nodes where they fit")
     }
 }

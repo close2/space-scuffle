@@ -21,7 +21,9 @@ fn fixture() -> Result<(SimWorld, TransportState, BattleSession), Box<dyn std::e
             owner: 0,
             passenger_ordinal: 2,
             carrier_ordinal: 3,
-            destination: [14, 14],
+            // (14, 14) lies on the corner field's north edge since plan
+            // 2026-11-20-resource-footprints gave fields their 2×1 footprints; (16, 14) is open.
+            destination: [16, 14],
         },
     )?;
     let metadata = CommittedBattleMetadata::from_definition(&definition)?;
@@ -146,7 +148,7 @@ fn selected_zero_speed_or_missing_definition_fails_without_ordinal_replacement()
         owner: 0,
         passenger_ordinal: 2,
         carrier_ordinal: 3,
-        destination: [14, 14],
+        destination: [16, 14],
     };
     let error = TransportState::select(&simulation, &spec)
         .err()

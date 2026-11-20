@@ -150,6 +150,7 @@ fn synthetic_map() -> GameMap {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     };
     let mut map = GameMap::new(W, H, base).expect("synthetic map dimensions are non-zero");
     let mut rng = SplitMix64(0x5ca1_ab1e_0009_0004);

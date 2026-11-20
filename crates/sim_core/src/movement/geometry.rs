@@ -7,7 +7,7 @@
 //! used for production egress and endpoint-only placement; only producer egress may explicitly
 //! exempt its own foundation, never terrain.
 
-use sim_map::{CellFlags, GameMap};
+use sim_map::{CellFlags, FootprintOccupant, GameMap};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
 pub(crate) fn ground_footprint_connected(
@@ -68,9 +68,14 @@ pub(crate) fn ground_footprint_connected(
                 continue;
             }
             // The ground under a structure is walkable (D-5); structures are tested below.
+            // So is the ground under a resource node; its outline is tested below (plan
+            // `2026-11-20-resource-footprints` D-5 C2).
             let allowed = map.cell(cell.0, cell.1).is_ok_and(|c| {
-                c.flags
-                    .intersects(CellFlags::GROUND_PATHABLE | CellFlags::OCCUPIED_BY_STRUCTURE)
+                c.flags.intersects(
+                    CellFlags::GROUND_PATHABLE
+                        | CellFlags::OCCUPIED_BY_STRUCTURE
+                        | CellFlags::OCCUPIED_BY_RESOURCE,
+                )
             });
             if !allowed || !map.terrain_step_is_connected(cell, cell) {
                 return false;
@@ -87,8 +92,11 @@ pub(crate) fn ground_footprint_connected(
             }
         }
     }
-    !map.structure_occupants_touched(start, end, radius)
-        .any(|placed| Some(placed.id) != exempt && placed.capsule_meets(start, end, radius))
+    !map.footprint_occupants_touched(start, end, radius)
+        .any(|(occupant, footprint)| {
+            exempt.map(FootprintOccupant::Structure) != Some(occupant)
+                && footprint.capsule_meets(start, end, radius)
+        })
 }
 
 /// Exact open-interior slab intersection; mere tangency is not footprint overlap.

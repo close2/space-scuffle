@@ -35,17 +35,31 @@ const LOADOUTS: &str = include_str!("../../../assets/catalog/start_loadouts.ron"
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
 const STRUCTURES: &str = include_str!("../../../assets/catalog/structures.ron");
 const UPGRADES: &str = include_str!("../../../assets/catalog/upgrades.ron");
+const PLACEMENT_RULES: &str = include_str!("../../../assets/catalog/placement_rules.ron");
 
 const HOME: PlayerId = PlayerId(0);
 const AWAY: PlayerId = PlayerId(1);
 /// More money than any test spends, so that money never decides an outcome.
 const RICH: u32 = 1_000_000;
 /// Minimum-corner cells of the home player's buildings, on open plateau clear of its nodes.
-const TRAINING_SITE: (u32, u32) = (2, 2);
+// (12, 2): plan `2026-11-20-resource-footprints` Amendment 2 puts a geyser's 3×3 at (0..2, 0..2),
+// under the former site (2, 2).
+const TRAINING_SITE: (u32, u32) = (12, 2);
 const MODULE_SITE: (u32, u32) = (2, 7);
 const WALK_LIMIT: u32 = 6_000;
 
 type TestResult = Result<(), Box<dyn Error>>;
+
+/// The shipped units and structures with the shipped placement rules: the world places its
+/// resource nodes by their footprints (plan `2026-11-20-resource-footprints` D-4).
+fn units() -> Result<UnitCatalog, Box<dyn Error>> {
+    let mut units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    units.set_placement_rules(sim_core::catalog::PlacementRules::from_ron_str(
+        PLACEMENT_RULES,
+    )?);
+    Ok(units)
+}
 
 fn skirmish() -> Result<SimWorld, Box<dyn Error>> {
     let manifest = ScenarioManifest::from_ron_str(SCENARIO)?;
@@ -56,7 +70,7 @@ fn skirmish() -> Result<SimWorld, Box<dyn Error>> {
         &loadouts,
         &manifest.players,
         3,
-        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?,
+        units()?,
         UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), UPGRADES)?,
     )?)
 }
@@ -879,7 +893,11 @@ fn preview_judges_public_terrain_and_nodes_at_any_range() -> TestResult {
         world.preview_site(HOME, extractor, TRAINING_SITE.0, TRAINING_SITE.1),
         Err(SiteRefusal::ExtractorNeedsGas)
     );
-    assert!(world.preview_site(HOME, extractor, 13, 5).is_ok());
+    // An extractor centred on a home gas node (the node cell is read from the map; plan
+    // `2026-11-20-resource-footprints` D-10 re-laid the showcase's geysers behind the bases).
+    let gas = nodes_of_side(&world, true, ResourceKind::Gas)[0];
+    let (gx, gy) = world.map.resources()[gas.0 as usize].cell;
+    assert!(world.preview_site(HOME, extractor, gx - 1, gy - 1).is_ok());
     Ok(())
 }
 
@@ -898,6 +916,12 @@ fn the_preview_reports_near_resources() -> TestResult {
         })
         .ok_or("no town hall analogue")?
         .unit_type_id;
+    // The world was built with the shipped rules (its nodes stand on their footprints, plan
+    // `2026-11-20-resource-footprints` D-4); the search runs with no rings, as the site's
+    // clearance apart from the rings is what it looks for.
+    world
+        .catalog
+        .set_placement_rules(sim_core::catalog::PlacementRules::NONE);
     let mut beside = None;
     'search: for node in nodes_of_side(&world, true, ResourceKind::Mineral) {
         let (x, y) = world.map.resources()[node.0 as usize].cell;
@@ -1044,26 +1068,36 @@ fn an_exhausted_visible_node_is_refused() -> TestResult {
     Ok(())
 }
 
+/// An unplaced geyser anchored at `(x, y)`, its position the cell's centre.
+fn geyser(x: u32, y: u32) -> ResourceNode {
+    let centre = |v: u32| SimScalar::from_num(v) + SimScalar::HALF;
+    ResourceNode {
+        pos: SimVec2::new(centre(x), centre(y)),
+        kind: ResourceKind::Gas,
+        remaining: 100,
+        cell: (x, y),
+        placed: None,
+    }
+}
+
 #[test]
 fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
     const SIDE: u32 = 160;
     const GAS_CELL: u32 = 150;
-    let gas_at = SimScalar::from_num(GAS_CELL) + SimScalar::HALF;
+    // The geyser every extractor is ordered onto, then one geyser per extractor member: an
+    // extractor stands only exactly over a geyser (plan `2026-11-20-resource-footprints` D-6).
+    const MEMBER_GEYSERS: u32 = 8;
+    let mut nodes = vec![geyser(GAS_CELL, GAS_CELL)];
+    nodes.extend((0..MEMBER_GEYSERS).map(|k| geyser(110 + 4 * k, 140)));
     let map = GameMap::from_cells(
         SIDE,
         SIDE,
         vec![MapCell::default_ground(CliffLevel(0)); (SIDE * SIDE) as usize],
-        vec![ResourceNode {
-            pos: SimVec2::new(gas_at, gas_at),
-            kind: ResourceKind::Gas,
-            remaining: 100,
-            cell: (GAS_CELL, GAS_CELL),
-        }],
+        nodes,
         Vec::new(),
     )?;
     let mut world = sim_fixtures::world(map, 5);
-    world.catalog =
-        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    world.catalog = units()?;
     world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     world.player_resources[PlayerSlot::ALL[0]].gas = RICH;
     let ids: Vec<UnitTypeId> = world.catalog.archetypes().map(|a| a.unit_type_id).collect();
@@ -1074,9 +1108,16 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
     }
     let mut members = Vec::with_capacity(ids.len());
     let mut next_site = 0;
+    let mut next_geyser = 0;
     for &id in &ids {
-        let shape = world.catalog.get(id)?.shape;
-        let member = if matches!(shape, ShapeKind::BuildingDome { .. }) {
+        let arch = world.catalog.get(id)?;
+        let shape = arch.shape;
+        let member = if arch.capabilities.is_gas_extractor {
+            assert!(next_geyser < MEMBER_GEYSERS, "a geyser for every extractor");
+            let x = 110 + 4 * next_geyser;
+            next_geyser += 1;
+            world.spawn_structure(id, HOME, x - 1, 139)?
+        } else if matches!(shape, ShapeKind::BuildingDome { .. }) {
             let (x, y) = (next_site % 12 * 8, next_site / 12 * 8 + 16);
             next_site += 1;
             world.spawn_structure(id, HOME, x, y)?
@@ -1110,7 +1151,7 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
     for &structure in &ids {
         let arch = world.catalog.get(structure)?;
         let site = if arch.capabilities.is_gas_extractor {
-            (GAS_CELL, GAS_CELL)
+            (GAS_CELL - 1, GAS_CELL - 1)
         } else {
             (100, 2)
         };

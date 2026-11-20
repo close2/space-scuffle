@@ -7,7 +7,9 @@
 //! fails here, once, instead of on every peer during a match. This is safety
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
-use super::placement_rules::{PlacementRulesFile, ResourceFootprintDef, MAX_REACH_SIDE};
+use super::placement_rules::{
+    PlacementRulesFile, ResourceFootprintDef, MAX_REACH_SIDE, MAX_RESOURCE_SIDE,
+};
 use super::{
     PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
     UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
@@ -18,7 +20,7 @@ use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, MoverType, PlacementFlag,
-    ProjectileTargetLossBehavior, SimAngle, SimScalar, WeaponVisualKind,
+    ProjectileTargetLossBehavior, ResourceKind, SimAngle, SimScalar, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -1145,9 +1147,12 @@ fn distinct_flags(definition: &str, field: &str, flags: &[PlacementFlag]) -> Sim
 }
 
 impl PlacementRulesFile {
-    /// Checks every resource ring (plan `2026-11-19-footprint-flags` D-2): each kind at most once,
-    /// a rectangular mask of `.` and `x` at most [`MAX_REACH_SIDE`] cells a side, the anchor on an
-    /// `x`, and a non-empty list of distinct applied flags without the engine's `Fogged`.
+    /// Checks every resource row (plans `2026-11-19-footprint-flags` D-2 and
+    /// `2026-11-20-resource-footprints` D-1): each kind exactly once, a rectangular mask of `.`,
+    /// `x` and `o` at most [`MAX_REACH_SIDE`] cells a side whose `x` cells form one rectangle of at
+    /// most [`MAX_RESOURCE_SIDE`] cells a side holding the anchor, a shape that lies in those cells
+    /// (an outline simple, 3 to 16 vertices on the quarter lattice, edges along axes and
+    /// diagonals), and a non-empty list of distinct applied flags without the engine's `Fogged`.
     pub(super) fn validate(&self) -> SimResult<()> {
         for (index, ring) in self.resource_footprints.iter().enumerate() {
             let definition = format!("{:?}", ring.kind);
@@ -1155,9 +1160,19 @@ impl PlacementRulesFile {
                 .iter()
                 .any(|earlier| earlier.kind == ring.kind)
             {
-                return Err(invalid(&definition, "kind", "must have at most one ring"));
+                return Err(invalid(&definition, "kind", "must have at most one row"));
             }
             ring.validate(&definition)?;
+        }
+        // Every resource kind has a row: a node of a kind without one could not be placed.
+        for kind in [ResourceKind::Mineral, ResourceKind::Gas] {
+            if !self.resource_footprints.iter().any(|row| row.kind == kind) {
+                return Err(invalid(
+                    &format!("{kind:?}"),
+                    "resource_footprints",
+                    "every resource kind must have a row",
+                ));
+            }
         }
         Ok(())
     }
@@ -1180,6 +1195,13 @@ impl ResourceFootprintDef {
                 "must not apply Fogged, a state of the placing player's vision",
             ));
         }
+        self.validate_rows(definition)?;
+        self.validate_own_cells(definition)?;
+        self.validate_shape(definition)
+    }
+
+    /// The mask: 1 to 15 rows of equal length 1 to 15, of `.`, `x` and `o` only.
+    fn validate_rows(&self, definition: &str) -> SimResult<()> {
         let width = self.rows.first().map_or(0, |row| row.chars().count());
         if width == 0 || self.rows.len() > MAX_REACH_SIDE || width > MAX_REACH_SIDE {
             return Err(invalid(
@@ -1194,9 +1216,34 @@ impl ResourceFootprintDef {
         if self
             .rows
             .iter()
-            .any(|row| row.chars().any(|mark| mark != '.' && mark != 'x'))
+            .any(|row| row.chars().any(|mark| !matches!(mark, '.' | 'x' | 'o')))
         {
-            return Err(invalid(definition, "rows", "must hold only `.` and `x`"));
+            return Err(invalid(
+                definition,
+                "rows",
+                "must hold only `.`, `x` and `o`",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The own cells: at least one `x`, all of them one rectangle of at most 4 × 4, and the
+    /// anchor on one of them.
+    fn validate_own_cells(&self, definition: &str) -> SimResult<()> {
+        let Some((_, _, width, height)) = self.own_rectangle() else {
+            return Err(invalid(
+                definition,
+                "rows",
+                "must hold the node's own cells, `x`",
+            ));
+        };
+        let filled = self.marked('x').count() == width * height;
+        if !filled || width > MAX_RESOURCE_SIDE || height > MAX_RESOURCE_SIDE {
+            return Err(invalid(
+                definition,
+                "rows",
+                "the own cells `x` must form one rectangle of at most 4 x 4 cells",
+            ));
         }
         let anchored = usize::try_from(self.anchor.1)
             .ok()
@@ -1204,9 +1251,48 @@ impl ResourceFootprintDef {
             .zip(usize::try_from(self.anchor.0).ok())
             .and_then(|(row, column)| row.chars().nth(column));
         match anchored {
-            Some('x') => Ok(()),
-            Some(_) => Err(invalid(definition, "anchor", "must name an `x` cell")),
-            None => Err(invalid(definition, "anchor", "must lie inside the rows")),
+            Some('x') => {}
+            Some(_) => return Err(invalid(definition, "anchor", "must name an `x` cell")),
+            None => return Err(invalid(definition, "anchor", "must lie inside the rows")),
+        }
+        Ok(())
+    }
+
+    /// The shape: every value a finite multiple of 1/4, and the resolved shape inside the own
+    /// cells by `sim_map`'s placement rule (a box nonempty with a chamfer shorter than its smaller
+    /// half extent; an outline simple, 3 to 16 vertices, edges along axes and diagonals).
+    fn validate_shape(&self, definition: &str) -> SimResult<()> {
+        if self
+            .shape
+            .values()
+            .iter()
+            .any(|value| !value.is_finite() || (value * 4.0).fract() != 0.0)
+        {
+            return Err(invalid(
+                definition,
+                "shape",
+                "every value must be a finite multiple of 1/4 world unit",
+            ));
+        }
+        let (_, _, width, height) = self.own_rectangle().unwrap_or((0, 0, 0, 0));
+        let fits = self.shape.resolve().is_some_and(|shape| {
+            sim_map::StructureFootprint {
+                width: u8::try_from(width).unwrap_or(0),
+                height: u8::try_from(height).unwrap_or(0),
+                shape,
+            }
+            .validate()
+            .is_ok()
+        });
+        if fits {
+            Ok(())
+        } else {
+            Err(invalid(
+                definition,
+                "shape",
+                "must lie in the own cells: a nonempty box, or a simple outline of 3 to 16 \
+                 vertices with every edge along an axis or a diagonal",
+            ))
         }
     }
 }
@@ -2502,7 +2588,7 @@ mod structure_radius_tests {
             sim_types::ShapeKind::BuildingDome {
                 footprint_w: 3,
                 footprint_h: 3,
-                shape: sim_types::FootprintShape {
+                shape: sim_types::FootprintShape::Box {
                     half_width_q: 6,
                     half_height_q: 6,
                     chamfer_q: 3,
@@ -2559,13 +2645,26 @@ mod placement_flag_tests {
         Ok((out.join("\n"), slug.ok_or("a slug")?))
     }
 
-    /// The shipped rules with the ring of `kind` replaced by `ring` (the text inside its
-    /// parentheses after `kind: …,`).
+    /// A full box on a one-cell row: the shape `rules_with` gives a ring that names none.
+    const ONE_CELL_SHAPE: &str =
+        "shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), remove_when_empty: false";
+
+    /// The shipped rules with the row of `kind` replaced by `ring` (the text inside its
+    /// parentheses after `kind: …,`); a ring that names no shape gets [`ONE_CELL_SHAPE`].
     fn rules_with(kind: &str, ring: &str) -> Result<String, Box<dyn std::error::Error>> {
         let start = RULES
             .find(&format!("(kind: {kind},"))
-            .ok_or("the shipped ring of that kind")?;
-        let end = start + RULES[start..].find("]),").ok_or("the ring's end")? + "]),".len();
+            .ok_or("the shipped row of that kind")?;
+        let removal = start
+            + RULES[start..]
+                .find("remove_when_empty: ")
+                .ok_or("the row's removal flag")?;
+        let end = removal + RULES[removal..].find("),").ok_or("the row's end")? + "),".len();
+        let ring = if ring.contains("shape:") {
+            ring.to_owned()
+        } else {
+            format!("{ring}, {ONE_CELL_SHAPE}")
+        };
         Ok(format!(
             "{}(kind: {kind}, {ring}),{}",
             &RULES[..start],
@@ -2674,7 +2773,7 @@ mod placement_flag_tests {
                 "rows",
             ),
             (
-                r#"applies: [NearResources], anchor: (0, 0), rows: ["xo"]"#,
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["xq"]"#,
                 "rows",
             ),
             ("applies: [NearResources], anchor: (0, 0), rows: []", "rows"),
@@ -2726,11 +2825,180 @@ mod placement_flag_tests {
         Ok(())
     }
 
-    /// Whether `cells` is unchanged by mirroring `dx` and by mirroring `dy`.
-    fn symmetric(cells: &[(i8, i8)]) -> bool {
-        cells
-            .iter()
-            .all(|&(dx, dy)| cells.contains(&(-dx, dy)) && cells.contains(&(dx, -dy)))
+    // ---- Plan `2026-11-20-resource-footprints` WP2: the footprint rows (D-1). ----
+
+    #[test]
+    fn a_resource_row_needs_own_cells() -> TestResult {
+        // A ring of `o` cells only, the anchor on one of them.
+        let rules = rules_with(
+            "Mineral",
+            r#"applies: [NearResources], anchor: (0, 0), rows: ["oo", "oo"]"#,
+        )?;
+        assert_eq!(refused_field(PlacementRules::from_ron_str(&rules)), "rows");
+        Ok(())
+    }
+
+    #[test]
+    fn own_cells_must_be_one_rectangle_with_the_anchor() -> TestResult {
+        let cases = [
+            // Two separate own cells.
+            (r#"anchor: (0, 0), rows: ["xox"]"#, "rows"),
+            // An L of three.
+            (r#"anchor: (0, 0), rows: ["xx", "xo"]"#, "rows"),
+            // Five wide.
+            (r#"anchor: (0, 0), rows: ["xxxxx"]"#, "rows"),
+            // The anchor on a ring cell.
+            (r#"anchor: (1, 0), rows: ["xo"]"#, "anchor"),
+            // A 4 × 4 with the anchor inside it, and a 2 × 1 anchored on its east cell.
+            (
+                r#"anchor: (2, 1), rows: ["xxxx", "xxxx", "xxxx", "xxxx"]"#,
+                "loaded",
+            ),
+            (r#"anchor: (1, 0), rows: ["xx"]"#, "loaded"),
+        ];
+        for (ring, field) in cases {
+            let rules = rules_with("Mineral", &format!("applies: [NearResources], {ring}"))?;
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&rules)),
+                field,
+                "{ring}"
+            );
+        }
+        // The loaded footprint is the rectangle from the anchor.
+        let rules = PlacementRules::from_ron_str(&rules_with(
+            "Mineral",
+            r#"applies: [NearResources], anchor: (1, 0), rows: ["xx"],
+               shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.0),
+               remove_when_empty: true"#,
+        )?)?;
+        let footprint = rules
+            .resource_footprints()
+            .get(ResourceKind::Mineral)
+            .ok_or("a mineral footprint")?;
+        assert_eq!(footprint.cells, (-1, 0, 2, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_resource_shape_must_lie_in_its_cells() -> TestResult {
+        let row = |shape: &str| {
+            format!(
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["xx"], shape: {shape},
+                   remove_when_empty: true"#
+            )
+        };
+        let cases = [
+            (
+                "Box(half_width: 1.25, half_height: 0.5, chamfer: 0.0)",
+                "shape",
+            ),
+            (
+                "Box(half_width: 1.0, half_height: 0.75, chamfer: 0.0)",
+                "shape",
+            ),
+            (
+                "Box(half_width: 0.0, half_height: 0.5, chamfer: 0.0)",
+                "shape",
+            ),
+            (
+                "Box(half_width: 1.0, half_height: 0.5, chamfer: 0.5)",
+                "shape",
+            ),
+            (
+                "Box(half_width: 0.9, half_height: 0.5, chamfer: 0.0)",
+                "shape",
+            ),
+            (
+                "Box(half_width: 1.0, half_height: 0.5, chamfer: 0.25)",
+                "loaded",
+            ),
+            ("Outline([(-1.0, -0.5), (1.0, -0.5), (1.0, 0.75)])", "shape"),
+            ("Outline([(-1.0, -0.5), (1.0, -0.5)])", "shape"),
+            (
+                "Outline([(-1.0, -0.5), (0.5, -0.5), (-0.125, 0.25)])",
+                "shape",
+            ),
+            ("Outline([(-1.0, -0.5), (0.0, -0.5), (0.0, 0.5)])", "loaded"),
+        ];
+        for (shape, field) in cases {
+            let rules = rules_with("Mineral", &row(shape))?;
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&rules)),
+                field,
+                "{shape}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_outline_edge_must_be_axis_or_diagonal() -> TestResult {
+        let row = |outline: &str| {
+            format!(
+                r#"applies: [NearResources], anchor: (1, 1), rows: ["xxx", "xxx", "xxx"],
+                   shape: Outline([{outline}]), remove_when_empty: false"#
+            )
+        };
+        let cases = [
+            // An edge of slope 2.
+            ("(-1.0, -1.0), (1.0, -1.0), (0.0, 1.0)", "shape"),
+            // Two edges crossing.
+            (
+                "(-1.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0)",
+                "shape",
+            ),
+            // Seventeen vertices.
+            (
+                "(-1.0, -1.0), (-0.75, -1.0), (-0.5, -1.0), (-0.25, -1.0), (0.0, -1.0), \
+                 (0.25, -1.0), (0.5, -1.0), (0.75, -1.0), (1.0, -1.0), (1.0, -0.5), (1.0, 0.0), \
+                 (1.0, 0.5), (1.0, 1.0), (0.5, 1.0), (0.0, 1.0), (-0.5, 1.0), (-1.0, 1.0)",
+                "shape",
+            ),
+            // The diagonals and axes of a chamfered square.
+            (
+                "(-0.5, -1.0), (0.5, -1.0), (1.0, -0.5), (1.0, 0.5), (0.5, 1.0), (-0.5, 1.0), \
+                 (-1.0, 0.5), (-1.0, -0.5)",
+                "loaded",
+            ),
+        ];
+        for (outline, field) in cases {
+            let rules = rules_with("Gas", &row(outline))?;
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&rules)),
+                field,
+                "{outline}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn both_kinds_need_a_row() -> TestResult {
+        for kind in ["Mineral", "Gas"] {
+            let start = RULES
+                .find(&format!("(kind: {kind},"))
+                .ok_or("the shipped row")?;
+            let removal = start
+                + RULES[start..]
+                    .find("remove_when_empty: ")
+                    .ok_or("the row's removal flag")?;
+            let end = removal + RULES[removal..].find("),").ok_or("the row's end")? + 2;
+            let without = format!("{}{}", &RULES[..start], &RULES[end..]);
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&without)),
+                "resource_footprints",
+                "{kind}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether `cells` is unchanged by mirroring `dx` about `twice_centre_x / 2` and `dy` about
+    /// `twice_centre_y / 2` (the centre of the node's own cells, doubled).
+    fn symmetric(cells: &[(i8, i8)], (twice_centre_x, twice_centre_y): (i8, i8)) -> bool {
+        cells.iter().all(|&(dx, dy)| {
+            cells.contains(&(twice_centre_x - dx, dy)) && cells.contains(&(dx, twice_centre_y - dy))
+        })
     }
 
     #[test]
@@ -2740,22 +3008,23 @@ mod placement_flag_tests {
             .reach(ResourceKind::Mineral)
             .ok_or("a mineral reach")?;
         let gas = rules.reach(ResourceKind::Gas).ok_or("a gas reach")?;
-        // FootprintMineralsRounded (plan §2.2 rule 3, D-3): the 7 × 7 less its four corners.
-        assert_eq!(mineral.cells.len(), 45);
+        // FootprintMineralsRounded (plan `2026-11-20-resource-footprints` D-1): the 8 × 7 rows
+        // round the 2×1 field anchored on its west cell, less their four corners: 56 − 4.
+        assert_eq!(mineral.cells.len(), 52);
         for dy in -3_i64..=3 {
-            for dx in -3_i64..=3 {
-                let corner = dx.abs() == 3 && dy.abs() == 3;
+            for dx in -3_i64..=4 {
+                let corner = (dx == -3 || dx == 4) && dy.abs() == 3;
                 assert_eq!(mineral.covers(dx, dy), !corner, "mineral ({dx}, {dy})");
             }
         }
-        assert!(!mineral.covers(4, 0) && !mineral.covers(0, -4));
+        assert!(!mineral.covers(5, 0) && !mineral.covers(-4, 0) && !mineral.covers(0, -4));
         // FootprintGeyserRounded with void's rounded rows: 81 − 2 × 4 − 2 × 2.
         assert_eq!(gas.cells.len(), 69);
         assert!(gas.covers(2, 4) && !gas.covers(3, 4));
         assert!(gas.covers(3, 3) && !gas.covers(4, 3));
         assert!(gas.covers(4, 2) && !gas.covers(5, 0));
-        for reach in [mineral, gas] {
-            assert!(symmetric(&reach.cells), "{:?}", reach.kind);
+        for (reach, centre) in [(mineral, (1, 0)), (gas, (0, 0))] {
+            assert!(symmetric(&reach.cells, centre), "{:?}", reach.kind);
             assert!(reach.covers(0, 0), "{:?} holds its node's cell", reach.kind);
             assert_eq!(reach.applies, PlacementFlag::NearResources.bit());
         }

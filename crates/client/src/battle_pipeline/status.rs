@@ -172,6 +172,7 @@ const fn placement_reason(reason: PlacementFailureReason) -> &'static str {
         PlacementFailureReason::CliffLevelMismatch => "the site spans different cliff levels",
         PlacementFailureReason::OverlapsRamp => "the site overlaps a ramp",
         PlacementFailureReason::OccupiedByStructure(_) => "a structure is in the way",
+        PlacementFailureReason::OccupiedByResource(_) => "a resource node is in the way",
         PlacementFailureReason::OutOfBounds => "the site lies outside the map",
     }
 }

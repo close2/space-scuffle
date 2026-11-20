@@ -204,7 +204,7 @@ mod tests {
         let shape = ShapeKind::BuildingDome {
             footprint_w: 3,
             footprint_h: 3,
-            shape: FootprintShape {
+            shape: FootprintShape::Box {
                 half_width_q: 6,
                 half_height_q: 6,
                 chamfer_q: 2,

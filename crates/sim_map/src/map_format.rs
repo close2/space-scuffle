@@ -9,7 +9,10 @@
 //! - Format version 1 is strictly enforced.
 //! - Cell grid layers are stored as row strings with North at row 0 (`y = height - 1 - row_idx`).
 //! - Derived flags (`RAMP`, `UNPASSABLE_CLIFF`) are never persisted in the authorable flags layer.
-//! - Runtime state (`OCCUPIED_BY_STRUCTURE`) is strictly forbidden in map files.
+//! - Runtime state (`OCCUPIED_BY_STRUCTURE`, `OCCUPIED_BY_RESOURCE`) is strictly forbidden in map
+//!   files.
+//! - A resource's `cell` is its anchor: the catalog's resource footprint of its kind places the
+//!   node's cells relative to it (plan `2026-11-20-resource-footprints` D-3).
 //! - Encoding never converts silently: `MapDocument::encode` and `MapDocument::from_game_map`
 //!   share one per-cell check, so a cell either survives a save and load unchanged or the save
 //!   fails with a typed error.
@@ -241,8 +244,9 @@ pub enum MapFormatError {
         y: u32,
     },
 
-    /// Cell contains runtime state (`OCCUPIED_BY_STRUCTURE`) during export.
-    #[error("runtime structure occupancy state present in cell ({x}, {y})")]
+    /// Cell contains runtime state (`OCCUPIED_BY_STRUCTURE` or `OCCUPIED_BY_RESOURCE`) during
+    /// export.
+    #[error("runtime occupancy state present in cell ({x}, {y})")]
     RuntimeStateInCell {
         /// X coordinate of cell.
         x: u32,
@@ -324,7 +328,8 @@ pub struct MapResource {
     pub id: MapEntityId,
     /// Mineral crystal or gas geyser.
     pub kind: ResourceKind,
-    /// Discrete grid cell coordinate `(x, y)`.
+    /// The node's anchor cell `(x, y)`: the catalog's resource footprint of its kind places the
+    /// node's cells relative to it (plan `2026-11-20-resource-footprints` D-3).
     pub cell: (u32, u32),
     /// Harvestable quantity of the resource.
     pub amount: u32,
@@ -864,6 +869,7 @@ impl MapDocument {
             terrain_kind: spec.terrain,
             flags,
             occupying_structure: None,
+            occupying_resource: None,
         }
     }
 
@@ -890,6 +896,7 @@ impl MapDocument {
                 kind: res.kind,
                 remaining: res.amount,
                 cell: res.cell,
+                placed: None,
             });
         }
 
@@ -950,8 +957,11 @@ impl MapDocument {
                 };
                 check_cell(x, y, &spec)?;
 
-                if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
+                if cell
+                    .flags
+                    .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::OCCUPIED_BY_RESOURCE)
                     || cell.occupying_structure.is_some()
+                    || cell.occupying_resource.is_some()
                 {
                     return Err(MapFormatError::RuntimeStateInCell { x, y });
                 }

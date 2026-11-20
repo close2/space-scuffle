@@ -327,7 +327,7 @@ fn seeded_layout(seed: u64, square: bool) -> Vec<((u32, u32), sim_map::Structure
             sim_map::StructureFootprint {
                 width: size,
                 height: size,
-                shape: sim_types::FootprintShape {
+                shape: sim_types::FootprintShape::Box {
                     half_width_q: 2 * u16::from(size),
                     half_height_q: 2 * u16::from(size),
                     chamfer_q: chamfer,
@@ -386,7 +386,9 @@ fn distance_to_shape(placed: &sim_map::PlacedStructure, (hx, hy): (i64, i64)) ->
         reason = "test coordinates are below 2^10"
     )]
     let p = (hx as f64 / 2.0, hy as f64 / 2.0);
-    let (vertices, count) = placed.contour();
+    let footprint = placed.footprint();
+    let vertices = footprint.contour();
+    let count = vertices.len();
     let world = |v: sim_map::LatticePoint| (f64::from(v.x) / 4.0, f64::from(v.y) / 4.0);
     let inside = placed.contains_open_scaled(2 * hx, 2 * hy, 1);
     if inside {

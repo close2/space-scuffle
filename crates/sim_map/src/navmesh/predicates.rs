@@ -50,7 +50,9 @@ const LATTICE_SQ_PER_CELL_SQ: u64 = 1 << (2 * LATTICE_BITS);
 /// A mesh vertex: a lattice point in quarter cells (plan `2026-11-18-contour-footprints` D-3).
 /// `(4x, 4y)` is the corner shared by cells `(x - 1, y - 1)` to `(x, y)`; the points between are
 /// the quarter points that footprint contours need.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct LatticePoint {
     /// Column of the lattice line, in quarter cells from the map's west edge.
     pub x: i32,

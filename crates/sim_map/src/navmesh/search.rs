@@ -1604,7 +1604,7 @@ mod tests {
                 StructureFootprint {
                     width,
                     height,
-                    shape: FootprintShape {
+                    shape: FootprintShape::Box {
                         half_width_q,
                         half_height_q,
                         chamfer_q,

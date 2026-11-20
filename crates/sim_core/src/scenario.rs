@@ -629,12 +629,22 @@ pub fn build_world_with_catalogs(
     if !report.errors.is_empty() {
         return Err(ScenarioError::InvalidMap(report.errors));
     }
+    // Every node must fit its kind's footprint, and no start may lie in a node's ring (plan
+    // `2026-11-20-resource-footprints` D-4).
+    let rules = catalog.placement_rules();
+    let footprint_errors =
+        sim_map::validate_resource_footprints(doc, rules.resource_footprints(), |kind, dx, dy| {
+            rules.reach(kind).is_some_and(|reach| reach.covers(dx, dy))
+        });
+    if !footprint_errors.is_empty() {
+        return Err(ScenarioError::InvalidMap(footprint_errors));
+    }
 
     // 2. Convert map document to GameMap.
     let game_map = doc.to_game_map()?;
 
-    // 3. Create simulation world.
-    let mut world = SimWorld::with_catalogs(game_map, seed, catalog, upgrade_catalog);
+    // 3. Create simulation world: its resource nodes are placed by their footprints.
+    let mut world = SimWorld::with_catalogs(game_map, seed, catalog, upgrade_catalog)?;
 
     // 4. Verify all players have an assigned start location.
     for player in players {

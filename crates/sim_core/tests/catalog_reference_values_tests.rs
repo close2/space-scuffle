@@ -4032,11 +4032,10 @@ fn structure_radii_follow_the_engine_rule() -> TestResult {
             archetype.slug
         );
         let quarters = |q: u16| f32::from(q) / 4.0;
-        let (hw, hh, c) = (
-            quarters(shape.half_width_q),
-            quarters(shape.half_height_q),
-            quarters(shape.chamfer_q),
-        );
+        let box_q = shape
+            .box_extents()
+            .ok_or("every structure's shape is a box")?;
+        let (hw, hh, c) = (quarters(box_q.0), quarters(box_q.1), quarters(box_q.2));
         let farthest = (hw * hw + (hh - c) * (hh - c)).max((hw - c) * (hw - c) + hh * hh);
         assert!(
             engine * engine >= farthest,
@@ -4314,12 +4313,15 @@ fn b134_footprint_shapes_follow_starcraft() -> TestResult {
             return [f32::NAN; 5];
         };
         let quarters = |q: u16| f32::from(q) / 4.0;
+        let Some(box_q) = shape.box_extents() else {
+            return [f32::NAN; 5];
+        };
         [
             f32::from(footprint_w),
             f32::from(footprint_h),
-            quarters(shape.half_width_q),
-            quarters(shape.half_height_q),
-            quarters(shape.chamfer_q),
+            quarters(box_q.0),
+            quarters(box_q.1),
+            quarters(box_q.2),
         ]
     })
 }
@@ -4405,4 +4407,69 @@ fn the_shipped_flag_sets() {
     }
     assert_eq!(structures, 49, "every structure row is checked");
     assert_eq!(flagged.len(), SC2_PLACEMENT_EXCLUDES.len(), "{flagged:?}");
+}
+
+/// Plan `2026-11-20-resource-footprints` WP2 (D-1, §2.3): the shipped resource footprints are
+/// 5.0.14's. A mineral field (`FootprintMineralsRounded`, liberty Footprint:1061-1096) takes its
+/// anchor cell and the cell east of it, its shape is the ±1 × ±0.5 box (Footprint:1094), its
+/// `NearResources` ring is the 8 × 7 rows less their corners (52 cells, the field's two
+/// included), and it leaves the map when empty (`RemoveWhenEmpty`, liberty BehaviorData:749). A
+/// geyser (`FootprintGeyserRounded`, Footprint:1535-1576 with void Footprint:3-21) takes the 3×3
+/// centred on its anchor, its shape is the void layer's 16 vertices, its ring is the void-rounded
+/// 9 × 9 (69 cells), and it stays when empty (liberty BehaviorData:801-807).
+#[test]
+fn the_shipped_resource_footprints_are_5_0_14() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
+    let mineral = rules
+        .resource_footprints()
+        .get(sim_types::ResourceKind::Mineral)
+        .ok_or("a mineral footprint")?;
+    assert_eq!(mineral.cells, (0, 0, 2, 1));
+    assert_eq!(
+        mineral.shape,
+        sim_types::FootprintShape::Box {
+            half_width_q: 4,
+            half_height_q: 2,
+            chamfer_q: 0
+        }
+    );
+    assert!(mineral.remove_when_empty);
+    let mineral_reach = rules
+        .reach(sim_types::ResourceKind::Mineral)
+        .ok_or("a mineral reach")?;
+    assert_eq!(mineral_reach.cells.len(), 52);
+    let gas = rules
+        .resource_footprints()
+        .get(sim_types::ResourceKind::Gas)
+        .ok_or("a gas footprint")?;
+    assert_eq!(gas.cells, (-1, -1, 3, 3));
+    let quarters: [(i16, i16); 16] = [
+        (-2, -4),
+        (-3, -5),
+        (-5, -3),
+        (-4, -2),
+        (-4, 2),
+        (-5, 3),
+        (-3, 5),
+        (-2, 4),
+        (2, 4),
+        (3, 5),
+        (5, 3),
+        (4, 2),
+        (4, -2),
+        (5, -3),
+        (3, -5),
+        (2, -4),
+    ];
+    let sim_types::FootprintShape::Outline(outline) = gas.shape else {
+        return Err("the geyser's shape is an outline".into());
+    };
+    assert_eq!(outline.vertices(), quarters.as_slice());
+    assert!(!gas.remove_when_empty);
+    let gas_reach = rules
+        .reach(sim_types::ResourceKind::Gas)
+        .ok_or("a gas reach")?;
+    assert_eq!(gas_reach.cells.len(), 69);
+    Ok(())
 }
