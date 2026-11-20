@@ -1169,3 +1169,30 @@ must (a bug fix) lands on `main` first and this plan's next package rebases on i
   committed pair per unit (I-3c); dropping the engaged-friend priority tie-breaks (C-2 note); the slot trigger is the
   existing `friend_holds_ahead` (G-1); the mirror family removes random weapon delays (§6.2); the pursuit fix is a
   separate, conditional package (WP5).
+
+## Amendment 1 (orchestrator, 2026-11-20): WP1's baseline of record; the pair list and the iteration count of WP2; WP5 under Solver only
+
+1. **The WP1 baseline supersedes §5.** The planner's scratch harness source is gone, so §5's figures cannot be
+   reproduced to the last digit. The committed harness was built from §6's text, with its open choices fixed in
+   evidence §1.3 before any solver measurement. Its baseline on the development range is the baseline of record.
+   No threshold changes.
+2. **WP2's pair list and K.** The C-3 property test fails as written, for two traced reasons (evidence §2):
+   - pairs built once miss contacts that the solve itself creates;
+   - convergence is slower than the 1 − 1/c derivation.
+
+   **Decision:**
+   - **(a) Pair list.** The solver keeps a Verlet pair list: it rebuilds the list when any body's accumulated
+     correction since the last build exceeds half the list's slack. This is the standard rule, so no new tuning
+     constant: the slack and the rebuild rule are stated with their derivation.
+   - **(b) K.** K becomes the smallest iteration count that passes C-3 on its generated crowds. It is recorded with
+     that test as its derivation, then confirmed on a fresh, disjoint set of generated crowds that was never used
+     to choose it. If the confirmation fails, stop.
+   - **(c) Bounds.** D-α's 5 % moving bound is not restated.
+   - **(d) Cost.** Report the Solver pipeline's instructions retired with the chosen K as soon as WP3 can measure
+     it. Flag at once if the 10 % stop of WP6 looks unreachable.
+3. **WP5 under Solver only until WP6.** The tick-start read of a pursued target's position applies only to the
+   Solver pipeline until WP6, so Legacy stays bit-identical. The Legacy effect is measured with the scratch patch:
+   the mirror goes from 0.438 to 0.488, as evidence §1 shows.
+4. **Register rows.** The plan's two new rows, the mirror asymmetry and give-ups with room, take the next free
+   numbers on main, with WP1's development-range figures.
+5. **Gate tier.** `harness_tests` (about 65 s) is reclassed from fast to slow in `crates/gate/suites.ron`.
