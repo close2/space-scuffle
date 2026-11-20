@@ -926,7 +926,6 @@ fn open_ground_is_not_a_gap() {
 /// 21.03 long). The expected length is the prototype's (its adopted build gives 15.510 on both
 /// maps; the plan's 15.614 is not what that build produces, evidence WP1).
 #[test]
-#[ignore = "B-146, WP3"]
 fn a_free_end_inside_the_clearance_is_clamped_out() {
     let layout = pkf_map(
         24,

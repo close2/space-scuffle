@@ -38,6 +38,11 @@
 //!   its offset sign is zero, a tangent touches the vertex itself, the shrunk pull does not move a
 //!   portal's free end, the emission gives the vertex once with no arc, and the refinement never
 //!   inserts it. TA*'s width test already treats such a corner as unbounded (`width_at`).
+//! - **Except inside an obstacle's clearance** (D-2, D-3): a free portal end closer than `rho` to
+//!   an obstacle vertex is clamped along its portal's line to the nearest point at least `rho`
+//!   from every such vertex, an [`Anchor::Pass`]; and a free vertex closer than `rho` to an
+//!   obstacle vertex of the channel that is not its partner across a portal keeps its circle, as
+//!   a corner of that obstacle's clearance.
 
 use sim_types::{SimScalar, SimVec2};
 
@@ -58,13 +63,19 @@ pub enum Side {
     Right,
 }
 
-/// A point the funnel route passes: an endpoint or a channel vertex rounded on one side.
+/// A point the funnel route passes: an endpoint, a channel vertex rounded on one side, or the
+/// point a free portal end was clamped to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
     /// The start or the goal, in world units.
     Point(SimVec2),
     /// Mesh vertex index and the side on which the route passes it.
     Vertex(u32, Side),
+    /// A point the route passes that is not an endpoint, in world units: a free portal end
+    /// clamped out of an obstacle's clearance (plan `2026-11-19-partial-knowledge-funnel` D-2).
+    /// It has no circle. It counts as an end only for the refinement's exemption of a vertex
+    /// approached at a leg's end (Amendment 1), never for the emission or the route's turns.
+    Pass(SimVec2),
 }
 
 /// A route through a channel.
@@ -94,7 +105,7 @@ fn perp(v: SimVec2) -> SimVec2 {
 
 fn centre(mesh: &NavMesh, anchor: Anchor) -> SimVec2 {
     match anchor {
-        Anchor::Point(p) => p,
+        Anchor::Point(p) | Anchor::Pass(p) => p,
         Anchor::Vertex(v, _) => mesh.vertex(v).to_sim(),
     }
 }
@@ -106,10 +117,10 @@ fn is_free(anchor: Anchor, free: &[u32]) -> bool {
 }
 
 /// Offset sign of the route from an anchor's centre, along the left normal of travel: zero for
-/// a point and for a free vertex (`free`, D-1), which the route passes as a point.
+/// a point, a clamped point and a free vertex (`free`, D-1), which the route passes as points.
 fn sigma(anchor: Anchor, free: &[u32]) -> i32 {
     match anchor {
-        Anchor::Point(_) => 0,
+        Anchor::Point(_) | Anchor::Pass(_) => 0,
         Anchor::Vertex(..) if is_free(anchor, free) => 0,
         Anchor::Vertex(_, Side::Left) => -1,
         Anchor::Vertex(_, Side::Right) => 1,
@@ -171,6 +182,13 @@ pub struct FunnelScratch {
     /// The free vertices of the current pull (plan `2026-11-19-partial-knowledge-funnel` D-1):
     /// the portal and end-triangle vertices at which no edge blocks the request, sorted by index.
     free: Vec<u32>,
+    /// The free list before D-3 took the clearance corners out of it, against which each free
+    /// vertex is judged.
+    judged: Vec<u32>,
+    /// The obstacle points closer than `rho` to the free portal end being clamped (D-2).
+    discs: Vec<SimVec2>,
+    /// The clamp's candidate offsets along the portal's line (D-2).
+    exits: Vec<SimScalar>,
 }
 
 /// How the funnel turns each rounded vertex's arc into waypoints.
@@ -256,6 +274,12 @@ pub(crate) fn radius_funnel(
     // refinement borrows the rest of the scratch, and moved back with its capacity.
     let mut free = std::mem::take(&mut obstacles.scratch.free);
     free_vertices(mesh, (portals, extra), obstacles.access, &mut free);
+    keep_clearance_corners(
+        mesh,
+        (portals, extra),
+        rho,
+        (&mut free, &mut obstacles.scratch.judged),
+    );
     let anchors = string_pull(mesh, (&items, extra), (rho, strategy), &free, obstacles);
     let waypoints = match emission {
         Emission::Inscribed { dip } => emit_waypoints(mesh, &anchors, (rho, dip), &free),
@@ -303,6 +327,134 @@ fn free_vertices(
     free.retain(|&v| !mesh.vertex_blocks(v, open));
 }
 
+/// Takes out of `free` every free vertex closer than `rho` to an obstacle vertex of the channel
+/// (a portal or end-triangle vertex not in `free`) that is not its partner across a portal
+/// (plan `2026-11-19-partial-knowledge-funnel` D-3): such a vertex is a corner of that obstacle's
+/// clearance, and keeps its circle as on an all-known channel. A free vertex whose partner across
+/// some portal is an obstacle vertex at most `rho` away stays free, and that portal end is
+/// clamped (D-2). Distances are compared exactly, on squares. Every free vertex is judged against
+/// the list as it was (`judged`), so the rule does not cascade.
+// PERFORMANCE RATIONALE:
+// Why: The rule asks, for each free vertex, about every obstacle vertex of the channel.
+// What: A scan of the channel's portals and end-triangle vertices per free vertex, with no
+// spatial index and no list of obstacle vertices (they are the channel vertices not in `judged`).
+// Trade-off: Quadratic in the channel's length (a few dozen portals) on pulls whose channel has a
+// free vertex; an all-known channel has none and returns at once.
+fn keep_clearance_corners(
+    mesh: &NavMesh,
+    (portals, extra): (&[(u32, u32)], &[u32]),
+    rho: SimScalar,
+    (free, judged): (&mut Vec<u32>, &mut Vec<u32>),
+) {
+    if free.is_empty() {
+        return;
+    }
+    judged.clear();
+    judged.extend_from_slice(free);
+    let rho_sq = rho * rho;
+    let distance_sq = |a: u32, b: u32| mesh.vertex(a).to_sim().distance_sq(mesh.vertex(b).to_sim());
+    let obstacle = |o: u32| judged.binary_search(&o).is_err();
+    free.retain(|&v| {
+        let partner_near = portals.iter().any(|&(l, r)| {
+            let partner = if l == v {
+                r
+            } else if r == v {
+                l
+            } else {
+                return false;
+            };
+            obstacle(partner) && distance_sq(partner, v) <= rho_sq
+        });
+        partner_near
+            || !portals
+                .iter()
+                .flat_map(|&(l, r)| [l, r])
+                .chain(extra.iter().copied())
+                .any(|o| obstacle(o) && distance_sq(o, v) < rho_sq)
+    });
+}
+
+/// How far, in world units, the clamp (D-2) moves a free portal end beyond the exact edge of an
+/// obstacle's clearance disc: one raw unit of `2⁻²⁴`.
+///
+/// Derived, not tuned: the exit offset `t₀ ± √(rho² − d²)` and the point `F + t u` are computed
+/// in Q32.32 with a rounded unit direction `u`, which together lose at most a few dozen raw units
+/// of `2⁻³²` for offsets of a few world units. `2⁻²⁴` is 256 raw units, so the point clears every
+/// disc after rounding; `the_clamp_clears_every_disc` checks this for every shipped radius.
+pub const CLAMP_PAD: SimScalar = SimScalar::from_raw(1 << 8);
+
+/// The point a free portal end `f` is clamped to (D-2): on the line through `f` along the unit
+/// direction `u`, at the candidate offset `t` of least `|t|` such that the point is at least
+/// `rho` from every point of `discs`. `None` when no candidate clears them, or when `discs` is
+/// empty.
+///
+/// The candidates are the two exits of each disc, `t₀ ± (√(rho² − d²) + CLAMP_PAD)` with `t₀` the
+/// offset of the disc's centre along the line and `d` its distance from the line. Zero is no
+/// candidate: every disc holds `f`, its centre being closer than `rho`. Of candidates with equal
+/// `|t|`, the earlier disc in `discs` comes first (the caller lists them by vertex index), and of
+/// one disc's two exits the positive one (beyond `f`, away from the portal's other end): a stable
+/// sort of the exits in that order. Distances are compared exactly, on squares.
+fn clamp(
+    f: SimVec2,
+    u: SimVec2,
+    rho: SimScalar,
+    (discs, exits): (&[SimVec2], &mut Vec<SimScalar>),
+) -> Option<SimVec2> {
+    let rho_sq = rho * rho;
+    exits.clear();
+    for &q in discs {
+        let t0 = (q - f).dot(u);
+        let foot = f + u * t0;
+        let half = (rho_sq - foot.distance_sq(q))
+            .max(SimScalar::ZERO)
+            .sqrt()
+            .unwrap_or(SimScalar::ZERO)
+            + CLAMP_PAD;
+        exits.push(t0 + half);
+        exits.push(t0 - half);
+    }
+    exits.sort_by_key(|&t| t.abs());
+    exits
+        .iter()
+        .map(|&t| f + u * t)
+        .find(|&p| discs.iter().all(|&q| q.distance_sq(p) >= rho_sq))
+}
+
+/// The point the free end `f` of a portal whose other end is `other` is clamped to (D-2): `None`
+/// when no obstacle vertex lies closer than `rho` to `f`, else [`clamp`] along the portal's line,
+/// away from `other`, against those obstacle vertices (the segment predicate's flood round the
+/// point `f`, `obstacle_vertices_near`).
+fn clamp_free_end(
+    mesh: &NavMesh,
+    (f, other): (SimVec2, SimVec2),
+    rho: SimScalar,
+    obstacles: &mut Obstacles<'_, '_>,
+) -> Option<SimVec2> {
+    let scratch = &mut *obstacles.scratch;
+    obstacle_vertices_near(
+        mesh,
+        obstacles.access,
+        obstacles.segment,
+        (f, f),
+        rho,
+        &mut scratch.near,
+    );
+    let rho_sq = rho * rho;
+    scratch.discs.clear();
+    scratch.discs.extend(
+        scratch
+            .near
+            .iter()
+            .map(|&v| mesh.vertex(v).to_sim())
+            .filter(|q| q.distance_sq(f) < rho_sq),
+    );
+    let u = (f - other).normalize_or_zero();
+    if scratch.discs.is_empty() || u == SimVec2::ZERO {
+        return None;
+    }
+    clamp(f, u, rho, (&scratch.discs, &mut scratch.exits))
+}
+
 /// Moves the obstacle ends of a portal inwards by `rho` (`rounded`: whether each end is rounded
 /// by a circle; a free end, D-1, imposes nothing).
 ///
@@ -342,9 +494,11 @@ fn triarea2(a: SimVec2, b: SimVec2, c: SimVec2) -> SimScalar {
 /// The route's turning anchors through the channel `items` (start and goal included).
 ///
 /// Step 1 pulls a point through the portals shrunk by `rho` (Mononen's Simple Stupid Funnel),
-/// which orders the turns robustly even where circles overlap the apex. Step 2 makes the turns
-/// exact for circles: a turn that bends against its side is dropped, and a candidate vertex
-/// closer than `rho` to a tangent leg is inserted, until neither happens.
+/// which orders the turns robustly even where circles overlap the apex. A free portal end inside
+/// an obstacle's clearance is first clamped out of it (D-2), in both strategies, and becomes an
+/// [`Anchor::Pass`]. Step 2 makes the turns exact for circles: a turn that bends against its side
+/// is dropped, and a candidate vertex closer than `rho` to a tangent leg is inserted, until
+/// neither happens.
 fn string_pull(
     mesh: &NavMesh,
     (items, extra): (&[(Anchor, Anchor)], &[u32]),
@@ -352,7 +506,7 @@ fn string_pull(
     free: &[u32],
     obstacles: &mut Obstacles<'_, '_>,
 ) -> Vec<Anchor> {
-    let points: Vec<(SimVec2, SimVec2)> = items
+    let mut points: Vec<(SimVec2, SimVec2)> = items
         .iter()
         .map(|&(l, r)| match (l, strategy) {
             (Anchor::Point(p), _) => (p, p),
@@ -365,6 +519,29 @@ fn string_pull(
             (_, PullStrategy::Pinned) => (centre(mesh, l), centre(mesh, r)),
         })
         .collect();
+    // The items as pulled: borrowed unless a free end is clamped.
+    let mut pulled = std::borrow::Cow::Borrowed(items);
+    for k in 1..items.len().saturating_sub(1) {
+        let (l, r) = items[k];
+        for (left_end, me, other) in [(true, l, r), (false, r, l)] {
+            if !is_free(me, free) {
+                continue;
+            }
+            let ends = (centre(mesh, me), centre(mesh, other));
+            let Some(p) = clamp_free_end(mesh, ends, rho, obstacles) else {
+                continue;
+            };
+            let item = &mut pulled.to_mut()[k];
+            if left_end {
+                points[k].0 = p;
+                item.0 = Anchor::Pass(p);
+            } else {
+                points[k].1 = p;
+                item.1 = Anchor::Pass(p);
+            }
+        }
+    }
+    let items: &[(Anchor, Anchor)] = &pulled;
     let mut path = vec![items[0].0];
     let (mut apex, mut left, mut right) = (points[0].0, points[0].0, points[0].1);
     let (mut left_i, mut right_i) = (0, 0);
@@ -536,11 +713,13 @@ fn deepest_violation(
 /// is the start or the goal (`ends`, the leg's two anchors). The disc stands at that point
 /// already, fitting or wedged, so the approach is not the leg's to fix, and rounding the vertex
 /// would only circle it (plan `2026-11-19-funnel-fallbacks` D-2.2, for every candidate of the
-/// zero-room pulls; applied to the obstacle vertices of D-3 in every pull, evidence WP2).
+/// zero-room pulls; applied to the obstacle vertices of D-3 in every pull, evidence WP2). A
+/// clamped point ([`Anchor::Pass`]) counts as such an end here, and only here: the route passes
+/// it as a point (plan `2026-11-19-partial-knowledge-funnel` Amendment 1).
 fn approached_at_an_end(p: SimVec2, distance: SimScalar, ends: (Anchor, Anchor)) -> bool {
     [ends.0, ends.1]
         .into_iter()
-        .any(|end| matches!(end, Anchor::Point(q) if p.distance(q) <= distance))
+        .any(|end| matches!(end, Anchor::Point(q) | Anchor::Pass(q) if p.distance(q) <= distance))
 }
 
 /// Step 2 of [`string_pull`]: drops turns against their side and inserts violated vertices.
@@ -1080,7 +1259,7 @@ fn emit_zero_room(
         let (before, after) = (inside(anchors[j - 1]), inside(anchors[j + 1]));
         let point_of = |a: Anchor| match a {
             Anchor::Point(p) => Some(p),
-            Anchor::Vertex(..) => None,
+            Anchor::Vertex(..) | Anchor::Pass(_) => None,
         };
         let n_in = (before.unwrap_or(tangents[j - 1].to) - c).normalize_or_zero();
         let n_out = (after.unwrap_or(tangents[j].from) - c).normalize_or_zero();
@@ -1530,5 +1709,65 @@ mod tests {
         assert_eq!(shrink(a, b, rho, (false, false)), (a, b));
         let (_, far) = shrink(a, b, rho, (true, false));
         assert_eq!(far, b, "a free end is not shrunk");
+    }
+
+    /// D-2: for seeded free ends with one to three obstacle points closer than `rho`, at every
+    /// shipped terrain radius, the clamped point lies on the portal's line at least `rho` from
+    /// every obstacle point, and no point of the line nearer the free end (by more than the pad)
+    /// clears them all, so no candidate with a smaller offset would have done.
+    #[test]
+    fn the_clamp_clears_every_disc() {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha8Rng;
+        const SHIPPED_TERRAIN_RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
+        let mut rng = ChaCha8Rng::seed_from_u64(0x0c1a_3b5e);
+        let mut exits = Vec::new();
+        for sixteenths in SHIPPED_TERRAIN_RADII {
+            let rho = SimScalar::from_raw(sixteenths << 28) + CORNER_SAFETY_MARGIN;
+            let rho_sq = rho * rho;
+            for _ in 0..200 {
+                let quarter = |rng: &mut ChaCha8Rng| {
+                    SimScalar::from_raw(i64::from(rng.gen_range::<i32, _>(0..64)) << 30)
+                };
+                let f = SimVec2::new(quarter(&mut rng), quarter(&mut rng));
+                let u = SimVec2::new(
+                    SimScalar::from_num(rng.gen_range::<i32, _>(-8..=8)),
+                    SimScalar::from_num(rng.gen_range::<i32, _>(1..=8)),
+                )
+                .normalize_or_zero();
+                let mut discs = Vec::new();
+                while discs.len() < rng.gen_range::<usize, _>(1..=3) {
+                    let offset = SimVec2::new(
+                        SimScalar::from_raw(rng.gen_range::<i64, _>(-(1 << 32)..(1 << 32))),
+                        SimScalar::from_raw(rng.gen_range::<i64, _>(-(1 << 32)..(1 << 32))),
+                    );
+                    if offset.length_sq() < rho_sq {
+                        discs.push(f + offset);
+                    }
+                }
+                let p = clamp(f, u, rho, (&discs, &mut exits)).expect("the farthest exit clears");
+                let t = (p - f).dot(u);
+                assert!(
+                    (f + u * t).distance(p) <= SimScalar::from_raw(1 << 4),
+                    "{p:?} off the line through {f:?} along {u:?}"
+                );
+                for &q in &discs {
+                    assert!(
+                        q.distance_sq(p) >= rho_sq,
+                        "{p:?} inside the disc round {q:?}"
+                    );
+                }
+                let step = SimScalar::from_raw(1 << 24);
+                let mut s = -t.abs() + CLAMP_PAD * 4;
+                while s < t.abs() - CLAMP_PAD * 4 {
+                    let x = f + u * s;
+                    assert!(
+                        discs.iter().any(|&q| q.distance(x) < rho + CLAMP_PAD),
+                        "offset {s:?} clears every disc nearer than the clamp's {t:?}"
+                    );
+                    s += step;
+                }
+            }
+        }
     }
 }

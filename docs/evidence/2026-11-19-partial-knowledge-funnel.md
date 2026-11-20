@@ -226,3 +226,44 @@ passes (1,800 seeded ends at the nine shipped radii); N4 routes in 15.510 and th
    traced above, or the plan says what removes it.
 3. **D-2 and D-7's tie rule** read: candidates sorted stably by `|t|`, in the order of the obstacle vertices by index
    with each disc's positive exit first.
+
+## WP3 under Amendment 1: D-2 and D-3 land
+
+**Change.** `funnel.rs`: `Anchor::Pass`; D-3 (`keep_clearance_corners`, exact squared distances, judged against the
+list before removal); D-2 (`clamp_free_end` and `clamp`, both pulls, candidates and discs in `FunnelScratch`, the
+items copied only when a clamp happens); `CLAMP_PAD` (2⁻²⁴, derived); `Pass` counts as an end in
+`approached_at_an_end` only (Amendment 1); the clamp's ties in the measured order. `search.rs`: `MeshRoute::turns`
+skips `Pass`. Measured on the tree merged with `main` `fb66d85e`; the control (`PKF_OFF=1`) reproduces `main` on
+every corpus.
+
+| Measure | Plan (adopted) | WP3 | Rule |
+|---|---|---|---|
+| `PATH_GOLDEN`, `CONTOUR_PATH_GOLDEN` | `0x4062_b0b6_83dd_1afb`, `0x1da8_6365_bcbd_3b37` | the same, four builds | 6: met |
+| Golden fallbacks: fitting-start / wedged (free anchor) | 0 / 3 (1); 0 / 6 (2) | the same | 9: met |
+| Golden changed routes | path 49 (10 fallback → legal, 1 wedged fallback → fallback 57.93 → 64.72, 38 shorter); contours 42 (15 → legal, 27 shorter) | the same | 8, 9: none longer, none new |
+| Layouts, fitting-start fallbacks (squares, contours, per-cell squares, per-cell contours) | 0, 1, 1, 5 | 0, 1, 1, 5 | 9: met |
+| Layouts, new against `main` | — | layout 58 q 13 only (accepted residual, Amendment 1) | 9 |
+| Stress search: fallbacks (new) | 10 (2) | **10 (2)**: K2/U1 (1, 0) r 0.75 and K2/U4 (1, 1) r 0.75 | 9: met |
+| All-known corpora | 0 | 0 (150, 1,000, 2,000 flush) | 9: met |
+| Oracle (§4.4): within 1.01 / worst / shorter | 1,804 of 1,820 / 1.134 / 0 | 1,804 of 1,820 / 1.1343 / 0 | 8: met |
+| Oracle: changed routes longer than `main` | 2 | 2: 0.38 % and 0.04 % (the WP2 traces, TA*'s channel) | 8: met |
+| Path-search cost | −52 % | 96.81 G → 46.54 G, **−51.9 %** | 7: met |
+
+**Residual traces** (class probe on the WP3 tree): whole contours layout 59 q 9 r 1.0 and per-cell layouts 8 q 2,
+59 q 9, 104 q 3 are class N on `main` too (a free anchor beside a known face where the disc has no room); 104 q 15 and
+58 q 13 are class OTHER, a clamped point beside a known corner (R-2). The stress residuals are flush contour pairs.
+**Observation outside rule 8's corpus:** per-cell squares layout 19 q 8 (a wedged start, r 1.0) is 31 % longer than
+on `main` (19.95 → 26.20): with D-2 and D-3 together TA* settles on the channel south of a structure; with either
+alone it does not. It is a wedged start, which rule 8's corpus excludes.
+
+**D-3 on and off** (recorded as WP3 asks): off, one golden request starts to fall back and one golden route is
+0.48 % longer, the per-cell contour layouts gain 3 new fallbacks and the stress search 3 new; D-3 stays.
+
+**Battles** (base built from `main` `fb66d85e`): the matrix (1,160 runs), battle 33 (68), battle 31 (100) and the
+showcase on nine seeds are **bit-identical** to the base, and so is the control build (`PKF_OFF=1`). Rules 1 to 5
+hold; `golden_replay_tests` is unchanged. Throughput: the WP3 code differs from the first WP3 build measured under
+WP2's table only on pulls with a clamp, which the battle scenarios other than the showcase never run; that build was
+within 0.3 % on every scenario (showcase +0.29 %).
+
+**Tests.** N4 (15.510), `golden_corpora_fall_back_only_from_wedged_starts` (0 and 0) and the unit test
+`the_clamp_clears_every_disc` (200 seeded ends at each of the nine shipped radii) pass.

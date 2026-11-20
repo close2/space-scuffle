@@ -98,7 +98,13 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// fallback falls back through another channel's midpoints, and 30 legal routes get shorter (least
 /// 0.913, median 0.9989); none gets longer and none starts to fall back. The new value is the
 /// same in native debug and release and in `wasm32-wasip1` release and debug.
-const CONTOUR_PATH_GOLDEN: u64 = 0x01f9_a949_e9c0_77ef;
+///
+/// Re-recorded for WP3 of the same plan (D-2, D-3; before, `0x01f9_a949_e9c0_77ef`, which the tree
+/// reproduces with D-2 and D-3 off, and `0x36ff_bf4b_e967_0683` with every rule off). Against
+/// `main` 42 requests change: 15 fallbacks become legal, 27 legal routes get shorter; none gets
+/// longer and none starts to fall back. The new value is the same in native debug and release and
+/// in `wasm32-wasip1` release and debug (Amendment 1 applied).
+const CONTOUR_PATH_GOLDEN: u64 = 0x1da8_6365_bcbd_3b37;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;
@@ -159,7 +165,14 @@ const DECODE_GOLDEN: u64 = 0x10db_ea43_6aba_f292;
 /// fallbacks become legal routes (2 from wedged starts), and 38 legal routes get shorter (least
 /// 0.823 of their length, median 0.9967); none gets longer and none starts to fall back. The new
 /// value is the same in native debug and release and in `wasm32-wasip1` release and debug.
-const PATH_GOLDEN: u64 = 0x254e_64e8_49c1_5bd2;
+///
+/// Re-recorded for WP3 of the same plan (D-2 the clamp, D-3 clearance corners kept round; before,
+/// `0x254e_64e8_49c1_5bd2`, which the tree reproduces with D-2 and D-3 off, and
+/// `0xa243_924f_8125_f760` with every rule off). Against `main` 49 requests change: 10 fallbacks
+/// become legal, one wedged-start fallback falls back through other midpoints (57.93 -> 64.72), 38
+/// legal routes get shorter; none gets longer. The new value is the same in native debug and
+/// release and in `wasm32-wasip1` release and debug (Amendment 1 applied).
+const PATH_GOLDEN: u64 = 0x4062_b0b6_83dd_1afb;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {
@@ -925,7 +938,6 @@ fn fitting_start_fallbacks(corpus: fn(&mut RouteFn<'_>) -> (u64, usize, usize)) 
 }
 
 #[test]
-#[ignore = "B-146, WP3"]
 fn golden_corpora_fall_back_only_from_wedged_starts() {
     assert_eq!(
         (

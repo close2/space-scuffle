@@ -838,7 +838,7 @@ fn route(
         .iter()
         .filter_map(|anchor| match *anchor {
             Anchor::Vertex(v, side) => Some((mesh.vertex(v), side)),
-            Anchor::Point(_) => None,
+            Anchor::Point(_) | Anchor::Pass(_) => None,
         })
         .collect();
     let (waypoints, fallback) = if legal {
