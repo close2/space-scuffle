@@ -324,13 +324,13 @@
         (
             id: (9),
             kind: Gas,
-            cell: (14, 6),
+            cell: (15, 6),
             amount: 2500,
         ),
         (
             id: (10),
             kind: Gas,
-            cell: (14, 10),
+            cell: (15, 10),
             amount: 2500,
         ),
         (
@@ -384,13 +384,13 @@
         (
             id: (19),
             kind: Gas,
-            cell: (49, 57),
+            cell: (48, 57),
             amount: 2500,
         ),
         (
             id: (20),
             kind: Gas,
-            cell: (49, 53),
+            cell: (48, 53),
             amount: 2500,
         ),
     ],

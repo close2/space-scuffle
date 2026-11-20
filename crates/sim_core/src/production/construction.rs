@@ -29,13 +29,17 @@
 //!   structure the player has not seen. The truth is applied on arrival, when the builder is
 //!   there to see it.
 //! - Sites never cover a resource node, except an extractor, which must cover a gas node.
+//! - A site has no cell carrying a placement flag its structure refuses (plan
+//!   `2026-11-19-footprint-flags` D-4): `NearResources` within a node's authored ring, `Fogged`
+//!   where the player does not see now. The flags are derived on demand, never stored.
 
 use super::{PreparedSpawn, ProductionInvariant, STANDARD_SUPPLY_CAP};
 use crate::economy::{Footprint, GameCommandError, GameCommandReceipt, TaskEventKind};
 use crate::{SimWorld, UnitArchetype};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    AnimState, EntityId, PlayerId, ResourceKind, ShapeKind, SimScalar, Tick, UnitOrder, UnitTypeId,
+    AnimState, EntityId, PlacementFlag, PlacementFlags, PlayerId, ResourceKind, ShapeKind,
+    SimScalar, Tick, UnitOrder, UnitTypeId, VisibilityState,
 };
 use thiserror::Error;
 
@@ -119,6 +123,16 @@ pub enum BuildRejection {
     /// An extractor must stand on a gas node and on no mineral node.
     #[error("an extractor needs a gas node under it")]
     ExtractorNeedsGas,
+    /// A cell of the site carries a placement flag the structure refuses (plan
+    /// `2026-11-19-footprint-flags` D-4). The first such cell, by `y` then `x`, and its lowest
+    /// refused flag in [`PlacementFlag`] order.
+    #[error("site cell {cell:?} is {flag:?}, which the structure refuses")]
+    FlaggedSite {
+        /// The refused flag.
+        flag: PlacementFlag,
+        /// The cell, in grid cells.
+        cell: (u32, u32),
+    },
     /// Authoritative state is malformed.
     #[error(transparent)]
     Invariant(#[from] ProductionInvariant),
@@ -267,6 +281,55 @@ impl SimWorld {
         }
         if arch.capabilities.is_gas_extractor && !covers_gas {
             return Err(BuildRejection::ExtractorNeedsGas);
+        }
+        self.check_flags(player, arch, site)
+    }
+
+    /// Whether any cell of `site` carries a placement flag `arch` refuses, for `player`.
+    ///
+    /// A cell carries the flags every resource node's ring applies on it (nodes are public, so
+    /// depleted ones count too) and `Fogged` when `player` does not see it now. Knowledge plays no
+    /// part: both are the same at admission, on arrival and in the preview. Cells are visited by
+    /// `y` then `x`, so the reported cell and flag are deterministic.
+    fn check_flags(
+        &self,
+        player: PlayerId,
+        arch: &UnitArchetype,
+        site: Footprint,
+    ) -> Result<(), BuildRejection> {
+        let refused = arch.placement_excludes;
+        if refused.is_empty() {
+            return Ok(());
+        }
+        let rules = self.catalog.placement_rules();
+        let vision = if refused.has(PlacementFlag::Fogged) {
+            Some(
+                self.vision_maps
+                    .get(player)
+                    .ok_or(ProductionInvariant::InvalidPlayer { player })?,
+            )
+        } else {
+            None
+        };
+        for y in site.bottom..site.bottom + site.height {
+            for x in site.left..site.left + site.width {
+                let mut flags = PlacementFlags::empty();
+                for node in self.map.resources() {
+                    if let Some(reach) = rules.reach(node.kind) {
+                        let dx = i64::from(x) - i64::from(node.cell.0);
+                        let dy = i64::from(y) - i64::from(node.cell.1);
+                        if reach.applies.intersects(refused) && reach.covers(dx, dy) {
+                            flags |= reach.applies;
+                        }
+                    }
+                }
+                if vision.is_some_and(|map| map.visibility_at(x, y) != VisibilityState::Visible) {
+                    flags |= PlacementFlags::FOGGED;
+                }
+                if let Some(flag) = (flags & refused).first() {
+                    return Err(BuildRejection::FlaggedSite { flag, cell: (x, y) });
+                }
+            }
         }
         Ok(())
     }

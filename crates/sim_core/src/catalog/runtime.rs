@@ -1,12 +1,12 @@
 //! Filesystem boundary for complete external simulation rule bundles.
 //!
-//! Loads the seven selected files in fixed order (`factions.ron` first, because the others name
-//! its factions and classes; `movement_rules.ron`, then the spell tables `statuses.ron` and
+//! Loads the eight selected files in fixed order (`factions.ron` first, because the others name
+//! its factions and classes; `movement_rules.ron` and `placement_rules.ron`, then the spell tables `statuses.ron` and
 //! `ability_effects.ron` last, checked against the abilities that name them) and returns a bundle only after all parse and authored-data checks
 //! succeed. Errors preserve the failing file path; no embedded definitions or alternate
 //! directories replace missing inputs.
 
-use super::{FactionCatalog, MovementRules, SpellCatalog, UnitCatalog};
+use super::{FactionCatalog, MovementRules, PlacementRules, SpellCatalog, UnitCatalog};
 use crate::error::SimCoreError;
 use crate::upgrades::UpgradeCatalog;
 use std::path::{Path, PathBuf};
@@ -46,9 +46,10 @@ pub enum CatalogLoadError {
 
 impl RuntimeCatalogs {
     /// Loads `factions.ron`, `units.ron`, `structures.ron`, `upgrades.ron`,
-    /// `movement_rules.ron`, `statuses.ron` and `ability_effects.ron` from `directory`; the
-    /// movement rules and the spell catalog travel in the unit catalog
-    /// ([`UnitCatalog::movement_rules`], [`UnitCatalog::spells`]).
+    /// `movement_rules.ron`, `placement_rules.ron`, `statuses.ron` and `ability_effects.ron` from
+    /// `directory`; the movement rules, the placement rules and the spell catalog travel in the
+    /// unit catalog ([`UnitCatalog::movement_rules`], [`UnitCatalog::placement_rules`],
+    /// [`UnitCatalog::spells`]).
     ///
     /// The directory is the catalog directory itself, typically `asset_root/catalog`.
     /// Definitions are read at call time, so restarting the same binary observes edits.
@@ -110,6 +111,15 @@ impl RuntimeCatalogs {
             }
         })?;
         units.set_movement_rules(rules);
+        let placement_path = directory.join("placement_rules.ron");
+        let placement =
+            PlacementRules::from_ron_str(&read(&placement_path)?).map_err(|source| {
+                CatalogLoadError::Invalid {
+                    path: placement_path,
+                    source,
+                }
+            })?;
+        units.set_placement_rules(placement);
         load_spells(directory, &mut units)?;
         units
             .validate_weapon_hit_effects(&upgrades)

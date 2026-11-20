@@ -7,6 +7,7 @@
 //! fails here, once, instead of on every peer during a match. This is safety
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
+use super::placement_rules::{PlacementRulesFile, ResourceFootprintDef, MAX_REACH_SIDE};
 use super::{
     PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
     UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
@@ -16,8 +17,8 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, MoverType, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, MoverType, PlacementFlag,
+    ProjectileTargetLossBehavior, SimAngle, SimScalar, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -1126,7 +1127,87 @@ impl StructureArchetypeDef {
                 weapon.validate(&self.slug, name)?;
             }
         }
+        distinct_flags(&self.slug, "placement_excludes", &self.placement_excludes)?;
         Ok(())
+    }
+}
+
+/// Refuses a flag list that names a flag twice (plan `2026-11-19-footprint-flags` D-2).
+fn distinct_flags(definition: &str, field: &str, flags: &[PlacementFlag]) -> SimResult<()> {
+    if flags
+        .iter()
+        .enumerate()
+        .any(|(index, flag)| flags[..index].contains(flag))
+    {
+        return Err(invalid(definition, field, "must not name a flag twice"));
+    }
+    Ok(())
+}
+
+impl PlacementRulesFile {
+    /// Checks every resource ring (plan `2026-11-19-footprint-flags` D-2): each kind at most once,
+    /// a rectangular mask of `.` and `x` at most [`MAX_REACH_SIDE`] cells a side, the anchor on an
+    /// `x`, and a non-empty list of distinct applied flags without the engine's `Fogged`.
+    pub(super) fn validate(&self) -> SimResult<()> {
+        for (index, ring) in self.resource_footprints.iter().enumerate() {
+            let definition = format!("{:?}", ring.kind);
+            if self.resource_footprints[..index]
+                .iter()
+                .any(|earlier| earlier.kind == ring.kind)
+            {
+                return Err(invalid(&definition, "kind", "must have at most one ring"));
+            }
+            ring.validate(&definition)?;
+        }
+        Ok(())
+    }
+}
+
+impl ResourceFootprintDef {
+    fn validate(&self, definition: &str) -> SimResult<()> {
+        if self.applies.is_empty() {
+            return Err(invalid(
+                definition,
+                "applies",
+                "must name at least one flag",
+            ));
+        }
+        distinct_flags(definition, "applies", &self.applies)?;
+        if self.applies.contains(&PlacementFlag::Fogged) {
+            return Err(invalid(
+                definition,
+                "applies",
+                "must not apply Fogged, a state of the placing player's vision",
+            ));
+        }
+        let width = self.rows.first().map_or(0, |row| row.chars().count());
+        if width == 0 || self.rows.len() > MAX_REACH_SIDE || width > MAX_REACH_SIDE {
+            return Err(invalid(
+                definition,
+                "rows",
+                "must hold 1 to 15 rows of 1 to 15 cells",
+            ));
+        }
+        if self.rows.iter().any(|row| row.chars().count() != width) {
+            return Err(invalid(definition, "rows", "must all have the same length"));
+        }
+        if self
+            .rows
+            .iter()
+            .any(|row| row.chars().any(|mark| mark != '.' && mark != 'x'))
+        {
+            return Err(invalid(definition, "rows", "must hold only `.` and `x`"));
+        }
+        let anchored = usize::try_from(self.anchor.1)
+            .ok()
+            .and_then(|row| self.rows.get(row))
+            .zip(usize::try_from(self.anchor.0).ok())
+            .and_then(|(row, column)| row.chars().nth(column));
+        match anchored {
+            Some('x') => Ok(()),
+            Some(_) => Err(invalid(definition, "anchor", "must name an `x` cell")),
+            None => Err(invalid(definition, "anchor", "must lie inside the rows")),
+        }
     }
 }
 
@@ -2428,6 +2509,256 @@ mod structure_radius_tests {
                 },
             }
         );
+        Ok(())
+    }
+}
+
+/// Plan `2026-11-19-footprint-flags` WP1: the authored placement flags and resource rings.
+#[cfg(test)]
+mod placement_flag_tests {
+    use crate::catalog::PlacementRules;
+    use crate::error::SimCoreError;
+    use sim_types::{PlacementFlag, PlacementFlags, ResourceKind};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    const STRUCTURES: &str = include_str!("../../../../assets/catalog/structures.ron");
+    const RULES: &str = include_str!("../../../../assets/catalog/placement_rules.ron");
+
+    fn load(structures: &str) -> crate::error::SimResult<crate::catalog::UnitCatalog> {
+        crate::catalog::UnitCatalog::from_ron_str_bundle(
+            &crate::test_support::shipped_factions(),
+            include_str!("../../../../assets/catalog/units.ron"),
+            structures,
+        )
+    }
+
+    /// The shipped structures with the first row's `placement_excludes` line replaced by
+    /// `line` (or removed), and that row's slug.
+    fn first_row_with(line: Option<&str>) -> Result<(String, String), Box<dyn std::error::Error>> {
+        let mut out = Vec::new();
+        let mut slug = None;
+        let mut edited = false;
+        for text in STRUCTURES.lines() {
+            let trimmed = text.trim_start();
+            if slug.is_none() {
+                slug = trimmed
+                    .strip_prefix("slug: ")
+                    .map(|rest| rest.trim_end_matches(',').trim_matches('"').to_owned());
+            }
+            if !edited && trimmed.starts_with("placement_excludes:") {
+                edited = true;
+                if let Some(line) = line {
+                    let indent = &text[..text.len() - trimmed.len()];
+                    out.push(format!("{indent}{line}"));
+                }
+                continue;
+            }
+            out.push(text.to_owned());
+        }
+        Ok((out.join("\n"), slug.ok_or("a slug")?))
+    }
+
+    /// The shipped rules with the ring of `kind` replaced by `ring` (the text inside its
+    /// parentheses after `kind: …,`).
+    fn rules_with(kind: &str, ring: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let start = RULES
+            .find(&format!("(kind: {kind},"))
+            .ok_or("the shipped ring of that kind")?;
+        let end = start + RULES[start..].find("]),").ok_or("the ring's end")? + "]),".len();
+        Ok(format!(
+            "{}(kind: {kind}, {ring}),{}",
+            &RULES[..start],
+            &RULES[end..]
+        ))
+    }
+
+    fn refused_field(result: crate::error::SimResult<PlacementRules>) -> String {
+        match result {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            Err(other) => format!("other error: {other}"),
+            Ok(_) => "loaded".to_owned(),
+        }
+    }
+
+    #[test]
+    fn placement_excludes_is_required() -> TestResult {
+        let (text, slug) = first_row_with(None)?;
+        let result = load(&text);
+        assert!(
+            matches!(
+                &result,
+                Err(SimCoreError::RonDeserializationError(message))
+                    if message.contains("placement_excludes")
+            ),
+            "{slug} without `placement_excludes` must fail to parse, naming the field, got {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unknown_flag_is_refused() -> TestResult {
+        for name in ["Creep", "DropOff", "Masked", "NoBuild"] {
+            let (text, _) = first_row_with(Some(&format!("placement_excludes: [{name}],")))?;
+            let result = load(&text);
+            assert!(
+                matches!(
+                    &result,
+                    Err(SimCoreError::RonDeserializationError(message)) if message.contains(name)
+                ),
+                "{name} must be refused as an unknown flag, got {result:?}"
+            );
+            let rules = rules_with(
+                "Mineral",
+                &format!(r#"applies: [{name}], anchor: (0, 0), rows: ["x"]"#),
+            )?;
+            assert!(
+                matches!(
+                    PlacementRules::from_ron_str(&rules),
+                    Err(SimCoreError::RonDeserializationError(_))
+                ),
+                "{name} applied by a resource"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_flags_are_refused() -> TestResult {
+        let (text, slug) = first_row_with(Some("placement_excludes: [Fogged, Fogged],"))?;
+        assert!(
+            matches!(
+                load(&text),
+                Err(SimCoreError::CatalogInvalidValue { definition, field, .. })
+                    if definition == slug && field == "placement_excludes"
+            ),
+            "{slug}"
+        );
+        let (text, _) = first_row_with(Some("placement_excludes: [Fogged, NearResources],"))?;
+        let catalog = load(&text)?;
+        assert!(catalog
+            .archetypes()
+            .any(|arch| arch.placement_excludes == PlacementFlags::all()));
+        let rules = rules_with(
+            "Gas",
+            r#"applies: [NearResources, NearResources], anchor: (0, 0), rows: ["x"]"#,
+        )?;
+        assert_eq!(
+            refused_field(PlacementRules::from_ron_str(&rules)),
+            "applies"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fogged_is_never_applied() -> TestResult {
+        for applies in ["[Fogged]", "[NearResources, Fogged]"] {
+            let rules = rules_with(
+                "Mineral",
+                &format!(r#"applies: {applies}, anchor: (0, 0), rows: ["x"]"#),
+            )?;
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&rules)),
+                "applies",
+                "{applies}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn resource_reach_rows_are_validated() -> TestResult {
+        let cases = [
+            (
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["xx", "x"]"#,
+                "rows",
+            ),
+            (
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["xo"]"#,
+                "rows",
+            ),
+            ("applies: [NearResources], anchor: (0, 0), rows: []", "rows"),
+            (
+                r#"applies: [NearResources], anchor: (0, 0), rows: [""]"#,
+                "rows",
+            ),
+            (
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["xxxxxxxxxxxxxxxx"]"#,
+                "rows",
+            ),
+            (
+                r#"applies: [NearResources], anchor: (2, 0), rows: ["xx"]"#,
+                "anchor",
+            ),
+            (
+                r#"applies: [NearResources], anchor: (0, 1), rows: ["xx"]"#,
+                "anchor",
+            ),
+            (
+                r#"applies: [NearResources], anchor: (1, 0), rows: ["x."]"#,
+                "anchor",
+            ),
+            (r#"applies: [], anchor: (0, 0), rows: ["x"]"#, "applies"),
+            (
+                r#"applies: [NearResources], anchor: (0, 0), rows: ["x"]"#,
+                "loaded",
+            ),
+        ];
+        for (ring, field) in cases {
+            let rules = rules_with("Mineral", ring)?;
+            assert_eq!(
+                refused_field(PlacementRules::from_ron_str(&rules)),
+                field,
+                "{ring}"
+            );
+        }
+        let tall = format!(
+            "applies: [NearResources], anchor: (0, 0), rows: [{}]",
+            vec!["\"x\""; 16].join(", ")
+        );
+        assert_eq!(
+            refused_field(PlacementRules::from_ron_str(&rules_with("Mineral", &tall)?)),
+            "rows"
+        );
+        // A kind twice: the gas ring renamed to the mineral kind.
+        let twice = RULES.replace("(kind: Gas,", "(kind: Mineral,");
+        assert_eq!(refused_field(PlacementRules::from_ron_str(&twice)), "kind");
+        Ok(())
+    }
+
+    /// Whether `cells` is unchanged by mirroring `dx` and by mirroring `dy`.
+    fn symmetric(cells: &[(i8, i8)]) -> bool {
+        cells
+            .iter()
+            .all(|&(dx, dy)| cells.contains(&(-dx, dy)) && cells.contains(&(dx, -dy)))
+    }
+
+    #[test]
+    fn the_shipped_reaches_are_the_5_0_14_rings() -> TestResult {
+        let rules = PlacementRules::from_ron_str(RULES)?;
+        let mineral = rules
+            .reach(ResourceKind::Mineral)
+            .ok_or("a mineral reach")?;
+        let gas = rules.reach(ResourceKind::Gas).ok_or("a gas reach")?;
+        // FootprintMineralsRounded (plan §2.2 rule 3, D-3): the 7 × 7 less its four corners.
+        assert_eq!(mineral.cells.len(), 45);
+        for dy in -3_i64..=3 {
+            for dx in -3_i64..=3 {
+                let corner = dx.abs() == 3 && dy.abs() == 3;
+                assert_eq!(mineral.covers(dx, dy), !corner, "mineral ({dx}, {dy})");
+            }
+        }
+        assert!(!mineral.covers(4, 0) && !mineral.covers(0, -4));
+        // FootprintGeyserRounded with void's rounded rows: 81 − 2 × 4 − 2 × 2.
+        assert_eq!(gas.cells.len(), 69);
+        assert!(gas.covers(2, 4) && !gas.covers(3, 4));
+        assert!(gas.covers(3, 3) && !gas.covers(4, 3));
+        assert!(gas.covers(4, 2) && !gas.covers(5, 0));
+        for reach in [mineral, gas] {
+            assert!(symmetric(&reach.cells), "{:?}", reach.kind);
+            assert!(reach.covers(0, 0), "{:?} holds its node's cell", reach.kind);
+            assert_eq!(reach.applies, PlacementFlag::NearResources.bit());
+        }
         Ok(())
     }
 }

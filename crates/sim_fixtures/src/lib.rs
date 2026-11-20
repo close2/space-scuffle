@@ -32,7 +32,9 @@ pub mod trace;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
-use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs, SpellCatalog};
+use sim_core::catalog::{
+    FactionCatalog, MovementRules, PlacementRules, RuntimeCatalogs, SpellCatalog,
+};
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
@@ -49,6 +51,8 @@ pub const STRUCTURES_RON: &str = include_str!("../../../assets/catalog/structure
 pub const UPGRADES_RON: &str = include_str!("../../../assets/catalog/upgrades.ron");
 /// The shipped `assets/catalog/movement_rules.ron`.
 pub const MOVEMENT_RULES_RON: &str = include_str!("../../../assets/catalog/movement_rules.ron");
+/// The shipped `assets/catalog/placement_rules.ron`.
+pub const PLACEMENT_RULES_RON: &str = include_str!("../../../assets/catalog/placement_rules.ron");
 /// The shipped `assets/catalog/statuses.ron`.
 pub const STATUSES_RON: &str = include_str!("../../../assets/catalog/statuses.ron");
 /// The shipped `assets/catalog/ability_effects.ron`.
@@ -84,6 +88,10 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
     units.set_movement_rules(
         MovementRules::from_ron_str(MOVEMENT_RULES_RON)
             .expect("invariant: the shipped movement_rules.ron is valid"),
+    );
+    units.set_placement_rules(
+        PlacementRules::from_ron_str(PLACEMENT_RULES_RON)
+            .expect("invariant: the shipped placement_rules.ron is valid"),
     );
     units
         .set_spell_catalog(

@@ -1073,6 +1073,121 @@ fn a_site_on_a_cliff_shows_refused_and_issues_nothing() {
     assert!(harness.status().contains(reason), "{}", harness.status());
 }
 
+/// The local worker's town hall analogue: the structure it raises that refuses `NearResources`
+/// (plan `2026-11-19-footprint-flags` §8), read from the catalog.
+fn town_hall(harness: &Harness, worker: EntityId) -> UnitTypeId {
+    let world = harness.world();
+    raised_by(harness, worker)
+        .into_iter()
+        .find(|structure| {
+            world.catalog.get(*structure).is_ok_and(|archetype| {
+                archetype
+                    .placement_excludes
+                    .has(sim_types::PlacementFlag::NearResources)
+            })
+        })
+        .expect("the worker raises a town hall analogue")
+}
+
+/// Plan `2026-11-19-footprint-flags` §8: a town hall analogue's ghost two cells from a home
+/// mineral node is red, and the status line says it is too close to resources.
+#[test]
+fn a_town_hall_near_resources_shows_refused_and_says_why() {
+    let mut harness = skirmish();
+    let (worker, _) = worker_and_site(&mut harness);
+    let hall = town_hall(&harness, worker);
+    let origin = harness.simulated_position(worker);
+    let (site, spot) = {
+        let world = harness.world();
+        let archetype = world.catalog.get(hall).unwrap();
+        world
+            .map
+            .resources()
+            .iter()
+            .filter(|node| node.kind == sim_types::ResourceKind::Mineral)
+            .flat_map(|node| {
+                let (x, y) = (i64::from(node.cell.0), i64::from(node.cell.1));
+                // The hall's face two empty cells from the node, on each side.
+                [
+                    (x + 3, y - 2),
+                    (x - 7, y - 2),
+                    (x - 2, y + 3),
+                    (x - 2, y - 7),
+                ]
+            })
+            .filter_map(|(x, y)| Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?)))
+            .filter(|&(x, y)| {
+                world.preview_site(LOCAL_PLAYER, hall, x, y) == Err(SiteRefusal::NearResources)
+            })
+            .map(|(x, y)| ((x, y), Vec2::new(x as f32 + 2.5, y as f32 + 2.5)))
+            .filter(|(site, spot)| placement_cell(world, archetype, spot.x, spot.y) == Some(*site))
+            .min_by(|a, b| a.1.distance(origin).total_cmp(&b.1.distance(origin)))
+            .expect("a site two cells from a mineral node")
+    };
+    arm_placement(&mut harness, hall);
+    harness.look_at(spot);
+    let on_screen = harness.ground_on_screen(spot);
+    harness.move_cursor(on_screen);
+    harness.step(1);
+
+    assert_eq!(preview(&harness).cell, Some(site));
+    assert_eq!(
+        preview(&harness).verdict,
+        Some(Err(SiteRefusal::NearResources))
+    );
+    assert_ghost_is(&mut harness, false);
+
+    harness.click(MouseButton::Left, on_screen);
+    harness.step(1);
+    assert_eq!(harness.pending_orders(), 0);
+    assert!(
+        harness.status().contains("too close to resources"),
+        "{}",
+        harness.status()
+    );
+}
+
+/// Plan `2026-11-19-footprint-flags` §8 and WP4: on the shipped map the player's own start keeps
+/// every resource ring off its town hall's cells, so with the starting hall gone the same town
+/// hall's ghost on the start is green.
+#[test]
+fn a_town_hall_on_its_own_start_shows_legal() {
+    let mut harness = skirmish();
+    let (worker, _) = worker_and_site(&mut harness);
+    let hall = town_hall(&harness, worker);
+    let home = harness.local_structure();
+    let start = harness.world().map.structures()[&home].top_left;
+    let at = harness.simulated_position(home);
+    // Another structure keeps the player in the match while the starting hall is removed.
+    let keeper = slug(&harness, STRUCTURE);
+    harness
+        .world_mut()
+        .spawn_structure(keeper, LOCAL_PLAYER, SITE_CORNER, SITE_CORNER)
+        .expect("a structure stands on the open site");
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&home)
+        .expect("the hall")
+        .hp = sim_types::SimScalar::ZERO;
+    harness.resume();
+    harness.step(5);
+    harness.pause();
+    assert!(
+        !harness.world().entities.contains_key(&home),
+        "the hall is gone"
+    );
+
+    arm_placement(&mut harness, hall);
+    harness.look_at(at);
+    let on_screen = harness.ground_on_screen(at);
+    harness.move_cursor(on_screen);
+    harness.step(1);
+    assert_eq!(preview(&harness).cell, Some(start));
+    assert_eq!(preview(&harness).verdict, Some(Ok(())));
+    assert_ghost_is(&mut harness, true);
+}
+
 #[test]
 fn a_hidden_enemy_structure_does_not_turn_the_preview_red() {
     let mut harness = skirmish();
