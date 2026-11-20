@@ -1574,7 +1574,11 @@ mod tests {
         let attack = record(AnimState::Attack, None);
         let lanes = lanes_at(&attack, 689, 674);
         for (tick, since) in [(689, 679), (689, 689), (700, 674), (12_345, 12_000)] {
-            assert_eq!(lanes_at(&attack, tick, since), lanes, "at {tick} since {since}");
+            assert_eq!(
+                lanes_at(&attack, tick, since),
+                lanes,
+                "at {tick} since {since}"
+            );
         }
         // It is the scene's sustained swing on the shared clock: the slice at its clip speed,
         // looped from clock time 0, without blending for the fixture's one-shot slice.
