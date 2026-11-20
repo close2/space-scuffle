@@ -658,3 +658,9 @@ Branch `footprint-flags-plan` (the plan named `footprint-flags`), on `main` `bf4
   geyser; found by the package gate and fixed in place under Amendment 1 (gas cell `(15, 6)`, corner `(14, 5)`).
 - A catalog built from unit and structure text alone carries `PlacementRules::NONE` (no ring), as it carries
   `MovementRules::PER_UNIT`; the runtime loader always reads the file.
+
+## Amendment (pointer, 2026-11-20)
+
+D-3's recorded minor difference (the mineral `NearResources` reach anchored on our one-cell node) is removed by plan
+[`2026-11-20-resource-footprints`](2026-11-20-resource-footprints.md) WP2: the mineral row is the game's 8 × 7 on the
+2×1 field.

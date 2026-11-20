@@ -963,3 +963,22 @@ D-10's "behind the base" meant.
 north-east corner, beside the geyser at (53, 62); its mirror (1, 10) moves to (1, 1), beside (10, 1). The D-10 guards
 pass. The arena is unchanged, so no golden moves; `SHOWCASE_RESOURCE_MESH_DIGEST` (WP4) is re-recorded with its proof.
 The tests' training site (2, 2), under (1, 1)'s 3×3, moves to (12, 2).
+
+## As built (implementation agent, 2026-11-20)
+
+| WP | Commit | Notes |
+|---|---|---|
+| WP0 | `6549d1b3` | B-150 to B-153 registered |
+| WP1 | `8fcda359` | Interior cell lines clipped per unit edge by its midpoint; the half-cell test adds the square's centre |
+| WP2 | `7280da8c`, `f254816a` | C7 allowlist for the authored shapes |
+| WP3 | `8a130efe`, `bec14d5d` | Maps carry no comment (the showcase must round-trip); golden_replay's hall stands in a ring, not on a node |
+| WP4 | `fb285e2d` | `ResourceNode.placed: Option<PlacedResource>`; `validate_resource_footprints` takes the ring as a predicate |
+| WP5 | `6efc053c` | Schema 32; `sim_fixtures::world` still returns a world (about 300 callers), `try_world` returns the error |
+| WP6 | `fb615fdd` | Contact goal one Q16 step past the terrain radius (the route's fit test is strict) |
+| WP7 | `1d41731f` | Picture check without harvest captures (no capture path orders harvests) |
+| WP8 | this commit | Register and rows |
+
+Figures are in [`docs/evidence/2026-11-20-resource-footprints.md`](../evidence/2026-11-20-resource-footprints.md):
+showcase winners hold with the corner geysers; income 60.3 per worker-minute; throughput +2.25 % instructions
+retired; the arena's rebuild with its nodes at 3.04× the node-free rebuild, above the 3× bar, profiled and recorded.
+
