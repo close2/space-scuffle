@@ -126,6 +126,29 @@ per-cell contours, one release binary of the measurement tree, `perf stat -e ins
 
 Rule 7's path-cost bound (no worse than `main` by more than 10 %) holds.
 
+**Throughput (rule 7, instructions retired).** Each scenario of `cargo bench -p sim_core --bench throughput` alone
+(`BENCH_ONLY`), `perf stat -e instructions:u`, under `flock ~/scratch/gate.lock`, `main` (`bf4252cf`) against the WP2
+tree:
+
+| Scenario | `main` (G) | WP2 (G) | Change |
+|---|---|---|---|
+| 64×64, 0 units | 1.86041 | 1.86041 | −0.00002 % |
+| 64×64, 100 units | 6.20228 | 6.20228 | +0.00001 % |
+| 64×64, 400 units | 30.90618 | 30.90618 | +0.00001 % |
+| 128×128, 400 units | 31.22870 | 31.22870 | +0.00001 % |
+| 256×256, 0 units | 29.14122 | 29.14122 | −0.0000004 % |
+| Showcase canyon, 400 units | 53.37711 | 53.50959 | **+0.25 %** |
+| 64×64, 67 casters, 400 units | 48.06543 | 48.06543 | +0.000003 % |
+
+Every scenario is within 5 %. The showcase's cost is the free-vertex walk on its channels; its structures make
+channels with free vertices. (The WP3 tree, measured from its first build, is within 0.3 % on every scenario too.)
+
+**Re-measured on the merged base.** After `main` gained plan `2026-11-19-footprint-flags` (`fb66d85e`, five geysers
+moved), the battle set was measured again: base built from `fb66d85e`, candidate and control from this branch's merge
+of it. Candidate and control are bit-identical to the new base on every output; the new base's matrix is byte-identical
+to the old one. Both path pins and `VALIDATION_GOLDEN`/`DECODE_GOLDEN` (as `main` re-recorded them) pass on the merged
+tree.
+
 **Pins, four builds.** With `PATH_GOLDEN` `0x254e_64e8_49c1_5bd2` and `CONTOUR_PATH_GOLDEN` `0x01f9_a949_e9c0_77ef`,
 `validation_golden_tests` passes in native debug, native release, `wasm32-wasip1` release and `wasm32-wasip1` debug
 (runner `wasmtime --dir=<worktree>`); `VALIDATION_GOLDEN` and `DECODE_GOLDEN` are unchanged.
