@@ -324,7 +324,7 @@
         (
             id: (9),
             kind: Gas,
-            cell: (1, 10),
+            cell: (1, 1),
             amount: 2500,
         ),
         (
@@ -384,7 +384,7 @@
         (
             id: (19),
             kind: Gas,
-            cell: (62, 53),
+            cell: (62, 62),
             amount: 2500,
         ),
         (

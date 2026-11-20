@@ -663,7 +663,12 @@ fn validate_resource_footprints_reports_each_error() {
 /// The digest of the shipped showcase's mesh with its 20 nodes placed by the test table (the
 /// shipped footprints of `placement_rules.ron`), computed by this test on the tree of plan
 /// `2026-11-20-resource-footprints` WP4, where nodes first cut the mesh; no earlier value exists.
-const SHOWCASE_RESOURCE_MESH_DIGEST: u64 = 0x376d_17a5_a368_0858;
+///
+/// Re-recorded for that plan's Amendment 2 (before, `0x376d_17a5_a368_0858`): the showcase's
+/// geysers at (62, 53) and (1, 10) move to the base corners (62, 62) and (1, 1). Proof: this tree
+/// with the previous map file reproduces the previous value; native release and `wasm32-wasip1`
+/// release agree on this one.
+const SHOWCASE_RESOURCE_MESH_DIGEST: u64 = 0xca1f_ad4b_b3af_339a;
 
 #[test]
 fn digest_of_the_showcase_mesh_with_its_nodes_is_pinned() {

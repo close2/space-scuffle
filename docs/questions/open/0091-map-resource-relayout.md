@@ -24,3 +24,10 @@ lines and geysers of `showcase_canyon` and `default_arena`; the exact cells are 
 - **(a)** Re-lay both maps as the plan states (the default).
 - **(b)** Re-lay them, but you give the layout. The work stops at WP3 until you do.
 - **(c)** Do not give nodes footprints, and keep B-147 open.
+
+## Context added by plan Amendments 1 and 2 (2026-11-20)
+
+Measured on today's base, slot 1's geyser at (62, 53) sat beside the ground where the showcase spawns that army and
+changed the battle; a first move to (59, 62) still sat beside the army's route round the north of its hall. Amendment 2
+puts the geysers in the base corners: slot 1 at (53, 62) and (62, 62), slot 0 at (10, 1) and (1, 1). The default (a)
+still applies, with these cells.

@@ -351,8 +351,8 @@ ring.
 
 | Map | Slot | Minerals (anchor cells) | Gas | Why |
 |---|---|---|---|---|
-| `showcase_canyon` | 0 | Front row `y = 14`: `x` 3, 6, 9, 12; back row `y = 15`: `x` 4, 7, 10; corner field (13, 13) | (1, 10), (10, 1) | A ladder-like two-row line: four close fields 3 cells from the hall, three far fields mined through 1-cell notches, a corner field that the 8 × 7 ring's cut corner admits. Geysers behind the base (F-3) |
-| `showcase_canyon` | 1 | The point mirror: anchor `(62 − x, 63 − y)` | (62, 53), (53, 62) | The map's point symmetry (a 2×1's mirrored anchor is one cell west of the mirrored cell) |
+| `showcase_canyon` | 0 | Front row `y = 14`: `x` 3, 6, 9, 12; back row `y = 15`: `x` 4, 7, 10; corner field (13, 13) | (1, 1), (10, 1) (Amendment 2; was (1, 10), (10, 1)) | A ladder-like two-row line: four close fields 3 cells from the hall, three far fields mined through 1-cell notches, a corner field that the 8 × 7 ring's cut corner admits. Geysers behind the base (F-3) |
+| `showcase_canyon` | 1 | The point mirror: anchor `(62 − x, 63 − y)` | (62, 62), (53, 62) (Amendment 2; was (62, 53), (53, 62)) | The map's point symmetry (a 2×1's mirrored anchor is one cell west of the mirrored cell) |
 | `default_arena` | 0 | Front column `x = 4`: `y` 3, 5, 7, 9; back column `x = 2`: `y` 2, 4, 6, 8 | (4, 11) unchanged, (11, 11) → (13, 12) | Clear of `golden_replay`'s hall at (6, 6) (T8) |
 | `default_arena` | 1 | Front row `y = 60`: `x` 39, 42, 45, 48; back row `y = 61`: `x` 40, 43, 46, 49 | (50, 56) unchanged, (55, 56) → (58, 59) | Clear of the hall at (52, 52); north of the start, 3 cells from its face |
 
@@ -958,3 +958,8 @@ D-10's "behind the base" meant.
 - **The winner rule stands.** If it breaches again, land WP5 with minerals only (option 2), and give the geysers
   their own layout study in a later package. Stop and report rather than trying further cells.
 - Q0091's context names the final cells.
+
+**As applied (implementation agent, 2026-11-20).** Slot 1's geyser at (62, 53) moves to (62, 62), the base's
+north-east corner, beside the geyser at (53, 62); its mirror (1, 10) moves to (1, 1), beside (10, 1). The D-10 guards
+pass. The arena is unchanged, so no golden moves; `SHOWCASE_RESOURCE_MESH_DIGEST` (WP4) is re-recorded with its proof.
+The tests' training site (2, 2), under (1, 1)'s 3×3, moves to (12, 2).
