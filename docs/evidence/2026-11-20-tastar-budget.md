@@ -247,3 +247,22 @@ fallbacks 0, 1, 1, 2 from fitting starts, none new, stress 0, all-known 0; admis
   layouts and is the partial-knowledge funnel's class-N residual that this plan keeps (§4.2, §9), so the test allows
   exactly that one, by name. A separate test rather than a half of the existing one, so each prints its own figures.
 - `crates/gate/suites.ron` needs no change: the new tests are in existing targets (C22).
+
+## WP6: final figures and bookkeeping
+
+The final tree's figures are WP4's (WP5 changed tests only). Against the plan's prototype (§4): every corpus, the
+contour corpus and the golden-corpus logs are request for request the prototype's adopted design; the three pins
+are its would-be values; path search −0.1 % (prototype −0.5 % against its own base, 46.47 G; this base measured
+46.13 G); showcase scenario +0.30 % instructions (prototype +0.50 %).
+
+**Wall clock** (`tab-cand` at WP4, one run under `flock ~/scratch/gate.lock` on the shared host, median of three):
+64×64 0 units 3,249 ticks/s, 100 units 778, 400 units 140; 128×128 178; 256×256 201; showcase canyon 107; casters
+204. Every scenario is above 25 ticks/s; a quiet-host run stays an open confirmation item.
+
+**Records.** `DESIGN.md` §4: B-149 fixed with the figures; B-154 keeps the visit cap's residual (4 oracle routes above
+1.01, at most 1.0185; per-cell contours 140 q 8 +4.3 %, back at 64 visits; 46 q 0 back at 255); B-146's row notes
+that its accepted residual 58 q 13 and its stress residual are gone (D-3). `docs/plans/README.md`: the plan is Done.
+The showcase did not move, so no storyboard check is needed.
+
+The scratch trees `tab-base`, `tab-cand` and `tab-measure` and their target directories are removed; the measurement
+patch, scripts and results stay under `~/scratch/tab/impl/`.
