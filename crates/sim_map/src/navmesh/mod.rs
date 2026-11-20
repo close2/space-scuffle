@@ -1399,7 +1399,7 @@ mod edge_lookup_tests {
             (3, 2, 6, 4, 2),
         ];
         let (width, height, half_width_q, half_height_q, chamfer_q) =
-            SHAPES[rng.gen_range(0..SHAPES.len())];
+            SHAPES[usize::try_from(rng.gen_range::<u32, _>(0..7)).unwrap_or(0)];
         if rng.gen_bool(0.3) {
             StructureFootprint::square(width, height)
         } else {
@@ -1435,13 +1435,16 @@ mod edge_lookup_tests {
         let arena = default_arena();
         let (width, height) = (arena.width(), arena.height());
         let mut nodes: Vec<ResourceNode> = arena.resources().to_vec();
-        for _ in 0..rng.gen_range(0..=24) {
+        for _ in 0..rng.gen_range::<u32, _>(0..=24) {
             let kind = if rng.gen_bool(0.25) {
                 ResourceKind::Gas
             } else {
                 ResourceKind::Mineral
             };
-            let cell = (rng.gen_range(0..width), rng.gen_range(0..height));
+            let cell = (
+                rng.gen_range::<u32, _>(0..width),
+                rng.gen_range::<u32, _>(0..height),
+            );
             let half = |v: u32| SimScalar::from_raw((i64::from(v) << 32) + (1 << 31));
             nodes.push(ResourceNode {
                 pos: SimVec2::new(half(cell.0), half(cell.1)),
@@ -1487,9 +1490,15 @@ mod edge_lookup_tests {
             }
             let footprint = footprint(&mut rng);
             let cell = if rng.gen_bool(0.2) {
-                (width - u32::from(footprint.width), rng.gen_range(0..height))
+                (
+                    width - u32::from(footprint.width),
+                    rng.gen_range::<u32, _>(0..height),
+                )
             } else {
-                (rng.gen_range(0..width), rng.gen_range(0..height))
+                (
+                    rng.gen_range::<u32, _>(0..width),
+                    rng.gen_range::<u32, _>(0..height),
+                )
             };
             structures += usize::from(
                 map.place_structure(EntityId(40_000 + attempt), cell, footprint)
