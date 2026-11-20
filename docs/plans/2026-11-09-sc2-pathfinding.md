@@ -743,6 +743,8 @@ of the friendly-blocking plan's acceptance (its Amendment 1). D-12's other stop 
   `movement/locomotion.rs`). With D-9's literal rule, every non-yielding body touching the corner including moving
   flockmates, the showcase got worse in all three boxes and its winner flipped (player 1 wins at tick 1,464).
   Moving bodies leave the corner by themselves and are spaced by steering.
+  *Pointer (plan [`2026-11-19-parked-body-aim`](2026-11-19-parked-body-aim.md) D-1, B-145):* the narrowing applies to
+  the start of a rounding only; once begun, a rounding is held while any non-yielding body touches the corner.
 - **A corner with a parked body is handed off only beyond it** (the half-plane test of A2), not when the unit is
   merely within the handoff distance. Otherwise a unit beside the body heads straight for the next point and is
   pushed into the gap between the body and the obstacle the corner turns around, where it sticks.

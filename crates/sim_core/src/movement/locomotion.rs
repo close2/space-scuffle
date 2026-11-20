@@ -1885,18 +1885,24 @@ impl MotionDraft<'_> {
     }
 }
 
-/// The body parked on `corner`, if any: a tick-start neighbour standing still that will not step
-/// aside for this unit and touches the corner point with its own radius and the unit's.
+/// The body parked on `corner`, if any: a tick-start neighbour that will not step aside for this
+/// unit and touches the corner point with its own radius and the unit's, and, unless the unit is
+/// already `rounding` a body at this corner, stands still.
 ///
-/// A moving body is not parked: it clears the corner by itself, and steering spaces the unit from
-/// it like any other flockmate.
+/// A moving body does not start a rounding: it clears the corner by itself, and steering spaces
+/// the unit from it like any other flockmate. A rounding once begun is held while any such body
+/// touches the corner, moving or not: the decision to round, like its sense
+/// ([`MovementMemory::corner_round`]), was taken against one snapshot and is not undone by the
+/// next while its cause persists, or the unit would turn back to the corner as soon as the body
+/// it rounds starts to walk (plan `2026-11-19-parked-body-aim` D-1, B-145).
 fn parked_on_corner<'n>(
     context: &StepContext<'n>,
     corner: SimVec2,
+    rounding: bool,
 ) -> Option<&'n SteeringObstacle> {
     let (body, policy) = (context.body, context.policy);
     context.neighbours.iter().find(|obstacle| {
-        obstacle.velocity == SimVec2::ZERO
+        (rounding || obstacle.velocity == SimVec2::ZERO)
             && !obstacle.yields_to(body.owner, body.push_priority)
             && within_distance(
                 obstacle.pos,
@@ -1922,7 +1928,9 @@ fn parked_on_corner<'n>(
 /// is on the outside. Its sense round the body is then kept in `sense` (`1` counter-clockwise,
 /// `-1` clockwise; [`MovementMemory::corner_round`]) and every later aim takes the candidate of
 /// that sense: once the unit is beside the body the line no longer cuts the obstacle, and the
-/// side rule would send it back. The route is never written: this is a steering aim.
+/// side rule would send it back. A held sense also holds the decision to round: while `sense` is
+/// set, a body touching the corner keeps the unit rounding it even once it walks (plan
+/// `2026-11-19-parked-body-aim` D-1). The route is never written: this is a steering aim.
 fn aim_past_parked_body(
     context: &StepContext<'_>,
     pathfinder: &mut Pathfinder,
@@ -1931,7 +1939,7 @@ fn aim_past_parked_body(
     sense: &mut i8,
 ) -> Result<Option<SimVec2>, MovementMathError> {
     let (body, policy) = (context.body, context.policy);
-    let Some(occupant) = parked_on_corner(context, corner) else {
+    let Some(occupant) = parked_on_corner(context, corner, *sense != 0) else {
         return Ok(None);
     };
     let away = direction(body.pos, occupant.pos)?;
@@ -1994,7 +2002,11 @@ fn aim_past_parked_body(
 /// (plan `2026-11-09-sc2-pathfinding` D-9 A2). A corner with a body parked on it is passed only
 /// beyond it: until then the unit rounds the body on the outside ([`aim_past_parked_body`]), and
 /// heading straight for the next point from beside the body would push it into the gap between
-/// the body and the obstacle the corner turns around.
+/// the body and the obstacle the corner turns around. A unit already rounding a body at the
+/// corner (`MovementMemory::corner_round` set) keeps it while any non-yielding body touches the
+/// corner, as [`aim_past_parked_body`] keeps aiming past it: the two must agree, or a held
+/// rounding would hand its corner off by distance while still aiming past the body (plan
+/// `2026-11-19-parked-body-aim` D-1).
 fn drop_passed_waypoints(
     context: &StepContext<'_>,
     pathfinder: &mut Pathfinder,
@@ -2013,7 +2025,8 @@ fn drop_passed_waypoints(
                 checked_vec_sub(actor.position, first)?,
                 checked_vec_sub(subsequent, first)?,
             )? >= SimScalar::ZERO;
-        let near = gap <= handoff && parked_on_corner(context, first).is_none();
+        let near = gap <= handoff
+            && parked_on_corner(context, first, proposal.memory.corner_round != 0).is_none();
         if !near && !past {
             break;
         }
@@ -2785,6 +2798,78 @@ mod tests {
             scan_range: SimScalar::from_num(5.5),
         };
         Ok(probe(&context, &mut world.pathfinder))
+    }
+
+    /// A body of radius 0.375 at `pos` with tick-start velocity `velocity`, under an order (not
+    /// idle) unless `idle`, so it does not yield to the unit of [`on_walk_context`] unless it is
+    /// an idle, standing friend.
+    fn corner_body(
+        pos: SimVec2,
+        velocity: SimVec2,
+        idle: bool,
+    ) -> crate::steering::SteeringObstacle {
+        use sim_types::{EntityId, PlayerId};
+        crate::steering::SteeringObstacle {
+            owner: PlayerId(0),
+            push_priority: 10,
+            anchored: false,
+            idle,
+            ..crate::steering::SteeringObstacle::new(
+                EntityId(2),
+                pos,
+                SimScalar::from_num(0.375),
+                velocity,
+            )
+        }
+    }
+
+    /// Whether `parked_on_corner` finds `body` on the corner (10.6, 10) of the unit of
+    /// [`on_walk_context`] (radius 0.375 at (10, 10)), with the unit `rounding` or not.
+    fn finds_on_corner(
+        body: crate::steering::SteeringObstacle,
+        rounding: bool,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let neighbours = [body];
+        on_walk_context(&neighbours, |context, _| {
+            super::parked_on_corner(context, v(10.6, 10.0), rounding).is_some()
+        })
+    }
+
+    /// A walking body on the corner starts no rounding, but keeps one begun (plan
+    /// `2026-11-19-parked-body-aim` D-1): the standing test applies only when not `rounding`.
+    #[test]
+    fn a_walking_body_on_the_corner_is_kept_only_by_a_rounding_begun(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let walking = corner_body(v(10.9, 10.0), v(0.1, 0.0), false);
+        assert!(!finds_on_corner(walking, false)?);
+        assert!(finds_on_corner(walking, true)?);
+        let standing = corner_body(v(10.9, 10.0), v(0.0, 0.0), false);
+        assert!(finds_on_corner(standing, false)?);
+        assert!(finds_on_corner(standing, true)?);
+        Ok(())
+    }
+
+    /// An idle, standing friend yields (contact pushes it aside), so it is never rounded.
+    #[test]
+    fn a_yielding_body_is_never_parked() -> Result<(), Box<dyn std::error::Error>> {
+        let idle = corner_body(v(10.9, 10.0), v(0.0, 0.0), true);
+        assert!(!finds_on_corner(idle, false)?);
+        assert!(!finds_on_corner(idle, true)?);
+        Ok(())
+    }
+
+    /// A body that does not touch the corner with both radii (0.75) is never parked on it,
+    /// standing or walking; a walking one just within that reach keeps a rounding begun.
+    #[test]
+    fn a_body_off_the_corner_is_never_parked() -> Result<(), Box<dyn std::error::Error>> {
+        for velocity in [v(0.0, 0.0), v(0.1, 0.0)] {
+            let off = corner_body(v(11.4, 10.0), velocity, false);
+            assert!(!finds_on_corner(off, false)?);
+            assert!(!finds_on_corner(off, true)?);
+        }
+        let within = corner_body(v(11.3, 10.0), v(0.1, 0.0), false);
+        assert!(finds_on_corner(within, true)?);
+        Ok(())
     }
 
     /// Whether the spent walk of the unit of [`on_walk_context`], having walked `walked` world

@@ -330,6 +330,16 @@
 // build that hashes each moved node at its old cell reproduces every checksum recorded before, and
 // the checksum without the resources section is identical on every one of the 1000 ticks with the
 // old and the moved map.
+// Re-recorded for plan 2026-11-19-parked-body-aim WP2 (B-145), on top of footprint-flags WP4:
+// checkpoint 6 (ticks 251 to 300) first changed. Entity 34 ("red_siege") rounds entity 35, parked
+// on its corner; at tick 273 entity 35 starts to walk and entity 34 keeps rounding it where it used
+// to turn back to the corner (D-1). Its hashed state differs on that tick and its pose from tick
+// 282; the two runs meet again by tick 350 (checkpoint 7 unchanged) and part for good at tick 352,
+// where entity 34 holds a rounding of entity 33 (checkpoints 8 to 20 changed). Over the replay a
+// rounding is held by a walking body on 70 unit-ticks (entity 34 on 4, entity 35 on 66). Proof: a
+// scratch build of the merged tree with `rounding` forced false reproduces footprint-flags WP4's
+// checksums at every checkpoint, and its entity states equal those of that build before the moved
+// geyser on every one of the 1000 ticks.
 (
     checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
@@ -362,20 +372,20 @@
         0xe9a4a96f5c1b886e,
         0xa130beb5ecaf30ab,
         0xe18c86d53521415b,
-        0xc1a50ac3f22cbb34,
+        0xb12dc5f766cf1186,
         0xdb6fa3a29c3559fd,
-        0xe2cfb0a2ba23bba0,
-        0x1b652bb0468c59ae,
-        0xd61e9b954fdb6ff9,
-        0x0cbcbdeb17c979a0,
-        0x9bab42d7ef9a6656,
-        0xc434388a4fcfdde0,
-        0x4af13667de27d3fc,
-        0x91658e348e03a598,
-        0xfe593d9c88c1ab16,
-        0xfabbe9de8d5ec7fb,
-        0xa3b1be0fa61757b2,
-        0xcc8cf64d32cbf295,
-        0xa133bb0731764e21,
+        0xdf56cbab3917d10f,
+        0x28222da9532547ce,
+        0x8f5b4afcb1606732,
+        0xd1423c70ba490b6c,
+        0x56af25ead4298b5c,
+        0x1a05404d8630fc8f,
+        0x8ec4fde20a8cf3b2,
+        0xd7f4de49a495c98c,
+        0xab72264ce5dc3bc2,
+        0xc7a9c131deff88ad,
+        0xd3fc4cd7a1a4c6a3,
+        0xca062854a51445d3,
+        0x472459263f54fbfc,
     ],
 )
