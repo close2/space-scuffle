@@ -56,8 +56,13 @@
 //! keeps its window off the desktop. It does not mean a software GPU.
 //!
 //! # How validation reaches this module
-//! 1. `WGPU_VALIDATION=1` makes `wgpu_hal` load `VK_LAYER_KHRONOS_validation` and register a debug
-//!    messenger. The layer writes through that messenger, never to a file.
+//! 1. `WGPU_VALIDATION=1` makes `wgpu_hal` load `VK_LAYER_KHRONOS_validation`, and `WGPU_DEBUG=1`
+//!    makes it enable `VK_EXT_debug_utils` and register a debug messenger. The layer and the
+//!    loader write through that messenger, never to a file. A debug build sets both bits by
+//!    default, a release build neither (wgpu-types' `InstanceFlags::from_build_config`, which
+//!    Bevy extends with `with_env`), so the harness sets both: with the layer but no messenger,
+//!    a release child never logs the loader's "inserted" line and fails as unvalidated (plan
+//!    `2026-11-20-gpu-lane` D-5, B-157).
 //! 2. The messenger forwards each message to the `log` crate under the target
 //!    `wgpu_hal::vulkan::instance`, as `<TYPE> [<ID> (0x<number>)]` plus a tab-indented body.
 //! 3. Bevy's `LogPlugin` writes those records to stderr, subject to `RUST_LOG`. Bevy also logs
@@ -2712,15 +2717,26 @@ impl GpuCommand {
     ///
     /// # Panics
     /// As [`Self::run`].
-    pub fn run_validated(mut self, label: &str) -> (GpuRun, ValidationReport) {
-        self.command.env("WGPU_VALIDATION", "1");
-        // Replaced so a developer's own filter cannot hide findings.
-        self.command.env("RUST_LOG", VALIDATED_RUST_LOG);
-        let driver = self.driver();
-        let run = self.run(label);
+    pub fn run_validated(self, label: &str) -> (GpuRun, ValidationReport) {
+        let validated = self.validated();
+        let driver = validated.driver();
+        let run = validated.run(label);
         let mut report = ValidationReport::parse(&run.log());
         report.expected_driver = driver;
         (run, report)
+    }
+
+    /// The command with the validation environment [`Self::run_validated`] runs it under:
+    /// `WGPU_VALIDATION=1` requests the layer, `WGPU_DEBUG=1` the debug messenger through which
+    /// the layer's and the loader's messages reach the log (plan `2026-11-20-gpu-lane` D-5,
+    /// B-157: a release build sets neither bit by default), and `RUST_LOG` is replaced so a
+    /// developer's own filter cannot hide findings.
+    #[must_use]
+    pub fn validated(mut self) -> Self {
+        self.command.env("WGPU_VALIDATION", "1");
+        self.command.env("WGPU_DEBUG", "1");
+        self.command.env("RUST_LOG", VALIDATED_RUST_LOG);
+        self
     }
 
     /// Runs the child and fails on any validation violation, the adapter check included.

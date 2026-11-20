@@ -1462,6 +1462,31 @@ fn an_offscreen_child_has_no_display_and_no_software_present() {
     }
 }
 
+/// Plan `2026-11-20-gpu-lane` D-5 (B-157): a validated child requests both the layer and the
+/// debug messenger, so validation works in release builds too; a plain child gets neither from
+/// the harness.
+#[test]
+fn a_validated_child_requests_the_layer_and_the_debug_messenger() {
+    for driver in [GpuDriver::Radv, GpuDriver::Lavapipe] {
+        let plain = GpuCommand::inspect(Path::new("/fixture/child"), &ChildDisplay::None, driver);
+        for key in ["WGPU_VALIDATION", "WGPU_DEBUG"] {
+            assert_eq!(variable(&plain, key), Setting::Inherited, "{driver}: {key}");
+        }
+        let validated = plain.validated();
+        for key in ["WGPU_VALIDATION", "WGPU_DEBUG"] {
+            assert_eq!(
+                variable(&validated, key),
+                Setting::Set("1".to_owned()),
+                "{driver}: {key}"
+            );
+        }
+        assert!(
+            matches!(variable(&validated, "RUST_LOG"), Setting::Set(_)),
+            "{driver}: a developer's filter cannot hide findings"
+        );
+    }
+}
+
 /// T-5: an Xvfb child keeps `xvfb-run` and radv's software present, as before the `KWin`
 /// display existed; the display name says which. A host child has no wrapper.
 #[test]
