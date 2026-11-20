@@ -1023,3 +1023,22 @@ Three of them were sites on moved nodes and are fixed. The other three are decid
 
 After these, run every client and `client_diagnostics` target that loads the shipped maps or stages a battle, one
 at a time, as asked before. All must pass.
+
+## Amendment 5 (orchestrator, 2026-11-20, short note): B-155, a faster edge-kind lookup in the mesh rebuild
+
+**What.** `ConstraintGraph::kind` (`crates/sim_map/src/navmesh/mod.rs`) takes 68.5 % of a mesh rebuild with the
+shipped resource nodes, which makes the arena rebuild 3.04× its cost without the nodes. Replace its per-edge search
+(`StructureEdges::contains` and `terrain_kind`) with a lookup that is O(1), or close to it, per unit edge. One option
+is a dense per-rebuild table keyed by canonical edge, built once from the structure edges and the terrain cell
+lines. The design is the implementer's, with a `PERFORMANCE RATIONALE` block.
+
+**Why.** It is a performance fix with no change in behaviour. The meshes must be bit-identical.
+
+**Tests and acceptance.**
+
+- **Bit-identity:** a property test compares the new lookup with the old one, kept as a test oracle, on random
+  layouts. Every `sim_map` pin and both goldens must stay unchanged.
+- **Cost:** the mesh rebuild instructions on the arena with nodes fall to at most 2× the no-node figure, the plan's
+  original 3× bar with margin. Measure on instructions retired.
+- **Memory:** the steady state allocates nothing per rebuild beyond today's.
+- B-155 is marked fixed.
