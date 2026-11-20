@@ -982,3 +982,14 @@ Figures are in [`docs/evidence/2026-11-20-resource-footprints.md`](../evidence/2
 showcase winners hold with the corner geysers; income 60.3 per worker-minute; throughput +2.25 % instructions
 retired; the arena's rebuild with its nodes at 3.04× the node-free rebuild, above the 3× bar, profiled and recorded.
 
+
+## Amendment 3 (orchestrator, 2026-11-20): the rebuild-cost bar missed on the arena is accepted and registered (B-155)
+
+WP7 measured a navigation mesh rebuild at 3.04× with the shipped nodes on `default_arena` (2.74× on the showcase),
+against the plan's 3× bar. The profile puts 68.5 % of the time in `ConstraintGraph::kind`, a per-edge lookup that
+the nodes' extra constraints multiply. Throughput holds: +2.25 % instructions, every scenario above 25 ticks/s.
+
+The miss is accepted for this package, and the cost is registered as **B-155**, with an indexed edge-kind lookup
+as its direction. That is an optimisation with no behaviour change, for its own short plan. The reversal figure
+reported under Amendment 1 (175 against 132, 34 within 1.5 of a node) is accepted as rule-caused, with B-152 as
+its register entry.
