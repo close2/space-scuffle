@@ -39,3 +39,10 @@ still applies, with these cells.
 Owner: *"of course, you have complete control of the map, change whatever you want on the map. it's your test map!"*
 
 Re-lay `showcase_canyon` and `default_arena` as planned (with Amendment 2's corner geyser placements and StarCraft II's `2×1` mineral and `3×3` geyser footprints, bringing mining income to SC2's authentic ~63 minerals/worker-minute while keeping army exits clear and preserving all 9 showcase winners). Going forward, agents have complete control over test/shipped map layouts (mineral lines, geysers, ramps, obstacles, spawn positions) and may adjust them freely without asking the owner.
+
+## Resolution (2026-11-20)
+
+Applied by plan `docs/plans/2026-11-20-resource-footprints.md` (Amendments 1 to 4). Both maps are re-laid with 2×1
+mineral fields and 3×3 geysers in the base corners. The owner's standing grant of control over test and shipped map
+layouts is recorded. Under the owner's guidance on movement work, layouts are chosen on principle, keeping army
+spawns and exits clear, not by which fixed seeds keep their winners.

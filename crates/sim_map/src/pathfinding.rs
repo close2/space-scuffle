@@ -25,7 +25,7 @@
 //!   with every mesh.
 
 use crate::error::{MapError, Result};
-use crate::grid::GameMap;
+use crate::grid::{GameMap, PlacedStructure};
 use crate::navmesh::lanes::{LaneCuts, LaneWord};
 use crate::navmesh::search::{LaneRestriction, MeshRoute, MeshSearch};
 use crate::navmesh::segment::WallContact;
@@ -181,22 +181,30 @@ impl ClearanceWorkspace {
         }
     }
 
-    /// Adds every structure's shape to the walls: the four corners of every half-cell whose open
-    /// interior meets the shape's open interior (D-6). For a full-box shape that is every lattice
-    /// point of its closed cells. Returns whether there were any structures.
+    /// Adds every structure's and every standing resource node's shape to the walls: the four
+    /// corners of every half-cell whose open interior meets the shape's open interior (D-6; plan
+    /// `2026-11-20-resource-footprints` D-5 M4). For a full-box shape that is every lattice point
+    /// of its closed cells. Returns whether there were any such shapes.
     fn mark_structure_walls(&mut self, map: &GameMap) -> bool {
-        for placed in map.structures().values() {
+        let mut any = false;
+        let structures = map.structures().values().map(PlacedStructure::footprint);
+        let nodes = map
+            .resources()
+            .iter()
+            .filter_map(|resource| resource.placed.map(|placed| placed.footprint));
+        for footprint in structures.chain(nodes) {
+            any = true;
             let (left, bottom) = (
-                i64::from(placed.top_left.0) * 2,
-                i64::from(placed.top_left.1) * 2,
+                i64::from(footprint.top_left.0) * 2,
+                i64::from(footprint.top_left.1) * 2,
             );
             let (right, top) = (
-                left + 2 * i64::from(placed.width),
-                bottom + 2 * i64::from(placed.height),
+                left + 2 * i64::from(footprint.width),
+                bottom + 2 * i64::from(footprint.height),
             );
             for hy in bottom..top {
                 for hx in left..right {
-                    if placed.meets_open_half_cell(hx, hy) {
+                    if footprint.meets_open_half_cell(hx, hy) {
                         let (x, y) = (
                             usize::try_from(hx).unwrap_or(0),
                             usize::try_from(hy).unwrap_or(0),
@@ -208,7 +216,7 @@ impl ClearanceWorkspace {
                 }
             }
         }
-        !map.structures().is_empty()
+        any
     }
 
     /// Computes the exact squared Euclidean distance from every lattice point to a wall.

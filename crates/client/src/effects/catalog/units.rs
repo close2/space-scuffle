@@ -702,7 +702,7 @@ mod tests {
                             footprint_w: 2,
                             footprint_h: 2,
                             shape,
-                        } if shape.half_width_q == half_q
+                        } if shape.box_extents().is_some_and(|(hw, _, _)| hw == half_q)
                     ) && (arch.weapon_against(MoverType::Ground, None).is_some()
                         || arch.weapon_against(MoverType::Air, None).is_some())
                 })

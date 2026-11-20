@@ -38,7 +38,7 @@ use sim_core::catalog::{
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
-use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog};
+use sim_core::{SimCoreError, SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::{MapDocument, SimMap};
 
 /// The shipped `assets/catalog/factions.ron`.
@@ -118,10 +118,7 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
 ///
 /// # Panics
 /// Panics if the shipped `statuses.ron` or `ability_effects.ron` does not parse.
-pub fn spells_with(
-    statuses_ron: &str,
-    effects_ron: &str,
-) -> Result<SpellCatalog, sim_core::SimCoreError> {
+pub fn spells_with(statuses_ron: &str, effects_ron: &str) -> Result<SpellCatalog, SimCoreError> {
     let mut statuses = SpellCatalog::parse_statuses(STATUSES_RON)
         .expect("invariant: the shipped statuses.ron parses");
     let mut effects = SpellCatalog::parse_effects(ABILITY_EFFECTS_RON)
@@ -159,16 +156,43 @@ pub fn without_random_delays(catalog: &mut UnitCatalog) {
     }
 }
 
-/// A world on `map` with the shipped catalogs and the deterministic RNG `seed`.
+/// A world on `map` with the shipped catalogs and the deterministic RNG `seed`, its resource
+/// nodes placed by the shipped footprints (plan `2026-11-20-resource-footprints` D-4).
+///
+/// # Errors
+/// [`SimCoreError::ResourceFootprint`] when a node of `map` does not fit its footprint.
+///
+/// # Panics
+/// Panics if the shipped catalogs are invalid (see [`shipped_catalogs`]).
+pub fn try_world(map: SimMap, seed: u64) -> Result<SimWorld, SimCoreError> {
+    let catalogs = shipped_catalogs();
+    SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
+}
+
+/// A world on `map` with the shipped catalogs and the deterministic RNG `seed`: [`try_world`]
+/// for a fixture map whose resource nodes fit their footprints.
 ///
 /// Replaces the former `SimWorld::new`; the world is identical to the one that built.
 ///
 /// # Panics
-/// Panics if the shipped catalogs are invalid (see [`shipped_catalogs`]).
+/// Panics if the shipped catalogs are invalid (see [`shipped_catalogs`]), or if a resource node
+/// of `map` does not fit its footprint: a fixture map that places a node where the shipped
+/// footprint cannot stand is a broken fixture, reported with the node and the reason.
 #[must_use]
 pub fn world(map: SimMap, seed: u64) -> SimWorld {
-    let catalogs = shipped_catalogs();
-    SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
+    match try_world(map, seed) {
+        Ok(world) => world,
+        Err(error) => fixture_failure(&error),
+    }
+}
+
+/// Stops a test whose fixture map cannot be built, naming why.
+#[allow(
+    clippy::panic,
+    reason = "test support: a fixture map whose nodes do not fit is a broken test, stopped loudly"
+)]
+fn fixture_failure(error: &SimCoreError) -> ! {
+    panic!("the fixture map cannot be built: {error}")
 }
 
 /// The shipped start loadouts.

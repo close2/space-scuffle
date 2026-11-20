@@ -58,7 +58,7 @@ fn world(
     arch.weapon = None;
     arch.ground_weapon = None;
     arch.air_weapon = None;
-    let mut world = SimWorld::with_catalogs(map, SEED, catalogs.units, catalogs.upgrades);
+    let mut world = SimWorld::with_catalogs(map, SEED, catalogs.units, catalogs.upgrades)?;
     world.vision_aware_pathfinding = fog;
     Ok((world, kind))
 }

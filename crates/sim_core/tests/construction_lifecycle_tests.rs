@@ -55,6 +55,7 @@ fn fixture() -> Result<(SimWorld, EntityId, UnitTypeId), Box<dyn Error>> {
             kind: ResourceKind::Gas,
             remaining: 500,
             cell: (20, 20),
+            placed: None,
         }],
         Vec::new(),
     )?;

@@ -340,8 +340,21 @@
 // scratch build of the merged tree with `rounding` forced false reproduces footprint-flags WP4's
 // checksums at every checkpoint, and its entity states equal those of that build before the moved
 // geyser on every one of the 1000 ticks.
+// Re-recorded for plan 2026-11-20-resource-footprints WP3 (B-147, D-10): default_arena's mineral
+// lines and the gas nodes (11, 11) and (55, 56) are re-laid for 2x1 fields and 3x3 geysers, clear
+// of this replay's halls at (6, 6) and (52, 52). Node positions are hashed, so every checkpoint
+// changed; no behaviour did. Proof: the checksum that ends after the route groups (entities,
+// projectiles, players, effects, route groups; a scratch switch, not committed) is identical on
+// all 20 checkpoints on e58f1af1 with the old map and on this tree with the re-laid one. Native
+// debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-20-resource-footprints WP5 (B-147): schema 32 hashes each node's
+// footprint and each cell's resource occupant, and the nodes' outlines change the hashed
+// clearance and `nav_version`. Entity state is unchanged on every checkpoint. Proof: the
+// checksum that ends after the route groups, with the schema number held at 31 (a scratch
+// switch, not committed), is identical on all 20 checkpoints with WP4's tree and with this one.
+// Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 31,
+    checksum_schema: 32,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -367,25 +380,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x419e7fc8e9e9455b,
-        0xdd8ae41f9815f47b,
-        0xe9a4a96f5c1b886e,
-        0xa130beb5ecaf30ab,
-        0xe18c86d53521415b,
-        0xb12dc5f766cf1186,
-        0xdb6fa3a29c3559fd,
-        0xdf56cbab3917d10f,
-        0x28222da9532547ce,
-        0x8f5b4afcb1606732,
-        0xd1423c70ba490b6c,
-        0x56af25ead4298b5c,
-        0x1a05404d8630fc8f,
-        0x8ec4fde20a8cf3b2,
-        0xd7f4de49a495c98c,
-        0xab72264ce5dc3bc2,
-        0xc7a9c131deff88ad,
-        0xd3fc4cd7a1a4c6a3,
-        0xca062854a51445d3,
-        0x472459263f54fbfc,
+        0x7441b902c2ee141e,
+        0x185a2cdd8558852e,
+        0x119c6bcacbc62774,
+        0x2fc1e0c0d65cffa4,
+        0x80162fd4b960cf97,
+        0x0e4cf5d075cdacb3,
+        0x624b8d1ffa465967,
+        0xb4ce71cd71c1a5dc,
+        0x3ffb05121531265b,
+        0x6ce62b3a09511add,
+        0xf49cf916bdbe85a7,
+        0x3ed5422166bd42ec,
+        0x6c8ae9f5dfcec607,
+        0x30387f31d6cf4476,
+        0xca042ecb6e570516,
+        0x825509e70a091ee6,
+        0x8956391092378049,
+        0x51bd0b3615c9fa42,
+        0x8cd3775e69949176,
+        0xe847fe5d8c748838,
     ],
 )

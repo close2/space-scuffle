@@ -65,6 +65,10 @@ pub enum MatchupError {
         #[source]
         source: SimCoreError,
     },
+    /// The world could not be built on the arena (its resource nodes, plan
+    /// `2026-11-20-resource-footprints` D-4; matrix arenas have none).
+    #[error("cannot build the world: {0}")]
+    World(#[source] SimCoreError),
     /// A unit could not be placed.
     #[error("cannot spawn `{unit}`: {source}")]
     Spawn {
@@ -723,7 +727,8 @@ impl BattleRun {
             battle.map_cells,
             MapCell::default_ground(CliffLevel(0)),
         )?;
-        let mut world = SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades);
+        let mut world = SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
+            .map_err(MatchupError::World)?;
         let mut nudges = Jitter::new(seed, jitter);
         let (blue_centre, red_centre) = (side_centre(&battle.blue), side_centre(&battle.red));
         let blue = spawn_side(&mut world, BLUE, &battle.blue, red_centre, &mut nudges)?;

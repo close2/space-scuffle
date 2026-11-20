@@ -61,7 +61,7 @@ fn fixture(
     arch.ground_weapon = None;
     arch.air_weapon = None;
     let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::with_catalogs(map, 40, catalogs.units, catalogs.upgrades);
+    let mut world = SimWorld::with_catalogs(map, 40, catalogs.units, catalogs.upgrades)?;
     let source = world.spawn_unit(source, owner, SimVec2::from_i32(10, 10))?;
     let target_owner = if owner == PlayerId(0) {
         PlayerId(7)

@@ -42,6 +42,7 @@ fn world() -> SimWorld {
             kind: ResourceKind::Mineral,
             remaining: 500,
             cell: (12, 12),
+            placed: None,
         }],
         vec![Watchtower {
             id: EntityId(100),
@@ -927,10 +928,40 @@ fn a_placed_structures_shape_is_hashed() {
         world.compute_checksum()
     };
     let square = sim_types::FootprintShape::full(2, 2);
-    let contour = sim_types::FootprintShape {
+    let contour = sim_types::FootprintShape::Box {
+        half_width_q: 4,
+        half_height_q: 4,
         chamfer_q: 2,
-        ..square
     };
     assert_eq!(place(square), place(square));
     assert_ne!(place(square), place(contour));
+}
+
+/// Plan `2026-11-20-resource-footprints` D-11 (schema 32): a node's placed footprint and its
+/// cells' resource occupant are hashed. Removing the fixture's field changes the checksum;
+/// placing it again restores it.
+#[test]
+fn a_nodes_footprint_is_hashed() {
+    let mut world = world();
+    let standing = world.compute_checksum();
+    assert!(
+        world.map.resources()[0].placed.is_some(),
+        "the world placed its field"
+    );
+    world
+        .map
+        .remove_resource_footprint(sim_types::ResourceNodeId(0))
+        .expect("the field stands");
+    let removed = world.compute_checksum();
+    assert_ne!(removed, standing);
+    let table = world
+        .catalog
+        .placement_rules()
+        .resource_footprints()
+        .clone();
+    world
+        .map
+        .place_one_resource_footprint(sim_types::ResourceNodeId(0), &table)
+        .expect("the field fits again");
+    assert_eq!(world.compute_checksum(), standing);
 }

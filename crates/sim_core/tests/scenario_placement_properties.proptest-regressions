@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f3c41422d0010fabced69ec23beebfffcbb5c22be0ea7650d8f489e9068a1e91 # shrinks to generated = Generated { size: 32, starts: [(6, 0), (22, 2)], blockers: [(31, 3, 1), (7, 21, 1), (9, 16, 0), (18, 25, 0), (11, 6, 1), (20, 22, 2), (1, 20, 2), (29, 8, 2), (17, 15, 2), (2, 11, 0), (9, 0, 1), (27, 27, 1), (28, 27, 1)], resources: [(18, 31), (9, 23), (21, 5)] }, n0 = 932, n1 = 241, k = 28

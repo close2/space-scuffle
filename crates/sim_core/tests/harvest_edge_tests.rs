@@ -1,0 +1,417 @@
+//! Harvesting from the footprint's edge, and a mined-out field leaving the map (plan
+//! `2026-11-20-resource-footprints` WP6, D-7 and D-8).
+//!
+//! # Responsibility
+//! Proves that a worker gathers when its body touches the field and delivers when it touches the
+//! town hall (contact: at most its collision radius from the shape, at least its terrain radius,
+//! at a chamfered corner too); that a back field of the showcase's two-row line is mined through
+//! its one-cell notch; that the showcase's income lies in the band §6.2 derives from `StarCraft`
+//! II's measured rates; that a field leaves the map on the take that empties it (its cells
+//! walkable, the mesh rebuilt, a unit able to walk through) while a geyser stays; and that a field
+//! that has left applies no ring.
+//!
+//! # How it fits
+//! Worlds come from `sim_fixtures` with the shipped catalog; the worker and the hall are found by
+//! capability. Behaviour is driven by `PlayerCommand`s only; setup may place entities.
+//!
+//! # Invariants
+//! Positions are fixed-point world units; distances to shapes are measured with the map's own
+//! exact predicates, never with floats.
+
+#![allow(
+    clippy::expect_used,
+    reason = "a broken harvest law must fail the test loudly"
+)]
+
+use std::error::Error;
+
+use sim_core::SimWorld;
+use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PlacedFootprint, ResourceNode};
+use sim_types::{
+    EntityId, PlacementFlag, PlayerCommand, PlayerId, PlayerSlot, ResourceKind, ResourceNodeId,
+    SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+};
+
+type TestResult = Result<(), Box<dyn Error>>;
+
+const ME: PlayerId = PlayerId(0);
+const SHOWCASE: &str = include_str!("../../../assets/maps/showcase_canyon.scmap.ron");
+
+fn node(kind: ResourceKind, cell: (u32, u32), remaining: u32) -> ResourceNode {
+    let centre = |v: u32| SimScalar::from_num(v) + SimScalar::HALF;
+    ResourceNode {
+        pos: SimVec2::new(centre(cell.0), centre(cell.1)),
+        kind,
+        remaining,
+        cell,
+        placed: None,
+    }
+}
+
+fn flat(nodes: Vec<ResourceNode>) -> GameMap {
+    GameMap::from_cells(
+        40,
+        40,
+        vec![MapCell::default_ground(CliffLevel(0)); 1600],
+        nodes,
+        Vec::new(),
+    )
+    .expect("invariant: 40 × 40 cells")
+}
+
+/// The worker archetype (a harvester) and the town hall analogue (a depot with no prerequisite).
+fn kinds(world: &SimWorld) -> Result<(UnitTypeId, UnitTypeId), Box<dyn Error>> {
+    let worker = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.harvester.is_some())
+        .ok_or("a harvester")?
+        .unit_type_id;
+    let hall = world
+        .catalog
+        .archetypes()
+        .find(|a| a.is_resource_dropoff && a.requires_structures.is_empty())
+        .ok_or("a depot")?
+        .unit_type_id;
+    Ok((worker, hall))
+}
+
+fn step(world: &mut SimWorld, commands: Vec<PlayerCommand>) {
+    let tick = world.current_tick;
+    world.step(&TickBundle {
+        tick: Tick(tick),
+        commands,
+        state_checksum: None,
+    });
+    assert_eq!(world.diagnostics(), []);
+}
+
+fn harvest(world: &mut SimWorld, workers: Vec<EntityId>, target: ResourceNodeId) {
+    step(
+        world,
+        vec![PlayerCommand {
+            player_id: ME,
+            entities: workers,
+            order: UnitOrder::Harvest { target },
+            queue: false,
+        }],
+    );
+}
+
+/// Whether the body of `radius` centred at `at` comes no nearer `shape` than `radius`: touching
+/// it at most at `radius`, as the map's capsule predicate decides on the Q16 grid.
+fn within(shape: &PlacedFootprint, at: SimVec2, radius: SimScalar) -> bool {
+    shape.capsule_meets(at, at, radius + SimScalar::from_raw(1 << 16))
+}
+
+/// The worker's collision and terrain radii.
+fn radii(world: &SimWorld, worker: UnitTypeId) -> Result<(SimScalar, SimScalar), Box<dyn Error>> {
+    let arch = world.catalog.get(worker)?;
+    Ok((arch.collision_radius, arch.terrain_radius))
+}
+
+/// Steps until `done`, at most `limit` ticks; returns whether it happened.
+fn until(world: &mut SimWorld, limit: u32, done: impl Fn(&SimWorld) -> bool) -> bool {
+    for _ in 0..limit {
+        if done(world) {
+            return true;
+        }
+        step(world, Vec::new());
+    }
+    done(world)
+}
+
+#[test]
+fn a_worker_gathers_touching_the_field() -> TestResult {
+    let mut world =
+        sim_fixtures::try_world(flat(vec![node(ResourceKind::Mineral, (14, 10), 1_500)]), 3)?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    world.spawn_structure(hall_type, ME, 2, 2)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(SimScalar::from_num(9), SimScalar::from_num(6)),
+    )?;
+    let (collision, terrain) = radii(&world, worker_type)?;
+    let field = world.map.resources()[0]
+        .placed
+        .ok_or("the field stands")?
+        .footprint;
+    harvest(&mut world, vec![worker], ResourceNodeId(0));
+    assert!(
+        until(&mut world, 400, |w| w.entities[&worker].task.gather_ticks
+            > 0),
+        "the worker starts gathering"
+    );
+    let at = world.entities[&worker].position;
+    assert!(
+        within(&field, at, collision),
+        "it touches the field: {at:?}"
+    );
+    assert!(
+        !field.capsule_meets(at, at, terrain),
+        "it stands no nearer than its terrain radius: {at:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_worker_delivers_touching_the_hall() -> TestResult {
+    // A field north-east of the hall, so the worker comes home to the hall's cut corner.
+    let mut world =
+        sim_fixtures::try_world(flat(vec![node(ResourceKind::Mineral, (12, 12), 1_500)]), 3)?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    let hall = world.spawn_structure(hall_type, ME, 2, 2)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+    )?;
+    let (collision, terrain) = radii(&world, worker_type)?;
+    let hall_shape = world.map.structures()[&hall].footprint();
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
+    harvest(&mut world, vec![worker], ResourceNodeId(0));
+    let mut delivered_at = None;
+    for _ in 0..800 {
+        let before = world.player_resources[PlayerSlot::ALL[0]].minerals;
+        step(&mut world, Vec::new());
+        if world.player_resources[PlayerSlot::ALL[0]].minerals > before {
+            delivered_at = Some(world.entities[&worker].position);
+            break;
+        }
+    }
+    let at = delivered_at.ok_or("a delivery")?;
+    assert!(
+        within(&hall_shape, at, collision),
+        "it touches the hall: {at:?}"
+    );
+    assert!(!hall_shape.capsule_meets(at, at, terrain), "{at:?}");
+    // The hall's shape is cut at its corners; the worker came to the north-east one.
+    let corner = SimVec2::new(SimScalar::from_num(7), SimScalar::from_num(7));
+    assert!(
+        at.x > SimScalar::from_num(6) && at.y > SimScalar::from_num(6),
+        "{at:?} by {corner:?}"
+    );
+    Ok(())
+}
+
+/// A world on the showcase with slot 0's town hall at its start and `count` workers beside it.
+fn showcase_start(count: usize) -> Result<(SimWorld, Vec<EntityId>), Box<dyn Error>> {
+    let doc = MapFile::from_ron_str(SHOWCASE)?.decode()?;
+    let start = doc
+        .start_locations
+        .iter()
+        .find(|s| s.player_slot == 0)
+        .ok_or("slot 0")?
+        .clone();
+    let mut world = sim_fixtures::try_world(doc.to_game_map()?, 7)?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    world.spawn_structure(hall_type, ME, start.cell.0, start.cell.1)?;
+    let workers = (0..count)
+        .map(|i| {
+            let x = SimScalar::from_num(start.cell.0 + 6)
+                + SimScalar::from_raw(i64::try_from(i).unwrap_or(0) << 30);
+            world.spawn_unit(
+                worker_type,
+                ME,
+                SimVec2::new(x, SimScalar::from_num(start.cell.1 + 6)),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
+    Ok((world, workers))
+}
+
+/// The showcase's slot-0 mineral fields, in node order.
+fn slot0_fields(world: &SimWorld) -> Vec<ResourceNodeId> {
+    (0_u32..)
+        .zip(world.map.resources())
+        .filter(|(_, n)| n.kind == ResourceKind::Mineral && n.cell.0 < 32)
+        .map(|(i, _)| ResourceNodeId(i))
+        .collect()
+}
+
+#[test]
+fn a_back_field_is_mined_through_its_notch() -> TestResult {
+    let (mut world, workers) = showcase_start(1)?;
+    // The back field at (4, 15) sits behind the front fields at (3, 14) and (6, 14): its only
+    // open face from the base is the one-cell notch at x 5.
+    let back = (0_u32..)
+        .zip(world.map.resources())
+        .find(|(_, n)| n.cell == (4, 15))
+        .map(|(i, _)| ResourceNodeId(i))
+        .ok_or("the back field at (4, 15)")?;
+    harvest(&mut world, workers.clone(), back);
+    assert!(
+        until(&mut world, 1_500, |w| w.player_resources
+            [PlayerSlot::ALL[0]]
+            .minerals
+            > 0),
+        "a delivery from the back field"
+    );
+    let field = world.map.resources()[back.0 as usize]
+        .placed
+        .ok_or("it stands")?
+        .footprint;
+    harvest(&mut world, workers.clone(), back);
+    assert!(until(&mut world, 400, |w| w.entities[&workers[0]]
+        .task
+        .gather_ticks
+        > 0));
+    let at = world.entities[&workers[0]].position;
+    // It gathers from below, in the notch: x within the notch cell, y below the field.
+    assert!(
+        at.x > SimScalar::from_num(5)
+            && at.x < SimScalar::from_num(6)
+            && at.y < SimScalar::from_num(15),
+        "{at:?}"
+    );
+    let (collision, _) = radii(&world, world.entities[&workers[0]].unit_type_id)?;
+    assert!(within(&field, at, collision));
+    Ok(())
+}
+
+/// §6.2's band (reference test): on the showcase's slot-0 start, one worker per field in turn,
+/// income over ticks 750 to 3,750 per worker per minute: the mean of the eight fields in
+/// [59.0, 65.2], every field in [54.3, 69.3]. `StarCraft` II's measured rates (Liquipedia: 61.22
+/// near, 53.57 far, 57.8 a base) less the unmodelled `ReturnDelay` (B-150) give 66.0, 57.2 and
+/// 62.1; the band is ±5 % of them.
+#[test]
+fn income_lies_in_the_band() -> TestResult {
+    let mut rates = Vec::new();
+    let fields = slot0_fields(&showcase_start(1)?.0);
+    assert_eq!(fields.len(), 8);
+    for field in fields {
+        let (mut world, workers) = showcase_start(1)?;
+        harvest(&mut world, workers, field);
+        for _ in 0..750 {
+            step(&mut world, Vec::new());
+        }
+        let before = world.player_resources[PlayerSlot::ALL[0]].minerals;
+        for _ in 0..3_000 {
+            step(&mut world, Vec::new());
+        }
+        let income = world.player_resources[PlayerSlot::ALL[0]].minerals - before;
+        // Per minute (1,500 ticks) over 3,000 ticks, in tenths: income × 5.
+        rates.push((field, income * 5));
+    }
+    for &(field, tenths) in &rates {
+        assert!(
+            (543..=693).contains(&tenths),
+            "field {field:?}: {tenths} tenths of a mineral per minute"
+        );
+    }
+    let mean_x8: u32 = rates.iter().map(|&(_, tenths)| tenths).sum();
+    assert!(
+        (590 * 8..=652 * 8).contains(&mean_x8),
+        "mean {} tenths per minute",
+        mean_x8 / 8
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mined_out_field_leaves_the_map() -> TestResult {
+    let mut world = sim_fixtures::try_world(
+        flat(vec![
+            node(ResourceKind::Mineral, (12, 4), 5),
+            node(ResourceKind::Mineral, (12, 8), 1_500),
+        ]),
+        3,
+    )?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    world.spawn_structure(hall_type, ME, 2, 2)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(4)),
+    )?;
+    let version = world.pathfinder.nav_version();
+    harvest(&mut world, vec![worker], ResourceNodeId(0));
+    assert!(until(&mut world, 600, |w| w.map.resources()[0].remaining == 0));
+    // On the take that emptied it, the field left the map.
+    let field = &world.map.resources()[0];
+    assert!(field.placed.is_none(), "the field left the map");
+    for x in 12..14 {
+        let cell = world.map.cell(x, 4)?;
+        assert!(cell.occupying_resource.is_none());
+        assert!(cell.flags.contains(sim_map::CellFlags::GROUND_PATHABLE));
+    }
+    assert_ne!(
+        world.pathfinder.nav_version(),
+        version,
+        "the mesh was rebuilt"
+    );
+    // A walker now crosses where the field stood.
+    let walker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(
+            SimScalar::from_num(13),
+            SimScalar::HALF * SimScalar::from_num(5),
+        ),
+    )?;
+    let across = SimVec2::new(SimScalar::from_num(13), SimScalar::from_num(6));
+    assert!(world.is_position_pathable_from(world.entities[&walker].position, across));
+    // The other field stands.
+    assert!(world.map.resources()[1].placed.is_some());
+    Ok(())
+}
+
+#[test]
+fn a_geyser_stays_when_empty() -> TestResult {
+    let mut world = sim_fixtures::try_world(flat(vec![node(ResourceKind::Gas, (14, 10), 5)]), 3)?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    world.spawn_structure(hall_type, ME, 2, 2)?;
+    let extractor = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.is_gas_extractor)
+        .ok_or("an extractor")?
+        .unit_type_id;
+    world.spawn_structure(extractor, ME, 13, 9)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(6)),
+    )?;
+    harvest(&mut world, vec![worker], ResourceNodeId(0));
+    assert!(until(&mut world, 800, |w| w.map.resources()[0].remaining == 0));
+    assert!(
+        world.map.resources()[0].placed.is_some(),
+        "the geyser stays"
+    );
+    assert_eq!(
+        world.map.cell(14, 10)?.occupying_resource,
+        Some(ResourceNodeId(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn an_emptied_field_no_longer_applies_its_ring() -> TestResult {
+    let mut world =
+        sim_fixtures::try_world(flat(vec![node(ResourceKind::Mineral, (20, 20), 5)]), 3)?;
+    let (worker_type, hall_type) = kinds(&world)?;
+    assert!(world
+        .catalog
+        .get(hall_type)?
+        .placement_excludes
+        .has(PlacementFlag::NearResources));
+    world.spawn_structure(hall_type, ME, 2, 2)?;
+    // A site two cells east of the field's east cell lies in its ring.
+    let site = (24, 18);
+    assert_eq!(
+        world.preview_site(ME, hall_type, site.0, site.1),
+        Err(sim_types::SiteRefusal::NearResources)
+    );
+    let worker = world.spawn_unit(
+        worker_type,
+        ME,
+        SimVec2::new(SimScalar::from_num(18), SimScalar::from_num(19)),
+    )?;
+    harvest(&mut world, vec![worker], ResourceNodeId(0));
+    assert!(until(&mut world, 1_000, |w| w.map.resources()[0].remaining == 0));
+    assert_eq!(world.preview_site(ME, hall_type, site.0, site.1), Ok(()));
+    Ok(())
+}

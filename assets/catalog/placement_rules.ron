@@ -1,39 +1,49 @@
 // assets/catalog/placement_rules.ron
-// Placement flags that resource nodes apply around themselves (StarCraft II Patch 5.0.14,
-// SC2GameData 5444e12f13; plan docs/plans/2026-11-19-footprint-flags.md D-2, D-3).
+// Resource node footprints (StarCraft II Patch 5.0.14, SC2GameData 5444e12f13; plans
+// docs/plans/2026-11-19-footprint-flags.md D-2 and docs/plans/2026-11-20-resource-footprints.md
+// D-1).
 //
-// Each ring is a mask: `x` is a cell on which the node applies the flags of `applies`, `.` a cell
-// on which it applies nothing. `rows[0]` is the row of lowest y, and `anchor` is the
-// (column, row) of the node's own cell. Every ring here is symmetric under both flips, so the row
-// order does not change it (plan §2.2 rule 5). A structure whose `placement_excludes` in
-// structures.ron names a flag cannot be placed on a cell that carries it.
+// Each row is the game's `Place` layer, copied: `x` is one of the node's own cells (its
+// footprint: nothing is built or spawned there), `o` a cell of its ring, `.` neither; the node
+// applies the flags of `applies` on its `x` and `o` cells. `rows[0]` is the row of lowest y, and
+// `anchor` is the (column, row) of the cell the map file names. `shape` is the pathing shape (the
+// game's `Shape`) in world units from the centre of the `x` cells: `Box` a box with 45-degree
+// corners cut by `chamfer`, `Outline` a vertex list in order round the outline. A structure whose
+// `placement_excludes` in structures.ron names a flag cannot be placed on a cell that carries it.
 (
     resource_footprints: [
-        // 5.0.14 FootprintMineralsRounded Place (liberty Footprint:1077-1091): NearResources on the
-        // field's cells and 3 cells beyond them, one corner cell cut. Our node is one cell, not
-        // the game's 2x1, so the ring is anchored on that cell (B-147; plan D-3).
+        // 5.0.14 FootprintMineralsRounded (liberty Footprint:1061-1096; liberty UnitData:68). Place
+        // rows :1083-1089, read with rows[0] the lowest y: `x` the field's own 2x1, `o` the
+        // NearResources ring. The anchor is the field's west cell, the map file's `cell`. Shape
+        // Offsets :1094 (a 2 x 1 box). RemoveWhenEmpty: liberty BehaviorData:749.
         (kind: Mineral, applies: [NearResources], anchor: (3, 3), rows: [
-            ".xxxxx.",
-            "xxxxxxx",
-            "xxxxxxx",
-            "xxxxxxx",
-            "xxxxxxx",
-            "xxxxxxx",
-            ".xxxxx.",
-        ]),
-        // 5.0.14 FootprintGeyserRounded Place (liberty Footprint:1554-1570), rows 0, 1, 7 and 8 as
-        // rounded by void Footprint:11-14. The node is the geyser's centre cell (the extractor's
-        // 3x3 is centred on it).
+            ".oooooo.",
+            "oooooooo",
+            "oooooooo",
+            "oooxxooo",
+            "oooooooo",
+            "oooooooo",
+            ".oooooo.",
+        ], shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.0), remove_when_empty: true),
+        // 5.0.14 FootprintGeyserRounded (liberty Footprint:1535-1576, rows 0, 1, 7 and 8 and
+        // Shape as void Footprint:3-21; liberty UnitData:2127). The anchor is the centre cell (the
+        // extractor's 3x3 is centred on it). Shape: void Footprint:18-19, the +-1 square with its
+        // corners pushed out into diagonal lobes. No RemoveWhenEmpty (liberty BehaviorData:801-807).
         (kind: Gas, applies: [NearResources], anchor: (4, 4), rows: [
-            "..xxxxx..",
-            ".xxxxxxx.",
-            "xxxxxxxxx",
-            "xxxxxxxxx",
-            "xxxxxxxxx",
-            "xxxxxxxxx",
-            "xxxxxxxxx",
-            ".xxxxxxx.",
-            "..xxxxx..",
-        ]),
+            "..ooooo..",
+            ".ooooooo.",
+            "ooooooooo",
+            "oooxxxooo",
+            "oooxxxooo",
+            "oooxxxooo",
+            "ooooooooo",
+            ".ooooooo.",
+            "..ooooo..",
+        ], shape: Outline([
+            (-0.5, -1.0), (-0.75, -1.25), (-1.25, -0.75), (-1.0, -0.5),
+            (-1.0, 0.5), (-1.25, 0.75), (-0.75, 1.25), (-0.5, 1.0),
+            (0.5, 1.0), (0.75, 1.25), (1.25, 0.75), (1.0, 0.5),
+            (1.0, -0.5), (1.25, -0.75), (0.75, -1.25), (0.5, -1.0),
+        ]), remove_when_empty: false),
     ],
 )

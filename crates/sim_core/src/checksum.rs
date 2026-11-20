@@ -71,7 +71,10 @@ use std::collections::BTreeMap;
 /// in quarter cells (plan `2026-11-18-contour-footprints`).
 /// Schema 31 adds each unit's surround-walk retreat, `MovementMemory::flank_retreat`, after the
 /// distance walked (plan `2026-11-19-crowd-edge-steering-2` D-1).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 31;
+/// Schema 32 adds each resource node's placed footprint and each cell's resource occupant (plan
+/// `2026-11-20-resource-footprints`), and a leading variant tag on every footprint shape (0 for
+/// a box, then its three values; 1 for an outline, then its vertices).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 32;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

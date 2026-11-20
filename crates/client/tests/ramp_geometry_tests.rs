@@ -204,6 +204,7 @@ fn ground(level: u8) -> MapCell {
         flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     }
 }
 
@@ -214,6 +215,7 @@ fn abyss() -> MapCell {
         flags: CellFlags::UNPASSABLE_CLIFF,
         ramp: None,
         occupying_structure: None,
+        occupying_resource: None,
     }
 }
 
@@ -224,6 +226,7 @@ fn ramp_cell(low: u8, dir: RampDir) -> MapCell {
         flags: CellFlags::GROUND_PATHABLE.union(CellFlags::RAMP),
         ramp: Some(dir),
         occupying_structure: None,
+        occupying_resource: None,
     }
 }
 

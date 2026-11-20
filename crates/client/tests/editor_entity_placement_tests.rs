@@ -73,7 +73,13 @@ const SINGLE_CELL_KINDS: [EntityToolKind; 3] = [
 fn without_symmetry_one_entity_is_added_with_the_next_id() {
     let doc = blank_document(16, 16);
     for kind in SINGLE_CELL_KINDS {
-        let command = place_entity_command(&doc, kind, (3, 4), SymmetryMode::None);
+        let command = place_entity_command(
+            &doc,
+            kind,
+            (3, 4),
+            SymmetryMode::None,
+            &sim_map::ResourceFootprints::NONE,
+        );
         assert_eq!(
             command,
             EditCommand::AddEntities {
@@ -93,7 +99,13 @@ fn under_symmetry_the_mirror_takes_the_following_id_and_the_mirrored_cell() {
         (SymmetryMode::Rotate180, (12, 11)),
     ] {
         for kind in SINGLE_CELL_KINDS {
-            let command = place_entity_command(&doc, kind, (3, 4), symmetry);
+            let command = place_entity_command(
+                &doc,
+                kind,
+                (3, 4),
+                symmetry,
+                &sim_map::ResourceFootprints::NONE,
+            );
             assert_eq!(
                 command,
                 EditCommand::AddEntities {
@@ -114,7 +126,13 @@ fn a_cell_on_the_symmetry_axis_is_placed_once() {
     // MirrorX.
     let doc = blank_document(17, 17);
     for kind in SINGLE_CELL_KINDS {
-        let command = place_entity_command(&doc, kind, (8, 3), SymmetryMode::MirrorX);
+        let command = place_entity_command(
+            &doc,
+            kind,
+            (8, 3),
+            SymmetryMode::MirrorX,
+            &sim_map::ResourceFootprints::NONE,
+        );
         assert_eq!(
             command,
             EditCommand::AddEntities {

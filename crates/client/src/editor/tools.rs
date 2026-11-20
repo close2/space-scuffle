@@ -24,6 +24,7 @@ use sim_map::map_format::{
     MapCellSpec, MapDocument, MapEntityId, MapResource, MapStartLocation, MapWatchtower,
 };
 use sim_map::validation::CellRect;
+use sim_map::ResourceFootprints;
 
 use crate::editor::commands::{CellDelta, EditCommand, MapEntity};
 use crate::editor::stroke::StrokeRecorder;
@@ -632,6 +633,11 @@ pub enum EntityToolKind {
 /// Constructs an [`EditCommand`] to place a new entity at discrete cell coordinates,
 /// including its mirrored partner under `symmetry`.
 ///
+/// A resource node is placed by its anchor `cell`; its mirror is the image of its footprint's
+/// cells under `symmetry`, read from `footprints` (plan `2026-11-20-resource-footprints` D-12):
+/// a 2×1 field mirrored across a vertical axis has its anchor one cell further. A kind with no
+/// footprint in the table is mirrored by its anchor cell.
+///
 /// If placing a start location for an already occupied player slot, moves it instead. Under symmetry
 /// the result always holds both slots, adding whichever is missing as one [`EditCommand::Batch`].
 #[must_use]
@@ -640,24 +646,23 @@ pub fn place_entity_command(
     kind: EntityToolKind,
     cell: (u32, u32),
     symmetry: SymmetryMode,
+    footprints: &ResourceFootprints,
 ) -> EditCommand {
+    let resource = |kind: ResourceKind, amount: u32| {
+        let mirror =
+            |cell: (u32, u32)| mirror_resource_anchor(doc, kind, cell, symmetry, footprints);
+        place_mirrored_entities_by(doc, cell, symmetry, mirror, |id, cell| {
+            MapEntity::Resource(MapResource {
+                id,
+                kind,
+                cell,
+                amount,
+            })
+        })
+    };
     match kind {
-        EntityToolKind::Mineral => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
-            MapEntity::Resource(MapResource {
-                id,
-                kind: ResourceKind::Mineral,
-                cell,
-                amount: DEFAULT_MINERAL_AMOUNT,
-            })
-        }),
-        EntityToolKind::Gas => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
-            MapEntity::Resource(MapResource {
-                id,
-                kind: ResourceKind::Gas,
-                cell,
-                amount: DEFAULT_GAS_AMOUNT,
-            })
-        }),
+        EntityToolKind::Mineral => resource(ResourceKind::Mineral, DEFAULT_MINERAL_AMOUNT),
+        EntityToolKind::Gas => resource(ResourceKind::Gas, DEFAULT_GAS_AMOUNT),
         EntityToolKind::Watchtower => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
             MapEntity::Watchtower(MapWatchtower {
                 id,
@@ -672,6 +677,63 @@ pub fn place_entity_command(
     }
 }
 
+/// The anchor of the mirror of a `kind` node anchored at `anchor`: the anchor of its footprint's
+/// mirrored cells (the footprint's offset from the anchor kept), or the mirrored anchor cell for
+/// a kind with no footprint.
+fn mirror_resource_anchor(
+    doc: &MapDocument,
+    kind: ResourceKind,
+    anchor: (u32, u32),
+    symmetry: SymmetryMode,
+    footprints: &ResourceFootprints,
+) -> (u32, u32) {
+    let Some(footprint) = footprints.get(kind) else {
+        return symmetry.mirror_cell(anchor, doc.width, doc.height);
+    };
+    let (dx, dy, width, height) = footprint.cells;
+    let min = (
+        i64::from(anchor.0) + i64::from(dx),
+        i64::from(anchor.1) + i64::from(dy),
+    );
+    let (Ok(min_x), Ok(min_y)) = (u32::try_from(min.0), u32::try_from(min.1)) else {
+        return symmetry.mirror_cell(anchor, doc.width, doc.height);
+    };
+    let rect = CellRect {
+        min: (min_x, min_y),
+        max_inclusive: (
+            min_x + u32::from(width).saturating_sub(1),
+            min_y + u32::from(height).saturating_sub(1),
+        ),
+    };
+    let mirrored = symmetry.mirror_rect(rect, doc.width, doc.height);
+    let back = |value: u32, offset: i8| {
+        u32::try_from(i64::from(value) - i64::from(offset)).unwrap_or(value)
+    };
+    (back(mirrored.min.0, dx), back(mirrored.min.1, dy))
+}
+
+/// Why a resource placement in the editor is refused: the node errors that
+/// [`sim_map::validate_resource_footprints`] reports for `after`, the document with the placement
+/// applied, that `before` did not have (plan `2026-11-20-resource-footprints` D-12). `None` when
+/// the placement adds no error.
+#[must_use]
+pub fn resource_placement_refusal(
+    before: &MapDocument,
+    after: &MapDocument,
+    rules: &sim_core::catalog::PlacementRules,
+) -> Option<String> {
+    let check = |doc: &MapDocument| {
+        sim_map::validate_resource_footprints(doc, rules.resource_footprints(), |kind, dx, dy| {
+            rules.reach(kind).is_some_and(|reach| reach.covers(dx, dy))
+        })
+    };
+    let known = check(before);
+    check(after)
+        .into_iter()
+        .find(|error| !known.contains(error))
+        .map(|error| error.to_string())
+}
+
 /// Adds one single-cell entity built by `make` at `cell` with the document's next entity ID,
 /// plus its mirror under `symmetry` with the following ID. A cell that mirrors onto itself (on
 /// the symmetry axis) is placed once.
@@ -681,11 +743,23 @@ fn place_mirrored_entities(
     symmetry: SymmetryMode,
     make: impl Fn(MapEntityId, (u32, u32)) -> MapEntity,
 ) -> EditCommand {
+    let mirror = |cell: (u32, u32)| symmetry.mirror_cell(cell, doc.width, doc.height);
+    place_mirrored_entities_by(doc, cell, symmetry, mirror, make)
+}
+
+/// As [`place_mirrored_entities`], with the mirrored anchor given by `mirror`.
+fn place_mirrored_entities_by(
+    doc: &MapDocument,
+    cell: (u32, u32),
+    symmetry: SymmetryMode,
+    mirror: impl Fn((u32, u32)) -> (u32, u32),
+    make: impl Fn(MapEntityId, (u32, u32)) -> MapEntity,
+) -> EditCommand {
     let primary_id = doc.next_entity_id();
     let mut entities = vec![make(primary_id, cell)];
 
     if symmetry != SymmetryMode::None {
-        let mirrored_cell = symmetry.mirror_cell(cell, doc.width, doc.height);
+        let mirrored_cell = mirror(cell);
         if mirrored_cell != cell {
             entities.push(make(MapEntityId(primary_id.0 + 1), mirrored_cell));
         }
@@ -1041,5 +1115,135 @@ pub fn erase_entities_command(
         None
     } else {
         Some(EditCommand::RemoveEntities { entities })
+    }
+}
+
+/// Plan `2026-11-20-resource-footprints` D-12: the editor mirrors a node's footprint, not its
+/// anchor, and refuses a field that does not fit.
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "a broken editor law must fail the test loudly"
+)]
+mod resource_footprint_tests {
+    use super::*;
+    use crate::editor::commands::ChangeSet;
+    use sim_core::catalog::PlacementRules;
+
+    const RULES: &str = include_str!("../../../../assets/catalog/placement_rules.ron");
+    const ARENA: &str = include_str!("../../../../assets/maps/default_arena.scmap.ron");
+
+    fn rules() -> PlacementRules {
+        PlacementRules::from_ron_str(RULES).expect("invariant: the shipped rules load")
+    }
+
+    fn arena() -> MapDocument {
+        sim_map::MapFile::from_ron_str(ARENA)
+            .and_then(|file| file.decode())
+            .expect("invariant: the shipped arena decodes")
+    }
+
+    /// The cells of every `kind` node of `doc`, by the rules' footprints.
+    fn cells(doc: &MapDocument, footprints: &ResourceFootprints) -> BTreeSet<(i64, i64)> {
+        doc.resources
+            .iter()
+            .flat_map(|node| {
+                let (dx, dy, w, h) = footprints.get(node.kind).expect("a footprint").cells;
+                let (x0, y0) = (
+                    i64::from(node.cell.0) + i64::from(dx),
+                    i64::from(node.cell.1) + i64::from(dy),
+                );
+                (0..i64::from(h))
+                    .flat_map(move |j| (0..i64::from(w)).map(move |i| (x0 + i, y0 + j)))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mirrored_minerals_mirror_the_footprint() {
+        let rules = rules();
+        let footprints = rules.resource_footprints();
+        for symmetry in [
+            SymmetryMode::MirrorX,
+            SymmetryMode::MirrorY,
+            SymmetryMode::Rotate180,
+        ] {
+            let mut doc = arena();
+            doc.resources.clear();
+            let command = place_entity_command(
+                &doc,
+                EntityToolKind::Mineral,
+                (20, 20),
+                symmetry,
+                footprints,
+            );
+            command.apply(&mut doc, &mut ChangeSet::default());
+            assert_eq!(doc.resources.len(), 2, "{symmetry:?}");
+            let primary: BTreeSet<_> = [(20, 20), (21, 20)].into_iter().collect();
+            let mirror = |(x, y): (i64, i64)| {
+                let (mx, my) = symmetry.mirror_cell(
+                    (
+                        u32::try_from(x).expect("on the map"),
+                        u32::try_from(y).expect("on the map"),
+                    ),
+                    doc.width,
+                    doc.height,
+                );
+                (i64::from(mx), i64::from(my))
+            };
+            let expected: BTreeSet<_> = primary
+                .iter()
+                .copied()
+                .chain(primary.iter().copied().map(mirror))
+                .collect();
+            assert_eq!(cells(&doc, footprints), expected, "{symmetry:?}");
+        }
+        // Without a footprint the anchor is mirrored, as for any one-cell entity.
+        let mut doc = arena();
+        doc.resources.clear();
+        place_entity_command(
+            &doc,
+            EntityToolKind::Mineral,
+            (20, 20),
+            SymmetryMode::MirrorX,
+            &ResourceFootprints::NONE,
+        )
+        .apply(&mut doc, &mut ChangeSet::default());
+        assert_eq!(doc.resources[1].cell, (doc.width - 21, 20));
+    }
+
+    #[test]
+    fn an_overlapping_field_is_refused() {
+        let rules = rules();
+        let before = arena();
+        // The shipped arena's field at (4, 3) takes (4, 3) and (5, 3): a field anchored at
+        // (5, 3) would share (5, 3).
+        let mut after = before.clone();
+        place_entity_command(
+            &before,
+            EntityToolKind::Mineral,
+            (5, 3),
+            SymmetryMode::None,
+            rules.resource_footprints(),
+        )
+        .apply(&mut after, &mut ChangeSet::default());
+        let refusal = resource_placement_refusal(&before, &after, &rules);
+        assert!(
+            refusal
+                .as_deref()
+                .is_some_and(|reason| reason.contains("overlaps")),
+            "{refusal:?}"
+        );
+        // A field in open ground away from every start is accepted.
+        let mut open = before.clone();
+        place_entity_command(
+            &before,
+            EntityToolKind::Mineral,
+            (30, 20),
+            SymmetryMode::None,
+            rules.resource_footprints(),
+        )
+        .apply(&mut open, &mut ChangeSet::default());
+        assert_eq!(resource_placement_refusal(&before, &open, &rules), None);
     }
 }

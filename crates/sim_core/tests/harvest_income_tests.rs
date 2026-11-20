@@ -37,6 +37,7 @@ fn node(kind: ResourceKind, cell: (i32, i32), remaining: u32) -> ResourceNode {
         kind,
         remaining,
         cell: (cell.0.unsigned_abs(), cell.1.unsigned_abs()),
+        placed: None,
     }
 }
 

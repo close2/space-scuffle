@@ -54,3 +54,16 @@ It would be judged on stated properties over generated scenarios and held-out se
 - **(a)** Yes: plan and build the redesign with D-α, D-β and D-γ as sanctioned deviations (recommended).
 - **(b)** Plan it, but come back with the plan and its harness results before any behaviour change lands.
 - **(c)** No: keep the current local layer and continue fixing it rule by rule.
+
+## Answer
+
+Owner (chat, 2026-11-20): "Q0092: option a!" The owner adds that StarCraft II itself uses iterative soft separation and
+pushing, with slight temporary overlap between friends (per James Anhalt's GDC 2011 navigation talk), so that crowds
+flow through ramps and chokes instead of locking up. The owner also notes that building the redesign behind a data
+switch, and judging it on objective property metrics over held-out seeds, makes option (a) low-risk.
+
+## Resolution (2026-11-20)
+
+Option (a): the contact redesign is planned and built. D-α, D-β and D-γ are sanctioned and added to
+[Q0052](0052-sanctioned-sc2-deviations.md)'s list. The plan is `docs/plans/2026-11-20-contact-solver.md`, which is
+being written.

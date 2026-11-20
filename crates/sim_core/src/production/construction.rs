@@ -38,8 +38,8 @@ use crate::economy::{Footprint, GameCommandError, GameCommandReceipt, TaskEventK
 use crate::{SimWorld, UnitArchetype};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    AnimState, EntityId, PlacementFlag, PlacementFlags, PlayerId, ResourceKind, ShapeKind,
-    SimScalar, Tick, UnitOrder, UnitTypeId, VisibilityState,
+    AnimState, EntityId, PlacementFlag, PlacementFlags, PlayerId, ResourceKind, ResourceNodeId,
+    ShapeKind, SimScalar, Tick, UnitOrder, UnitTypeId, VisibilityState,
 };
 use thiserror::Error;
 
@@ -239,24 +239,30 @@ impl SimWorld {
                     || remembered(cell_x, cell_y)
             }
         };
+        // The node rule runs first and keeps its reasons (plan `2026-11-20-resource-footprints`
+        // D-5 P2): nodes are public, so the grid's resource occupant is never what a player hears.
+        let over_node = self.site_node(arch, site)?;
         #[expect(
             clippy::cast_possible_truncation,
             reason = "footprint sides were read from u8 fields in site_of"
         )]
-        self.map
-            .can_place_building_where(
+        let grid = if over_node.is_some() {
+            // An extractor exactly over a standing geyser: the node's cells are open, buildable
+            // ground it was placed on, so only a structure on them refuses the site.
+            self.site_structure(site, counts)
+        } else {
+            self.map.can_place_building_where(
                 site.left,
                 site.bottom,
                 site.width as u8,
                 site.height as u8,
                 counts,
             )
-            .map_err(|error| match error {
-                sim_map::MapError::PlacementBlocked { reason, .. } => {
-                    BuildRejection::Blocked(reason)
-                }
-                _ => BuildRejection::OutOfBounds,
-            })?;
+        };
+        grid.map_err(|error| match error {
+            sim_map::MapError::PlacementBlocked { reason, .. } => BuildRejection::Blocked(reason),
+            _ => BuildRejection::OutOfBounds,
+        })?;
         if knowledge == Knowledge::Player {
             // A remembered structure stands until the player sees the cell empty. Answering from
             // the truth here would reveal, from any distance, that it had gone.
@@ -266,29 +272,79 @@ impl SimWorld {
                 return Err(BuildRejection::RememberedStructure);
             }
         }
-        let mut covers_gas = false;
-        for node in self.map.resources() {
-            if !site.contains_cell(node.cell) {
+        self.check_flags(player, arch, site)
+    }
+
+    /// The node rule of a site (plan `2026-11-20-resource-footprints` D-5 P2): a site may not
+    /// cover any cell of a standing node, except that a gas extractor must cover exactly one
+    /// standing gas node's footprint. Returns that node for an extractor.
+    fn site_node(
+        &self,
+        arch: &UnitArchetype,
+        site: Footprint,
+    ) -> Result<Option<ResourceNodeId>, BuildRejection> {
+        let mut over = None;
+        for (index, node) in (0_u32..).zip(self.map.resources()) {
+            let Some(placed) = node.placed else {
+                continue;
+            };
+            let cells = placed.footprint;
+            let meets = (cells.top_left.1..cells.top_left.1 + u32::from(cells.height)).any(|y| {
+                (cells.top_left.0..cells.top_left.0 + u32::from(cells.width))
+                    .any(|x| site.contains_cell((x, y)))
+            });
+            if !meets {
                 continue;
             }
             if !arch.capabilities.is_gas_extractor {
                 return Err(BuildRejection::CoversResource);
             }
-            if node.kind != ResourceKind::Gas {
+            let exact = (site.left, site.bottom, site.width, site.height)
+                == (
+                    cells.top_left.0,
+                    cells.top_left.1,
+                    u32::from(cells.width),
+                    u32::from(cells.height),
+                );
+            if node.kind != ResourceKind::Gas || !exact || over.is_some() {
                 return Err(BuildRejection::ExtractorNeedsGas);
             }
-            covers_gas = true;
+            over = Some(ResourceNodeId(index));
         }
-        if arch.capabilities.is_gas_extractor && !covers_gas {
+        if arch.capabilities.is_gas_extractor && over.is_none() {
             return Err(BuildRejection::ExtractorNeedsGas);
         }
-        self.check_flags(player, arch, site)
+        Ok(over)
+    }
+
+    /// Whether a structure `counts` refuses stands on a cell of `site`, as the grid check
+    /// reports it.
+    fn site_structure(
+        &self,
+        site: Footprint,
+        counts: impl Fn(u32, u32, EntityId) -> bool,
+    ) -> sim_map::Result<()> {
+        for y in site.bottom..site.bottom + site.height {
+            for x in site.left..site.left + site.width {
+                if let Some(occupant) = self.map.cell(x, y)?.occupying_structure {
+                    if counts(x, y, occupant) {
+                        return Err(sim_map::MapError::PlacementBlocked {
+                            cell_x: site.left,
+                            cell_y: site.bottom,
+                            reason: PlacementFailureReason::OccupiedByStructure(occupant),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Whether any cell of `site` carries a placement flag `arch` refuses, for `player`.
     ///
-    /// A cell carries the flags every resource node's ring applies on it (nodes are public, so
-    /// depleted ones count too) and `Fogged` when `player` does not see it now. Knowledge plays no
+    /// A cell carries the flags every standing resource node's ring applies on it (nodes are
+    /// public; a mined-out field that has left the map applies nothing, plan
+    /// `2026-11-20-resource-footprints` D-5 P3) and `Fogged` when `player` does not see it now. Knowledge plays no
     /// part: both are the same at admission, on arrival and in the preview. Cells are visited by
     /// `y` then `x`, so the reported cell and flag are deterministic.
     fn check_flags(
@@ -314,7 +370,7 @@ impl SimWorld {
         for y in site.bottom..site.bottom + site.height {
             for x in site.left..site.left + site.width {
                 let mut flags = PlacementFlags::empty();
-                for node in self.map.resources() {
+                for node in self.map.resources().iter().filter(|n| n.placed.is_some()) {
                     if let Some(reach) = rules.reach(node.kind) {
                         let dx = i64::from(x) - i64::from(node.cell.0);
                         let dy = i64::from(y) - i64::from(node.cell.1);
@@ -537,9 +593,17 @@ impl SimWorld {
             height: site.height as u8,
             shape,
         };
-        self.map
-            .place_structure(prepared.entity.id, (site.left, site.bottom), footprint)
-            .map_err(|_| BuildRejection::OutOfBounds)?;
+        let extractor = self
+            .catalog
+            .get(structure_type)
+            .is_ok_and(|arch| arch.capabilities.is_gas_extractor);
+        self.place_structure_cells(
+            prepared.entity.id,
+            extractor,
+            (site.left, site.bottom),
+            footprint,
+        )
+        .map_err(|_| BuildRejection::OutOfBounds)?;
         let id = self.commit_spawn(prepared);
         self.pathfinder.recompute_clearance(&self.map);
         Ok(id)

@@ -144,7 +144,18 @@ const PATH_REQUESTS_PER_MAP: usize = 250;
 /// the previous value; with the moved maps the variant set and the counts (13 and 14 together in
 /// 15 reports, unreachable in 1, 2,496 warnings) are unchanged. Native debug and release and
 /// `wasm32-wasip1` release and debug produce this same value.
-const VALIDATION_GOLDEN: u64 = 0x78f4_a8ea_2deb_b63b;
+///
+/// Re-recorded for plan `2026-11-20-resource-footprints` WP3 (D-10; before,
+/// `0x78f4_a8ea_2deb_b63b`): `default_arena`'s mineral lines and two gas nodes are re-laid for
+/// 2×1 fields and 3×3 geysers, and the corpus is built from that map, so the reports that print
+/// node cells changed. Proof: this tree with the previous `default_arena` reproduces the previous
+/// value. With the re-laid map the variant set and the error counts (13 and 14 together in 15
+/// reports, unreachable in 1) are unchanged; warnings rise from 2,496 to 2,790, two more
+/// `UnassignedResource` per arena document (147 documents): the slot 0 line moved west and slot
+/// 1's north, beyond the association radius of the start (`validate_map` on the shipped arena:
+/// 8 unassigned before, 10 after). Native debug and release and `wasm32-wasip1` release and debug
+/// produce this same value.
+const VALIDATION_GOLDEN: u64 = 0x4dbe_8075_1245_0f9e;
 /// Digest of every decode result over the corpus, recorded before the step 9.2 split
 /// (`0x56c4_3eea_8701_94bd`). Re-recorded for B-140 (plan `2026-11-18-contour-footprints`
 /// Amendment 5): the document and damage draws are `u32` instead of `usize`, and the corpus
@@ -155,7 +166,12 @@ const VALIDATION_GOLDEN: u64 = 0x78f4_a8ea_2deb_b63b;
 /// `0x4c32_25d2_ef3a_fc87`): the decoded documents hold the moved gas nodes. Proof: the previous
 /// map files reproduce the previous value, and the failure set is unchanged. Native debug and
 /// release and `wasm32-wasip1` release and debug produce this same value.
-const DECODE_GOLDEN: u64 = 0x10db_ea43_6aba_f292;
+///
+/// Re-recorded for plan `2026-11-20-resource-footprints` WP3 (D-10; before,
+/// `0x10db_ea43_6aba_f292`): the decoded documents hold the re-laid nodes. Proof: this tree with
+/// the previous `default_arena` reproduces the previous value, and the failure set is unchanged.
+/// Native debug and release and `wasm32-wasip1` release and debug produce this same value.
+const DECODE_GOLDEN: u64 = 0x8aa3_3f5e_c0af_266e;
 /// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
 /// come from the navigation mesh at the request's radius (before, the grid corridor:
 /// `0x52cf_7f61_9e6e_88b1`, recorded before the step 9.2 split). Re-recorded under Amendment 4:
@@ -859,7 +875,7 @@ fn place_seeded_contours(map: &mut GameMap, rng: &mut ChaCha8Rng) -> u32 {
         let footprint = sim_map::StructureFootprint {
             width: size,
             height: size,
-            shape: sim_types::FootprintShape {
+            shape: sim_types::FootprintShape::Box {
                 half_width_q: half,
                 half_height_q: half,
                 chamfer_q: chamfer,

@@ -34,6 +34,7 @@ const LOADOUTS: &str = include_str!("../../../assets/catalog/start_loadouts.ron"
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
 const STRUCTURES: &str = include_str!("../../../assets/catalog/structures.ron");
 const UPGRADES: &str = include_str!("../../../assets/catalog/upgrades.ron");
+const PLACEMENT_RULES: &str = include_str!("../../../assets/catalog/placement_rules.ron");
 
 const HOME: PlayerId = PlayerId(0);
 const AWAY: PlayerId = PlayerId(1);
@@ -41,11 +42,27 @@ const ARMY_SIZE: usize = 6;
 const TICK_LIMIT: u32 = 12_000;
 
 /// Minimum-corner cells of the home player's buildings, on open plateau clear of its nodes.
-const TRAINING_SITE: (u32, u32) = (2, 2);
+// (12, 2): plan `2026-11-20-resource-footprints` Amendment 2 puts a geyser's 3×3 at (0..2, 0..2),
+// under the former site (2, 2).
+const TRAINING_SITE: (u32, u32) = (12, 2);
 const MODULE_SITE: (u32, u32) = (2, 7);
-/// A 3x3 extractor here is centred on the gas node at (15, 6) (moved from (14, 6) out of the
-/// start's `NearResources` reach, plan `2026-11-19-footprint-flags` D-8).
-const EXTRACTOR_SITE: (u32, u32) = (14, 5);
+/// The home gas node the tech path takes: (10, 1), behind the base (re-laid by plan
+/// `2026-11-20-resource-footprints` D-10; it was (15, 6), moved from (14, 6) by plan
+/// `2026-11-19-footprint-flags` D-8).
+const GAS_CELL: (u32, u32) = (10, 1);
+/// A 3x3 extractor here is centred on [`GAS_CELL`].
+const EXTRACTOR_SITE: (u32, u32) = (GAS_CELL.0 - 1, GAS_CELL.1 - 1);
+
+/// The shipped units and structures with the shipped placement rules: the world places its
+/// resource nodes by their footprints (plan `2026-11-20-resource-footprints` D-4).
+fn units() -> Result<UnitCatalog, Box<dyn Error>> {
+    let mut units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    units.set_placement_rules(sim_core::catalog::PlacementRules::from_ron_str(
+        PLACEMENT_RULES,
+    )?);
+    Ok(units)
+}
 
 fn skirmish(seed: u64) -> Result<SimWorld, Box<dyn Error>> {
     let manifest = ScenarioManifest::from_ron_str(SCENARIO)?;
@@ -56,7 +73,7 @@ fn skirmish(seed: u64) -> Result<SimWorld, Box<dyn Error>> {
         &loadouts,
         &manifest.players,
         seed,
-        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?,
+        units()?,
         UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), UPGRADES)?,
     )?)
 }
@@ -248,7 +265,7 @@ impl Script {
                 self.stage = Stage::RaiseModule;
                 let gas = Self::home_nodes(world, ResourceKind::Gas)
                     .into_iter()
-                    .find(|node| world.map.resources()[node.0 as usize].cell == (15, 6));
+                    .find(|node| world.map.resources()[node.0 as usize].cell == GAS_CELL);
                 gas.map_or_else(Vec::new, |target| {
                     vec![command(
                         self.workers[..3].to_vec(),

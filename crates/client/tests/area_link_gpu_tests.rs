@@ -300,6 +300,11 @@ struct Report {
     /// Where the enemy's missile was aimed at the edge of the viewer's sight, map `x, y`.
     #[serde(default)]
     fungal_fog_edge: Option<[f32; 2]>,
+    /// The staged viewer casters' sight that the fog edge was kept clear of (plan
+    /// `2026-11-20-resource-footprints` Amendment 4): per caster, the segment it may stand on
+    /// (map `x, y`, from its place towards its target) and its sight radius in world units.
+    #[serde(default)]
+    fungal_sight: Vec<([f32; 2], [f32; 2], f32)>,
     /// Ground samples round the enemy's missile's target (review 1, E1-3): window pixel and
     /// whether the viewer sees the ground there (`None` within [`FOG_MARGIN`] of a fog cell
     /// edge).
@@ -581,7 +586,10 @@ fn candidates(around: Vec2) -> impl Iterator<Item = Vec2> {
     })
 }
 
-/// `count` spots of open ground in sight near `around`, clear and `apart` from each other.
+/// `count` spots of open ground in sight near `around`, clear and `apart` from each other: the
+/// first such set in candidate order, found by a depth-first search over the candidates (plan
+/// `2026-11-20-resource-footprints`: the base's corner geyser takes ground the greedy first
+/// choice used to leave, so the first fitting point is not always part of a full set).
 fn find_spots(
     world: &SimWorld,
     fog: &BattleFog,
@@ -590,32 +598,46 @@ fn find_spots(
     apart: f32,
     visible: impl Fn(Vec2) -> bool,
 ) -> Vec<Vec2> {
-    let mut spots: Vec<Vec2> = Vec::new();
-    for point in candidates(around) {
-        if spots.len() == count {
-            break;
-        }
-        // The first two spots take the areas; the others are units' places.
-        let ground = if spots.len() < 2 {
-            open(world, point)
-        } else {
+    // Each candidate, whether it may take an area (open round its rim) and a unit (open cells).
+    let usable: Vec<(Vec2, bool)> = candidates(around)
+        .filter(|&point| {
             open_cells(world, point)
-        };
-        if ground
-            && clear(world, point)
-            && spots.iter().all(|spot| spot.distance(point) > apart)
-            && fog.sees(point.x, point.y)
-            && visible(point)
-        {
-            spots.push(point);
-        }
-    }
-    assert_eq!(
-        spots.len(),
-        count,
-        "the start area has open ground in sight"
-    );
+                && clear(world, point)
+                && fog.sees(point.x, point.y)
+                && visible(point)
+        })
+        .map(|point| (point, open(world, point)))
+        .collect();
+    let mut spots: Vec<Vec2> = Vec::new();
+    let found = extend_spots(&usable, 0, count, apart, &mut spots);
+    assert!(found, "the start area has open ground in sight: {spots:?}");
     spots
+}
+
+/// Extends `spots` to `count` from `usable[from..]`, in order, backtracking; the first two spots
+/// take the areas and need open ground round their rim.
+fn extend_spots(
+    usable: &[(Vec2, bool)],
+    from: usize,
+    count: usize,
+    apart: f32,
+    spots: &mut Vec<Vec2>,
+) -> bool {
+    if spots.len() == count {
+        return true;
+    }
+    for index in from..usable.len() {
+        let (point, rim) = usable[index];
+        if (spots.len() < 2 && !rim) || spots.iter().any(|spot| spot.distance(point) <= apart) {
+            continue;
+        }
+        spots.push(point);
+        if extend_spots(usable, index + 1, count, apart, spots) {
+            return true;
+        }
+        spots.pop();
+    }
+    false
 }
 
 /// A point at the edge of the viewer's sight on screen, with a place for an enemy caster in the
@@ -628,7 +650,18 @@ fn find_fog_edge(
     cliff: bool,
     visible: impl Fn(Vec2) -> bool,
 ) -> Option<(Vec2, Vec2, Vec2)> {
-    (0..48).find_map(|step| {
+    fog_edges(world, fog, around, cliff, visible).next()
+}
+
+/// Every place [`find_fog_edge`] accepts, one per direction from `around`, in its order.
+fn fog_edges<'a>(
+    world: &'a SimWorld,
+    fog: &'a BattleFog,
+    around: Vec2,
+    cliff: bool,
+    visible: impl Fn(Vec2) -> bool + 'a,
+) -> impl Iterator<Item = (Vec2, Vec2, Vec2)> + 'a {
+    (0..48).filter_map(move |step| {
         let direction = Vec2::from_angle(step as f32 * std::f32::consts::TAU / 48.0);
         let mut previous = around;
         for distance in (4..60).map(|half| half as f32 * 0.5) {
@@ -2716,29 +2749,60 @@ fn set_up_fungal(
 ) {
     let sim = session.world_mut().expect("a ready session has a world");
     let (kind, indices, storm) = missile_caster_type(sim);
+    // The staged casters' own sight (plan `2026-11-20-resource-footprints` Amendment 4): see
+    // the fog edge below. The victims are of the same type and the enemy's; their sight does
+    // not change the viewer's fog.
+    sim.catalog
+        .get_mut(kind)
+        .expect("invariant: the stand-in type was just made in this catalog")
+        .sight_radius = SimScalar::from_num(FUNGAL_CASTER_SIGHT);
     let ability = indices[0];
     staging.caster_type = Some(kind);
     let visible = on_screen(sim, camera);
-    let spots = find_spots(sim, fog, target, 4, 5.0, &visible);
-    let edge = find_fog_edge(sim, fog, target, false, &visible);
-    drop(visible);
-    let caster = spawn_still(sim, kind, VIEWER, spots[2]);
-    for index in 0..FUNGAL_VICTIMS {
-        let angle = index as f32 * std::f32::consts::TAU / FUNGAL_VICTIMS as f32;
-        let victim = spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
-        staging.fungal_victims.push(victim);
-    }
     // WP5: the storm stand-in's victims, cast on by a second caster of the viewer at once. The
-    // caster stands within the ability's range of its target, so it does not walk: a walking
-    // viewer unit would move the viewer's sight over the fog edge measured below.
+    // caster stands within the ability's range of its target, so it does not walk.
     let storm_range = sim
         .catalog
         .get(kind)
         .ok()
         .and_then(|arch| arch.abilities.get(usize::from(storm)))
         .map_or(4.0, |spec| spec.cast_range.to_f32());
-    let towards = (spots[3] - spots[1]).normalize_or_zero();
-    let storm_at = spots[1] + towards * spots[1].distance(spots[3]).min(storm_range - 1.0).max(2.5);
+    let storm_place = |spots: &[Vec2]| {
+        let towards = (spots[3] - spots[1]).normalize_or_zero();
+        spots[1] + towards * spots[1].distance(spots[3]).min(storm_range - 1.0).max(2.5)
+    };
+    let spots = find_spots(sim, fog, target, 4, 5.0, &visible);
+    let storm_at = storm_place(&spots);
+    // The fog is measured before the viewer's two casters stand, so neither caster's sight may
+    // reach the ground sampled round the edge (plan `2026-11-20-resource-footprints`
+    // Amendment 4): the Fungal Growth caster anywhere on its way from its place towards its
+    // target, the storm caster at its place. On the re-laid base the only fog edge on screen is
+    // at (18.88, 7.26), 5.73 world units from the storm caster's place, so the stand-in's
+    // shipped sight of 8 would cross it; the staged casters see FUNGAL_CASTER_SIGHT world units,
+    // and the edge is kept FUNGAL_CASTER_SIGHT + FUNGAL_FOG_REACH + SIGHT_CELL_MARGIN = 4.41
+    // world units clear of them. The viewer's sight at the edge is the shipped battle's.
+    let radius = staged_sight_radius(sim, kind);
+    let sight = [(spots[2], spots[0]), (storm_at, storm_at)].map(|(from, to)| StagedSight {
+        from,
+        to,
+        radius,
+    });
+    let edge = fog_edges(sim, fog, target, false, |point| {
+        visible(point) && sight.iter().all(|reach| reach.clear_of(point))
+    })
+    .next()
+    .expect("the viewer's sight ends on screen beyond the staged casters' sight");
+    drop(visible);
+    staging.report.fungal_sight = sight
+        .iter()
+        .map(|reach| (reach.from.to_array(), reach.to.to_array(), reach.radius))
+        .collect();
+    let caster = spawn_still(sim, kind, VIEWER, spots[2]);
+    for index in 0..FUNGAL_VICTIMS {
+        let angle = index as f32 * std::f32::consts::TAU / FUNGAL_VICTIMS as f32;
+        let victim = spawn_still(sim, kind, ENEMY, spots[0] + Vec2::from_angle(angle) * 0.9);
+        staging.fungal_victims.push(victim);
+    }
     let storm_caster = spawn_still(sim, kind, VIEWER, storm_at);
     for index in 0..STORM_VICTIMS {
         let angle = index as f32 * std::f32::consts::TAU / STORM_VICTIMS as f32;
@@ -2762,13 +2826,12 @@ fn set_up_fungal(
     let cast = |sim: &mut SimWorld, unit: EntityId, at: Vec2| cast_at(sim, unit, ability, at);
     cast(sim, caster, spots[0]);
     cast_at(sim, storm_caster, storm, spots[1]);
-    if let Some((edge, enemy_at, _)) = edge {
-        let enemy = spawn_still(sim, kind, ENEMY, enemy_at);
-        cast(sim, enemy, edge);
-        staging.fungal_edge = Some(edge);
-        staging.report.fungal_fog_edge = Some(edge.to_array());
-        staging.report.fungal_fog_ground = fog_ground(sim, fog, camera, edge);
-    }
+    let (edge, enemy_at, _) = edge;
+    let enemy = spawn_still(sim, kind, ENEMY, enemy_at);
+    cast(sim, enemy, edge);
+    staging.fungal_edge = Some(edge);
+    staging.report.fungal_fog_edge = Some(edge.to_array());
+    staging.report.fungal_fog_ground = fog_ground(sim, fog, camera, edge);
     staging.caster = Some(caster);
     staging.spots = spots;
 }
@@ -2776,6 +2839,54 @@ fn set_up_fungal(
 /// World units round the enemy's missile's target sampled for the fog check (review 1, E1-3):
 /// the impact's reach and a margin.
 const FUNGAL_FOG_REACH: f32 = 2.0;
+
+/// Sight radius of the Fungal Growth child's staged casters, world units (plan
+/// `2026-11-20-resource-footprints` Amendment 4): below the shipped stand-in's 8, so the storm
+/// caster's sight stays off the only fog edge on screen of the re-laid base.
+const FUNGAL_CASTER_SIGHT: i32 = 1;
+
+/// World units added to a staged viewer unit's sight radius when the fog edge is kept clear of
+/// it: the diagonal of one vision cell (the fog is kept per cell), so a cell the sight circle
+/// touches is counted seen.
+const SIGHT_CELL_MARGIN: f32 = std::f32::consts::SQRT_2;
+
+/// Where a staged viewer unit's sight may reach (plan `2026-11-20-resource-footprints`
+/// Amendment 4): a disc of `radius` world units round any point of the segment from `from` to
+/// `to`, map `x, y`.
+struct StagedSight {
+    from: Vec2,
+    to: Vec2,
+    radius: f32,
+}
+
+impl StagedSight {
+    /// Whether the fog samples round an edge at `point` ([`FUNGAL_FOG_REACH`]) lie beyond this
+    /// sight by at least [`SIGHT_CELL_MARGIN`].
+    fn clear_of(&self, point: Vec2) -> bool {
+        self.distance_to(point) > self.radius + FUNGAL_FOG_REACH + SIGHT_CELL_MARGIN
+    }
+
+    /// World units from `point` to the nearest point of the segment.
+    fn distance_to(&self, point: Vec2) -> f32 {
+        let span = self.to - self.from;
+        let along = if span.length_squared() > 0.0 {
+            ((point - self.from).dot(span) / span.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (self.from + span * along).distance(point)
+    }
+}
+
+/// World units of sight of a viewer unit of `kind`: the type's sight radius with the viewer's
+/// upgrades.
+fn staged_sight_radius(world: &SimWorld, kind: UnitTypeId) -> f32 {
+    let archetype = world
+        .catalog
+        .get(kind)
+        .expect("the caster type is in the catalog");
+    world.effective_sight_radius(archetype, VIEWER).to_f32()
+}
 
 /// Ground samples every 0.1 world units within [`FUNGAL_FOG_REACH`] of `centre`: window pixel
 /// and whether the viewer sees the ground there, `None` within [`FOG_MARGIN`] of a fog cell
@@ -3437,6 +3548,29 @@ fn fungal_growth_flies_lands_and_afflicts() -> TestResult {
              unseen ground samples changed against the first frame (most seen on frame {})",
             change.seen, change.total.0, change.unseen, change.total.1, change.peak_frame
         );
+        // The edge was chosen where no staged viewer caster's sight reaches the samples.
+        let edge = Vec2::from_array(
+            report
+                .fungal_fog_edge
+                .ok_or("the fog samples belong to an edge")?,
+        );
+        for &(from, to, radius) in &report.fungal_sight {
+            let reach = StagedSight {
+                from: Vec2::from_array(from),
+                to: Vec2::from_array(to),
+                radius,
+            };
+            eprintln!(
+                "driver {driver}: viewer caster from {from:?} towards {to:?}, sight radius \
+                 {radius:.2}: {:.2} world units from the fog edge {:?}",
+                reach.distance_to(edge),
+                edge.to_array()
+            );
+            assert!(
+                reach.clear_of(edge),
+                "a staged viewer caster's sight stays off the fog edge's samples"
+            );
+        }
         assert_eq!(change.unseen, 0, "no unseen ground sample changes");
         assert!(change.seen > 0, "the seen part of the impact is drawn");
     }

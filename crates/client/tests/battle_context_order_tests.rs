@@ -59,8 +59,10 @@ const MINING_ROUND_FRAMES: usize = 900;
 /// A structure with shipped media and no prerequisite but the starting base.
 const STRUCTURE: &str = "assembly_bay_dome";
 
-/// Minimum corner of open plateau in the skirmish, clear of the home player's nodes.
-const SITE_CORNER: u32 = 2;
+/// Minimum corner of open plateau in the skirmish, clear of the home player's nodes. It moved
+/// from (2, 2) to (12, 2) when plan 2026-11-20-resource-footprints Amendment 2 put a geyser at
+/// (1, 1), whose 3×3 covers (0..2, 0..2).
+const SITE_CORNER: (u32, u32) = (12, 2);
 
 /// Height above the ground, in world units, of the middle of a blocker's bubble.
 const BLOCKER_HEIGHT: f32 = 0.7;
@@ -206,15 +208,19 @@ fn soldier_beside(harness: &mut Harness, worker: EntityId) -> EntityId {
 }
 
 /// Spawns a unit of `owner` standing in front of `node`'s billboard, and returns it with the
-/// window position of that billboard.
+/// window position where the pointer is on both: the unit's bubble, over the node.
+///
+/// Re-derived for plan 2026-11-20-resource-footprints WP5: the billboard stands at a unit's
+/// height over the field's centre, so the sight line meets that height on the field itself, which
+/// is now a 2×1 obstacle no body stands on. The blocker stands instead at the nearest point on the
+/// camera's side whose body is clear of every field and where the ground under the pointer on its
+/// bubble lies within the node's pick disc (1.0 round its position), and the pointer is put on
+/// its bubble.
 fn blocker_in_front_of(
     harness: &mut Harness,
     node: ResourceNodeId,
     owner: sim_types::PlayerId,
 ) -> (EntityId, Vec2) {
-    // The sight line from the camera to the billboard, where it passes at a unit's height.
-    let billboard =
-        harness.app.world().resource::<MapPresentation>().objects[node.0 as usize].position;
     let world = harness.app.world_mut();
     let eye = world
         .query_filtered::<&GlobalTransform, With<client::RtsCamera>>()
@@ -227,24 +233,54 @@ fn blocker_in_front_of(
         .terrain_altitude_scalar(battle_harness::sim_position(node_at))
         .to_f32();
     let height = ground + BLOCKER_HEIGHT;
-    let on_sight_line = eye.lerp(billboard, (eye.y - height) / (eye.y - billboard.y));
     let world = harness.world_mut();
     let unit_type = world
         .catalog
         .id_by_slug("pulse_bot")
         .expect("the catalog ships this unit");
-    let position = sim_types::SimVec2::new(
-        SimScalar::from_num(on_sight_line.x),
-        SimScalar::from_num(on_sight_line.z),
-    );
+    let radius = world
+        .catalog
+        .get(unit_type)
+        .expect("the catalog ships this unit")
+        .terrain_radius;
+    let clear = |world: &sim_core::SimWorld, at: sim_types::SimVec2| {
+        world.map.resources().iter().all(|node| {
+            node.placed
+                .is_none_or(|placed| !placed.footprint.capsule_meets(at, at, radius))
+        })
+    };
+    let to_eye = Vec2::new(eye.x - node_at.x, eye.z - node_at.y);
+    let mut best: Option<(f32, Vec2)> = None;
+    // Where the pointer's ray through the bubble at `at` reaches the ground.
+    let ground_under = |at: Vec2| {
+        let bubble = Vec3::new(at.x, height, at.y);
+        let hit = eye + (bubble - eye) * ((eye.y - ground) / (eye.y - height));
+        Vec2::new(hit.x, hit.z)
+    };
+    for j in -32..=32 {
+        for i in -32..=32 {
+            let offset = Vec2::new(i as f32, j as f32) / 16.0;
+            // On the camera's side, with the ground under the pointer within the pick disc.
+            let at = node_at + offset;
+            if offset.dot(to_eye) <= 0.0 || ground_under(at).distance(node_at) > 0.9 {
+                continue;
+            }
+            if clear(world, battle_harness::sim_position(at))
+                && best.is_none_or(|(length, _)| offset.length() < length)
+            {
+                best = Some((offset.length(), at));
+            }
+        }
+    }
+    let (_, at) = best.expect("a clear spot in front of the node");
     let blocker = world
-        .spawn_unit(unit_type, owner, position)
+        .spawn_unit(unit_type, owner, battle_harness::sim_position(at))
         .expect("open ground beside a node");
     harness.resume();
     harness.step(3);
     harness.pause();
-    let billboard = node_on_screen(harness, node);
-    (blocker, billboard)
+    let pointer = harness.screen_position(Vec3::new(at.x, height, at.y));
+    (blocker, pointer)
 }
 
 // --- Right click on a node ---------------------------------------------------------------------
@@ -438,7 +474,7 @@ fn ready_to_place(harness: &mut Harness) -> (EntityId, UnitTypeId, Vec2) {
         .catalog
         .id_by_slug(STRUCTURE)
         .expect("the catalog ships this structure");
-    let site = Vec2::new(SITE_CORNER as f32 + 1.5, SITE_CORNER as f32 + 1.5);
+    let site = Vec2::new(SITE_CORNER.0 as f32 + 1.5, SITE_CORNER.1 as f32 + 1.5);
     let worker_at = harness.simulated_position(worker);
     harness.look_at((worker_at + site) * 0.5);
     harness.select(worker);
@@ -484,8 +520,8 @@ fn a_placed_build_pays_on_arrival() {
         orders[0].order,
         UnitOrder::Build {
             structure_type: structure,
-            cell_x: SITE_CORNER,
-            cell_y: SITE_CORNER,
+            cell_x: SITE_CORNER.0,
+            cell_y: SITE_CORNER.1,
         }
     );
     assert_eq!(mode(&harness), CommandMode::Normal);

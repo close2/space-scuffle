@@ -76,6 +76,13 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
         reason: "authoring: range checks on catalog decimals before their fixed-point conversion",
     },
     FloatAllowance {
+        path: "crates/sim_core/src/catalog/placement_rules.rs",
+        count: 9,
+        reason: "authoring: resource footprint shapes in `placement_rules.ron` are decimal world \
+                 units, checked as multiples of 1/4 and converted to quarter cells at load \
+                 (plan `2026-11-20-resource-footprints` D-1)",
+    },
+    FloatAllowance {
         path: "crates/sim_core/src/combat_resolution.rs",
         count: 4,
         reason: "a decimal constant converted once with `SimScalar::from_num`, and the \

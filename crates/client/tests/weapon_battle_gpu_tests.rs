@@ -144,6 +144,10 @@ const SPOT_DISTANCES: [f32; 14] = [
 /// Clearance around a spot, in world units, from any unit, structure or resource node (the
 /// green crystal props stand on nodes; review 1, P1-3).
 const SPOT_CLEARANCE: f32 = 3.0;
+/// Clearance of a spot from every structure's and resource node's footprint cell, world units
+/// (plan `2026-11-20-resource-footprints` Amendment 4): the subjects stand on open ground away
+/// from the base's hall and its re-laid mineral line and geysers, where its workers walk.
+const FOOTPRINT_CLEARANCE: f32 = 4.5;
 /// Distance between two subjects, world units.
 const SUBJECT_APART: f32 = 3.2;
 /// Window pixels a subject's spot keeps from the window's sides and top.
@@ -572,6 +576,32 @@ fn walkable(world: &SimWorld, point: Vec2) -> bool {
         })
 }
 
+/// Whether no structure's and no resource node's footprint cell lies within
+/// [`FOOTPRINT_CLEARANCE`] of `point` (plan `2026-11-20-resource-footprints` Amendment 4): since nodes have their
+/// 5.0.14 footprints (a mineral field 2×1, a geyser 3×3) and the geysers stand in the
+/// base corners, a node's centre no longer says how close its body is, and a spot keeps the
+/// clearance from the footprint itself, on open ground like the spots away from the base.
+fn footprints_clear(world: &SimWorld, point: Vec2) -> bool {
+    let map = &world.map;
+    let reach = (FOOTPRINT_CLEARANCE * 2.0).ceil() as i32;
+    (-reach..=reach).all(|x: i32| {
+        (-reach..=reach).all(|y: i32| {
+            let offset = Vec2::new(x as f32, y as f32) * 0.5;
+            let probe = point + offset;
+            offset.length() > FOOTPRINT_CLEARANCE
+                || map
+                    .world_to_cell(sim_position(probe))
+                    .ok()
+                    .and_then(|(cx, cy)| map.cell(cx, cy).ok())
+                    .is_none_or(|cell| {
+                        !cell.flags.intersects(
+                            CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::OCCUPIED_BY_RESOURCE,
+                        )
+                    })
+        })
+    })
+}
+
 /// Whether the 5 by 5 cells around `point` are open, walkable ground.
 fn open(world: &SimWorld, point: Vec2) -> bool {
     let map = &world.map;
@@ -622,7 +652,8 @@ fn find_spots(
                 .map
                 .resources()
                 .iter()
-                .all(|node| clear_of(Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32())));
+                .all(|node| clear_of(Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32())))
+                && footprints_clear(world, point);
             let apart = spots
                 .iter()
                 .all(|spot| spot.distance(point) > SUBJECT_APART);

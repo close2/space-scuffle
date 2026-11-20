@@ -17,7 +17,10 @@
 //! - What a distant node holds is private until the player sees it. An order to an exhausted
 //!   node out of sight is taken, and the worker walks there to find out, so neither admission
 //!   nor an event reveals it early.
-//! - Resource nodes are not obstacles, and the map keeps exhausted ones so identifiers hold.
+//! - A worker gathers when its body touches the field (or the extractor) and delivers when it
+//!   touches the depot (plan `2026-11-20-resource-footprints` D-7): contact, not a reach.
+//! - A mined-out field leaves the map (its kind's `remove_when_empty`, D-8) and the mesh is
+//!   rebuilt; a geyser stays. The map keeps every node in its list so identifiers hold.
 //! - Gas yields only through a completed extractor owned by the harvester's player, standing
 //!   over the node. Workers gather from the extractor's edge.
 //! - A unit holding cargo delivers before it gathers again, so cargo of the other kind is
@@ -29,6 +32,7 @@ use crate::entity::Cargo;
 use crate::movement::math::squared_distance;
 use crate::production::ProductionInvariant;
 use crate::SimWorld;
+use sim_map::PlacedFootprint;
 use sim_types::{
     AnimState, EntityId, HarvesterSpec, PlayerId, ResourceKind, ResourceNodeId, SimScalar, SimVec2,
     UnitOrder, VisibilityState,
@@ -38,11 +42,20 @@ use sim_types::{
 const NEXT_NODE_RADIUS: SimScalar = SimScalar::from_raw(12 << 32);
 
 impl SimWorld {
-    /// The footprint a player's worker gathers from at `node`, if it can gather there now.
-    fn gather_site(&self, player: PlayerId, node: ResourceNodeId) -> Option<Footprint> {
+    /// The cells and shape a player's worker gathers from at `node`, if it can gather there
+    /// now: a standing field's own footprint, or the completed extractor over a geyser (plan
+    /// `2026-11-20-resource-footprints` D-7).
+    fn gather_site(
+        &self,
+        player: PlayerId,
+        node: ResourceNodeId,
+    ) -> Option<(Footprint, PlacedFootprint)> {
         let resource = self.map.resources().get(node.0 as usize)?;
         match resource.kind {
-            ResourceKind::Mineral => Some(Footprint::cell(resource.cell)),
+            ResourceKind::Mineral => {
+                let placed = resource.placed?.footprint;
+                Some((Footprint::of_placed(&placed), placed))
+            }
             ResourceKind::Gas => {
                 let structure = self
                     .map
@@ -61,7 +74,7 @@ impl SimWorld {
                     self.map
                         .structures()
                         .get(&structure)
-                        .map(Footprint::of_structure)
+                        .map(|placed| (Footprint::of_structure(placed), placed.footprint()))
                 })?
             }
         }
@@ -178,18 +191,18 @@ impl SimWorld {
             }
             return;
         }
-        let Some(site) = self.gather_site(owner, target) else {
+        let Some((site, shape)) = self.gather_site(owner, target) else {
             self.end_task(id, Some(TaskEventKind::ExtractorLost));
             return;
         };
-        self.step_gather(id, target, site, spec);
+        self.step_gather(id, target, (site, shape), spec);
     }
 
     fn step_gather(
         &mut self,
         id: EntityId,
         target: ResourceNodeId,
-        site: Footprint,
+        (site, shape): (Footprint, PlacedFootprint),
         spec: HarvesterSpec,
     ) {
         let gathering = self
@@ -197,7 +210,7 @@ impl SimWorld {
             .get(&id)
             .is_some_and(|actor| actor.task.gather_ticks > 0);
         if !gathering {
-            match self.approach_footprint(id, site, Self::approach_cell) {
+            match self.approach_shape(id, site, &shape) {
                 Approach::Walking => {}
                 Approach::Unreachable => self.end_task(id, Some(TaskEventKind::Unreachable)),
                 Approach::Arrived => {
@@ -222,6 +235,9 @@ impl SimWorld {
         let amount = spec.harvest_capacity.min(node.remaining);
         node.remaining -= amount;
         let kind = node.kind;
+        if node.remaining == 0 && amount > 0 {
+            self.remove_if_empty(target, kind);
+        }
         if let Some(actor) = self.entities.get_mut(&id) {
             actor.current_anim = AnimState::Idle;
             actor.task.last_node = Some(target);
@@ -229,6 +245,22 @@ impl SimWorld {
             if amount > 0 {
                 actor.cargo = Some(Cargo { kind, amount });
             }
+        }
+    }
+
+    /// Removes a node of `kind` that has just emptied, if its kind leaves the map when empty
+    /// (plan `2026-11-20-resource-footprints` D-8, `RemoveWhenEmpty`): its cells become open
+    /// ground again and the mesh and clearance are rebuilt, as for a structure change. The node
+    /// stays in the map's list with nothing left, so identifiers hold.
+    fn remove_if_empty(&mut self, node: ResourceNodeId, kind: ResourceKind) {
+        let removes = self
+            .catalog
+            .placement_rules()
+            .resource_footprints()
+            .get(kind)
+            .is_some_and(|footprint| footprint.remove_when_empty);
+        if removes && self.map.remove_resource_footprint(node).is_ok() {
+            self.pathfinder.recompute_clearance(&self.map);
         }
     }
 
@@ -302,15 +334,15 @@ impl SimWorld {
             }
             nearest
         };
-        let Some(site) = self
+        let Some((site, shape)) = self
             .map
             .structures()
             .get(&depot)
-            .map(Footprint::of_structure)
+            .map(|placed| (Footprint::of_structure(placed), placed.footprint()))
         else {
             return false;
         };
-        match self.approach_footprint(id, site, Self::approach_cell) {
+        match self.approach_shape(id, site, &shape) {
             Approach::Walking => false,
             Approach::Unreachable => {
                 self.end_task(id, Some(TaskEventKind::Unreachable));

@@ -19,8 +19,8 @@ use crate::production::{ProductionItem, ProductionJob};
 use crate::world::PlayerResources;
 use sim_map::navmesh::lanes::LaneWord;
 use sim_map::{
-    CellFlags, CliffLevel, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
-    TerrainKind, Watchtower,
+    CellFlags, CliffLevel, MapCell, PlacedFootprint, PlacedResource, PlacedStructure, RampDir,
+    ResourceKind, ResourceNode, TerrainKind, Watchtower,
 };
 use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
@@ -96,7 +96,7 @@ macro_rules! integers {
         }
     )+};
 }
-integers!(u8, u16, u32, u64, u128, i8, i32, i64);
+integers!(u8, u16, u32, u64, u128, i8, i16, i32, i64);
 
 impl Canonical for bool {
     fn encode(&self, encoder: &mut Encoder) {
@@ -629,7 +629,8 @@ fields!(MapCell {
     ramp,
     terrain_kind,
     flags,
-    occupying_structure
+    occupying_structure,
+    occupying_resource
 });
 fields!(PlacedStructure {
     id,
@@ -639,16 +640,56 @@ fields!(PlacedStructure {
     prior_flags,
     shape
 });
-fields!(FootprintShape {
-    half_width_q,
-    half_height_q,
-    chamfer_q
+// Schema 32 (plan `2026-11-20-resource-footprints` D-11): a leading variant tag, then a box's
+// three quarter-cell values or an outline's vertex count and vertices.
+impl Canonical for FootprintShape {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Box {
+                half_width_q,
+                half_height_q,
+                chamfer_q,
+            } => {
+                0_u8.encode(encoder);
+                half_width_q.encode(encoder);
+                half_height_q.encode(encoder);
+                chamfer_q.encode(encoder);
+            }
+            Self::Outline(outline) => {
+                1_u8.encode(encoder);
+                encoder.length(outline.vertices().len());
+                for (x, y) in outline.vertices() {
+                    x.encode(encoder);
+                    y.encode(encoder);
+                }
+            }
+        }
+    }
+}
+// A placed footprint: its cells, then its outline's lattice points in stored order.
+impl Canonical for PlacedFootprint {
+    fn encode(&self, encoder: &mut Encoder) {
+        self.top_left.encode(encoder);
+        self.width.encode(encoder);
+        self.height.encode(encoder);
+        encoder.length(self.contour().len());
+        for point in self.contour() {
+            point.x.encode(encoder);
+            point.y.encode(encoder);
+        }
+    }
+}
+fields!(PlacedResource {
+    footprint,
+    prior_flags
 });
 fields!(ResourceNode {
     pos,
     kind,
     remaining,
     cell
+} unhashed {
+    placed
 });
 fields!(Watchtower {
     id,
@@ -876,7 +917,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 31, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 32, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -952,7 +993,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 31, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 32, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -975,7 +1016,7 @@ mod tests {
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
         // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 31, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 32, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -983,7 +1024,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 31, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 32, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

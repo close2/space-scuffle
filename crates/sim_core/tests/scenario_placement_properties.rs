@@ -487,6 +487,11 @@ fn document(generated: &Generated) -> MapDocument {
             footprint: (FOOTPRINT, FOOTPRINT),
         });
     }
+    // A generated field is kept only where its 5.0.14 footprint fits (plan
+    // `2026-11-20-resource-footprints` D-4): on open ground, clear of the starts, the other
+    // fields and the starts' resource rings. A world is never built without its node footprints.
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
     for &cell in &generated.resources {
         let id: MapEntityId = doc.next_entity_id();
         doc.resources.push(MapResource {
@@ -495,6 +500,15 @@ fn document(generated: &Generated) -> MapDocument {
             cell,
             amount: 1500,
         });
+        let fits = sim_map::validate_resource_footprints(
+            &doc,
+            rules.resource_footprints(),
+            |kind, dx, dy| rules.reach(kind).is_some_and(|reach| reach.covers(dx, dy)),
+        )
+        .is_empty();
+        if !fits {
+            doc.resources.pop();
+        }
     }
     doc
 }

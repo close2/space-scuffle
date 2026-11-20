@@ -68,7 +68,7 @@ impl Fixture {
         archetype.gas_cost = 0;
         assert_eq!(archetype.build_time_ticks, duration);
         let map = GameMap::new(24, 24, MapCell::default_ground(CliffLevel(0)))?;
-        let mut world = SimWorld::with_catalogs(map, 73, catalog, UpgradeCatalog::default());
+        let mut world = SimWorld::with_catalogs(map, 73, catalog, UpgradeCatalog::default())?;
         let producer = world.spawn_structure(producer_type, PlayerId(0), 5, 5)?;
         Ok(Self {
             world,
