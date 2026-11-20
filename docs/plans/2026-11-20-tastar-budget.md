@@ -403,7 +403,8 @@ visits cost × 1.6, × 2.8 and × 8.9 on the path-search corpus; a cap per (stat
 routes; S11's once-before-the-first-path rule gives worse first routes. The cap's value is a WP8 measurement on known
 terrain, not a derivation. Its residual under partial knowledge (§4.5: four oracle routes above 1.01 at most
 1.0185; T6 +4.3 % on the per-cell contours) is registered as **B-150** (proposed; **verify** the next free number at
-WP0), open, for a later plan with a dominance rule that has a derivation.
+WP0), open, for a later plan with a dominance rule that has a derivation. *(WP0: registered as **B-154**; B-150 to B-153 went to plan
+`2026-11-20-resource-footprints`. B-150 in this plan means that row.)*
 
 ### D-5. One rule for every request
 

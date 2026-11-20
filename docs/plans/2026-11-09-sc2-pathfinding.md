@@ -926,3 +926,9 @@ targets, B-106, defect c").
 ## Amendment 7 (2026-11-11): B-113 is fixed by the contact plan
 
 B-113 (Amendment 6, open) is fixed by plan [`2026-11-11-contact-and-missiles`](2026-11-11-contact-and-missiles.md): bodies are discs against terrain, so a push can no longer wedge a body inside its radius of a route corner; the route rules of this plan are unchanged.
+
+## Amendment 8 (2026-11-20): D-5's expansion budget is replaced by S11's rule
+
+D-5's anytime loop no longer stops on `NAV_TA_STAR_EXTRA_EXPANSIONS`: plan
+[`2026-11-20-tastar-budget`](2026-11-20-tastar-budget.md) (B-149) removes the budget and runs S11's own termination
+(no open node with `f` below the incumbent), bounded by the visit cap, and adds a channel-geodesic lower bound to `g`.
