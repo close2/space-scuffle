@@ -271,3 +271,66 @@ Today's pipeline lets every walker through in every corner scene (no give-up, no
 reverses more than in any other family: M1 20.94 [19.97, 21.86] per 1,000 moving unit-ticks, M1-hi 4.60. B-152 is
 reproduced by the family; it is judged at WP6 under the same thresholds.
 
+## 2. WP2: stopped on the C-3 property
+
+WP2's work (the `contact` section, schema 33's three memory fields, `movement/solver.rs`, `intent.rs` and
+`concave.rs` with their tests) is on the side branch `contact-solver-wp2-wip`, not on `contact-solver-plan`. Every
+test the plan names for WP2 passes there except one, which the plan marked **verify** and which fails as specified.
+
+### 2.1 What fails
+
+C-3 claims that `K = ⌈ln(δ_move / ρ) / ln(1 − 1/c)⌉ = 14` iterations bring the overlap one tick injects (at most `ρ`
+of the radius sum per pair, `ρ = 0.56` for the shipped catalog's worst pair) below `δ_move = 5 %`, and WP2's test list
+asks: "after K iterations no friendly pair of a generated hexagonal crowd with injected overlap `ρ` exceeds
+`δ_move`". The test (`movement::solver::tests::k_iterations_bring_injected_overlap_below_the_moving_bound`) builds a
+9 × 9 hexagonal crowd of radius 0.375 standing in contact and steps every body by up to `ρ · r` = 0.21 (the worst
+pair's top speed) in a random direction, so no pair gains more than `ρ`; it then runs the solver as C-1 specifies
+(pairs built once within `r_i + r_j + 1/4`, averaged Jacobi, dead band 1 %, hard pass, open ground).
+
+Over 1,000 generated crowds (scratch measurement on the WIP code):
+
+| K | Pair slack 1/4 (C-1 as written): crowds above 5 % | worst | Pair slack 1 (every pair that can touch): crowds above 5 % | worst |
+|---:|---:|---:|---:|---:|
+| 14 | 182 | 0.144 | 143 | 0.077 |
+| 16 | 92 | 0.150 | 41 | 0.069 |
+| 18 | 69 | 0.148 | 13 | 0.061 |
+| 20 | 60 | 0.153 | 1 | 0.050 |
+| 22 | 60 | 0.151 | 0 | 0.046 |
+| 24 | 63 | 0.151 | 0 | 0.041 |
+| 28 | 64 | 0.151 | 0 | 0.032 |
+
+No crowd stopped early: the adversarial case uses every iteration.
+
+### 2.2 Two causes
+
+1. **The pair list misses contacts the solve itself makes.** Built once with a 1/4 slack, the list lacks pairs that
+   were farther apart than `r_i + r_j + 1/4` after the steps but that the corrections of their other neighbours
+   push together. Their overlap is never corrected, so more iterations do not help: with slack 1/4 the share of
+   failing crowds stops falling at about 6 % and the worst stays near 15 % (seed 14: bodies 51 and 61 end 9.5 %
+   apart-overlapped with free room on their far sides).
+2. **The contraction per iteration is slower than `1 − 1/c`.** With every pair present, `K = 14` still leaves 14 %
+   of crowds above 5 % (worst 7.7 %); the bound holds on all 1,000 crowds from `K = 22`. Averaging over up to six
+   contacts removes less than `1/6` of the deepest overlap per iteration when every neighbour is itself displaced:
+   the derivation's premise "a body whose other contacts are resolved" does not hold when one tick moves them all.
+
+### 2.3 Why this is a stop
+
+The test is in WP2's list of failing-tests-first, and it can be made green only by changing a derived constant
+(`contact.iterations`) or the solver's design (the pair list), both of which the standing rules reserve for an
+amendment. Nothing was tuned.
+
+### 2.4 Proposed amendment (for the orchestrator)
+
+- **C-1, the pair list:** rebuild the pair list whenever a body has moved more than half the slack since the list was
+  built (a Verlet list), or build it with a slack that covers the tick's largest possible motion
+  (`2 · s_max + ρ_max · r_max`, about 1 world unit for the shipped catalog). Either keeps C-1a's order independence:
+  the list is still a function of the set of bodies and positions.
+- **C-3, the derivation:** replace `ln(1 − 1/c)` by a contraction measured by this property test, and derive `K` as
+  the least count for which the property holds on the generated crowds of the shipped catalog's worst pair; on the
+  data above that is **22** with a full pair list. The property test then guards the data as the formula test does.
+- **Cost:** `K = 22` is the worst case; the early stop ends typical ticks sooner (WP3 measures it). §5.5's prototype
+  cost was measured at `K = 14` with a slack-1/4 list; the WP6 10 % stop (K-8) becomes harder to meet and should be
+  re-estimated before WP3.
+- Alternatively, keep `K = 14` and restate D-α's moving bound as what 14 iterations achieve on this property (about
+  8 % worst case with a full pair list); T7's thresholds would not change (they bound shares of near pair-ticks,
+  measured on the families).
