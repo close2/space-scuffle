@@ -689,3 +689,27 @@ header (**verify** its file list at WP2's start).
    set of this plan's evidence. They also join the stop rules that later plans copy from it whenever a plan touches
    TA* or the funnel. Record that in the evidence and in the pathfinding plan's pointer amendment.
 3. Re-run `sim_core` and `sim_map` in release. The whole suites must be green before the hand-back.
+
+## Amendment 2 (orchestrator, 2026-11-20): the flipbook release test follows the next swinging unit; `default_battle` joins the measurement set
+
+**Why.** The second package gate failed on `battle_flipbook_tests::attack_release_shows_the_release_frame`, with
+"released only 2 times" (trace at `~/scratch/tab/impl/flipbook-trace.md`, to be copied into the evidence).
+
+- **D-1 alone causes it.** It changes the same lane as Amendment 1: player 1's group lane in
+  `scenarios/default_battle.ron` takes the shorter west side.
+- **What happens to the unit.** The armies meet head-on, and the followed attacker, `EntityId(13)`, dies after 83
+  ticks and 2 releases. On `main` it stood at its start for the whole window.
+- **Classification:** rule-caused.
+- **The rest of the client is clean.** The sweep of every battle-driving client target in debug, the gate's profile,
+  finds no other behaviour change. The release-only Vulkan validation failures come from the validation layer not
+  being loaded in release builds; they are not this plan's.
+
+**Decision: restate the test, test-only.** The subject is the flipbook's release frame, not how the battle unfolds.
+
+- When the followed attacker's record ends, the test continues with the next local unit that swings.
+- It requires at least 3 releases over the window, each checked exactly as now.
+- The doc comment carries this trace.
+
+`scenarios/default_battle.ron` joins the measurement set beside the group-routing fixtures, as Amendment 1 set out.
+The release-profile validation observation is recorded in the evidence for the GPU test plan to pick up; it is not
+a bug of this plan.
