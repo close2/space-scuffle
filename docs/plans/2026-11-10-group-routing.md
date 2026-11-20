@@ -577,3 +577,9 @@ Recorded under Q0002; each item can be brought back.
    single-unit commands, every tick); the canyon script and the flat arena at 75 ‰ are in `group_routing_tests.rs`.
 7. **`route_trace`** gains `--order` and `--lane-tolerance`, so the G-1 fixture and pre-data-change measurements need
    no file under `assets/`; group measures go to `groups.md` and `lanes.csv`.
+
+## Amendment 2 (2026-11-20): the anytime budget D-5 kept is removed
+
+D-5 keeps "the anytime budget `NAV_TA_STAR_EXTRA_EXPANSIONS`" unchanged; plan
+[`2026-11-20-tastar-budget`](2026-11-20-tastar-budget.md) (B-149) removes it for every search, the lane-restricted one
+included: the loop runs to S11's termination, bounded by the visit cap per (state, word).

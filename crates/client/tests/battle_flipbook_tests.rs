@@ -274,7 +274,14 @@ fn record_run(frame: Duration, ticks: u32) -> BTreeMap<Tick, BTreeMap<EntityId, 
 /// Steps the resumed default battle until a local unit whose atlas has an Attack slice is in a
 /// swing, and returns it.
 fn first_swing(harness: &mut Harness) -> EntityId {
-    for _ in 0..2_000 {
+    let (found, _) = next_swing(harness, 2_000);
+    found.unwrap_or_else(|| panic!("no local unit with an Attack slice ever swung"))
+}
+
+/// Steps the battle at most `ticks` times until a local unit whose atlas has an Attack slice is
+/// in a swing. Returns that unit, or `None` when none swings within `ticks`, and the ticks taken.
+fn next_swing(harness: &mut Harness, ticks: u32) -> (Option<EntityId>, u32) {
+    for taken in 1..=ticks {
         harness.step(1);
         let registry = harness.app.world().resource::<FlipbookRegistry>();
         let found = harness
@@ -293,11 +300,11 @@ fn first_swing(harness: &mut Harness) -> EntityId {
                         .is_some_and(|meta| meta.actions.contains_key(&AnimState::Attack))
             })
             .map(|bubble| bubble.entity_id);
-        if let Some(id) = found {
-            return id;
+        if found.is_some() {
+            return (found, taken);
         }
     }
-    panic!("no local unit with an Attack slice ever swung");
+    (None, ticks)
 }
 
 fn card(harness: &Harness) -> &CommandCard {
@@ -454,22 +461,44 @@ fn state_change_resets_the_loop() {
     }
 }
 
-/// On the default battle, every release of one attacker shows its Attack slice's first layer,
-/// the tick before it the last layer, and the whole cycle displays `Attack`.
+/// On the default battle, every release of a local attacker shows its Attack slice's first
+/// layer, the tick before it the last layer, and the whole cycle displays `Attack`. When the
+/// followed attacker's record ends (it died), the test follows the next local unit that swings;
+/// over the 600-tick window at least 3 releases are checked.
+///
+/// Restated test-only by plan `2026-11-20-tastar-budget` Amendment 2. The test followed one
+/// attacker and ended its window when that attacker's record ended. With that plan's D-1, player
+/// 1's group lane in this scenario, (58.5, 53.5) -> (5.5, 5.5) at r 0.375, is the west side of the
+/// plateau (92.061, against 92.419 for the east side `main` takes, a channel `main` loses to the
+/// visit cap, B-149), player 0's own lane: the armies meet head-on, and the first local unit to
+/// swing, `EntityId(13)`, dies 83 ticks into the window after 2 releases, where on `main` it stood
+/// at player 1's start for the whole window. The subject is the release frame, not the battle.
 #[test]
 fn attack_release_shows_the_release_frame() {
     let mut harness = boot(ClientMode::LiveBattle, DEFAULT_BATTLE_SCENARIO);
     // The window pins one fixed period per cycle; the random firing delay (WP11, B-3) spreads it.
     sim_fixtures::without_random_delays(&mut harness.world_mut().catalog);
     harness.resume();
-    let attacker = first_swing(&mut harness);
-    let (start, count) = slice(&harness, attacker, AnimState::Attack);
+    let mut attacker = first_swing(&mut harness);
+    let (mut start, mut count) = slice(&harness, attacker, AnimState::Attack);
     let mut releases = 0;
     let mut previous: Option<(u32, AttackSwing)> = None;
-    for _ in 0..600 {
+    let mut ticks = 0;
+    while ticks < 600 {
         harness.step(1);
+        ticks += 1;
         let Some(bubble) = try_record(&harness, attacker) else {
-            break;
+            // The followed attacker died: follow the next local unit that swings, within the
+            // window; the window ends when no local unit swings again (the army has fallen).
+            let (next, taken) = next_swing(&mut harness, 600 - ticks);
+            ticks += taken;
+            let Some(next) = next else {
+                break;
+            };
+            attacker = next;
+            (start, count) = slice(&harness, attacker, AnimState::Attack);
+            previous = None;
+            continue;
         };
         let layer = flipbook_layer(
             clock(&harness),

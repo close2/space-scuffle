@@ -216,6 +216,12 @@ fn test_performance_quality_gate() {
 /// back to the portal midpoints and are now legal: (8.75, 4.0) -> (27.5, 59.0), 95.67 -> 63.41
 /// long, and (8.75, 6.25) -> (8.75, 49.5), 115.55 -> 63.63. The new value is the same in native
 /// debug and release and in `wasm32-wasip1` release and debug.
+///
+/// Re-recorded for plan `2026-11-20-tastar-budget` WP2 (D-1, TA*'s channel-geodesic bound; was
+/// `0x7ac0_f0b9_f8b4_2057`, which the measurement tree reproduces with D-1 switched off). One of
+/// the 1,000 requests changes, shorter: (61.75, 19.5) -> (2.0, ·), r 0.5, 62.090 -> 61.497 (the
+/// anytime budget cut its better channel before; D-2 alone finds it too). The new value is the
+/// same in native debug and release and in `wasm32-wasip1` release and debug.
 #[test]
 fn contour_route_checksum() {
     let mut map = arena::default_arena();
@@ -278,6 +284,6 @@ fn contour_route_checksum() {
     }
     let checksum = hasher.digest();
     eprintln!("contour route checksum: 0x{checksum:016x}");
-    const CONTOUR_ROUTE_CHECKSUM: u64 = 0x7ac0_f0b9_f8b4_2057;
+    const CONTOUR_ROUTE_CHECKSUM: u64 = 0xec9a_71b8_655a_01c2;
     assert_eq!(checksum, CONTOUR_ROUTE_CHECKSUM, "contour routes diverged");
 }
