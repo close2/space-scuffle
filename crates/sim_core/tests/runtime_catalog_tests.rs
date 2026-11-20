@@ -276,13 +276,19 @@ fn an_edited_placement_rule_changes_the_loaded_reach() -> TestResult {
             .reach(sim_types::ResourceKind::Mineral)
             .map(|reach| reach.cells.len())
     };
-    assert_eq!(reach(&shipped), Some(45));
+    assert_eq!(reach(&shipped), Some(52));
     let path = bundle.directory.join(FILES[6]);
     let text = std::fs::read_to_string(&path)?;
     let start = text.find("(kind: Mineral,").ok_or("the mineral ring")?;
-    let end = start + text[start..].find("]),").ok_or("its end")? + "]),".len();
+    let removal = start
+        + text[start..]
+            .find("remove_when_empty: ")
+            .ok_or("its removal flag")?;
+    let end = removal + text[removal..].find("),").ok_or("its end")? + "),".len();
     let edited = format!(
-        "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"]),{}",
+        "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"], \
+         shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), \
+         remove_when_empty: true),{}",
         &text[..start],
         &text[end..]
     );
@@ -293,6 +299,44 @@ fn an_edited_placement_rule_changes_the_loaded_reach() -> TestResult {
         bundle.load(),
         Err(CatalogLoadError::Invalid { path: failed, source: SimCoreError::CatalogInvalidValue { .. } }) if failed == path
     ));
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-20-resource-footprints` WP2 (charter §3.3, C6): the resource footprints are read
+/// at run time, so an edited shape or removal flag changes the loaded table without recompiling.
+#[test]
+fn an_edited_resource_footprint_changes_the_loaded_table() -> TestResult {
+    let bundle = Bundle::new("resource-footprints")?;
+    let footprint = |catalogs: &RuntimeCatalogs| {
+        catalogs
+            .units
+            .placement_rules()
+            .resource_footprints()
+            .get(sim_types::ResourceKind::Mineral)
+            .copied()
+    };
+    let shipped = footprint(&bundle.load()?).ok_or("the shipped mineral footprint")?;
+    assert_eq!(shipped.cells, (0, 0, 2, 1));
+    assert!(shipped.remove_when_empty);
+    let path = bundle.directory.join(FILES[6]);
+    let text = std::fs::read_to_string(&path)?;
+    let narrower = text.replace(
+        "shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.0), remove_when_empty: true",
+        "shape: Box(half_width: 0.75, half_height: 0.5, chamfer: 0.25), remove_when_empty: false",
+    );
+    assert_ne!(narrower, text, "the shipped mineral shape is the 2 x 1 box");
+    std::fs::write(&path, narrower)?;
+    let edited = footprint(&bundle.load()?).ok_or("the edited mineral footprint")?;
+    assert_eq!(
+        edited.shape,
+        sim_types::FootprintShape::Box {
+            half_width_q: 3,
+            half_height_q: 2,
+            chamfer_q: 1
+        }
+    );
+    assert!(!edited.remove_when_empty);
     bundle.finish()?;
     Ok(())
 }

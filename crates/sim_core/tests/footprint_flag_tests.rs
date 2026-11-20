@@ -173,8 +173,11 @@ fn offset(cell: (u32, u32), dx: i32, dy: i32) -> Result<(u32, u32), Box<dyn Erro
     ))
 }
 
-/// F-1: every town hall analogue is refused when its face is 2 cells from a mineral node, at the
-/// first cell of its site in the ring, and admitted at a 3-cell gap.
+/// F-1, re-derived for plan `2026-11-20-resource-footprints` WP2: the mineral ring is the game's
+/// 8 × 7 rows round the 2×1 field (anchored on its west cell, the node's cell), 3 cells beyond it
+/// on every side. Every town hall analogue is refused when its face is 2 cells east of the
+/// field's east cell, at the first cell of its site in the ring, and admitted at a 3-cell gap;
+/// on the west side the same, measured from the anchor.
 #[test]
 fn a_town_hall_is_refused_within_reach_of_minerals() -> TestResult {
     let mut world = world()?;
@@ -188,40 +191,44 @@ fn a_town_hall_is_refused_within_reach_of_minerals() -> TestResult {
         let (width, height) = footprint(world.catalog.get(hall)?);
         let half = i32::try_from(height / 2)?;
         let builder = builder_for(&mut world, hall, offset(MINERAL, 0, -12)?)?;
-        // Two empty cells between the node and the hall's left face.
-        let near = offset(MINERAL, 3, -half)?;
+        // Two empty cells between the field's east cell (anchor + 1) and the hall's left face.
+        let near = offset(MINERAL, 4, -half)?;
         assert_eq!(
             admit(&mut world, builder, hall, near)?,
             flagged(PlacementFlag::NearResources, near),
-            "a {width}x{height} hall two cells from the node"
+            "a {width}x{height} hall two cells east of the field"
         );
-        let clear = offset(MINERAL, 4, -half)?;
+        let clear = offset(MINERAL, 5, -half)?;
         assert!(admit(&mut world, builder, hall, clear)?.is_ok());
-        // The same on the node's far side: the face is the hall's right column.
+        // The same on the field's west side: the face is the hall's right column.
         let west = offset(MINERAL, -2 - i32::try_from(width)?, -half)?;
         let edge = offset(MINERAL, -3, -half)?;
         assert_eq!(
             admit(&mut world, builder, hall, west)?,
             flagged(PlacementFlag::NearResources, edge)
         );
+        let west_clear = offset(MINERAL, -3 - i32::try_from(width)?, -half)?;
+        assert!(admit(&mut world, builder, hall, west_clear)?.is_ok());
     }
     Ok(())
 }
 
-/// F-2: the mineral ring's corners are cut, so a hall diagonal to the node at (3, 3) stands and
-/// one at (3, 2) does not.
+/// F-2, re-derived for plan `2026-11-20-resource-footprints` WP2: the mineral ring's corners are
+/// cut (`.oooooo.`, liberty Footprint:1083), so a hall north-east of the field at (4, 3) from the
+/// anchor stands, and ones at (4, 2) and (3, 3) do not.
 #[test]
 fn the_mineral_reach_has_its_corners_cut() -> TestResult {
     let mut world = world()?;
     let hall = checking(&world, PlacementFlag::NearResources)[0];
     let builder = builder_for(&mut world, hall, offset(MINERAL, -6, -6)?)?;
-    let corner = offset(MINERAL, 3, 3)?;
+    let corner = offset(MINERAL, 4, 3)?;
     assert!(admit(&mut world, builder, hall, corner)?.is_ok());
-    let closer = offset(MINERAL, 3, 2)?;
-    assert_eq!(
-        admit(&mut world, builder, hall, closer)?,
-        flagged(PlacementFlag::NearResources, closer)
-    );
+    for closer in [offset(MINERAL, 4, 2)?, offset(MINERAL, 3, 3)?] {
+        assert_eq!(
+            admit(&mut world, builder, hall, closer)?,
+            flagged(PlacementFlag::NearResources, closer)
+        );
+    }
     Ok(())
 }
 
@@ -495,11 +502,16 @@ fn the_rule_reads_the_catalog() -> TestResult {
     bundle.edit("structures.ron", production_row_refusing)?;
     bundle.edit("placement_rules.ron", |text| {
         let start = text.find("(kind: Mineral,").unwrap_or(text.len());
-        let end = text[start..]
-            .find("]),")
-            .map_or(text.len(), |at| start + at + "]),".len());
+        let removal = text[start..]
+            .find("remove_when_empty: ")
+            .map_or(text.len(), |at| start + at);
+        let end = text[removal..]
+            .find("),")
+            .map_or(text.len(), |at| removal + at + "),".len());
         format!(
-            "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"]),{}",
+            "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"], \
+             shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), \
+             remove_when_empty: true),{}",
             &text[..start],
             &text[end..]
         )

@@ -35,7 +35,7 @@
 use sim_types::{FootprintShape, SimScalar, SimVec2, QUARTER_OUTLINE_CAPACITY};
 
 use crate::error::{MapError, Result};
-use crate::grid::{GameMap, PlacedStructure};
+use crate::grid::{GameMap, PlacedStructure, ResourceKind};
 use crate::navmesh::predicates::{segments_touch, segments_within, LatticePoint, QPoint};
 use crate::navmesh::segment::radius_q;
 
@@ -431,6 +431,72 @@ impl PlacedStructure {
     #[must_use]
     pub fn capsule_meets(&self, a: SimVec2, b: SimVec2, radius: SimScalar) -> bool {
         self.footprint().capsule_meets(a, b, radius)
+    }
+}
+
+/// One resource kind's footprint, resolved from `placement_rules.ron` (plan
+/// `2026-11-20-resource-footprints` D-1): which cells a node of the kind takes relative to its
+/// anchor cell, the pathing shape centred on those cells, and whether a node that empties leaves
+/// the map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceFootprint {
+    /// The node's own cells as `(dx, dy, width, height)`: the rectangle's minimum corner in grid
+    /// cells from the anchor cell, and its size in cells (the game's `Place` `x` cells).
+    pub cells: (i8, i8, u8, u8),
+    /// The pathing shape, centred on those cells, in quarter cells (the game's `Shape`).
+    pub shape: FootprintShape,
+    /// Whether a node of this kind is removed from the map when it empties (the game's
+    /// `RemoveWhenEmpty`).
+    pub remove_when_empty: bool,
+}
+
+impl ResourceFootprint {
+    /// The cells and shape as a [`StructureFootprint`], the form placement validates.
+    #[must_use]
+    pub const fn footprint(&self) -> StructureFootprint {
+        StructureFootprint {
+            width: self.cells.2,
+            height: self.cells.3,
+            shape: self.shape,
+        }
+    }
+}
+
+/// Every resource kind's footprint (plan `2026-11-20-resource-footprints` D-1). The catalog
+/// fills it from `placement_rules.ron`; `sim_map` places nodes by it. At most one row per kind.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResourceFootprints {
+    rows: Vec<(ResourceKind, ResourceFootprint)>,
+}
+
+impl ResourceFootprints {
+    /// No footprint for any kind.
+    pub const NONE: Self = Self { rows: Vec::new() };
+
+    /// A table of `rows`; a later row of a kind already present is ignored.
+    #[must_use]
+    pub fn new(rows: Vec<(ResourceKind, ResourceFootprint)>) -> Self {
+        let mut table = Self::NONE;
+        for (kind, footprint) in rows {
+            if table.get(kind).is_none() {
+                table.rows.push((kind, footprint));
+            }
+        }
+        table
+    }
+
+    /// The footprint of nodes of `kind`, if the table has one.
+    #[must_use]
+    pub fn get(&self, kind: ResourceKind) -> Option<&ResourceFootprint> {
+        self.rows
+            .iter()
+            .find(|(row_kind, _)| *row_kind == kind)
+            .map(|(_, footprint)| footprint)
+    }
+
+    /// Every row, in the order given.
+    pub fn iter(&self) -> impl Iterator<Item = &(ResourceKind, ResourceFootprint)> + '_ {
+        self.rows.iter()
     }
 }
 
