@@ -907,7 +907,6 @@ proptest! {
 /// wide (plan `2026-11-19-funnel-fallbacks` §4.3), and a hair less finds it. Routes keep the
 /// corner margin, so they are compared with this margin-free oracle from below and by share.
 #[test]
-#[ignore = "B-149, WP2"]
 fn partial_knowledge_routes_agree_with_the_oracle() {
     let (mut within, mut total, mut worst) = (0u32, 0u32, 1.0f64);
     for number in 0..40_u64 {
@@ -1018,7 +1017,6 @@ fn within_a_thousandth(length: SimScalar, expected: f64) -> bool {
 /// 57.104 (1.1343 of the oracle): the anytime budget ran out 1,136 pops before the straight
 /// channel. Every turn of the route is on a wall of the known structures or the terrain.
 #[test]
-#[ignore = "B-149, WP2"]
 fn the_straight_channel_across_an_unknown_footprint_is_found() -> Result<(), MapError> {
     let (layout, route) = b149_case(
         (25, 11, LayoutKind::WHOLE_SQUARES),
@@ -1047,7 +1045,6 @@ fn the_straight_channel_across_an_unknown_footprint_is_found() -> Result<(), Map
 /// its state once the channel bound orders the open list. On `main` 50.904, a point bend at the
 /// free (44, 19); the budget is not the cause (unbounded, the open list empties at 50.904).
 #[test]
-#[ignore = "B-149, WP2"]
 fn a_capped_state_keeps_the_straight_channel() -> Result<(), MapError> {
     let (_, route) = b149_case(
         (92, 13, LayoutKind::WHOLE_SQUARES),
@@ -1066,7 +1063,6 @@ fn a_capped_state_keeps_the_straight_channel() -> Result<(), MapError> {
 /// start of radius 1.0 beside unknown cells, takes the channel south of a structure. On `main`
 /// 26.195 (19.951 before B-146's fix, the partial-knowledge funnel's 31 % observation).
 #[test]
-#[ignore = "B-149, WP2"]
 fn a_wedged_start_beside_unknown_cells_takes_the_short_channel() -> Result<(), MapError> {
     let layout = layouts::layout(19, LayoutKind::PER_CELL_SQUARES);
     let drawn = layout.requests[8];
@@ -1131,6 +1127,7 @@ fn a_legal_channel_is_sought_before_the_midpoints() -> Result<(), MapError> {
 /// legal channel of 70.863. On `main` the route is 69.905, so the length is held from above
 /// only: no fallback, and no longer than the legal-only search's route.
 #[test]
+#[ignore = "B-149, WP4"]
 fn an_illegal_first_pull_does_not_end_the_search() -> Result<(), MapError> {
     let (_, route) = b149_case(
         (92, 12, LayoutKind::PER_CELL_CONTOURS),

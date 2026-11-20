@@ -104,7 +104,16 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// `main` 42 requests change: 15 fallbacks become legal, 27 legal routes get shorter; none gets
 /// longer and none starts to fall back. The new value is the same in native debug and release and
 /// in `wasm32-wasip1` release and debug (Amendment 1 applied).
-const CONTOUR_PATH_GOLDEN: u64 = 0x1da8_6365_bcbd_3b37;
+///
+/// Re-recorded for plan `2026-11-20-tastar-budget` WP2 (D-1, TA*'s channel-geodesic bound;
+/// before, `0x1da8_6365_bcbd_3b37`, which the measurement tree reproduces with D-1 switched off).
+/// Of the 258 requests TA* routes, 16 change, none all-known: one wedged-start fallback becomes
+/// legal ((16.75, 24.5) -> (58, 53.5), r 1.0, 81.457 by midpoints -> 57.897), 13 legal routes get
+/// shorter, and 2 get longer: (49.5, 57.5) -> (4.5, 0.5), r 0.5, fitting, 87.626 -> 88.919
+/// (+1.48 %), and the wedged (26.75, 25.5) -> (54.5, 18.5), r 1.0, 30.972 -> 32.416 (+4.66 %),
+/// both the visit cap's choice under the new order (B-154). None starts to fall back. The new
+/// value is the same in native debug and release and in `wasm32-wasip1` release and debug.
+const CONTOUR_PATH_GOLDEN: u64 = 0x30cd_bf6a_3de1_a900;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;
@@ -172,7 +181,14 @@ const DECODE_GOLDEN: u64 = 0x10db_ea43_6aba_f292;
 /// become legal, one wedged-start fallback falls back through other midpoints (57.93 -> 64.72), 38
 /// legal routes get shorter; none gets longer. The new value is the same in native debug and
 /// release and in `wasm32-wasip1` release and debug (Amendment 1 applied).
-const PATH_GOLDEN: u64 = 0x4062_b0b6_83dd_1afb;
+///
+/// Re-recorded for plan `2026-11-20-tastar-budget` WP2 (D-1, TA*'s channel-geodesic bound;
+/// before, `0x4062_b0b6_83dd_1afb`, which the measurement tree reproduces with D-1 switched off).
+/// Of the 174 requests TA* routes, 12 change, none all-known: 11 legal routes get shorter and one
+/// gets longer, (17.5, 6.5) -> (18.25, 54.5), r 1.0, fitting, 58.471 -> 58.611 (+0.24 %), the
+/// visit cap's choice under the new order (B-154). No fallback changes (3, all wedged starts).
+/// The new value is the same in native debug and release and in `wasm32-wasip1` release and debug.
+const PATH_GOLDEN: u64 = 0xf322_b17b_9841_7b5e;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {

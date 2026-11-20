@@ -42,3 +42,84 @@ Each case first checks that the regenerated request is the plan's (endpoints and
 - The four unit tests of `search.rs` (`a_start_on_the_first_portal_line_does_not_inflate_the_bound`,
   `a_clamped_free_end_bounds_nothing`, `channel_bounds_never_exceed_a_legal_pull`, `the_search_ends_on_the_incumbent`)
   test functions the plan adds in WP2 and WP3, so they land with that code.
+
+## WP2: D-1, the channel-geodesic bound
+
+**Method.** Three scratch trees, all removed after measurement: `tab-base` (`main` `e58f1af1` with the bench's
+`BENCH_ONLY` switch and the corpus test), `tab-cand` (the WP2 tree with the same two additions; cost and throughput)
+and `tab-measure` (the WP2 tree with the measurement patch `~/scratch/tab/impl/apply_measure.py`: a switch per rule,
+`TAB_OFF_D1`, the cap `TAB_VISITS`, the admissibility check `TAB_STAT`, the partial-knowledge funnel's `PKF_LOG` and
+`PKF_PROBE` probes, and the scratch corpus tests of the plan's §3.1). Corpora and battles come from `tab-measure`:
+base is that binary with `TAB_OFF_D1=1`. **Control:** with D-1 off, every corpus file, the golden-corpus logs, the
+contour corpus and the whole battle set are byte-identical to the prototype's base (`~/scratch/tab/v-base`,
+`bat-base`, `glog-base-*`, `cr-base.txt`), which reproduced `main`; the three pins pass with D-1 off.
+
+**The bound as built.** The point funnel is advanced per node and re-read from the ancestors when its apex moves
+(the plan's incremental form); unit test `channel_bounds_never_exceed_a_legal_pull` checks on every node of the
+four test-size corpora and the all-known one (3,247 channels with a legal pull) that it equals the funnel
+recomputed from the start, and that no node bounds a legal pull from above. On the oracle corpus the routes are
+request for request those of the prototype's recomputed form (`TAB_FG=4`, budget 256, `~/scratch/tab/o-TAB_FG_4.txt`).
+
+| Corpus | Base | D-1 (budget 256) |
+|---|---|---|
+| Partial-knowledge oracle (1,820 from fitting starts) | 1,804 within 1.01, worst 1.1343, none shorter | **1,814**, worst **1.0193**, none shorter |
+| All 1,964 routed requests of that corpus | — | 66 change: 58 shorter, 8 longer (7 fitting, at most +0.649 %, 137 q 7; the wedged 81 q 10 +0.766 %) |
+| All-known oracle | 1,743 / 1,744, worst 1.0193 | identical; one wedged route of 1,889 changes, shorter |
+| Fallbacks from fitting starts (whole squares, whole contours, per-cell squares, per-cell contours) | 0, 1, 1, 5 | 0, 1, 1, 5: per-cell contours 104 q 3 becomes legal and **92 q 12 falls back** (WP2's stated exception until WP4) |
+| Stress search | 10 fallbacks | 3, all among the 10 |
+| All-known corpora (150, 1,000, 2,000 flush) | 0 / 0 / 0 | 0 / 0 / 0 |
+| Layouts, routes longer (whole contours, per-cell squares, per-cell contours) | — | 12 (at most +1.225 %, 128 q 5), 5 (at most +1.52 %, 92 q 12), 15 (at most +4.305 %, 140 q 8, T6) |
+| `PATH_GOLDEN` corpus (174 routed) | — | 12 change: 11 shorter, 1 longer (+0.24 %, fitting); fallbacks 3 → 3 (wedged) |
+| `CONTOUR_PATH_GOLDEN` corpus (258 routed) | — | 16 change: 13 shorter, 2 longer (+1.48 % fitting r 0.5, +4.66 % wedged r 1.0), 1 wedged fallback → legal |
+| `CONTOUR_ROUTE_CHECKSUM` corpus (1,000) | — | 1 changes, shorter: (61.75, 19.5) → x 2.0, r 0.5, 62.090 → 61.497 |
+| Admissibility (`TAB_STAT`, every legal pull of the five corpora) | 1 | 1, the same: layout 74 q 12, a wedged start, the start node (`g` 0) whose `h`, the straight distance, exceeds the route's Q32.32 length by rounding; not a term of D-1, so no pad (D-6) |
+| Path-search cost (instructions, three corpora; `tab-base` against `tab-cand`) | 12.317 + 14.421 + 19.395 = **46.132 G** | 12.438 + 14.180 + 15.955 = **42.573 G (−7.7 %)** |
+
+The 32 longer routes of the four layout corpora were run again with the cap at 64 (diagnostic, D-1 on, budget 256):
+21 come back to at most their base length; the other 11 (oracle 128 q 6, 137 q 7; whole contours 45 q 8, 113 q 1;
+per-cell squares 83 q 7, 115 q 14; per-cell contours 43 q 0, 46 q 0, 75 q 14, 81 q 5, 83 q 7) do not, and 113 q 1 is
+T7, which the budget cuts; they are traced again on the WP3 tree.
+
+**Battles** (`measure.sh`, same binary): the matrix (1,160 runs), battle 33 (64 seeds), battle 31 (`--seeds 100`) and
+the showcase to tick 3,000 on the default seed and seeds 1 to 8 are **byte-identical** to the control. `sim_core`'s
+`golden_replay_tests`, `fog_of_war_pathfinding_tests` and `wall_contact_tests` pass in release.
+
+**Throughput** (instructions retired, each scenario alone through `BENCH_ONLY`, under `flock ~/scratch/gate.lock`,
+`tab-base` against `tab-cand`):
+
+| Scenario | Base (G) | D-1 (G) | Change |
+|---|---|---|---|
+| 64×64, 0 units | 1.85985 | 1.86097 | +0.06 % |
+| 64×64, 100 units | 6.20175 | 6.20287 | +0.02 % |
+| 64×64, 400 units | 30.90531 | 30.90643 | +0.004 % |
+| 128×128, 400 units | 31.22504 | 31.22959 | +0.01 % |
+| 256×256, 0 units | 29.12343 | 29.14178 | +0.06 % |
+| Showcase canyon, 400 units | 53.76819 | 53.95638 | **+0.35 %** |
+| 64×64, 67 casters, 400 units | 48.06513 | 48.06625 | +0.002 % |
+
+**Pins.** `PATH_GOLDEN` `0x4062_b0b6_83dd_1afb` → `0xf322_b17b_9841_7b5e`, `CONTOUR_PATH_GOLDEN`
+`0x1da8_6365_bcbd_3b37` → `0x30cd_bf6a_3de1_a900`, `CONTOUR_ROUTE_CHECKSUM` `0x7ac0_f0b9_f8b4_2057` →
+`0xec9a_71b8_655a_01c2`: D-1 alone already gives the plan's would-be values of the adopted design (§4.6). Re-recorded
+here, with proof headers, since they are identical in native debug, native release, `wasm32-wasip1` release and
+`wasm32-wasip1` debug (runner `wasmtime --dir=<worktree>`); every other test of both binaries passes on all four.
+
+**Tests.** T1, T2, T3 and the tightened oracle test are un-ignored (oracle test: 489 of 489 within 1 %, worst
+1.0054; `mesh_route_lengths_are_within_one_percent_of_the_oracle` 522 / 523, worst 1.0220, and
+`exact_fit_routes_agree_with_the_oracle` 293 routes, worst 1.0443, 153 of 159, both unchanged);
+`an_illegal_first_pull_does_not_end_the_search` is ignored ("B-149, WP4"). New unit tests:
+`a_start_on_the_first_portal_line_does_not_inflate_the_bound` (T4's channel: every node's `g + h` at most 42.975;
+Mononen's strict crossing tests give 48.88 on the same portals), `a_clamped_free_end_bounds_nothing` (T5),
+`channel_bounds_never_exceed_a_legal_pull`.
+
+**Deviations.**
+- T5: the plan gives 34.47 at depth 3 for a bound that treats (26, 26) as a side. On the route's channel, read from
+  the search, the point bound peaks at 33.87 with the end as a side and 33.84 without, both below 34.324. The unit
+  test therefore checks what holds: (26, 26) is a clampable end of the channel, the channel bound stays below the
+  route, and no node of any legal channel of that search exceeds its pull.
+- The clampable stamps are a `Vec<u32>` holding `2 × generation + answer`, as D-1's rationale asks; the node carries
+  three points, a length and three depths (positions, not vertex indices: the start is not a vertex).
+
+**Stop rules (D-1's figures, WP2's exception):** winners, survivor ranges, give-ups and reversals unchanged (battles
+byte-identical); control reproduces `main`; pins re-recorded on four builds, every other pin unmoved; throughput at most
++0.35 %; path cost −7.7 %; oracle 1,814 / 1.0193 and 1,743 / 1,744, none shorter; longer routes as the prototype's
+D-1 row (7 fitting, at most +0.65 %); fallbacks: only 92 q 12, the stated exception; admissibility as base. **Held.**
