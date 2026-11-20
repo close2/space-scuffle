@@ -75,7 +75,13 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 31 (plan `2026-11-19-crowd-edge-steering-2` WP3, B-103), which
 /// encodes each unit's surround-walk retreat, 0 at spawn; a scratch build that does not encode
 /// it and keeps schema 30 reproduces `15_355_001_956_314_655_944`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_350_324_976_263_869_928;
+/// Re-recorded for plan `2026-11-20-resource-footprints` WP3 and WP5 (B-147): `default_arena`'s
+/// nodes are re-laid (node positions are hashed) and schema 32 hashes each node's placed
+/// footprint and each cell's resource occupant, whose outlines also change the clearance. Every
+/// entity is as before: the checksum ending after the route groups, with the schema number held
+/// at 31 (a scratch switch, not committed), is `3_802_618_527_547_176_050` on `e58f1af1` and on
+/// this tree.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_458_594_406_894_179_644;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
