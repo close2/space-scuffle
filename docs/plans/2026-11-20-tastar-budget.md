@@ -662,3 +662,30 @@ header (**verify** its file list at WP2's start).
   corpora per request), `cr-*.txt` (`CONTOUR_ROUTE_CHECKSUM` per request), `final-tests.txt`, `oracle-final3.txt`,
   `simmap-final3.log`, `simcore-final3.log`.
 - The prototype worktree and its target directory were removed after measurement.
+
+## Amendment 1 (orchestrator, 2026-11-20): G-1 restated on Q0079's intent; group-routing fixtures join the measurement set
+
+**Why.** The package gate failed on `group_routing_tests::g1_the_q0079_split_closes`. The trace is at
+`~/scratch/tab/impl/g1-trace.md` and is to be copied into the evidence.
+
+- **D-1 alone causes it.** With D-1, player 1's group lane is the west side of the plateau: 92.061 long, against
+  92.419 for the east lane `main` takes. That lane is shorter and legal.
+- **`main` can never find it.** Even with no budget it loses that channel to the visit cap among near-equal
+  bounds, which is B-149's own mechanism.
+- **What G-1 asserts.** The whole group still takes one lane, and every member's first route carries its word.
+  G-1 also asserted that the word is non-empty and that all ten units cross y = 32 within 600 ticks. Both hold only
+  for the east lane, which avoids player 0's army.
+- **Classification:** rule-caused.
+
+**Decision.**
+
+1. **Restate G-1 on Q0079's intent, as a test-only change** carrying this trace in its doc comment:
+   - the group has one lane;
+   - every member's first route carries the lane's word;
+   - every member that crosses y = 32 within 600 ticks crosses on one side.
+
+   The two east-lane assertions are dropped. No rule changes.
+2. **Measurement set.** The group-routing fixtures, `group_routing_tests` and its scenarios, join the measurement
+   set of this plan's evidence. They also join the stop rules that later plans copy from it whenever a plan touches
+   TA* or the funnel. Record that in the evidence and in the pathfinding plan's pointer amendment.
+3. Re-run `sim_core` and `sim_map` in release. The whole suites must be green before the hand-back.
