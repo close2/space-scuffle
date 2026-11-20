@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use sim_map::map_format::MapDocument;
 use sim_map::validation::CellRect;
+use sim_map::ResourceFootprints;
 
 use super::{
     find_entity_by_id, EditorTool, EditorToolState, EditorUiContext, EditorUiState,
@@ -27,7 +28,7 @@ use crate::editor::symmetry::SymmetryMode;
 use crate::editor::tools::{
     box_fill_command, check_ramp_placement, erase_cell_command, erase_entities_command, infer_ramp,
     move_entity_command, paint_brush_stamp, pick_entity, place_entity_command, place_ramp_command,
-    BrushShape,
+    resource_placement_refusal, BrushShape, EntityToolKind,
 };
 use crate::terrain::{pick_terrain, TerrainParamsState, TerrainState, OVERLAY_FLAG_BRUSH};
 
@@ -61,6 +62,7 @@ pub(super) fn update_viewport(
             &mut terrain.terrain_state,
             &mut terrain.terrain_params,
             now_secs,
+            terrain.unit_catalog.as_deref(),
         );
     }
     finish_released_gestures(&input.mouse_buttons, history, tool_state);
@@ -146,6 +148,7 @@ fn handle_viewport_tool_interaction(
     terrain: &mut ResMut<'_, TerrainState>,
     terrain_params: &mut ResMut<'_, TerrainParamsState>,
     now_secs: f64,
+    catalog: Option<&crate::CatalogResource>,
 ) {
     let Ok(window) = windows.get_single() else {
         return;
@@ -204,7 +207,15 @@ fn handle_viewport_tool_interaction(
             now_secs,
         ),
         EditorTool::Entity => {
-            run_entity_tool(mouse_buttons, doc, history, tool_state, hit_cell, now_secs);
+            run_entity_tool(
+                mouse_buttons,
+                doc,
+                history,
+                tool_state,
+                hit_cell,
+                now_secs,
+                catalog,
+            );
         }
         EditorTool::Select => {
             run_select_tool(mouse_buttons, doc, history, tool_state, hit_cell, now_secs);
@@ -331,14 +342,39 @@ fn run_entity_tool(
     tool_state: &mut EditorToolState,
     hit_cell: (u32, u32),
     now_secs: f64,
+    catalog: Option<&crate::CatalogResource>,
 ) {
     if mouse_buttons.just_pressed(MouseButton::Left) {
+        let resource = matches!(
+            tool_state.entity_kind,
+            EntityToolKind::Mineral | EntityToolKind::Gas
+        );
+        let rules = catalog.map(|catalog| catalog.0.placement_rules());
+        if resource && rules.is_none() {
+            tool_state.last_status_message =
+                Some("Refused: resource footprints need the unit catalog".into());
+            return;
+        }
+        let none = ResourceFootprints::NONE;
+        let footprints = rules.map_or(&none, |rules| rules.resource_footprints());
         let cmd = place_entity_command(
             &doc.doc,
             tool_state.entity_kind,
             hit_cell,
             tool_state.symmetry,
+            footprints,
         );
+        // A node is checked against its footprint, the other nodes and the starts' rings on a
+        // trial copy before the edit is made (plan `2026-11-20-resource-footprints` D-12).
+        if let (true, Some(rules)) = (resource, rules) {
+            let mut trial = doc.doc.clone();
+            let mut scratch = ChangeSet::default();
+            cmd.apply(&mut trial, &mut scratch);
+            if let Some(reason) = resource_placement_refusal(&doc.doc, &trial, rules) {
+                tool_state.last_status_message = Some(format!("Refused: {reason}"));
+                return;
+            }
+        }
         let mut cs = ChangeSet::default();
         history.execute(cmd, &mut doc.doc, &mut cs);
         doc.apply_changeset(&cs, now_secs);
