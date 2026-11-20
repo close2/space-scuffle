@@ -279,3 +279,10 @@ within 0.3 % on every scenario (showcase +0.29 %).
   1.1343 (B-149's TA* residual, reported, not asserted against `MESH_RATIO_BOUND`), none shorter, no fallback. About
   15 s in a debug build.
 - `crates/gate/suites.ron` needs no change: both tests are in an existing target.
+
+## WP5: bookkeeping
+
+`DESIGN.md` B-146 is fixed, with the figures above and its residuals; B-149 stays open. The plan's index row is Done.
+The showcase did not move (bit-identical `units.csv` on nine seeds), so no storyboard check is needed. Open
+confirmation item: a wall-clock throughput run on a quiet host (the decision rests on instructions retired, as
+funnel-fallbacks Amendment 1 settled for this host).
