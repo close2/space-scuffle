@@ -50,7 +50,7 @@ pub use combat::{
 };
 pub use entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Cargo, Entity, MovementMemory, PendingLine,
-    PendingLineView, PendingStrikes, UnitTask, WeaponPhase,
+    PendingLineView, PendingStrikes, SlotClaim, UnitTask, WeaponPhase,
 };
 pub use error::{SimCoreError, SimResult};
 pub use published_actions::ActionSet;

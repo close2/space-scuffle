@@ -353,8 +353,14 @@
 // checksum that ends after the route groups, with the schema number held at 31 (a scratch
 // switch, not committed), is identical on all 20 checkpoints with WP4's tree and with this one.
 // Native debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-20-contact-solver WP2 (checksum schema 32 -> 33): each unit's
+// movement memory now hashes the side rule's commitment (`side_partner`, `side_left`) and its slot
+// claim (`slot`), after `leash_origin`; the legacy pipeline never writes them, so every checkpoint
+// changed and no behaviour did. Proof: a scratch build that leaves the three fields unhashed and
+// holds the schema at 32 reproduces the previous checksums at every checkpoint, native debug and
+// release. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 32,
+    checksum_schema: 33,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -380,25 +386,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x7441b902c2ee141e,
-        0x185a2cdd8558852e,
-        0x119c6bcacbc62774,
-        0x2fc1e0c0d65cffa4,
-        0x80162fd4b960cf97,
-        0x0e4cf5d075cdacb3,
-        0x624b8d1ffa465967,
-        0xb4ce71cd71c1a5dc,
-        0x3ffb05121531265b,
-        0x6ce62b3a09511add,
-        0xf49cf916bdbe85a7,
-        0x3ed5422166bd42ec,
-        0x6c8ae9f5dfcec607,
-        0x30387f31d6cf4476,
-        0xca042ecb6e570516,
-        0x825509e70a091ee6,
-        0x8956391092378049,
-        0x51bd0b3615c9fa42,
-        0x8cd3775e69949176,
-        0xe847fe5d8c748838,
+        0x43076d7270ec1760,
+        0x069b7760d45b5275,
+        0x8c7a7b9069bf9447,
+        0xd0144272abeb3574,
+        0x72adce274f60717d,
+        0x436402cc1a892a8a,
+        0xc7cce607a16f13ac,
+        0x615437389474bc5e,
+        0x478dd3bac117d341,
+        0xa2f9502fef637890,
+        0x70ce004db2934a3d,
+        0x4d50e4a37df61ef4,
+        0x1dc3653bd93a6cf1,
+        0x4da121657b9245f8,
+        0xfd440e5a593d26e5,
+        0x478a1a60fda516b8,
+        0x829088697e94f902,
+        0xb190b49ef24df8db,
+        0xb1887ecfc5bf6f64,
+        0xb1dbd5b61f374c15,
     ],
 )
