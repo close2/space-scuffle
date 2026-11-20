@@ -270,6 +270,10 @@ impl MotionProposal {
 
 pub(crate) type CastRequest = (EntityId, u8, Option<SimVec2>, Option<EntityId>);
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a proposal is built and moved once per actor per tick; boxing it would allocate there"
+)]
 enum MotionAction {
     Commit(MotionProposal),
     Pursue(EntityId, AttackOrigin),

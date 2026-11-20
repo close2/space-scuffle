@@ -286,10 +286,34 @@ pub struct MovementMemory {
     /// `2026-11-18-contour-footprints` Amendment 4, B-142). `None` while it chases no automatically
     /// acquired target; an ordered attack and a new order clear it.
     pub leash_origin: Option<SimVec2>,
+    /// The body this unit passes on its committed side: the partner of the side rule's one-pair
+    /// commitment (plan `2026-11-20-contact-solver` I-3). Written only by the solver pipeline;
+    /// `None` under the legacy pipeline and when no pair is committed.
+    pub side_partner: Option<EntityId>,
+    /// The committed side of the side rule: the unit passes [`Self::side_partner`] on its left
+    /// when true (I-3). Written only by the solver pipeline.
+    pub side_left: bool,
+    /// The free point on its weapon's arc round its target that this blocked attacker walks to
+    /// (the slot goal, plan `2026-11-20-contact-solver` G-3). Written only by the solver
+    /// pipeline; `None` under the legacy pipeline and while the unit needs no slot.
+    pub slot: Option<SlotClaim>,
+}
+
+/// One attacker's claim of a slot on its weapon's arc round its target (plan
+/// `2026-11-20-contact-solver` G-3 to G-5): kept until the unit is in range, the slot is taken,
+/// the target moves by more than the unit's radius, or the order or target changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotClaim {
+    /// The target the slot is round.
+    pub target: EntityId,
+    /// The slot's centre, world units: on the circle of radius `band − r/2` round the target's
+    /// tick-start position when it was claimed.
+    pub point: SimVec2,
 }
 
 impl MovementMemory {
-    /// Clears everything tied to the current order.
+    /// Clears everything tied to the current order, the side rule's commitment and any slot
+    /// claim included.
     pub(crate) fn restart(&mut self) {
         *self = Self {
             abandoned_target: self.abandoned_target,

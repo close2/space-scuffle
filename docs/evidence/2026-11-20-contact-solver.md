@@ -271,3 +271,105 @@ Today's pipeline lets every walker through in every corner scene (no give-up, no
 reverses more than in any other family: M1 20.94 [19.97, 21.86] per 1,000 moving unit-ticks, M1-hi 4.60. B-152 is
 reproduced by the family; it is judged at WP6 under the same thresholds.
 
+## 2. WP2: stopped on the C-3 property
+
+WP2's work (the `contact` section, schema 33's three memory fields, `movement/solver.rs`, `intent.rs` and
+`concave.rs` with their tests) is on the side branch `contact-solver-wp2-wip`, not on `contact-solver-plan`. Every
+test the plan names for WP2 passes there except one, which the plan marked **verify** and which fails as specified.
+
+### 2.1 What fails
+
+C-3 claims that `K = ⌈ln(δ_move / ρ) / ln(1 − 1/c)⌉ = 14` iterations bring the overlap one tick injects (at most `ρ`
+of the radius sum per pair, `ρ = 0.56` for the shipped catalog's worst pair) below `δ_move = 5 %`, and WP2's test list
+asks: "after K iterations no friendly pair of a generated hexagonal crowd with injected overlap `ρ` exceeds
+`δ_move`". The test (`movement::solver::tests::k_iterations_bring_injected_overlap_below_the_moving_bound`) builds a
+9 × 9 hexagonal crowd of radius 0.375 standing in contact and steps every body by up to `ρ · r` = 0.21 (the worst
+pair's top speed) in a random direction, so no pair gains more than `ρ`; it then runs the solver as C-1 specifies
+(pairs built once within `r_i + r_j + 1/4`, averaged Jacobi, dead band 1 %, hard pass, open ground).
+
+Over 1,000 generated crowds (scratch measurement on the WIP code):
+
+| K | Pair slack 1/4 (C-1 as written): crowds above 5 % | worst | Pair slack 1 (every pair that can touch): crowds above 5 % | worst |
+|---:|---:|---:|---:|---:|
+| 14 | 182 | 0.144 | 143 | 0.077 |
+| 16 | 92 | 0.150 | 41 | 0.069 |
+| 18 | 69 | 0.148 | 13 | 0.061 |
+| 20 | 60 | 0.153 | 1 | 0.050 |
+| 22 | 60 | 0.151 | 0 | 0.046 |
+| 24 | 63 | 0.151 | 0 | 0.041 |
+| 28 | 64 | 0.151 | 0 | 0.032 |
+
+No crowd stopped early: the adversarial case uses every iteration.
+
+### 2.2 Two causes
+
+1. **The pair list misses contacts the solve itself makes.** Built once with a 1/4 slack, the list lacks pairs that
+   were farther apart than `r_i + r_j + 1/4` after the steps but that the corrections of their other neighbours
+   push together. Their overlap is never corrected, so more iterations do not help: with slack 1/4 the share of
+   failing crowds stops falling at about 6 % and the worst stays near 15 % (seed 14: bodies 51 and 61 end 9.5 %
+   apart-overlapped with free room on their far sides).
+2. **The contraction per iteration is slower than `1 − 1/c`.** With every pair present, `K = 14` still leaves 14 %
+   of crowds above 5 % (worst 7.7 %); the bound holds on all 1,000 crowds from `K = 22`. Averaging over up to six
+   contacts removes less than `1/6` of the deepest overlap per iteration when every neighbour is itself displaced:
+   the derivation's premise "a body whose other contacts are resolved" does not hold when one tick moves them all.
+
+### 2.3 Why this is a stop
+
+The test is in WP2's list of failing-tests-first, and it can be made green only by changing a derived constant
+(`contact.iterations`) or the solver's design (the pair list), both of which the standing rules reserve for an
+amendment. Nothing was tuned.
+
+### 2.4 Proposed amendment (for the orchestrator)
+
+- **C-1, the pair list:** rebuild the pair list whenever a body has moved more than half the slack since the list was
+  built (a Verlet list), or build it with a slack that covers the tick's largest possible motion
+  (`2 · s_max + ρ_max · r_max`, about 1 world unit for the shipped catalog). Either keeps C-1a's order independence:
+  the list is still a function of the set of bodies and positions.
+- **C-3, the derivation:** replace `ln(1 − 1/c)` by a contraction measured by this property test, and derive `K` as
+  the least count for which the property holds on the generated crowds of the shipped catalog's worst pair; on the
+  data above that is **22** with a full pair list. The property test then guards the data as the formula test does.
+- **Cost:** `K = 22` is the worst case; the early stop ends typical ticks sooner (WP3 measures it). §5.5's prototype
+  cost was measured at `K = 14` with a slack-1/4 list; the WP6 10 % stop (K-8) becomes harder to meet and should be
+  re-estimated before WP3.
+- Alternatively, keep `K = 14` and restate D-α's moving bound as what 14 iterations achieve on this property (about
+  8 % worst case with a full pair list); T7's thresholds would not change (they bound shares of near pair-ticks,
+  measured on the families).
+
+## 3. WP2 under Amendment 1: stopped on the confirmation of K
+
+Amendment 1 (`1005fa5b`) decided a Verlet pair list and K as the smallest count passing C-3, confirmed on a fresh,
+disjoint set of crowds, with a stop if the confirmation fails. It failed.
+
+- **The pair list.** The solver keeps the list built within `r_i + r_j + 1/4` and rebuilds it after any iteration in
+  which a body's net correction since the build exceeds 1/8 (half the slack): a pair left out was at least the
+  radius sum plus 1/4 apart and each body has since moved at most 1/8, so it cannot touch.
+- **Derivation.** The crowds of §2 (9 × 9 hexagonal crowd, radius 0.375, every body stepped by up to `ρ · r` = 0.21),
+  seeds 1 to 1,000:
+
+  | K | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | Crowds above 5 % | 143 | 78 | 41 | 23 | 13 | 4 | 1 | 0 |
+  | Worst overlap | 0.077 | 0.073 | 0.069 | 0.065 | 0.061 | 0.057 | 0.050 | 0.048 |
+
+  The smallest passing count is **K = 21** (set in `movement_rules.ron` on the WIP branch).
+- **Confirmation** on the fresh crowds of seeds 1,000,001 to 1,001,000, never used to choose K: **fails**. Two crowds
+  end above 5 % at K = 21, the worst at 5.99 % (the test stopped first at seed 1,000,266, 5.05 %). Measured after the
+  failure, for the trace only: on this set K = 22 to 24 leave one crowd above 5 % and K = 25 passes (worst 4.74 %).
+
+### 3.1 Reading
+
+The tail of the C-3 property is heavy: the worst crowd of a set of 1,000 sets K, and a second set of 1,000 has a
+worse one. A K chosen as "the smallest passing count" on any finite set will be confirmed only by chance; a K that
+passes both sets here (25) would very likely fail a third. The residual overlaps are small (5 % to 6 % of the radius
+sum on 0.1 % to 0.2 % of adversarial crowds), but the amendment's rule is binary.
+
+### 3.2 Proposed amendment (for the orchestrator)
+
+- **A margin, not a minimum.** Derive K as the smallest count for which the worst overlap over the derivation crowds
+  is at most a stated fraction of `δ_move` (for example 4 %, i.e. `0.8 δ_move`), then confirm on fresh crowds against
+  `δ_move` itself. On the derivation data above, 4 % is not yet met at K = 21 (worst 4.82 %); the count would be
+  measured, not chosen here.
+- **Or a quantile.** State C-3 as "at most one crowd in 1,000 above `δ_move`" and confirm that rate on the fresh
+  set (K = 20 on the derivation set; 21 gives 2 in 1,000 on the confirmation set).
+- **Or more crowds.** Derive on 10,000 crowds and confirm on 10,000 fresh ones.
+- Either way D-α's 5 % stays as it is (Amendment 1, 2 (c)), and T7 bounds the overlap actually seen on the families.

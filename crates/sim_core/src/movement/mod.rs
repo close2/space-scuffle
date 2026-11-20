@@ -9,13 +9,16 @@
 //! surface invariant diagnostics before advancing an unhealthy match.
 
 pub(crate) mod collision;
+pub(crate) mod concave;
 pub(crate) mod contact;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
 pub mod groups;
+pub(crate) mod intent;
 mod locomotion;
 pub(crate) mod math;
+pub mod solver;
 pub(crate) mod tuning;
 pub use math::MovementMathError;
 
@@ -244,6 +247,13 @@ pub(crate) struct MovementWorkspace {
     pushes: Vec<collision::BodyPush>,
     collision_grid: grid::BodyGrid,
     pair_scratch: Vec<usize>,
+    /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1); the solver
+    /// pipeline uses them from WP3 on.
+    #[allow(
+        dead_code,
+        reason = "plan 2026-11-20-contact-solver WP2: read from WP3 on"
+    )]
+    pub(crate) solver: solver::ContactSolver,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
@@ -257,7 +267,7 @@ pub(crate) struct MovementWorkspace {
     seen_nav_version: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MotionPolicy {
     pub layer: MovementLayer,
     /// The body's size against other bodies (`collision_radius`), in world units.
