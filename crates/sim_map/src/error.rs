@@ -5,7 +5,7 @@
 //! placement, disconnected paths, or corrupted map serializations) are
 //! handled with explicit, descriptive error values rather than panics.
 
-use sim_types::{EntityId, FootprintShape, SimVec2};
+use sim_types::{EntityId, FootprintShape, ResourceNodeId, SimVec2};
 use thiserror::Error;
 
 /// Specific cause for why building placement failed.
@@ -31,11 +31,62 @@ pub enum PlacementFailureReason {
     #[error("footprint extends beyond map boundaries")]
     OutOfBounds,
 
+    /// Target footprint covers a standing resource node's cells (plan
+    /// `2026-11-20-resource-footprints` D-5 P1).
+    #[error("target footprint covers resource node {0:?}")]
+    OccupiedByResource(ResourceNodeId),
+
     /// A footprint cell is not walkable ground: the ground under a structure must be walkable,
     /// so the part of its cells its shape leaves open is open ground (plan
     /// `2026-11-18-contour-footprints` D-5).
     #[error("target cell is not walkable ground")]
     UnpathableTerrain,
+}
+
+/// Why a resource node's footprint could not be placed (plan `2026-11-20-resource-footprints`
+/// D-4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ResourceFootprintFailure {
+    /// The footprint table has no row for the node's kind.
+    #[error("no footprint for the node's kind")]
+    NoFootprint,
+    /// The kind's shape does not lie in its cells, or an outline is invalid.
+    #[error("the kind's shape does not fit its cells")]
+    InvalidShape,
+    /// A footprint cell lies beyond the map.
+    #[error("a footprint cell lies beyond the map")]
+    OutOfBounds,
+    /// A footprint cell is another node's.
+    #[error("overlaps resource node {0:?}")]
+    OverlapsNode(ResourceNodeId),
+    /// A footprint cell holds a structure.
+    #[error("overlaps structure {0:?}")]
+    OverlapsStructure(EntityId),
+    /// A footprint cell is not walkable, buildable, non-ramp ground.
+    #[error("cell ({x}, {y}) is not open, buildable ground")]
+    NotOpenGround {
+        /// Cell column.
+        x: u32,
+        /// Cell row.
+        y: u32,
+    },
+    /// A footprint cell is on another cliff level than the anchor.
+    #[error("cell ({x}, {y}) is on another cliff level than the anchor")]
+    CliffLevelMismatch {
+        /// Cell column.
+        x: u32,
+        /// Cell row.
+        y: u32,
+    },
+    /// The node already stands on the map.
+    #[error("the node is already placed")]
+    AlreadyPlaced,
+    /// The node is not placed (removal of a node that does not stand).
+    #[error("the node is not placed")]
+    NotPlaced,
+    /// A structure stands on the node, so it cannot be removed.
+    #[error("a structure stands on the node")]
+    UnderStructure,
 }
 
 /// Comprehensive error type for all `sim_map` operations.
@@ -75,6 +126,26 @@ pub enum MapError {
         height: u8,
         /// The refused shape, in quarter cells.
         shape: FootprintShape,
+    },
+
+    /// A resource node's footprint could not be placed or removed (plan
+    /// `2026-11-20-resource-footprints` D-4).
+    #[error("resource node {node:?}: {reason}")]
+    ResourceFootprint {
+        /// The node, by its index in the map's resources.
+        node: ResourceNodeId,
+        /// Why.
+        reason: ResourceFootprintFailure,
+    },
+
+    /// A structure placed over a resource node must take exactly the node's standing cells
+    /// (plan `2026-11-20-resource-footprints` D-6).
+    #[error("structure {structure:?} is not exactly over resource node {node:?}")]
+    NotOverResource {
+        /// The structure.
+        structure: EntityId,
+        /// The node.
+        node: ResourceNodeId,
     },
 
     /// Building placement was blocked at the given cell.

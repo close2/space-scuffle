@@ -15,9 +15,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sim_types::{PlayerSlot, SimScalar, SimVec2, MAX_PLAYERS};
+use sim_types::{PlayerSlot, ResourceNodeId, SimScalar, SimVec2, MAX_PLAYERS};
 
-use crate::error::PlacementFailureReason;
+use crate::error::{PlacementFailureReason, ResourceFootprintFailure};
+use crate::footprint::ResourceFootprints;
+use crate::grid::ResourceKind;
 use crate::grid::{CellFlags, CliffLevel, GameMap, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
 use crate::map_format::{
     MapDocument, MapEntityId, MapStartLocation, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
@@ -288,6 +290,44 @@ pub enum MapValidationError {
     #[error("watchtower {id:?} reveal radius exceeds {MAX_SIGHT_RADIUS_CELLS} cells")]
     WatchtowerRevealTooLarge {
         /// Entity ID of watchtower.
+        id: MapEntityId,
+    },
+
+    /// A resource node's footprint cannot be placed (plan `2026-11-20-resource-footprints`
+    /// D-4): its kind has no footprint, or a cell lies beyond the map, overlaps another node, is
+    /// not open buildable ground or is on another cliff level than its anchor.
+    #[error("resource {id:?} footprint cannot be placed: {reason}")]
+    ResourceFootprintInvalid {
+        /// Entity ID of resource node.
+        id: MapEntityId,
+        /// Why.
+        reason: ResourceFootprintFailure,
+    },
+
+    /// A resource node's footprint covers a cell of a start footprint.
+    #[error("resource {id:?} footprint overlaps start location {start:?} footprint")]
+    ResourceFootprintUnderStart {
+        /// Entity ID of resource node.
+        id: MapEntityId,
+        /// Entity ID of start location.
+        start: MapEntityId,
+    },
+
+    /// A start footprint cell lies in a resource node's ring, where a town hall may not stand
+    /// (plan `2026-11-19-footprint-flags` WP4, on the rings of `placement_rules.ron`).
+    #[error("start location {start:?} footprint lies in the ring of resource {id:?}")]
+    StartInResourceRing {
+        /// Entity ID of start location.
+        start: MapEntityId,
+        /// Entity ID of resource node.
+        id: MapEntityId,
+    },
+
+    /// No walkable cell of the node's cliff level, outside every footprint, lies beside a
+    /// resource node's footprint: no worker can reach it.
+    #[error("resource {id:?} has no walkable cell beside its footprint")]
+    ResourceEnclosed {
+        /// Entity ID of resource node.
         id: MapEntityId,
     },
 
@@ -1164,4 +1204,120 @@ impl ValidationContext<'_> {
             }
         }
     }
+}
+
+/// A cell rectangle `(left, bottom, width, height)`, signed so neighbours may lie off the map.
+type CellBox = (i64, i64, i64, i64);
+
+/// Whether two cell rectangles share a cell.
+fn boxes_meet(a: CellBox, b: CellBox) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+}
+
+/// Checks every resource node of `doc` against its kind's footprint in `table` (plan
+/// `2026-11-20-resource-footprints` D-4): each footprint can be placed (in bounds, on open
+/// buildable non-ramp ground of its anchor's cliff level, overlapping no node placed before it),
+/// covers no start footprint cell, and has a walkable cell of its level beside it outside every
+/// footprint; and no start footprint cell lies in any node's ring, as `in_ring(kind, dx, dy)`
+/// answers for a cell `(dx, dy)` grid cells from the node's anchor (the rings are the catalog's
+/// `NearResources` reach). Errors come in node order, then start order.
+///
+/// A document whose grid or resources cannot be converted reports nothing here:
+/// [`validate_map`] reports those defects.
+#[must_use]
+pub fn validate_resource_footprints(
+    doc: &MapDocument,
+    table: &ResourceFootprints,
+    in_ring: impl Fn(ResourceKind, i64, i64) -> bool,
+) -> Vec<MapValidationError> {
+    let Ok(mut map) = doc.to_game_map() else {
+        return Vec::new();
+    };
+    let mut errors = Vec::new();
+    let mut placed: Vec<Option<CellBox>> = Vec::with_capacity(doc.resources.len());
+    for (index, resource) in doc.resources.iter().enumerate() {
+        let node = ResourceNodeId(u32::try_from(index).unwrap_or(u32::MAX));
+        match map.place_resource_footprint(node, index, table) {
+            Ok(()) => placed.push(map.resources()[index].placed.map(|p| {
+                let f = p.footprint;
+                (
+                    i64::from(f.top_left.0),
+                    i64::from(f.top_left.1),
+                    i64::from(f.width),
+                    i64::from(f.height),
+                )
+            })),
+            Err(reason) => {
+                errors.push(MapValidationError::ResourceFootprintInvalid {
+                    id: resource.id,
+                    reason,
+                });
+                placed.push(None);
+            }
+        }
+    }
+    let starts: Vec<(MapEntityId, CellBox)> = doc
+        .start_locations
+        .iter()
+        .map(|start| {
+            let (x, y) = start.cell;
+            let (w, h) = start.footprint;
+            (
+                start.id,
+                (i64::from(x), i64::from(y), i64::from(w), i64::from(h)),
+            )
+        })
+        .collect();
+    let in_footprint = |x: i64, y: i64| {
+        placed
+            .iter()
+            .flatten()
+            .chain(starts.iter().map(|(_, b)| b))
+            .any(|&b| boxes_meet(b, (x, y, 1, 1)))
+    };
+    for (resource, rect) in doc.resources.iter().zip(&placed) {
+        let Some(rect) = *rect else { continue };
+        for &(start, footprint) in &starts {
+            if boxes_meet(rect, footprint) {
+                errors.push(MapValidationError::ResourceFootprintUnderStart {
+                    id: resource.id,
+                    start,
+                });
+            }
+        }
+        let level = map
+            .cell(resource.cell.0, resource.cell.1)
+            .map(|cell| cell.cliff_level)
+            .ok();
+        let beside = (rect.1 - 1..=rect.1 + rect.3).any(|y| {
+            (rect.0 - 1..=rect.0 + rect.2).any(|x| {
+                !in_footprint(x, y)
+                    && u32::try_from(x)
+                        .ok()
+                        .zip(u32::try_from(y).ok())
+                        .and_then(|(x, y)| map.cell(x, y).ok())
+                        .is_some_and(|cell| {
+                            cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                                && Some(cell.cliff_level) == level
+                        })
+            })
+        });
+        if !beside {
+            errors.push(MapValidationError::ResourceEnclosed { id: resource.id });
+        }
+    }
+    for &(start, (left, bottom, width, height)) in &starts {
+        for resource in &doc.resources {
+            let (ax, ay) = (i64::from(resource.cell.0), i64::from(resource.cell.1));
+            let covered = (bottom..bottom + height)
+                .any(|y| (left..left + width).any(|x| in_ring(resource.kind, x - ax, y - ay)));
+            if covered {
+                errors.push(MapValidationError::StartInResourceRing {
+                    start,
+                    id: resource.id,
+                });
+            }
+        }
+    }
+    errors
 }

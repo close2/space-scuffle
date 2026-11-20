@@ -27,8 +27,10 @@ pub mod traversal;
 pub mod validation;
 pub mod vision;
 
-pub use error::{MapError, PlacementFailureReason, Result};
-pub use footprint::{PlacedFootprint, ResourceFootprint, ResourceFootprints, StructureFootprint};
+pub use error::{MapError, PlacementFailureReason, ResourceFootprintFailure, Result};
+pub use footprint::{
+    FootprintOccupant, PlacedFootprint, ResourceFootprint, ResourceFootprints, StructureFootprint,
+};
 pub use grid::{
     CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
     ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
@@ -51,9 +53,9 @@ pub use pathfinding::{
 };
 pub use sim_types::VisibilityState;
 pub use validation::{
-    validate_map, CellRect, MapValidationError, MapValidationReport, MapValidationWarning,
-    MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
-    RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_RADIUS,
+    validate_map, validate_resource_footprints, CellRect, MapValidationError, MapValidationReport,
+    MapValidationWarning, MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS,
+    MIN_START_SEPARATION_CELLS, RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_RADIUS,
 };
 pub use vision::{watchtower_source, PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
 

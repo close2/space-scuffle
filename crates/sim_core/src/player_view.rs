@@ -291,7 +291,12 @@ fn site_refusal(rejection: &BuildRejection) -> SiteRefusal {
         BuildRejection::Blocked(PlacementFailureReason::OverlapsRamp) => SiteRefusal::OverlapsRamp,
         BuildRejection::Blocked(PlacementFailureReason::OccupiedByStructure(_))
         | BuildRejection::RememberedStructure => SiteRefusal::KnownStructure,
-        BuildRejection::CoversResource => SiteRefusal::CoversResource,
+        // A resource node is public, so a site on one hears the node rule's reason (plan
+        // `2026-11-20-resource-footprints` D-5 P1, P2).
+        BuildRejection::CoversResource
+        | BuildRejection::Blocked(PlacementFailureReason::OccupiedByResource(_)) => {
+            SiteRefusal::CoversResource
+        }
         BuildRejection::ExtractorNeedsGas => SiteRefusal::ExtractorNeedsGas,
         BuildRejection::FlaggedSite { flag, .. } => match flag {
             PlacementFlag::NearResources => SiteRefusal::NearResources,

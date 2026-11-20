@@ -1062,6 +1062,7 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
             kind: ResourceKind::Gas,
             remaining: 100,
             cell: (GAS_CELL, GAS_CELL),
+            placed: None,
         }],
         Vec::new(),
     )?;

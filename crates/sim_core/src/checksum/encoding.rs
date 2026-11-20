@@ -624,12 +624,17 @@ fields!(UnitStatDeltas {
     attack_cooldown_delta,
     bonus_damage_delta,
 });
+// `occupying_resource` is left out until plan `2026-11-20-resource-footprints` WP5, which hashes
+// it under schema 32 (D-11): before WP5 nothing in a world places a resource node, so the field
+// is `None` in every cell of every world.
 fields!(MapCell {
     cliff_level,
     ramp,
     terrain_kind,
     flags,
     occupying_structure
+} unhashed {
+    occupying_resource
 });
 fields!(PlacedStructure {
     id,
@@ -667,11 +672,15 @@ impl Canonical for FootprintShape {
         }
     }
 }
+// `placed` is left out until plan `2026-11-20-resource-footprints` WP5, which hashes it under
+// schema 32 (D-11): before WP5 nothing in a world places a resource node, so it is `None`.
 fields!(ResourceNode {
     pos,
     kind,
     remaining,
     cell
+} unhashed {
+    placed
 });
 fields!(Watchtower {
     id,

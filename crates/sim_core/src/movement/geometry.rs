@@ -7,7 +7,7 @@
 //! used for production egress and endpoint-only placement; only producer egress may explicitly
 //! exempt its own foundation, never terrain.
 
-use sim_map::{CellFlags, GameMap};
+use sim_map::{CellFlags, FootprintOccupant, GameMap};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
 pub(crate) fn ground_footprint_connected(
@@ -87,8 +87,11 @@ pub(crate) fn ground_footprint_connected(
             }
         }
     }
-    !map.structure_occupants_touched(start, end, radius)
-        .any(|placed| Some(placed.id) != exempt && placed.capsule_meets(start, end, radius))
+    !map.footprint_occupants_touched(start, end, radius)
+        .any(|(occupant, footprint)| {
+            exempt.map(FootprintOccupant::Structure) != Some(occupant)
+                && footprint.capsule_meets(start, end, radius)
+        })
 }
 
 /// Exact open-interior slab intersection; mere tangency is not footprint overlap.

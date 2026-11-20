@@ -32,7 +32,9 @@
 //!   agree on the shape to that grid. For a `Box` each predicate returns what the box's closed
 //!   form returns (property-tested against those forms).
 
-use sim_types::{FootprintShape, SimScalar, SimVec2, QUARTER_OUTLINE_CAPACITY};
+use sim_types::{
+    EntityId, FootprintShape, ResourceNodeId, SimScalar, SimVec2, QUARTER_OUTLINE_CAPACITY,
+};
 
 use crate::error::{MapError, Result};
 use crate::grid::{GameMap, PlacedStructure, ResourceKind};
@@ -152,7 +154,7 @@ enum Location {
 
 /// A footprint's shape placed on the lattice: its cells and its outline (plan
 /// `2026-11-20-resource-footprints` D-2). Built from a validated [`StructureFootprint`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PlacedFootprint {
     /// Bottom-left (minimum X, minimum Y) cell.
     pub top_left: (u32, u32),
@@ -500,17 +502,28 @@ impl ResourceFootprints {
     }
 }
 
+/// What occupies a footprint: a structure or a standing resource node (plan
+/// `2026-11-20-resource-footprints` D-5 C2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FootprintOccupant {
+    /// A placed structure.
+    Structure(EntityId),
+    /// A standing resource node.
+    Resource(ResourceNodeId),
+}
+
 impl GameMap {
-    /// The distinct structures occupying any cell of the closed bounding box of a disc of
-    /// `radius` world units swept from `start` to `end`, each once, in the row-major order of the
-    /// first box cell it occupies. Every structure whose shape the capsule could meet is among
+    /// The distinct footprints (structures and standing resource nodes) occupying any cell of
+    /// the closed bounding box of a disc of `radius` world units swept from `start` to `end`,
+    /// each once, in the row-major order of the first box cell it occupies (a structure before
+    /// a node on the same cell). Every footprint whose shape the capsule could meet is among
     /// them, since a shape lies in its cells. Allocation-free.
-    pub fn structure_occupants_touched(
+    pub fn footprint_occupants_touched(
         &self,
         start: SimVec2,
         end: SimVec2,
         radius: SimScalar,
-    ) -> impl Iterator<Item = &PlacedStructure> + '_ {
+    ) -> impl Iterator<Item = (FootprintOccupant, PlacedFootprint)> + '_ {
         let r = radius.raw().max(0);
         let cell_range = |a: i64, b: i64, size: u32| {
             let low = a.min(b).saturating_sub(r) >> 32;
@@ -526,14 +539,27 @@ impl GameMap {
         } else {
             y0..y1 + 1
         };
+        // A footprint's cells form a rectangle, so its first cell in the box is the box cell at
+        // its own minimum corner clamped into the box.
+        let first_in_box = move |top_left: (u32, u32), cell: (u32, u32)| {
+            (top_left.0.max(x0), top_left.1.max(y0)) == cell
+        };
         rows.flat_map(move |y| (x0..=x1).map(move |x| (x, y)))
-            .filter_map(move |(x, y)| {
-                let id = self.cell(x, y).ok()?.occupying_structure?;
-                let placed = self.structures().get(&id)?;
-                // A structure's cells form a rectangle, so its first cell in the box is the
-                // box cell at its own minimum corner clamped into the box.
-                let first = (placed.top_left.0.max(x0), placed.top_left.1.max(y0));
-                (first == (x, y)).then_some(placed)
+            .flat_map(move |(x, y)| {
+                let cell = self.cell(x, y).ok();
+                let structure = cell
+                    .and_then(|cell| cell.occupying_structure)
+                    .and_then(|id| self.structures().get(&id))
+                    .filter(|placed| first_in_box(placed.top_left, (x, y)))
+                    .map(|placed| (FootprintOccupant::Structure(placed.id), placed.footprint()));
+                let resource = cell
+                    .and_then(|cell| cell.occupying_resource)
+                    .and_then(|node| {
+                        let placed = self.resources().get(node.0 as usize)?.placed?;
+                        first_in_box(placed.footprint.top_left, (x, y))
+                            .then_some((FootprintOccupant::Resource(node), placed.footprint))
+                    });
+                structure.into_iter().chain(resource)
             })
     }
 }
@@ -783,8 +809,11 @@ mod tests {
                 .expect("invariant: open ground");
         }
         let ids = |a: SimVec2, b: SimVec2, r: SimScalar| -> Vec<u32> {
-            map.structure_occupants_touched(a, b, r)
-                .map(|p| p.id.0)
+            map.footprint_occupants_touched(a, b, r)
+                .map(|(occupant, _)| match occupant {
+                    FootprintOccupant::Structure(id) => id.0,
+                    FootprintOccupant::Resource(node) => 1_000 + node.0,
+                })
                 .collect()
         };
         let quarter = SimScalar::from_raw(1 << 30);

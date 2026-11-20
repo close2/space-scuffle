@@ -42,6 +42,7 @@ fn world() -> SimWorld {
             kind: ResourceKind::Mineral,
             remaining: 500,
             cell: (12, 12),
+            placed: None,
         }],
         vec![Watchtower {
             id: EntityId(100),

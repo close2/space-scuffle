@@ -47,7 +47,7 @@ pub mod predicates;
 pub mod search;
 pub mod segment;
 
-use sim_types::{EntityId, SimScalar, SimVec2, VisibilityState};
+use sim_types::{EntityId, ResourceNodeId, SimScalar, SimVec2, VisibilityState};
 use thiserror::Error;
 
 use crate::footprint::PlacedFootprint;
@@ -141,6 +141,9 @@ pub enum TriangleKind {
     Open,
     /// One cell of a structure's footprint; impassable to a request that knows the structure.
     Structure(EntityId),
+    /// Inside a standing resource node's outline; impassable to every request, since nodes are
+    /// public map data (plan `2026-11-20-resource-footprints` D-5 M1, M2, D-9).
+    Resource(ResourceNodeId),
 }
 
 /// The label of one triangle (D-2).
@@ -336,6 +339,11 @@ impl StructureEdges {
         for placed in map.structures().values() {
             Self::add_structure(placed, &mut edges);
         }
+        for resource in map.resources() {
+            if let Some(placed) = resource.placed {
+                Self::add_footprint(&placed.footprint, &mut edges);
+            }
+        }
         edges.sort_unstable();
         edges.dedup();
         Self { edges }
@@ -477,12 +485,20 @@ impl ConstraintGraph<'_> {
         let mut candidates: Vec<(i32, i32)> = (0..=h)
             .flat_map(|y| (0..=w).map(move |x| (y * LATTICE_PER_CELL, x * LATTICE_PER_CELL)))
             .collect();
-        for placed in map.structures().values() {
-            let corner =
-                LatticePoint::cell_corner(signed(placed.top_left.0), signed(placed.top_left.1));
+        let structures = map
+            .structures()
+            .values()
+            .map(|placed| (placed.top_left, placed.width, placed.height));
+        let nodes = map.resources().iter().filter_map(|resource| {
+            resource
+                .placed
+                .map(|p| (p.footprint.top_left, p.footprint.width, p.footprint.height))
+        });
+        for (top_left, width, height) in structures.chain(nodes) {
+            let corner = LatticePoint::cell_corner(signed(top_left.0), signed(top_left.1));
             let (pw, ph) = (
-                i32::from(placed.width) * LATTICE_PER_CELL,
-                i32::from(placed.height) * LATTICE_PER_CELL,
+                i32::from(width) * LATTICE_PER_CELL,
+                i32::from(height) * LATTICE_PER_CELL,
             );
             for y in corner.y..=corner.y + ph {
                 for x in corner.x..=corner.x + pw {
@@ -534,7 +550,9 @@ fn classify_cell(map: &GameMap, x: usize, y: usize) -> CellClass {
             usable: map.terrain_step_is_connected((cx, cy), (cx, cy)),
             level: cell.cliff_level.0,
             ramp: cell.ramp,
-            structure: cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE),
+            structure: cell
+                .flags
+                .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::OCCUPIED_BY_RESOURCE),
         },
         Err(_) => CellClass {
             usable: false,
@@ -688,13 +706,24 @@ impl NavMesh {
         let class = classify_cell(map, cx as usize, cy as usize);
         // A triangle in a structure's cell is the structure's when its centroid lies inside the
         // shape (exact on three times the centroid, D-4); a centroid is never on a constraint.
-        let occupant = map
-            .cell(cx, cy)
-            .ok()
+        let cell = map.cell(cx, cy).ok();
+        // A standing node's triangles are the node's, tested first: a geyser under an
+        // extractor stays closed to a player who does not know the extractor (D-5 M1).
+        let resource = cell
+            .and_then(|cell| cell.occupying_resource)
+            .filter(|node| {
+                map.resources()
+                    .get(node.0 as usize)
+                    .and_then(|resource| resource.placed)
+                    .is_some_and(|placed| placed.footprint.contains_open_scaled(sx, sy, 3))
+            });
+        let occupant = cell
             .and_then(|cell| cell.occupying_structure)
             .and_then(|id| map.structures().get(&id))
             .filter(|placed| placed.contains_open_scaled(sx, sy, 3));
-        let kind = if let Some(placed) = occupant {
+        let kind = if let Some(node) = resource {
+            TriangleKind::Resource(node)
+        } else if let Some(placed) = occupant {
             TriangleKind::Structure(placed.id)
         } else if class.usable {
             TriangleKind::Open
@@ -836,6 +865,7 @@ impl NavMesh {
                 TriangleKind::Blocked => 0,
                 TriangleKind::Open => 1,
                 TriangleKind::Structure(id) => 2 + u64::from(id.0),
+                TriangleKind::Resource(node) => (1 << 33) + u64::from(node.0),
             });
             eat(u64::from(label.cliff_level) << 8 | label.ramp.map_or(0, |r| 1 + r as u64));
             eat(u64::from(label.cell));
@@ -1087,7 +1117,8 @@ impl<'a> Access<'a> {
     pub(crate) fn open(&self, t: u32) -> bool {
         let label = self.mesh.labels[t as usize];
         let passable = match label.kind {
-            TriangleKind::Blocked => false,
+            // Resource nodes are public: closed to every request (D-9).
+            TriangleKind::Blocked | TriangleKind::Resource(_) => false,
             TriangleKind::Open => true,
             TriangleKind::Structure(_) => !self.structure_known(label.cell),
         };

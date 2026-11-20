@@ -545,6 +545,11 @@ fn check_contour_labels(map: &GameMap, mesh: &NavMesh) -> Result<(), String> {
                     }
                 }
             }
+            TriangleKind::Resource(node) => {
+                return Err(format!(
+                    "triangle {t} is node {node:?}'s, but no node stands"
+                ));
+            }
             TriangleKind::Open | TriangleKind::Blocked => {
                 if !inside.is_empty() {
                     return Err(format!(

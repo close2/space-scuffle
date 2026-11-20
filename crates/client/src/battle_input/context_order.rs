@@ -194,6 +194,7 @@ mod tests {
             kind,
             remaining: 100,
             cell: (cell, cell),
+            placed: None,
         }
     }
 

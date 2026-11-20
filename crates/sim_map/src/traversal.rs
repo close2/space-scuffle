@@ -101,11 +101,14 @@ impl GameMap {
         let (Ok(a), Ok(b)) = (self.cell(from.0, from.1), self.cell(to.0, to.1)) else {
             return false;
         };
-        // A placed structure removes GROUND_PATHABLE from otherwise usable terrain.
-        // Physical and perceived occupancy are deliberately enforced by the caller.
+        // A placed structure or resource node removes GROUND_PATHABLE from otherwise usable
+        // terrain. Physical and perceived occupancy are deliberately enforced by the caller.
         let terrain_usable = |flags: CellFlags| {
-            flags.intersects(CellFlags::GROUND_PATHABLE | CellFlags::OCCUPIED_BY_STRUCTURE)
-                && !flags.contains(CellFlags::UNPASSABLE_CLIFF)
+            flags.intersects(
+                CellFlags::GROUND_PATHABLE
+                    | CellFlags::OCCUPIED_BY_STRUCTURE
+                    | CellFlags::OCCUPIED_BY_RESOURCE,
+            ) && !flags.contains(CellFlags::UNPASSABLE_CLIFF)
         };
         if !terrain_usable(a.flags) || !terrain_usable(b.flags) {
             return false;

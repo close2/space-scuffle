@@ -8,7 +8,10 @@
 //! search, so the grid-against-mesh columns of WP8's tables are no longer produced; the evidence
 //! keeps their last measurement. A third table (plan `2026-11-18-contour-footprints` WP3, D-14)
 //! compares the showcase map with 24 seeded structures cut as full squares and as their 5.0.14
-//! contours: mesh size and rebuild time.
+//! contours: mesh size and rebuild time. A row of the first table (plan
+//! `2026-11-20-resource-footprints` WP4) builds the showcase with its 20 resource nodes placed,
+//! by the footprints `assets/catalog/placement_rules.ron` authors (restated here, since `sim_map`
+//! cannot read the catalog).
 //!
 //! # How it fits
 //! A measurement tool, not a test: it times with the wall clock, which the simulation never
@@ -30,8 +33,11 @@ use std::time::Instant;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use sim_map::{GameMap, MapFile, NavMesh, PathRequest, PathRequestWithVision, Pathfinder};
-use sim_types::{EntityId, SimScalar, SimVec2};
+use sim_map::{
+    GameMap, MapFile, NavMesh, PathRequest, PathRequestWithVision, Pathfinder, ResourceFootprint,
+    ResourceFootprints, ResourceKind,
+};
+use sim_types::{EntityId, FootprintShape, QuarterOutline, SimScalar, SimVec2};
 
 const QUERIES: usize = 1_000;
 
@@ -99,6 +105,48 @@ fn build_row(name: &str, map: &GameMap, structures: u32) -> Result<(), Box<dyn E
         median_micros(samples),
     );
     Ok(())
+}
+
+/// The shipped resource footprints of `placement_rules.ron`: a mineral field the 2×1 box on its
+/// anchor and the cell east of it, a geyser the 3×3 with the void 16-vertex outline.
+fn shipped_resource_footprints() -> Result<ResourceFootprints, Box<dyn Error>> {
+    let geyser = QuarterOutline::new(&[
+        (-2, -4),
+        (-3, -5),
+        (-5, -3),
+        (-4, -2),
+        (-4, 2),
+        (-5, 3),
+        (-3, 5),
+        (-2, 4),
+        (2, 4),
+        (3, 5),
+        (5, 3),
+        (4, 2),
+        (4, -2),
+        (5, -3),
+        (3, -5),
+        (2, -4),
+    ])
+    .ok_or("sixteen vertices fit")?;
+    Ok(ResourceFootprints::new(vec![
+        (
+            ResourceKind::Mineral,
+            ResourceFootprint {
+                cells: (0, 0, 2, 1),
+                shape: FootprintShape::full(2, 1),
+                remove_when_empty: true,
+            },
+        ),
+        (
+            ResourceKind::Gas,
+            ResourceFootprint {
+                cells: (-1, -1, 3, 3),
+                shape: FootprintShape::Outline(geyser),
+                remove_when_empty: false,
+            },
+        ),
+    ]))
 }
 
 /// A 256x256 map made of 4x4 copies of the showcase canyon.
@@ -214,7 +262,7 @@ fn seeded(map: &GameMap, count: u32, contour: bool) -> Result<(GameMap, u32), Bo
             sim_map::StructureFootprint {
                 width: size,
                 height: size,
-                shape: sim_types::FootprintShape::Box {
+                shape: FootprintShape::Box {
                     half_width_q: half,
                     half_height_q: half,
                     chamfer_q: chamfer,
@@ -259,6 +307,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("|---|---:|---:|---:|---:|---:|---:|");
     build_row("default_arena 64x64", &arena, 6)?;
     build_row("showcase_canyon 64x64", &canyon, 6)?;
+    let mut with_nodes = canyon.clone();
+    with_nodes.place_resource_footprints(&shipped_resource_footprints()?)?;
+    build_row("showcase_canyon with its 20 nodes", &with_nodes, 6)?;
     build_row("canyon 4x4 tiled 256x256", &big, 40)?;
     println!();
     contour_rows(&canyon)?;

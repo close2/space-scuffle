@@ -295,6 +295,7 @@ mod tests {
             kind,
             remaining: 100,
             cell,
+            placed: None,
         }
     }
 

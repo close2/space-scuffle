@@ -55,6 +55,7 @@ fn node(kind: ResourceKind, cell: (u32, u32)) -> ResourceNode {
         kind,
         remaining: 1_500,
         cell,
+        placed: None,
     }
 }
 
