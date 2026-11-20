@@ -1,0 +1,39 @@
+// assets/catalog/placement_rules.ron
+// Placement flags that resource nodes apply around themselves (StarCraft II Patch 5.0.14,
+// SC2GameData 5444e12f13; plan docs/plans/2026-11-19-footprint-flags.md D-2, D-3).
+//
+// Each ring is a mask: `x` is a cell on which the node applies the flags of `applies`, `.` a cell
+// on which it applies nothing. `rows[0]` is the row of lowest y, and `anchor` is the
+// (column, row) of the node's own cell. Every ring here is symmetric under both flips, so the row
+// order does not change it (plan §2.2 rule 5). A structure whose `placement_excludes` in
+// structures.ron names a flag cannot be placed on a cell that carries it.
+(
+    resource_footprints: [
+        // 5.0.14 FootprintMineralsRounded Place (liberty Footprint:1077-1091): NearResources on the
+        // field's cells and 3 cells beyond them, one corner cell cut. Our node is one cell, not
+        // the game's 2x1, so the ring is anchored on that cell (B-147; plan D-3).
+        (kind: Mineral, applies: [NearResources], anchor: (3, 3), rows: [
+            ".xxxxx.",
+            "xxxxxxx",
+            "xxxxxxx",
+            "xxxxxxx",
+            "xxxxxxx",
+            "xxxxxxx",
+            ".xxxxx.",
+        ]),
+        // 5.0.14 FootprintGeyserRounded Place (liberty Footprint:1554-1570), rows 0, 1, 7 and 8 as
+        // rounded by void Footprint:11-14. The node is the geyser's centre cell (the extractor's
+        // 3x3 is centred on it).
+        (kind: Gas, applies: [NearResources], anchor: (4, 4), rows: [
+            "..xxxxx..",
+            ".xxxxxxx.",
+            "xxxxxxxxx",
+            "xxxxxxxxx",
+            "xxxxxxxxx",
+            "xxxxxxxxx",
+            "xxxxxxxxx",
+            ".xxxxxxx.",
+            "..xxxxx..",
+        ]),
+    ],
+)

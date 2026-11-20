@@ -15,7 +15,7 @@ use sim_core::{
     transport::TransportAdmissionError,
 };
 use sim_map::PlacementFailureReason;
-use sim_types::SiteRefusal;
+use sim_types::{PlacementFlag, SiteRefusal};
 
 use super::{commands::SubmissionError, driver::AdmissionOutcome};
 
@@ -63,6 +63,11 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
     }
 }
 
+/// The reason for a site within reach of resources (plan `2026-11-19-footprint-flags` D-9).
+const NEAR_RESOURCES_REASON: &str = "too close to resources";
+/// The reason for a site a structure must see and the player does not (D-9).
+const NOT_VISIBLE_REASON: &str = "the site must be in sight";
+
 /// Says why a site cannot be ordered, in the words of the matching [`BuildRejection`].
 #[must_use]
 pub const fn site_reason(refusal: SiteRefusal) -> &'static str {
@@ -79,6 +84,8 @@ pub const fn site_reason(refusal: SiteRefusal) -> &'static str {
         SiteRefusal::KnownStructure => "a structure is in the way",
         SiteRefusal::CoversResource => "the site covers a resource node",
         SiteRefusal::ExtractorNeedsGas => "an extractor needs a gas node under it",
+        SiteRefusal::NearResources => NEAR_RESOURCES_REASON,
+        SiteRefusal::NotVisible => NOT_VISIBLE_REASON,
     }
 }
 
@@ -197,6 +204,10 @@ pub fn write_build_rejection(output: &mut String, rejection: &BuildRejection) {
         BuildRejection::RememberedStructure => "a structure was last seen on this site",
         BuildRejection::CoversResource => "the site covers a resource node",
         BuildRejection::ExtractorNeedsGas => "an extractor needs a gas node under it",
+        BuildRejection::FlaggedSite { flag, .. } => match flag {
+            PlacementFlag::NearResources => NEAR_RESOURCES_REASON,
+            PlacementFlag::Fogged => NOT_VISIBLE_REASON,
+        },
         BuildRejection::Invariant(_) => "the battle cannot process this order",
     };
     output.push_str(reason);

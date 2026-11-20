@@ -324,14 +324,22 @@
 // from its goal, keeps walking at tick 44 where its walk used to end on the room its retreat
 // made (D-1). Proof: a scratch build of WP3 with D-1 off, `flank_retreat` unhashed and schema
 // 30 reproduces the previous checksums at every checkpoint.
-// Re-recorded for plan 2026-11-19-parked-body-aim WP2 (B-145): checkpoint 6 (ticks 251 to 300)
-// first changed. Entity 34 ("red_siege") rounds entity 35, parked on its corner; at tick 273
-// entity 35 starts to walk and entity 34 keeps rounding it where it used to turn back to the
-// corner (D-1). Its hashed state differs on that tick and its pose from tick 282; the two runs
-// meet again by tick 350 (checkpoint 7 unchanged) and part for good at tick 352, where entity 34
-// holds a rounding of entity 33 (checkpoints 8 to 20 changed). Over the replay a rounding is held
-// by a walking body on 70 unit-ticks (entity 34 on 4, entity 35 on 66). Proof: a scratch build
-// with `rounding` forced false reproduces the previous checksums at every checkpoint.
+// Re-recorded for plan 2026-11-19-footprint-flags WP4 (B-139, D-8): the gas node of slot 1 on
+// default_arena moves from (48, 56) to (50, 56), out of the NearResources reach of its start's town
+// hall. Node positions are hashed, so every checkpoint changed; no behaviour did. Proof: a scratch
+// build that hashes each moved node at its old cell reproduces every checksum recorded before, and
+// the checksum without the resources section is identical on every one of the 1000 ticks with the
+// old and the moved map.
+// Re-recorded for plan 2026-11-19-parked-body-aim WP2 (B-145), on top of footprint-flags WP4:
+// checkpoint 6 (ticks 251 to 300) first changed. Entity 34 ("red_siege") rounds entity 35, parked
+// on its corner; at tick 273 entity 35 starts to walk and entity 34 keeps rounding it where it used
+// to turn back to the corner (D-1). Its hashed state differs on that tick and its pose from tick
+// 282; the two runs meet again by tick 350 (checkpoint 7 unchanged) and part for good at tick 352,
+// where entity 34 holds a rounding of entity 33 (checkpoints 8 to 20 changed). Over the replay a
+// rounding is held by a walking body on 70 unit-ticks (entity 34 on 4, entity 35 on 66). Proof: a
+// scratch build of the merged tree with `rounding` forced false reproduces footprint-flags WP4's
+// checksums at every checkpoint, and its entity states equal those of that build before the moved
+// geyser on every one of the 1000 ticks.
 (
     checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
@@ -359,25 +367,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xa08848e1b44e3859,
-        0xbb5bb963a878a603,
-        0xe90b33fd925756d9,
-        0xd708959a99a9640d,
-        0x72860ae262f456fa,
-        0xc7b0baee18235426,
-        0xcdf61288b15f9174,
-        0x499485940f22cbe7,
-        0xdd70fb730a442bb7,
-        0xbdfe7dede23e9eb3,
-        0x86e9e8a15d0a3b10,
-        0x7c30c34c9aeff751,
-        0xb021e89bc4102b7a,
-        0x651d01b332b74d2e,
-        0xf8f6f36529282c01,
-        0x90a63229e77f859a,
-        0x0906bb1019769484,
-        0x854b8b397cada31b,
-        0x766923c90a01550b,
-        0xf4e76e26caed3b92,
+        0x419e7fc8e9e9455b,
+        0xdd8ae41f9815f47b,
+        0xe9a4a96f5c1b886e,
+        0xa130beb5ecaf30ab,
+        0xe18c86d53521415b,
+        0xb12dc5f766cf1186,
+        0xdb6fa3a29c3559fd,
+        0xdf56cbab3917d10f,
+        0x28222da9532547ce,
+        0x8f5b4afcb1606732,
+        0xd1423c70ba490b6c,
+        0x56af25ead4298b5c,
+        0x1a05404d8630fc8f,
+        0x8ec4fde20a8cf3b2,
+        0xd7f4de49a495c98c,
+        0xab72264ce5dc3bc2,
+        0xc7a9c131deff88ad,
+        0xd3fc4cd7a1a4c6a3,
+        0xca062854a51445d3,
+        0x472459263f54fbfc,
     ],
 )

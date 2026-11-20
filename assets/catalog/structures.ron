@@ -16,6 +16,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint5x5Contour (liberty:10379), Footprint:2016 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint5x5DropOff (liberty:10380): its Check refuses NearResources (Footprint:1838).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10377; Footprint5x5Contour Shape 2.6926, Footprint:2015).
             radius: 2.75,
             mineral_cost: 400,
@@ -57,6 +59,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint5x5Contour (liberty:10525), Footprint:2016 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint5x5DropOff (liberty:10526): its Check refuses NearResources (Footprint:1838).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10523; Footprint5x5Contour Shape 2.6926, Footprint:2015).
             radius: 2.75,
             mineral_cost: 150,
@@ -96,6 +100,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint5x5Contour (liberty:10663), Footprint:2016 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint5x5DropOff (liberty:10664): its Check refuses NearResources (Footprint:1838).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.5, liberty UnitData:10661; Footprint5x5Contour Shape 2.6926, Footprint:2015).
             radius: 2.75,
             mineral_cost: 150,
@@ -164,6 +170,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:5665), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:5666, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.25 = max(Radius 1.25, liberty UnitData:5663; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.25,
             mineral_cost: 100,
@@ -203,6 +211,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: FootprintGeyserRoundedBuilt (liberty:5778), Footprint:960 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.75),
+            // 5.0.14 PlacementFootprint Footprint3x3CappedGeyser (liberty:5779, Footprint:1515): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:5776; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
             radius: 1.6875,
             mineral_cost: 75,
@@ -242,6 +252,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:5840), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:5841, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:5838; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -281,6 +293,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:5972), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:5973, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:5970; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 125,
@@ -324,6 +338,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:6156), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:6157, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:6154; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 100,
@@ -364,6 +380,8 @@
             footprint: (1, 1),
             // 5.0.14 Shape: Footprint1x1 (liberty:9454), Footprint:1107 Offsets.
             footprint_shape: (half_width: 0.5, half_height: 0.5, chamfer: 0.0),
+            // 5.0.14 PlacementFootprint Footprint1x1 (liberty:9455, Footprint:1098): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 0.75 = max(Radius 0.75, liberty UnitData:9452; Footprint1x1 Shape 0.7072, Footprint:1106).
             radius: 0.75,
             mineral_cost: 100,
@@ -403,6 +421,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:6035), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:6036, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 0.75, liberty UnitData:6033; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 100,
@@ -473,6 +493,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:6240), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:6241, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.625, liberty UnitData:6238; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -512,6 +534,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:9775), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:9776, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9773; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -551,6 +575,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:6373), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:6374, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.625, liberty UnitData:6371; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -590,6 +616,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:6508), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:6509, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.25, liberty UnitData:6506; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -633,6 +661,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:10917), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:10918, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:10915; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -672,6 +702,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:6644), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3AddOn2x2 (liberty:6645, Footprint:1735): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:6642; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 50,
@@ -711,6 +743,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:6581), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3AddOn2x2 (liberty:6582, Footprint:1735): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:6579; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 50,
@@ -754,6 +788,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint5x5Contour (liberty:4186), Footprint:2016 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint5x5DropOff (liberty:4187): its Check refuses NearResources (Footprint:1838).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:4184; Footprint5x5Contour Shape 2.6926, Footprint:2015).
             radius: 2.75,
             mineral_cost: 400, // 5.0.14 calibrated
@@ -792,6 +828,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:4337), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:4338, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:4335; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 100,
@@ -830,6 +868,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: FootprintGeyserRoundedBuilt (liberty:4124), Footprint:960 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.75),
+            // 5.0.14 PlacementFootprint Footprint3x3CappedGeyser (liberty:4125, Footprint:1515): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:4122; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
             radius: 1.6875,
             mineral_cost: 75,
@@ -868,6 +908,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:4396), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:4397, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:4394; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -906,6 +948,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:4538), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:4539, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4536; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -948,6 +992,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:11054), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:11055, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:11052; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 150,
@@ -1042,6 +1088,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:1614), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:1615, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:1612; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.125,
             mineral_cost: 100,
@@ -1080,6 +1128,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:10819), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:10820, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:10817; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1122,6 +1172,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:4606), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:4607, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4604; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1160,6 +1212,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:9642), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:9643, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.75, liberty UnitData:9640; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1198,6 +1252,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:9571), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:9572, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9569; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1236,6 +1292,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:4669), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:4670, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:4667; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1274,6 +1332,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour (liberty:9512), Footprint:1951 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2 (liberty:9513, Footprint:1184): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.5 = max(Radius 1.5, liberty UnitData:9510; Footprint2x2Contour Shape 1.1181, Footprint:1950).
             radius: 1.5,
             mineral_cost: 150,
@@ -1312,6 +1372,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:9839), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:9840, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9837; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1350,6 +1412,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3Contour (liberty:9710), Footprint:1936 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3 (liberty:9711, Footprint:128): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9708; Footprint3x3Contour Shape 1.803, Footprint:1935).
             radius: 1.8125,
             mineral_cost: 300,
@@ -1392,6 +1456,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint6x5DropOffCreepSourceContour (liberty:8210), Footprint:2262 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint6x5DropOffCreepSource (liberty:8211): its Check refuses NearResources (Footprint:2213).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8208; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
             radius: 2.75,
             mineral_cost: 275, // 5.0.14 calibrated
@@ -1429,6 +1495,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint6x5DropOffCreepSourceContour (liberty:8292), Footprint:2262 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint6x5DropOffCreepSource (liberty:8293): its Check refuses NearResources (Footprint:2213).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8290; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
             radius: 2.75,
             mineral_cost: 150,
@@ -1466,6 +1534,8 @@
             footprint: (5, 5),
             // 5.0.14 Shape: Footprint6x5DropOffCreepSourceContour (liberty:8372), Footprint:2262 Offsets.
             footprint_shape: (half_width: 2.5, half_height: 2.5, chamfer: 1.5),
+            // 5.0.14 PlacementFootprint Footprint6x5DropOffCreepSource (liberty:8373): its Check refuses NearResources (Footprint:2213).
+            placement_excludes: [NearResources],
             // 5.0.14 engine radius 2.75 = max(Radius 2.0, liberty UnitData:8370; Footprint6x5DropOffCreepSourceContour Shape 2.6926, Footprint:2261).
             radius: 2.75,
             mineral_cost: 200,
@@ -1503,6 +1573,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: FootprintGeyserRoundedBuilt (liberty:8151), Footprint:960 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.75),
+            // 5.0.14 PlacementFootprint Footprint3x3CappedGeyser (liberty:8152, Footprint:1515): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.6875 = max(Radius 1.5, liberty UnitData:8149; FootprintGeyserRoundedBuilt Shape 1.6772, Footprint:959).
             radius: 1.6875,
             mineral_cost: 25,
@@ -1540,6 +1612,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:8888), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:8889, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8886; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 200,
@@ -1577,6 +1651,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:8446), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:8447, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8444; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 75,
@@ -1618,6 +1694,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2ZergSpineCrawler (liberty:8617), Footprint:5370 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2Creep2 (liberty:8618): its Check refuses Fogged (Footprint:1217).
+            placement_excludes: [Fogged],
             // 5.0.14 engine radius 1.125 = max(Radius 0.875, liberty UnitData:8615; Footprint2x2ZergSpineCrawler Shape 1.1181, Footprint:5369).
             radius: 1.125,
             mineral_cost: 100,
@@ -1684,6 +1762,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2Contour2 (liberty:8751), Footprint:163 Offsets.
             footprint_shape: (half_width: 0.5, half_height: 0.5, chamfer: 0.25),
+            // 5.0.14 PlacementFootprint Footprint2x2Creep2 (liberty:8752): its Check refuses Fogged (Footprint:1217).
+            placement_excludes: [Fogged],
             // 5.0.14 engine radius 0.875 = max(Radius 0.875, liberty UnitData:8749; Footprint2x2Contour2 Shape 0.559, Footprint:162).
             radius: 0.875,
             mineral_cost: 75,
@@ -1750,6 +1830,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:11767), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:11768, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:11765; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1787,6 +1869,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:9968), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:9969, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9966; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 100,
@@ -1824,6 +1908,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:8951), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:8952, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:8949; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 100,
@@ -1861,6 +1947,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:678), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:679, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:676; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 150,
@@ -1899,6 +1987,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2CreepContour (liberty:9013), Footprint:2074 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2Creep (liberty:9014, Footprint:1199): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:9011; Footprint2x2CreepContour Shape 1.1181, Footprint:2073).
             radius: 1.125,
             mineral_cost: 200,
@@ -1940,6 +2030,8 @@
             footprint: (2, 2),
             // 5.0.14 Shape: Footprint2x2IgnoreCreepContour (liberty:9084), Footprint:1239 Offsets.
             footprint_shape: (half_width: 1.0, half_height: 1.0, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint2x2Creep (liberty:9085, Footprint:1199): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.125 = max(Radius 1.0, liberty UnitData:9082; Footprint2x2IgnoreCreepContour Shape 1.1181, Footprint:1238).
             radius: 1.125,
             mineral_cost: 100,
@@ -1977,6 +2069,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:2079), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:2080, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:2077; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 100,
@@ -2014,6 +2108,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:9901), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:9902, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9899; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 150,
@@ -2051,6 +2147,8 @@
             footprint: (3, 3),
             // 5.0.14 Shape: Footprint3x3CreepContour (liberty:9217), Footprint:2206 Offsets.
             footprint_shape: (half_width: 1.5, half_height: 1.5, chamfer: 0.5),
+            // 5.0.14 PlacementFootprint Footprint3x3Creep (liberty:9218, Footprint:2146): no modelled flag beyond the shared defaults.
+            placement_excludes: [],
             // 5.0.14 engine radius 1.8125 = max(Radius 1.5, liberty UnitData:9215; Footprint3x3CreepContour Shape 1.803, Footprint:2205).
             radius: 1.8125,
             mineral_cost: 150,

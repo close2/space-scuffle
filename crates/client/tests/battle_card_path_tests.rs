@@ -55,8 +55,10 @@ const OVERCLOCKED: &str = "pulse_bot";
 const OVERCLOCK_UPGRADE: &str = "overclock_stim";
 
 /// The gas node the skirmish's home player starts beside, and the extractor corner that covers it.
-const GAS_CELL: (u32, u32) = (14, 6);
-const EXTRACTOR_CORNER: (u32, u32) = (13, 5);
+/// Plan 2026-11-19-footprint-flags D-8 moved this geyser from (14, 6) to (15, 6); Amendment 1 fixes
+/// the tests that name the moved cells in place.
+const GAS_CELL: (u32, u32) = (15, 6);
+const EXTRACTOR_CORNER: (u32, u32) = (14, 5);
 
 /// Minimum corners of open plateau, clear of the home player's nodes.
 const RESEARCHER_CORNER: u32 = 2;

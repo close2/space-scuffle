@@ -883,6 +883,51 @@ fn preview_judges_public_terrain_and_nodes_at_any_range() -> TestResult {
     Ok(())
 }
 
+/// F-9 of plan `2026-11-19-footprint-flags`: a town hall analogue's site beside a home mineral
+/// node, clear under no placement rules, is refused under the shipped rings as
+/// `SiteRefusal::NearResources`.
+#[test]
+fn the_preview_reports_near_resources() -> TestResult {
+    let mut world = skirmish()?;
+    let hall = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.placement_excludes
+                .has(sim_types::PlacementFlag::NearResources)
+        })
+        .ok_or("no town hall analogue")?
+        .unit_type_id;
+    let mut beside = None;
+    'search: for node in nodes_of_side(&world, true, ResourceKind::Mineral) {
+        let (x, y) = world.map.resources()[node.0 as usize].cell;
+        for (dx, dy) in [(2_i64, -2_i64), (-7, -2), (-2, 2), (-2, -7)] {
+            let (Ok(sx), Ok(sy)) = (
+                u32::try_from(i64::from(x) + dx),
+                u32::try_from(i64::from(y) + dy),
+            ) else {
+                continue;
+            };
+            if world.preview_site(HOME, hall, sx, sy).is_ok() {
+                beside = Some((sx, sy));
+                break 'search;
+            }
+        }
+    }
+    let (x, y) = beside.ok_or("no clear site beside a home mineral node")?;
+    world.catalog.set_placement_rules(
+        sim_fixtures::shipped_catalogs()
+            .units
+            .placement_rules()
+            .clone(),
+    );
+    assert_eq!(
+        world.preview_site(HOME, hall, x, y),
+        Err(SiteRefusal::NearResources)
+    );
+    Ok(())
+}
+
 #[test]
 fn a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival() -> TestResult {
     let mut world = skirmish()?;
@@ -1041,6 +1086,24 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
         };
         members.push((id, member));
     }
+    // Sight is another rule's business too (plan `2026-11-19-footprint-flags` WP2): the crawler
+    // analogues refuse a site the player does not see, so a sighted unit stands beside the shared
+    // site and vision is measured once before the orders.
+    let lookout = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            !matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                && arch.sight_radius >= SimScalar::from_num(8)
+        })
+        .ok_or("no sighted unit")?
+        .unit_type_id;
+    let beside = SimVec2::new(
+        SimScalar::from_num(102) + SimScalar::HALF,
+        SimScalar::from_num(8) + SimScalar::HALF,
+    );
+    world.spawn_unit(lookout, HOME, beside)?;
+    step(&mut world, Vec::new());
 
     let mut commands = Vec::new();
     let mut pairs = Vec::new();

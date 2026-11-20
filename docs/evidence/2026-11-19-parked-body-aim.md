@@ -151,3 +151,20 @@ manifest `~/scratch/aim-flip/wp3/takes/battle.manifest.ron`): `advance` 251 to 3
 `assault` from 973 at 2x (to about 1,373) over both workers' deaths. Every scene still covers its beat; no scene
 length changed, and the storyboard's comment gains the re-check. The hall's fall (2,622) is after the take, as the
 fall at 1,935 was. `showcase_storyboard_tests` and `showcase_tests` pass.
+
+## Merge of `main` at `fb66d85e` (footprint flags)
+
+`main`'s merge of plan `2026-11-19-footprint-flags` moved five geysers and re-recorded `golden_replay` (node cells are
+hashed); the two re-records conflicted. Resolved by re-recording `golden_replay` on the merged tree, its header
+covering both changes:
+
+- **Proof.** A scratch build of the merged tree with `rounding` forced false reproduces footprint-flags WP4's 20
+  checksums; `golden_replay_orders` is identical with the rule on or off. With the rule on, checkpoint 6 first
+  changes again (hashed state at tick 273, entity 34's pose from tick 282; checkpoint 7 unchanged; 8 to 20 changed).
+  The per-tick entity states (position, velocity, `corner_round`, route length) of both builds equal those of the
+  same builds before the merge on all 1,000 ticks, so the held-rounding count (70 unit-ticks) stands.
+- **Builds.** Native release and debug, `wasm32-wasip1` release and debug pass.
+- **Control on the merged tree** (`~/scratch/aim-flip/main-fb66`, `mctrl`, `mimpl`): `main`'s own tools reproduce
+  `bf4252cf` byte for byte (matrix, battles 31 and 33, the nine showcase seeds; the geyser move is battle-identical);
+  the merged tree with `rounding` forced false reproduces `main`'s run byte for byte, and with the rule on reproduces
+  WP2's run byte for byte. Every WP2 figure holds.
