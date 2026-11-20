@@ -31,3 +31,11 @@ Measured on today's base, slot 1's geyser at (62, 53) sat beside the ground wher
 changed the battle; a first move to (59, 62) still sat beside the army's route round the north of its hall. Amendment 2
 puts the geysers in the base corners: slot 1 at (53, 62) and (62, 62), slot 0 at (10, 1) and (1, 1). The default (a)
 still applies, with these cells.
+
+## Answer
+
+**Option (a) — Approved, with standing full autonomy over the test/shipped maps.**
+
+Owner: *"of course, you have complete control of the map, change whatever you want on the map. it's your test map!"*
+
+Re-lay `showcase_canyon` and `default_arena` as planned (with Amendment 2's corner geyser placements and StarCraft II's `2×1` mineral and `3×3` geyser footprints, bringing mining income to SC2's authentic ~63 minerals/worker-minute while keeping army exits clear and preserving all 9 showcase winners). Going forward, agents have complete control over test/shipped map layouts (mineral lines, geysers, ramps, obstacles, spawn positions) and may adjust them freely without asking the owner.
