@@ -1105,7 +1105,6 @@ fn the_anytime_loop_runs_to_the_incumbent() -> Result<(), MapError> {
 /// funnel's accepted residual) has a channel with a legal pull, so it does not fall back to the
 /// portal midpoints. On `main` no pull of the channel TA* returns is legal, and it falls back.
 #[test]
-#[ignore = "B-149, WP4"]
 fn a_legal_channel_is_sought_before_the_midpoints() -> Result<(), MapError> {
     let (_, route) = b149_case(
         (58, 13, LayoutKind::PER_CELL_CONTOURS),
@@ -1126,7 +1125,6 @@ fn a_legal_channel_is_sought_before_the_midpoints() -> Result<(), MapError> {
 /// legal channel of 70.863. On `main` the route is 69.905, so the length is held from above
 /// only: no fallback, and no longer than the legal-only search's route.
 #[test]
-#[ignore = "B-149, WP4"]
 fn an_illegal_first_pull_does_not_end_the_search() -> Result<(), MapError> {
     let (_, route) = b149_case(
         (92, 12, LayoutKind::PER_CELL_CONTOURS),

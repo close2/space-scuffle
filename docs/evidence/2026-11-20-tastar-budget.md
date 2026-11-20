@@ -173,3 +173,65 @@ green with the budget back (`TAB_OFF_D2=1`), and T7 (red with the budget back: 1
 added to hold D-2.
 
 **Stop rules (WP3's figures, the 92 q 12 exception):** held, as WP2.
+
+## WP4: D-3, a legal-only search before the fallback
+
+`Query` gains `legal_only`; `MeshSearch::legal_only_retry` runs TA* once more with it after the zero-room retry has
+failed, takes a channel as the incumbent only when its inscribed pull is legal, and restores the first channel's
+portals for the midpoint fallback when it finds none. Its expansions are not added to `MeshRoute::expansions`
+(as the prototype); `MeshSearch::fallbacks` counts only real fallbacks. The module doc states the order of the attempts.
+
+**Method.** As WP2 and WP3; base is the measurement binary with `TAB_OFF_D1=1 TAB_OFF_D2=1 TAB_OFF_D3=1`.
+**Controls:** all three off reproduces WP2's control (hence `main`) byte for byte in every corpus, the contour
+corpus, the golden logs and the battle set; D-3 off reproduces WP3's corpora byte for byte; D-1 off (D-2 + D-3) gives
+1,809 / 1,820, worst 1.0549 (the plan's "budget unbounded, cap 4" row); D-2 off (D-1 + D-3) gives 1,814 / 1.0193.
+With all three on, every corpus file and the contour corpus are request for request the prototype's adopted design
+(`~/scratch/tab/v-final3`, `cr-final3.txt`), and the golden-corpus logs equal its `glog-final3-*`.
+
+| Corpus | Base | D-1 + D-2 + D-3 |
+|---|---|---|
+| Partial-knowledge oracle | 1,804 / 1,820, worst 1.1343 | **1,815**, worst **1.0193**, none shorter |
+| All-known oracle | 1,743 / 1,744 | identical; one wedged route shorter |
+| Fallbacks from fitting starts (whole squares, whole contours, per-cell squares, per-cell contours) | 0, 1, 1, 5 | **0, 1, 1, 2**; no new fallback: per-cell contours 58 q 13, 104 q 3 and 104 q 15 become legal; left: whole contours 59 q 9, per-cell 8 q 2 (both kinds), per-cell contours 59 q 9 (class N) |
+| 92 q 12 (per-cell contours) | 69.905 | 70.863 (+1.37 %), legal, by the legal-only search |
+| Stress search | 10 | **0** |
+| All-known corpora | 0 / 0 / 0 | 0 / 0 / 0 |
+| Routes longer (oracle, whole contours, per-cell squares, per-cell contours) | — | 6 (5 fitting ≤ +0.24 %, wedged 81 q 10 +0.77 %), 10 (≤ +1.225 %), 5 (≤ +1.52 %), 16 (≤ +4.305 %, T6; 92 q 12 among them) |
+| Golden corpora, contour corpus, pins | — | as WP2; the three pins unchanged, passing in native debug and release and `wasm32-wasip1` release and debug |
+| Admissibility (`TAB_STAT`) | 1 | 1 (base's start-node rounding) |
+| Path-search cost | 46.132 G | **46.091 G (−0.1 %)**; D-3's searches cost 1.08 G over WP3, on the corpora's would-be fallbacks |
+
+**The plan's count of 15 longer per-cell contour routes** is 16 by this count, with the plan's maximum (+4.30 %);
+the same count on the prototype's own files (`v-base` against `v-final3`) gives 16, and the routes are identical
+to the prototype's, so the difference is in the plan's tally, not in the routes.
+
+**Longer routes traced** (cap 64, all rules on): all but four come back to at most base. 46 q 0 comes back at 255
+visits (the cap); 115 q 14 and 43 q 0 are base's retry repairs (WP3); 92 q 12 is D-3's route where D-1 + D-2 alone
+fall back (its first channel's illegal pull, 65.377, ends the search). All four are the plan's §9 "illegal pull as
+incumbent" item or the cap (B-154).
+
+**Battles**: byte-identical to the control (matrix, battle 33, battle 31 on 100 seeds, showcase on nine seeds).
+`golden_replay_tests` (native release and `wasm32-wasip1` release), `fog_of_war_pathfinding_tests` and
+`wall_contact_tests` pass.
+
+**Throughput** (instructions, `tab-cand` at WP4 against `tab-base`):
+
+| Scenario | Base (G) | Adopted (G) | Change |
+|---|---|---|---|
+| 64×64, 0 units | 1.85985 | 1.86097 | +0.06 % |
+| 64×64, 100 units | 6.20175 | 6.20288 | +0.02 % |
+| 64×64, 400 units | 30.90531 | 30.90644 | +0.004 % |
+| 128×128, 400 units | 31.22504 | 31.22959 | +0.01 % |
+| 256×256, 0 units | 29.12343 | 29.14178 | +0.06 % |
+| Showcase canyon, 400 units | 53.76819 | 53.93064 | **+0.30 %** |
+| 64×64, 67 casters, 400 units | 48.06513 | 48.06625 | +0.002 % |
+| Whole benchmark | 201.149 | 201.339 | +0.09 % |
+
+**Tests.** `a_legal_channel_is_sought_before_the_midpoints` (58 q 13: 50.403) and
+`an_illegal_first_pull_does_not_end_the_search` (92 q 12: 70.863) are un-ignored.
+
+**Stop rules (rule 9 without exception):** winners, survivors, give-ups, reversals: battles byte-identical; controls
+reproduce `main`; pins identical on four builds, `VALIDATION_GOLDEN`, `DECODE_GOLDEN`, `SHOWCASE_MESH_DIGEST`,
+`EXPECTED_CHECKSUM` and the cross-platform checksum unmoved; throughput at most +0.30 %, path cost −0.1 %; oracle
+1,815 / 1.0193 and 1,743 / 1,744, none shorter; longer routes at the prototype's counts and amounts, each traced;
+fallbacks 0, 1, 1, 2 from fitting starts, none new, stress 0, all-known 0; admissibility as base. **Held.**

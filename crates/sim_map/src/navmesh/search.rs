@@ -36,6 +36,11 @@
 //!   them for `H` cuts (plan `2026-11-10-group-routing` D-5), which multiplies that bound.
 //! - Ties break on `(f, triangle, node)`; every container is a `Vec` or `BinaryHeap` filled in
 //!   index order, so the result is a pure function of the mesh and the request.
+//! - A route is attempted in a fixed order, each step only when every earlier one gave no legal
+//!   route: TA* and its pull; TA* again with the start and goal reach checks; the pinned pull;
+//!   the fitted-margin pulls; the zero-room pulls; TA* once more taking only channels whose pull
+//!   is legal (plan `2026-11-20-tastar-budget` D-3); and last the portal midpoints of the first
+//!   channel, counted in [`MeshSearch::fallbacks`].
 //! - The start triangle is entered whatever its width (D-3); every later triangle passed through
 //!   must admit the disc between its entry and exit edges.
 //! - A vertex at which no edge blocks the request (a free vertex, such as a corner of a structure
@@ -336,6 +341,11 @@ struct Query<'a> {
     end_checks: bool,
     /// The lane the route must keep, or `None` for an unrestricted search.
     lane: Option<LaneQuery<'a>>,
+    /// Whether only a channel whose inscribed pull passes the segment predicate may become the
+    /// incumbent (the legal-only search of plan `2026-11-20-tastar-budget` D-3). Off in every
+    /// search but the last attempt before the portal-midpoint fallback: the retries repair
+    /// illegal pulls that are better than any legal one.
+    legal_only: bool,
 }
 
 impl MeshSearch {
@@ -812,6 +822,29 @@ impl MeshSearch {
         (failed, false)
     }
 
+    /// The last attempt before the portal-midpoint fallback (plan `2026-11-20-tastar-budget`
+    /// D-3): after every pull of the returned channel failed the segment predicate, TA* runs once
+    /// more and takes only a channel whose inscribed pull is legal as the incumbent (S11: a
+    /// channel that cannot yield a valid path is not considered). Returns that route and true, or
+    /// `failed` and false with `self.portals` holding `failed`'s channel again for the fallback.
+    fn legal_only_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        failed: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let failed_portals = self.portals.clone();
+        let legal_only = Query {
+            legal_only: true,
+            ..*query
+        };
+        if let (Some(route), _) = self.ta_star(&legal_only, start_triangle) {
+            return (route, true);
+        }
+        self.portals = failed_portals;
+        (failed, false)
+    }
+
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
     /// Returns the route, whether it is legal, and the expansions spent; `self.portals` holds
     /// the returned route's channel.
@@ -899,6 +932,11 @@ impl MeshSearch {
                         scratch: &mut self.funnel,
                     },
                 );
+                // D-3: a legal-only search takes no channel whose pull is illegal, so such a
+                // channel neither becomes the incumbent nor ends the search.
+                if query.legal_only && !self.is_legal(query, &route) {
+                    continue;
+                }
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
                 }
@@ -997,7 +1035,8 @@ pub struct LaneRestriction<'a> {
 /// more than `lane.bound` letters from every prefix of the target are pruned, and the visit cap
 /// counts per (triangle, entry edge, word), which bounds the search's work as the cap bounds
 /// [`find_route`]'s (the module's invariants). Everything else is [`find_route`]'s: S11's
-/// anytime loop to the incumbent, both passes, the retries, the legality check and the fallback.
+/// anytime loop to the incumbent, both passes, the retries, the legal-only search, the legality
+/// check and the fallback.
 ///
 /// # Errors
 /// As [`find_route`]; [`MapError::NoPathFound`] also when no channel of that lane admits the
@@ -1068,6 +1107,7 @@ fn route(
         ),
         end_checks: false,
         lane,
+        legal_only: false,
     };
     let (route, legal, expansions) = search.two_pass(&query, start_triangle);
     let route = route.ok_or(MapError::NoPathFound { start, goal })?;
@@ -1086,6 +1126,11 @@ fn route(
     } else {
         let (route, legal) = search.zero_room_retry(&query, start_triangle, route);
         (route, legal, legal)
+    };
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.legal_only_retry(&query, start_triangle, route)
     };
     let turns = route
         .anchors
@@ -1667,6 +1712,7 @@ mod tests {
             start_fits: segment_clear(mesh, &access, &mut search.segment, start, start, radius),
             end_checks: false,
             lane: None,
+            legal_only: false,
         };
         let (route, _) = search.ta_star(&query, start_triangle);
         then(search, &query, route);
@@ -1773,6 +1819,7 @@ mod tests {
             start_fits: true,
             end_checks: false,
             lane: None,
+            legal_only: false,
         };
         search.begin_clampable(mesh.vertex_count());
         let channel = search.portals.clone();
