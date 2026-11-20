@@ -4323,3 +4323,86 @@ fn b134_footprint_shapes_follow_starcraft() -> TestResult {
         ]
     })
 }
+
+/// The placement flags each structure's 5.0.14 placement footprint `Check` refuses beyond the
+/// shared defaults (plan `2026-11-19-footprint-flags` §2.3, D-2): the town halls' `NearResources`
+/// (`Footprint5x5DropOff` Footprint:1838, `Footprint6x5DropOffCreepSource` Footprint:2213) and the
+/// crawlers' `Fogged` (`Footprint2x2Creep2` Footprint:1217). Every other structure refuses none.
+const SC2_PLACEMENT_EXCLUDES: [(&str, sim_types::PlacementFlag, &str); 9] = [
+    (
+        "Command Center",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:10380",
+    ),
+    (
+        "Orbital Command",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:10526",
+    ),
+    (
+        "Planetary Fortress",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:10664",
+    ),
+    (
+        "Nexus",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:4187",
+    ),
+    (
+        "Hatchery",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:8211",
+    ),
+    (
+        "Lair",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:8293",
+    ),
+    (
+        "Hive",
+        sim_types::PlacementFlag::NearResources,
+        "liberty UnitData:8373",
+    ),
+    (
+        "Spine Crawler",
+        sim_types::PlacementFlag::Fogged,
+        "liberty UnitData:8618",
+    ),
+    (
+        "Spore Crawler",
+        sim_types::PlacementFlag::Fogged,
+        "liberty UnitData:8752",
+    ),
+];
+
+#[test]
+fn the_shipped_flag_sets() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut structures = 0;
+    let mut flagged = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes() {
+        if !is_structure(archetype) {
+            assert!(
+                archetype.placement_excludes.is_empty(),
+                "{} is mobile",
+                archetype.slug
+            );
+            continue;
+        }
+        structures += 1;
+        let name = analogue(archetype);
+        let expected = SC2_PLACEMENT_EXCLUDES
+            .iter()
+            .find(|(analogue, ..)| *analogue == name)
+            .map_or(sim_types::PlacementFlags::empty(), |(_, flag, _)| {
+                flag.bit()
+            });
+        assert_eq!(archetype.placement_excludes, expected, "{name}");
+        if !expected.is_empty() {
+            flagged.insert(name.to_owned());
+        }
+    }
+    assert_eq!(structures, 49, "every structure row is checked");
+    assert_eq!(flagged.len(), SC2_PLACEMENT_EXCLUDES.len(), "{flagged:?}");
+}

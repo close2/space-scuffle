@@ -324,6 +324,12 @@
 // from its goal, keeps walking at tick 44 where its walk used to end on the room its retreat
 // made (D-1). Proof: a scratch build of WP3 with D-1 off, `flank_retreat` unhashed and schema
 // 30 reproduces the previous checksums at every checkpoint.
+// Re-recorded for plan 2026-11-19-footprint-flags WP4 (B-139, D-8): the gas node of slot 1 on
+// default_arena moves from (48, 56) to (50, 56), out of the NearResources reach of its start's town
+// hall. Node positions are hashed, so every checkpoint changed; no behaviour did. Proof: a scratch
+// build that hashes each moved node at its old cell reproduces every checksum recorded before, and
+// the checksum without the resources section is identical on every one of the 1000 ticks with the
+// old and the moved map.
 (
     checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
@@ -351,25 +357,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xa08848e1b44e3859,
-        0xbb5bb963a878a603,
-        0xe90b33fd925756d9,
-        0xd708959a99a9640d,
-        0x72860ae262f456fa,
-        0x89c71afb2f658532,
-        0xcdf61288b15f9174,
-        0x9e91aaac82b69404,
-        0xadbed1ed05f287de,
-        0x21bacecca067bdeb,
-        0x268cd7cfde896214,
-        0xf89c2dfa7aa05321,
-        0xbdaee2d8de7bc832,
-        0x8585dcf19795560a,
-        0x50fd6bb13994705e,
-        0xeccde5435d341db3,
-        0x51db11382f73cbed,
-        0x780a27f319f2e690,
-        0x8e3fb7d7654bf26a,
-        0x38062afe5ca87b2d,
+        0x419e7fc8e9e9455b,
+        0xdd8ae41f9815f47b,
+        0xe9a4a96f5c1b886e,
+        0xa130beb5ecaf30ab,
+        0xe18c86d53521415b,
+        0xc1a50ac3f22cbb34,
+        0xdb6fa3a29c3559fd,
+        0xe2cfb0a2ba23bba0,
+        0x1b652bb0468c59ae,
+        0xd61e9b954fdb6ff9,
+        0x0cbcbdeb17c979a0,
+        0x9bab42d7ef9a6656,
+        0xc434388a4fcfdde0,
+        0x4af13667de27d3fc,
+        0x91658e348e03a598,
+        0xfe593d9c88c1ab16,
+        0xfabbe9de8d5ec7fb,
+        0xa3b1be0fa61757b2,
+        0xcc8cf64d32cbf295,
+        0xa133bb0731764e21,
     ],
 )

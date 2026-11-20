@@ -26,6 +26,7 @@ pub mod errors;
 pub mod footprint;
 pub mod ids;
 pub mod math;
+pub mod placement;
 pub mod player_view;
 pub mod presentation;
 mod sin_table;
@@ -57,6 +58,7 @@ pub use ids::{
     ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,
 };
 pub use math::{SimAngle, SimScalar, SimVec2};
+pub use placement::{PlacementFlag, PlacementFlags};
 pub use player_view::{
     AbilityLockView, CarrierView, CastStateView, CommandOptionView, CommandSubject, ModeStateView,
     OptionLock, PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView,

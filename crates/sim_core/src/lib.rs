@@ -104,6 +104,12 @@ pub(crate) mod test_support {
             ))
             .expect("invariant: the shipped movement_rules.ron is valid"),
         );
+        units.set_placement_rules(
+            crate::catalog::PlacementRules::from_ron_str(include_str!(
+                "../../../assets/catalog/placement_rules.ron"
+            ))
+            .expect("invariant: the shipped placement_rules.ron is valid"),
+        );
         units
             .set_spell_catalog(
                 crate::catalog::SpellCatalog::from_ron_strs(

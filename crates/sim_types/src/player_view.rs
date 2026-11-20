@@ -279,6 +279,12 @@ pub enum SiteRefusal {
     CoversResource,
     /// An extractor must stand on a gas node and on no mineral node.
     ExtractorNeedsGas,
+    /// A cell of the footprint lies within reach of a resource node, which the structure refuses
+    /// (5.0.14 `NearResources`; plan `2026-11-19-footprint-flags` D-4).
+    NearResources,
+    /// A cell of the footprint is not in the viewer's sight now, which the structure refuses
+    /// (5.0.14 `Fogged`).
+    NotVisible,
 }
 
 #[cfg(test)]

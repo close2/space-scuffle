@@ -25,15 +25,16 @@ use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId,
-    FootprintShape, HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
-    SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
-    WeaponVisualKind,
+    FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
+    ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashLine,
+    SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, TurretIdle, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
 mod factions;
 mod movement_rules;
+mod placement_rules;
 mod runtime;
 mod spells;
 mod targeting;
@@ -42,6 +43,7 @@ mod validation;
 pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use movement_rules::{MovementRules, MAX_LANE_TOLERANCE_PERMILLE};
+pub use placement_rules::{PlacementRules, ResourceReach, MAX_REACH_SIDE};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 pub use spells::{
     min_missile_speed, CatalogError, EffectFacts, EffectNode, FlatNode, ResolvedFilter,
@@ -263,6 +265,11 @@ pub struct UnitArchetype {
     /// simulation never reads it and no entity copies it, so it is not hashed.
     #[serde(default)]
     pub effects: ArchetypeEffects,
+    /// The placement flags this structure's site refuses beyond the rules every structure shares
+    /// (5.0.14's placement footprint `Check` layer, plan `2026-11-19-footprint-flags` D-2). Empty
+    /// for a mobile unit and for most structures.
+    #[serde(default)]
+    pub placement_excludes: PlacementFlags,
 }
 
 impl UnitArchetype {
@@ -398,6 +405,7 @@ pub struct UnitCatalog {
     slug_index: OnceLock<Vec<(String, usize)>>,
     factions: FactionCatalog,
     movement_rules: MovementRules,
+    placement_rules: PlacementRules,
     spells: Arc<SpellCatalog>,
 }
 
@@ -419,6 +427,7 @@ impl UnitCatalog {
             slug_index: OnceLock::new(),
             factions: factions.clone(),
             movement_rules: MovementRules::PER_UNIT,
+            placement_rules: PlacementRules::NONE,
             spells: Arc::new(SpellCatalog::default()),
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
@@ -446,6 +455,20 @@ impl UnitCatalog {
     /// Replaces the movement rules this catalog carries into the world.
     pub fn set_movement_rules(&mut self, rules: MovementRules) {
         self.movement_rules = rules;
+    }
+
+    /// The placement rules of `placement_rules.ron`: the reach of each resource kind (plan
+    /// `2026-11-19-footprint-flags` D-2). [`PlacementRules::NONE`] until
+    /// [`Self::set_placement_rules`] replaces them; [`RuntimeCatalogs::load_from_directory`]
+    /// always loads them from the file.
+    #[must_use]
+    pub const fn placement_rules(&self) -> &PlacementRules {
+        &self.placement_rules
+    }
+
+    /// Replaces the placement rules this catalog carries into the world.
+    pub fn set_placement_rules(&mut self, rules: PlacementRules) {
+        self.placement_rules = rules;
     }
 
     /// The statuses and effect trees of `statuses.ron` and `ability_effects.ron` (plan
@@ -1615,6 +1638,7 @@ impl UnitArchetypeDef {
             armor_class,
             modes,
             effects: self.effects,
+            placement_excludes: PlacementFlags::empty(),
         })
     }
 }
@@ -1690,6 +1714,11 @@ struct StructureArchetypeDef {
     /// so a catalog written before the field fails to load; every value a multiple of 1/4, the
     /// box inside the cells, and the chamfer shorter than the smaller half-extent.
     pub footprint_shape: FootprintShapeDef,
+    /// The placement flags the structure's 5.0.14 placement footprint `Check` layer refuses beyond
+    /// the defaults every structure shares (plan `2026-11-19-footprint-flags` D-1, D-2): a town
+    /// hall refuses `NearResources`, the Spine and Spore Crawlers refuse `Fogged`. Required, so a
+    /// catalog written before the field fails to load; no flag twice.
+    pub placement_excludes: Vec<PlacementFlag>,
     /// Mineral resource cost.
     pub mineral_cost: u32,
     /// Vespene gas resource cost.
@@ -1891,6 +1920,7 @@ impl StructureArchetypeDef {
             armor_class: None,
             modes: Vec::new(),
             effects: self.effects,
+            placement_excludes: PlacementFlags::of(&self.placement_excludes),
         })
     }
 }

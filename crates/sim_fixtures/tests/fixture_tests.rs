@@ -150,6 +150,10 @@ fn embedded_catalogs_are_the_shipped_files() -> Result<(), Box<dyn Error>> {
         embedded.units.movement_rules(),
         on_disk.units.movement_rules()
     );
+    assert_eq!(
+        embedded.units.placement_rules(),
+        on_disk.units.placement_rules()
+    );
     assert_eq!(embedded.units.spells(), on_disk.units.spells());
     assert_eq!(
         embedded
