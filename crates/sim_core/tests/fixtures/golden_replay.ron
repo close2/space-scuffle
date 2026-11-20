@@ -340,6 +340,13 @@
 // scratch build of the merged tree with `rounding` forced false reproduces footprint-flags WP4's
 // checksums at every checkpoint, and its entity states equal those of that build before the moved
 // geyser on every one of the 1000 ticks.
+// Re-recorded for plan 2026-11-20-resource-footprints WP3 (B-147, D-10): default_arena's mineral
+// lines and the gas nodes (11, 11) and (55, 56) are re-laid for 2x1 fields and 3x3 geysers, clear
+// of this replay's halls at (6, 6) and (52, 52). Node positions are hashed, so every checkpoint
+// changed; no behaviour did. Proof: the checksum that ends after the route groups (entities,
+// projectiles, players, effects, route groups; a scratch switch, not committed) is identical on
+// all 20 checkpoints on e58f1af1 with the old map and on this tree with the re-laid one. Native
+// debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
     checksum_schema: 31,
     seed: 0x5EED_0F_5CAFF1E,
@@ -367,25 +374,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x419e7fc8e9e9455b,
-        0xdd8ae41f9815f47b,
-        0xe9a4a96f5c1b886e,
-        0xa130beb5ecaf30ab,
-        0xe18c86d53521415b,
-        0xb12dc5f766cf1186,
-        0xdb6fa3a29c3559fd,
-        0xdf56cbab3917d10f,
-        0x28222da9532547ce,
-        0x8f5b4afcb1606732,
-        0xd1423c70ba490b6c,
-        0x56af25ead4298b5c,
-        0x1a05404d8630fc8f,
-        0x8ec4fde20a8cf3b2,
-        0xd7f4de49a495c98c,
-        0xab72264ce5dc3bc2,
-        0xc7a9c131deff88ad,
-        0xd3fc4cd7a1a4c6a3,
-        0xca062854a51445d3,
-        0x472459263f54fbfc,
+        0x780c84c77f8f004b,
+        0x93103c5a12dbb610,
+        0xcf0d10e0fccb9dfd,
+        0xa6004af522db19b4,
+        0x12e54c044ce7c31e,
+        0x9de9e6146b950d3e,
+        0x3bb2e45380585288,
+        0x7e8db0a0f51b011d,
+        0x069a8e3727538208,
+        0x5faaf42f100a083b,
+        0x9638779d3bc47207,
+        0x932a546e4fcb9f4a,
+        0x3e16a2b07abe1844,
+        0xea11ad90b5928d55,
+        0xab1e7858c1a517a8,
+        0x6ace5c8d4b696c01,
+        0xee7015c6c64df4cb,
+        0x670578a7a9757f0f,
+        0xd07df9e9a46354c0,
+        0xfc7b14ec8a5dae1b,
     ],
 )

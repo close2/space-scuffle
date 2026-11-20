@@ -1195,6 +1195,22 @@ fn a_hidden_exhausted_node_stays_pickable_and_the_worker_finds_out_on_arrival() 
     );
 
     // A node seen empty offers nothing, whatever stands around it.
+    // The re-laid line (plan `2026-11-20-resource-footprints` D-10) has fields 3 cells east of
+    // the one the worker learns is empty from where it stops, beyond its sight; walk it to the
+    // line's middle so it sees them all.
+    let middle = line.iter().fold(Vec2::ZERO, |sum, node| {
+        let at = billboard_position(&harness, *node);
+        sum + Vec2::new(at.x, at.z)
+    }) / line.len() as f32;
+    let stand = harness.open_ground(middle, 4.0);
+    submit(
+        &mut harness,
+        LOCAL_PLAYER,
+        &[worker],
+        UnitOrder::Move {
+            target: sim_position(stand),
+        },
+    );
     run_until(&mut harness, "the whole line is seen", |harness| {
         line.iter().all(|node| !billboard_drawn(harness, *node))
     });

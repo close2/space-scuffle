@@ -1255,3 +1255,177 @@ fn every_shipped_gas_node_takes_an_extractor() {
     }
     assert!(checked > 0);
 }
+
+/// The cells a node takes on its map by the shipped resource footprints (plan
+/// `2026-11-20-resource-footprints` D-1): `(left, bottom, width, height)`.
+fn node_cells(
+    footprints: &sim_map::ResourceFootprints,
+    kind: ResourceKind,
+    anchor: (u32, u32),
+) -> (i64, i64, i64, i64) {
+    let footprint = footprints
+        .get(kind)
+        .expect("every resource kind has a footprint");
+    let (dx, dy, width, height) = footprint.cells;
+    (
+        i64::from(anchor.0) + i64::from(dx),
+        i64::from(anchor.1) + i64::from(dy),
+        i64::from(width),
+        i64::from(height),
+    )
+}
+
+/// Whether two cell rectangles `(left, bottom, width, height)` share a cell.
+fn rectangles_meet(a: (i64, i64, i64, i64), b: (i64, i64, i64, i64)) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+}
+
+/// Plan `2026-11-20-resource-footprints` WP3 (guard, D-4, D-10): every node of every shipped map
+/// fits its 5.0.14 footprint: in bounds, on walkable, buildable, non-ramp cells of its anchor's
+/// cliff level, overlapping no other node and no start footprint, with a walkable cell beside it
+/// outside every footprint. (`sim_map::validation::validate_resource_footprints`, WP4, makes the
+/// same checks; this guard holds the maps from WP3 on.)
+#[test]
+fn every_shipped_resource_footprint_fits() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let footprints = catalogs.units.placement_rules().resource_footprints();
+    let mut checked = 0;
+    for (name, doc) in shipped_maps() {
+        let map = doc.to_game_map().expect("a shipped map converts");
+        let rects: Vec<_> = doc
+            .resources
+            .iter()
+            .map(|node| node_cells(footprints, node.kind, node.cell))
+            .collect();
+        let starts: Vec<_> = doc
+            .start_locations
+            .iter()
+            .map(|start| {
+                (
+                    i64::from(start.cell.0),
+                    i64::from(start.cell.1),
+                    i64::from(start.footprint.0),
+                    i64::from(start.footprint.1),
+                )
+            })
+            .collect();
+        let in_any = |x: i64, y: i64| {
+            rects
+                .iter()
+                .chain(&starts)
+                .any(|&r| rectangles_meet(r, (x, y, 1, 1)))
+        };
+        for (index, (node, &rect)) in doc.resources.iter().zip(&rects).enumerate() {
+            let at = |x: i64, y: i64| {
+                u32::try_from(x)
+                    .ok()
+                    .zip(u32::try_from(y).ok())
+                    .and_then(|(x, y)| map.cell(x, y).ok())
+            };
+            let level = at(i64::from(node.cell.0), i64::from(node.cell.1))
+                .expect("an anchor is on the map")
+                .cliff_level;
+            for y in rect.1..rect.1 + rect.3 {
+                for x in rect.0..rect.0 + rect.2 {
+                    let cell = at(x, y);
+                    assert!(
+                        cell.is_some(),
+                        "{name}: node {index} cell ({x}, {y}) off the map"
+                    );
+                    let cell = cell.expect("invariant: asserted on the map above");
+                    assert!(
+                        cell.flags
+                            .contains(CellFlags::GROUND_PATHABLE | CellFlags::BUILDABLE)
+                            && cell.ramp.is_none()
+                            && cell.cliff_level == level,
+                        "{name}: node {index} at {:?} cell ({x}, {y}) is not open ground of its level",
+                        node.cell
+                    );
+                }
+            }
+            for (other, &other_rect) in rects.iter().enumerate().skip(index + 1) {
+                assert!(
+                    !rectangles_meet(rect, other_rect),
+                    "{name}: nodes {index} and {other} overlap"
+                );
+            }
+            for (slot, &start) in starts.iter().enumerate() {
+                assert!(
+                    !rectangles_meet(rect, start),
+                    "{name}: node {index} lies under start {slot}"
+                );
+            }
+            let beside = (rect.1 - 1..=rect.1 + rect.3).any(|y| {
+                (rect.0 - 1..=rect.0 + rect.2).any(|x| {
+                    !in_any(x, y)
+                        && at(x, y).is_some_and(|cell| {
+                            cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                                && cell.cliff_level == level
+                        })
+                })
+            });
+            assert!(
+                beside,
+                "{name}: node {index} has no walkable cell beside it"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 20, "every node of both maps was checked");
+}
+
+/// The structures a golden replay fixture spawns before it starts.
+#[derive(serde::Deserialize)]
+struct FixtureStructures {
+    structures: Vec<FixtureStructure>,
+}
+
+/// One spawned structure of a fixture.
+#[derive(serde::Deserialize)]
+struct FixtureStructure {
+    slug: String,
+    cell: (u32, u32),
+}
+
+/// Plan `2026-11-20-resource-footprints` WP3 (guard, T8, D-10): no structure the golden replays
+/// spawn on `default_arena` stands on a node's cells. (Fixture structures are spawned without the
+/// flag check; `golden_replay`'s hall at (6, 6) lies in the 8 × 7 ring of the field at (4, 3),
+/// recorded in the WP3 commit.)
+#[test]
+fn no_golden_structure_stands_on_a_node() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
+    let arena = MapFile::load(&resolve_path("../../assets/maps/default_arena.scmap.ron"))
+        .expect("the arena loads")
+        .decode()
+        .expect("the arena decodes");
+    let mut checked = 0;
+    for fixture in ["golden_replay.ron", "golden_replay_orders.ron"] {
+        let text = std::fs::read_to_string(resolve_path(&format!("tests/fixtures/{fixture}")))
+            .expect("the fixture reads");
+        let spawns: FixtureStructures = ron::from_str(&text).expect("the fixture parses");
+        for spawn in spawns.structures {
+            let arch = catalogs
+                .units
+                .archetypes()
+                .find(|arch| arch.slug == spawn.slug)
+                .expect("a fixture structure is in the catalog");
+            let (width, height) = arch.shape.footprint().expect("a structure has a footprint");
+            for y in spawn.cell.1..spawn.cell.1 + u32::from(height) {
+                for x in spawn.cell.0..spawn.cell.0 + u32::from(width) {
+                    for node in &arena.resources {
+                        let rect = node_cells(rules.resource_footprints(), node.kind, node.cell);
+                        assert!(
+                            !rectangles_meet(rect, (i64::from(x), i64::from(y), 1, 1)),
+                            "{fixture}: {} cell ({x}, {y}) on the node at {:?}",
+                            spawn.slug,
+                            node.cell
+                        );
+                    }
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 2, "golden_replay's two halls");
+}

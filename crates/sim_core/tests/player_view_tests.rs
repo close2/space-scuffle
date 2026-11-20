@@ -879,7 +879,11 @@ fn preview_judges_public_terrain_and_nodes_at_any_range() -> TestResult {
         world.preview_site(HOME, extractor, TRAINING_SITE.0, TRAINING_SITE.1),
         Err(SiteRefusal::ExtractorNeedsGas)
     );
-    assert!(world.preview_site(HOME, extractor, 13, 5).is_ok());
+    // An extractor centred on a home gas node (the node cell is read from the map; plan
+    // `2026-11-20-resource-footprints` D-10 re-laid the showcase's geysers behind the bases).
+    let gas = nodes_of_side(&world, true, ResourceKind::Gas)[0];
+    let (gx, gy) = world.map.resources()[gas.0 as usize].cell;
+    assert!(world.preview_site(HOME, extractor, gx - 1, gy - 1).is_ok());
     Ok(())
 }
 
