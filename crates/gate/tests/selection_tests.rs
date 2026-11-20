@@ -133,7 +133,7 @@ fn gpu_binaries(repo: &Repo) -> BTreeSet<TargetId> {
 }
 
 /// A floor under [`gpu_binaries`], so an empty or truncated catalog cannot pass vacuously:
-/// 21 client GPU binaries and 3 in `client_diagnostics` when this was written.
+/// 25 client GPU binaries and 3 in `client_diagnostics` (28 in all) on 2026-11-20.
 const MIN_GPU_BINARIES: usize = 20;
 
 /// Asserts that `selection` runs exactly the workspace's GPU binaries, and that there are enough

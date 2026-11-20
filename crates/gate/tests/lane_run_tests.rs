@@ -332,6 +332,71 @@ fn three_lanes_overlap_and_each_target_writes_only_its_own_log() -> Result<(), G
     Ok(())
 }
 
+/// The start and end of `name`'s run, from its lane record.
+fn span_of(outcome: &LaneOutcome, name: &str) -> (Duration, Duration) {
+    let result = result_of(outcome, name);
+    let record = result
+        .lane
+        .as_ref()
+        .unwrap_or_else(|| panic!("{name} ran on a lane"));
+    (record.start, record.start + result.wall)
+}
+
+/// Plan `2026-11-20-gpu-lane` D-1 and D-2 with real processes: a valgrind fake and a GPU fake
+/// overlap while no general fake overlaps the valgrind one, and once the general queue is empty
+/// a second GPU fake runs on a general lane, which `lanes.tsv` names `GPU2`.
+#[test]
+fn valgrind_runs_beside_the_gpu_lane_and_a_second_gpu_job_follows_the_general_work() {
+    let sandbox = Sandbox::new(&[
+        fake("v", 1_500),
+        fake("g1", 3_000),
+        fake("g2", 800),
+        fake("a", 500),
+    ]);
+    let class_job = |name: &str, class: TestClass, seconds: u64| Job {
+        class,
+        ..job(name, seconds, Some(10))
+    };
+    let jobs = vec![
+        class_job("v", TestClass::Valgrind, 2),
+        class_job("g1", TestClass::Gpu, 3),
+        class_job("g2", TestClass::Gpu, 1),
+        class_job("a", TestClass::Slow, 1),
+    ];
+    let outcome = run_targets(
+        &sandbox.lane_run(None),
+        Scheduler::new(3, jobs, MemoryLimits::UNLIMITED),
+    );
+    assert!(outcome.results.iter().all(|r| r.outcome == Outcome::Passed));
+    let (v, g1, g2, a) = (
+        span_of(&outcome, "v"),
+        span_of(&outcome, "g1"),
+        span_of(&outcome, "g2"),
+        span_of(&outcome, "a"),
+    );
+    assert!(
+        g1.0 < v.1 && v.0 < g1.1,
+        "the GPU fake runs during the valgrind fake: {v:?} {g1:?}"
+    );
+    assert!(a.0 >= v.1, "no general fake beside valgrind: {v:?} {a:?}");
+    assert!(g2.0 >= v.1, "{v:?} {g2:?}");
+    assert!(
+        g2.0 < g1.1,
+        "the second GPU fake starts while the first runs: {g1:?} {g2:?}"
+    );
+    let tsv = lanes_tsv(&outcome.results);
+    let lane = |name: &str| {
+        tsv.lines()
+            .find(|line| line.starts_with(&format!("fake/{name}\t")))
+            .and_then(|line| line.split('\t').nth(1))
+            .map(str::to_string)
+    };
+    assert_eq!(lane("v").as_deref(), Some("V"), "{tsv}");
+    assert_eq!(lane("g1").as_deref(), Some("GPU"), "{tsv}");
+    assert_eq!(lane("g2").as_deref(), Some("GPU2"), "{tsv}");
+    assert_eq!(lane("a").as_deref(), Some("L1"), "{tsv}");
+}
+
 #[test]
 fn the_peak_of_a_process_tree_counts_a_grandchild_in_another_process_group() {
     let sandbox = Sandbox::new(&[Fake {
@@ -685,8 +750,12 @@ fn every_executable_receives_the_run_ledger() -> Result<(), GateError> {
     labels.sort_unstable();
     assert_eq!(labels, ["first-child", "second-child"]);
     assert_eq!(children.unreadable, 0);
-    assert!(children
-        .render()
-        .contains("GPU children, slowest first (2 of 2"));
+    let block = children.render(Some(outcome.wall));
+    assert!(block.contains("GPU children, slowest first (2 of 2"));
+    // Plan 2026-11-20-gpu-lane D-4: each fake held the GPU 1.0 s.
+    assert!(
+        block.contains("GPU occupancy: the children held the GPU 2.0 s of a "),
+        "{block}"
+    );
     Ok(())
 }
