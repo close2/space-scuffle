@@ -1736,7 +1736,7 @@ mod tests {
                 )
                 .normalize_or_zero();
                 let mut discs = Vec::new();
-                while discs.len() < rng.gen_range::<usize, _>(1..=3) {
+                while discs.len() < usize::try_from(rng.gen_range::<u32, _>(1..=3)).unwrap_or(1) {
                     let offset = SimVec2::new(
                         SimScalar::from_raw(rng.gen_range::<i64, _>(-(1 << 32)..(1 << 32))),
                         SimScalar::from_raw(rng.gen_range::<i64, _>(-(1 << 32)..(1 << 32))),
