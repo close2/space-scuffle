@@ -932,3 +932,29 @@ tick 1. Minerals alone keep every winner, and a far node changes nothing. The pl
    obstacles) records the measured rise as its baseline. I decide on the figures at hand-back, without loosening
    any other rule.
 4. Then WP6 to WP8 as written.
+
+## Amendment 2 (orchestrator, 2026-11-20): the geysers go to the base corners
+
+**Why.** Amendment 1's cells, slot 1 at (59, 62) and its mirror at (4, 1), still change the mesh beside the route
+slot 1's army takes round the north of its hall. The geysers alone flip the default seed and make seeds 1, 3 and 8
+draws; minerals alone keep every winner (proposed amendment 2 on `resource-footprints-wp5-wip`).
+
+The probe with the geysers in the base corners keeps all nine winners. Its seeds end within a few ticks of the
+"geysers not placed" control, so in the corners the geysers stay out of every army's route. That is the property
+D-10's "behind the base" meant.
+
+**Decision: option 1, the corner cells.**
+
+- **Slot 1's geysers** go to (53, 62) and (62, 62); **slot 0's** to (10, 1) and (1, 1). The map stays
+  point-symmetric.
+- **Proof the corners keep geysers out of the routes:** the geysers-not-placed control is part of WP5's
+  measurement, and it must stay within a few ticks of the full run on every seed. Record that comparison as the
+  evidence.
+- **Unchanged:**
+  - the full WP5 re-measure against the WP4 base;
+  - the D-10 guards;
+  - the `SHOWCASE_RESOURCE_MESH_DIGEST` re-pin with its proof;
+  - the tests' training site moved off (1, 1)'s 3×3.
+- **The winner rule stands.** If it breaches again, land WP5 with minerals only (option 2), and give the geysers
+  their own layout study in a later package. Stop and report rather than trying further cells.
+- Q0091's context names the final cells.
