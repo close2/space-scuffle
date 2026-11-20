@@ -286,3 +286,8 @@ within 0.3 % on every scenario (showcase +0.29 %).
 The showcase did not move (bit-identical `units.csv` on nine seeds), so no storyboard check is needed. Open
 confirmation item: a wall-clock throughput run on a quiet host (the decision rests on instructions retired, as
 funnel-fallbacks Amendment 1 settled for this host).
+
+**After merging `main` `fd750285`** (plan `2026-11-19-parked-body-aim`, showcase reversals 174 → 132): the battle set
+built from this branch is bit-identical to one built from `fd750285` (matrix, battles 33 and 31, the showcase on nine
+seeds), and `validation_golden_tests` passes with both path pins in native debug and release and `wasm32-wasip1`
+release and debug.
