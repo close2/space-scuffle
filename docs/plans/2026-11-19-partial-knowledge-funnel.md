@@ -670,3 +670,24 @@ header. `sim_core` is untouched.
   per variant); `corpus-*.txt`, `oracle-*.txt` (layouts); `cases-*.txt`, `search-*.txt` (hand cases); `thr-*.txt`
   (throughput instructions).
 - The prototype worktree and its target directory were removed after measurement.
+
+## Amendment 1 (orchestrator, 2026-11-20): `Anchor::Pass` is an end for approach; one residual accepted; the tie rule stated
+
+**Why.** WP3 stopped on stop rule 9: the stress search has 11 fallbacks against the measured 10 (evidence, "WP3
+stopped"). Switching each part on and off traced the cause to the plan's own text. D-2 keeps `Anchor::Pass` out of
+`approached_at_an_end`, but the measured prototype used `Anchor::Point` there, which counts as an end. The extra
+route (K2/U4 offset (1, 1), r 0.75) already falls back on `main`.
+
+**Decision.**
+
+1. `Anchor::Pass` counts as an end in `approached_at_an_end`, and only there. That restores the measured 10 and
+   changes no other figure and neither pin. Rule 9's bound is not raised.
+2. **Residual accepted.** The per-cell contours case, layout 58 q 13, is accepted as a residual under rule 9's first
+   bullet. It is new against `main`, but the plan's adopted prototype has it too, so the rule and the measured
+   design contradicted each other. It is recorded in the evidence and in B-146's row.
+3. **Tie rule.** D-2 and D-7's tie wording is replaced by the measured order: a stable sort by `|t|` in vertex
+   order, with each disc's positive exit first. Both alternative readings were measured and are worse.
+4. **WP2's figures stand.** Its interim per-cell and stress-search fallbacks are recorded in the evidence. WP3
+   removes them.
+
+WP3 then lands from `partial-knowledge-funnel-wp3-wip`, with the four-build pin proof. WP4 and WP5 follow.
