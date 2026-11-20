@@ -96,7 +96,7 @@ macro_rules! integers {
         }
     )+};
 }
-integers!(u8, u16, u32, u64, u128, i8, i32, i64);
+integers!(u8, u16, u32, u64, u128, i8, i16, i32, i64);
 
 impl Canonical for bool {
     fn encode(&self, encoder: &mut Encoder) {
@@ -639,11 +639,34 @@ fields!(PlacedStructure {
     prior_flags,
     shape
 });
-fields!(FootprintShape {
-    half_width_q,
-    half_height_q,
-    chamfer_q
-});
+// A box encodes its three quarter-cell values, as the struct it was under schema 31. An outline
+// cannot yet stand in a world: nothing places one before plan `2026-11-20-resource-footprints`
+// WP5, which adds a leading variant tag to both forms under schema 32 (D-11). Until then an
+// outline encodes its vertex count and vertices behind a `u16::MAX` marker, a half width no box
+// in a valid footprint can have.
+impl Canonical for FootprintShape {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Box {
+                half_width_q,
+                half_height_q,
+                chamfer_q,
+            } => {
+                half_width_q.encode(encoder);
+                half_height_q.encode(encoder);
+                chamfer_q.encode(encoder);
+            }
+            Self::Outline(outline) => {
+                u16::MAX.encode(encoder);
+                encoder.length(outline.vertices().len());
+                for (x, y) in outline.vertices() {
+                    x.encode(encoder);
+                    y.encode(encoder);
+                }
+            }
+        }
+    }
+}
 fields!(ResourceNode {
     pos,
     kind,

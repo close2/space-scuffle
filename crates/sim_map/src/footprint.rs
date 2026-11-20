@@ -1,37 +1,42 @@
-//! Exact geometry of a placed structure's footprint shape (plan `2026-11-18-contour-footprints`
-//! D-2, D-6, D-7).
+//! Exact geometry of a placed footprint's shape (plans `2026-11-18-contour-footprints` D-2, D-6,
+//! D-7 and `2026-11-20-resource-footprints` D-2).
 //!
 //! # Responsibility
-//! A structure has two layers, as in `StarCraft` II 5.0.14: its footprint **cells** (the game's
-//! `Place` layer), which placement, construction and knowledge read, and its **shape** (the
-//! game's `Shape`), a box centred on the cells with 45° chamfered corners
-//! ([`sim_types::FootprintShape`]), which pathing reads. This module owns the shape's geometry
-//! once placed: its contour on the navigation mesh's quarter-cell lattice, and the exact
-//! containment, segment and capsule predicates the mesh labels, the clearance raster and the
-//! ground-movement rules use. [`StructureFootprint`] is what a caller places: the cells and the
-//! shape together.
+//! A footprint has two layers, as in `StarCraft` II 5.0.14: its **cells** (the game's `Place`
+//! layer), which placement, construction and knowledge read, and its **shape** (the game's
+//! `Shape`, [`sim_types::FootprintShape`]): a box centred on the cells with 45° chamfered
+//! corners, or an outline of up to 16 vertices. This module places every shape as one outline,
+//! [`PlacedFootprint`], on the navigation mesh's quarter-cell lattice and owns the exact
+//! containment, half-cell, segment and capsule predicates the mesh labels, the clearance raster
+//! and the ground-movement rules use. [`StructureFootprint`] is what a caller places: the cells
+//! and the shape together.
 //!
 //! # How it fits
 //! `GameMap::place_structure` validates a [`StructureFootprint`] and records the shape on the
-//! `PlacedStructure`. The navigation mesh cuts the contour (`navmesh/mod.rs`), the clearance field
-//! rasterises it (`pathfinding.rs`), and `sim_core`'s centre rule and unit placement test segments
-//! and discs against it.
+//! `PlacedStructure`, whose [`PlacedStructure::footprint`] places it here on demand. The
+//! navigation mesh cuts the outline (`navmesh/mod.rs`), the clearance field rasterises it
+//! (`pathfinding.rs`), and `sim_core`'s centre rule and unit placement test segments and discs
+//! against it.
 //!
 //! # Invariants
 //! - The shape lies in its cells and is centred on them: its centre is
 //!   `(4·left + 2·width, 4·bottom + 2·height)` in quarter cells, always a lattice point, so every
-//!   contour vertex is a lattice point.
-//! - Every predicate is exact integer arithmetic: containment on lattice coordinates scaled by an
-//!   integer, segments and capsules on the Q16 grid of the mesh's own segment predicate (`i128`,
-//!   `navmesh/predicates.rs`), so placement, routes and contact agree on the shape to that grid.
+//!   outline vertex is a lattice point.
+//! - A placed outline is simple, has 3 to 16 vertices, runs counter-clockwise, and every edge
+//!   runs along an axis or a diagonal (the mesh's unit-edge model, contour plan D-4). A `Box`
+//!   shape's outline is its 4 or 8 contour vertices, counter-clockwise from the east end of its
+//!   south face.
+//! - Every predicate is exact integer arithmetic: containment by the crossing-number test on
+//!   lattice coordinates scaled by an integer, segments and capsules on the Q16 grid of the mesh's
+//!   own segment predicate (`i128`, `navmesh/predicates.rs`), so placement, routes and contact
+//!   agree on the shape to that grid. For a `Box` each predicate returns what the box's closed
+//!   form returns (property-tested against those forms).
 
-use sim_types::{FootprintShape, SimScalar, SimVec2};
+use sim_types::{FootprintShape, SimScalar, SimVec2, QUARTER_OUTLINE_CAPACITY};
 
 use crate::error::{MapError, Result};
 use crate::grid::{GameMap, PlacedStructure};
-use crate::navmesh::predicates::{
-    segments_touch, segments_within, LatticePoint, QPoint, LATTICE_BITS, Q_BITS,
-};
+use crate::navmesh::predicates::{segments_touch, segments_within, LatticePoint, QPoint};
 use crate::navmesh::segment::radius_q;
 
 /// What a structure takes from the map when it is placed: its footprint cells and its pathing
@@ -57,22 +62,37 @@ impl StructureFootprint {
         }
     }
 
-    /// Checks that the shape lies in its cells and keeps every face: `0 < half_width ≤ width/2`,
-    /// `0 < half_height ≤ height/2` and `chamfer < min(half_width, half_height)`.
+    /// Checks that the shape lies in its cells and keeps every face. A box: `0 < half_width ≤
+    /// width/2`, `0 < half_height ≤ height/2` and `chamfer < min(half_width, half_height)`. An
+    /// outline: 3 to 16 vertices inside the cells, every edge of positive length along an axis or
+    /// a diagonal, and simple (no two edges meet except adjacent ones at their shared vertex).
     ///
     /// # Errors
     /// [`MapError::InvalidFootprintShape`] when it does not.
     pub fn validate(self) -> Result<()> {
-        let FootprintShape {
-            half_width_q,
-            half_height_q,
-            chamfer_q,
-        } = self.shape;
-        let fits = half_width_q > 0
-            && half_height_q > 0
-            && half_width_q <= 2 * u16::from(self.width)
-            && half_height_q <= 2 * u16::from(self.height)
-            && chamfer_q < half_width_q.min(half_height_q);
+        let fits = match self.shape {
+            FootprintShape::Box {
+                half_width_q,
+                half_height_q,
+                chamfer_q,
+            } => {
+                half_width_q > 0
+                    && half_height_q > 0
+                    && half_width_q <= 2 * u16::from(self.width)
+                    && half_height_q <= 2 * u16::from(self.height)
+                    && chamfer_q < half_width_q.min(half_height_q)
+            }
+            FootprintShape::Outline(outline) => {
+                let (hw, hh) = (2 * i32::from(self.width), 2 * i32::from(self.height));
+                let vertices: Vec<LatticePoint> = outline
+                    .vertices()
+                    .iter()
+                    .map(|&(x, y)| LatticePoint::new(i32::from(x), i32::from(y)))
+                    .collect();
+                vertices.iter().all(|v| v.x.abs() <= hw && v.y.abs() <= hh)
+                    && outline_is_simple(&vertices)
+            }
+        };
         if fits {
             Ok(())
         } else {
@@ -85,13 +105,133 @@ impl StructureFootprint {
     }
 }
 
-/// Q16 units per lattice unit.
-const Q_PER_LATTICE: u32 = Q_BITS - LATTICE_BITS;
+/// Whether `vertices` form a simple polygon of 3 to 16 vertices whose edges each have positive
+/// length and run along an axis or a diagonal.
+fn outline_is_simple(vertices: &[LatticePoint]) -> bool {
+    let count = vertices.len();
+    if !(3..=QUARTER_OUTLINE_CAPACITY).contains(&count) {
+        return false;
+    }
+    let edge = |i: usize| (vertices[i].to_q(), vertices[(i + 1) % count].to_q());
+    let on_segment =
+        |point: QPoint, (from, to): (QPoint, QPoint)| segments_touch(point, point, from, to);
+    for i in 0..count {
+        let (from, to) = (vertices[i], vertices[(i + 1) % count]);
+        let (dx, dy) = (to.x - from.x, to.y - from.y);
+        if (dx, dy) == (0, 0) || !(dx == 0 || dy == 0 || dx.abs() == dy.abs()) {
+            return false;
+        }
+        // The next edge shares only the vertex between them: neither folds back over the other.
+        let next = edge((i + 1) % count);
+        if on_segment(next.1, edge(i)) || on_segment(edge(i).0, next) {
+            return false;
+        }
+        for j in i + 2..count {
+            if i == 0 && j == count - 1 {
+                continue;
+            }
+            let (first, second) = (edge(i), edge(j));
+            if segments_touch(first.0, first.1, second.0, second.1) {
+                return false;
+            }
+        }
+    }
+    true
+}
 
-impl PlacedStructure {
+/// Where a point lies relative to a closed outline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Location {
+    /// In the open interior.
+    Inside,
+    /// On an edge or a vertex.
+    Boundary,
+    /// Outside the closed outline.
+    Outside,
+}
+
+/// A footprint's shape placed on the lattice: its cells and its outline (plan
+/// `2026-11-20-resource-footprints` D-2). Built from a validated [`StructureFootprint`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlacedFootprint {
+    /// Bottom-left (minimum X, minimum Y) cell.
+    pub top_left: (u32, u32),
+    /// Width in cells.
+    pub width: u8,
+    /// Height in cells.
+    pub height: u8,
+    /// The outline's lattice points, counter-clockwise; slots at or past `count` are unused.
+    outline: [LatticePoint; QUARTER_OUTLINE_CAPACITY],
+    /// How many outline slots are used.
+    count: u8,
+}
+
+impl PlacedFootprint {
+    /// Places `footprint` with its bottom-left cell at `top_left`. The footprint must already be
+    /// valid ([`StructureFootprint::validate`]); a placed structure's always is.
+    #[must_use]
+    pub fn new(top_left: (u32, u32), footprint: StructureFootprint) -> Self {
+        let axis = |low: u32, size: u8| {
+            i32::try_from(4 * i64::from(low) + 2 * i64::from(size)).unwrap_or(i32::MAX)
+        };
+        let centre = LatticePoint::new(
+            axis(top_left.0, footprint.width),
+            axis(top_left.1, footprint.height),
+        );
+        let at = |dx: i32, dy: i32| LatticePoint::new(centre.x + dx, centre.y + dy);
+        let mut outline = [centre; QUARTER_OUTLINE_CAPACITY];
+        let count = match footprint.shape {
+            FootprintShape::Box {
+                half_width_q,
+                half_height_q,
+                chamfer_q,
+            } => {
+                let (hw, hh, c) = (
+                    i32::from(half_width_q),
+                    i32::from(half_height_q),
+                    i32::from(chamfer_q),
+                );
+                let vertices: &[LatticePoint] = if c == 0 {
+                    &[at(hw, -hh), at(hw, hh), at(-hw, hh), at(-hw, -hh)]
+                } else {
+                    &[
+                        at(hw - c, -hh),
+                        at(hw, -hh + c),
+                        at(hw, hh - c),
+                        at(hw - c, hh),
+                        at(-hw + c, hh),
+                        at(-hw, hh - c),
+                        at(-hw, -hh + c),
+                        at(-hw + c, -hh),
+                    ]
+                };
+                outline[..vertices.len()].copy_from_slice(vertices);
+                vertices.len()
+            }
+            FootprintShape::Outline(quarters) => {
+                let vertices = quarters.vertices();
+                for (slot, &(x, y)) in outline.iter_mut().zip(vertices) {
+                    *slot = at(i32::from(x), i32::from(y));
+                }
+                let used = &mut outline[..vertices.len()];
+                if signed_area_twice(used) < 0 {
+                    used.reverse();
+                }
+                vertices.len()
+            }
+        };
+        Self {
+            top_left,
+            width: footprint.width,
+            height: footprint.height,
+            outline,
+            count: u8::try_from(count).unwrap_or(0),
+        }
+    }
+
     /// The centre of the shape in lattice units (quarter cells): the centre of the cells.
     #[must_use]
-    pub fn shape_centre(&self) -> LatticePoint {
+    pub fn centre(&self) -> LatticePoint {
         let axis = |low: u32, size: u8| {
             i32::try_from(4 * i64::from(low) + 2 * i64::from(size)).unwrap_or(i32::MAX)
         };
@@ -101,72 +241,45 @@ impl PlacedStructure {
         )
     }
 
-    /// The shape's vertices, counter-clockwise from the east end of its south face, and how many
-    /// of the eight slots are used: 8 for a chamfered shape, 4 for a full box.
+    /// The outline's vertices, counter-clockwise (module invariants).
     #[must_use]
-    pub fn contour(&self) -> ([LatticePoint; 8], usize) {
-        let centre = self.shape_centre();
-        let (hw, hh, c) = (
-            i32::from(self.shape.half_width_q),
-            i32::from(self.shape.half_height_q),
-            i32::from(self.shape.chamfer_q),
-        );
-        let at = |dx: i32, dy: i32| LatticePoint::new(centre.x + dx, centre.y + dy);
-        if c == 0 {
-            let corners = [at(hw, -hh), at(hw, hh), at(-hw, hh), at(-hw, -hh)];
-            return (
-                [
-                    corners[0], corners[1], corners[2], corners[3], corners[0], corners[1],
-                    corners[2], corners[3],
-                ],
-                4,
-            );
-        }
-        (
-            [
-                at(hw - c, -hh),
-                at(hw, -hh + c),
-                at(hw, hh - c),
-                at(hw - c, hh),
-                at(-hw + c, hh),
-                at(-hw, hh - c),
-                at(-hw, -hh + c),
-                at(-hw + c, -hh),
-            ],
-            8,
-        )
+    pub fn contour(&self) -> &[LatticePoint] {
+        &self.outline[..usize::from(self.count)]
     }
 
     /// Whether the point `(x, y) / scale`, in lattice units, lies in the shape's open interior.
     /// Exact for any positive integer `scale`: the mesh labels pass a triangle's vertex sum with
-    /// scale 3 (its centroid).
+    /// scale 3 (its centroid), and its interior cell lines a unit edge's doubled midpoint with
+    /// scale 2.
     #[must_use]
     pub fn contains_open_scaled(&self, x: i64, y: i64, scale: i64) -> bool {
-        let centre = self.shape_centre();
-        let dx = (x - scale * i64::from(centre.x)).abs();
-        let dy = (y - scale * i64::from(centre.y)).abs();
-        let (hw, hh, c) = self.extents();
-        dx < scale * hw && dy < scale * hh && dx + dy < scale * (hw + hh - c)
+        let scale = i128::from(scale);
+        self.locate((i128::from(x), i128::from(y)), |v| {
+            (i128::from(v.x) * scale, i128::from(v.y) * scale)
+        }) == Location::Inside
     }
 
     /// Whether the open half-cell whose south-west corner is the half-cell lattice point
-    /// `(hx, hy)` (world `(hx/2, hy/2)`) meets the shape's open interior. Two convex polygons'
-    /// interiors meet iff no edge direction of either separates them, so four exact interval
-    /// tests decide it: east, north and the two diagonals.
+    /// `(hx, hy)` (world `(hx/2, hy/2)`) meets the shape's open interior. The open square and the
+    /// open outline meet exactly when an outline vertex lies strictly inside the square, an edge
+    /// passes through the square's open interior, or (the boundary missing the open square
+    /// entirely) the square's centre lies strictly inside the outline.
     #[must_use]
     pub fn meets_open_half_cell(&self, hx: i64, hy: i64) -> bool {
-        let centre = self.shape_centre();
-        let (cx, cy) = (i64::from(centre.x), i64::from(centre.y));
-        let (hw, hh, c) = self.extents();
-        let reach = hw + hh - c;
         // The half-cell in lattice units: [x0, x0 + 2] by [y0, y0 + 2].
         let (x0, y0) = (2 * hx, 2 * hy);
-        let overlaps =
-            |low_a: i64, high_a: i64, low_b: i64, high_b: i64| low_a < high_b && low_b < high_a;
-        overlaps(x0, x0 + 2, cx - hw, cx + hw)
-            && overlaps(y0, y0 + 2, cy - hh, cy + hh)
-            && overlaps(x0 + y0, x0 + y0 + 4, cx + cy - reach, cx + cy + reach)
-            && overlaps(x0 - y0 - 2, x0 - y0 + 2, cx - cy - reach, cx - cy + reach)
+        let contour = self.contour();
+        let n = contour.len();
+        let edge_enters = (0..n).any(|i| {
+            let (a, b) = (contour[i], contour[(i + 1) % n]);
+            segment_meets_open_box(
+                (i64::from(a.x), i64::from(a.y)),
+                (i64::from(b.x), i64::from(b.y)),
+                (x0, y0),
+                (x0 + 2, y0 + 2),
+            )
+        });
+        edge_enters || self.contains_open_scaled(x0 + 1, y0 + 1, 1)
     }
 
     /// Whether the closed segment `[a, b]` (world units, reduced to the Q16 grid) meets the
@@ -174,7 +287,7 @@ impl PlacedStructure {
     #[must_use]
     pub fn segment_meets(&self, a: SimVec2, b: SimVec2) -> bool {
         let (qa, qb) = (QPoint::from_sim(a), QPoint::from_sim(b));
-        self.contains_q(qa, false) || self.any_edge(|u, v| segments_touch(qa, qb, u, v))
+        self.locate_q(qa) != Location::Outside || self.any_edge(|u, v| segments_touch(qa, qb, u, v))
     }
 
     /// Whether a disc of `radius` world units swept along `[a, b]` meets the shape's open
@@ -185,40 +298,139 @@ impl PlacedStructure {
     pub fn capsule_meets(&self, a: SimVec2, b: SimVec2, radius: SimScalar) -> bool {
         let (qa, qb) = (QPoint::from_sim(a), QPoint::from_sim(b));
         let r = radius_q(radius);
-        self.contains_q(qa, true) || self.any_edge(|u, v| segments_within(qa, qb, u, v, r))
+        self.locate_q(qa) == Location::Inside
+            || self.any_edge(|u, v| segments_within(qa, qb, u, v, r))
     }
 
-    /// The shape's half-width, half-height and chamfer in lattice units.
-    fn extents(&self) -> (i64, i64, i64) {
-        (
-            i64::from(self.shape.half_width_q),
-            i64::from(self.shape.half_height_q),
-            i64::from(self.shape.chamfer_q),
-        )
+    /// Where the Q16 point `p` lies relative to the closed shape.
+    fn locate_q(&self, p: QPoint) -> Location {
+        self.locate((i128::from(p.x), i128::from(p.y)), |v| {
+            let q = v.to_q();
+            (i128::from(q.x), i128::from(q.y))
+        })
     }
 
-    /// Whether the Q16 point `p` lies in the shape: strictly inside when `open`, else inside or
-    /// on the boundary.
-    fn contains_q(&self, p: QPoint, open: bool) -> bool {
-        let centre = self.shape_centre().to_q();
-        let (hw, hh, c) = self.extents();
-        let (hw, hh, reach) = (
-            hw << Q_PER_LATTICE,
-            hh << Q_PER_LATTICE,
-            (hw + hh - c) << Q_PER_LATTICE,
-        );
-        let (dx, dy) = ((p.x - centre.x).abs(), (p.y - centre.y).abs());
-        if open {
-            dx < hw && dy < hh && dx + dy < reach
+    /// Where `p` lies relative to the outline whose vertices `scaled` maps into `p`'s units: on
+    /// an edge, or else inside by the crossing number of a ray towards +x.
+    fn locate(&self, p: (i128, i128), scaled: impl Fn(LatticePoint) -> (i128, i128)) -> Location {
+        let contour = self.contour();
+        let n = contour.len();
+        let mut inside = false;
+        for i in 0..n {
+            let (a, b) = (scaled(contour[i]), scaled(contour[(i + 1) % n]));
+            let cross = (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0);
+            let within = p.0 >= a.0.min(b.0)
+                && p.0 <= a.0.max(b.0)
+                && p.1 >= a.1.min(b.1)
+                && p.1 <= a.1.max(b.1);
+            if cross == 0 && within {
+                return Location::Boundary;
+            }
+            // The edge straddles the horizontal line through `p` and passes east of it: left of
+            // an upward edge, right of a downward one.
+            if (a.1 > p.1) != (b.1 > p.1) && (cross > 0) == (b.1 > a.1) {
+                inside = !inside;
+            }
+        }
+        if inside {
+            Location::Inside
         } else {
-            dx <= hw && dy <= hh && dx + dy <= reach
+            Location::Outside
         }
     }
 
-    /// Whether `test` holds for some edge of the contour, each edge as a pair of Q16 points.
+    /// Whether `test` holds for some edge of the outline, each edge as a pair of Q16 points.
     fn any_edge(&self, test: impl Fn(QPoint, QPoint) -> bool) -> bool {
-        let (vertices, count) = self.contour();
-        (0..count).any(|i| test(vertices[i].to_q(), vertices[(i + 1) % count].to_q()))
+        let contour = self.contour();
+        let n = contour.len();
+        (0..n).any(|i| test(contour[i].to_q(), contour[(i + 1) % n].to_q()))
+    }
+}
+
+/// Twice the signed area of a polygon: positive when it runs counter-clockwise.
+fn signed_area_twice(vertices: &[LatticePoint]) -> i64 {
+    let n = vertices.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (vertices[i], vertices[(i + 1) % n]);
+            i64::from(a.x) * i64::from(b.y) - i64::from(b.x) * i64::from(a.y)
+        })
+        .sum()
+}
+
+/// Whether the closed segment `[a, b]` meets the open box `(low, high)`: the parameter ranges
+/// in which each coordinate lies strictly inside its interval, intersected with `[0, 1]`, leave
+/// an open interval (Liang–Barsky with strict bounds, compared as exact fractions).
+fn segment_meets_open_box(a: (i64, i64), b: (i64, i64), low: (i64, i64), high: (i64, i64)) -> bool {
+    // Fractions `num / den` with `den > 0`.
+    let (mut lower, mut upper) = ((0_i64, 1_i64), (1_i64, 1_i64));
+    for (start, delta, lo, hi) in [
+        (a.0, b.0 - a.0, low.0, high.0),
+        (a.1, b.1 - a.1, low.1, high.1),
+    ] {
+        if delta == 0 {
+            if start <= lo || start >= hi {
+                return false;
+            }
+            continue;
+        }
+        let (enter, leave) = if delta > 0 {
+            ((lo - start, delta), (hi - start, delta))
+        } else {
+            ((start - hi, -delta), (start - lo, -delta))
+        };
+        if enter.0 * lower.1 > lower.0 * enter.1 {
+            lower = enter;
+        }
+        if leave.0 * upper.1 < upper.0 * leave.1 {
+            upper = leave;
+        }
+    }
+    lower.0 * upper.1 < upper.0 * lower.1
+}
+
+impl PlacedStructure {
+    /// The structure's shape placed on its cells.
+    #[must_use]
+    pub fn footprint(&self) -> PlacedFootprint {
+        PlacedFootprint::new(
+            self.top_left,
+            StructureFootprint {
+                width: self.width,
+                height: self.height,
+                shape: self.shape,
+            },
+        )
+    }
+
+    /// The centre of the shape in lattice units (quarter cells): the centre of the cells.
+    #[must_use]
+    pub fn shape_centre(&self) -> LatticePoint {
+        self.footprint().centre()
+    }
+
+    /// [`PlacedFootprint::contains_open_scaled`] of the structure's shape.
+    #[must_use]
+    pub fn contains_open_scaled(&self, x: i64, y: i64, scale: i64) -> bool {
+        self.footprint().contains_open_scaled(x, y, scale)
+    }
+
+    /// [`PlacedFootprint::meets_open_half_cell`] of the structure's shape.
+    #[must_use]
+    pub fn meets_open_half_cell(&self, hx: i64, hy: i64) -> bool {
+        self.footprint().meets_open_half_cell(hx, hy)
+    }
+
+    /// [`PlacedFootprint::segment_meets`] of the structure's shape.
+    #[must_use]
+    pub fn segment_meets(&self, a: SimVec2, b: SimVec2) -> bool {
+        self.footprint().segment_meets(a, b)
+    }
+
+    /// [`PlacedFootprint::capsule_meets`] of the structure's shape.
+    #[must_use]
+    pub fn capsule_meets(&self, a: SimVec2, b: SimVec2, radius: SimScalar) -> bool {
+        self.footprint().capsule_meets(a, b, radius)
     }
 }
 
@@ -263,7 +475,8 @@ impl GameMap {
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
-    reason = "a broken geometry law must fail the test loudly"
+    clippy::many_single_char_names,
+    reason = "a broken geometry law must fail the test loudly; the oracles keep the plan's names"
 )]
 mod tests {
     use super::*;
@@ -271,7 +484,7 @@ mod tests {
     use sim_types::EntityId;
 
     fn shape(hw: u16, hh: u16, c: u16) -> FootprintShape {
-        FootprintShape {
+        FootprintShape::Box {
             half_width_q: hw,
             half_height_q: hh,
             chamfer_q: c,
@@ -306,10 +519,9 @@ mod tests {
     #[test]
     fn a_full_shape_is_its_cells() {
         let p = placed(3, 4, 3, 2, FootprintShape::full(3, 2));
-        let (vertices, count) = p.contour();
-        assert_eq!(count, 4);
+        let footprint = p.footprint();
         assert_eq!(
-            vertices[..4],
+            footprint.contour(),
             [
                 LatticePoint::cell_corner(6, 4),
                 LatticePoint::cell_corner(6, 6),
@@ -419,8 +631,8 @@ mod tests {
         ];
         for (width, height, s, expected) in cases {
             let p = placed(2, 2, width, height, s);
-            let (vertices, count) = p.contour();
-            let got: Vec<(i32, i32)> = vertices[..count].iter().map(|v| (v.x, v.y)).collect();
+            let footprint = p.footprint();
+            let got: Vec<(i32, i32)> = footprint.contour().iter().map(|v| (v.x, v.y)).collect();
             assert_eq!(got, expected, "{width}x{height} {s:?}");
         }
     }
@@ -563,5 +775,338 @@ mod tests {
         assert!(map
             .place_structure(EntityId(3), (4, 4), StructureFootprint::square(2, 2))
             .is_ok());
+    }
+
+    // ---- Plan `2026-11-20-resource-footprints` WP1: the general outline against the box. ----
+
+    /// The box's contour by its closed form, counter-clockwise from the east end of its south
+    /// face: the test oracle of the general outline (today's construction before WP1).
+    fn box_contour(p: &PlacedFootprint, hw: i32, hh: i32, c: i32) -> Vec<LatticePoint> {
+        let centre = p.centre();
+        let at = |dx: i32, dy: i32| LatticePoint::new(centre.x + dx, centre.y + dy);
+        if c == 0 {
+            return vec![at(hw, -hh), at(hw, hh), at(-hw, hh), at(-hw, -hh)];
+        }
+        vec![
+            at(hw - c, -hh),
+            at(hw, -hh + c),
+            at(hw, hh - c),
+            at(hw - c, hh),
+            at(-hw + c, hh),
+            at(-hw, hh - c),
+            at(-hw, -hh + c),
+            at(-hw + c, -hh),
+        ]
+    }
+
+    /// The box's closed-form open containment of `(x, y) / scale` (lattice units).
+    fn box_contains_open_scaled(
+        p: &PlacedFootprint,
+        b: (i64, i64, i64),
+        x: i64,
+        y: i64,
+        s: i64,
+    ) -> bool {
+        let centre = p.centre();
+        let (hw, hh, c) = b;
+        let dx = (x - s * i64::from(centre.x)).abs();
+        let dy = (y - s * i64::from(centre.y)).abs();
+        dx < s * hw && dy < s * hh && dx + dy < s * (hw + hh - c)
+    }
+
+    /// The box's closed-form half-cell test: four separating directions.
+    fn box_meets_open_half_cell(p: &PlacedFootprint, b: (i64, i64, i64), hx: i64, hy: i64) -> bool {
+        let centre = p.centre();
+        let (cx, cy) = (i64::from(centre.x), i64::from(centre.y));
+        let (hw, hh, c) = b;
+        let reach = hw + hh - c;
+        let (x0, y0) = (2 * hx, 2 * hy);
+        let overlaps = |la: i64, ha: i64, lb: i64, hb: i64| la < hb && lb < ha;
+        overlaps(x0, x0 + 2, cx - hw, cx + hw)
+            && overlaps(y0, y0 + 2, cy - hh, cy + hh)
+            && overlaps(x0 + y0, x0 + y0 + 4, cx + cy - reach, cx + cy + reach)
+            && overlaps(x0 - y0 - 2, x0 - y0 + 2, cx - cy - reach, cx - cy + reach)
+    }
+
+    /// The box's closed-form containment of a Q16 point.
+    fn box_contains_q(p: &PlacedFootprint, b: (i64, i64, i64), q: QPoint, open: bool) -> bool {
+        let centre = p.centre().to_q();
+        let shift = crate::navmesh::predicates::Q_BITS - crate::navmesh::predicates::LATTICE_BITS;
+        let (hw, hh, c) = b;
+        let (hw, hh, reach) = (hw << shift, hh << shift, (hw + hh - c) << shift);
+        let (dx, dy) = ((q.x - centre.x).abs(), (q.y - centre.y).abs());
+        if open {
+            dx < hw && dy < hh && dx + dy < reach
+        } else {
+            dx <= hw && dy <= hh && dx + dy <= reach
+        }
+    }
+
+    /// Every valid box of footprints 1×1 to 5×5: `(width, height, hw, hh, c)`.
+    fn every_box() -> Vec<(u8, u8, u16, u16, u16)> {
+        let mut boxes = Vec::new();
+        for width in 1..=5_u8 {
+            for height in 1..=5_u8 {
+                for hw in 1..=2 * u16::from(width) {
+                    for hh in 1..=2 * u16::from(height) {
+                        for c in 0..hw.min(hh) {
+                            boxes.push((width, height, hw, hh, c));
+                        }
+                    }
+                }
+            }
+        }
+        boxes
+    }
+
+    #[test]
+    fn a_box_outline_is_its_contour() {
+        let boxes = every_box();
+        assert!(boxes.len() > 1_000);
+        for (width, height, hw, hh, c) in boxes {
+            for top_left in [(0, 0), (3, 7), (10, 4)] {
+                let footprint = StructureFootprint {
+                    width,
+                    height,
+                    shape: shape(hw, hh, c),
+                };
+                footprint
+                    .validate()
+                    .expect("invariant: every_box yields valid boxes");
+                let p = PlacedFootprint::new(top_left, footprint);
+                let expected = box_contour(&p, i32::from(hw), i32::from(hh), i32::from(c));
+                assert_eq!(
+                    p.contour(),
+                    expected.as_slice(),
+                    "{footprint:?} at {top_left:?}"
+                );
+            }
+        }
+    }
+
+    /// A Q16 coordinate near the lattice: a quarter-cell multiple plus a small offset, so that
+    /// boundaries, vertices and chamfers are hit exactly as well as just missed.
+    fn near_lattice(quarters: i64, offset: i64) -> i64 {
+        (quarters << 14) + offset
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn general_predicates_agree_with_the_box_closed_forms(
+            pick in 0_usize..100_000,
+            left in 0_u32..6,
+            bottom in 0_u32..6,
+            points in proptest::collection::vec(
+                (-4_i64..28, -4_i64..28, -2_i64..=2, -2_i64..=2, 1_i64..=3), 48),
+            radius_q in 1_i64..(1 << 17),
+        ) {
+            let boxes = every_box();
+            let (width, height, hw, hh, c) = boxes[pick % boxes.len()];
+            let footprint = StructureFootprint { width, height, shape: shape(hw, hh, c) };
+            let p = PlacedFootprint::new((left, bottom), footprint);
+            let b = (i64::from(hw), i64::from(hh), i64::from(c));
+            let origin = (4 * i64::from(left), 4 * i64::from(bottom));
+            let radius = SimScalar::from_raw(radius_q << 16);
+            let r = radius_q;
+            let contour: Vec<QPoint> = box_contour(&p, i32::from(hw), i32::from(hh), i32::from(c))
+                .iter()
+                .map(|v| v.to_q())
+                .collect();
+            let n = contour.len();
+            for window in points.windows(2) {
+                let (ax, ay, oa, ob, scale) = window[0];
+                let (bx, by, oc, od, _) = window[1];
+                // Lattice containment at scale 1 to 3.
+                let (x, y) = (scale * (origin.0 + ax) + oa, scale * (origin.1 + ay) + ob);
+                proptest::prop_assert_eq!(
+                    p.contains_open_scaled(x, y, scale),
+                    box_contains_open_scaled(&p, b, x, y, scale),
+                    "contains ({}, {}) / {}", x, y, scale
+                );
+                // Half-cells.
+                let (hx, hy) = ((origin.0 + ax).div_euclid(2), (origin.1 + ay).div_euclid(2));
+                proptest::prop_assert_eq!(
+                    p.meets_open_half_cell(hx, hy),
+                    box_meets_open_half_cell(&p, b, hx, hy),
+                    "half-cell ({}, {})", hx, hy
+                );
+                // Segments and capsules on the Q16 grid.
+                let qa = QPoint { x: near_lattice(origin.0 + ax, oa), y: near_lattice(origin.1 + ay, ob) };
+                let qb = QPoint { x: near_lattice(origin.0 + bx, oc), y: near_lattice(origin.1 + by, od) };
+                let to_sim = |q: QPoint| SimVec2::new(SimScalar::from_raw(q.x << 16), SimScalar::from_raw(q.y << 16));
+                let (a, bb) = (to_sim(qa), to_sim(qb));
+                let any_edge = |test: &dyn Fn(QPoint, QPoint) -> bool| {
+                    (0..n).any(|i| test(contour[i], contour[(i + 1) % n]))
+                };
+                let segment_oracle = box_contains_q(&p, b, qa, false)
+                    || any_edge(&|u, v| segments_touch(qa, qb, u, v));
+                proptest::prop_assert_eq!(p.segment_meets(a, bb), segment_oracle, "segment {:?} {:?}", qa, qb);
+                let capsule_oracle = box_contains_q(&p, b, qa, true)
+                    || any_edge(&|u, v| segments_within(qa, qb, u, v, r));
+                proptest::prop_assert_eq!(p.capsule_meets(a, bb, radius), capsule_oracle, "capsule {:?} {:?}", qa, qb);
+                // The open and closed point tests on their own.
+                proptest::prop_assert_eq!(p.locate_q(qa) == Location::Inside, box_contains_q(&p, b, qa, true));
+                proptest::prop_assert_eq!(p.locate_q(qa) != Location::Outside, box_contains_q(&p, b, qa, false));
+            }
+        }
+    }
+
+    /// The 5.0.14 geyser outline (void Footprint:18-19, plan §2.2 rule 3) in quarter cells.
+    fn geyser_shape() -> FootprintShape {
+        FootprintShape::Outline(
+            sim_types::QuarterOutline::new(&[
+                (-2, -4),
+                (-3, -5),
+                (-5, -3),
+                (-4, -2),
+                (-4, 2),
+                (-5, 3),
+                (-3, 5),
+                (-2, 4),
+                (2, 4),
+                (3, 5),
+                (5, 3),
+                (4, 2),
+                (4, -2),
+                (5, -3),
+                (3, -5),
+                (2, -4),
+            ])
+            .expect("invariant: sixteen vertices fit"),
+        )
+    }
+
+    #[test]
+    fn the_geyser_outline_is_contained_exactly() {
+        // A 3×3 at cells (2, 2) to (4, 4): centre (3.5, 3.5), lattice (14, 14).
+        let footprint = StructureFootprint {
+            width: 3,
+            height: 3,
+            shape: geyser_shape(),
+        };
+        footprint
+            .validate()
+            .expect("invariant: the geyser fits its 3x3");
+        let p = PlacedFootprint::new((2, 2), footprint);
+        assert_eq!(p.contour().len(), 16);
+        assert!(
+            signed_area_twice(p.contour()) > 0,
+            "stored counter-clockwise"
+        );
+        // Lattice points times 2 (scale 2), relative to the centre (28, 28).
+        let open = |dx: i64, dy: i64| p.contains_open_scaled(28 + dx, 28 + dy, 2);
+        let closed = |dx: i64, dy: i64| {
+            let q = |v: i64| SimScalar::from_raw(v << 29);
+            let point = SimVec2::new(q(28 + dx), q(28 + dy));
+            p.segment_meets(point, point)
+        };
+        // The centre is inside.
+        assert!(open(0, 0));
+        // Each recessed side lies at ±1 (8 doubled quarters) over its middle cell: the middle
+        // cell's centre is on it, a sixteenth further in is inside, and the band between the
+        // recess and the hull's line at ±1.25 is outside.
+        for (sx, sy) in [(0, -1), (0, 1), (-1, 0), (1, 0)] {
+            assert!(
+                !open(8 * sx, 8 * sy) && closed(8 * sx, 8 * sy),
+                "recess ({sx}, {sy})"
+            );
+            assert!(open(7 * sx, 7 * sy), "inside the recess ({sx}, {sy})");
+            assert!(!closed(9 * sx, 9 * sy), "outside the recess ({sx}, {sy})");
+        }
+        // The lobe tips (±0.75, ±1.25) and (±1.25, ±0.75) are on the boundary.
+        for (dx, dy) in [
+            (6, 10),
+            (10, 6),
+            (-6, 10),
+            (-10, 6),
+            (6, -10),
+            (10, -6),
+            (-6, -10),
+            (-10, -6),
+        ] {
+            assert!(!open(dx, dy) && closed(dx, dy), "lobe tip ({dx}, {dy})");
+        }
+        // A lobe's diagonal passes through (±1, ±1); just inside it is in the shape.
+        assert!(!open(8, 8) && closed(8, 8));
+        assert!(open(7, 7));
+        // The corners of the 3×3 cells are outside.
+        assert!(!closed(12, 12) && !closed(-12, 12));
+    }
+
+    #[test]
+    fn an_outline_must_be_simple_axis_or_diagonal_and_on_the_lattice() {
+        let outline = |vertices: &[(i16, i16)]| {
+            FootprintShape::Outline(
+                sim_types::QuarterOutline::new(vertices).expect("invariant: at most sixteen"),
+            )
+        };
+        let refused = [
+            // Fewer than three vertices.
+            outline(&[(0, 0), (4, 0)]),
+            // An edge of slope 2.
+            outline(&[(-2, -2), (2, -2), (0, 2)]),
+            // A bow tie: two edges cross.
+            outline(&[(-2, -2), (2, 2), (2, -2), (-2, 2)]),
+            // A vertex outside the 2×2 cells (half extent 4 quarters).
+            outline(&[(-4, -4), (5, -4), (5, 4), (-4, 4)]),
+            // A zero-length edge (a repeated vertex).
+            outline(&[(-2, -2), (2, -2), (2, -2), (2, 2), (-2, 2)]),
+            // An edge folding back over its predecessor.
+            outline(&[(-2, -2), (2, -2), (0, -2), (0, 2)]),
+            // All vertices on one line.
+            outline(&[(-2, 0), (0, 0), (2, 0)]),
+            // Two non-adjacent edges touching at a vertex (a pinched figure eight).
+            outline(&[
+                (0, 0),
+                (2, -2),
+                (4, 0),
+                (2, 2),
+                (0, 0),
+                (-2, 2),
+                (-4, 0),
+                (-2, -2),
+            ]),
+        ];
+        let mut map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a positive side is a valid map size");
+        for s in refused {
+            let footprint = StructureFootprint {
+                width: 2,
+                height: 2,
+                shape: s,
+            };
+            assert_eq!(
+                map.place_structure(EntityId(3), (4, 4), footprint),
+                Err(MapError::InvalidFootprintShape {
+                    width: 2,
+                    height: 2,
+                    shape: s
+                }),
+                "{s:?}"
+            );
+        }
+        assert!(map.structures().is_empty());
+        // Every vertex is in quarter cells from a lattice centre, so a placed outline is always
+        // on the lattice; a clockwise square and the geyser are accepted.
+        let clockwise = outline(&[(-4, -4), (-4, 4), (4, 4), (4, -4)]);
+        let footprint = StructureFootprint {
+            width: 2,
+            height: 2,
+            shape: clockwise,
+        };
+        assert!(map.place_structure(EntityId(3), (4, 4), footprint).is_ok());
+        let geyser = StructureFootprint {
+            width: 3,
+            height: 3,
+            shape: geyser_shape(),
+        };
+        assert!(map.place_structure(EntityId(4), (8, 8), geyser).is_ok());
+        let placed = map
+            .structures()
+            .get(&EntityId(3))
+            .expect("invariant: placed");
+        assert!(signed_area_twice(placed.footprint().contour()) > 0);
     }
 }

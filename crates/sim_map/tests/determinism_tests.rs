@@ -233,7 +233,7 @@ fn contour_route_checksum() {
         let footprint = sim_map::StructureFootprint {
             width: size,
             height: size,
-            shape: sim_types::FootprintShape {
+            shape: sim_types::FootprintShape::Box {
                 half_width_q: half,
                 half_height_q: half,
                 chamfer_q: chamfer,

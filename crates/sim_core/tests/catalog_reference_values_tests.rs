@@ -4032,11 +4032,10 @@ fn structure_radii_follow_the_engine_rule() -> TestResult {
             archetype.slug
         );
         let quarters = |q: u16| f32::from(q) / 4.0;
-        let (hw, hh, c) = (
-            quarters(shape.half_width_q),
-            quarters(shape.half_height_q),
-            quarters(shape.chamfer_q),
-        );
+        let box_q = shape
+            .box_extents()
+            .ok_or("every structure's shape is a box")?;
+        let (hw, hh, c) = (quarters(box_q.0), quarters(box_q.1), quarters(box_q.2));
         let farthest = (hw * hw + (hh - c) * (hh - c)).max((hw - c) * (hw - c) + hh * hh);
         assert!(
             engine * engine >= farthest,
@@ -4314,12 +4313,15 @@ fn b134_footprint_shapes_follow_starcraft() -> TestResult {
             return [f32::NAN; 5];
         };
         let quarters = |q: u16| f32::from(q) / 4.0;
+        let Some(box_q) = shape.box_extents() else {
+            return [f32::NAN; 5];
+        };
         [
             f32::from(footprint_w),
             f32::from(footprint_h),
-            quarters(shape.half_width_q),
-            quarters(shape.half_height_q),
-            quarters(shape.chamfer_q),
+            quarters(box_q.0),
+            quarters(box_q.1),
+            quarters(box_q.2),
         ]
     })
 }

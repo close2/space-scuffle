@@ -592,11 +592,10 @@ fn every_shipped_structure_contour_is_in_melee_reach() {
             continue;
         };
         let quarters = |q: u16| f64::from(q) / 4.0;
-        let (hw, hh, c) = (
-            quarters(shape.half_width_q),
-            quarters(shape.half_height_q),
-            quarters(shape.chamfer_q),
-        );
+        let box_q = shape
+            .box_extents()
+            .expect("invariant: every structure's shape is a box");
+        let (hw, hh, c) = (quarters(box_q.0), quarters(box_q.1), quarters(box_q.2));
         let bounding = (hw * hw + (hh - c) * (hh - c))
             .max((hw - c) * (hw - c) + hh * hh)
             .sqrt();

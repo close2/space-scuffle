@@ -927,9 +927,10 @@ fn a_placed_structures_shape_is_hashed() {
         world.compute_checksum()
     };
     let square = sim_types::FootprintShape::full(2, 2);
-    let contour = sim_types::FootprintShape {
+    let contour = sim_types::FootprintShape::Box {
+        half_width_q: 4,
+        half_height_q: 4,
         chamfer_q: 2,
-        ..square
     };
     assert_eq!(place(square), place(square));
     assert_ne!(place(square), place(contour));

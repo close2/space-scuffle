@@ -81,7 +81,7 @@ fn scratch_structure(
 }
 
 /// The 5.0.14 5×5 contour: corners cut by 1.5.
-const HALL_CONTOUR: FootprintShape = FootprintShape {
+const HALL_CONTOUR: FootprintShape = FootprintShape::Box {
     half_width_q: 10,
     half_height_q: 10,
     chamfer_q: 6,
@@ -246,7 +246,7 @@ fn shipped_structure(world: &SimWorld, size: u8, shape: FootprintShape) -> UnitT
 }
 
 /// The 5.0.14 2×2 contour: corners cut by 0.5.
-const DEPOT_CONTOUR: FootprintShape = FootprintShape {
+const DEPOT_CONTOUR: FootprintShape = FootprintShape::Box {
     half_width_q: 4,
     half_height_q: 4,
     chamfer_q: 2,
@@ -289,7 +289,9 @@ fn xy(p: SimVec2) -> (f64, f64) {
 
 /// The Euclidean distance from `p` to the closed shape of `placed`, world units (0 inside).
 fn gap_to_shape(placed: &sim_map::PlacedStructure, p: (f64, f64)) -> f64 {
-    let (vertices, count) = placed.contour();
+    let footprint = placed.footprint();
+    let vertices = footprint.contour();
+    let count = vertices.len();
     let world = |v: sim_map::LatticePoint| (f64::from(v.x) / 4.0, f64::from(v.y) / 4.0);
     let mut inside = true;
     let mut nearest = f64::INFINITY;
@@ -426,7 +428,7 @@ fn a_unit_rounds_a_hall_corner_inside_its_old_square() {
 }
 
 /// The 5.0.14 Spore Crawler shape: a 1×1 box cut by 0.25, centred in 2×2 cells.
-const SPORE_CONTOUR: FootprintShape = FootprintShape {
+const SPORE_CONTOUR: FootprintShape = FootprintShape::Box {
     half_width_q: 2,
     half_height_q: 2,
     chamfer_q: 1,

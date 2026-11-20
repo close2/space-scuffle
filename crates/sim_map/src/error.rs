@@ -63,8 +63,10 @@ pub enum MapError {
         height: u8,
     },
 
-    /// A structure's pathing shape does not lie in its footprint cells or leaves a face of no
-    /// length (plan `2026-11-18-contour-footprints` D-2).
+    /// A pathing shape does not lie in its footprint cells or leaves a face of no length (plan
+    /// `2026-11-18-contour-footprints` D-2), or an outline is not simple, has fewer than 3 or
+    /// more than 16 vertices, or has an edge off the axes and diagonals (plan
+    /// `2026-11-20-resource-footprints` D-2).
     #[error("footprint shape {shape:?} does not fit a {width}x{height} footprint")]
     InvalidFootprintShape {
         /// Footprint width in cells.

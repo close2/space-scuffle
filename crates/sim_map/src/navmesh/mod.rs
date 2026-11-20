@@ -50,6 +50,7 @@ pub mod segment;
 use sim_types::{EntityId, SimScalar, SimVec2, VisibilityState};
 use thiserror::Error;
 
+use crate::footprint::PlacedFootprint;
 use crate::grid::{CellFlags, GameMap, PlacedStructure, RampDir};
 use crate::pathfinding::PathRequestWithVision;
 use cdt::{Triangulation, NONE};
@@ -340,9 +341,19 @@ impl StructureEdges {
         Self { edges }
     }
 
-    /// Adds the unit edges of `placed`'s contour and of its clipped interior cell lines.
+    /// Adds the unit edges of `placed`'s outline and of its interior cell lines clipped to the
+    /// outline's open interior.
     fn add_structure(placed: &PlacedStructure, edges: &mut Vec<((i32, i32), Direction)>) {
-        let (vertices, count) = placed.contour();
+        Self::add_footprint(&placed.footprint(), edges);
+    }
+
+    /// Adds the unit edges of a placed footprint's outline and of its interior cell lines clipped
+    /// to the outline's open interior. Outline vertices are lattice points and its edges run
+    /// along axes and diagonals, so the outline crosses a cell line only at lattice points: a
+    /// unit edge of the line lies in the open interior exactly when its midpoint does.
+    fn add_footprint(footprint: &PlacedFootprint, edges: &mut Vec<((i32, i32), Direction)>) {
+        let vertices = footprint.contour();
+        let count = vertices.len();
         for i in 0..count {
             let (u, v) = (vertices[i], vertices[(i + 1) % count]);
             let (sx, sy) = ((v.x - u.x).signum(), (v.y - u.y).signum());
@@ -352,33 +363,28 @@ impl StructureEdges {
                 edges.push(Self::canonical(a, (sx, sy)));
             }
         }
-        let centre = placed.shape_centre();
-        let (hw, hh, c) = (
-            i32::from(placed.shape.half_width_q),
-            i32::from(placed.shape.half_height_q),
-            i32::from(placed.shape.chamfer_q),
-        );
-        let reach = hw + hh - c;
         let corner = LatticePoint::cell_corner(
-            i32::try_from(placed.top_left.0).unwrap_or(i32::MAX),
-            i32::try_from(placed.top_left.1).unwrap_or(i32::MAX),
+            i32::try_from(footprint.top_left.0).unwrap_or(i32::MAX),
+            i32::try_from(footprint.top_left.1).unwrap_or(i32::MAX),
         );
-        for i in 1..i32::from(placed.width) {
+        let (span_x, span_y) = (
+            i32::from(footprint.width) * LATTICE_PER_CELL,
+            i32::from(footprint.height) * LATTICE_PER_CELL,
+        );
+        let inside =
+            |x2: i32, y2: i32| footprint.contains_open_scaled(i64::from(x2), i64::from(y2), 2);
+        for i in 1..i32::from(footprint.width) {
             let x = corner.x + i * LATTICE_PER_CELL;
-            let dx = (x - centre.x).abs();
-            let half = hh.min(reach - dx);
-            if dx < hw && half > 0 {
-                for y in centre.y - half..centre.y + half {
+            for y in corner.y..corner.y + span_y {
+                if inside(2 * x, 2 * y + 1) {
                     edges.push(((y, x), Direction::North));
                 }
             }
         }
-        for j in 1..i32::from(placed.height) {
+        for j in 1..i32::from(footprint.height) {
             let y = corner.y + j * LATTICE_PER_CELL;
-            let dy = (y - centre.y).abs();
-            let half = hw.min(reach - dy);
-            if dy < hh && half > 0 {
-                for x in centre.x - half..centre.x + half {
+            for x in corner.x..corner.x + span_x {
+                if inside(2 * x + 1, 2 * y) {
                     edges.push(((y, x), Direction::East));
                 }
             }

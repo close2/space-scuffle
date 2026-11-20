@@ -52,7 +52,9 @@ pub use enums::{
     VisibilityState, WeaponVisualKind,
 };
 pub use errors::MathError;
-pub use footprint::{FootprintShape, FOOTPRINT_QUARTERS_PER_CELL};
+pub use footprint::{
+    FootprintShape, QuarterOutline, FOOTPRINT_QUARTERS_PER_CELL, QUARTER_OUTLINE_CAPACITY,
+};
 pub use ids::{
     ArmorClassId, EntityId, FactionId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError,
     ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,

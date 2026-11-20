@@ -132,7 +132,7 @@ const TERRAIN_DROPS: [f64; 4] = [0.0, 0.0625, 0.125, 0.25];
 /// The footprint shapes S-9 draws from, by footprint size: the full box and the 5.0.14
 /// contours of that size (plan `2026-11-18-contour-footprints` §2.3), in quarter cells.
 fn shapes_of_size(size: u8) -> Vec<sim_types::FootprintShape> {
-    let shape = |half: u16, chamfer: u16| sim_types::FootprintShape {
+    let shape = |half: u16, chamfer: u16| sim_types::FootprintShape::Box {
         half_width_q: half,
         half_height_q: half,
         chamfer_q: chamfer,
@@ -153,7 +153,9 @@ fn on_q16(point: SimVec2) -> SimVec2 {
 /// Whether the Q16 point `p` lies closer than `t` (a multiple of 2⁻¹⁶) to the closed shape of
 /// `placed`, or inside it: an exact `i128` oracle written apart from `sim_map`'s predicates.
 fn disc_meets_shape(placed: &sim_map::PlacedStructure, p: SimVec2, t: SimScalar) -> bool {
-    let (vertices, count) = placed.contour();
+    let footprint = placed.footprint();
+    let vertices = footprint.contour();
+    let count = vertices.len();
     // Lattice units are quarter cells: 2^14 Q16 units.
     let q = |v: sim_map::LatticePoint| (i128::from(v.x) << 14, i128::from(v.y) << 14);
     let (px, py) = (i128::from(p.x.raw() >> 16), i128::from(p.y.raw() >> 16));
@@ -610,7 +612,7 @@ fn a_spawned_structure_places_its_catalog_shape() {
         .expect("invariant: a free unit type id");
     scratch.unit_type_id = free;
     "scratch_contour".clone_into(&mut scratch.slug);
-    let contour = sim_types::FootprintShape {
+    let contour = sim_types::FootprintShape::Box {
         half_width_q: 6,
         half_height_q: 6,
         chamfer_q: 3,

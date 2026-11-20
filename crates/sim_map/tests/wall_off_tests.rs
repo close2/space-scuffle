@@ -363,7 +363,7 @@ fn contour(size: u8) -> sim_map::StructureFootprint {
     sim_map::StructureFootprint {
         width: size,
         height: size,
-        shape: sim_types::FootprintShape {
+        shape: sim_types::FootprintShape::Box {
             half_width_q: 2 * u16::from(size),
             half_height_q: 2 * u16::from(size),
             chamfer_q,

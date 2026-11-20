@@ -186,6 +186,7 @@ impl ClearanceWorkspace {
     /// point of its closed cells. Returns whether there were any structures.
     fn mark_structure_walls(&mut self, map: &GameMap) -> bool {
         for placed in map.structures().values() {
+            let footprint = placed.footprint();
             let (left, bottom) = (
                 i64::from(placed.top_left.0) * 2,
                 i64::from(placed.top_left.1) * 2,
@@ -196,7 +197,7 @@ impl ClearanceWorkspace {
             );
             for hy in bottom..top {
                 for hx in left..right {
-                    if placed.meets_open_half_cell(hx, hy) {
+                    if footprint.meets_open_half_cell(hx, hy) {
                         let (x, y) = (
                             usize::try_from(hx).unwrap_or(0),
                             usize::try_from(hy).unwrap_or(0),

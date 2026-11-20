@@ -1662,7 +1662,7 @@ impl FootprintShapeDef {
         // A quarter cell is 2^30 raw units.
         let quarters =
             |value: f64| u16::try_from(SimScalar::from_num(value).raw() >> 30).unwrap_or(u16::MAX);
-        FootprintShape {
+        FootprintShape::Box {
             half_width_q: quarters(self.half_width),
             half_height_q: quarters(self.half_height),
             chamfer_q: quarters(self.chamfer),
@@ -2109,7 +2109,7 @@ mod tests {
         dome.shape = ShapeKind::BuildingDome {
             footprint_w: 2,
             footprint_h: 2,
-            shape: FootprintShape {
+            shape: FootprintShape::Box {
                 half_width_q: 2,
                 half_height_q: 2,
                 chamfer_q: 1,

@@ -2502,7 +2502,7 @@ mod structure_radius_tests {
             sim_types::ShapeKind::BuildingDome {
                 footprint_w: 3,
                 footprint_h: 3,
-                shape: sim_types::FootprintShape {
+                shape: sim_types::FootprintShape::Box {
                     half_width_q: 6,
                     half_height_q: 6,
                     chamfer_q: 3,
