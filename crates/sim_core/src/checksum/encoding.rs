@@ -9,7 +9,7 @@ use crate::effects::{
 };
 use crate::entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingLine,
-    PendingStrikes, WeaponPhase,
+    PendingStrikes, SlotClaim, WeaponPhase,
 };
 use crate::entity::{Cargo, UnitTask};
 use crate::match_state::MatchState;
@@ -288,8 +288,12 @@ fields!(MovementMemory {
     flank_walked,
     flank_retreat,
     flank_target,
-    leash_origin
+    leash_origin,
+    side_partner,
+    side_left,
+    slot
 });
+fields!(SlotClaim { target, point });
 fields!(ActiveBuff {
     buff_id,
     remaining_ticks,

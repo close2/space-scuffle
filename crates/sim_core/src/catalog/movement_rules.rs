@@ -1,13 +1,17 @@
 //! Authored movement rules that belong to no single archetype: `assets/catalog/movement_rules.ron`.
 //!
 //! The file holds the group-routing tolerance of plan `2026-11-10-group-routing` (D-7, sanctioned
-//! deviation S-7) and the leash of an automatic chase (5.0.14's `AcquireLeashRadius`, plan
-//! `2026-11-18-contour-footprints` Amendment 4, B-142). It is parsed into [`MovementRules`],
-//! validated, and carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like
-//! every catalog it is not hashed; lockstep peers must load equal files.
+//! deviation S-7), the leash of an automatic chase (5.0.14's `AcquireLeashRadius`, plan
+//! `2026-11-18-contour-footprints` Amendment 4, B-142) and the contact rules of plan
+//! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
+//! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
+//! rule's horizon factor and the D-β switch. It is parsed into [`MovementRules`], validated, and
+//! carried by the [`UnitCatalog`](super::UnitCatalog) the world is built with. Like every catalog
+//! it is not hashed; lockstep peers must load equal files.
 //!
-//! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille and a
-//! leash radius of at least one world unit.
+//! Invariants: a [`MovementRules`] value always has a tolerance in `0..=1000` permille, a leash
+//! radius of at least one world unit, and [`ContactRules`] with at least one iteration,
+//! `0 < dead_band_permille < moving_overlap_permille < 1000` and a horizon factor of at least 1.
 
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
@@ -21,11 +25,88 @@ pub const MAX_LANE_TOLERANCE_PERMILLE: u16 = 1000;
 /// with before `movement_rules.ron` replaces them carry it; the file authors the shipped value.
 pub const STARCRAFT_ACQUIRE_LEASH_RADIUS: u16 = 21;
 
+/// Which local movement pipeline the tick runs (plan `2026-11-20-contact-solver` §3.6, a
+/// migration switch until the legacy pipeline is deleted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum MovementPipeline {
+    /// Today's pipeline: steering with its proposal-time velocity limit, the waiting rule, the
+    /// surround walk and the separate soft collision pass.
+    Legacy,
+    /// The plan's pipeline: intent steering with one time-to-collision side rule, and one
+    /// position-based contact solver after every unit moved.
+    Solver,
+}
+
+/// The contact rules of `movement_rules.ron` (plan `2026-11-20-contact-solver` §3.3, §3.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContactRules {
+    /// The pipeline the tick runs.
+    pub pipeline: MovementPipeline,
+    /// C-3: Jacobi iterations of the contact solver per tick; at least the bound
+    /// `⌈ln(moving / ρ) / ln(5/6)⌉` for the catalog's worst injected overlap `ρ`.
+    pub iterations: u8,
+    /// C-4, D-α at rest: an overlap of at most this many thousandths of the radius sum is not
+    /// corrected.
+    pub dead_band_permille: u16,
+    /// D-α while moving: the bound, in thousandths of the radius sum, that `iterations` is
+    /// derived for.
+    pub moving_overlap_permille: u16,
+    /// I-3a: a threat counts from `factor · (r + r_b) / speed` ticks before contact (2: at most a
+    /// 30° turn).
+    pub side_horizon_factor: u8,
+    /// D-β: moving friends push each other by priority (`true`), or each yields its own approach
+    /// (`false`).
+    pub moving_friends_push: bool,
+}
+
+impl ContactRules {
+    /// The rules a catalog carries before `movement_rules.ron` replaces them: the legacy
+    /// pipeline, with the plan's derived values for the solver.
+    pub const LEGACY: Self = Self {
+        pipeline: MovementPipeline::Legacy,
+        iterations: 14,
+        dead_band_permille: 10,
+        moving_overlap_permille: 50,
+        side_horizon_factor: 2,
+        moving_friends_push: true,
+    };
+
+    /// These rules if they are valid (§3.6).
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] naming the first field out of range.
+    pub fn validated(self) -> SimResult<Self> {
+        let invalid = |field: &str, reason| SimCoreError::CatalogInvalidValue {
+            definition: "contact".to_owned(),
+            field: field.to_owned(),
+            reason,
+        };
+        if self.iterations == 0 {
+            return Err(invalid("iterations", "must be at least 1"));
+        }
+        if self.dead_band_permille == 0 || self.dead_band_permille >= self.moving_overlap_permille {
+            return Err(invalid(
+                "dead_band_permille",
+                "must be above 0 and below moving_overlap_permille",
+            ));
+        }
+        if self.moving_overlap_permille >= 1000 {
+            return Err(invalid("moving_overlap_permille", "must be below 1000"));
+        }
+        if self.side_horizon_factor == 0 {
+            return Err(invalid("side_horizon_factor", "must be at least 1"));
+        }
+        Ok(self)
+    }
+}
+
 /// Movement rules loaded from `movement_rules.ron`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MovementRules {
     lane_tolerance_permille: u16,
     acquire_leash_radius: u16,
+    contact: ContactRules,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +114,7 @@ pub struct MovementRules {
 struct MovementRulesFile {
     group_routing: GroupRoutingFile,
     pursuit: PursuitFile,
+    contact: ContactRules,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +137,7 @@ impl MovementRules {
     pub const PER_UNIT: Self = Self {
         lane_tolerance_permille: 0,
         acquire_leash_radius: STARCRAFT_ACQUIRE_LEASH_RADIUS,
+        contact: ContactRules::LEGACY,
     };
 
     /// Rules with the given group-routing tolerance, in permille of the member's own route length.
@@ -74,6 +157,7 @@ impl MovementRules {
         Ok(Self {
             lane_tolerance_permille,
             acquire_leash_radius: STARCRAFT_ACQUIRE_LEASH_RADIUS,
+            contact: ContactRules::LEGACY,
         })
     }
 
@@ -96,16 +180,36 @@ impl MovementRules {
         })
     }
 
+    /// These rules with the contact rules `contact`, validated.
+    ///
+    /// # Errors
+    /// [`SimCoreError::CatalogInvalidValue`] when `contact` is out of range
+    /// ([`ContactRules::validated`]).
+    pub fn with_contact(self, contact: ContactRules) -> SimResult<Self> {
+        Ok(Self {
+            contact: contact.validated()?,
+            ..self
+        })
+    }
+
     /// Parses and validates the text of `movement_rules.ron`.
     ///
     /// # Errors
     /// [`SimCoreError::RonDeserializationError`] for malformed RON or unknown or missing fields,
-    /// and [`SimCoreError::CatalogInvalidValue`] for a tolerance above 1000 permille.
+    /// and [`SimCoreError::CatalogInvalidValue`] for a tolerance above 1000 permille or contact
+    /// rules out of range.
     pub fn from_ron_str(ron_data: &str) -> SimResult<Self> {
         let file: MovementRulesFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
         Self::with_lane_tolerance(file.group_routing.lane_tolerance_permille)?
-            .with_acquire_leash_radius(file.pursuit.acquire_leash_radius)
+            .with_acquire_leash_radius(file.pursuit.acquire_leash_radius)?
+            .with_contact(file.contact)
+    }
+
+    /// The contact rules (plan `2026-11-20-contact-solver` §3.6).
+    #[must_use]
+    pub const fn contact(self) -> ContactRules {
+        self.contact
     }
 
     /// The leash of an automatically acquired chase, world units: the chase is given up when
@@ -160,19 +264,72 @@ mod tests {
         Ok(())
     }
 
+    /// A `movement_rules.ron` text with the given leash and contact section.
+    fn text(leash: u32, contact: &str) -> String {
+        format!(
+            "(group_routing: (lane_tolerance_permille: 75), pursuit: (acquire_leash_radius: \
+             {leash}), contact: {contact})"
+        )
+    }
+
+    /// The shipped contact section's values, as RON.
+    const CONTACT: &str = "(pipeline: Legacy, iterations: 14, dead_band_permille: 10, \
+        moving_overlap_permille: 50, side_horizon_factor: 2, moving_friends_push: true)";
+
     #[test]
     fn the_leash_is_read_and_must_be_positive() -> SimResult<()> {
-        let rules = MovementRules::from_ron_str(
-            "(group_routing: (lane_tolerance_permille: 75), pursuit: (acquire_leash_radius: 21))",
-        )?;
+        let rules = MovementRules::from_ron_str(&text(21, CONTACT))?;
         assert_eq!(rules.acquire_leash_radius(), SimScalar::from_i32(21));
         assert_eq!(rules.lane_tolerance_permille(), 75);
         assert!(matches!(
-            MovementRules::from_ron_str(
-                "(group_routing: (lane_tolerance_permille: 75), pursuit: (acquire_leash_radius: 0))"
-            ),
+            MovementRules::from_ron_str(&text(0, CONTACT)),
             Err(SimCoreError::CatalogInvalidValue { .. })
         ));
+        Ok(())
+    }
+
+    /// Plan `2026-11-20-contact-solver` §3.6: the contact section is read whole and validated:
+    /// `iterations` ≥ 1, `0 < dead_band_permille < moving_overlap_permille < 1000` and
+    /// `side_horizon_factor` ≥ 1; the pipeline is `Legacy` or `Solver`.
+    #[test]
+    fn the_contact_section_is_read_and_validated() -> SimResult<()> {
+        let rules = MovementRules::from_ron_str(&text(21, CONTACT))?;
+        assert_eq!(rules.contact(), ContactRules::LEGACY);
+        let solver = CONTACT.replace("Legacy", "Solver").replace("true", "false");
+        let rules = MovementRules::from_ron_str(&text(21, &solver))?;
+        assert_eq!(rules.contact().pipeline, MovementPipeline::Solver);
+        assert!(!rules.contact().moving_friends_push);
+        for (from, to) in [
+            ("iterations: 14", "iterations: 0"),
+            ("dead_band_permille: 10", "dead_band_permille: 0"),
+            ("dead_band_permille: 10", "dead_band_permille: 50"),
+            (
+                "moving_overlap_permille: 50",
+                "moving_overlap_permille: 1000",
+            ),
+            ("side_horizon_factor: 2", "side_horizon_factor: 0"),
+        ] {
+            assert!(
+                matches!(
+                    MovementRules::from_ron_str(&text(21, &CONTACT.replace(from, to))),
+                    Err(SimCoreError::CatalogInvalidValue { .. })
+                ),
+                "{to}"
+            );
+        }
+        for broken in [
+            CONTACT.replace("Legacy", "Other"),
+            CONTACT.replace(", moving_friends_push: true", ""),
+            CONTACT.replace("true)", "true, extra: 1)"),
+        ] {
+            assert!(
+                matches!(
+                    MovementRules::from_ron_str(&text(21, &broken)),
+                    Err(SimCoreError::RonDeserializationError(_))
+                ),
+                "{broken}"
+            );
+        }
         Ok(())
     }
 
@@ -185,6 +342,7 @@ mod tests {
             "(group_routing: ())",
             "(group_routing: (lane_tolerance_permille: 75))",
             "(group_routing: (lane_tolerance_permille: 75), pursuit: ())",
+            "(group_routing: (lane_tolerance_permille: 75), pursuit: (acquire_leash_radius: 21))",
             "()",
         ] {
             assert!(
