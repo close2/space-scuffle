@@ -897,3 +897,38 @@ D-12. Tests:
   `proto/rebuild*.txt`, `bench/`, `showcase-variants.txt`.
 - The scratch worktrees (`resource-footprints-proto`, `rf-placebo`) and their target directories were removed
   at hand-back; the diff rebuilds the prototype on `fb66d85e`.
+
+## Amendment 1 (orchestrator, 2026-11-20): slot 1's geysers re-laid away from the army's spawn; the reversal clause is reported, not a stop
+
+**Why.** WP5 stopped on §7 rule 4. The proposed amendment, with its controls and trace, is on
+`resource-footprints-wp5-wip`. Measured on today's base (the WP4 tree), placing the geysers makes showcase seed 4 a
+draw and flips seed 6 to player 0. The controls attribute both changes to slot 1's geysers. Their footprint changes
+the mesh beside the ground where the scenario spawns slot 1's army, so the routes out of the base change from
+tick 1. Minerals alone keep every winner, and a far node changes nothing. The plan's prototype was measured on
+`fb66d85e`, before plan `2026-11-19-partial-knowledge-funnel` moved every seed, so its figures no longer apply.
+
+**Decision: option 1.**
+
+1. **Re-lay the geysers.** Slot 1's geysers, and their mirror in slot 0, are moved so that no geyser footprint or
+   its mesh constraint lies between a town hall and the cells where the scenario spawns that slot's army, nor on
+   the army's exit. Use the same rule that D-10 states for "behind the base", made concrete:
+   - the geyser lies on the far side of the hall from the army's spawn ring and exit;
+   - the map stays mirror-symmetric;
+   - the D-10 guards hold.
+
+   Record the new cells in D-10 and in Q0091's context; Q0091's default (a) still applies.
+2. **Re-measure WP5** against the WP4 base and its placebo band. Rule 4's winner part stands as written: all nine
+   showcase winners, the matrix, and battles 31 and 33. A further winner change stops the package again, with
+   controls.
+3. **The reversal clause becomes a report, not a stop.** The 90 %-near-a-node fraction and the +31 + 13 allowance
+   were set from the `fb66d85e` prototype. That base no longer exists, and even minerals alone on today's base rise
+   by 50. The stop rules for oscillation stay:
+   - give-ups at most base + 1;
+   - deeper unit-ticks 0;
+   - no unit reversing on more than 3 consecutive ticks;
+   - the F-3 oscillation absent.
+
+   The total and its split by distance from a node are reported per seed. B-152 (the oscillation beside rounded
+   obstacles) records the measured rise as its baseline. I decide on the figures at hand-back, without loosening
+   any other rule.
+4. Then WP6 to WP8 as written.
