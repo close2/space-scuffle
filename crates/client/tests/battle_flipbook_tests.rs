@@ -65,8 +65,10 @@ const ATTACKER: &str = "pulse_bot";
 /// Shipped unarmed structure with media: the sustained-fire target and the foundation built.
 const TARGET: &str = "assembly_bay_dome";
 
-/// Minimum corner cell of open plateau in the skirmish, clear of both players' starts.
-const TARGET_CELL: u32 = 2;
+/// Minimum corner cell of open plateau in the skirmish, clear of both players' starts and of the
+/// home player's nodes. It moved from (2, 2) to (12, 2) when plan 2026-11-20-resource-footprints
+/// Amendment 2 put a geyser at (1, 1), whose 3×3 covers (0..2, 0..2).
+const TARGET_CELL: (u32, u32) = (12, 2);
 
 /// More minerals than any test spends.
 const RICH: u32 = 100_000;
@@ -522,7 +524,7 @@ fn sustained_fire_changes_no_material() {
         .expect("the catalog ships the target");
     let target = harness
         .world_mut()
-        .spawn_structure(target_type, ENEMY, TARGET_CELL, TARGET_CELL)
+        .spawn_structure(target_type, ENEMY, TARGET_CELL.0, TARGET_CELL.1)
         .expect("the corner plateau is open");
     let at = harness.open_ground(harness.simulated_position(target), 3.0);
     let attacker = harness
@@ -592,7 +594,7 @@ fn construction_follows_progress() {
         .get_mut(LOCAL_PLAYER)
         .expect("invariant: LOCAL_PLAYER has a player slot")
         .minerals = RICH;
-    let site = Vec2::new(TARGET_CELL as f32 + 1.5, TARGET_CELL as f32 + 1.5);
+    let site = Vec2::new(TARGET_CELL.0 as f32 + 1.5, TARGET_CELL.1 as f32 + 1.5);
     let worker_at = harness.simulated_position(worker);
     harness.look_at((worker_at + site) * 0.5);
     harness.select(worker);
