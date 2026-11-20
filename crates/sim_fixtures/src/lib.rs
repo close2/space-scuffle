@@ -26,6 +26,7 @@
     reason = "test support: a broken shipped catalog must fail the calling test loudly"
 )]
 
+pub mod harness;
 pub mod matchup;
 mod sandbox;
 pub mod trace;
