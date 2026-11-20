@@ -316,3 +316,57 @@ Plan `2026-11-09-sc2-pathfinding` Amendment 8 points here.
 
 **Whole suites** (`cargo test --release --no-fail-fast -p sim_core -p sim_map`, under `flock ~/scratch/gate.lock`):
 exit 0, 101 test targets, 1,288 passed, 0 failed, 3 ignored (the three B-103 tests ignored on `main`).
+
+## Amendment 2: the flipbook release trace, `default_battle` and the release validation observation
+
+The package gate on `05204c9d` failed on `client/battle_flipbook_tests::attack_release_shows_the_release_frame`.
+The trace, copied from `~/scratch/tab/impl/flipbook-trace.md`:
+
+Tree: tastar-budget-plan 05204c9d, measurement copy with the rule switches (scratch, removed). Release, GPU test run
+under flock ~/scratch/gate.lock (the test locks the GPU itself).
+
+Bisection: all rules on FAILED ("released only 2 times"); all off ok; D-1 off ok; D-2 off FAILED; D-3 off FAILED;
+D-2 and D-3 off FAILED. D-1 alone causes it.
+
+Scene: `scenarios/default_battle.ron` = the showcase canyon map with `AttackMoveToStart` both ways (the
+pre-Amendment-5 orders of G-1), random firing delays removed by the test.
+
+First divergence: the third route request of the run, the same request G-1 traced: player 1's group lane,
+(58.5, 53.5) -> (5.5, 5.5), r 0.375, partial knowledge. main 92.419, east of the plateau; D-1 92.061 (-0.39 %), west,
+a shorter legal first-pass pull that main loses to the visit cap (B-149). Player 1's army then takes player 0's west
+lane, so the armies meet head-on west of the plateau instead of passing on opposite sides.
+
+The attacker: the test's subject is the first local unit to swing, EntityId(13) in both runs.
+- main: first swing at (47.56, 52.62), at player 1's start; it stands there and the 600-tick window records
+  119 Attack, 441 Idle and 40 Walk ticks: enough releases.
+- D-1: first swing at (25.49, 32.11), in the head-on fight west of the plateau; it is in the window for 83 ticks
+  (17 Attack, 54 Idle, 12 Walk) and then dies (its entity leaves the world while its last presented bubble remains),
+  after 2 releases.
+So its standing windows do not shrink by walking: it dies in the fight its group now meets on the way.
+
+Classification: rule-caused (the same lane change as Amendment 1), not a defect.
+
+Proposed amendment (its first option adopted as plan Amendment 2): restate the test test-only. Its subject is the flipbook release frame, not the
+battle's choreography; its window ends when its one attacker dies. For example: when the attacker's record ends,
+continue with the next local unit that swings, and require at least 3 releases over the window (each checked as now);
+or pick the attacker that stands longest; or run it in a fixture with a stationary attacker (as
+`sustained_fire_changes_no_material` does in the skirmish scenario). No rule change.
+
+**As restated (plan Amendment 2).** When the followed attacker's record ends, the test follows the next local unit
+that swings, within the same 600-tick window, and ends the window when no local unit swings again (player 0's army
+falls in the head-on fight); it requires at least 3 releases, each checked as before. With the branch's rules a probe of
+the restated loop counted 17 releases over five attackers before the local army was gone. All nine tests of the
+target pass in debug.
+
+**The measurement set gains `scenarios/default_battle.ron`**, beside the group-routing fixtures of Amendment 1: like
+G-1 it runs the pre-Amendment-5 orders, whose lanes follow TA*'s channel choice. The sweep that found this case: every
+`client` test target that drives a battle or a scenario (38 targets), one at a time under the gate lock. In debug, the
+gate's profile, the only behaviour change is this test.
+
+**Observation for the GPU test plan (not this plan's).** In a release build, 13 GPU targets (`area_link_gpu_tests`,
+`combat_fx_slot_gpu_tests`, `concealment_gpu_tests`, `damage_look_gpu_tests`, `dome_fill_tests`, `editor_app_tests`,
+`lab_scene_tests`, `mode_atlas_gpu_tests`, `round2_visual_tests`, `skirmish_match_tests`, `stance_gpu_tests`,
+`status_gpu_tests`, `weapon_battle_gpu_tests`) fail their validation children with "VK_LAYER_KHRONOS_validation was
+not inserted": with `WGPU_VALIDATION=1` set by `gpu_run.rs`, wgpu logs "Debug utils not enabled" in release and does
+not load the layer. All 13 pass in debug. The GPU validation tests are meaningful in debug only; a release run of them
+fails without a defect.
