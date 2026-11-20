@@ -51,12 +51,12 @@ use sim_types::{EntityId, ResourceNodeId, SimScalar, SimVec2, VisibilityState};
 use thiserror::Error;
 
 use crate::footprint::PlacedFootprint;
-use crate::grid::{CellFlags, GameMap, PlacedStructure, RampDir};
+use crate::grid::{CellFlags, GameMap, RampDir};
 use crate::pathfinding::PathRequestWithVision;
 use cdt::{Triangulation, NONE};
 use predicates::{
     lattice_distance_sq, lattice_dot, lattice_point_segment_width, orient_q, LatticePoint, QPoint,
-    SquaredWidth, LATTICE_PER_CELL, NAV_MESH_MAX_DIMENSION,
+    SquaredWidth, LATTICE_BITS, LATTICE_PER_CELL, NAV_MESH_MAX_DIMENSION,
 };
 
 /// Why a navigation mesh could not be built.
@@ -93,6 +93,17 @@ enum Direction {
 
 impl Direction {
     const ALL: [Self; 4] = [Self::East, Self::North, Self::NorthEast, Self::NorthWest];
+
+    /// The direction's position in [`Self::ALL`], its bit within a lattice point's four in a
+    /// [`StructureEdges`] mask.
+    const fn index(self) -> u32 {
+        match self {
+            Self::East => 0,
+            Self::North => 1,
+            Self::NorthEast => 2,
+            Self::NorthWest => 3,
+        }
+    }
 
     /// The lattice step of the edge.
     const fn step(self) -> (i32, i32) {
@@ -320,104 +331,144 @@ impl EdgeGrid {
 
 /// The unit lattice edges of every structure's geometry (D-4): the boundary of its shape and
 /// the interior cell lines of its footprint clipped to the shape's open interior, all `Seam`.
+/// A standing resource node's footprint counts as a structure's.
 // PERFORMANCE RATIONALE:
-// Why: A dense edge grid on the quarter lattice would hold 16 times the whole-cell grid's
-// points and be rebuilt and scanned on every structure change.
-// What: Terrain stays in the whole-cell `EdgeGrid`; only structure edges, which lie in their
-// footprints, are kept here, as a `Vec` sorted by start point and direction and searched by
-// bisection (no hashed collection, charter §3.1).
-// Trade-off: A sort per rebuild and a logarithmic lookup per edge query, in exchange for memory
-// and work proportional to the structures, not to the map.
+// Why: The build asks for the kind of the eight unit edges at every candidate vertex and at
+// every lattice point along a run. A sorted edge list searched by bisection made that lookup
+// 68.5 % of a rebuild with the shipped resource nodes, 3.04 times the node-free rebuild (B-155).
+// What: One `u64` per whole cell of the closed map rectangle, row-major; its bits are the
+// canonical unit edges starting at the cell's sixteen quarter-lattice points, four directions
+// each (`Self::slot`). A query is two shifts, one bounds check and one bit test; building sets
+// bits in place, with no sort and no deduplication.
+// Trade-off: Eight bytes per cell of the map, zeroed on every rebuild, where the sorted list
+// held memory in proportion to the structures; the build's candidate list already holds eight
+// bytes per cell corner, so the rebuild's peak stays of the same order. The table is one
+// allocation of known size, where the list grew by doubling.
 struct StructureEdges {
-    /// `((y, x), direction)` of each unit edge's start point, sorted and unique.
-    edges: Vec<((i32, i32), Direction)>,
+    /// Cells per row of `masks`: the map's width plus one, so that start points on the map's
+    /// east line have a cell.
+    columns: usize,
+    /// Rows of `masks`: the map's height plus one, for start points on the north line.
+    rows: usize,
+    /// Per cell, row-major, the mask of the structure edges that start at its lattice points.
+    masks: Vec<u64>,
 }
+
+// One cell's lattice points, four canonical directions each, fill at most one `u64`.
+const _: () = assert!(LATTICE_PER_CELL * LATTICE_PER_CELL * 4 <= 64);
 
 impl StructureEdges {
     fn new(map: &GameMap) -> Self {
-        let mut edges = Vec::new();
+        let columns = map.width() as usize + 1;
+        let rows = map.height() as usize + 1;
+        let mut edges = Self {
+            columns,
+            rows,
+            masks: vec![0; columns * rows],
+        };
+        let mut insert = |start: (i32, i32), direction: Direction| {
+            // A footprint lies on the map (placement refuses a cell beyond it), so every start
+            // point lies in the closed map rectangle and has a slot.
+            if let Some((index, bit)) = edges.slot(start, direction) {
+                edges.masks[index] |= bit;
+            }
+        };
         for placed in map.structures().values() {
-            Self::add_structure(placed, &mut edges);
+            footprint_edges(&placed.footprint(), &mut insert);
         }
         for resource in map.resources() {
             if let Some(placed) = resource.placed {
-                Self::add_footprint(&placed.footprint, &mut edges);
+                footprint_edges(&placed.footprint, &mut insert);
             }
         }
-        edges.sort_unstable();
-        edges.dedup();
-        Self { edges }
+        edges
     }
 
-    /// Adds the unit edges of `placed`'s outline and of its interior cell lines clipped to the
-    /// outline's open interior.
-    fn add_structure(placed: &PlacedStructure, edges: &mut Vec<((i32, i32), Direction)>) {
-        Self::add_footprint(&placed.footprint(), edges);
+    /// The index in `masks` and the bit of the unit edge from lattice point `start` in
+    /// `direction`; `None` when `start` lies outside the closed map rectangle, where no
+    /// structure edge starts. Bit `4 * (LATTICE_PER_CELL * (y mod L) + x mod L) + d`, with
+    /// `L = LATTICE_PER_CELL` and `d` the direction's index.
+    #[inline]
+    fn slot(&self, (x, y): (i32, i32), direction: Direction) -> Option<(usize, u64)> {
+        let column = usize::try_from(x >> LATTICE_BITS).ok()?;
+        let row = usize::try_from(y >> LATTICE_BITS).ok()?;
+        if column >= self.columns || row >= self.rows {
+            return None;
+        }
+        let local = |v: i32| (v & (LATTICE_PER_CELL - 1)).unsigned_abs();
+        let point = local(y) * LATTICE_PER_CELL.unsigned_abs() + local(x);
+        Some((
+            row * self.columns + column,
+            1 << (4 * point + direction.index()),
+        ))
     }
 
-    /// Adds the unit edges of a placed footprint's outline and of its interior cell lines clipped
-    /// to the outline's open interior. Outline vertices are lattice points and its edges run
-    /// along axes and diagonals, so the outline crosses a cell line only at lattice points: a
-    /// unit edge of the line lies in the open interior exactly when its midpoint does.
-    fn add_footprint(footprint: &PlacedFootprint, edges: &mut Vec<((i32, i32), Direction)>) {
-        let vertices = footprint.contour();
-        let count = vertices.len();
-        for i in 0..count {
-            let (u, v) = (vertices[i], vertices[(i + 1) % count]);
-            let (sx, sy) = ((v.x - u.x).signum(), (v.y - u.y).signum());
-            let length = (v.x - u.x).abs().max((v.y - u.y).abs());
-            for k in 0..length {
-                let a = (u.x + k * sx, u.y + k * sy);
-                edges.push(Self::canonical(a, (sx, sy)));
-            }
-        }
-        let corner = LatticePoint::cell_corner(
-            i32::try_from(footprint.top_left.0).unwrap_or(i32::MAX),
-            i32::try_from(footprint.top_left.1).unwrap_or(i32::MAX),
-        );
-        let (span_x, span_y) = (
-            i32::from(footprint.width) * LATTICE_PER_CELL,
-            i32::from(footprint.height) * LATTICE_PER_CELL,
-        );
-        let inside =
-            |x2: i32, y2: i32| footprint.contains_open_scaled(i64::from(x2), i64::from(y2), 2);
-        for i in 1..i32::from(footprint.width) {
-            let x = corner.x + i * LATTICE_PER_CELL;
-            for y in corner.y..corner.y + span_y {
-                if inside(2 * x, 2 * y + 1) {
-                    edges.push(((y, x), Direction::North));
-                }
-            }
-        }
-        for j in 1..i32::from(footprint.height) {
-            let y = corner.y + j * LATTICE_PER_CELL;
-            for x in corner.x..corner.x + span_x {
-                if inside(2 * x + 1, 2 * y) {
-                    edges.push(((y, x), Direction::East));
-                }
-            }
-        }
-    }
-
-    /// The stored form of the unit edge from `a` along `step`: its start point and direction.
-    fn canonical(a: (i32, i32), step: (i32, i32)) -> ((i32, i32), Direction) {
-        let (x, y) = a;
-        match step {
-            (1, 0) => ((y, x), Direction::East),
-            (-1, 0) => ((y, x - 1), Direction::East),
-            (0, 1) => ((y, x), Direction::North),
-            (0, -1) => ((y - 1, x), Direction::North),
-            (1, 1) => ((y, x), Direction::NorthEast),
-            (-1, -1) => ((y - 1, x - 1), Direction::NorthEast),
-            (-1, 1) => ((y, x), Direction::NorthWest),
-            _ => ((y - 1, x + 1), Direction::NorthWest),
-        }
-    }
-
+    /// Whether the unit edge from lattice point `start` in `direction` is a structure edge.
+    #[inline]
     fn contains(&self, start: (i32, i32), direction: Direction) -> bool {
-        self.edges
-            .binary_search(&((start.1, start.0), direction))
-            .is_ok()
+        self.slot(start, direction)
+            .is_some_and(|(index, bit)| self.masks[index] & bit != 0)
+    }
+}
+
+/// Calls `sink` with the canonical form (start point `(x, y)` and direction) of each unit edge
+/// of a placed footprint's outline and of its interior cell lines clipped to the outline's open
+/// interior. Outline vertices are lattice points and its edges run along axes and diagonals, so
+/// the outline crosses a cell line only at lattice points: a unit edge of the line lies in the
+/// open interior exactly when its midpoint does. An edge may be reported more than once.
+fn footprint_edges(footprint: &PlacedFootprint, sink: &mut impl FnMut((i32, i32), Direction)) {
+    let vertices = footprint.contour();
+    let count = vertices.len();
+    for i in 0..count {
+        let (u, v) = (vertices[i], vertices[(i + 1) % count]);
+        let (sx, sy) = ((v.x - u.x).signum(), (v.y - u.y).signum());
+        let length = (v.x - u.x).abs().max((v.y - u.y).abs());
+        for k in 0..length {
+            let (start, direction) = canonical((u.x + k * sx, u.y + k * sy), (sx, sy));
+            sink(start, direction);
+        }
+    }
+    let corner = LatticePoint::cell_corner(
+        i32::try_from(footprint.top_left.0).unwrap_or(i32::MAX),
+        i32::try_from(footprint.top_left.1).unwrap_or(i32::MAX),
+    );
+    let (span_x, span_y) = (
+        i32::from(footprint.width) * LATTICE_PER_CELL,
+        i32::from(footprint.height) * LATTICE_PER_CELL,
+    );
+    let inside = |x2: i32, y2: i32| footprint.contains_open_scaled(i64::from(x2), i64::from(y2), 2);
+    for i in 1..i32::from(footprint.width) {
+        let x = corner.x + i * LATTICE_PER_CELL;
+        for y in corner.y..corner.y + span_y {
+            if inside(2 * x, 2 * y + 1) {
+                sink((x, y), Direction::North);
+            }
+        }
+    }
+    for j in 1..i32::from(footprint.height) {
+        let y = corner.y + j * LATTICE_PER_CELL;
+        for x in corner.x..corner.x + span_x {
+            if inside(2 * x + 1, 2 * y) {
+                sink((x, y), Direction::East);
+            }
+        }
+    }
+}
+
+/// The stored form of the unit edge from lattice point `a` one step along `step` (one of the
+/// eight unit steps): its start point `(x, y)` and canonical direction.
+#[inline]
+fn canonical(a: (i32, i32), step: (i32, i32)) -> ((i32, i32), Direction) {
+    let (x, y) = a;
+    match step {
+        (1, 0) => ((x, y), Direction::East),
+        (-1, 0) => ((x - 1, y), Direction::East),
+        (0, 1) => ((x, y), Direction::North),
+        (0, -1) => ((x, y - 1), Direction::North),
+        (1, 1) => ((x, y), Direction::NorthEast),
+        (-1, -1) => ((x - 1, y - 1), Direction::NorthEast),
+        (-1, 1) => ((x, y), Direction::NorthWest),
+        _ => ((x + 1, y - 1), Direction::NorthWest),
     }
 }
 
@@ -431,10 +482,10 @@ struct ConstraintGraph<'a> {
 impl ConstraintGraph<'_> {
     /// The kind of the unit edge from lattice point `p` one step along `(dx, dy)`, if any.
     fn kind(&self, p: (i32, i32), (dx, dy): (i32, i32)) -> Option<EdgeKind> {
-        let (start, direction) = StructureEdges::canonical(p, (dx, dy));
+        let (start, direction) = canonical(p, (dx, dy));
         let structure = self
             .structures
-            .contains((start.1, start.0), direction)
+            .contains(start, direction)
             .then_some(EdgeKind::Seam);
         stronger(self.terrain_kind(p, (dx, dy)), structure)
     }
@@ -1193,5 +1244,303 @@ impl<'a> Access<'a> {
         } else {
             self.mesh.width_at(t, k, |u| self.open(u))
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "tests: a shipped map or fixture that does not build is a failed test"
+)]
+mod edge_lookup_tests {
+    //! The structure edge table against the sorted edge list it replaced (plan
+    //! `2026-11-20-resource-footprints` Amendment 5, B-155), kept here as the oracle: every unit
+    //! edge kind of random layouts with terrain, structures and resource nodes must agree.
+
+    use super::*;
+    use crate::footprint::{ResourceFootprint, ResourceFootprints};
+    use crate::grid::{ResourceKind, ResourceNode};
+    use crate::map_format::MapFile;
+    use crate::StructureFootprint;
+    use proptest::prelude::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+    use sim_types::{EntityId, FootprintShape, QuarterOutline, ResourceNodeId};
+
+    /// The eight unit lattice steps.
+    const STEPS: [(i32, i32); 8] = [
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (-1, 1),
+        (-1, 0),
+        (0, -1),
+        (-1, -1),
+        (1, -1),
+    ];
+
+    /// The lookup before B-155: the structure edges sorted by start point and direction and
+    /// searched by bisection, over the same terrain.
+    struct Oracle<'a> {
+        graph: &'a ConstraintGraph<'a>,
+        edges: Vec<((i32, i32), Direction)>,
+    }
+
+    impl<'a> Oracle<'a> {
+        fn new(map: &GameMap, graph: &'a ConstraintGraph<'a>) -> Self {
+            let mut edges = Vec::new();
+            let mut push = |start, direction| edges.push((start, direction));
+            for placed in map.structures().values() {
+                footprint_edges(&placed.footprint(), &mut push);
+            }
+            for resource in map.resources() {
+                if let Some(placed) = resource.placed {
+                    footprint_edges(&placed.footprint, &mut push);
+                }
+            }
+            edges.sort_unstable();
+            edges.dedup();
+            Self { graph, edges }
+        }
+
+        fn kind(&self, p: (i32, i32), step: (i32, i32)) -> Option<EdgeKind> {
+            let structure = self
+                .edges
+                .binary_search(&canonical(p, step))
+                .is_ok()
+                .then_some(EdgeKind::Seam);
+            stronger(self.graph.terrain_kind(p, step), structure)
+        }
+    }
+
+    /// Asserts that the table and the oracle agree on every unit edge from every lattice point
+    /// of `map` and of a two-point margin around it; returns the number of structure edges.
+    fn assert_lookups_agree(map: &GameMap) -> usize {
+        let terrain = EdgeGrid::new(map);
+        let graph = ConstraintGraph {
+            terrain: &terrain,
+            structures: StructureEdges::new(map),
+        };
+        let oracle = Oracle::new(map, &graph);
+        let (w, h) = (
+            signed(map.width()) * LATTICE_PER_CELL,
+            signed(map.height()) * LATTICE_PER_CELL,
+        );
+        for y in -2..=h + 2 {
+            for x in -2..=w + 2 {
+                for step in STEPS {
+                    assert_eq!(
+                        graph.kind((x, y), step),
+                        oracle.kind((x, y), step),
+                        "unit edge from ({x}, {y}) along {step:?}"
+                    );
+                }
+            }
+        }
+        oracle.edges.len()
+    }
+
+    /// The 5.0.14 geyser outline in quarter cells, as the shipped catalog has it.
+    fn geyser_outline() -> FootprintShape {
+        FootprintShape::Outline(
+            QuarterOutline::new(&[
+                (-2, -4),
+                (-3, -5),
+                (-5, -3),
+                (-4, -2),
+                (-4, 2),
+                (-5, 3),
+                (-3, 5),
+                (-2, 4),
+                (2, 4),
+                (3, 5),
+                (5, 3),
+                (4, 2),
+                (4, -2),
+                (5, -3),
+                (3, -5),
+                (2, -4),
+            ])
+            .expect("invariant: sixteen vertices fit an outline"),
+        )
+    }
+
+    /// Minerals a 2×1 box anchored on the west cell, gas the 3×3 outline centred on its anchor.
+    fn table() -> ResourceFootprints {
+        ResourceFootprints::new(vec![
+            (
+                ResourceKind::Mineral,
+                ResourceFootprint {
+                    cells: (0, 0, 2, 1),
+                    shape: FootprintShape::full(2, 1),
+                    remove_when_empty: true,
+                },
+            ),
+            (
+                ResourceKind::Gas,
+                ResourceFootprint {
+                    cells: (-1, -1, 3, 3),
+                    shape: geyser_outline(),
+                    remove_when_empty: false,
+                },
+            ),
+        ])
+    }
+
+    /// Structure footprints: full boxes and chamfered boxes of the shipped sizes.
+    fn footprint(rng: &mut ChaCha8Rng) -> StructureFootprint {
+        const SHAPES: [(u8, u8, u16, u16, u16); 7] = [
+            (5, 5, 10, 10, 6),
+            (3, 3, 6, 6, 2),
+            (3, 3, 6, 6, 3),
+            (2, 2, 4, 4, 2),
+            (2, 2, 2, 2, 1),
+            (1, 1, 2, 2, 0),
+            (3, 2, 6, 4, 2),
+        ];
+        let (width, height, half_width_q, half_height_q, chamfer_q) =
+            SHAPES[rng.gen_range(0..SHAPES.len())];
+        if rng.gen_bool(0.3) {
+            StructureFootprint::square(width, height)
+        } else {
+            StructureFootprint {
+                width,
+                height,
+                shape: FootprintShape::Box {
+                    half_width_q,
+                    half_height_q,
+                    chamfer_q,
+                },
+            }
+        }
+    }
+
+    /// The default arena's cells and nodes, its nodes not placed.
+    fn default_arena() -> GameMap {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/maps/default_arena.scmap.ron");
+        MapFile::load(&path)
+            .expect("invariant: the shipped arena loads")
+            .decode()
+            .expect("invariant: the shipped arena decodes")
+            .to_game_map()
+            .expect("invariant: the shipped arena is a valid map")
+    }
+
+    /// A random layout on the arena's terrain: its own nodes and up to 24 more, every node that
+    /// fits placed, an extractor over the first standing geyser, then up to 16 structures, some
+    /// flush with the map border. Returns the map, the standing nodes and the structures.
+    fn layout(seed: u64) -> (GameMap, usize, usize) {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let arena = default_arena();
+        let (width, height) = (arena.width(), arena.height());
+        let mut nodes: Vec<ResourceNode> = arena.resources().to_vec();
+        for _ in 0..rng.gen_range(0..=24) {
+            let kind = if rng.gen_bool(0.25) {
+                ResourceKind::Gas
+            } else {
+                ResourceKind::Mineral
+            };
+            let cell = (rng.gen_range(0..width), rng.gen_range(0..height));
+            let half = |v: u32| SimScalar::from_raw((i64::from(v) << 32) + (1 << 31));
+            nodes.push(ResourceNode {
+                pos: SimVec2::new(half(cell.0), half(cell.1)),
+                kind,
+                remaining: 1_500,
+                cell,
+                placed: None,
+            });
+        }
+        let mut map = GameMap::from_cells(
+            width,
+            height,
+            arena.cells().to_vec(),
+            nodes,
+            arena.watchtowers().to_vec(),
+        )
+        .expect("invariant: the arena's own size and cells");
+        let table = table();
+        let count = map.resources().len();
+        let ids = (0..count).map(|i| ResourceNodeId(u32::try_from(i).unwrap_or(u32::MAX)));
+        let standing = ids
+            .filter(|&id| map.place_one_resource_footprint(id, &table).is_ok())
+            .count();
+        let geyser = (0..count).find(|&i| {
+            map.resources()[i].kind == ResourceKind::Gas && map.resources()[i].placed.is_some()
+        });
+        let mut structures = 0;
+        if let Some(i) = geyser {
+            let id = ResourceNodeId(u32::try_from(i).unwrap_or(u32::MAX));
+            let extractor = StructureFootprint {
+                width: 3,
+                height: 3,
+                shape: geyser_outline(),
+            };
+            structures += usize::from(
+                map.place_structure_over_resource(EntityId(50_000), id, extractor)
+                    .is_ok(),
+            );
+        }
+        for attempt in 0..64u32 {
+            if structures >= 16 {
+                break;
+            }
+            let footprint = footprint(&mut rng);
+            let cell = if rng.gen_bool(0.2) {
+                (width - u32::from(footprint.width), rng.gen_range(0..height))
+            } else {
+                (rng.gen_range(0..width), rng.gen_range(0..height))
+            };
+            structures += usize::from(
+                map.place_structure(EntityId(40_000 + attempt), cell, footprint)
+                    .is_ok(),
+            );
+        }
+        (map, standing, structures)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+
+        /// The table answers every unit edge of a random layout as the sorted list did.
+        #[test]
+        fn the_table_agrees_with_the_sorted_list_on_random_layouts(seed in any::<u64>()) {
+            let (map, standing, structures) = layout(seed);
+            prop_assert!(standing > 0 && structures > 0, "a layout with nodes and structures");
+            let edges = assert_lookups_agree(&map);
+            prop_assert!(edges > 0);
+        }
+    }
+
+    /// The shipped arena with its nodes standing: the case B-155 measured.
+    #[test]
+    fn the_table_agrees_with_the_sorted_list_on_the_arena_with_its_nodes() {
+        let mut map = default_arena();
+        map.place_resource_footprints(&table())
+            .expect("invariant: the arena's nodes fit the test table");
+        assert!(assert_lookups_agree(&map) > 0);
+    }
+
+    /// A structure flush with the north-east corner has edges on the map's east and north
+    /// lines, which only the table's extra column and row hold; points beyond have none.
+    #[test]
+    fn edges_on_the_map_border_are_found_and_points_beyond_have_none() {
+        let side = 8;
+        let cells = vec![crate::grid::MapCell::default_ground(crate::grid::CliffLevel(1)); 64];
+        let mut map = GameMap::from_cells(side, side, cells, Vec::new(), Vec::new())
+            .expect("invariant: a valid size");
+        map.place_structure(EntityId(1), (6, 6), StructureFootprint::square(2, 2))
+            .expect("invariant: open ground");
+        let edges = StructureEdges::new(&map);
+        let east_line = signed(side) * LATTICE_PER_CELL;
+        assert!(edges.contains((east_line, east_line - 1), Direction::North));
+        assert!(edges.contains((east_line - 1, east_line), Direction::East));
+        assert!(!edges.contains((east_line + 1, east_line - 1), Direction::North));
+        assert!(!edges.contains((-1, 0), Direction::East));
+        assert!(!edges.contains((0, -1), Direction::North));
+        assert!(!edges.contains((i32::MAX, i32::MAX), Direction::NorthEast));
+        assert!(!edges.contains((i32::MIN, 0), Direction::NorthWest));
+        // The outline: four sides of eight quarter steps; the interior: one line each way.
+        assert_eq!(assert_lookups_agree(&map), 4 * 8 + 2 * 8);
     }
 }
