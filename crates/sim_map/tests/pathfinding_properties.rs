@@ -964,6 +964,80 @@ fn partial_knowledge_routes_agree_with_the_oracle() {
     );
 }
 
+/// Plan `2026-11-20-tastar-budget` WP5: the per-cell half of
+/// `partial_knowledge_routes_agree_with_the_oracle`. The same 40 layouts of full squares, each
+/// cell known or not, and their requests between cells where the disc fits. The oracle runs on
+/// the arena with every known cell as a one-cell structure. The plan does not hold this oracle
+/// exact under per-cell knowledge (it was never validated there; worst ratio 1.0309 on this
+/// corpus), so the test holds only what a lower bound can: no route is shorter than it by more
+/// than 10⁻³, and no route from a fitting start falls back, except per-cell layout 8 q 2, the
+/// partial-knowledge funnel's class N (a free anchor beside a known face with no room for the
+/// disc; no channel has a legal pull, plan `2026-11-20-tastar-budget` §9).
+#[test]
+fn partial_knowledge_routes_agree_with_the_oracle_per_cell() {
+    let (mut total, mut worst, mut fallbacks) = (0u32, 1.0f64, Vec::new());
+    for number in 0..40_u64 {
+        let layout = layouts::layout(number, LayoutKind::PER_CELL_SQUARES);
+        let map = &layout.map;
+        let mut known_cells = arena::default_arena();
+        for (index, &known) in (0_u32..).zip(&layout.known) {
+            let cell = (index % map.width(), index / map.width());
+            let id = sim_types::EntityId(60_000 + index);
+            assert!(
+                !known
+                    || known_cells
+                        .place_structure(id, cell, sim_map::StructureFootprint::square(1, 1))
+                        .is_ok(),
+                "layout {number}: known cell {cell:?} is not open ground"
+            );
+        }
+        let mut pathfinder = Pathfinder::new(map);
+        for (q, drawn) in layout.requests.iter().enumerate() {
+            let request = layout_request(&layout, drawn);
+            let fits = |p: SimVec2, pathfinder: &mut Pathfinder| {
+                pathfinder.segment_is_passable(map, &request, p, p)
+            };
+            if !fits(drawn.start, &mut pathfinder) || !fits(drawn.goal, &mut pathfinder) {
+                continue;
+            }
+            let Ok(route) = pathfinder.find_route_mesh(map, &request) else {
+                continue;
+            };
+            if route.fallback {
+                fallbacks.push((number, q));
+                continue;
+            }
+            assert!(route_is_legal(
+                &mut pathfinder,
+                map,
+                &request,
+                &route.waypoints
+            ));
+            let radius = f64::from(request.radius.to_f32());
+            let oracle = oracle::Oracle::new(oracle::walls_of(&known_cells), radius - 1e-5);
+            let Some(reference) = oracle.shortest(to_f64(drawn.start), to_f64(drawn.goal)) else {
+                continue;
+            };
+            if reference <= 0.0 {
+                continue;
+            }
+            let length = f64::from(route.total_length.to_f32());
+            assert!(
+                length >= reference - 1e-3,
+                "layout {number} q {q}: {length} shorter than the oracle's {reference}: {request:?}"
+            );
+            total += 1;
+            worst = worst.max(length / reference);
+        }
+    }
+    eprintln!("per-cell knowledge against the oracle: {total} routes, worst ratio {worst:.4}, fallbacks {fallbacks:?}");
+    assert!(total >= 300, "only {total} routes compared");
+    assert!(
+        fallbacks.iter().all(|&case| case == (8, 2)),
+        "fallbacks from fitting starts: {fallbacks:?}"
+    );
+}
+
 /// The mesh request of a drawn layout request, under the layout's knowledge.
 fn layout_request<'a>(
     layout: &'a layouts::Layout,

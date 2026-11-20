@@ -235,3 +235,15 @@ reproduce `main`; pins identical on four builds, `VALIDATION_GOLDEN`, `DECODE_GO
 `EXPECTED_CHECKSUM` and the cross-platform checksum unmoved; throughput at most +0.30 %, path cost −0.1 %; oracle
 1,815 / 1.0193 and 1,743 / 1,744, none shorter; longer routes at the prototype's counts and amounts, each traced;
 fallbacks 0, 1, 1, 2 from fitting starts, none new, stress 0, all-known 0; admissibility as base. **Held.**
+
+## WP5: tests and pins
+
+- The three pins were re-recorded in WP2 (D-1 alone gives the adopted values) and stayed through WP3 and WP4, so WP5
+  re-records none; their headers name the changed requests by class and the old values the control reproduces.
+- `partial_knowledge_routes_agree_with_the_oracle_per_cell`, the per-cell half: the same 40 layouts with each cell
+  known or not; the oracle runs on the arena with every known cell as a one-cell structure; 457 routes from fitting
+  starts, none shorter than the oracle by more than 10⁻³ (worst ratio 1.0309, reported only).
+  **Deviation:** the plan asks for "no fallback from a fitting start"; per-cell layout 8 q 2 is inside the 40
+  layouts and is the partial-knowledge funnel's class-N residual that this plan keeps (§4.2, §9), so the test allows
+  exactly that one, by name. A separate test rather than a half of the existing one, so each prints its own figures.
+- `crates/gate/suites.ron` needs no change: the new tests are in existing targets (C22).
