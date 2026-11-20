@@ -767,19 +767,24 @@ fn player_one_group(world: &SimWorld) -> Result<RouteGroup, Box<dyn std::error::
         .clone())
 }
 
-/// G-1: with the old player 1 order, player 1's ten attackers all cross y = 32 on one side, and
-/// each unit's first route has the leader's lane word.
+/// G-1 (Q0079's intent): with the old player 1 order, player 1's ten attackers form one group
+/// with one lane, each unit's first route carries the lane's word, and every attacker that
+/// crosses y = 32 within 600 ticks crosses on one side.
+///
+/// Restated test-only by plan `2026-11-20-tastar-budget` Amendment 1. The test asserted before
+/// that the lane's word is non-empty and that all ten cross y = 32; both hold only for the east
+/// lane. With that plan's D-1 the leader's route (58.5, 53.5) -> (5.5, 5.5), r 0.375, is the west
+/// lane, 92.061 long, which `main` cannot find (it loses the channel to the visit cap among
+/// near-equal bounds, B-149), against 92.419 for the east lane. The west lane crosses no cut, so
+/// its word is empty, and it is player 0's lane: the armies meet west of the plateau, and after
+/// 600 ticks none of player 1's has crossed y = 32. The group still takes one lane.
 #[test]
 fn g1_the_q0079_split_closes() -> TestResult {
     let mut world = g1_world(75)?;
     let group = player_one_group(&world)?;
     assert_eq!(group.members.len(), 10);
     checked_tick(&mut world, Vec::new())?;
-    let lane = lane_of(&world, group.id.0).ok_or("lane")?;
-    assert!(
-        !lane.word.is_empty(),
-        "the lane passes a side of the plateau"
-    );
+    let lane = lane_of(&world, group.id.0).ok_or("the group has one lane")?;
     for &(id, _) in &group.members {
         assert_eq!(
             route_word(&world, id),
@@ -809,9 +814,8 @@ fn g1_the_q0079_split_closes() -> TestResult {
             break;
         }
     }
-    assert_eq!(crossed.len(), 10, "every attacker crossed y = 32");
     let sides: BTreeSet<bool> = crossed.values().copied().collect();
-    assert_eq!(sides.len(), 1, "one side: {crossed:?}");
+    assert!(sides.len() <= 1, "one side: {crossed:?}");
     Ok(())
 }
 

@@ -60,7 +60,8 @@ fn perp(a: P) -> P {
     (-a.1, a.0)
 }
 
-fn point_segment(p: P, a: P, b: P) -> f64 {
+/// Distance from `p` to the segment `[a, b]`, in world units.
+pub fn point_segment(p: P, a: P, b: P) -> f64 {
     let d = sub(b, a);
     let l = dot(d, d);
     let t = if l == 0.0 {

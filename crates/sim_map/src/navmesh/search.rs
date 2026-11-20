@@ -13,14 +13,34 @@
 //!
 //! # Invariants
 //! - Search nodes are paths, not triangles (TA*): a triangle may be reached along several
-//!   channels, never twice on one channel. `g` is the larger of two lower bounds, the straight
-//!   distance from the start to the entry edge and the parent's `g` plus the drop in `h`; `h` is
-//!   the distance from the goal to the entry edge. Both are admissible.
-//! - The first channel to reach the goal sets the incumbent (its funnel length). The search goes
-//!   on while an open node's `f` is below the incumbent, for at most
-//!   [`NAV_TA_STAR_EXTRA_EXPANSIONS`] further expansions (S11's anytime loop).
+//!   channels, never twice on one channel. `g` is the largest of three lower bounds on a route
+//!   of the channel to the entry edge: the straight distance from the start, each of up to eight
+//!   ancestors' `g` plus the distance between the two edges, and the channel's point geodesic
+//!   (plan `2026-11-20-tastar-budget` D-1: the shortest point path from the start through the
+//!   channel's portals to its last bend, plus the distance from that bend to the edge). `h` is the
+//!   distance from the goal to the entry edge. All are admissible: every pull of the channel
+//!   crosses its portals in order, inside every portal end except a clampable one (a free vertex
+//!   within `r + CORNER_SAFETY_MARGIN` of an obstacle vertex, which the radius funnel may clamp
+//!   outwards), and the point funnel gives a clampable end no side.
+//! - Each node carries the point funnel of its channel (apex, path length, two sides), so a
+//!   child's bound costs one funnel step; the funnel is equal to the one recomputed from the
+//!   start through the node's portals.
+//! - The first channel to reach the goal sets the incumbent (its funnel length), and a shorter
+//!   one replaces it. The search ends when no open node's `f` is below the incumbent (S11's own
+//!   termination, plan `2026-11-20-tastar-budget` D-2); there is no expansion budget. The work
+//!   is bounded by the visit cap: every expansion is one of the first
+//!   [`NAV_TA_STAR_TRIANGLE_VISITS`] at its (triangle, entry edge) state, so a pass expands at
+//!   most `3 × NAV_TA_STAR_TRIANGLE_VISITS × T` nodes for a mesh of `T` triangles, each pushing at
+//!   most two children. A lane-restricted search counts per (state, word), and its words are the
+//!   prefixes of the target extended by at most `K` letters, at most `(|target| + 1) · (2H)^K` of
+//!   them for `H` cuts (plan `2026-11-10-group-routing` D-5), which multiplies that bound.
 //! - Ties break on `(f, triangle, node)`; every container is a `Vec` or `BinaryHeap` filled in
 //!   index order, so the result is a pure function of the mesh and the request.
+//! - A route is attempted in a fixed order, each step only when every earlier one gave no legal
+//!   route: TA* and its pull; TA* again with the start and goal reach checks; the pinned pull;
+//!   the fitted-margin pulls; the zero-room pulls; TA* once more taking only channels whose pull
+//!   is legal (plan `2026-11-20-tastar-budget` D-3); and last the portal midpoints of the first
+//!   channel, counted in [`MeshSearch::fallbacks`].
 //! - The start triangle is entered whatever its width (D-3); every later triangle passed through
 //!   must admit the disc between its entry and exit edges.
 //! - A vertex at which no edge blocks the request (a free vertex, such as a corner of a structure
@@ -42,19 +62,13 @@ use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
 use super::predicates::{lattice_distance_sq, lattice_point_segment_width, SquaredWidth};
 use super::segment::{
-    nearest_blocking_point, nearest_blocking_point_exhaustive, segment_clear, SegmentScratch,
-    WallContact,
+    nearest_blocking_point, nearest_blocking_point_exhaustive, obstacle_vertices_near,
+    segment_clear, SegmentScratch, WallContact,
 };
 use super::{next, prev, Access, NavMesh};
 use crate::error::{MapError, Result};
 use crate::grid::GameMap;
 use crate::pathfinding::{PathRequestWithVision, CORNER_SAFETY_MARGIN};
-
-/// Expansions TA* may spend after its first route to the goal, looking for a shorter channel.
-///
-/// Measured in WP8 (`docs/evidence/2026-11-09-sc2-pathfinding.md`): on both shipped maps the
-/// best channel is found within this budget for every query of the differential run.
-pub const NAV_TA_STAR_EXTRA_EXPANSIONS: u32 = 256;
 
 /// How many search nodes may expand the same (triangle, entry edge) state (bounds TA*'s
 /// path-based node count; the first is always expanded, so no route is ever missed).
@@ -75,6 +89,127 @@ struct Node {
     /// Interned lane word of the node's portal-midpoint polyline ([`WORD_ROOT`] when the search
     /// is not restricted to a lane).
     word: u32,
+    /// Portals crossed from the start: 0 for the start node, its parent's plus one otherwise.
+    depth: u32,
+    /// The point funnel through the node's channel, up to and including its entry portal (D-1
+    /// of plan `2026-11-20-tastar-budget`).
+    // PERFORMANCE RATIONALE:
+    // Why: The channel bound is read for every child, and recomputing the funnel from the start
+    //      is O(depth) per child: +11.8 % instructions on the showcase throughput scenario.
+    // What: Each node carries its funnel state, and a child advances it by its one entry portal;
+    //      only when the apex moves are the portals since the new apex re-read from the ancestors.
+    // Trade-off: Three points, a length and three depths more per node, and a re-read of the
+    //      portals since the apex when it moves.
+    funnel: PointFunnel,
+}
+
+/// A portal of the point funnel (D-1 of plan `2026-11-20-tastar-budget`): its ends, left and
+/// right as the route crosses it, and whether each end constrains the funnel.
+#[derive(Debug, Clone, Copy)]
+struct BoundPortal {
+    left: SimVec2,
+    right: SimVec2,
+    /// Whether the left end bounds the funnel (false for a clampable end, see
+    /// `MeshSearch::clampable`).
+    left_bounds: bool,
+    /// Whether the right end bounds the funnel.
+    right_bounds: bool,
+}
+
+/// The point funnel (Simple Stupid Funnel, Mononen) through a node's channel, start first: the
+/// shortest point path from the start through the portals, cut at its last bend, and the two
+/// sides of the funnel beyond it. Depths count portals from the start (the start is depth 0).
+///
+/// It is a separate, point-only funnel, not the radius funnel of `funnel.rs`: that one pulls a
+/// disc round shrunk portals and circles, and only once per channel that reaches the goal; this
+/// one is advanced at every node, so it holds a lower bound on every pull of the channel and
+/// costs one step per child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PointFunnel {
+    /// The last bend of the shortest point path (the start until the path bends).
+    apex: SimVec2,
+    /// Length of the shortest point path from the start to `apex`, in world units.
+    length: SimScalar,
+    /// Depth of the portal whose end is `apex`.
+    apex_depth: u32,
+    left: SimVec2,
+    left_depth: u32,
+    right: SimVec2,
+    right_depth: u32,
+}
+
+impl PointFunnel {
+    /// The funnel of the start node: apex and both sides at `start`.
+    fn at(start: SimVec2) -> Self {
+        Self {
+            apex: start,
+            length: SimScalar::ZERO,
+            apex_depth: 0,
+            left: start,
+            left_depth: 0,
+            right: start,
+            right_depth: 0,
+        }
+    }
+
+    /// Moves the apex to a side point at `depth`, `distance` further along the path.
+    fn bend(&mut self, point: SimVec2, depth: u32) {
+        self.length += self.apex.distance(point);
+        self.apex = point;
+        self.apex_depth = depth;
+        (self.left, self.left_depth) = (point, depth);
+        (self.right, self.right_depth) = (point, depth);
+    }
+
+    /// Advances the funnel through `portals`, the first of which is at depth `first`.
+    ///
+    /// A portal end that bounds narrows its side when it lies inside the funnel; when it crosses
+    /// the other side, the apex moves to that side and the portals after it are taken again.
+    /// The tests are inclusive (`>= 0` to narrow, `<= 0` not to cross): a portal end on the line
+    /// of the other side does not move the apex (T4 of the plan, a start on the first portal's
+    /// line). Returns false when the apex moved to a side set before `portals`: the state then
+    /// holds the new apex, and the caller advances it again through every portal after the apex.
+    fn advance(&mut self, portals: &[BoundPortal], first: u32) -> bool {
+        let zero = SimScalar::ZERO;
+        let mut i = 0;
+        while let Some(portal) = portals.get(i) {
+            let depth = first + u32::try_from(i).unwrap_or(u32::MAX - first);
+            let apex = self.apex;
+            if portal.right_bounds && (self.right - apex).cross_2d(portal.right - apex) >= zero {
+                if apex == self.right || (self.left - apex).cross_2d(portal.right - apex) <= zero {
+                    (self.right, self.right_depth) = (portal.right, depth);
+                } else {
+                    self.bend(self.left, self.left_depth);
+                    let Some(next) = self.apex_depth.checked_sub(first) else {
+                        return false;
+                    };
+                    i = next as usize + 1;
+                    continue;
+                }
+            }
+            let apex = self.apex;
+            if portal.left_bounds && (self.left - apex).cross_2d(portal.left - apex) <= zero {
+                if apex == self.left || (self.right - apex).cross_2d(portal.left - apex) >= zero {
+                    (self.left, self.left_depth) = (portal.left, depth);
+                } else {
+                    self.bend(self.right, self.right_depth);
+                    let Some(next) = self.apex_depth.checked_sub(first) else {
+                        return false;
+                    };
+                    i = next as usize + 1;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// A lower bound on the length of any route through the funnel's channel from the start to
+    /// the edge `[a, b]` beyond its last portal: the path to the apex, then straight to the edge.
+    fn bound_to(&self, a: SimVec2, b: SimVec2) -> SimScalar {
+        self.length + point_segment_distance(self.apex, a, b)
+    }
 }
 
 /// A route found on the mesh, with what the search learned on the way.
@@ -115,6 +250,21 @@ pub struct MeshSearch {
     lanes: LaneScratch,
     /// Funnel legs that failed the segment predicate since construction (a diagnostic, D-6).
     pub fallbacks: u64,
+    /// Per mesh vertex, whether it is clampable for the current search, stamped:
+    /// `2 * generation + answer`, any other value meaning not yet asked.
+    // PERFORMANCE RATIONALE:
+    // Why: The clampable test is a fan walk and a flood, asked for the same vertex by many
+    //      channels of one search.
+    // What: A word per mesh vertex holding the answer under the search's generation, so a new
+    //      search starts by bumping the generation instead of clearing.
+    // Trade-off: One word per vertex kept between searches.
+    clampable: Vec<u32>,
+    /// The generation of `clampable`'s stamps.
+    generation: u32,
+    /// Obstacle vertices near a vertex, the clampable test's buffer.
+    near: Vec<u32>,
+    /// Portals re-read from a node's ancestors when its funnel's apex moves.
+    bound_portals: Vec<BoundPortal>,
 }
 
 /// The vector from the point of `[a, b]` nearest `p` to `p`, in world units.
@@ -191,6 +341,11 @@ struct Query<'a> {
     end_checks: bool,
     /// The lane the route must keep, or `None` for an unrestricted search.
     lane: Option<LaneQuery<'a>>,
+    /// Whether only a channel whose inscribed pull passes the segment predicate may become the
+    /// incumbent (the legal-only search of plan `2026-11-20-tastar-budget` D-3). Off in every
+    /// search but the last attempt before the portal-midpoint fallback: the retries repair
+    /// illegal pulls that are better than any legal one.
+    legal_only: bool,
 }
 
 impl MeshSearch {
@@ -202,6 +357,19 @@ impl MeshSearch {
         } else {
             self.visits.clear();
             self.visits.resize(3 * triangles, 0);
+        }
+    }
+
+    /// Starts a new generation of the clampable stamps, sized to `vertices`.
+    fn begin_clampable(&mut self, vertices: usize) {
+        if self.generation >= u32::MAX >> 1 {
+            self.generation = 0;
+            self.clampable.clear();
+        }
+        self.generation += 1;
+        if self.clampable.len() != vertices {
+            self.clampable.clear();
+            self.clampable.resize(vertices, 0);
         }
     }
 
@@ -332,6 +500,7 @@ impl MeshSearch {
             };
             let h = point_segment_distance(query.goal, a, b);
             let g = self.lower_bound(query, id, a, b);
+            let funnel = self.child_funnel(query, id, (tv[prev(k)], tv[next(k)]));
             let entry = mesh
                 .triangle_vertices(child)
                 .iter()
@@ -345,15 +514,102 @@ impl MeshSearch {
                 g,
                 h,
                 word,
+                depth: node.depth + 1,
+                funnel,
             });
         }
     }
 
+    /// Whether mesh vertex `v` is clampable for `query`: a free vertex (no edge at it blocks the
+    /// request) with an obstacle vertex strictly within `rho_max = r + CORNER_SAFETY_MARGIN`.
+    /// The radius funnel may clamp such a portal end outwards along its portal (plan
+    /// `2026-11-19-partial-knowledge-funnel` D-2), so a pull may pass beyond it, and the point
+    /// funnel gives it no side. `rho_max` is the largest radius any pull of the route uses (the
+    /// fitted retry uses less, the zero-room retry `r + ZERO_ROOM_SLACK`).
+    fn clampable(&mut self, query: &Query<'_>, v: u32) -> bool {
+        let slot = v as usize;
+        let asked = self.clampable[slot];
+        if asked >> 1 == self.generation {
+            return asked & 1 == 1;
+        }
+        let mesh = query.mesh;
+        let answer = !mesh.vertex_blocks(v, |t| query.access.open(t)) && {
+            let f = mesh.vertex(v).to_sim();
+            let rho = query.radius + CORNER_SAFETY_MARGIN;
+            obstacle_vertices_near(
+                mesh,
+                query.access,
+                &mut self.segment,
+                (f, f),
+                rho,
+                &mut self.near,
+            );
+            let rho_sq = rho * rho;
+            self.near
+                .iter()
+                .any(|&u| mesh.vertex(u).to_sim().distance_sq(f) < rho_sq)
+        };
+        self.clampable[slot] = (self.generation << 1) | u32::from(answer);
+        answer
+    }
+
+    /// The portal `(left, right)` of mesh vertices, with whether each end bounds the funnel.
+    fn bound_portal(&mut self, query: &Query<'_>, (left, right): (u32, u32)) -> BoundPortal {
+        BoundPortal {
+            left: query.mesh.vertex(left).to_sim(),
+            right: query.mesh.vertex(right).to_sim(),
+            left_bounds: !self.clampable(query, left),
+            right_bounds: !self.clampable(query, right),
+        }
+    }
+
+    /// The point funnel of a child of node `id` entered through the portal `(left, right)`: the
+    /// node's funnel advanced by that portal. When the apex moves to a side set before it, the
+    /// portals after the new apex are re-read from the node's ancestors and the funnel advanced
+    /// through them.
+    fn child_funnel(&mut self, query: &Query<'_>, id: u32, portal: (u32, u32)) -> PointFunnel {
+        let node = self.nodes[id as usize];
+        let depth = node.depth + 1;
+        let mut funnel = node.funnel;
+        let entry = self.bound_portal(query, portal);
+        if funnel.advance(&[entry], depth) {
+            return funnel;
+        }
+        let mut portals = std::mem::take(&mut self.bound_portals);
+        loop {
+            portals.clear();
+            portals.push(entry);
+            let mut current = id;
+            loop {
+                let ancestor = self.nodes[current as usize];
+                if ancestor.parent == NONE || ancestor.depth <= funnel.apex_depth {
+                    break;
+                }
+                let parent = self.nodes[ancestor.parent as usize];
+                let tv = query.mesh.triangle_vertices(parent.triangle);
+                let k = usize::from(ancestor.via);
+                portals.push(self.bound_portal(query, (tv[prev(k)], tv[next(k)])));
+                current = ancestor.parent;
+            }
+            portals.reverse();
+            if funnel.advance(&portals, funnel.apex_depth + 1) {
+                break;
+            }
+        }
+        self.bound_portals = portals;
+        funnel
+    }
+
     /// An admissible lower bound on the length of any route of this channel from the start to
-    /// the edge `[a, b]` leaving node `id`: the route crosses each ancestor's entry edge `e` after
-    /// at least that ancestor's bound, then needs at least the distance from `e` to `[a, b]`.
+    /// the edge `[a, b]` leaving node `id`, the largest of three: the straight distance from the
+    /// start; for each of up to [`NAV_TA_STAR_BOUND_ANCESTORS`] ancestors, its bound at its entry
+    /// edge `e` plus the distance from `e` to `[a, b]`; and the point funnel's path through the
+    /// node's channel to its apex plus the distance from the apex to `[a, b]` (D-1 of plan
+    /// `2026-11-20-tastar-budget`: every pull crosses the same portals, inside every end that
+    /// bounds, so it is no shorter).
     fn lower_bound(&self, query: &Query<'_>, id: u32, a: SimVec2, b: SimVec2) -> SimScalar {
-        let mut bound = point_segment_distance(query.start, a, b);
+        let mut bound = point_segment_distance(query.start, a, b)
+            .max(self.nodes[id as usize].funnel.bound_to(a, b));
         let mut current = id;
         for _ in 0..NAV_TA_STAR_BOUND_ANCESTORS {
             let node = self.nodes[current as usize];
@@ -566,6 +822,29 @@ impl MeshSearch {
         (failed, false)
     }
 
+    /// The last attempt before the portal-midpoint fallback (plan `2026-11-20-tastar-budget`
+    /// D-3): after every pull of the returned channel failed the segment predicate, TA* runs once
+    /// more and takes only a channel whose inscribed pull is legal as the incumbent (S11: a
+    /// channel that cannot yield a valid path is not considered). Returns that route and true, or
+    /// `failed` and false with `self.portals` holding `failed`'s channel again for the fallback.
+    fn legal_only_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        failed: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let failed_portals = self.portals.clone();
+        let legal_only = Query {
+            legal_only: true,
+            ..*query
+        };
+        if let (Some(route), _) = self.ta_star(&legal_only, start_triangle) {
+            return (route, true);
+        }
+        self.portals = failed_portals;
+        (failed, false)
+    }
+
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
     /// Returns the route, whether it is legal, and the expansions spent; `self.portals` holds
     /// the returned route's channel.
@@ -592,7 +871,10 @@ impl MeshSearch {
         (Some(first), false, spent + more)
     }
 
-    /// TA*: returns the best funnel route found and its channel in `self.portals`.
+    /// TA*: returns the best funnel route found and its channel in `self.portals`, and the nodes
+    /// expanded. It runs until no open node's `f` is below the best route's length (D-2 of plan
+    /// `2026-11-20-tastar-budget`), at most `3 × NAV_TA_STAR_TRIANGLE_VISITS × T` expansions on a
+    /// mesh of `T` triangles (per lane word for a restricted search, see the module invariants).
     fn ta_star(&mut self, query: &Query<'_>, start_triangle: u32) -> (Option<FunnelRoute>, u32) {
         let rho = query.radius + CORNER_SAFETY_MARGIN;
         let (s, g) = (
@@ -601,6 +883,7 @@ impl MeshSearch {
         );
         let end_vertices = [s[0], s[1], s[2], g[0], g[1], g[2]];
         self.reset(query.mesh.triangle_count(), query.lane.is_some());
+        self.begin_clampable(query.mesh.vertex_count());
         self.push(Node {
             triangle: start_triangle,
             entry: NO_EDGE,
@@ -609,15 +892,19 @@ impl MeshSearch {
             g: SimScalar::ZERO,
             h: query.start.distance(query.goal),
             word: WORD_ROOT,
+            depth: 0,
+            funnel: PointFunnel::at(query.start),
         });
         let mut best: Option<(FunnelRoute, Vec<(u32, u32)>)> = None;
-        let (mut expansions, mut extra) = (0u32, 0u32);
+        let mut expansions = 0u32;
         while let Some(Reverse((f, _, id))) = self.open.pop() {
-            if let Some((route, _)) = &best {
-                if f >= route.length.raw() || extra >= NAV_TA_STAR_EXTRA_EXPANSIONS {
-                    break;
-                }
-                extra += 1;
+            // S11's termination (D-2): every open channel's bound is at least the incumbent's
+            // length, so none can be shorter. The open list is left as it ends; `reset` clears it.
+            if best
+                .as_ref()
+                .is_some_and(|(route, _)| f >= route.length.raw())
+            {
+                break;
             }
             let node = self.nodes[id as usize];
             if node.triangle == query.goal_triangle && node.parent != NONE {
@@ -645,6 +932,11 @@ impl MeshSearch {
                         scratch: &mut self.funnel,
                     },
                 );
+                // D-3: a legal-only search takes no channel whose pull is illegal, so such a
+                // channel neither becomes the incumbent nor ends the search.
+                if query.legal_only && !self.is_legal(query, &route) {
+                    continue;
+                }
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
                 }
@@ -672,7 +964,6 @@ impl MeshSearch {
             expansions += 1;
             self.expand(query, id);
         }
-        self.open.clear();
         match best {
             Some((route, portals)) => {
                 self.portals = portals;
@@ -742,8 +1033,10 @@ pub struct LaneRestriction<'a> {
 /// `2026-11-10-group-routing`): TA* whose nodes carry the lane word of their portal-midpoint
 /// polyline, which accepts a channel only when its word is `lane.word`. Nodes whose word strays
 /// more than `lane.bound` letters from every prefix of the target are pruned, and the visit cap
-/// counts per (triangle, entry edge, word). Everything else is [`find_route`]'s: the anytime
-/// budget, both passes, the pinned retry, the legality check and the fallback.
+/// counts per (triangle, entry edge, word), which bounds the search's work as the cap bounds
+/// [`find_route`]'s (the module's invariants). Everything else is [`find_route`]'s: S11's
+/// anytime loop to the incumbent, both passes, the retries, the legal-only search, the legality
+/// check and the fallback.
 ///
 /// # Errors
 /// As [`find_route`]; [`MapError::NoPathFound`] also when no channel of that lane admits the
@@ -814,6 +1107,7 @@ fn route(
         ),
         end_checks: false,
         lane,
+        legal_only: false,
     };
     let (route, legal, expansions) = search.two_pass(&query, start_triangle);
     let route = route.ok_or(MapError::NoPathFound { start, goal })?;
@@ -832,6 +1126,11 @@ fn route(
     } else {
         let (route, legal) = search.zero_room_retry(&query, start_triangle, route);
         (route, legal, legal)
+    };
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.legal_only_retry(&query, start_triangle, route)
     };
     let turns = route
         .anchors
@@ -1116,6 +1415,532 @@ pub fn nearest_reachable_point(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map_format::MapFile;
+    use crate::StructureFootprint;
+    use sim_types::{EntityId, FootprintShape};
+
+    /// A point of the plan's hand-checked channels, in world units.
+    fn at(x: f64, y: f64) -> SimVec2 {
+        SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// Portals `(left x, left y, right x, right y)` whose ends all bound, except `skipped`.
+    fn portals_of(ends: &[(f64, f64, f64, f64)], skipped: Option<SimVec2>) -> Vec<BoundPortal> {
+        ends.iter()
+            .map(|&(lx, ly, rx, ry)| {
+                let (left, right) = (at(lx, ly), at(rx, ry));
+                BoundPortal {
+                    left,
+                    right,
+                    left_bounds: Some(left) != skipped,
+                    right_bounds: Some(right) != skipped,
+                }
+            })
+            .collect()
+    }
+
+    /// The funnel after each of `portals` as the search keeps it: advanced by one portal per
+    /// node, and through every portal after the apex again when the apex moves before it.
+    fn funnels_by_node(start: SimVec2, portals: &[BoundPortal]) -> Vec<PointFunnel> {
+        let mut funnel = PointFunnel::at(start);
+        let mut out = vec![funnel];
+        for depth in 1..=portals.len() {
+            let first = depth - 1;
+            if !funnel.advance(
+                &portals[first..depth],
+                u32::try_from(depth).unwrap_or(u32::MAX),
+            ) {
+                let from = funnel.apex_depth as usize;
+                assert!(funnel.advance(&portals[from..depth], funnel.apex_depth + 1));
+            }
+            out.push(funnel);
+        }
+        out
+    }
+
+    /// The largest `g + h` the channel bound gives along `portals` from `start` to `goal`: at
+    /// each node, the funnel's bound to the next portal (or to the goal) plus that edge's
+    /// distance to the goal.
+    fn largest_f(start: SimVec2, goal: SimVec2, portals: &[BoundPortal]) -> SimScalar {
+        let funnels = funnels_by_node(start, portals);
+        funnels
+            .iter()
+            .enumerate()
+            .map(|(depth, funnel)| {
+                let (a, b) = portals
+                    .get(depth)
+                    .map_or((goal, goal), |portal| (portal.right, portal.left));
+                funnel.bound_to(a, b) + point_segment_distance(goal, a, b)
+            })
+            .max()
+            .unwrap_or(SimScalar::ZERO)
+    }
+
+    /// T4 of plan `2026-11-20-tastar-budget` (whole squares layout 23 q 0, r 0.75, a route of
+    /// 42.975): the start (42.5, 55.5) lies on the line of the first portal's ends. With
+    /// Mononen's strict crossing tests the funnel collapses onto the portal's far end and the
+    /// bound reaches 48.9, so the search would stop on a longer channel (46.128 was found); the
+    /// inclusive tests keep every node's `g + h` at most the route's length.
+    #[test]
+    fn a_start_on_the_first_portal_line_does_not_inflate_the_bound() {
+        let ends = [
+            (45.0, 58.0, 36.0, 49.0),
+            (45.0, 57.0, 36.0, 49.0),
+            (45.0, 57.0, 37.0, 49.0),
+            (45.0, 56.0, 37.0, 49.0),
+            (45.0, 56.0, 38.0, 49.0),
+            (45.0, 55.0, 38.0, 49.0),
+            (45.0, 54.0, 38.0, 49.0),
+            (45.0, 53.0, 38.0, 49.0),
+            (45.0, 53.0, 38.0, 48.0),
+            (47.0, 44.0, 38.0, 48.0),
+            (47.0, 44.0, 38.0, 47.0),
+            (47.0, 44.0, 38.0, 46.0),
+            (47.0, 44.0, 38.0, 45.0),
+            (47.0, 44.0, 38.0, 44.0),
+            (47.0, 43.0, 38.0, 44.0),
+            (48.0, 41.0, 38.0, 44.0),
+            (34.0, 34.0, 38.0, 44.0),
+            (34.0, 34.0, 37.0, 44.0),
+            (34.0, 34.0, 36.0, 44.0),
+            (34.0, 34.0, 35.0, 44.0),
+            (34.0, 34.0, 34.0, 44.0),
+            (34.0, 34.0, 33.0, 44.0),
+            (34.0, 34.0, 30.0, 34.0),
+            (34.0, 30.0, 30.0, 34.0),
+            (34.0, 30.0, 30.0, 30.0),
+            (40.0, 17.0, 30.0, 30.0),
+            (40.0, 16.0, 30.0, 30.0),
+        ];
+        let (start, goal) = (at(42.5, 55.5), at(16.5, 28.5));
+        let portals = portals_of(&ends, None);
+        assert_eq!(
+            (at(45.0, 58.0) - start).cross_2d(at(36.0, 49.0) - start),
+            SimScalar::ZERO,
+            "the start is not on the first portal's line"
+        );
+        let f = largest_f(start, goal, &portals);
+        assert!(
+            f <= SimScalar::from_num(42.975),
+            "a bound of {} beyond 42.975",
+            f.to_f32()
+        );
+    }
+
+    /// One draw of the partial-knowledge layout corpus's generator (`SplitMix64`), below
+    /// `bound`: the generator of `tests/support/layouts.rs`, which this module cannot include.
+    fn layout_draw(state: &mut u64, bound: u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        z % bound
+    }
+
+    /// The corpus's footprints: `Place` size in cells, then the contour in quarter cells.
+    const SHAPES: [(u8, u8, u16, u16, u16); 7] = [
+        (5, 5, 10, 10, 6),
+        (3, 3, 6, 6, 2),
+        (3, 3, 6, 6, 3),
+        (2, 2, 4, 4, 2),
+        (2, 2, 2, 2, 1),
+        (1, 1, 2, 2, 0),
+        (3, 2, 6, 4, 2),
+    ];
+
+    /// The shipped terrain radii, in sixteenths of a cell.
+    const RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
+
+    /// Knowledge of a corpus layout's structures.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Knowledge {
+        /// Each structure known or not as a whole.
+        Whole,
+        /// Each cell known or not.
+        PerCell,
+        /// Every structure known.
+        All,
+    }
+
+    /// The default arena, loaded from its shipped file.
+    fn default_arena() -> std::result::Result<GameMap, String> {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/maps/default_arena.scmap.ron");
+        let file = MapFile::load(&path).map_err(|e| e.to_string())?;
+        let document = file.decode().map_err(|e| e.to_string())?;
+        document.to_game_map().map_err(|e| e.to_string())
+    }
+
+    /// One request of a corpus layout: start, goal, radius.
+    type LayoutRequest = (SimVec2, SimVec2, SimScalar);
+
+    /// A corpus layout: the map, the knowledge mask (`None`: all known) and its requests.
+    type Layout = (GameMap, Option<Vec<bool>>, Vec<LayoutRequest>);
+
+    /// Layout `number` of the corpus: the map with every structure, the knowledge mask (`None`
+    /// when every structure is known) and the 16 requests in draw order.
+    fn layout(
+        number: u64,
+        contours: bool,
+        knowledge: Knowledge,
+    ) -> std::result::Result<Layout, String> {
+        let mut state = number.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5eed;
+        let mut map = default_arena()?;
+        let count = 2 + u32::try_from(number % 12).unwrap_or(0);
+        let (mut placed, mut whole) = (0, Vec::new());
+        for attempt in 0..count * 6 {
+            if placed == count {
+                break;
+            }
+            let (width, height, half_width_q, half_height_q, chamfer_q) =
+                SHAPES[usize::try_from(layout_draw(&mut state, 7)).unwrap_or(0)];
+            let cell = (
+                u32::try_from(layout_draw(&mut state, u64::from(map.width() - 5))).unwrap_or(0),
+                u32::try_from(layout_draw(&mut state, u64::from(map.height() - 5))).unwrap_or(0),
+            );
+            let is_known = layout_draw(&mut state, 2) == 0;
+            let footprint = if contours {
+                StructureFootprint {
+                    width,
+                    height,
+                    shape: FootprintShape {
+                        half_width_q,
+                        half_height_q,
+                        chamfer_q,
+                    },
+                }
+            } else {
+                StructureFootprint::square(width, height)
+            };
+            if map
+                .place_structure(EntityId(40_000 + attempt), cell, footprint)
+                .is_ok()
+            {
+                placed += 1;
+                whole.push((EntityId(40_000 + attempt), is_known));
+            }
+        }
+        let width = map.width();
+        let mut known = vec![false; (map.width() * map.height()) as usize];
+        for (id, structure) in map.structures() {
+            let is_known = whole.iter().any(|&(w, k)| w == *id && k);
+            let (left, top) = structure.top_left;
+            for y in top..top + u32::from(structure.height) {
+                for x in left..left + u32::from(structure.width) {
+                    known[(y * width + x) as usize] = if knowledge == Knowledge::PerCell {
+                        layout_draw(&mut state, 2) == 0
+                    } else {
+                        is_known
+                    };
+                }
+            }
+        }
+        let mut requests = Vec::new();
+        for _ in 0..16 {
+            let mut centre = || {
+                let x = u32::try_from(layout_draw(&mut state, u64::from(map.width()))).unwrap_or(0);
+                let y =
+                    u32::try_from(layout_draw(&mut state, u64::from(map.height()))).unwrap_or(0);
+                map.cell_to_world_center(x, y).map_err(|e| e.to_string())
+            };
+            let (start, goal) = (centre()?, centre()?);
+            let sixteenths = RADII[usize::try_from(layout_draw(&mut state, 9)).unwrap_or(0)];
+            requests.push((start, goal, SimScalar::from_raw(sixteenths << 28)));
+        }
+        let known = (knowledge != Knowledge::All).then_some(known);
+        Ok((map, known, requests))
+    }
+
+    /// What [`audit_channels`] found over the channels of one search.
+    #[derive(Default)]
+    struct Audit {
+        /// Channels that reached the goal with a legal pull.
+        legal_channels: u32,
+        /// Nodes on those channels whose `g + h` exceeds the pull's length: `(g + h, length)`.
+        excess: Vec<(f32, f32)>,
+        /// Nodes whose incremental funnel differs from the funnel recomputed from the start.
+        diverged: u32,
+    }
+
+    /// Runs TA*'s first pass for `request` as `route` sets it up and checks every node it
+    /// pushed: its incremental funnel equals the funnel recomputed from the start through its
+    /// channel (R-5), and on every channel that reaches the goal with a legal inscribed pull,
+    /// every node's `g + h` is at most the pull's length (D-1's admissibility).
+    fn audit_channels(
+        mesh: &NavMesh,
+        search: &mut MeshSearch,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Audit {
+        let mut audit = Audit::default();
+        first_pass(mesh, search, map, request, |search, query, _| {
+            audit_search(search, query, request, &mut audit);
+        });
+        audit
+    }
+
+    /// Runs TA*'s first pass for `request` as `route` sets it up, then `then` with the search, the
+    /// query and the pass's route. Nothing runs for a request `route` answers without a search
+    /// (an invalid endpoint, one triangle, or a straight segment).
+    fn first_pass(
+        mesh: &NavMesh,
+        search: &mut MeshSearch,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        then: impl FnOnce(&mut MeshSearch, &Query<'_>, Option<FunnelRoute>),
+    ) {
+        let access = Access::new(mesh, map, request);
+        let Ok((start_triangle, goal_triangle)) =
+            endpoints(mesh, &access, &mut search.segment, request)
+        else {
+            return;
+        };
+        let (start, goal, radius) = (request.start, request.goal, request.radius);
+        if start_triangle == goal_triangle
+            || segment_clear(mesh, &access, &mut search.segment, start, goal, radius)
+        {
+            return;
+        }
+        let query = Query {
+            mesh,
+            access: &access,
+            start,
+            goal,
+            goal_triangle,
+            radius,
+            start_fits: segment_clear(mesh, &access, &mut search.segment, start, start, radius),
+            end_checks: false,
+            lane: None,
+            legal_only: false,
+        };
+        let (route, _) = search.ta_star(&query, start_triangle);
+        then(search, &query, route);
+    }
+
+    /// The checks of [`audit_channels`] on the nodes of the search just run.
+    fn audit_search(
+        search: &mut MeshSearch,
+        query: &Query<'_>,
+        request: &PathRequestWithVision<'_>,
+        audit: &mut Audit,
+    ) {
+        let (mesh, start, goal) = (query.mesh, query.start, query.goal);
+        let (start_triangle, goal_triangle) = (search.nodes[0].triangle, query.goal_triangle);
+        let (s, g) = (
+            mesh.triangle_vertices(start_triangle),
+            mesh.triangle_vertices(goal_triangle),
+        );
+        for id in 0..u32::try_from(search.nodes.len()).unwrap_or(0) {
+            search.collect_portals(mesh, id);
+            let channel = search.portals.clone();
+            let portals: Vec<BoundPortal> = channel
+                .iter()
+                .map(|&portal| search.bound_portal(query, portal))
+                .collect();
+            let mut recomputed = PointFunnel::at(start);
+            recomputed.advance(&portals, 1);
+            let kept = search.nodes[id as usize].funnel;
+            if (kept.apex, kept.length) != (recomputed.apex, recomputed.length) {
+                audit.diverged += 1;
+            }
+            let node = search.nodes[id as usize];
+            if node.triangle != goal_triangle || node.parent == NONE {
+                continue;
+            }
+            let route = radius_funnel(
+                mesh,
+                (start, goal),
+                &channel,
+                &[s[0], s[1], s[2], g[0], g[1], g[2]],
+                (
+                    request.radius + CORNER_SAFETY_MARGIN,
+                    Emission::Inscribed { dip: ARC_CHORD_DIP },
+                    PullStrategy::Shrunk,
+                ),
+                &mut Obstacles {
+                    access: query.access,
+                    segment: &mut search.segment,
+                    scratch: &mut search.funnel,
+                },
+            );
+            if !search.is_legal(query, &route) {
+                continue;
+            }
+            audit.legal_channels += 1;
+            let mut current = id;
+            while current != NONE {
+                let on = search.nodes[current as usize];
+                if on.g + on.h > route.length {
+                    audit
+                        .excess
+                        .push(((on.g + on.h).to_f32(), route.length.to_f32()));
+                }
+                current = on.parent;
+            }
+        }
+    }
+
+    /// T5 of plan `2026-11-20-tastar-budget` (per-cell squares layout 142 q 0, r 1.0, a route of
+    /// 34.324): the free vertex (26, 26) is 1.0 from the known corner (25, 26), within `rho`
+    /// 1.05, so the radius funnel clamps that portal end outwards and the route passes beyond it
+    /// (x 26.42 at y 26). The channel bound gives that end no side, and no node of any channel
+    /// with a legal pull bounds the route above its length.
+    #[test]
+    fn a_clamped_free_end_bounds_nothing() -> std::result::Result<(), String> {
+        let (map, known, requests) = layout(142, false, Knowledge::PerCell)?;
+        let mesh = NavMesh::build(&map).map_err(|e| e.to_string())?;
+        let (start, goal, radius) = requests[0];
+        assert_eq!(
+            (start, goal, radius),
+            (at(21.5, 20.5), at(40.5, 48.5), SimScalar::ONE),
+            "layout 142 q 0 is not the plan's request"
+        );
+        let request = PathRequestWithVision {
+            start,
+            goal,
+            radius,
+            vision: None,
+            block_unexplored_ramps: false,
+            known_structures: known.as_deref(),
+        };
+        let mut search = MeshSearch::default();
+        let route = find_route(&mesh, &mut search, &map, &request).map_err(|e| e.to_string())?;
+        assert!(!route.fallback);
+        // The clamped end is a portal end of the route's channel, and clampable.
+        let access = Access::new(&mesh, &map, &request);
+        let query = Query {
+            mesh: &mesh,
+            access: &access,
+            start,
+            goal,
+            goal_triangle: 0,
+            radius,
+            start_fits: true,
+            end_checks: false,
+            lane: None,
+            legal_only: false,
+        };
+        search.begin_clampable(mesh.vertex_count());
+        let channel = search.portals.clone();
+        let clamped = at(26.0, 26.0);
+        let portals: Vec<BoundPortal> = channel
+            .iter()
+            .map(|&portal| search.bound_portal(&query, portal))
+            .collect();
+        assert!(
+            portals
+                .iter()
+                .any(|p| (p.right == clamped && !p.right_bounds)
+                    || (p.left == clamped && !p.left_bounds)),
+            "(26, 26) is not a clampable end of the channel"
+        );
+        let f = largest_f(start, goal, &portals);
+        assert!(
+            f <= route.total_length,
+            "the channel bound {} exceeds the route's {}",
+            f.to_f32(),
+            route.total_length.to_f32()
+        );
+        let audit = audit_channels(&mesh, &mut search, &map, &request);
+        assert!(audit.legal_channels > 0);
+        assert!(audit.excess.is_empty(), "{:?}", audit.excess);
+        Ok(())
+    }
+
+    /// D-2 of plan `2026-11-20-tastar-budget` on T1 (whole squares layout 25 q 11) and T7 (113
+    /// q 1): after the first route the search runs until every open node's `f` is at least the
+    /// best route's length (S11's termination). On `main` the budget of 256 pops after the first
+    /// route ended both with open channels bounded below the route; with D-1, T1 ends on its own
+    /// after 29 expansions, while T7 still ran into the budget, so T7 is what holds D-2.
+    #[test]
+    fn the_search_ends_on_the_incumbent() -> std::result::Result<(), String> {
+        for (number, q) in [(25, 11), (113, 1)] {
+            let (map, known, requests) = layout(number, false, Knowledge::Whole)?;
+            let mesh = NavMesh::build(&map).map_err(|e| e.to_string())?;
+            let (start, goal, radius) = requests[q];
+            let request = PathRequestWithVision {
+                start,
+                goal,
+                radius,
+                vision: None,
+                block_unexplored_ramps: false,
+                known_structures: known.as_deref(),
+            };
+            let mut search = MeshSearch::default();
+            let mut routed = false;
+            first_pass(&mesh, &mut search, &map, &request, |search, _, route| {
+                let Some(route) = route else {
+                    return;
+                };
+                routed = true;
+                let below: Vec<f32> = search
+                    .open
+                    .iter()
+                    .filter(|Reverse((f, _, _))| *f < route.length.raw())
+                    .map(|Reverse((f, _, _))| SimScalar::from_raw(*f).to_f32())
+                    .collect();
+                assert!(
+                    below.is_empty(),
+                    "layout {number} q {q}: the search ended with {} open channels below the \
+                     route's {}: {below:?}",
+                    below.len(),
+                    route.length.to_f32()
+                );
+            });
+            assert!(routed, "layout {number} q {q} is routed by a search");
+        }
+        Ok(())
+    }
+
+    /// D-1 of plan `2026-11-20-tastar-budget`: over the four partial-knowledge layout corpora at
+    /// test size (40 layouts each: squares and contours, knowledge per structure and per cell)
+    /// and the all-known corpus, no node on a channel with a legal pull bounds the route above
+    /// the pull's length, and every node's incremental funnel is the funnel recomputed from the
+    /// start.
+    #[test]
+    fn channel_bounds_never_exceed_a_legal_pull() -> std::result::Result<(), String> {
+        let corpora = [
+            (false, Knowledge::Whole),
+            (true, Knowledge::Whole),
+            (false, Knowledge::PerCell),
+            (true, Knowledge::PerCell),
+            (false, Knowledge::All),
+        ];
+        let mut search = MeshSearch::default();
+        let (mut channels, mut excess, mut diverged) = (0u32, Vec::new(), 0u32);
+        for (contours, knowledge) in corpora {
+            for number in 0..40 {
+                let (map, known, requests) = layout(number, contours, knowledge)?;
+                let mesh = NavMesh::build(&map).map_err(|e| e.to_string())?;
+                for (start, goal, radius) in requests {
+                    let request = PathRequestWithVision {
+                        start,
+                        goal,
+                        radius,
+                        vision: None,
+                        block_unexplored_ramps: false,
+                        known_structures: known.as_deref(),
+                    };
+                    let audit = audit_channels(&mesh, &mut search, &map, &request);
+                    channels += audit.legal_channels;
+                    diverged += audit.diverged;
+                    excess.extend(audit.excess.iter().map(|&e| (number, contours, e)));
+                }
+            }
+        }
+        eprintln!(
+            "{channels} legal channels audited, {} excess, {diverged} diverged",
+            excess.len()
+        );
+        assert!(channels > 1_000, "only {channels} channels audited");
+        assert!(excess.is_empty(), "bounds beyond a legal pull: {excess:?}");
+        assert_eq!(
+            diverged, 0,
+            "incremental funnels that differ from the recomputed"
+        );
+        Ok(())
+    }
 
     /// Amendment 1: the fitted margin is half the spare width, floored to the raw grid, and only
     /// when it is positive and below the full margin.
