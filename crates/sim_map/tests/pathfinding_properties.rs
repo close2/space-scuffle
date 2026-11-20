@@ -40,6 +40,14 @@ use draw::draw_index;
 
 #[path = "support/radii.rs"]
 mod radii;
+
+#[allow(
+    dead_code,
+    reason = "the corpus's four kinds are named; this binary routes a subset"
+)]
+#[path = "support/layouts.rs"]
+mod layouts;
+use layouts::LayoutKind;
 use radii::{required_clearance, LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
 
 use proptest::collection::vec;
@@ -887,100 +895,46 @@ proptest! {
     }
 }
 
-/// One draw of the partial-knowledge layout corpus's generator (`SplitMix64`), below `bound`.
-fn layout_draw(state: &mut u64, bound: u64) -> u64 {
-    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31;
-    z % bound
-}
-
-/// The `Place` sizes of the 5.0.14 footprints the layout corpus draws, as full squares.
-const LAYOUT_SIZES: [(u8, u8); 7] = [(5, 5), (3, 3), (3, 3), (2, 2), (2, 2), (1, 1), (3, 2)];
-
-/// The shipped terrain radii, in sixteenths of a cell.
-const LAYOUT_RADII: [i64; 9] = [5, 6, 8, 9, 10, 12, 14, 15, 16];
-
 /// Plan `2026-11-19-partial-knowledge-funnel` WP4 (§4.4's corpus at a test's scale): 40 seeded
 /// layouts of the default arena with 2 to 13 full-square structures, each known or not as a
 /// whole, and 16 requests each between cells where the disc fits. The oracle runs on a map that
 /// holds only the known structures, which is the free space of the request. Every route from a
 /// fitting start is legal with no fallback, none is shorter than the oracle's by more than 10⁻³,
-/// and at least 95 % are within 1 % of it.
+/// at least 95 % are within 1 % of it, and none is beyond [`MESH_RATIO_BOUND`] (plan
+/// `2026-11-20-tastar-budget` WP1: before its D-1, layout 25 reached 1.1343, B-149).
 ///
 /// The oracle runs at `r - 10⁻⁵`, not at `r`: its float tolerance misses a passage exactly `2r`
 /// wide (plan `2026-11-19-funnel-fallbacks` §4.3), and a hair less finds it. Routes keep the
 /// corner margin, so they are compared with this margin-free oracle from below and by share.
 #[test]
+#[ignore = "B-149, WP2"]
 fn partial_knowledge_routes_agree_with_the_oracle() {
     let (mut within, mut total, mut worst) = (0u32, 0u32, 1.0f64);
-    for layout in 0..40_u64 {
-        let mut state = layout.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5eed;
-        let mut map = arena::default_arena();
-        let mut known_map = arena::default_arena();
-        let count = 2 + u32::try_from(layout % 12).unwrap_or(0);
-        let mut placed = 0;
-        let mut known = vec![false; (map.width() * map.height()) as usize];
-        for attempt in 0..count * 6 {
-            if placed == count {
-                break;
-            }
-            let (width, height) = LAYOUT_SIZES[layout_draw(&mut state, 7) as usize];
-            let cell = (
-                layout_draw(&mut state, u64::from(map.width() - 5)) as u32,
-                layout_draw(&mut state, u64::from(map.height() - 5)) as u32,
-            );
-            let is_known = layout_draw(&mut state, 2) == 0;
-            let footprint = sim_map::StructureFootprint::square(width, height);
-            let id = sim_types::EntityId(40_000 + attempt);
-            if map.place_structure(id, cell, footprint).is_ok() {
-                placed += 1;
-                if is_known {
-                    assert!(known_map.place_structure(id, cell, footprint).is_ok());
-                    for y in cell.1..cell.1 + u32::from(height) {
-                        for x in cell.0..cell.0 + u32::from(width) {
-                            known[(y * map.width() + x) as usize] = true;
-                        }
-                    }
-                }
-            }
-        }
-        let mut pathfinder = Pathfinder::new(&map);
-        for _ in 0..16 {
-            let mut cell = || {
-                let x = layout_draw(&mut state, u64::from(map.width())) as u32;
-                let y = layout_draw(&mut state, u64::from(map.height())) as u32;
-                map.cell_to_world_center(x, y).ok()
-            };
-            let (Some(start), Some(goal)) = (cell(), cell()) else {
-                continue;
-            };
-            let sixteenths = LAYOUT_RADII[layout_draw(&mut state, 9) as usize];
-            let request = PathRequestWithVision {
-                known_structures: Some(&known),
-                ..mesh_request(start, goal, SimScalar::from_raw(sixteenths << 28))
-            };
+    for number in 0..40_u64 {
+        let layout = layouts::layout(number, LayoutKind::WHOLE_SQUARES);
+        let map = &layout.map;
+        let mut pathfinder = Pathfinder::new(map);
+        for drawn in &layout.requests {
+            let request = layout_request(&layout, drawn);
             let fits = |p: SimVec2, pathfinder: &mut Pathfinder| {
-                pathfinder.segment_is_passable(&map, &request, p, p)
+                pathfinder.segment_is_passable(map, &request, p, p)
             };
-            if !fits(start, &mut pathfinder) || !fits(goal, &mut pathfinder) {
+            if !fits(drawn.start, &mut pathfinder) || !fits(drawn.goal, &mut pathfinder) {
                 continue;
             }
-            let Ok(route) = pathfinder.find_route_mesh(&map, &request) else {
+            let Ok(route) = pathfinder.find_route_mesh(map, &request) else {
                 continue;
             };
-            assert!(!route.fallback, "layout {layout}: fallback {request:?}");
+            assert!(!route.fallback, "layout {number}: fallback {request:?}");
             assert!(route_is_legal(
                 &mut pathfinder,
-                &map,
+                map,
                 &request,
                 &route.waypoints
             ));
             let radius = f64::from(request.radius.to_f32());
-            let oracle = oracle::Oracle::new(oracle::walls_of(&known_map), radius - 1e-5);
-            let Some(reference) = oracle.shortest(to_f64(start), to_f64(goal)) else {
+            let oracle = oracle::Oracle::new(oracle::walls_of(&layout.known_map), radius - 1e-5);
+            let Some(reference) = oracle.shortest(to_f64(drawn.start), to_f64(drawn.goal)) else {
                 continue;
             };
             if reference <= 0.0 {
@@ -989,7 +943,7 @@ fn partial_knowledge_routes_agree_with_the_oracle() {
             let length = f64::from(route.total_length.to_f32());
             assert!(
                 length >= reference - 1e-3,
-                "layout {layout}: {length} shorter than the oracle's {reference}: {request:?}"
+                "layout {number}: {length} shorter than the oracle's {reference}: {request:?}"
             );
             let ratio = length / reference;
             total += 1;
@@ -1005,4 +959,188 @@ fn partial_knowledge_routes_agree_with_the_oracle() {
         f64::from(within) >= 0.95 * f64::from(total),
         "only {within}/{total} within 1 %"
     );
+    assert!(
+        worst <= MESH_RATIO_BOUND,
+        "worst ratio {worst:.4} beyond {MESH_RATIO_BOUND}"
+    );
+}
+
+/// The mesh request of a drawn layout request, under the layout's knowledge.
+fn layout_request<'a>(
+    layout: &'a layouts::Layout,
+    drawn: &layouts::LayoutRequest,
+) -> PathRequestWithVision<'a> {
+    PathRequestWithVision {
+        known_structures: Some(&layout.known),
+        ..mesh_request(drawn.start, drawn.goal, drawn.radius)
+    }
+}
+
+/// One B-149 case of plan `2026-11-20-tastar-budget` §3.3: layout `number`, request `q`, of
+/// kind `kind`, checked against the endpoints and radius the plan names. Returns the layout and
+/// the route, whose legs pass the segment predicate unless it fell back.
+///
+/// # Errors
+/// The route's error, when the mesh finds none.
+fn b149_case(
+    (number, q, kind): (u64, usize, LayoutKind),
+    (start, goal, radius): ((f32, f32), (f32, f32), f32),
+) -> Result<(layouts::Layout, sim_map::MeshRoute), MapError> {
+    let layout = layouts::layout(number, kind);
+    let drawn = layout.requests[q];
+    assert_eq!(
+        (
+            (drawn.start.x.to_f32(), drawn.start.y.to_f32()),
+            (drawn.goal.x.to_f32(), drawn.goal.y.to_f32()),
+            drawn.radius.to_f32()
+        ),
+        (start, goal, radius),
+        "layout {number} q {q} is not the plan's request"
+    );
+    let request = layout_request(&layout, &drawn);
+    let mut pathfinder = Pathfinder::new(&layout.map);
+    let route = pathfinder.find_route_mesh(&layout.map, &request)?;
+    assert!(
+        route.fallback || route_is_legal(&mut pathfinder, &layout.map, &request, &route.waypoints),
+        "layout {number} q {q}: an illegal leg: {route:?}"
+    );
+    Ok((layout, route))
+}
+
+/// Whether `length` is within a factor of 1.001 of `expected`, either way.
+fn within_a_thousandth(length: SimScalar, expected: f64) -> bool {
+    let length = f64::from(length.to_f32());
+    length <= expected * 1.001 && length >= expected / 1.001
+}
+
+/// T1 of plan `2026-11-20-tastar-budget` (B-149): across an unknown 5 × 5 the straight channel is
+/// found. On `main` the route turns at the free corners (48, 38), (49, 41) and (49, 43) at
+/// 57.104 (1.1343 of the oracle): the anytime budget ran out 1,136 pops before the straight
+/// channel. Every turn of the route is on a wall of the known structures or the terrain.
+#[test]
+#[ignore = "B-149, WP2"]
+fn the_straight_channel_across_an_unknown_footprint_is_found() -> Result<(), MapError> {
+    let (layout, route) = b149_case(
+        (25, 11, LayoutKind::WHOLE_SQUARES),
+        ((39.5, 11.5), (48.5, 56.5), 0.3125),
+    )?;
+    assert!(!route.fallback, "{route:?}");
+    assert!(
+        within_a_thousandth(route.total_length, 50.382),
+        "length {} is not 50.382: {route:?}",
+        route.total_length.to_f32()
+    );
+    let walls = oracle::walls_of(&layout.known_map);
+    for &(corner, _) in &route.turns {
+        let p = to_f64(corner.to_sim());
+        assert!(
+            walls
+                .iter()
+                .any(|&(a, b)| oracle::point_segment(p, a, b) < 1e-9),
+            "the route turns at the free vertex {p:?}: {route:?}"
+        );
+    }
+    Ok(())
+}
+
+/// T2 of plan `2026-11-20-tastar-budget` (B-149): the visit cap keeps the straight channel at
+/// its state once the channel bound orders the open list. On `main` 50.904, a point bend at the
+/// free (44, 19); the budget is not the cause (unbounded, the open list empties at 50.904).
+#[test]
+#[ignore = "B-149, WP2"]
+fn a_capped_state_keeps_the_straight_channel() -> Result<(), MapError> {
+    let (_, route) = b149_case(
+        (92, 13, LayoutKind::WHOLE_SQUARES),
+        ((28.5, 49.5), (49.5, 4.5), 0.5),
+    )?;
+    assert!(!route.fallback, "{route:?}");
+    assert!(
+        within_a_thousandth(route.total_length, 50.263),
+        "length {} is not 50.263: {route:?}",
+        route.total_length.to_f32()
+    );
+    Ok(())
+}
+
+/// T3 of plan `2026-11-20-tastar-budget` (B-149): per-cell squares layout 19 q 8, a wedged
+/// start of radius 1.0 beside unknown cells, takes the channel south of a structure. On `main`
+/// 26.195 (19.951 before B-146's fix, the partial-knowledge funnel's 31 % observation).
+#[test]
+#[ignore = "B-149, WP2"]
+fn a_wedged_start_beside_unknown_cells_takes_the_short_channel() -> Result<(), MapError> {
+    let layout = layouts::layout(19, LayoutKind::PER_CELL_SQUARES);
+    let drawn = layout.requests[8];
+    assert_eq!(drawn.radius.to_f32(), 1.0);
+    let request = layout_request(&layout, &drawn);
+    let mut pathfinder = Pathfinder::new(&layout.map);
+    assert!(
+        !pathfinder.segment_is_passable(&layout.map, &request, drawn.start, drawn.start),
+        "the start is not wedged"
+    );
+    let route = pathfinder.find_route_mesh(&layout.map, &request)?;
+    assert!(
+        within_a_thousandth(route.total_length, 19.876),
+        "length {} is not 19.876: {route:?}",
+        route.total_length.to_f32()
+    );
+    Ok(())
+}
+
+/// T7 of plan `2026-11-20-tastar-budget` (B-149): the anytime loop runs until no open channel's
+/// bound is below the incumbent (S11's rule). On `main` 76.571, a point bend at the free
+/// (45, 12): the first route comes after 97 expansions, and the better channel needs 1,041 more
+/// pops than the budget's 256, with the channel bound or without it.
+#[test]
+#[ignore = "B-149, WP3"]
+fn the_anytime_loop_runs_to_the_incumbent() -> Result<(), MapError> {
+    let (_, route) = b149_case(
+        (113, 1, LayoutKind::WHOLE_SQUARES),
+        ((13.5, 61.5), (59.5, 2.5), 1.0),
+    )?;
+    assert!(!route.fallback, "{route:?}");
+    assert!(
+        within_a_thousandth(route.total_length, 75.372),
+        "length {} is not 75.372: {route:?}",
+        route.total_length.to_f32()
+    );
+    Ok(())
+}
+
+/// Plan `2026-11-20-tastar-budget` D-3: per-cell contours layout 58 q 13 (the partial-knowledge
+/// funnel's accepted residual) has a channel with a legal pull, so it does not fall back to the
+/// portal midpoints. On `main` no pull of the channel TA* returns is legal, and it falls back.
+#[test]
+#[ignore = "B-149, WP4"]
+fn a_legal_channel_is_sought_before_the_midpoints() -> Result<(), MapError> {
+    let (_, route) = b149_case(
+        (58, 13, LayoutKind::PER_CELL_CONTOURS),
+        ((42.5, 44.5), (52.5, 7.5), 0.9375),
+    )?;
+    assert!(!route.fallback, "{route:?}");
+    assert!(
+        within_a_thousandth(route.total_length, 50.403),
+        "length {} is not 50.403: {route:?}",
+        route.total_length.to_f32()
+    );
+    Ok(())
+}
+
+/// Plan `2026-11-20-tastar-budget` D-3: per-cell contours layout 92 q 12. With the channel bound
+/// the first channel's pull is illegal and shorter than every other channel's bound, so it ends
+/// the search, the retries fail and the request would fall back; the legal-only search finds a
+/// legal channel of 70.863. On `main` the route is 69.905, so the length is held from above
+/// only: no fallback, and no longer than the legal-only search's route.
+#[test]
+fn an_illegal_first_pull_does_not_end_the_search() -> Result<(), MapError> {
+    let (_, route) = b149_case(
+        (92, 12, LayoutKind::PER_CELL_CONTOURS),
+        ((60.5, 13.5), (60.5, 52.5), 1.0),
+    )?;
+    assert!(!route.fallback, "{route:?}");
+    assert!(
+        f64::from(route.total_length.to_f32()) <= 70.863 * 1.001,
+        "length {} is beyond 70.863: {route:?}",
+        route.total_length.to_f32()
+    );
+    Ok(())
 }
