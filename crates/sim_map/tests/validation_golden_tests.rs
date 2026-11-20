@@ -91,7 +91,20 @@ const PATH_SEED: u64 = 0x0009_2a7e_45ee_d500;
 /// zero-room pinch on the showcase under partial knowledge, r 1.0, (34.5, 23.5) -> (50.0, 47.5),
 /// which fell back to the portal midpoints (91.45 long) and is now legal (51.27). The new value
 /// is the same in native debug and release and in `wasm32-wasip1` release and debug.
-const CONTOUR_PATH_GOLDEN: u64 = 0x36ff_bf4b_e967_0683;
+///
+/// Re-recorded for plan `2026-11-19-partial-knowledge-funnel` WP2 (D-1, D-4, D-5; before,
+/// `0x36ff_bf4b_e967_0683`, which the tree reproduces with the rules switched off). 43 of the 500
+/// requests change, all under partial knowledge: 12 fallbacks become legal routes, one wedged-start
+/// fallback falls back through another channel's midpoints, and 30 legal routes get shorter (least
+/// 0.913, median 0.9989); none gets longer and none starts to fall back. The new value is the
+/// same in native debug and release and in `wasm32-wasip1` release and debug.
+///
+/// Re-recorded for WP3 of the same plan (D-2, D-3; before, `0x01f9_a949_e9c0_77ef`, which the tree
+/// reproduces with D-2 and D-3 off, and `0x36ff_bf4b_e967_0683` with every rule off). Against
+/// `main` 42 requests change: 15 fallbacks become legal, 27 legal routes get shorter; none gets
+/// longer and none starts to fall back. The new value is the same in native debug and release and
+/// in `wasm32-wasip1` release and debug (Amendment 1 applied).
+const CONTOUR_PATH_GOLDEN: u64 = 0x1da8_6365_bcbd_3b37;
 /// Documents at the head of the validation corpus: both shipped maps, the short grid and the
 /// walled arena.
 const FIXED_DOCUMENTS: usize = 4;
@@ -145,7 +158,21 @@ const DECODE_GOLDEN: u64 = 0x10db_ea43_6aba_f292;
 /// value is the one `wasm32-wasip1` already produced on the old corpus, since `rand` drew that
 /// `usize` as a `u32` there: routing never differed, the corpus did. Native debug, native
 /// release and `wasm32-wasip1` release produce this same value.
-const PATH_GOLDEN: u64 = 0xa243_924f_8125_f760;
+///
+/// Re-recorded for plan `2026-11-19-partial-knowledge-funnel` WP2 (D-1 free portal vertices
+/// pulled as points, D-4, D-5; before, `0xa243_924f_8125_f760`, which the tree reproduces with
+/// the rules switched off). 49 of the 500 requests change, all under partial knowledge: 11
+/// fallbacks become legal routes (2 from wedged starts), and 38 legal routes get shorter (least
+/// 0.823 of their length, median 0.9967); none gets longer and none starts to fall back. The new
+/// value is the same in native debug and release and in `wasm32-wasip1` release and debug.
+///
+/// Re-recorded for WP3 of the same plan (D-2 the clamp, D-3 clearance corners kept round; before,
+/// `0x254e_64e8_49c1_5bd2`, which the tree reproduces with D-2 and D-3 off, and
+/// `0xa243_924f_8125_f760` with every rule off). Against `main` 49 requests change: 10 fallbacks
+/// become legal, one wedged-start fallback falls back through other midpoints (57.93 -> 64.72), 38
+/// legal routes get shorter; none gets longer. The new value is the same in native debug and
+/// release and in `wasm32-wasip1` release and debug (Amendment 1 applied).
+const PATH_GOLDEN: u64 = 0x4062_b0b6_83dd_1afb;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {
@@ -735,8 +762,18 @@ fn hash_outcome(hasher: &mut Xxh64, outcome: &Result<PathResult, sim_map::MapErr
     }
 }
 
-#[test]
-fn find_path_with_vision_matches_the_recorded_corpus_digest() {
+/// How a corpus routes one request: `Pathfinder::find_path_with_vision`, or a probe around it.
+type RouteFn<'f> = dyn FnMut(
+        &GameMap,
+        &mut Pathfinder,
+        &PathRequestWithVision<'_>,
+    ) -> Result<PathResult, sim_map::MapError>
+    + 'f;
+
+/// Routes every request of the `PATH_GOLDEN` corpus with `route`, in corpus order; returns the
+/// digest of the outcomes, the number of paths with a corner and the number of failures. A plain
+/// request is routed as `Pathfinder::find_path` routes it, converted with no vision and no mask.
+fn path_corpus(route: &mut RouteFn<'_>) -> (u64, usize, usize) {
     let mut rng = ChaCha8Rng::seed_from_u64(PATH_SEED);
     let mut hasher = Xxh64::new(0);
     let mut cornered = 0usize;
@@ -758,19 +795,16 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
                 goal: random_point(&map, &mut rng),
                 radius,
             };
-            let outcome = match rng.gen_range::<i32, _>(0..4) {
-                0 => pathfinder.find_path(&map, &base),
+            let mut request: PathRequestWithVision<'_> = base.into();
+            match rng.gen_range::<i32, _>(0..4) {
+                0 => {}
+                3 => request.known_structures = Some(&known),
                 mode => {
-                    let mut request: PathRequestWithVision<'_> = base.into();
-                    if mode == 3 {
-                        request.known_structures = Some(&known);
-                    } else {
-                        request.vision = Some(&vision);
-                        request.block_unexplored_ramps = mode == 1;
-                    }
-                    pathfinder.find_path_with_vision(&map, &request)
+                    request.vision = Some(&vision);
+                    request.block_unexplored_ramps = mode == 1;
                 }
-            };
+            }
+            let outcome = route(&map, &mut pathfinder, &request);
             match &outcome {
                 Ok(path) if path.waypoints.len() > 2 => cornered += 1,
                 Ok(_) => {}
@@ -779,7 +813,13 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
             hash_outcome(&mut hasher, &outcome);
         }
     }
-    let digest = hasher.digest();
+    (hasher.digest(), cornered, failed)
+}
+
+#[test]
+fn find_path_with_vision_matches_the_recorded_corpus_digest() {
+    let (digest, cornered, failed) =
+        path_corpus(&mut |map, pathfinder, request| pathfinder.find_path_with_vision(map, request));
     eprintln!("path digest 0x{digest:016x}; {cornered} cornered paths; {failed} failures");
     assert!(
         cornered >= 50,
@@ -820,10 +860,9 @@ fn place_seeded_contours(map: &mut GameMap, rng: &mut ChaCha8Rng) -> u32 {
     placed_contours
 }
 
-/// Plan `2026-11-18-contour-footprints` WP3: routes on both shipped maps among seeded contour
-/// structures, at the shipped terrain radii, with and without knowledge rules.
-#[test]
-fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
+/// Routes every request of the `CONTOUR_PATH_GOLDEN` corpus with `route`, in corpus order; returns
+/// what [`path_corpus`] returns.
+fn contour_path_corpus(route: &mut RouteFn<'_>) -> (u64, usize, usize) {
     const RADII: [i64; 6] = [5, 6, 8, 10, 12, 16];
     let mut rng = ChaCha8Rng::seed_from_u64(PATH_SEED ^ 0xc0_47_0e);
     let mut hasher = Xxh64::new(0);
@@ -846,13 +885,11 @@ fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
                 goal: random_point(&map, &mut rng),
                 radius,
             };
-            let outcome = if rng.gen_range::<u32, _>(0..2) == 0 {
-                pathfinder.find_path(&map, &base)
-            } else {
-                let mut request: PathRequestWithVision<'_> = base.into();
+            let mut request: PathRequestWithVision<'_> = base.into();
+            if rng.gen_range::<u32, _>(0..2) != 0 {
                 request.known_structures = Some(&known);
-                pathfinder.find_path_with_vision(&map, &request)
-            };
+            }
+            let outcome = route(&map, &mut pathfinder, &request);
             match &outcome {
                 Ok(path) if path.waypoints.len() > 2 => cornered += 1,
                 Ok(_) => {}
@@ -861,7 +898,16 @@ fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
             hash_outcome(&mut hasher, &outcome);
         }
     }
-    let digest = hasher.digest();
+    (hasher.digest(), cornered, failed)
+}
+
+/// Plan `2026-11-18-contour-footprints` WP3: routes on both shipped maps among seeded contour
+/// structures, at the shipped terrain radii, with and without knowledge rules.
+#[test]
+fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
+    let (digest, cornered, failed) = contour_path_corpus(&mut |map, pathfinder, request| {
+        pathfinder.find_path_with_vision(map, request)
+    });
     eprintln!("contour path digest 0x{digest:016x}; {cornered} cornered paths; {failed} failures");
     assert!(
         cornered >= 50,
@@ -869,4 +915,36 @@ fn find_path_with_vision_on_contours_matches_the_recorded_corpus_digest() {
     );
     assert!(failed > 0, "corpus must exercise error paths");
     assert_eq!(digest, CONTOUR_PATH_GOLDEN, "contour path output changed");
+}
+
+/// Plan `2026-11-19-partial-knowledge-funnel` (B-146): in both path corpora a route falls back
+/// to the portal midpoints only from a start where the disc does not fit (a wedged start,
+/// pathfinding plan D-3). Before the plan, 8 fallbacks of `PATH_GOLDEN`'s corpus and 13 of
+/// `CONTOUR_PATH_GOLDEN`'s came from fitting starts, every one rounding a free vertex.
+/// How many routes of `corpus` fall back to the portal midpoints from a start where the disc
+/// fits, read from `Pathfinder::mesh_funnel_fallbacks` around each request.
+fn fitting_start_fallbacks(corpus: fn(&mut RouteFn<'_>) -> (u64, usize, usize)) -> usize {
+    let mut count = 0usize;
+    corpus(&mut |map, pathfinder, request| {
+        let fits = pathfinder.segment_is_passable(map, request, request.start, request.start);
+        let before = pathfinder.mesh_funnel_fallbacks();
+        let outcome = pathfinder.find_path_with_vision(map, request);
+        if fits && pathfinder.mesh_funnel_fallbacks() > before {
+            count += 1;
+        }
+        outcome
+    });
+    count
+}
+
+#[test]
+fn golden_corpora_fall_back_only_from_wedged_starts() {
+    assert_eq!(
+        (
+            fitting_start_fallbacks(path_corpus),
+            fitting_start_fallbacks(contour_path_corpus)
+        ),
+        (0, 0),
+        "fallbacks from fitting starts in the PATH_GOLDEN and CONTOUR_PATH_GOLDEN corpora"
+    );
 }

@@ -695,3 +695,7 @@ A route of many consecutive corners therefore exceeds the oracle's 1.01 by const
 3. **Trace whatever is still above 1.01** after item 1 (six routes were at 1.018 to 1.045 with a sixteenth turn).
    Record each trace in the evidence, and classify each as the TA* channel choice or a defect. A defect is a stop.
 4. Then WP5.
+
+## Amendment 3 (orchestrator, 2026-11-19): B-146 has its own plan
+
+The §9 row **B-146** is planned in [`2026-11-19-partial-knowledge-funnel`](2026-11-19-partial-knowledge-funnel.md).
