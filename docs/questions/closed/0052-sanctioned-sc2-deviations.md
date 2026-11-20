@@ -21,3 +21,13 @@ Owner (chat, 2026-11-05): "Confirmed." (followed by the refinement quoted in Q00
 ## Resolution
 
 2026-11-05. S-1 to S-6 are sanctioned. Closed.
+
+## Addendum (2026-11-20): movement contact deviations from Q0092
+
+Sanctioned by the owner's answer to [Q0092](0092-movement-contact-redesign.md), option (a), for plan
+`docs/plans/2026-11-20-contact-solver.md`:
+
+- **D-α:** friendly bodies may overlap briefly, within the contact solver's tolerances (about 5 % of the radius sum
+  while moving, 1 % at rest), which are authored in data. Never with enemies or terrain.
+- **D-β:** moving friends push each other by priority, as a data switch.
+- **D-γ:** the concave is reached by choosing a free slot on the weapon-range arc, not by a surround-walk mode.
