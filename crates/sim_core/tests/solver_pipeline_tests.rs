@@ -346,3 +346,84 @@ fn a_body_spawned_into_a_crowd_leaves_it_within_a_second_and_never_through_a_wal
     assert_eq!(world.diagnostics(), []);
     Ok(())
 }
+
+/// WP3b (Amendment 3, item 4, B-158): in the mixed-priority gap scenes of development seeds 12,
+/// 15 and 16, lower-priority walkers reached the clump of higher-priority arrivals at the shared
+/// point, could not push them (C-2) and touched only arrivals beyond the bounded witness reach,
+/// so they gave their `Move` up. Under the group-arrival chain each of them arrives.
+#[test]
+fn mixed_priority_walkers_all_arrive_at_the_shared_point() -> TestResult {
+    let options = solver_options()?;
+    for seed in [12, 15, 16] {
+        let csv = run_range(Family::Gap, (seed, 1), false, 1, &options)?;
+        let a = aggregate(Family::Gap.name(), &parse_csv(&csv));
+        assert_eq!(a.get("giveups"), 0.0, "seed {seed}: give-ups");
+        assert_eq!(a.get("deadlocks"), 0.0, "seed {seed}: deadlocks");
+        assert_eq!(a.get("complete_scen"), 100.0, "seed {seed}: complete");
+    }
+    Ok(())
+}
+
+/// WP3b: the arrival chain runs only through arrivals. A walker that gave its `Move` up in front
+/// of a closed way (here a line of friends on Hold Position across a corridor) is no witness, so a
+/// second walker to the same point that touches it keeps its order instead of ending it short of
+/// the way through (the failure of the unbounded chain measured in §5.3 of the plan).
+#[test]
+fn a_give_up_is_no_witness_of_the_arrival_chain() -> TestResult {
+    let mut map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    for x in 0..64 {
+        for y in (0..64).filter(|y| !(30..33).contains(y)) {
+            map.cell_mut(x, y)?.flags = CellFlags::empty();
+        }
+    }
+    let mut world = sim_fixtures::world(map, 0x6A7E);
+    let rules = world.catalog.movement_rules();
+    let contact = ContactRules {
+        pipeline: MovementPipeline::Solver,
+        ..rules.contact()
+    };
+    world
+        .catalog
+        .set_movement_rules(rules.with_contact(contact)?);
+    let unit = kind(&world)?;
+    let r = f64::from(world.catalog.get(unit)?.collision_radius.to_f32());
+    let mut holders = Vec::new();
+    let mut y = 30.0 + r + 0.005;
+    while y + r <= 33.0 {
+        holders.push(world.spawn_unit(unit, PlayerId(0), at(30.5, y))?);
+        y += 2.0 * r + 0.01;
+    }
+    let first = world.spawn_unit(unit, PlayerId(0), at(20.0, 31.5))?;
+    step(
+        &mut world,
+        vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: holders,
+            order: UnitOrder::HoldPosition,
+            queue: false,
+        }],
+    );
+    step(&mut world, vec![move_to(first, 45.0, 31.5)]);
+    let mut gave_up = false;
+    for _ in 0..600 {
+        step(&mut world, vec![]);
+        if world.entities[&first].order_queue.is_empty() {
+            gave_up = true;
+            break;
+        }
+    }
+    assert!(gave_up, "the first walker gives its blocked move up");
+    assert_eq!(world.entities[&first].movement.arrived_at, None);
+    let second = world.spawn_unit(unit, PlayerId(0), at(22.0, 31.5))?;
+    step(&mut world, vec![move_to(second, 45.0, 31.5)]);
+    for tick in 0..60 {
+        step(&mut world, vec![]);
+        assert!(
+            !world.entities[&second].order_queue.is_empty(),
+            "tick {tick}: the second walker ended its move on a give-up"
+        );
+    }
+    assert!(gap(&world, first, second) <= 0.15, "the walkers touch");
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}

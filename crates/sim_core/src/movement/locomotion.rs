@@ -37,10 +37,10 @@ use super::math::{
     direction, distance, within_distance,
 };
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
-    ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
-    STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON,
-    WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, ARRIVAL_WITNESS_REACH, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
+    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
+    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD,
+    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
@@ -1498,10 +1498,19 @@ impl MotionDraft<'_> {
             )
             .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
+        let reported = routes.len();
         if self
             .check_progress(routes, on_last_leg, gap, map_news, queued)?
             .is_break()
         {
+            // Under the solver a give-up is no arrival: the unit is no witness of the group-arrival
+            // chain (WP3b), so a clump's chain never runs back through units that gave up.
+            let gave_up = routes[reported..]
+                .iter()
+                .any(|outcome| outcome.kind == RouteOutcomeKind::NoProgress);
+            if gave_up && context.intent.is_some() {
+                self.proposal.memory.arrived_at = None;
+            }
             return Ok(());
         }
         self.propose_step(&context, scene.pathfinder, next, gap)
@@ -1651,10 +1660,15 @@ impl MotionDraft<'_> {
                 self.entry.policy.radius,
                 goal,
                 context.neighbours,
-                |witness| {
-                    witness.owner == actor.owner
-                        && (!ground || on_connected_ground(context.map, witness.pos, goal))
-                },
+                (
+                    // Under the solver the chain of arrivals is unbounded (WP3b, B-158): only
+                    // arrivals are witnesses, since a give-up records none (`check_progress`).
+                    context.intent.map_or(Some(ARRIVAL_WITNESS_REACH), |_| None),
+                    |witness: &SteeringObstacle| {
+                        witness.owner == actor.owner
+                            && (!ground || on_connected_ground(context.map, witness.pos, goal))
+                    },
+                ),
             )
             .map_err(self.fault())?
         {
