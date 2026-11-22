@@ -402,3 +402,117 @@ above 8 %, confirmed once on unseen crowds.
 - The new list agrees on native debug and release and on `wasm32-wasip1` release and debug (runner
   `wasmtime --dir=<worktree>`).
 - The harness's rows of seeds 1 to 20 of every scene family are byte-identical to WP1's with the WP2 code.
+
+## 5. WP3: the Solver pipeline, stopped on prescribed tests and on cost
+
+WP3's code is on the side branch `contact-solver-wp3-wip`. Under `contact.pipeline: Solver` the step steers by intent
+(I-1 to I-4, the side commitment in `MovementMemory`), skips the legacy velocity limit, the surround walk and the
+waiting rule, widens the neighbour reach by the side horizon, and the collision phase runs the contact solver (Verlet
+pairs, K = 21) with the legacy terrain step. Legacy is untouched: both golden replays and the sandbox checksum pass,
+and the harness rows of seeds 1 to 20 of every scene family are byte-identical to WP1's. **The acceptance range was
+not run**: WP3 fails its own prescribed tests first (§5.1), so spending the range now would leave nothing unseen for a
+real acceptance after an amendment.
+
+### 5.1 Prescribed tests
+
+- `tests/solver_pipeline_tests.rs`: the restated tests of §8.1 pass (an idle friend pushed along the line of centres,
+  a waiting friend's half share, the D-β-off twin, the exact head-on tie passing right to right, converging units not
+  vibrating, a body spawned into a crowd leaving it within 25 ticks and never through a wall).
+- **Fails:** `gaps_and_crossings_meet_t4_and_t7_under_the_solver`: 5 deadlocked units in 20 development gap scenes, all
+  in mixed-priority scenes (seeds 12, 15, 16): the K-10 give-ups at the shared destination.
+- **Kept tests that fail under Solver** (scratch run with the shipped pipeline flipped, `kept-under-solver.log`):
+  `test_move_command_units_fan_out_and_surround_target_point` (spread 2.77, needs 3) and
+  `battlefield_bubble_trajectories_are_smooth_without_micro_jitter` (one heading zig-zag). The restated-in-WP3 tests
+  in their legacy form fail as expected (`test_idle_friendly_displaced_laterally`,
+  `test_converging_units_respect_speed_cap_and_do_not_vibrate`, `units_blocked_by_a_holding_line_never_reverse`);
+  every other kept file passes.
+
+### 5.2 Development range (seeds 1 to 1,000), informative only
+
+| Family | Measure | Today (WP1) | Solver |
+|---|---|---:|---:|
+| gap | M1 / M1-hi | 17.70 / 3.79 | 3.11 / 0.31 |
+| gap | give-ups with room; scenes complete | 454; 80.5 % | 336; 83.4 % |
+| gap | η median / 5th | 0.655 / 0.300 | 0.784 / 0.381 |
+| gap | friends > 5 % moving / > 1 % standing / max | 14.68 % / 5.59 % / 0.742 | 1.59 % / 0.03 % / 0.905 |
+| cross | M1 / M1-hi | 4.27 / 1.36 | 1.19 / 0.49 |
+| cross | give-ups with room; scenes complete | 152; 94.6 % | 2; 99.8 % |
+| cross | friends > 5 % moving / max | 3.78 % / 0.537 | 0.00 % / 0.098 |
+| corner (B-152) | M1 / M1-hi; give-ups | 20.94 / 4.60; 0 | 0.51 / 0.11; 7 |
+| arc (no slots yet) | M1; fill mean / 5th; give-ups | 3.20; 0.980 / 0.889; 25 | 29.85; 0.609 / 0.381; 4,827 |
+| corridor (no slots yet) | M1; enemy overlap max; give-ups | 8.77; 0.040; 275 | 25.76; 0.217; 4,991 |
+| mirror (WP5 not applied) | blue share | 0.438 [0.400, 0.476] | 0.452 [0.414, 0.490] |
+
+On the families WP3 is judged on, the solver improves on today almost everywhere (gap reversals ÷ 5.7, crossings
+complete in 99.8 % of scenes, throughput +20 %), but on this range it would still fail T1 (gap 3.11 and cross 1.19
+above 1.0), T4 (gap 336 give-ups, K-10; cross 2) and T7 (gap: 1.59 % of moving near pair-ticks above 5 %, max 0.905).
+Arc and corridor wait for WP4's slots, as in §5.3 of the plan ("noslot"). T8 holds on this range (§5.4).
+
+### 5.3 Cost (instructions retired, release benchmark, `perf stat -e instructions:u`, under the gate lock)
+
+| Scenario (400 units, 300 ticks) | Legacy | Solver | Change | Ticks/s Legacy / Solver |
+|---|---:|---:|---:|---:|
+| 64 × 64 flat, armies meet | 9.91 G | 18.56 G | **+87 %** | 158 / 91 |
+| 128 × 128 flat, armies apart | 10.25 G | 12.40 G | **+21 %** | 161 / 53* |
+| showcase canyon | 17.61 G | 31.13 G | **+77 %** | 80 / 56 |
+
+*Wall-clock figures were taken on a loaded machine; the instruction counts are the measure. Every scenario stays above
+real time (25 ticks per second).
+
+**Iterations and rebuilds per tick** (scratch counter `contact_iterations`, `contact_rebuilds`):
+
+| | Mean iterations | Ticks at K = 21 | Ticks with ≤ 1 | Pair-list rebuilds per tick |
+|---|---:|---:|---:|---:|
+| 64 × 64 flat | 15.75 | 69.9 % | 22.8 % | 1.56 |
+| 128 × 128 flat | 1.00 | 0 % | 100 % | 0.00 |
+| showcase canyon | 20.36 | 92.4 % | 0.3 % | 1.53 |
+| Harness, all scene families (4.77 M solver ticks) | 6.54 | 90th percentile 21 | median 1 | — |
+
+**Where the extra instructions go** (64 × 64, inclusive shares of a DWARF call-graph profile): of the +8.65 G,
+- **contact +4.56 G (53 %)**: the solver is 26.6 % of the Solver run (`accumulate` 15.3 %, `apply` with the terrain step
+  6.7 %, pair builds 3.6 %), against 3.8 % for the legacy collision phase;
+- **intent and steering +2.30 G (27 %)**: the movement phase is 5.66 G against 3.36 G, mostly `gather_neighbours`
+  (11.5 % of the run against 4.2 %) because the reach adds the side horizon `h · (r + r_max)`; the TTC rule itself is
+  cheaper than legacy steering's `remove_blocked_velocity` and `surround_walk` (16.6 % of the legacy run);
+- **target acquisition +1.52 G (18 %)**: a behaviour side effect (more units within scan of each other per tick);
+- **slots: 0** (WP4 not built).
+
+**Why the early stop does not help in battle.** The stop fires only in an iteration in which no body moved. A crowd
+pressing into a fighting or anchored line keeps overlaps the averaged iterations cannot clear (K-12), so 70 % to 92 %
+of battle ticks run all 21 iterations. A scratch variant that also stops once no pair exceeds D-α's 5 % (not committed)
+barely changes it: mean 15.02 and 18.49 iterations, 66 % and 79 % of ticks still at K.
+
+### 5.4 Relabelling (T8)
+
+T8 holds in every family under the Solver (sign tests, M1 / completion tick): gap 0.274 / 0.025, cross 1.000 / 0.180,
+arc 0.445 / 0.860, corridor 0.523 / 0.541, corner 1.000 / 0.595; today's pipeline failed it on cross (completion tick
+p < 0.001) and corridor (M1 p = 0.004). The relabelled runs were first played under Legacy by a run-script error and
+were re-run under the Solver; only the corrected figures are reported.
+
+### 5.5 Options (for the orchestrator; none implemented)
+
+The 10 % stop of WP6 is out of reach with this design: contact alone adds 46 % on the 64 × 64 battle. Each option
+below is a design change by amendment; the figures are estimates from §5.3.
+
+1. **Restrict iteration to the active set.** After the first iteration, iterate only over pairs whose overlap exceeds
+   the dead band and over the bodies they touch, rebuilding that subset each iteration (order-independent: it is a
+   function of positions). In a battle most pairs are within the band after one or two iterations; the cost of later
+   iterations falls with the active set rather than the whole list. It does not by itself reduce the 21 iterations the
+   pressed front needs, so it helps most where few pairs are deep.
+2. **Gauss–Seidel with a fixed, order-independent colouring.** Colour the pair graph (or the bodies by grid cell parity)
+   by a rule that depends only on positions and ids, and sweep colour by colour; corrections propagate within an
+   iteration instead of one neighbour per iteration, which typically cuts the iterations needed by 2× to 4×. Needs a
+   new C-3 derivation and confirmation (Amendment 2's method).
+3. **A lower K with a stated residual for pressed crowds.** The infeasible wedges of K-12 cannot be cleared at any K;
+   cap the iterations (for example K = 8) and accept that pressed fronts keep their residual until the press ends,
+   with T7 measuring what is visible. Contact cost would fall by about 60 % on the battle scenarios (8 / 15.75 to
+   8 / 20.36 of today's iterations), still leaving roughly +20 % to +30 % overall with the neighbour reach.
+4. **Do not widen the neighbour reach for all units.** Gather the horizon reach only for units whose step is
+   unblocked by a co-moving friend, or cap it at today's reach plus one step; saves most of the +2.30 G of §5.3.
+5. **Cheaper normals.** `direction` divides in 128 bits per pair per iteration (`__udivti3` is 13 % of the Solver run);
+   computing `1 / |d|` once per pair per iteration and multiplying, or reusing the normal across iterations while a
+   pair moves less than a tolerance, is an implementation change with no behaviour change if done exactly.
+
+A combination of 1, 4 and 5 is an implementation-level saving that keeps the plan's behaviour; 2 and 3 change the
+solver's convergence and need C-3 re-derived. Whether any combination reaches +10 % is not known; the K-12 press keeps
+the battle scenarios at K whatever the per-iteration cost.
