@@ -43,7 +43,7 @@ mod validation;
 pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use movement_rules::{MovementRules, MAX_LANE_TOLERANCE_PERMILLE};
-pub use placement_rules::{PlacementRules, ResourceReach, MAX_REACH_SIDE};
+pub use placement_rules::{PlacementRules, ResourceHarvest, ResourceReach, MAX_REACH_SIDE};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 pub use spells::{
     min_missile_speed, CatalogError, EffectFacts, EffectNode, FlatNode, ResolvedFilter,
@@ -943,11 +943,12 @@ struct OverclockSpecDef {
     attack_rate_multiplier: f32,
 }
 
+/// An authored harvester capability, written `harvester: Some(())`. It has no fields: harvest
+/// time, amount and return delay are the resource's (`placement_rules.ron`, plan
+/// `2026-11-22-harvest-timing` D-3), and a row still naming one is refused, not ignored.
 #[derive(Debug, Deserialize)]
-struct HarvesterSpecDef {
-    harvest_capacity: u32,
-    harvest_rate_ticks: u16,
-}
+#[serde(deny_unknown_fields)]
+struct HarvesterSpecDef {}
 
 /// An authored barrier (`StarCraft` II's Immortal Barrier); see [`BarrierSpec`].
 #[derive(Debug, Deserialize)]
@@ -1502,10 +1503,9 @@ impl UnitArchetypeDef {
             speed_multiplier: SimScalar::from_f32_lossy(o.speed_multiplier),
             attack_rate_multiplier: SimScalar::from_f32_lossy(o.attack_rate_multiplier),
         });
-        let harvester = authored.harvester.map(|h| HarvesterSpec {
-            harvest_capacity: h.harvest_capacity,
-            harvest_rate_ticks: h.harvest_rate_ticks,
-        });
+        let harvester = authored
+            .harvester
+            .map(|HarvesterSpecDef {}| HarvesterSpec {});
         let barrier = authored.barrier.map(|b| BarrierSpec {
             absorb_limit: SimScalar::from_f32_lossy(b.absorb_limit),
             duration_ticks: b.duration_ticks,

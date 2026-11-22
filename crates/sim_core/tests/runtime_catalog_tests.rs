@@ -290,7 +290,8 @@ fn an_edited_placement_rule_changes_the_loaded_reach() -> TestResult {
     let edited = format!(
         "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"], \
          shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), \
-         remove_when_empty: true),{}",
+         remove_when_empty: true, \
+         harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0),{}",
         &text[..start],
         &text[end..]
     );
@@ -340,6 +341,126 @@ fn an_edited_resource_footprint_changes_the_loaded_table() -> TestResult {
     );
     assert!(!edited.remove_when_empty);
     bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-22-harvest-timing` WP1 (charter §3.3, C6): a resource's harvest time and amount
+/// are read from `placement_rules.ron` at run time, so an edited mineral row changes how long a
+/// worker gathers and what it carries without recompiling.
+#[test]
+fn an_edited_resource_harvest_changes_the_gather() -> TestResult {
+    let bundle = Bundle::new("resource-harvest")?;
+    let shipped = bundle.load()?;
+    let shipped_harvest = *shipped
+        .units
+        .placement_rules()
+        .harvest(sim_types::ResourceKind::Mineral)
+        .ok_or("the shipped mineral harvest")?;
+    let path = bundle.directory.join(FILES[6]);
+    let text = std::fs::read_to_string(&path)?;
+    let row = text.find("(kind: Mineral,").ok_or("the mineral row")?;
+    let (time, amount) = (
+        shipped_harvest.time_ticks + 13,
+        shipped_harvest.amount.saturating_sub(2).max(1),
+    );
+    let tail = replace_first_field(&text[row..], "harvest_time_ticks", &time.to_string());
+    let tail = replace_first_field(&tail, "harvest_amount", &amount.to_string());
+    std::fs::write(&path, format!("{}{tail}", &text[..row]))?;
+    let edited = bundle.load()?;
+    bundle.finish()?;
+    let harvest = *edited
+        .units
+        .placement_rules()
+        .harvest(sim_types::ResourceKind::Mineral)
+        .ok_or("the edited mineral harvest")?;
+    assert_eq!((harvest.time_ticks, harvest.amount), (time, amount));
+    assert_ne!(harvest, shipped_harvest);
+
+    let side = 32_u32;
+    let cells = vec![MapCell::default_ground(CliffLevel(0)); (side * side) as usize];
+    let mineral = sim_map::ResourceNode {
+        pos: SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(8.5)),
+        kind: sim_types::ResourceKind::Mineral,
+        remaining: 1_000,
+        cell: (16, 8),
+        placed: None,
+    };
+    let map = GameMap::from_cells(side, side, cells, vec![mineral], Vec::new())?;
+    let mut world = SimWorld::with_catalogs(map, 7, edited.units, edited.upgrades)?;
+    let worker_type = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.capabilities.harvester.is_some())
+        .ok_or("a harvester")?
+        .unit_type_id;
+    let hall_type = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.is_resource_dropoff && arch.requires_structures.is_empty())
+        .ok_or("a depot")?
+        .unit_type_id;
+    world.spawn_structure(hall_type, PlayerId(0), 4, 6)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        PlayerId(0),
+        SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(8.5)),
+    )?;
+    let step = |world: &mut SimWorld, commands: Vec<sim_types::PlayerCommand>| {
+        let tick = world.current_tick;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+    };
+    step(
+        &mut world,
+        vec![sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![worker],
+            order: sim_types::UnitOrder::Harvest {
+                target: sim_types::ResourceNodeId(0),
+            },
+            queue: false,
+        }],
+    );
+    let mut started = None;
+    for _ in 0..600 {
+        step(&mut world, Vec::new());
+        let entity = &world.entities[&worker];
+        if started.is_none() && entity.task.gather_ticks > 0 {
+            started = Some(world.current_tick);
+        }
+        if let Some(cargo) = entity.cargo {
+            let started = started.ok_or("the gather started before the cargo")?;
+            assert_eq!(world.current_tick - started, u32::from(time));
+            assert_eq!(cargo.amount, amount);
+            assert_eq!(world.map.resources()[0].remaining, 1_000 - amount);
+            return Ok(());
+        }
+    }
+    Err("the worker never gathered".into())
+}
+
+/// Plan `2026-11-22-harvest-timing` D-3: the worker's harvester capability has no numbers, so a
+/// units catalog still naming the old per-worker fields is refused, not silently ignored.
+#[test]
+fn a_harvester_naming_a_harvest_field_is_refused() -> TestResult {
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    assert!(units.contains("harvester: Some(())"));
+    for field in ["harvest_capacity: 5", "harvest_rate_ticks: 50"] {
+        let edited = units.replacen(
+            "harvester: Some(())",
+            &format!("harvester: Some(({field}))"),
+            1,
+        );
+        let result = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &edited);
+        let name = field.split(':').next().ok_or("a field name")?;
+        assert!(
+            matches!(&result, Err(SimCoreError::RonDeserializationError(message)) if message.contains(name)),
+            "{field}: {result:?}"
+        );
+    }
     Ok(())
 }
 

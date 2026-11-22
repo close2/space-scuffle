@@ -1,11 +1,14 @@
 //! The harvester state machine and income.
 //!
 //! Driven only by the archetype's `HarvesterSpec`: any unit with one gathers, whatever it is.
+//! How long a gather takes and what it yields are the resource's: the
+//! [`ResourceHarvest`](crate::catalog::ResourceHarvest) of the node's kind in the catalog's
+//! placement rules (plan `2026-11-22-harvest-timing` D-2).
 //!
 //! # The cycle
 //! A `Harvest` order alternates two states, chosen by whether the unit holds cargo:
-//! - **Empty:** walk to the node, stay for `harvest_rate_ticks`, then take up to
-//!   `harvest_capacity` units from it. The node is drawn down at that moment.
+//! - **Empty:** walk to the node, stay for its kind's `time_ticks`, then take up to its
+//!   `amount` units from it. The node is drawn down at that moment.
 //! - **Carrying:** walk to the nearest completed friendly depot. Income is credited on
 //!   arrival, not when gathered, so cargo lost with its carrier was never income.
 //!
@@ -26,6 +29,9 @@
 //! - A unit holding cargo delivers before it gathers again, so cargo of the other kind is
 //!   never thrown away.
 //! - With no depot left, the order ends and the cargo stays on the unit.
+//! - A node whose kind has no harvest in the catalog (rules not loaded,
+//!   [`PlacementRules::NONE`](crate::catalog::PlacementRules::NONE)) cannot be gathered: the
+//!   order ends with [`TaskEventKind::NotCapable`].
 
 use super::{Approach, Footprint, GameCommandError, GameCommandReceipt, TaskEventKind};
 use crate::entity::Cargo;
@@ -154,10 +160,10 @@ impl SimWorld {
 
     /// One tick of a `Harvest` order at the front of `id`'s queue.
     pub(crate) fn step_harvest(&mut self, id: EntityId, target: ResourceNodeId) {
-        let Some(spec) = self.harvester_spec(id) else {
+        if self.harvester_spec(id).is_none() {
             self.end_task(id, Some(TaskEventKind::NotCapable));
             return;
-        };
+        }
         let Some(actor) = self.entities.get_mut(&id) else {
             return;
         };
@@ -195,16 +201,27 @@ impl SimWorld {
             self.end_task(id, Some(TaskEventKind::ExtractorLost));
             return;
         };
-        self.step_gather(id, target, (site, shape), spec);
+        self.step_gather(id, target, (site, shape));
     }
 
+    /// One tick of gathering at `target`: walk to its site, gather for its kind's time, then
+    /// take its kind's amount.
     fn step_gather(
         &mut self,
         id: EntityId,
         target: ResourceNodeId,
         (site, shape): (Footprint, PlacedFootprint),
-        spec: HarvesterSpec,
     ) {
+        let harvest = self
+            .map
+            .resources()
+            .get(target.0 as usize)
+            .and_then(|node| self.catalog.placement_rules().harvest(node.kind))
+            .copied();
+        let Some(harvest) = harvest else {
+            self.end_task(id, Some(TaskEventKind::NotCapable));
+            return;
+        };
         let gathering = self
             .entities
             .get(&id)
@@ -215,7 +232,7 @@ impl SimWorld {
                 Approach::Unreachable => self.end_task(id, Some(TaskEventKind::Unreachable)),
                 Approach::Arrived => {
                     if let Some(actor) = self.entities.get_mut(&id) {
-                        actor.task.gather_ticks = spec.harvest_rate_ticks.max(1);
+                        actor.task.gather_ticks = harvest.time_ticks;
                         actor.current_anim = AnimState::Cast;
                     }
                 }
@@ -232,7 +249,7 @@ impl SimWorld {
         let Some(node) = self.map.resources_mut().get_mut(target.0 as usize) else {
             return;
         };
-        let amount = spec.harvest_capacity.min(node.remaining);
+        let amount = harvest.amount.min(node.remaining);
         node.remaining -= amount;
         let kind = node.kind;
         if node.remaining == 0 && amount > 0 {

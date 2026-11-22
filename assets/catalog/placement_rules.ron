@@ -10,6 +10,13 @@
 // game's `Shape`) in world units from the centre of the `x` cells: `Box` a box with 45-degree
 // corners cut by `chamfer`, `Outline` a vertex list in order round the outline. A structure whose
 // `placement_excludes` in structures.ron names a flag cannot be placed on a cell that carries it.
+//
+// Each row also carries the resource's harvest data, from the same 5.0.14 CBehaviorResource
+// record as `remove_when_empty` (plan docs/plans/2026-11-22-harvest-timing.md D-2):
+// `harvest_time_ticks` (HarvestTime) a worker gathers, `harvest_amount` (HarvestAmount) it takes
+// and `return_delay_ticks` (ReturnDelay) it waits at the node holding its load before it walks
+// back. Times are whole ticks at 25 per Faster second: t Normal seconds is round(t / 1.4 * 25),
+// halves up.
 (
     resource_footprints: [
         // 5.0.14 FootprintMineralsRounded (liberty Footprint:1061-1096; liberty UnitData:68). Place
@@ -24,7 +31,9 @@
             "oooooooo",
             "oooooooo",
             ".oooooo.",
-        ], shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.0), remove_when_empty: true),
+        ], shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.0), remove_when_empty: true,
+            // The workers' former values (plan 2026-11-22-harvest-timing WP1, moved unchanged).
+            harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0),
         // 5.0.14 FootprintGeyserRounded (liberty Footprint:1535-1576, rows 0, 1, 7 and 8 and
         // Shape as void Footprint:3-21; liberty UnitData:2127). The anchor is the centre cell (the
         // extractor's 3x3 is centred on it). Shape: void Footprint:18-19, the +-1 square with its
@@ -44,6 +53,8 @@
             (-1.0, 0.5), (-1.25, 0.75), (-0.75, 1.25), (-0.5, 1.0),
             (0.5, 1.0), (0.75, 1.25), (1.25, 0.75), (1.0, 0.5),
             (1.0, -0.5), (1.25, -0.75), (0.75, -1.25), (0.5, -1.0),
-        ]), remove_when_empty: false),
+        ]), remove_when_empty: false,
+            // The workers' former values (plan 2026-11-22-harvest-timing WP1, moved unchanged).
+            harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0),
     ],
 )

@@ -280,23 +280,6 @@ fn ability_rates(definition: &str, prefix: &str, abilities: &[AbilitySpec]) -> S
 }
 
 impl UnitArchetypeDef {
-    /// A harvester that carries nothing would loop forever without earning.
-    fn validate_harvester(&self) -> SimResult<()> {
-        if self
-            .capabilities
-            .harvester
-            .as_ref()
-            .is_some_and(|spec| spec.harvest_capacity == 0)
-        {
-            return Err(invalid(
-                &self.slug,
-                "capabilities.harvester.harvest_capacity",
-                "must be positive",
-            ));
-        }
-        Ok(())
-    }
-
     /// A barrier absorbs a positive amount, stays raised at least one tick, and cannot be
     /// raised again while it is still up.
     fn validate_barrier(&self) -> SimResult<()> {
@@ -506,7 +489,6 @@ impl UnitArchetypeDef {
         self.validate_hull_turning()?;
         self.validate_regeneration_delays()?;
         self.validate_weapons()?;
-        self.validate_harvester()?;
         self.validate_barrier()?;
         self.validate_attack_dash()?;
         if let Some(overclock) = &self.capabilities.overclock {
@@ -1152,7 +1134,8 @@ impl PlacementRulesFile {
     /// `x` and `o` at most [`MAX_REACH_SIDE`] cells a side whose `x` cells form one rectangle of at
     /// most [`MAX_RESOURCE_SIDE`] cells a side holding the anchor, a shape that lies in those cells
     /// (an outline simple, 3 to 16 vertices on the quarter lattice, edges along axes and
-    /// diagonals), and a non-empty list of distinct applied flags without the engine's `Fogged`.
+    /// diagonals), a non-empty list of distinct applied flags without the engine's `Fogged`, and
+    /// a harvest of at least one tick and one unit (plan `2026-11-22-harvest-timing` D-2).
     pub(super) fn validate(&self) -> SimResult<()> {
         for (index, ring) in self.resource_footprints.iter().enumerate() {
             let definition = format!("{:?}", ring.kind);
@@ -1197,7 +1180,24 @@ impl ResourceFootprintDef {
         }
         self.validate_rows(definition)?;
         self.validate_own_cells(definition)?;
-        self.validate_shape(definition)
+        self.validate_shape(definition)?;
+        self.validate_harvest(definition)
+    }
+
+    /// The harvest: a gather that takes no time or yields nothing would loop forever without
+    /// earning. A return delay of 0 is no wait.
+    fn validate_harvest(&self, definition: &str) -> SimResult<()> {
+        if self.harvest_time_ticks == 0 {
+            return Err(invalid(
+                definition,
+                "harvest_time_ticks",
+                "must be at least 1 tick",
+            ));
+        }
+        if self.harvest_amount == 0 {
+            return Err(invalid(definition, "harvest_amount", "must be positive"));
+        }
+        Ok(())
     }
 
     /// The mask: 1 to 15 rows of equal length 1 to 15, of `.`, `x` and `o` only.
@@ -2649,8 +2649,13 @@ mod placement_flag_tests {
     const ONE_CELL_SHAPE: &str =
         "shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), remove_when_empty: false";
 
+    /// A valid harvest (plan `2026-11-22-harvest-timing` D-2): what `rules_with` gives a ring
+    /// that names none.
+    const A_HARVEST: &str = "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0";
+
     /// The shipped rules with the row of `kind` replaced by `ring` (the text inside its
-    /// parentheses after `kind: …,`); a ring that names no shape gets [`ONE_CELL_SHAPE`].
+    /// parentheses after `kind: …,`); a ring that names no shape gets [`ONE_CELL_SHAPE`], and one
+    /// that names no harvest [`A_HARVEST`].
     fn rules_with(kind: &str, ring: &str) -> Result<String, Box<dyn std::error::Error>> {
         let start = RULES
             .find(&format!("(kind: {kind},"))
@@ -2664,6 +2669,11 @@ mod placement_flag_tests {
             ring.to_owned()
         } else {
             format!("{ring}, {ONE_CELL_SHAPE}")
+        };
+        let ring = if ring.contains("harvest_time_ticks:") {
+            ring
+        } else {
+            format!("{ring}, {A_HARVEST}")
         };
         Ok(format!(
             "{}(kind: {kind}, {ring}),{}",
