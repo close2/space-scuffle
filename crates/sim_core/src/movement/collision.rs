@@ -326,6 +326,7 @@ impl SimWorld {
             return;
         }
         self.movement.contact_iterations = 0;
+        self.movement.contact_rebuilds = 0;
         let mut bodies = std::mem::take(&mut self.movement.bodies);
         let mut pushes = std::mem::take(&mut self.movement.pushes);
         let mut grid = std::mem::take(&mut self.movement.collision_grid);
@@ -433,6 +434,7 @@ impl SimWorld {
             },
         );
         self.movement.contact_iterations = solved.iterations;
+        self.movement.contact_rebuilds = solved.rebuilds;
         for body in &solver.bodies {
             if let Some(actor) = self.entities.get_mut(&body.id) {
                 actor.position = body.position;

@@ -252,6 +252,9 @@ pub(crate) struct MovementWorkspace {
     /// Averaged iterations the contact solver ran in the latest collision phase; 0 under the legacy
     /// pipeline. Derived output for the cost report: never read by the simulation, never hashed.
     contact_iterations: u8,
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (Verlet rule).
+    /// Derived output for the cost report, like [`Self::contact_iterations`].
+    contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
@@ -430,6 +433,14 @@ impl SimWorld {
     #[must_use]
     pub fn contact_iterations(&self) -> u8 {
         self.movement.contact_iterations
+    }
+
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (plan
+    /// `2026-11-20-contact-solver` Amendment 1, the Verlet rule); 0 under the legacy pipeline.
+    /// Derived output for the cost report, excluded from checksums.
+    #[must_use]
+    pub fn contact_rebuilds(&self) -> u8 {
+        self.movement.contact_rebuilds
     }
 
     /// Total pathfinder searches this world has run. Derived output for tests and benchmarks.
