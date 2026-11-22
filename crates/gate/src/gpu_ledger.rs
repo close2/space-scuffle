@@ -13,7 +13,11 @@
 //!   [`GpuChild`];
 //! - renders the five slowest children and the run's lock waits ([`render_slowest`]), which
 //!   [`crate::RunReport::render`] prints after the result table, so GPU lane time and lock
-//!   contention (B-136) are visible in every gate log.
+//!   contention (B-136) are visible in every gate log;
+//! - renders the run's GPU occupancy ([`occupancy_line`], plan `2026-11-20-gpu-lane` D-4): the
+//!   time its children held the GPU (`C`, the sum of `run_s` of the children that took the GPU
+//!   lock), the test phase (`T`), and `η = C / T`. The lock admits one child at a time, so the
+//!   children's runs never overlap and `C` is also the time the GPU was held by this run.
 //!
 //! # How it fits
 //! The gate depends on no workspace crate (charter §5), so it reads the ledger as text and
@@ -23,7 +27,8 @@
 //! # Invariants
 //! - Only the lines appended during this run count: [`GpuLedger::start`] is the file's length
 //!   when the run began, so an inherited ledger that already holds other runs adds nothing old.
-//! - A run with no GPU child renders nothing.
+//! - A run with no GPU child renders nothing, and a run with no child that took the GPU lock
+//!   (lavapipe only) renders no occupancy line.
 //! - Seconds are kept as whole milliseconds, parsed exactly from the ledger's decimal text, so
 //!   the order of the table never depends on float rounding.
 //! - A ledger line that does not parse is counted and named in the table's heading, never
@@ -34,6 +39,7 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The variable naming the GPU run ledger, read by the GPU test harness.
 pub const LEDGER_VAR: &str = "SPACE_SCUFFLE_GPU_RUN_LEDGER";
@@ -232,10 +238,15 @@ impl GpuChildren {
         })
     }
 
-    /// The report's GPU block ([`render_slowest`]); empty when no GPU child ran.
+    /// The report's GPU block ([`render_slowest`], then the [`occupancy_line`] over
+    /// `test_phase`, the lane run's wall time, when known); empty when no GPU child ran.
     #[must_use]
-    pub fn render(&self) -> String {
-        render_slowest(&self.children, self.unreadable, &self.ledger)
+    pub fn render(&self, test_phase: Option<Duration>) -> String {
+        let mut out = render_slowest(&self.children, self.unreadable, &self.ledger);
+        if let Some(phase) = test_phase {
+            out.push_str(&occupancy_line(&self.children, phase));
+        }
+        out
     }
 }
 
@@ -291,6 +302,33 @@ pub fn render_slowest(children: &[GpuChild], unreadable: usize, ledger: &Path) -
     }
     out.push_str(&lock_line(children));
     out
+}
+
+/// One line on the run's GPU occupancy (D-4): `C`, the summed run time of the children that
+/// took the GPU lock, against `test_phase`, `T`, and `η = C / T` to two decimals. Empty when no
+/// child took the lock or the test phase is zero. The children of reruns after the lane run are
+/// in the ledger too, so a run with reruns can show `η` above its lane run's.
+#[must_use]
+pub fn occupancy_line(children: &[GpuChild], test_phase: Duration) -> String {
+    let held: u64 = children
+        .iter()
+        .filter(|child| child.lock_wait_ms.is_some())
+        .map(|child| child.run_ms)
+        .sum();
+    let phase = u64::try_from(test_phase.as_millis()).unwrap_or(u64::MAX);
+    if phase == 0 || !children.iter().any(|child| child.lock_wait_ms.is_some()) {
+        return String::new();
+    }
+    // η in hundredths, rounded half up, in integers so the line never depends on float rounding.
+    let hundredths = (u128::from(held) * 200 + u128::from(phase)) / (u128::from(phase) * 2);
+    format!(
+        "  GPU occupancy: the children held the GPU {} s of a {} s test phase, \
+         eta = C / T = {}.{:02}\n",
+        secs(held),
+        secs(phase),
+        hundredths / 100,
+        hundredths % 100
+    )
 }
 
 /// One line on the run's lock waits: the total, the longest and who waited it, and the children
@@ -460,6 +498,43 @@ mod tests {
             text.contains("1 ledger line(s) could not be read"),
             "{text}"
         );
+    }
+
+    /// D-4: the occupancy line sums the run time of the children that took the lock, against the
+    /// test phase; a run with no such child prints none.
+    #[test]
+    fn the_occupancy_line_states_c_t_and_eta() {
+        let ledger: String = [
+            line("a", "0.10", "1000.00", "0", "-"),
+            line("b", "5.00", "1505.50", "0", "-"),
+            line("soft", "-", "400.00", "0", "-"),
+        ]
+        .concat();
+        let (children, _) = parse_ledger(&ledger);
+        assert_eq!(
+            occupancy_line(&children, Duration::from_mins(61)),
+            "  GPU occupancy: the children held the GPU 2505.5 s of a 3660.0 s test phase, \
+             eta = C / T = 0.68\n"
+        );
+        let block = GpuChildren {
+            ledger: PathBuf::from("x"),
+            children: children.clone(),
+            unreadable: 0,
+        };
+        assert!(block
+            .render(Some(Duration::from_mins(61)))
+            .ends_with("eta = C / T = 0.68\n"));
+        assert!(!block.render(None).contains("GPU occupancy"));
+        assert_eq!(occupancy_line(&children, Duration::ZERO), "");
+        let (soft, _) = parse_ledger(&line("soft", "-", "400.00", "0", "-"));
+        assert_eq!(occupancy_line(&soft, Duration::from_secs(10)), "");
+        assert_eq!(occupancy_line(&[], Duration::from_secs(10)), "");
+        let empty = GpuChildren {
+            ledger: PathBuf::from("x"),
+            children: Vec::new(),
+            unreadable: 0,
+        };
+        assert_eq!(empty.render(Some(Duration::from_secs(10))), "");
     }
 
     /// A child that took no lock (lavapipe) has no wait, and a run of only those has no lock line.
