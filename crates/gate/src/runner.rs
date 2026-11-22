@@ -267,7 +267,7 @@ impl RunReport {
             );
         }
         if let Some(gpu) = &self.gpu {
-            out.push_str(&gpu.render());
+            out.push_str(&gpu.render(self.test_wall));
         }
         out.push_str(&self.render_failures());
         let verdict = if self.passed() { "GREEN" } else { "RED" };
@@ -1745,6 +1745,14 @@ mod tests {
         );
         assert!(
             text.contains("GPU lock: 1 child(ren) waited 4.5 s in total"),
+            "{text}"
+        );
+        // D-4 (plan 2026-11-20-gpu-lane): the occupancy over the report's test phase.
+        assert!(
+            text.contains(
+                "GPU occupancy: the children held the GPU 31.0 s of a 2410.0 s test phase, \
+                 eta = C / T = 0.01"
+            ),
             "{text}"
         );
     }

@@ -39,13 +39,32 @@
 //! `SPACE_SCUFFLE_WEAPON_BATTLE_EVIDENCE_DIR` set writes a sheet per family: a 40 ms sequence
 //! at 1:1 and the same frames at 2x.
 //!
+//! # Where the waves stand
+//! Plan `2026-11-20-gpu-lane` D-3. The camera boots on the start base, beside the map's edge,
+//! where the base's footprints and the ground off the map leave room for one subject (plan
+//! §2.3). So before the spots are sought, each child pans the battle camera, without zooming,
+//! to the nearest of a fixed set of candidate targets round the start at which
+//! [`search_spots`] finds [`MAX_SUBJECTS`] spots ([`camera_target`]), and lets the camera and
+//! the renderer settle again. The base's sight does not reach that far: at the candidates in
+//! sight the probe of WP3 found at most 4 spots. So a spot may lie in the fog when it is
+//! sought ([`Sight::OnceStaged`]): the wave's shooters, the viewer's own units, stand on it,
+//! and at the baseline picture every subject's shooter and target must be in the viewer's
+//! sight, or the child fails naming the subject, so nothing is judged under fog. A child that
+//! finds fewer than [`MIN_SPOTS`] spots fails, counting the candidates each condition
+//! rejected, so a change that crowds the waves fails instead of doubling the target's time.
+//! Away from the base the ground has cliffs, so a spot must be [`level`]: a target below a
+//! cliff's edge is hidden from the camera by the high ground. With several subjects a wave,
+//! two may fire the same look, so each instance of a look is counted for the subject nearest
+//! to it ([`owner`]), never for every subject that names the look.
+//!
 //! # How it fits
 //! Each child re-executes this test binary through `support/gpu_run.rs` (charter §7, C21), as
 //! `status_gpu_tests.rs` does. Every unit and look is chosen by catalog properties (media, a
 //! weapon, a block's looks), never by name (C5).
 //!
 //! # Invariants verified
-//! - The waves are planned from the catalog alone, so parent and child agree on them.
+//! - The waves are planned from the catalog and the spots alone, so parent and child agree on
+//!   them; the parent checks that every child planned as many waves as the first.
 //! - Every unit staged stands at full health throughout, so nothing dies in the pictures.
 
 #![allow(
@@ -137,6 +156,9 @@ const FRAME_STEP: Duration = Duration::from_millis(40);
 const WAVE_SECONDS: f64 = 2.0;
 /// Most shooters a wave stages.
 const MAX_SUBJECTS: usize = 9;
+/// Fewest spots a wave child may stage on (plan `2026-11-20-gpu-lane` D-3): a child that finds
+/// fewer fails, naming the conditions that rejected the candidates.
+const MIN_SPOTS: usize = 6;
 /// Distances from the camera's target, in world units, at which the spots are sought.
 const SPOT_DISTANCES: [f32; 14] = [
     3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 3.5, 4.5, 5.5, 6.5, 7.5, 2.5, 10.0,
@@ -496,6 +518,12 @@ struct WaveReport {
     /// Families no presentable shooter could carry (no shooter of their event kind).
     unstaged: Vec<String>,
     waves: usize,
+    /// Where the camera was panned to before the spots were sought (world `x, y`; plan
+    /// `2026-11-20-gpu-lane` D-3), and the spots found there.
+    #[serde(default)]
+    camera: [f32; 2],
+    #[serde(default)]
+    spots: usize,
 }
 
 /// What the child is doing.
@@ -527,6 +555,9 @@ struct Staging {
     directory: PathBuf,
     wave: usize,
     phase: Phase,
+    /// Whether the camera has been panned to the waves' ground (plan `2026-11-20-gpu-lane`
+    /// D-3); the boot and framing phases run again after the pan.
+    panned: bool,
     /// Each subject: its shooter, its target, its centre (world `x, y`), and its looks' ids
     /// with their spawn counts at the start.
     subjects: Vec<StagedSubject>,
@@ -553,6 +584,10 @@ struct StagedSubject {
     shooter: (Vec2, f32),
     target: (Vec2, f32),
     looks: [Option<(client::effects::catalog::EffectId, u32)>; 2],
+    /// The instances of its travel and its impact look seen so far, as `(pool slot, birth's
+    /// bits)`: an instance is the subject's when the subject is the nearest of those firing the
+    /// same look ([`owner`]), so subjects of one wave that share a look are told apart.
+    seen: [Vec<(usize, u64)>; 2],
     /// The ground units packed under a cross-plane subject's flyer.
     under: Vec<EntityId>,
 }
@@ -621,6 +656,89 @@ fn open(world: &SimWorld, point: Vec2) -> bool {
     })
 }
 
+/// What a candidate spot must be, in the order [`SpotSearch::rejected`] counts them: open
+/// ground under the 5 by 5 probe; walkable at both ends of the widest pair; level, at one height
+/// under the probe and both ends ([`level`]); clear of every unit; clear of every node and
+/// footprint; apart from the spots already found; in the viewer's sight; on screen.
+const CONDITIONS: [&str; 8] = [
+    "open", "sides", "level", "units", "nodes", "apart", "fog", "screen",
+];
+/// Most the terrain's height may differ, world units, between a spot and any point of its probe
+/// or the ends of its widest pair: a subject never straddles a cliff's edge, where the high
+/// ground hides a target below it from the camera (WP3's first trial on the panned ground).
+const LEVEL_TOLERANCE: f32 = 0.05;
+
+/// When a spot must be in the viewer's sight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sight {
+    /// Already, when the spot is sought.
+    Now,
+    /// Once the wave's shooters, the viewer's own units, stand on it (plan `2026-11-20-gpu-lane`
+    /// D-3 item 2): the fog is still counted, but rejects nothing, and the baseline picture
+    /// asserts that every staged unit is seen.
+    OnceStaged,
+}
+
+/// The spots [`search_spots`] found near a point and, per condition of [`CONDITIONS`], how many
+/// of the candidates it tried failed it (a candidate failing several counts under each).
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SpotSearch {
+    /// The spots found, world `x, y`, in the order they were found.
+    spots: Vec<Vec2>,
+    /// Candidates tried before the search stopped.
+    tried: usize,
+    /// Rejections per condition of [`CONDITIONS`].
+    rejected: [usize; CONDITIONS.len()],
+}
+
+impl SpotSearch {
+    /// The rejection counts, one `name: count` per condition.
+    fn rejections(&self) -> String {
+        CONDITIONS
+            .iter()
+            .zip(self.rejected)
+            .map(|(name, count)| format!("{name}: {count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The spots, if there are at least [`MIN_SPOTS`] (plan `2026-11-20-gpu-lane` D-3, the
+    /// guard); otherwise a refusal that counts the candidates each condition rejected, so a
+    /// map or clearance change that crowds the waves fails here instead of doubling the
+    /// target's time.
+    fn at_least_min(&self, around: Vec2) -> Result<&[Vec2], String> {
+        if self.spots.len() >= MIN_SPOTS {
+            Ok(&self.spots)
+        } else {
+            Err(format!(
+                "only {} spots near {around:?} (at least {MIN_SPOTS} needed); of {} candidates \
+                 rejected per condition: {}",
+                self.spots.len(),
+                self.tried,
+                self.rejections()
+            ))
+        }
+    }
+}
+
+/// Whether the terrain under the 5 by 5 probe round `point` and under both ends of the widest
+/// pair, each a body's reach further out, stands within [`LEVEL_TOLERANCE`] of its height at
+/// `point`.
+fn level(world: &SimWorld, point: Vec2) -> bool {
+    let map = &world.map;
+    let height = |at: Vec2| map.terrain_altitude_at(sim_position(at));
+    let centre = height(point);
+    let reach = MOST_GAP * 0.5 + BODY_REACH;
+    let probe =
+        (-2..=2).flat_map(|x: i32| (-2..=2).map(move |y: i32| Vec2::new(x as f32, y as f32)));
+    let ends = [-reach, reach]
+        .into_iter()
+        .flat_map(|offset| [Vec2::new(offset, 0.0), Vec2::new(0.0, offset)]);
+    probe
+        .chain(ends)
+        .all(|offset| (height(point + offset) - centre).abs() <= LEVEL_TOLERANCE)
+}
+
 /// Up to `count` spots of open ground in the viewer's sight near `around`, clear of every unit,
 /// node and other spot, on screen.
 fn find_spots(
@@ -630,60 +748,158 @@ fn find_spots(
     count: usize,
     on_screen: impl Fn(Vec2) -> bool,
 ) -> Vec<Vec2> {
-    let mut spots: Vec<Vec2> = Vec::new();
+    search_spots(world, fog, around, count, Sight::Now, on_screen).spots
+}
+
+/// [`find_spots`], counting per condition the candidates that failed it; with
+/// [`Sight::OnceStaged`] a spot outside the viewer's sight is admitted (and counted).
+fn search_spots(
+    world: &SimWorld,
+    fog: &BattleFog,
+    around: Vec2,
+    count: usize,
+    sight: Sight,
+    on_screen: impl Fn(Vec2) -> bool,
+) -> SpotSearch {
+    let mut search = SpotSearch::default();
     for distance in SPOT_DISTANCES {
         for step in 0..24 {
-            if spots.len() == count {
-                return spots;
+            if search.spots.len() == count {
+                return search;
             }
             let point =
                 around + Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * distance;
-            let clear_of = |at: Vec2| at.distance(point) > SPOT_CLEARANCE;
-            // Clear of every unit's and structure's edge, not only its centre.
-            let units = world.entities.values().all(|unit| {
-                let radius = world
-                    .catalog
-                    .get(unit.unit_type_id)
-                    .map_or(0.0, |arch| arch.collision_radius.to_f32());
-                Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()).distance(point)
-                    > SPOT_CLEARANCE + radius
-            });
-            let nodes = world
-                .map
-                .resources()
-                .iter()
-                .all(|node| clear_of(Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32())))
-                && footprints_clear(world, point);
-            let apart = spots
-                .iter()
-                .all(|spot| spot.distance(point) > SUBJECT_APART);
-            let ends = [-MOST_GAP * 0.5, MOST_GAP * 0.5]
-                .iter()
-                .all(|dx| on_screen(point + Vec2::new(*dx, 0.0)));
-            // Open ground under both ends of the widest pair, so no picture runs off the map.
-            // Open ground at both ends of the widest pair, across and up and down the screen
-            // (the approach wave stands pairs along the map's `y`).
-            // Each end is probed a body's reach further out, so no staged unit's disc runs off
-            // the map's edge (a shooter of radius 0.6 at x = 0.54 broke the simulation's
-            // movement domain).
-            let reach = MOST_GAP * 0.5 + BODY_REACH;
-            let sides = [-reach, reach].iter().all(|offset| {
-                walkable(world, point + Vec2::new(*offset, 0.0))
-                    && walkable(world, point + Vec2::new(0.0, *offset))
-            });
-            if open(world, point)
-                && sides
-                && units
-                && nodes
-                && apart
-                && fog.sees(point.x, point.y)
-                && ends
-            {
-                spots.push(point);
+            let met = spot_conditions(world, fog, point, &search.spots, &on_screen);
+            search.tried += 1;
+            for (rejected, met) in search.rejected.iter_mut().zip(met) {
+                *rejected += usize::from(!met);
+            }
+            let required = |(index, met): (usize, &bool)| {
+                *met || (sight == Sight::OnceStaged && CONDITIONS[index] == "fog")
+            };
+            if met.iter().enumerate().all(required) {
+                search.spots.push(point);
             }
         }
     }
-    spots
+    search
+}
+
+/// Whether `point` meets each condition of [`CONDITIONS`], given the spots already found.
+fn spot_conditions(
+    world: &SimWorld,
+    fog: &BattleFog,
+    point: Vec2,
+    spots: &[Vec2],
+    on_screen: &impl Fn(Vec2) -> bool,
+) -> [bool; CONDITIONS.len()] {
+    let clear_of = |at: Vec2| at.distance(point) > SPOT_CLEARANCE;
+    // Clear of every unit's and structure's edge, not only its centre.
+    let units = world.entities.values().all(|unit| {
+        let radius = world
+            .catalog
+            .get(unit.unit_type_id)
+            .map_or(0.0, |arch| arch.collision_radius.to_f32());
+        Vec2::new(unit.position.x.to_f32(), unit.position.y.to_f32()).distance(point)
+            > SPOT_CLEARANCE + radius
+    });
+    let nodes = world
+        .map
+        .resources()
+        .iter()
+        .all(|node| clear_of(Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32())))
+        && footprints_clear(world, point);
+    let apart = spots
+        .iter()
+        .all(|spot| spot.distance(point) > SUBJECT_APART);
+    let ends = [-MOST_GAP * 0.5, MOST_GAP * 0.5]
+        .iter()
+        .all(|dx| on_screen(point + Vec2::new(*dx, 0.0)));
+    // Open ground at both ends of the widest pair, across and up and down the screen (the
+    // approach wave stands pairs along the map's `y`), so no picture runs off the map. Each end
+    // is probed a body's reach further out, so no staged unit's disc runs off the map's edge (a
+    // shooter of radius 0.6 at x = 0.54 broke the simulation's movement domain).
+    let reach = MOST_GAP * 0.5 + BODY_REACH;
+    let sides = [-reach, reach].iter().all(|offset| {
+        walkable(world, point + Vec2::new(*offset, 0.0))
+            && walkable(world, point + Vec2::new(0.0, *offset))
+    });
+    [
+        open(world, point),
+        sides,
+        level(world, point),
+        units,
+        nodes,
+        apart,
+        fog.sees(point.x, point.y),
+        ends,
+    ]
+}
+
+/// World units between the rings of candidate camera targets round the start (plan
+/// `2026-11-20-gpu-lane` D-3).
+const PAN_STEP: f32 = 2.0;
+/// Rings of candidate camera targets round the start.
+const PAN_RINGS: usize = 12;
+/// Candidate camera targets on each ring, evenly round it.
+const PAN_DIRECTIONS: usize = 16;
+
+/// The candidate camera targets (world `x, y`), nearest the start first: `start` itself, then
+/// [`PAN_RINGS`] rings [`PAN_STEP`] apart, each of [`PAN_DIRECTIONS`] points from the map's `+x`
+/// round, every point kept on the map as the battle camera keeps its own target.
+fn camera_targets(world: &SimWorld, start: Vec2) -> Vec<Vec2> {
+    let high = Vec2::new(
+        world.map.width() as f32 - 0.5,
+        world.map.height() as f32 - 0.5,
+    );
+    let mut targets = vec![start];
+    for ring in 1..=PAN_RINGS {
+        for step in 0..PAN_DIRECTIONS {
+            let angle = step as f32 * std::f32::consts::TAU / PAN_DIRECTIONS as f32;
+            let point = (start + Vec2::from_angle(angle) * PAN_STEP * ring as f32)
+                .clamp(Vec2::splat(0.5), high);
+            if !targets.contains(&point) {
+                targets.push(point);
+            }
+        }
+    }
+    targets
+}
+
+/// The camera target the waves are staged round (plan `2026-11-20-gpu-lane` D-3): the first of
+/// [`camera_targets`] round `start` at which [`search_spots`] finds [`MAX_SUBJECTS`] spots, or
+/// else the one where it finds the most (the nearest of those). `on_screen` is the window's
+/// open part as the camera sees it with its target at `start`; a candidate sees it moved by the
+/// pan, since panning moves the camera without turning or zooming it. Depends on the map, the
+/// catalog, the units and the fog alone, so the parent's test and every child agree.
+fn camera_target(
+    world: &SimWorld,
+    fog: &BattleFog,
+    start: Vec2,
+    on_screen: impl Fn(Vec2) -> bool,
+) -> (Vec2, SpotSearch) {
+    let mut best: Option<(Vec2, SpotSearch)> = None;
+    for target in camera_targets(world, start) {
+        let shift = target - start;
+        let search = search_spots(
+            world,
+            fog,
+            target,
+            MAX_SUBJECTS,
+            Sight::OnceStaged,
+            |point| on_screen(point - shift),
+        );
+        if search.spots.len() == MAX_SUBJECTS {
+            return (target, search);
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(_, found)| search.spots.len() > found.spots.len())
+        {
+            best = Some((target, search));
+        }
+    }
+    best.expect("invariant: the start itself is a candidate")
 }
 
 /// Whether a ground point lies in the window's open part, clear of its edges and of the HUD.
@@ -895,6 +1111,7 @@ fn stage(
             shooter: (shooter_at, shooter_radius),
             target: (target_at, target_radius),
             looks: [look(&family.travel), look(&family.impact)],
+            seen: [Vec::new(), Vec::new()],
             under,
         });
         staging.report.subjects.push(SubjectReport {
@@ -1093,22 +1310,61 @@ fn picture(
     }
 }
 
-/// Records each subject's spawns since the staging.
-fn count(staging: &mut Staging, runtime: &EffectRuntime, now: f64) {
-    for (subject, report) in staging.subjects.iter().zip(&mut staging.report.subjects) {
-        let spawned =
-            |look: Option<(_, u32)>| look.map_or(0, |(id, at)| runtime.spawned_of(id) - at);
-        report.travel_spawned = spawned(subject.looks[0]);
-        report.impact_spawned = spawned(subject.looks[1]);
+/// The subject an instance of look `look` (0 travel, 1 impact) belongs to: of the subjects
+/// whose looks name its effect, the one nearest on the map to where the instance is, measured
+/// from an impact's anchor to the target, and from a travel's line start (or anchor) to the
+/// shooter (or target). Subjects stand at least [`SUBJECT_APART`] apart, so the nearest is the
+/// one that fired it.
+fn owner(
+    subjects: &[StagedSubject],
+    look: usize,
+    instance: &client::effects::pool::EffectInstance,
+) -> Option<usize> {
+    let plane = |at: Vec3| Vec2::new(at.x, at.z);
+    let distance = |subject: &StagedSubject| match (look, instance.line) {
+        (0, Some(line)) => plane(line.from).distance(subject.shooter.0),
+        _ => plane(instance.anchor).distance(subject.target.0),
+    };
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, subject)| subject.looks[look].is_some_and(|(id, _)| id == instance.effect))
+        .min_by(|(_, a), (_, b)| distance(a).total_cmp(&distance(b)))
+        .map(|(index, _)| index)
+}
+
+/// Records each subject's spawns since fire was opened at `opened` (seconds of
+/// `Time<Virtual>`): the distinct instances of its looks it owns ([`owner`]), and whether one
+/// of its impacts is born and alive at `now`.
+fn count(staging: &mut Staging, runtime: &EffectRuntime, opened: f64, now: f64) {
+    let mut born = vec![false; staging.subjects.len()];
+    for (slot, instance) in runtime.pool().iter() {
+        if instance.birth < opened {
+            continue;
+        }
+        for look in 0..2 {
+            let Some(index) = owner(&staging.subjects, look, instance) else {
+                continue;
+            };
+            let key = (slot, instance.birth.to_bits());
+            let seen = &mut staging.subjects[index].seen[look];
+            if !seen.contains(&key) {
+                seen.push(key);
+            }
+            // Review 3, E3-1: an instant shot's impact waits for its slug, so the impact is
+            // looked for from its birth, not from its spawn request.
+            born[index] |= look == 1 && instance.birth <= now;
+        }
+    }
+    for ((subject, report), born) in staging
+        .subjects
+        .iter()
+        .zip(&mut staging.report.subjects)
+        .zip(born)
+    {
+        report.travel_spawned = u32::try_from(subject.seen[0].len()).unwrap_or(u32::MAX);
+        report.impact_spawned = u32::try_from(subject.seen[1].len()).unwrap_or(u32::MAX);
         report.impacts.push(report.impact_spawned);
-        // Review 3, E3-1: an instant shot's impact waits for its slug, so the impact is looked
-        // for from its birth, not from its spawn request.
-        let born = subject.looks[1].is_some_and(|(id, _)| {
-            runtime
-                .pool()
-                .iter()
-                .any(|(_, instance)| instance.effect == id && instance.birth <= now)
-        });
         report.impact_born.push(born);
     }
 }
@@ -1122,7 +1378,12 @@ fn record_launch(
     camera: (&Camera, &GlobalTransform),
     opened: f64,
 ) {
-    for (subject, report) in staging.subjects.iter().zip(&mut staging.report.subjects) {
+    let subjects = &staging.subjects;
+    for (index, (subject, report)) in subjects
+        .iter()
+        .zip(&mut staging.report.subjects)
+        .enumerate()
+    {
         let Some((travel, _)) = subject.looks[0] else {
             continue;
         };
@@ -1133,6 +1394,7 @@ fn record_launch(
             .pool()
             .iter()
             .filter(|(_, instance)| instance.effect == travel && instance.birth >= opened)
+            .filter(|(_, instance)| owner(subjects, 0, instance) == Some(index))
             .filter_map(|(_, instance)| instance.line.map(|line| (instance.birth, line.from)))
             .min_by(|a, b| a.0.total_cmp(&b.0));
         report.launch_px = first.map(|(_, from)| project3(camera, from));
@@ -1151,8 +1413,8 @@ fn stage_wave_child(
         Option<Res<'_, EffectRuntime>>,
         Option<Res<'_, EffectCatalog>>,
     ),
-    (cameras, bubbles): (
-        Query<'_, '_, (&Camera, &GlobalTransform, &RtsCamera)>,
+    (mut cameras, bubbles): (
+        Query<'_, '_, (&Camera, &GlobalTransform, &mut RtsCamera)>,
         Query<'_, '_, &BubbleInstance, With<LiveBattleBubble>>,
     ),
     idle: Res<'_, LabRenderIdle>,
@@ -1161,7 +1423,7 @@ fn stage_wave_child(
     if !session.is_ready() {
         return;
     }
-    let Ok((camera, transform, rts)) = cameras.get_single() else {
+    let Ok((camera, transform, mut rts)) = cameras.get_single_mut() else {
         return;
     };
     let tick = session.published().map_or(0, |published| published.tick);
@@ -1188,19 +1450,44 @@ fn stage_wave_child(
         Phase::Framing { frames } if frames < FRAMING_FRAMES || !idle_long => {
             Phase::Framing { frames: frames + 1 }
         }
+        Phase::Framing { .. } if !staging.panned => {
+            // D-3 item 1: pan, without zooming, to where the waves have room, then let the
+            // camera and the renderer settle again.
+            let world = session.world().expect("a ready session has a world");
+            let (target, _) = camera_target(
+                world,
+                &fog,
+                rts.target,
+                on_screen(world, (camera, transform)),
+            );
+            rts.target = target;
+            staging.panned = true;
+            staging.report.camera = target.to_array();
+            Phase::Booting {
+                still: 0,
+                height: rts.look_at_y,
+            }
+        }
         Phase::Framing { .. } => {
             let (Some(runtime), Some(catalog)) = (effects.0.as_deref(), effects.1.as_deref())
             else {
                 panic!("the effect system is loaded before the staging");
             };
             let world = session.world().expect("a ready session has a world");
-            let spots = find_spots(
+            let search = search_spots(
                 world,
                 &fog,
                 rts.target,
                 MAX_SUBJECTS,
+                Sight::OnceStaged,
                 on_screen(world, (camera, transform)),
             );
+            // D-3 item 3: the guard against crowded waves.
+            let spots = match search.at_least_min(rts.target) {
+                Ok(spots) => spots.to_vec(),
+                Err(refusal) => panic!("wave {}: {refusal}", staging.wave),
+            };
+            staging.report.spots = spots.len();
             // The map direction that runs up the screen (away from the camera).
             let up = {
                 let [_, y0] = project(world, (camera, transform), rts.target);
@@ -1222,6 +1509,7 @@ fn stage_wave_child(
             Phase::Settling { at }
         }
         Phase::Settling { .. } => {
+            assert_staged_units_seen(&staging, &session, &fog);
             let drawn: Vec<(EntityId, Vec3, f32)> = bubbles
                 .iter()
                 .map(|bubble| {
@@ -1263,7 +1551,7 @@ fn stage_wave_child(
                 frame,
             );
             if let Some(runtime) = effects.0.as_deref() {
-                count(&mut staging, runtime, now);
+                count(&mut staging, runtime, at, now);
                 record_launch(&mut staging, runtime, (camera, transform), at);
             }
             Phase::Running {
@@ -1284,6 +1572,31 @@ fn stage_wave_child(
             Phase::Finishing
         }
     };
+}
+
+/// D-3 item 2: every subject's shooter and target stand in the viewer's sight when the
+/// baseline is pictured, so nothing is pictured under fog; fails naming the subject otherwise.
+fn assert_staged_units_seen(staging: &Staging, session: &BattleSession, fog: &BattleFog) {
+    let world = session.world().expect("a ready session has a world");
+    for (subject, report) in staging.subjects.iter().zip(&staging.report.subjects) {
+        for (role, id) in ["shooter", "target"].iter().zip(subject.units) {
+            let Some(unit) = world.entities.get(&id) else {
+                panic!(
+                    "wave {}: {} ({:?}): its {role} is gone before the baseline",
+                    staging.wave, report.family, report.approach
+                );
+            };
+            let (x, y) = (unit.position.x.to_f32(), unit.position.y.to_f32());
+            assert!(
+                fog.sees(x, y),
+                "wave {}: {} ({:?}): its {role} at ({x:.2}, {y:.2}) is not in the viewer's sight \
+                 at the baseline",
+                staging.wave,
+                report.family,
+                report.approach
+            );
+        }
+    }
 }
 
 /// Holds every mobile unit of the viewer, so nothing walks through the pictures.
@@ -1679,11 +1992,19 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
     }
     let mut wave = 0;
     let mut failures = Vec::new();
+    let mut planned = None;
     loop {
         let (report, directory) = run_wave(wave, None)?;
         assert!(
             !report.subjects.is_empty(),
             "wave {wave} staged no subject (no open spot was found)"
+        );
+        eprintln!(
+            "driver {driver}: wave {wave} staged {} subjects on {} spots round the camera's \
+             target {:?}",
+            report.subjects.len(),
+            report.spots,
+            report.camera
         );
         if wave == 0 {
             eprintln!(
@@ -1691,6 +2012,13 @@ fn weapon_looks_fire_in_a_staged_battle() -> TestResult {
                 report.waves, report.unstaged
             );
         }
+        // Every child plans the waves from the same catalog and the same spots.
+        let waves = *planned.get_or_insert(report.waves);
+        assert_eq!(
+            report.waves, waves,
+            "wave {wave} planned {} waves, wave 0 {waves}",
+            report.waves
+        );
         // The wave's blank: the same staging with every impact of the wave drawn as nothing.
         let mut impacts: Vec<&str> = report.subjects.iter().filter_map(impact_of).collect();
         impacts.sort_unstable();
@@ -2722,4 +3050,152 @@ fn a_held_beam_follows_its_target_and_ends_with_it() -> TestResult {
     assert!(lingering.is_empty(), "the beam outlives its exit");
     assert_eq!(remains, 0, "no pixel of the beam remains after its exit");
     Ok(())
+}
+
+// --- The waves' ground (plan `2026-11-20-gpu-lane` D-3), without a GPU -------------------------
+
+/// The shipped skirmish in the production client without a window, after its first ticks (the
+/// fog is first computed by a tick), with the camera still at its boot target.
+fn skirmish_without_window() -> battle_harness::Harness {
+    let mut harness =
+        battle_harness::Harness::boot_scenario(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    harness.resume();
+    let mut frames = 0;
+    while harness.world().current_tick < 2 {
+        harness.step(1);
+        frames += 1;
+        assert!(frames < 10_000, "the battle stopped ticking");
+    }
+    harness.pause();
+    // The look height eases over several frames.
+    harness.step(40);
+    harness
+}
+
+/// Calls `view` with the battle, its fog, the camera and the camera's target.
+fn with_view<R>(
+    harness: &mut battle_harness::Harness,
+    view: impl FnOnce(&SimWorld, &BattleFog, (&Camera, &GlobalTransform), Vec2) -> R,
+) -> R {
+    let app = harness.app.world_mut();
+    let mut cameras = app.query::<(&Camera, &GlobalTransform, &RtsCamera)>();
+    let (camera, transform, rts) = cameras.single(app);
+    let world = app
+        .resource::<BattleSession>()
+        .world()
+        .expect("committed battle");
+    let fog = app.resource::<BattleFog>();
+    view(world, fog, (camera, transform), rts.target)
+}
+
+/// D-3 item 1: on the shipped skirmish the search pans to a target with room for at least
+/// [`MIN_SPOTS`] subjects, and finds the same target every time.
+#[test]
+fn the_camera_pans_to_ground_with_room_for_the_waves() {
+    let mut harness = skirmish_without_window();
+    let (first, second, at_start) = with_view(&mut harness, |world, fog, camera, start| {
+        let screen = || on_screen(world, camera);
+        (
+            camera_target(world, fog, start, screen()),
+            camera_target(world, fog, start, screen()),
+            search_spots(world, fog, start, MAX_SUBJECTS, Sight::OnceStaged, screen()),
+        )
+    });
+    eprintln!(
+        "at the boot target {} spots ({}); panned to {:?}: {} spots ({})",
+        at_start.spots.len(),
+        at_start.rejections(),
+        first.0,
+        first.1.spots.len(),
+        first.1.rejections()
+    );
+    assert!(
+        first.1.spots.len() >= MIN_SPOTS,
+        "the camera's target has room for at least {MIN_SPOTS} subjects: {}",
+        first.1.rejections()
+    );
+    assert_eq!(first, second, "the search is deterministic");
+}
+
+/// D-3 item 4: at full capacity the subjects plan into at most 8 waves, and they are the
+/// subjects planned one a wave: the same families, as their own or lent, from the same
+/// approaches (a lent family may ride another matching shooter, since a wave stages each
+/// shooter once).
+#[test]
+fn the_waves_at_capacity_stage_every_subject_of_one_a_wave() {
+    let harness = skirmish_without_window();
+    let world = harness.world();
+    let subjects = |capacity: usize| {
+        let (waves, unstaged) = plan(world, capacity);
+        let mut subjects: Vec<String> = waves
+            .iter()
+            .flatten()
+            .map(|(_, family, own, approach)| format!("{} {own} {approach:?}", family.label()))
+            .collect();
+        subjects.sort();
+        (waves.len(), subjects, unstaged)
+    };
+    let (one_waves, one, one_unstaged) = subjects(1);
+    let (full_waves, full, full_unstaged) = subjects(MAX_SUBJECTS);
+    eprintln!("{one_waves} waves of one subject, {full_waves} at capacity {MAX_SUBJECTS}");
+    assert!(full_waves <= 8, "{full_waves} waves at capacity");
+    assert!(full_waves < one_waves);
+    assert_eq!(full, one, "the same subjects at either capacity");
+    assert_eq!(full_unstaged, one_unstaged);
+}
+
+/// D-3 item 3: a world crowded so that fewer than [`MIN_SPOTS`] spots exist makes the staging
+/// refuse, and the refusal counts the candidates each condition rejected.
+#[test]
+fn a_crowded_world_makes_the_staging_refuse_with_counts_per_condition() {
+    let mut harness = skirmish_without_window();
+    let (target, found) = with_view(&mut harness, |world, fog, camera, start| {
+        camera_target(world, fog, start, on_screen(world, camera))
+    });
+    assert!(found.at_least_min(target).is_ok());
+    // Units every three world units over the target's surroundings leave no spot clear.
+    let crowd = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|arch| arch.max_speed > SimScalar::ZERO && arch.mover_type == MoverType::Ground)
+        .map(|arch| arch.unit_type_id)
+        .expect("the catalog has a ground unit");
+    let world = harness.world_mut();
+    for x in -6..=6 {
+        for y in -6..=6 {
+            let place = target + Vec2::new(x as f32, y as f32) * 3.0;
+            if let Ok(id) = world.spawn_unit(crowd, ENEMY, sim_position(place)) {
+                world
+                    .entities
+                    .get_mut(&id)
+                    .expect("just spawned")
+                    .is_immobile = true;
+            }
+        }
+    }
+    let refusal = with_view(&mut harness, |world, fog, camera, start| {
+        let shift = target - start;
+        let screen = on_screen(world, camera);
+        search_spots(
+            world,
+            fog,
+            target,
+            MAX_SUBJECTS,
+            Sight::OnceStaged,
+            |point| screen(point - shift),
+        )
+        .at_least_min(target)
+        .map(<[Vec2]>::len)
+    })
+    .expect_err("a crowded world refuses the staging");
+    eprintln!("{refusal}");
+    assert!(refusal.contains(&format!("at least {MIN_SPOTS} needed")));
+    for name in CONDITIONS {
+        assert!(refusal.contains(&format!("{name}: ")), "{refusal}");
+    }
+    assert!(
+        !refusal.contains("units: 0,"),
+        "the crowd rejected candidates: {refusal}"
+    );
 }
