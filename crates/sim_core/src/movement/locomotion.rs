@@ -321,17 +321,24 @@ struct StepContext<'a> {
 }
 
 impl StepContext<'_> {
+    /// Whether `obstacle`, one of [`Self::neighbours`], lies within the near reach: the reach
+    /// every rule but the side rule reads (the legacy pipeline's whole reach).
+    fn is_near(&self, obstacle: &SteeringObstacle) -> bool {
+        let radii = i128::from(self.body.radius.raw()) + i128::from(obstacle.radius.raw());
+        within_distance(
+            self.body.pos,
+            obstacle.pos,
+            radii + i128::from(self.near_margin.raw()),
+        )
+    }
+
     /// Whether `obstacle`, one of [`Self::neighbours`], is a neighbour by the ground test that
     /// [`gather_neighbours`] defers for bodies beyond the near reach: always for an air unit or a
-    /// near body, else when the ground between the two is connected.
+    /// near body, else when the ground between the two is connected. Only the side rule reads
+    /// bodies beyond the near reach.
     fn admits(&self, obstacle: &SteeringObstacle) -> bool {
-        let radii = i128::from(self.body.radius.raw()) + i128::from(obstacle.radius.raw());
         self.policy.layer == MovementLayer::Air
-            || within_distance(
-                self.body.pos,
-                obstacle.pos,
-                radii + i128::from(self.near_margin.raw()),
-            )
+            || self.is_near(obstacle)
             || on_connected_ground(self.map, self.body.pos, obstacle.pos)
     }
 }
@@ -425,15 +432,16 @@ fn near_margin(entry: MotionEntry) -> SimScalar {
 /// solver pipeline (`horizon` set) the reach adds the side rule's horizon, `h · (r + r_b)` world
 /// units for the largest `r_b` (plan `2026-11-20-contact-solver` WP3, I-3a); a body beyond the
 /// near reach ([`near_margin`]) is listed without its ground test, which
-/// [`StepContext::admits`] makes for the few rules that read such far bodies.
+/// [`StepContext::admits`] makes for the side rule, the only rule that reads such far bodies;
+/// every other rule reads the near reach alone ([`StepContext::is_near`]).
 // PERFORMANCE RATIONALE:
 // Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units. Under
 // the solver the horizon widens the reach about fivefold in area, and the ground test of each
 // far body walks the cells between the two (evidence §5.3: the gather tripled its share).
 // What: Read candidates from a grid built once at the start of the phase, and copy the few that
 // pass an exact distance test into one retained buffer. A far body's ground test is deferred to
-// the rules that can act on it: the side rule, for a body that is a threat or the committed
-// partner, and the parked-corner test (plan Amendment 3, item 1, option 4).
+// the rule that can act on it: the side rule, for a body that is a threat or the committed
+// partner (plan Amendment 3, item 1, option 4).
 // Trade-off: Copies ~56-byte records per neighbour, in exchange for flat scans downstream and
 // O(N) work per tick; `out` stops growing once the densest crowd has been seen. Every rule that
 // reads far bodies must ask [`StepContext::admits`]; the rules that do not read them are bounded
@@ -1993,7 +2001,7 @@ fn parked_on_corner<'n>(
                 corner,
                 i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
             )
-            && context.admits(obstacle)
+            && context.is_near(obstacle)
     })
 }
 

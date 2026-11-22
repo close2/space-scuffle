@@ -427,3 +427,119 @@ fn a_give_up_is_no_witness_of_the_arrival_chain() -> TestResult {
     assert_eq!(world.diagnostics(), []);
     Ok(())
 }
+
+/// Amendment 3, item 5: the kept `battlefield_bubble_trajectories_are_smooth_without_micro_jitter`
+/// played under the solver pipeline. Its zig-zag was traced to the parked-corner aim (L24)
+/// reading a body beyond the legacy reach, which the side rule's wider neighbour list had let in;
+/// with every rule but the side rule reading the near reach, the march has no zig-zag.
+#[test]
+fn the_canyon_march_has_no_zig_zag_under_the_solver() -> TestResult {
+    use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
+    use sim_map::MapFile;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc = MapFile::load(&dir.join("../../assets/maps/showcase_canyon.scmap.ron"))?.decode()?;
+    let loadouts = StartLoadoutCatalog::load(dir.join("../../assets/catalog/start_loadouts.ron"))?;
+    let players: Vec<PlayerSetup> = (0..2)
+        .map(|player_slot| PlayerSetup {
+            player_slot,
+            loadout_slug: "battle_automaton".to_string(),
+        })
+        .collect();
+    let mut world = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1_592_639_215)?;
+    let rules = world.catalog.movement_rules();
+    let contact = ContactRules {
+        pipeline: MovementPipeline::Solver,
+        ..rules.contact()
+    };
+    world
+        .catalog
+        .set_movement_rules(rules.with_contact(contact)?);
+    let mut marchers = Vec::new();
+    let mut fastest = SimScalar::ZERO;
+    for (&id, entity) in &world.entities {
+        let arch = world.catalog.get(entity.unit_type_id)?;
+        let armed =
+            arch.ground_weapon.is_some() || arch.air_weapon.is_some() || arch.weapon.is_some();
+        if entity.owner == PlayerId(0)
+            && !entity.is_immobile
+            && arch.capabilities.harvester.is_none()
+            && armed
+        {
+            marchers.push(id);
+            fastest = fastest.max(arch.max_speed);
+        }
+    }
+    // The kept test's window: 16.2 world units at the fastest marcher's speed.
+    let window = SimScalar::from_num(16.2)
+        .checked_div(fastest)
+        .ok_or("a mobile marcher")?
+        .saturating_ceil()
+        .saturating_to_u32();
+    let target = at(52.5, 52.5);
+    step(
+        &mut world,
+        vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: marchers.clone(),
+            order: UnitOrder::AttackMove { target },
+            queue: false,
+        }],
+    );
+    // Per unit: the last heading and the last turn (tick, sign, degrees), as the kept test counts.
+    let mut last: std::collections::BTreeMap<EntityId, ((f64, f64), Option<(u32, f64, f64)>)> =
+        std::collections::BTreeMap::new();
+    let mut zig_zags = Vec::new();
+    for tick in 1..=window {
+        step(&mut world, vec![]);
+        for &id in &marchers {
+            let Some(entity) = world.entities.get(&id) else {
+                continue;
+            };
+            let (vx, vy) = (
+                f64::from(entity.velocity.x.to_f32()),
+                f64::from(entity.velocity.y.to_f32()),
+            );
+            let speed = vx.hypot(vy);
+            if speed < 0.01 {
+                continue;
+            }
+            let heading = (vx / speed, vy / speed);
+            let turn = last.get(&id).map(|&((px, py), _)| {
+                let angle = (heading.0 * px + heading.1 * py)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
+                let cross = px * heading.1 - py * heading.0;
+                let sign = if cross > 0.02 {
+                    1.0
+                } else if cross < -0.02 {
+                    -1.0
+                } else {
+                    0.0
+                };
+                (tick, sign, angle)
+            });
+            if let (Some((_, sign, angle)), Some((_, Some((prev_tick, prev_sign, prev_angle))))) =
+                (turn, last.get(&id))
+            {
+                if *prev_tick == tick - 1
+                    && tick > 3
+                    && prev_sign * sign < 0.0
+                    && angle > 8.0
+                    && *prev_angle > 8.0
+                {
+                    zig_zags.push((id, tick));
+                }
+            }
+            let kept = turn.or_else(|| last.get(&id).and_then(|entry| entry.1));
+            last.insert(id, (heading, kept));
+        }
+    }
+    assert_eq!(
+        zig_zags,
+        [],
+        "velocity zig-zags (> 8° each way on consecutive ticks)"
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
