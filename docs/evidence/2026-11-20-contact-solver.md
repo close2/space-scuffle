@@ -516,3 +516,188 @@ below is a design change by amendment; the figures are estimates from §5.3.
 A combination of 1, 4 and 5 is an implementation-level saving that keeps the plan's behaviour; 2 and 3 change the
 solver's convergence and need C-3 re-derived. Whether any combination reaches +10 % is not known; the K-12 press keeps
 the battle scenarios at K whatever the per-iteration cost.
+
+## 6. WP3 under Amendment 3: cost step done; stopped on the pressed-front rule
+
+Base: `contact-solver-plan` at `fc6966e7` (main `dd17f4c5`) with the WP3 side branch `contact-solver-wp3-wip`
+(`47585fb2`) merged. Every figure is on the **development range** (seeds 1 to 1,000 per family, scene families also
+relabelled, mirror 1 to 1,000), one run at a time under `flock ~/scratch/gate.lock`, `--jobs 4`. Neither the
+acceptance nor the held-out range was run. Binaries, CSVs, traces and profiles are under
+`~/scratch/contact-solver/wp3b/`.
+
+| Step (Amendment 3) | State | Branch / commit |
+|---|---|---|
+| 1. Cost, behaviour-preserving (options 1, 4, 5) | **Done**: rows byte-identical | `62431054` (on `contact-solver-plan`) |
+| 2. Pressed-front rule | **Stop**: T5 worse on development (§6.2) | `7d9e51f1`, probe `ad8c7111` (`contact-solver-wp3-wip2-pressed`) |
+| 3. Gauss–Seidel | Not started (the stop comes first) | — |
+| 4. WP3b, arrival rule | Rule as written fails its own constraint; a variant measured (§6.3) | `a33a697a`, `5d8440fe` (`contact-solver-wp3-wip2`) |
+| 5. The two kept tests | Traced and classified (§6.4); one defect fixed | `12333567` (`contact-solver-wp3-wip2`) |
+
+### 6.1 Cost, behaviour-preserving (step 1)
+
+Three exact changes, each tested against the arithmetic it replaces:
+
+- **Active set (option 1).** A pair keeps its last correction and reuses it while neither body moved since; a body
+  whose terrain step left it in place is not stepped again toward the same target. Both are functions of positions,
+  so the result is bit-identical.
+- **Neighbour reach (option 4).** The side rule's wider reach no longer costs a ground test per far body: a body
+  beyond the legacy (near) reach is listed without its ground test, and the side rule makes the test only for a body
+  that is a threat or the committed partner. The side rule's co-moving test (a normalisation) also runs only for
+  such bodies. Each is an exclusion that never fails, so the threat found is the same.
+- **Normals (option 5).** A pair in the dead band needs no root (`⌊√s⌋ ≥ T ⟺ s ≥ T²`); an active pair takes one
+  root for its distance and its normal. `integer_sqrt` takes the 64-bit root of the top bits and one 64-bit division
+  instead of a Newton loop of 128-bit divisions, and the normal's quotient is long division on 64-bit hardware
+  division. Both are tested equal to the replaced code (200,000 values each plus edge cases).
+
+**Byte-identity.** All eleven CSVs of the development corpus under the Solver (five scene families, each relabelled,
+and the mirror) are byte-identical to WP3's (`runs/c3-1` against `wp3/runs/solver-1`), and the Legacy rows of seeds
+1 to 20 of every scene family are identical to WP1's.
+
+**Instructions retired** (release benchmark, 400 units, 300 ticks, `perf stat -e instructions:u`; G = 10⁹):
+
+| Scenario | Legacy | WP3 (`47585fb2`) | Step 1 (`62431054`) | Step 2, pressed (`7d9e51f1`) | Candidate (`5d8440fe`) |
+|---|---:|---:|---:|---:|---:|
+| 64 × 64 flat, armies meet | 9.91 G | 18.56 G (+87 %) | 15.34 G (**+55 %**) | 15.46 G (+56 %) | 15.32 G (+55 %) |
+| 128 × 128 flat, armies apart | 10.25 G | 12.40 G (+21 %) | 11.08 G (**+8 %**) | 11.10 G (+8 %) | 11.10 G (+8 %) |
+| showcase canyon | 17.61 G | 31.13 G (+77 %) | 26.67 G (**+51 %**) | 26.62 G (+51 %) | 27.06 G (+54 %) |
+
+Percentages are against Legacy at `fc6966e7`. The exact arithmetic also serves Legacy, whose rows do not change and
+whose count moves by under 1 % (9.83 G, 10.29 G, 17.47 G at `62431054`).
+
+**Where the rest goes** (64 × 64, cycles, inclusive, `perf record --call-graph=dwarf`, step 1 against Legacy at the
+same commit): contact +3.4 G (the solver is 24 % of the run: pair sums 12 %, terrain steps 7 %, pair builds 4.5 %);
+target acquisition +1.6 G (39 % of the run against 44 % of a smaller one: more units in scan of each other, a
+behaviour effect); the movement phase +0.6 G. Contact is therefore not the whole gap: even a free solver would leave
+the 64 × 64 battle near +25 %.
+
+### 6.2 The pressed-front rule (step 2): stop
+
+**Rule as built** (`7d9e51f1`): under Solver, a step that closes on a friend that holds its ground
+(`SteeringObstacle::anchored`: hold, immobile, unpushable, or anchored in combat) and ends touching it stands
+instead (`Idle`, no velocity); for an attacker such a tick adds no stall (Q0089, D-4). Test first:
+`a_unit_pressed_into_a_holding_line_stands_and_keeps_its_order` (red without the rule).
+
+**Development figures** (gap, cross and corner rows are byte-identical to step 1: nobody there is anchored):
+
+| Family | Measure | Step 1 | Pressed |
+|---|---|---:|---:|
+| arc | M1 / M1-hi | 29.85 / 0.71 | 1.86 / 0.63 |
+| arc | M2 / M3 | 0.2474 / 1.442 | 0.0170 / 0.011 |
+| arc | give-ups | 4,827 | 23 |
+| arc | **fill mean / 5th (T5)** | **0.609 / 0.381** | **0.163 / 0.050** |
+| arc | friends > 5 % moving / > 1 % standing / max | 0.93 % / 3.13 % / 0.997 | 0.47 % / 0.11 % / 0.996 |
+| corridor | M1 / M1-hi | 25.76 / 4.76 | 0.03 / 0.00 |
+| corridor | give-ups | 4,991 | 0 |
+| corridor | fill mean | 0.945 | 0.815 |
+| corridor | enemy max; friends > 5 % moving / > 1 % standing / max | 0.217; 7.53 % / 30.06 % / 1.000 | 0.000; 0.00 % / 0.00 % / 0.010 |
+| mirror | blue share | 0.452 [0.414, 0.490] | 0.461 [0.422, 0.499] |
+| harness | solver iterations per tick: mean, 90th | 6.54, 21 | 2.19, 5 |
+
+T1, T2 and T7 improve on arc and corridor, but **T5 gets much worse** (arc fill 0.609 → 0.163). By Amendment 3,
+item 2 that is a stop.
+
+**Trace** (arc seed 5: pillar 0.5, range 1, r 0.5625, 28 attackers, capacity 11). Under the rule one attacker
+reaches range and fires; the other 27 stand `Idle` with their order for 680 to 703 of the scene's ticks, in their
+block, 1.6 to 7.3 world units from the band (`trace/arc5-p1.txt`; step 1: all 28 walk, 9 in range). The stand
+cascades: `is_anchored_in_combat` counts a unit **standing still under an attack order** whose target lives as
+anchored, so a unit that stood because it pressed is anchored on the next tick, and the unit behind it presses into
+it and stands, and so on down the column. The rule meets the legacy definition of anchored, which was written for
+units that stand because they fire.
+
+**The rule does not deliver the cost it was meant for.** On the release benchmark it barely moves the iterations:
+64 × 64 mean 15.75 → 15.42 (ticks at K 69.9 % → 68.5 %), canyon 20.36 → 20.36 (92.4 % at K); instructions within
+1 %. In those battles the overlaps that keep the solver at K are not a crowd pressing into anchored friends (K-12)
+but dense moving crowds, in which some pair always exceeds the 1 % dead band after an averaged iteration, so the
+early stop (no body moved) never fires.
+
+**Probe, not adopted** (`ad8c7111`): only friends on hold, immobile, unpushable or in a weapon cycle stop a step.
+Arc seeds 1 to 100: fill 0.365 against 0.549 (step 1) and 0.129 (pressed), give-ups 269 against 554 and 0, M1 35.5
+against 29.2 and 4.1. It removes the cascade but not the loss of fill, and it is worse than step 1 on M1.
+
+### 6.3 WP3b, the group-arrival chain (step 4)
+
+**Trace of B-158 under the Solver** (gap seeds 12, 15, 16, `trace/gap-giveups-p1.txt`): every give-up is a unit of
+push priority 10 at the edge of the clump of arrived priority-20 units, 3.2 to 4.7 from the shared point, touching
+an arrival 2.5 to 3.1 from it. The L14 witness must lie within `r + r_o + 1.5` (2.16 for seed 12); the unit cannot
+push the arrival (C-2 row 6) and gives up after 10 s.
+
+**The rule as written** (`a33a697a`): under Solver a give-up records no arrival (the legacy `finish` set
+`arrived_at` for a `NoProgress` give-up too, so give-ups were witnesses), and a witness needs no bound on its
+distance from the point. Tests first: `mixed_priority_walkers_all_arrive_at_the_shared_point` and
+`a_give_up_is_no_witness_of_the_arrival_chain` (both red on the previous commit). It removes the give-ups of seeds
+12, 15 and 16, but on gap seeds 1 to 20 it **ends orders short of the wall's far side** in single-file scenes
+(seeds 2, 6, 9, 14; r 0.875 to 1; no give-ups, 6 units not complete). Trace of seed 6 (15 units, r 1): the units
+arrive one behind the other and each stops on touching the one before, so the arrivals form a line from the point
+back toward the gap, 0.12 to 17.49 from the point. Through arrivals alone, the chain still runs back along the
+column: excluding give-ups is necessary but not sufficient. On gap seeds 1 to 20 it trades 5 give-ups (seeds 12, 15, 16) for 6 units short of the far side (seeds 2, 6, 9, 14).
+
+**Variant measured** (`5d8440fe`, proposed in §6.5): beyond L14's bound, only an arrival the unit cannot push
+(higher push priority, C-2 row 6) is a witness; with every other arrival the unit pushes on, as today. Gap seeds 1
+to 20: no deadlock, no give-up.
+
+### 6.4 The two kept tests (step 5)
+
+- **`battlefield_bubble_trajectories_are_smooth_without_micro_jitter`: a defect, fixed.** Trace (canyon, unit 4,
+  `trace/bubble-solver.txt`): at tick 1 the parked-corner aim (L24, kept) finds unit 6 standing on the unit's corner,
+  2.0 away, a body the legacy pipeline never sees: it lies beyond the legacy reach (1.35) and inside the side rule's
+  wider one. Rounding then follows the bodies on the corner as they walk on (`corner_round` 1, the parked body
+  switching from unit 6 to unit 5 at tick 6), and the aim jumps: a 59° turn and a 13° turn back (the zig-zag).
+  WP3 widened the reach for the side rule only (I-3a); the other rules were not meant to read it. Fix
+  (`12333567`): every rule but the side rule reads the near reach. Test first:
+  `the_canyon_march_has_no_zig_zag_under_the_solver` (red without the fix).
+- **`test_move_command_units_fan_out_and_surround_target_point`: a consequence of the rule, to be restated.**
+  Trace (`trace/fan-*.txt`): eight units with their own `Move` to a point occupied by an immobile friend; at the
+  judged tick (58) the spread is 3.79 under Legacy and 2.77 under the Solver. Both crowds converge on the point and
+  end around it with spreads 1.97 and 1.74; under the Solver they are 0.3 to 0.5 further along at tick 58 and closer
+  together, because converging co-moving friends are ignored by intent (I-4) and separated by contact instead of
+  blocked at proposal time (D-β). WP4's slots do not apply (a `Move`, not an attack). The property the test names,
+  fanning out around an occupied point without overlap, holds; the fixed spread at a fixed tick measures the legacy
+  blocking. Proposed restatement at WP6, when the Solver becomes the shipped pipeline: every unit ends within its
+  radius sum plus the touch margin of the occupied point's clump, the clump surrounds the point (the units' bearings
+  from it span more than a half-turn), and no pair overlaps beyond D-α. Not loosened: unchanged until then.
+- **Kept files under Solver** (shipped pipeline flipped by hand, candidate `5d8440fe`): of the 16 kept movement files, 12 pass whole. `battlefield_bubble_trajectories_are_smooth_without_micro_jitter`
+  now **passes** under the Solver. Failing: `test_move_command_units_fan_out_and_surround_target_point` (above) and
+  the three tests §8.1 already marks *restated* in WP3, in their legacy form (`test_converging_units_respect_speed_cap_and_do_not_vibrate`,
+  `units_blocked_by_a_holding_line_never_reverse`, `test_idle_friendly_displaced_laterally`), whose restated forms
+  pass in `solver_pipeline_tests.rs` (`trace/kept-under-solver-a2.log`).
+
+### 6.5 Candidate state and development figures
+
+Candidate `5d8440fe` = step 1 + WP3b variant + the near-reach fix, without the pressed rule:
+
+Rows of arc, cross, corridor, corner and the mirror are **byte-identical** to step 1; only the gap family moves.
+
+| Family | Measure | Legacy (WP1) | Step 1 | Candidate | Threshold |
+|---|---|---:|---:|---:|---|
+| gap | M1 / M1-hi | 17.70 / 3.79 | 3.11 / 0.31 | **1.11 / 0.28** | T1 ≤ 1.0 / ≤ 0.25: fails, just |
+| gap | M1 95 % interval | [16.74, 18.63] | [2.57, 3.72] | [1.00, 1.23] | |
+| gap | M2 / M3 | 0.0634 / 0.004 | 0.0330 / 0.003 | 0.0286 / 0.000 | T2 holds |
+| gap | deadlocks; give-ups; scenes complete | 459; 454; 80.5 % | 332; 336; 83.4 % | **46; 46; 97.8 %** | T4 fails |
+| gap | η median / 5th | 0.655 / 0.300 | 0.784 / 0.381 | 0.784 / 0.381 | T6 holds |
+| gap | friends > 5 % moving / > 1 % standing / max | 14.68 % / 5.59 % / 0.742 | 1.59 % / 0.03 % / 0.905 | 1.62 % / 0.02 % / 0.905 | T7 fails |
+| gap | relabel p (M1 / completion) | 0.436 / 0.248 | 0.274 / 0.025 | 0.176 / 0.036 | T8 holds |
+| cross | M1 / M1-hi; give-ups | 4.27 / 1.36; 152 | 1.19 / 0.49; 2 | same | T1, T4 fail |
+| corner | M1; give-ups | 20.94; 0 | 0.51; 7 | same | T4, T7 (max 0.758) fail |
+
+The prescribed test `gaps_and_crossings_meet_t4_and_t7_under_the_solver` now passes T4 on its 20 seeds and fails on
+T7 (gap: 1.91 % of moving near pair-ticks above 5 %). WP3's development figures are therefore **not met**: T1 (gap
+1.11, cross 1.19), T4 (gap 46, cross 2, corner 7 give-ups) and T7 (gap, corner) fail. Cost: 64 × 64 +55 %,
+128 × 128 +8 %, canyon +54 %; iterations unchanged from step 1 (64 × 64 mean 15.75, canyon 20.35, 94 % of ticks
+at K).
+
+### 6.6 Proposed amendment (for the orchestrator)
+
+1. **Drop the pressed-front rule** (step 2). It worsens T5 by a stand cascade through the legacy definition of
+   anchored, and it does not reduce the battle benchmarks' iterations, which it was meant to do. The concave's
+   standing units are WP4's (G-6), where a unit stands only when it has no free slot.
+2. **Adopt the near-reach fix** (`12333567`) as a WP3 defect fix: only the side rule reads beyond the legacy reach.
+3. **Restate WP3b's rule:** "A unit moving to a shared point completes its order once it touches a friend that has
+   arrived at the same point (not given up) and stands, within L14's bound; beyond the bound, only if that friend
+   is one it cannot push (C-2 row 6)." Reason: through arrivals alone the chain still runs back along a single-file
+   column (§6.3); the push table already says which arrivals a unit must stop at.
+4. **Cost.** After step 1 the 64 × 64 battle is +55 % and the canyon +51 %; contact is about 60 % of the excess and
+   target acquisition about 30 %. Gauss–Seidel (step 3) attacks only the first part. Before building it, decide
+   whether WP6's +10 % applies to the battle scenarios as they stand, or whether the target-acquisition excess,
+   a behaviour effect outside the solver, is measured and judged separately.
+5. **T1 and T4 on gap** remain just above their thresholds with the candidate (§6.5); the acceptance range stays
+   unrun.
