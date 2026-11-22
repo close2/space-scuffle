@@ -315,6 +315,25 @@ struct StepContext<'a> {
     /// plan `2026-11-20-contact-solver` I-3a): the step steers by intent and contact is the
     /// solver's. `None` under the legacy pipeline.
     intent: Option<u8>,
+    /// The near reach's margin beyond the radius sum, world units ([`near_margin`]): a
+    /// neighbour beyond it was listed without its ground test ([`Self::admits`]).
+    near_margin: SimScalar,
+}
+
+impl StepContext<'_> {
+    /// Whether `obstacle`, one of [`Self::neighbours`], is a neighbour by the ground test that
+    /// [`gather_neighbours`] defers for bodies beyond the near reach: always for an air unit or a
+    /// near body, else when the ground between the two is connected.
+    fn admits(&self, obstacle: &SteeringObstacle) -> bool {
+        let radii = i128::from(self.body.radius.raw()) + i128::from(obstacle.radius.raw());
+        self.policy.layer == MovementLayer::Air
+            || within_distance(
+                self.body.pos,
+                obstacle.pos,
+                radii + i128::from(self.near_margin.raw()),
+            )
+            || on_connected_ground(self.map, self.body.pos, obstacle.pos)
+    }
 }
 
 /// What gates a `turn_before_move` unit's step: its tick-start heading and its moving hull rate.
@@ -393,15 +412,32 @@ struct NeighbourIndex<'a> {
     largest_radius: SimScalar,
 }
 
+/// The margin beyond the radius sum within which a body is a neighbour under the legacy
+/// pipeline, world units: the steering lookahead and two steps at `entry`'s speed. Under the
+/// solver pipeline it is the **near** reach, inside which neighbours are read by every rule.
+fn near_margin(entry: MotionEntry) -> SimScalar {
+    STEERING_LOOKAHEAD + entry.speed + entry.speed
+}
+
 /// Collects the bodies that can affect `entry` this tick from the tick-start snapshot.
 ///
-/// Bodies across a cliff are left out: ground units cannot touch through terrain.
+/// Bodies across a cliff are left out: ground units cannot touch through terrain. Under the
+/// solver pipeline (`horizon` set) the reach adds the side rule's horizon, `h · (r + r_b)` world
+/// units for the largest `r_b` (plan `2026-11-20-contact-solver` WP3, I-3a); a body beyond the
+/// near reach ([`near_margin`]) is listed without its ground test, which
+/// [`StepContext::admits`] makes for the few rules that read such far bodies.
 // PERFORMANCE RATIONALE:
-// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units.
+// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units. Under
+// the solver the horizon widens the reach about fivefold in area, and the ground test of each
+// far body walks the cells between the two (evidence §5.3: the gather tripled its share).
 // What: Read candidates from a grid built once at the start of the phase, and copy the few that
-// pass an exact distance test into one retained buffer.
+// pass an exact distance test into one retained buffer. A far body's ground test is deferred to
+// the rules that can act on it: the side rule, for a body that is a threat or the committed
+// partner, and the parked-corner test (plan Amendment 3, item 1, option 4).
 // Trade-off: Copies ~56-byte records per neighbour, in exchange for flat scans downstream and
-// O(N) work per tick; `out` stops growing once the densest crowd has been seen.
+// O(N) work per tick; `out` stops growing once the densest crowd has been seen. Every rule that
+// reads far bodies must ask [`StepContext::admits`]; the rules that do not read them are bounded
+// by the near reach.
 fn gather_neighbours(
     index: &NeighbourIndex<'_>,
     map: &SimMap,
@@ -410,24 +446,26 @@ fn gather_neighbours(
     out: &mut Vec<SteeringObstacle>,
 ) {
     out.clear();
-    // Under the solver pipeline the reach adds the side rule's horizon, `h · (r + r_b)` world
-    // units for the largest `r_b`, to today's (plan `2026-11-20-contact-solver` WP3, I-3a).
     let horizon_reach = horizon.map_or(SimScalar::ZERO, |factor| {
         (entry.policy.radius + index.largest_radius).saturating_mul(SimScalar::from_num(factor))
     });
-    let margin = STEERING_LOOKAHEAD + entry.speed + entry.speed + horizon_reach;
+    let near = near_margin(entry);
+    let margin = near + horizon_reach;
     let reach = entry.policy.radius + index.largest_radius + margin;
     index.grid.for_each_near(position, reach, |body| {
         let obstacle = &index.obstacles[body];
         if obstacle.id == entry.id {
             return;
         }
-        let touching = i128::from(entry.policy.radius.raw())
-            + i128::from(obstacle.radius.raw())
-            + i128::from(margin.raw());
-        if within_distance(position, obstacle.pos, touching)
-            && (entry.policy.layer == MovementLayer::Air
-                || on_connected_ground(map, position, obstacle.pos))
+        let radii = i128::from(entry.policy.radius.raw()) + i128::from(obstacle.radius.raw());
+        if !within_distance(position, obstacle.pos, radii + i128::from(margin.raw())) {
+            return;
+        }
+        let deferred = horizon_reach > SimScalar::ZERO
+            && !within_distance(position, obstacle.pos, radii + i128::from(near.raw()));
+        if entry.policy.layer == MovementLayer::Air
+            || deferred
+            || on_connected_ground(map, position, obstacle.pos)
         {
             out.push(*obstacle);
         }
@@ -1389,6 +1427,7 @@ impl MotionDraft<'_> {
             surround: None,
             scan_range: self.entry.scan_range,
             intent,
+            near_margin: near_margin(self.entry),
         }
     }
 
@@ -1940,6 +1979,7 @@ fn parked_on_corner<'n>(
                 corner,
                 i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
             )
+            && context.admits(obstacle)
     })
 }
 
@@ -2229,18 +2269,21 @@ fn proposed_heading(
     let Some(horizon_factor) = context.intent else {
         return steer_body(context.body, next, ignored, context.neighbours);
     };
-    let decided = intent_heading(&IntentInput {
-        body: context.body,
-        next,
-        speed: context.speed,
-        ignored,
-        neighbours: context.neighbours,
-        horizon_factor,
-        side: SideMemory {
-            partner: proposal.memory.side_partner,
-            left: proposal.memory.side_left,
+    let decided = intent_heading(
+        &IntentInput {
+            body: context.body,
+            next,
+            speed: context.speed,
+            ignored,
+            neighbours: context.neighbours,
+            horizon_factor,
+            side: SideMemory {
+                partner: proposal.memory.side_partner,
+                left: proposal.memory.side_left,
+            },
         },
-    })?;
+        |obstacle| context.admits(obstacle),
+    )?;
     proposal.memory.side_partner = decided.side.partner;
     proposal.memory.side_left = decided.side.left;
     Ok(decided.heading)
@@ -2860,6 +2903,7 @@ mod tests {
             surround: Some(Some(EntityId(99))),
             scan_range: SimScalar::from_num(5.5),
             intent: None,
+            near_margin: SimScalar::from_num(8),
         };
         Ok(probe(&context, &mut world.pathfinder))
     }

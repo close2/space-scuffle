@@ -32,7 +32,9 @@
 use super::contact::settle_on_terrain;
 use super::grid::BodyGrid;
 use super::locomotion::slide_target;
-use super::math::{checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
+use super::math::{
+    checked_vec_add, checked_vec_scale, checked_vec_sub, direction, unit_components,
+};
 use super::{MotionPolicy, MovementInvariant, MovementMathError};
 use sim_map::{Pathfinder, SimMap};
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
@@ -209,6 +211,10 @@ pub(crate) struct SolverBody {
     pub ghost: bool,
 }
 
+/// What one pair's geometry gives in an iteration: both bodies' corrections, shares applied,
+/// `None` within the dead band, or the arithmetic fault to report.
+type Correction = Result<Option<(SimVec2, SimVec2)>, MovementMathError>;
+
 /// One pair that may touch, lower id first, with its shares.
 #[derive(Debug, Clone, Copy)]
 struct Pair {
@@ -221,6 +227,9 @@ struct Pair {
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
+    /// The pair's correction at its bodies' current positions, once computed: reused while
+    /// neither body moves, since it is a function of the two positions alone.
+    cached: Option<Correction>,
 }
 
 /// One body's corrections within an iteration.
@@ -268,6 +277,16 @@ const PAIR_SLACK: SimScalar = SimScalar::from_raw(1 << 30);
 // workspace and are cleared, not freed, each tick; pairs are flat records indexed by body slot.
 // Trade-off: Memory stays at the densest tick's high-water mark, in exchange for no allocation in
 // steady state and contiguous scans per iteration.
+// PERFORMANCE RATIONALE:
+// Why: In a battle most pairs and most bodies do not change between iterations: a settled
+// pair stays in its dead band, and a body pressed into a wall or an anchored line is refused
+// the same correction again (evidence §5.3: 70 % to 92 % of battle ticks run all K iterations).
+// What: The active set (plan Amendment 3, item 1). A pair keeps its last correction and reuses
+// it while neither body moved; a body whose last terrain step left it in place is not stepped
+// again toward the same target. Both are functions of positions alone, so every result is
+// bit-identical to recomputing.
+// Trade-off: One cached correction per pair and a flag and a target per body, kept in the
+// retained buffers.
 #[derive(Debug, Default)]
 pub(crate) struct ContactSolver {
     /// This tick's bodies, in the caller's order.
@@ -276,8 +295,20 @@ pub(crate) struct ContactSolver {
     /// Each body's position when the pair list was last built.
     anchors: Vec<SimVec2>,
     sums: Vec<Accumulator>,
+    /// Per body: the state of its last terrain step, for the active set.
+    steps: Vec<BodyStep>,
     grid: BodyGrid,
     near: Vec<usize>,
+}
+
+/// One body's last terrain step within a solve (the active set of [`ContactSolver`]).
+#[derive(Debug, Clone, Copy, Default)]
+struct BodyStep {
+    /// The body moved in the latest application.
+    moved: bool,
+    /// The target of the body's latest terrain step when that step left it where it was
+    /// without a fault, world units; `None` after a step that moved it or faulted.
+    held: Option<SimVec2>,
 }
 
 impl ContactSolver {
@@ -386,6 +417,7 @@ impl ContactSolver {
                 || share_b == SimScalar::ZERO,
             radius_sum,
             dead_band,
+            cached: None,
         });
     }
 
@@ -408,6 +440,8 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) -> SolveReport {
         self.build_pairs(map_size, settings, &mut connected, report);
+        self.steps.clear();
+        self.steps.resize(self.bodies.len(), BodyStep::default());
         let mut done = SolveReport::default();
         for _ in 0..settings.iterations {
             done.iterations += 1;
@@ -435,17 +469,23 @@ impl ContactSolver {
             .any(|(body, &anchor)| !super::math::within_distance(body.position, anchor, half))
     }
 
-    /// Sums every (hard, when `hard_only`) pair's corrections from the current positions.
+    /// Sums every (hard, when `hard_only`) pair's corrections from the current positions; a
+    /// pair neither of whose bodies moved since its correction was computed reuses it.
     fn accumulate(&mut self, hard_only: bool, report: &mut impl FnMut(MovementInvariant)) {
         self.sums.clear();
         self.sums.resize(self.bodies.len(), Accumulator::default());
-        for pair in &self.pairs {
+        for pair in &mut self.pairs {
             if hard_only && !pair.hard {
                 continue;
             }
             let (ia, ib) = (pair.a as usize, pair.b as usize);
             let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
-            match pair_correction(pair, a, b) {
+            let correction = match pair.cached {
+                Some(cached) if !self.steps[ia].moved && !self.steps[ib].moved => cached,
+                _ => pair_correction(pair, a, b),
+            };
+            pair.cached = Some(correction);
+            match correction {
                 Ok(None) => {}
                 Ok(Some((delta_a, delta_b))) => {
                     let added = add_to(&mut self.sums, ia, delta_a, pair.share_a)
@@ -476,7 +516,8 @@ impl ContactSolver {
         report: &mut impl FnMut(MovementInvariant),
     ) -> bool {
         let mut moved = false;
-        for (body, acc) in self.bodies.iter_mut().zip(&self.sums) {
+        for ((body, acc), last) in self.bodies.iter_mut().zip(&self.sums).zip(&mut self.steps) {
+            last.moved = false;
             if acc.count == 0 || body.party.fixed {
                 continue;
             }
@@ -486,15 +527,21 @@ impl ContactSolver {
             } else {
                 Ok(acc.sum)
             };
-            let result = step
-                .and_then(|step| checked_vec_add(body.position, step))
-                .and_then(|target| terrain(body, target));
-            match result {
+            let target = step.and_then(|step| checked_vec_add(body.position, step));
+            // Every terrain step sets or clears `held`, and only a terrain step moves a body, so
+            // a held target was refused from the present position: the step would repeat.
+            if target.is_ok() && target.ok() == last.held {
+                continue;
+            }
+            let attempted = target.ok();
+            last.held = None;
+            match target.and_then(|target| terrain(body, target)) {
                 Ok(Some(next)) if next != body.position => {
                     body.position = next;
+                    last.moved = true;
                     moved = true;
                 }
-                Ok(_) => {}
+                Ok(_) => last.held = attempted,
                 Err(source) => report(MovementInvariant::Arithmetic {
                     entity: body.id,
                     operation: "contact solver terrain step",
@@ -565,18 +612,43 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
 }
 
 /// The pair's corrections for `a` and `b`, shares applied, or `None` within the dead band.
-fn pair_correction(
-    pair: &Pair,
-    a: &SolverBody,
-    b: &SolverBody,
-) -> Result<Option<(SimVec2, SimVec2)>, MovementMathError> {
-    let distance = super::checked_distance(a.position, b.position)
+// PERFORMANCE RATIONALE:
+// Why: This runs for every listed pair in every iteration; a root for the distance and another
+// for the normal, each with 128-bit divisions, were most of the solver's cost (evidence §5.3).
+// What: A pair is within the dead band exactly when `⌊√s⌋ ≥ radius_sum − dead_band`, that is
+// `s ≥ (radius_sum − dead_band)²` for the squared raw distance `s`, so it needs no root; a pair
+// beyond it takes one root, shared by its distance and its normal ([`unit_components`]).
+// Trade-off: The distance and the normal are not computed by the general helpers, so the
+// equivalence is stated here: the same floor root and the same truncated quotients.
+fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
+    let x = i128::from(a.position.x.raw()) - i128::from(b.position.x.raw());
+    let y = i128::from(a.position.y.raw()) - i128::from(b.position.y.raw());
+    let (ux, uy) = (x.unsigned_abs(), y.unsigned_abs());
+    let squared = ux
+        .checked_mul(ux)
+        .and_then(|xx| uy.checked_mul(uy).and_then(|yy| xx.checked_add(yy)))
         .ok_or(MovementMathError::Unrepresentable)?;
+    let threshold = pair.radius_sum.saturating_sub(pair.dead_band).raw();
+    if let Ok(bound) = u128::try_from(threshold) {
+        // A root below 2^63 is representable; beyond, the distance fails as before.
+        if squared < (1_u128 << 126) && squared >= bound * bound {
+            return Ok(None);
+        }
+    } else if squared < (1_u128 << 126) {
+        return Ok(None);
+    }
+    let norm = super::integer_sqrt(squared);
+    let distance = i64::try_from(norm)
+        .map(SimScalar::from_raw)
+        .map_err(|_| MovementMathError::Unrepresentable)?;
     let overlap = pair.radius_sum.saturating_sub(distance);
     if overlap <= pair.dead_band {
         return Ok(None);
     }
-    let normal = pair_normal(a, b)?;
+    let normal = match unit_components((x, y), norm)? {
+        normal if normal == SimVec2::ZERO => SimVec2::new(-SimScalar::ONE, SimScalar::ZERO),
+        normal => normal,
+    };
     let push = |share: SimScalar| {
         overlap
             .checked_mul(share)
