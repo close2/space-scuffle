@@ -34,7 +34,7 @@ use super::grid::BodyGrid;
 use super::intent::{intent_heading, IntentInput, SideMemory};
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
-    direction, distance, within_distance,
+    direction, distance, squared_distance, within_distance,
 };
 use super::tuning::{
     ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
@@ -118,6 +118,9 @@ struct MotionProposal {
     retarget: Option<SimVec2>,
     clear_target: bool,
     memory: MovementMemory,
+    /// Under the solver pipeline, the step stood because it pressed into a friend that holds
+    /// its ground ([`presses_holding_friend`]); transient, never committed.
+    pressed: bool,
 }
 
 impl MotionProposal {
@@ -140,6 +143,7 @@ impl MotionProposal {
             retarget: None,
             clear_target: false,
             memory,
+            pressed: false,
         }
     }
 
@@ -1498,13 +1502,29 @@ impl MotionDraft<'_> {
             )
             .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
+        let stalled = self.proposal.memory.stalled_ticks;
         if self
             .check_progress(routes, on_last_leg, gap, map_news, queued)?
             .is_break()
         {
             return Ok(());
         }
-        self.propose_step(&context, scene.pathfinder, next, gap)
+        self.propose_step(&context, scene.pathfinder, next, gap)?;
+        if attack_moving {
+            self.keep_stall_when_pressed(stalled);
+        }
+        Ok(())
+    }
+
+    /// A tick on which the step stood pressed into a friend that holds its ground
+    /// ([`presses_holding_friend`]) is a queued tick (plan `2026-11-19-crowd-edge-steering` D-4,
+    /// Q0089): the stall count it may have added is taken back. `before` is the count at the
+    /// start of the tick's progress check.
+    fn keep_stall_when_pressed(&mut self, before: u16) {
+        if self.proposal.pressed {
+            let memory = &mut self.proposal.memory;
+            memory.stalled_ticks = memory.stalled_ticks.min(before);
+        }
     }
 
     /// Lowers this tick's step so a unit with a finite deceleration can stop `short` world units
@@ -1835,6 +1855,7 @@ impl MotionDraft<'_> {
             self.abandon_pursuit(routes, pursuit.target);
             return Ok(());
         }
+        let stalled = self.proposal.memory.stalled_ticks;
         if self
             .check_pursuit_progress(routes, pursuit, queued)?
             .is_break()
@@ -1850,6 +1871,7 @@ impl MotionDraft<'_> {
             Some(pursuit.target),
         )
         .map_err(self.fault())?;
+        self.keep_stall_when_pressed(stalled);
         self.pass_reached_waypoint(next);
         if refused && self.ground && self.cooled_down {
             self.reroute_pursuit(scene, pursuit)?;
@@ -2199,6 +2221,12 @@ fn step_toward(
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
+    }
+    if context.intent.is_some() && presses_holding_friend(context, velocity)? {
+        proposal.velocity = SimVec2::ZERO;
+        proposal.anim = AnimState::Idle;
+        proposal.pressed = true;
+        return Ok(false);
     }
     let mut crowded = false;
     if context.intent.is_none() {
@@ -2621,6 +2649,45 @@ fn friend_ahead(
             + i128::from(speed.raw());
         if within_distance(body.pos, obstacle.pos, reach)
             && difference_product(ahead, obstacle.pos, body.pos, false)? > 0
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the step `velocity` (world units per tick) presses the unit into a friend that holds
+/// its ground ([`SteeringObstacle::anchored`]: on hold, immobile, or anchored in combat): the
+/// step closes on that friend and ends touching it. Under the solver pipeline such a step gains
+/// nothing, since contact would hand the whole overlap back to the unit, so the unit stands and
+/// keeps its order (plan `2026-11-20-contact-solver` Amendment 3, item 2, the solver form of
+/// the queued rule D-4 and Q0089). A step along the friend's edge or away from it is kept.
+fn presses_holding_friend(
+    context: &StepContext<'_>,
+    velocity: SimVec2,
+) -> Result<bool, MovementMathError> {
+    if velocity == SimVec2::ZERO {
+        return Ok(false);
+    }
+    let body = context.body;
+    let end = checked_vec_add(body.pos, velocity)?;
+    for obstacle in context.neighbours {
+        if obstacle.id == body.id
+            || obstacle.owner != body.owner
+            || !obstacle.anchored
+            || obstacle.yields_to(body.owner, body.push_priority)
+        {
+            continue;
+        }
+        let touching = i128::from(body.radius.raw()) + i128::from(obstacle.radius.raw());
+        // Within one step of the unit's edge, so inside the near reach: no deferred ground test.
+        if within_distance(end, obstacle.pos, touching)
+            && within_distance(
+                body.pos,
+                obstacle.pos,
+                touching + i128::from(context.speed.raw()),
+            )
+            && squared_distance(end, obstacle.pos) < squared_distance(body.pos, obstacle.pos)
         {
             return Ok(true);
         }

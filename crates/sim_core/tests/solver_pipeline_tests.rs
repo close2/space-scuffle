@@ -346,3 +346,81 @@ fn a_body_spawned_into_a_crowd_leaves_it_within_a_second_and_never_through_a_wal
     assert_eq!(world.diagnostics(), []);
     Ok(())
 }
+
+/// Amendment 3, item 2 (K-12): an attack-moving unit whose way is shut by friends on Hold
+/// Position stands instead of pressing into them. It keeps its order past the stall bound
+/// (Q0089, the queued rule D-4), its proposal is `Idle` with no velocity, it never pushes into a
+/// holder beyond the dead band, and once it stands the contact solver needs one iteration.
+#[test]
+fn a_unit_pressed_into_a_holding_line_stands_and_keeps_its_order() -> TestResult {
+    let mut map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+    for y in (0..64).filter(|y| !(30..33).contains(y)) {
+        map.cell_mut(20, y)?.flags = CellFlags::empty();
+    }
+    let mut world = sim_fixtures::world(map, 0x9E55);
+    let rules = world.catalog.movement_rules();
+    let contact = ContactRules {
+        pipeline: MovementPipeline::Solver,
+        ..rules.contact()
+    };
+    world
+        .catalog
+        .set_movement_rules(rules.with_contact(contact)?);
+    let unit = kind(&world)?;
+    let r = f64::from(world.catalog.get(unit)?.collision_radius.to_f32());
+    let mut holders = Vec::new();
+    let mut y = 30.0 + r + 0.005;
+    while y + r <= 33.0 {
+        holders.push(world.spawn_unit(unit, PlayerId(0), at(20.5, y))?);
+        y += 2.0 * r + 0.01;
+    }
+    let walker = world.spawn_unit(unit, PlayerId(0), at(14.0, 31.5))?;
+    step(
+        &mut world,
+        vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: holders.clone(),
+            order: UnitOrder::HoldPosition,
+            queue: false,
+        }],
+    );
+    step(
+        &mut world,
+        vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![walker],
+            order: UnitOrder::AttackMove {
+                target: at(40.0, 31.5),
+            },
+            queue: false,
+        }],
+    );
+    for tick in 0..400 {
+        step(&mut world, vec![]);
+        for &holder in &holders {
+            assert!(
+                gap(&world, walker, holder) >= -0.01 * 2.0 * r - 1e-6,
+                "tick {tick}: pressed {} into a holder",
+                gap(&world, walker, holder)
+            );
+        }
+        if tick >= 300 {
+            let body = &world.entities[&walker];
+            assert_eq!(body.velocity, SimVec2::ZERO, "tick {tick}: stands");
+            assert_eq!(body.current_anim, sim_types::AnimState::Idle, "tick {tick}");
+            assert!(
+                world.contact_iterations() <= 1,
+                "tick {tick}: solver pressed"
+            );
+        }
+    }
+    assert!(
+        matches!(
+            world.entities[&walker].order_queue.front(),
+            Some(UnitOrder::AttackMove { .. })
+        ),
+        "the queued attacker keeps its order"
+    );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
