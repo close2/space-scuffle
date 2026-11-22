@@ -23,14 +23,6 @@
 //! - The heading is a unit vector, or zero when the unit stands on its point.
 //! - All arithmetic is checked Q32.32 with one square root per threat for its time and one for the
 //!   turn; no trigonometric table.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "plan 2026-11-20-contact-solver WP2 builds this part as tested library code; the \
-                  solver pipeline calls it from WP3 on"
-    )
-)]
 
 use super::math::{checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
 use super::tuning::{COMOVING_MIN_COSINE, STEERING_CORRIDOR_MARGIN};

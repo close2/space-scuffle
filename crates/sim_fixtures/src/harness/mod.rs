@@ -27,7 +27,7 @@ pub mod report;
 
 use corpus::{Lattice, Role, Scenario};
 use metrics::{ScenarioMeter, ScenarioRow};
-use sim_core::catalog::MovementRules;
+use sim_core::catalog::{MovementPipeline, MovementRules};
 use sim_core::{SimWorld, UnitCatalog};
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, ResourceNode};
 use sim_types::{
@@ -129,6 +129,24 @@ impl Default for RunOptions {
         Self {
             rules: shipped_rules(),
         }
+    }
+}
+
+impl RunOptions {
+    /// The shipped rules with the contact pipeline `pipeline`.
+    ///
+    /// # Errors
+    /// [`HarnessError::Usage`] when the shipped contact rules are invalid.
+    pub fn with_pipeline(pipeline: MovementPipeline) -> Result<Self, HarnessError> {
+        let shipped = shipped_rules();
+        let contact = sim_core::catalog::ContactRules {
+            pipeline,
+            ..shipped.contact()
+        };
+        let rules = shipped
+            .with_contact(contact)
+            .map_err(|e| HarnessError::Usage(e.to_string()))?;
+        Ok(Self { rules })
     }
 }
 
@@ -288,6 +306,7 @@ pub fn run_scenario(
             state_checksum: None,
         });
         meter.add_diagnostics(world.drain_diagnostics().count());
+        meter.add_iterations(world.contact_iterations());
         meter.observe(&world);
     }
     Ok(meter.finish())
@@ -354,6 +373,7 @@ pub mod cli {
     //! of the runs in the directories and the verdicts of every run after the first against it.
 
     use super::{report, run_range, Family, HarnessError, RunOptions};
+    use sim_core::catalog::MovementPipeline;
     use std::path::PathBuf;
 
     /// What the command line asks for.
@@ -371,6 +391,8 @@ pub mod cli {
             jobs: usize,
             /// Where to write the CSV.
             out: PathBuf,
+            /// The contact pipeline to play under; the shipped one when `None`.
+            pipeline: Option<MovementPipeline>,
         },
         /// Aggregate run directories, each `label=dir`.
         Aggregate(Vec<(String, PathBuf)>),
@@ -398,6 +420,7 @@ pub mod cli {
         }
         let (mut family, mut from, mut count, mut relabel, mut jobs, mut out) =
             (None, 1_u64, 1_u64, false, 1_usize, None);
+        let mut pipeline = None;
         let mut iter = args.iter();
         while let Some(flag) = iter.next() {
             let mut value = || {
@@ -420,6 +443,13 @@ pub mod cli {
                 }
                 "--out" => out = Some(PathBuf::from(value()?)),
                 "--relabel" => relabel = true,
+                "--pipeline" => {
+                    pipeline = Some(match value()?.as_str() {
+                        "legacy" => MovementPipeline::Legacy,
+                        "solver" => MovementPipeline::Solver,
+                        _ => return Err(usage("--pipeline legacy|solver")),
+                    });
+                }
                 other => return Err(usage(&format!("unknown argument {other}"))),
             }
         }
@@ -429,6 +459,7 @@ pub mod cli {
             relabel,
             jobs,
             out: out.ok_or_else(|| usage("--out <file.csv>"))?,
+            pipeline,
         })
     }
 
@@ -444,8 +475,13 @@ pub mod cli {
                 relabel,
                 jobs,
                 out,
+                pipeline,
             } => {
-                let text = run_range(*family, *range, *relabel, *jobs, options)?;
+                let chosen = match pipeline {
+                    Some(pipeline) => RunOptions::with_pipeline(*pipeline)?,
+                    None => *options,
+                };
+                let text = run_range(*family, *range, *relabel, *jobs, &chosen)?;
                 std::fs::write(out, &text)
                     .map_err(|e| HarnessError::Io(format!("{}: {e}", out.display())))?;
                 Ok(format!(

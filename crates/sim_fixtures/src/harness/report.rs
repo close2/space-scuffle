@@ -500,6 +500,7 @@ pub fn render(runs: &[Run]) -> String {
             }
         }
     }
+    render_iterations(runs, &mut text);
     let _ = writeln!(
         text,
         "\n**mirror** (blue / red / draws; blue share of decisive [95 % Wilson])\n"
@@ -515,6 +516,68 @@ pub fn render(runs: &[Run]) -> String {
         );
     }
     text
+}
+
+/// The contact solver's iterations per tick, per run over every scene family: mean and
+/// quantiles of the ticks on which it ran (plan `2026-11-20-contact-solver` Amendment 2, 4).
+fn render_iterations(runs: &[Run], text: &mut String) {
+    let mut lines = Vec::new();
+    for run in runs {
+        let mut ticks: Vec<u64> = Vec::new();
+        for row in run.scenes.values().flatten() {
+            let Some(cells) = row.get("iteration_ticks").filter(|c| !c.is_empty()) else {
+                continue;
+            };
+            for (k, cell) in cells.split('/').enumerate() {
+                let count: u64 = cell.parse().unwrap_or(0);
+                if ticks.len() <= k {
+                    ticks.resize(k + 1, 0);
+                }
+                ticks[k] += count;
+            }
+        }
+        let total: u64 = ticks.iter().sum();
+        if total == 0 {
+            continue;
+        }
+        let at = |q: f64| -> usize {
+            let mut seen = 0_u64;
+            for (k, count) in ticks.iter().enumerate() {
+                seen += count;
+                if f64::from(u32::try_from(seen).unwrap_or(u32::MAX))
+                    >= q * f64::from(u32::try_from(total).unwrap_or(u32::MAX))
+                {
+                    return k;
+                }
+            }
+            ticks.len().saturating_sub(1)
+        };
+        let sum: u64 = ticks.iter().enumerate().map(|(k, c)| k as u64 * c).sum();
+        let mean = f64::from(u32::try_from(sum).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(total).unwrap_or(u32::MAX));
+        lines.push(format!(
+            "| {} | {total} | {mean:.2} | {} | {} | {} | {} |",
+            run.label,
+            at(0.5),
+            at(0.9),
+            at(0.99),
+            ticks.len().saturating_sub(1)
+        ));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        text,
+        "\n**contact solver iterations per tick** (ticks on which it ran)\n"
+    );
+    let _ = writeln!(
+        text,
+        "| Run | Ticks | Mean | Median | 90th | 99th | Max |\n|---|---:|---:|---:|---:|---:|---:|"
+    );
+    for line in lines {
+        let _ = writeln!(text, "{line}");
+    }
 }
 
 /// The bootstrap intervals of `key` in every run's `family`, if it has them.

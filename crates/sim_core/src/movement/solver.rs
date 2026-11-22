@@ -28,14 +28,6 @@
 //!   corrected (C-4).
 //! - Checked arithmetic: a pair whose correction cannot be represented is reported as a typed
 //!   [`MovementInvariant`] and contributes nothing.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "plan 2026-11-20-contact-solver WP2 builds this part as tested library code; the \
-                  solver pipeline calls it from WP3 on"
-    )
-)]
 
 use super::contact::settle_on_terrain;
 use super::grid::BodyGrid;
@@ -398,6 +390,7 @@ impl ContactSolver {
     }
 
     /// The pairs built, for tests and the cost report.
+    #[cfg(test)]
     pub(crate) fn pair_count(&self) -> usize {
         self.pairs.len()
     }

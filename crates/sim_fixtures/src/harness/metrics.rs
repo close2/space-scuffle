@@ -117,6 +117,13 @@ pub struct ScenarioRow {
     pub standing_wasted: f64,
     /// Simulation diagnostics raised while playing the scene.
     pub diagnostics: u32,
+    /// Ticks on which the contact solver ran (0 under the legacy pipeline).
+    pub contact_ticks: u32,
+    /// Averaged iterations the contact solver ran, summed over the scene's ticks.
+    pub contact_iterations: u32,
+    /// Ticks by iterations used: entry `k` counts the ticks on which the solver ran `k`
+    /// iterations (plan `2026-11-20-contact-solver` Amendment 2, 4: the early stop's effect).
+    pub iteration_ticks: Vec<u32>,
 }
 
 impl ScenarioRow {
@@ -125,14 +132,14 @@ impl ScenarioRow {
         deadlocked,giveups,rev_amp,rev_amp_hi,path,wasted,rev_legacy,moving_ticks,progress_viol,\
         progress_windows,through,in_range,throughput,fo_move_max,fo_rest_max,fo_move_over,\
         fo_rest_over,pair_ticks_move,pair_ticks_rest,enemy_ov_max,terrain_pen_max,mean_done_tick,\
-        standing_wasted,diagnostics";
+        standing_wasted,diagnostics,contact_ticks,contact_iterations,iteration_ticks";
 
     /// The row as one CSV line, without a line end.
     #[must_use]
     pub fn to_csv(&self) -> String {
         format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{},{},{},{},{},{},{:.4},{:.5},{:.5},\
-             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{}",
+             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{}",
             self.family,
             self.seed,
             u8::from(self.relabel),
@@ -165,6 +172,13 @@ impl ScenarioRow {
             self.mean_done_tick,
             self.standing_wasted,
             self.diagnostics,
+            self.contact_ticks,
+            self.contact_iterations,
+            self.iteration_ticks
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("/"),
         )
     }
 }
@@ -635,6 +649,21 @@ impl ScenarioMeter {
             Answer::Wall { wall, .. } => track.position.0 > f64::from(wall) + 0.5,
             Answer::Moves | Answer::Ring => false,
         }
+    }
+
+    /// Records the contact solver's iterations of the tick just played (0: the solver did not run).
+    pub fn add_iterations(&mut self, iterations: u8) {
+        if iterations == 0 {
+            return;
+        }
+        let index = usize::from(iterations);
+        let ticks = &mut self.row.iteration_ticks;
+        if ticks.len() <= index {
+            ticks.resize(index + 1, 0);
+        }
+        ticks[index] += 1;
+        self.row.contact_ticks += 1;
+        self.row.contact_iterations += u32::from(iterations);
     }
 
     /// Records simulation diagnostics the scene raised.

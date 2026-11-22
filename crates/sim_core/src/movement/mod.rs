@@ -247,13 +247,14 @@ pub(crate) struct MovementWorkspace {
     pushes: Vec<collision::BodyPush>,
     collision_grid: grid::BodyGrid,
     pair_scratch: Vec<usize>,
-    /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1); the solver
-    /// pipeline uses them from WP3 on.
-    #[allow(
-        dead_code,
-        reason = "plan 2026-11-20-contact-solver WP2: read from WP3 on"
-    )]
+    /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1).
     pub(crate) solver: solver::ContactSolver,
+    /// Averaged iterations the contact solver ran in the latest collision phase; 0 under the legacy
+    /// pipeline. Derived output for the cost report: never read by the simulation, never hashed.
+    contact_iterations: u8,
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (Verlet rule).
+    /// Derived output for the cost report, like [`Self::contact_iterations`].
+    contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
@@ -424,6 +425,22 @@ impl SimWorld {
             .binary_search_by_key(&id, |&(entity, _)| entity)
             .ok()
             .map(|index| steps[index].1)
+    }
+
+    /// Averaged iterations the contact solver ran in the latest collision phase (plan
+    /// `2026-11-20-contact-solver` C-1, the early stop); 0 under the legacy pipeline. Derived
+    /// output for the cost report, excluded from checksums and never consulted by the simulation.
+    #[must_use]
+    pub fn contact_iterations(&self) -> u8 {
+        self.movement.contact_iterations
+    }
+
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (plan
+    /// `2026-11-20-contact-solver` Amendment 1, the Verlet rule); 0 under the legacy pipeline.
+    /// Derived output for the cost report, excluded from checksums.
+    #[must_use]
+    pub fn contact_rebuilds(&self) -> u8 {
+        self.movement.contact_rebuilds
     }
 
     /// Total pathfinder searches this world has run. Derived output for tests and benchmarks.
