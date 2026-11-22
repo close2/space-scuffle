@@ -1661,24 +1661,29 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let on_last_leg = self.proposal.route(actor).len() <= 1;
-        if on_last_leg
-            && check_cluster_arrival_with(
+        let priority = self.entry.push_priority;
+        let witness = |witness: &SteeringObstacle| {
+            witness.owner == actor.owner
+                && (!ground || on_connected_ground(context.map, witness.pos, goal))
+        };
+        let arrived = |reach, unpushable_only: bool| {
+            check_cluster_arrival_with(
                 Some(id),
                 actor.position,
                 self.entry.policy.radius,
                 goal,
                 context.neighbours,
-                (
-                    // Under the solver the chain of arrivals is unbounded (WP3b, B-158): only
-                    // arrivals are witnesses, since a give-up records none (`check_progress`).
-                    context.intent.map_or(Some(ARRIVAL_WITNESS_REACH), |_| None),
-                    |witness: &SteeringObstacle| {
-                        witness.owner == actor.owner
-                            && (!ground || on_connected_ground(context.map, witness.pos, goal))
-                    },
-                ),
+                (reach, |seen: &SteeringObstacle| {
+                    (!unpushable_only || seen.push_priority > priority) && witness(seen)
+                }),
             )
-            .map_err(self.fault())?
+        };
+        // Under the solver an arrival this unit cannot push (C-2 row 6: a higher priority) is a
+        // witness wherever it stands (WP3b, B-158): the unit gains nothing by pressing on. Only
+        // arrivals are witnesses, since a give-up records none (`check_progress`).
+        if on_last_leg
+            && (arrived(Some(ARRIVAL_WITNESS_REACH), false).map_err(self.fault())?
+                || (context.intent.is_some() && arrived(None, true).map_err(self.fault())?))
         {
             self.proposal.finish(goal);
             return Ok(ControlFlow::Break(()));
