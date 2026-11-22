@@ -190,6 +190,10 @@ pub struct SteeringObstacle {
     pub push_priority: u8,
     /// Whether this body holds its ground: on hold, immobile or anchored in combat.
     pub anchored: bool,
+    /// Whether this body holds its ground by itself: on hold, immobile, unpushable, or in a
+    /// weapon cycle. Unlike [`Self::anchored`], a body merely standing under an attack order is
+    /// not firm (plan `2026-11-20-contact-solver` evidence §6, the pressed-front variant).
+    pub firm: bool,
     /// Whether this body has nothing to do: no order, `Idle` or `Stop`. A body standing still
     /// under an order is waiting for room, not idle, and is not pushed aside.
     pub idle: bool,
@@ -209,6 +213,7 @@ impl SteeringObstacle {
             owner: PlayerId(0),
             push_priority: 0,
             anchored: false,
+            firm: false,
             idle: true,
             settled_on: None,
         }

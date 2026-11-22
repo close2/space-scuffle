@@ -764,6 +764,13 @@ impl SimWorld {
             owner: actor.owner,
             push_priority: entry.push_priority,
             anchored: actor.cannot_be_pushed() || self.is_anchored_in_combat(actor),
+            firm: actor.cannot_be_pushed()
+                || matches!(
+                    actor.weapon_phase,
+                    WeaponPhase::RotatingToTarget { .. }
+                        | WeaponPhase::Windup { .. }
+                        | WeaponPhase::Backswing { .. }
+                ),
             idle: actor.is_idle(),
             settled_on: actor.movement.arrived_at.filter(|_| idle),
         }
@@ -2674,7 +2681,7 @@ fn presses_holding_friend(
     for obstacle in context.neighbours {
         if obstacle.id == body.id
             || obstacle.owner != body.owner
-            || !obstacle.anchored
+            || !obstacle.firm
             || obstacle.yields_to(body.owner, body.push_priority)
         {
             continue;
