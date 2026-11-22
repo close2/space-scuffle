@@ -1217,3 +1217,54 @@ is the wrong criterion: any larger sample contains a worse crowd.
    then a different solver (for example Gauss–Seidel with a fixed, order-independent colouring), by amendment.
 4. **Cost.** Report the distribution of iterations actually used per tick on the harness, since early stopping
    is the expected cost saver. Report instructions retired at WP3.
+
+## Amendment 3 (orchestrator, 2026-11-22): WP3 continues with cost work, an arrival rule for B-158, and a trace of two kept tests
+
+**Where WP3 stands** (evidence §5 on `contact-solver-wp3-wip`). On the development range the Solver is far better
+than Legacy:
+
+| Family | Measure | Legacy | Solver |
+|---|---|---:|---:|
+| gap | reversals (M1) | 17.70 | 3.11 |
+| gap | throughput η | 0.655 | 0.784 |
+| gap | friend pair-ticks above 5 % moving | 14.7 % | 1.59 % |
+| cross | reversals (M1) | 4.27 | 1.19 |
+| cross | give-ups | 152 | 2 |
+| corner (B-152) | reversals (M1) | 20.94 | 0.51 |
+
+T8 now holds everywhere. WP3 still stops, for three reasons:
+
+- **Cost:** +87 %, +21 % and +77 % instructions. In battles, 70 to 92 % of ticks run all K = 21 iterations,
+  because a crowd pressing into a fighting line keeps overlaps the solve cannot clear (K-12).
+- **Mixed-priority gap scenes:** they deadlock at the shared destination. K-10 / B-158 makes T4 fail in both
+  pipelines.
+- **Two kept tests fail:** the fan-out spread and the trajectory smoothness tests.
+
+**Decision.**
+
+1. **Cost, behaviour-preserving first.** Implement the evidence's options 1, 4 and 5:
+   - iterate only the active set;
+   - widen the neighbour reach only for bodies that the side rule can act on;
+   - one reciprocal per pair for normals.
+
+   They must leave the Solver's harness rows byte-identical. Measure instructions retired again.
+2. **The pressed front (K-12) is a behaviour question, not a solver one.** A unit whose intent pushes into an
+   anchored or holding friend ahead gains nothing. Under Solver, intent is zeroed toward such a friend; the unit
+   stands, keeping its order (Q0089). That is the Solver form of the Legacy "queued" rule.
+   - Measure it on the development range first, then the iteration distribution and cost.
+   - If T-figures on development get worse, stop with a trace.
+3. **Then option 2 if still needed.** If cost is still above +10 % after items 1 and 2, prototype Gauss–Seidel with
+   a fixed, order-independent colouring. Re-derive K under Amendment 2's protocol: derive on the seen crowds,
+   confirm once on a new unseen set, seeds 3,000,001 to 3,001,000. Option 3, a lower K with a residual, is not
+   adopted without a further amendment.
+4. **B-158 joins this plan as WP3b, the arrival rule.** The plan had left K-10 outside its scope while its own T4
+   counts it; that was an inconsistency. T4 is not restated.
+   - A unit moving to a shared point completes its order once it touches a friend that has already completed the
+     same order's destination and stands. This is the group-arrival chain.
+   - The rule must not end orders before an unpassed gap. The planner's rejected unbounded chain did; the touch is
+     transitive only through friends that completed at the destination.
+   - Design it, test it first, and measure it on the development range.
+5. **The two failing kept tests.** Trace each one. If WP4's slots address it (the fan-out around a target point),
+   record that and defer the test's verdict to WP4. Otherwise classify it as a defect, to be fixed, or as a
+   consequence of the rule, to be restated with the trace. A test is never loosened to pass.
+6. **The acceptance range** is used only once WP3 meets its development figures, as before.
