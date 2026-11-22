@@ -388,10 +388,14 @@ fn a_give_up_is_no_witness_of_the_arrival_chain() -> TestResult {
     let unit = kind(&world)?;
     let r = f64::from(world.catalog.get(unit)?.collision_radius.to_f32());
     let mut holders = Vec::new();
-    let mut y = 30.0 + r + 0.005;
-    while y + r <= 33.0 {
+    // Holders edge to edge across the whole opening, so no walker squeezes past them.
+    let mut y = 30.0 + r;
+    loop {
         holders.push(world.spawn_unit(unit, PlayerId(0), at(30.5, y))?);
-        y += 2.0 * r + 0.01;
+        if y + r >= 33.0 {
+            break;
+        }
+        y = (y + 2.0 * r - 0.01).min(33.0 - r);
     }
     let first = world.spawn_unit(unit, PlayerId(0), at(20.0, 31.5))?;
     step(
