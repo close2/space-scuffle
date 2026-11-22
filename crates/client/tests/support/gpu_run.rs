@@ -62,7 +62,7 @@
 //!    default, a release build neither (wgpu-types' `InstanceFlags::from_build_config`, which
 //!    Bevy extends with `with_env`), so the harness sets both: with the layer but no messenger,
 //!    a release child never logs the loader's "inserted" line and fails as unvalidated (plan
-//!    `2026-11-20-gpu-lane` D-5, B-157).
+//!    `2026-11-20-gpu-lane` D-5, B-159).
 //! 2. The messenger forwards each message to the `log` crate under the target
 //!    `wgpu_hal::vulkan::instance`, as `<TYPE> [<ID> (0x<number>)]` plus a tab-indented body.
 //! 3. Bevy's `LogPlugin` writes those records to stderr, subject to `RUST_LOG`. Bevy also logs
@@ -2729,7 +2729,7 @@ impl GpuCommand {
     /// The command with the validation environment [`Self::run_validated`] runs it under:
     /// `WGPU_VALIDATION=1` requests the layer, `WGPU_DEBUG=1` the debug messenger through which
     /// the layer's and the loader's messages reach the log (plan `2026-11-20-gpu-lane` D-5,
-    /// B-157: a release build sets neither bit by default), and `RUST_LOG` is replaced so a
+    /// B-159: a release build sets neither bit by default), and `RUST_LOG` is replaced so a
     /// developer's own filter cannot hide findings.
     #[must_use]
     pub fn validated(mut self) -> Self {

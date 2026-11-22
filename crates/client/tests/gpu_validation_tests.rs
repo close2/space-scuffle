@@ -1462,7 +1462,7 @@ fn an_offscreen_child_has_no_display_and_no_software_present() {
     }
 }
 
-/// Plan `2026-11-20-gpu-lane` D-5 (B-157): a validated child requests both the layer and the
+/// Plan `2026-11-20-gpu-lane` D-5 (B-159): a validated child requests both the layer and the
 /// debug messenger, so validation works in release builds too; a plain child gets neither from
 /// the harness.
 #[test]
