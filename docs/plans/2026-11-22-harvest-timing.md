@@ -619,3 +619,19 @@ record both tables in the evidence. Re-record the goldens on four builds with th
   `world/` (base and candidate), `golden/`, `sim_core_tests.log`.
 - The scratch worktree `harvest-timing-proto` and its target directory were removed at hand-back; the diff
   rebuilds the prototype on `dd17f4c5`.
+
+---
+
+## As built (implementation agent, 2026-11-22)
+
+| WP | Commit | Notes |
+|---|---|---|
+| WP0 | `4eb33157` | B-160 registered; B-61 restated for geysers; B-150 and B-151 point here |
+| WP1 | `adb849ea` | `ron` reads `Some(())` into the empty `HarvesterSpecDef {}` with `deny_unknown_fields` (D-3's **verify**: no fallback needed). A kind without a harvest (`PlacementRules::NONE`) ends a `Harvest` order with `NotCapable` |
+| WP2 | `22df1d99` | Schema 33. Besides the goldens, `sim_fixtures`' `DEFAULT_SANDBOX_CHECKSUM` and the four `checksum::encoding` tests that spell the schema bytes move with the schema; both re-pinned, the sandbox with the goldens' proof |
+| WP3 | this commit | Register, Economy row, evidence, README |
+
+Figures are in [`docs/evidence/2026-11-22-harvest-timing.md`](../evidence/2026-11-22-harvest-timing.md): every
+trip equals the derived `T₀ + 9` (minerals) or `T₀ − 15` (gas); the showcase start's mean 55.80 minerals and the
+near geyser's 60.61 gas per worker-minute, as §7 measured on the prototype; matrix, battles 31 and 33 and the showcase
+byte-identical on WP1 and WP2; the skirmish match won at tick 6,494 (WP1 6,458) within `TICK_LIMIT` 12,000.

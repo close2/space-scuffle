@@ -2,7 +2,7 @@
 
 Plan: [`docs/plans/2026-11-22-harvest-timing.md`](../plans/2026-11-22-harvest-timing.md). Measured on the package
 branch `harvest-timing-plan` on top of `main` `dd17f4c5`, 2026-11-22, on the shared VM (AMD Radeon RX 580). WP1 is
-`adb849ea`; WP2 is the commit that adds this file. Scratch material lives under `~/scratch/harvest-timing/`
+`adb849ea`, WP2 `22df1d99`. Scratch material lives under `~/scratch/harvest-timing/`
 (`wp1/`, `wp2/`, `client/`, `scripts/`).
 
 ## 1. What the data says (plan §2.3)
