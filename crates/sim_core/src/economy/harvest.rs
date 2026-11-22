@@ -9,12 +9,18 @@
 //! A `Harvest` order alternates two states, chosen by whether the unit holds cargo:
 //! - **Empty:** walk to the node, stay for its kind's `time_ticks`, then take up to its
 //!   `amount` units from it. The node is drawn down at that moment.
-//! - **Carrying:** walk to the nearest completed friendly depot. Income is credited on
-//!   arrival, not when gathered, so cargo lost with its carrier was never income.
+//! - **Carrying:** first wait at the node, holding the load, for its kind's
+//!   `return_delay_ticks` (`ReturnDelay`, counted down in `UnitTask::return_ticks`; plan
+//!   `2026-11-22-harvest-timing` D-1), then walk to the nearest completed friendly depot,
+//!   chosen when the wait ends. Income is credited on arrival, not when gathered, so cargo lost
+//!   with its carrier was never income.
 //!
 //! # Rules
-//! - Workers gathering or returning walk through other units, as mineral walking does in
-//!   `StarCraft` II, so a crowded line never jams on itself. A node has no worker limit.
+//! - Workers gathering, waiting or returning walk through other units, as mineral walking does
+//!   in `StarCraft` II, so a crowded line never jams on itself. A node has no worker limit, and
+//!   it is free for the next worker during the wait.
+//! - The wait is part of the leg: a new order replaces it at once, and the cargo stays on the
+//!   unit (D-4; 5.0.14 marks the stage uninterruptible, B-160). `ReturnCargo` does not wait.
 //! - An exhausted node sends its worker to the nearest live node of the same kind within
 //!   [`NEXT_NODE_RADIUS`]. With none left the order ends with an event.
 //! - What a distant node holds is private until the player sees it. An order to an exhausted
@@ -172,6 +178,10 @@ impl SimWorld {
         let position = actor.position;
         if actor.cargo.is_some() {
             actor.task.gather_ticks = 0;
+            if actor.task.return_ticks > 0 {
+                actor.task.return_ticks -= 1;
+                return;
+            }
             self.step_delivery(id, owner, position);
             return;
         }
@@ -205,7 +215,7 @@ impl SimWorld {
     }
 
     /// One tick of gathering at `target`: walk to its site, gather for its kind's time, then
-    /// take its kind's amount.
+    /// take its kind's amount and start its kind's return delay.
     fn step_gather(
         &mut self,
         id: EntityId,
@@ -261,6 +271,7 @@ impl SimWorld {
             actor.task.depot = None;
             if amount > 0 {
                 actor.cargo = Some(Cargo { kind, amount });
+                actor.task.return_ticks = harvest.return_delay_ticks;
             }
         }
     }

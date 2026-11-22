@@ -81,7 +81,10 @@ use std::path::PathBuf;
 /// entity is as before: the checksum ending after the route groups, with the schema number held
 /// at 31 (a scratch switch, not committed), is `3_802_618_527_547_176_050` on `e58f1af1` and on
 /// this tree.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_458_594_406_894_179_644;
+/// Re-recorded for checksum schema 33 (plan `2026-11-22-harvest-timing` WP2, B-150, B-151), which
+/// encodes each unit's return-delay countdown, 0 at spawn; a scratch build that does not encode it
+/// and keeps schema 32 reproduces `6_458_594_406_894_179_644`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 3_827_951_643_646_962_361;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

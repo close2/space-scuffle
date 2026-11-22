@@ -721,6 +721,7 @@ pub(crate) const fn fresh_leg(task: UnitTask) -> UnitTask {
         goal: None,
         legs: 0,
         gather_ticks: 0,
+        return_ticks: 0,
         wait_ticks: 0,
         depot: None,
         last_node: task.last_node,

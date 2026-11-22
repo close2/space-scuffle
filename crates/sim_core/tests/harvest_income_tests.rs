@@ -298,6 +298,10 @@ fn a_partial_last_load_is_delivered_and_the_order_then_ends() -> TestResult {
     Ok(())
 }
 
+/// The worker looks for its depot when its `ReturnDelay` wait ends (plan
+/// `2026-11-22-harvest-timing` D-1), so with the depot killed on the tick its cargo appears the
+/// order still stands through the wait and ends on the tick after it: the mineral row's
+/// `return_delay_ticks` + 1 ticks after the take (the hall's death is processed on the first).
 #[test]
 fn losing_the_depot_ends_the_order_and_keeps_the_cargo() -> TestResult {
     let mut f = fixture(1000)?;
@@ -306,7 +310,13 @@ fn losing_the_depot_ends_the_order_and_keeps_the_cargo() -> TestResult {
     f.until(800, |f| f.world.entities[&f.worker].cargo.is_some())?;
     f.world.entities.get_mut(&hall).ok_or("hall")?.hp = SimScalar::ZERO;
     f.idle(1);
-    f.idle(1);
+    for _ in 0..f.mineral.return_delay_ticks {
+        assert!(
+            !f.world.entities[&worker].order_queue.is_empty(),
+            "the order stands while the worker waits"
+        );
+        f.idle(1);
+    }
     assert!(f.world.entities[&worker].order_queue.is_empty());
     assert!(f.world.entities[&worker].cargo.is_some());
     assert_eq!(f.minerals(), 0);

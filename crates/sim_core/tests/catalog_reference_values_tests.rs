@@ -4417,6 +4417,38 @@ fn the_shipped_flag_sets() {
 /// geyser (`FootprintGeyserRounded`, Footprint:1535-1576 with void Footprint:3-21) takes the 3×3
 /// centred on its anchor, its shape is the void layer's 16 vertices, its ring is the void-rounded
 /// 9 × 9 (69 cells), and it stays when empty (liberty BehaviorData:801-807).
+/// Plan `2026-11-22-harvest-timing` §2.3: each resource row's harvest is 5.0.14's, converted at
+/// 25 ticks per Faster second (t Normal s = round(t / 1.4 × 25) ticks, halves up). A mineral
+/// field (`MineralFieldMinerals`, liberty BehaviorData:743-756): `HarvestTime 2.786` (:747) =
+/// 49.75 → 50 ticks, `HarvestAmount 5` (:748), `ReturnDelay 0.5` (:750) = 8.93 → 9 ticks; no
+/// later layer changes them. Gas through an extractor (`HarvestableVespeneGeyserGas` and its
+/// Protoss and Zerg twins, liberty BehaviorData:817-852): `HarvestTime 1.981` = 35.375 → 35
+/// ticks, `HarvestAmount 4`, no `ReturnDelay` (0).
+#[test]
+fn the_shipped_resource_harvests_are_5_0_14() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
+    let mineral = rules
+        .harvest(sim_types::ResourceKind::Mineral)
+        .ok_or("a mineral harvest")?;
+    assert_eq!(
+        (
+            mineral.time_ticks,
+            mineral.amount,
+            mineral.return_delay_ticks
+        ),
+        (50, 5, 9)
+    );
+    let gas = rules
+        .harvest(sim_types::ResourceKind::Gas)
+        .ok_or("a gas harvest")?;
+    assert_eq!(
+        (gas.time_ticks, gas.amount, gas.return_delay_ticks),
+        (35, 4, 0)
+    );
+    Ok(())
+}
+
 #[test]
 fn the_shipped_resource_footprints_are_5_0_14() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
