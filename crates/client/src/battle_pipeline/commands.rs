@@ -697,11 +697,15 @@ fn capable(
     let mobile = !entity.immobile_after_channel(archetype) && archetype.max_speed > SimScalar::ZERO;
     let armed = is_armed(archetype);
     match order {
-        // These roster controls intentionally address movable actors only. This is
-        // a UI selection policy, not a general simulation order-permission rule.
-        UnitOrder::Move { .. } | UnitOrder::HoldPosition | UnitOrder::Stop | UnitOrder::Idle => {
-            mobile
-        }
+        // Stop and Hold Position follow the settled stance's data (plan
+        // `2026-11-23-anchored-commands` D-3): a unit has Stop when its StarCraft II unit type
+        // carries `stop`, and Hold Position when it carries `move`, whose `HoldPos` command it is
+        // (`core` AbilData:552-554, :1362, :1371). The sieged tank has Stop only (`liberty`
+        // UnitData:5172-5174); the card reads the same rule.
+        UnitOrder::Stop => entity.settled_stance_orders(archetype).stop,
+        UnitOrder::HoldPosition => entity.settled_stance_orders(archetype).hold_position,
+        // Walking orders address movable actors only.
+        UnitOrder::Move { .. } | UnitOrder::Idle => mobile,
         UnitOrder::AttackMove { .. } => mobile && armed,
         UnitOrder::AttackTarget { .. } => {
             armed || entity.is_sieged && entity.siege_weapon.is_some()

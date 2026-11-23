@@ -267,6 +267,8 @@ fn s13_projectile_splash_spares_its_attacker() {
         shape: sim_types::SplashShape::Circle,
         friendly_fire: true,
         offset_by_unit_radius: false,
+        impact: sim_types::SplashImpact::Target,
+        target_radius_below: None,
     });
     let hp = arena.vitals(shooter);
     let victim_hp = arena.vitals(victim);
@@ -632,6 +634,7 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
         ground_weapon_override,
         air_weapon_override: None,
         energy_cost_per_second: SimScalar::ZERO,
+        orders: sim_types::StanceOrders::ALL,
     };
     let switch = |name: &str| AbilitySpec {
         name: name.to_owned(),

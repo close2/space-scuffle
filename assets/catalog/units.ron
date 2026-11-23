@@ -472,6 +472,10 @@
                     leave_cast_ticks: 63,
                     cast_random_delay_max_ticks: 8.9286,
                     leave_random_delay_max_ticks: 8.9286,
+                    // SiegeTankSieged carries stop, attack and Unsiege and no move, so Stop and no
+                    // Hold Position (liberty UnitData:5172-5174; no later layer sets its AbilArray;
+                    // plan 2026-11-23-anchored-commands D-1, B-98).
+                    orders: (stop: true, hold_position: false),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: false,
@@ -494,6 +498,13 @@
                         damage_point_ticks: 3,
                         backswing_ticks: 9,
                         random_delay_ticks: (-1.1161, 2.2321),
+                        // B-84 (plan 2026-11-23-splash-centres D-3, D-4): the 5.0.14 weapon effect is
+                        // CrucioShockCannonSwitch (swarm WeaponData:169-171, EffectData:2183-2187;
+                        // voidmulti EffectData:739-742): a target whose Radius is below 1.25
+                        // (TargetRadiusSmall, liberty ValidatorData:824-833) gets the splashing
+                        // CrucioShockCannonBlast, any other the area-less CrucioShockCannonDirected
+                        // with the same 40, +30 Armored. The lowered Supply Depot's case is not
+                        // modelled (no lowered depot; plan §14 F-1).
                         splash: Some((
                             zones: [
                                 (radius: 0.4687, fraction: 1.0),
@@ -501,6 +512,7 @@
                                 (radius: 1.25, fraction: 0.25),
                             ],
                             friendly_fire: true,
+                            target_radius_below: Some(1.25),
                         )),
                         projectile_speed: None,
                         weapon_class: Some("directorate_vehicle_weapons"),
@@ -529,11 +541,14 @@
                 is_resource_dropoff: false,
             ),
             // Presentation (plan 2026-11-09-effect-visualization §5.3): the sieged cannon's splash,
-            // the furrow ploughed as it sieges and unsieges, and the anchored stance (WP8).
+            // the furrow ploughed as it sieges and unsieges, and the anchored stance (WP8). The
+            // sieged shot also names the tank mode's landing: its area opens only below a target
+            // radius of 1.25, so a shot at a larger target still shows where it struck (plan
+            // 2026-11-23-splash-centres D-8).
             effects: (
                 weapons: [
                     (weapon: Primary, travel: Some("cannon_tracer"), impact: Some("cannon_hit")),
-                    (weapon: Primary, mode: Some("siege_mode"), travel: Some("cannon_tracer"), splash: Some("shell_impact")),
+                    (weapon: Primary, mode: Some("siege_mode"), travel: Some("cannon_tracer"), impact: Some("cannon_hit"), splash: Some("shell_impact")),
                 ],
                 modes: [(mode: "siege_mode", transition: Some("mode_seal_sweep"), stance: Some("siege_anchor"))],
                 death: Some("vehicle_wreck"),
@@ -2791,10 +2806,18 @@
                 damage_point_ticks: 0,
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
+                // B-83 (plan 2026-11-23-splash-centres D-2, D-4): VolatileBurstU and VolatileBurstU2
+                // impact the caster (ImpactLocation CasterUnit, liberty EffectData:1759, :1055), so
+                // the 2.2 area is searched around the Baneling and its target is struck by it, once
+                // (ExcludeArray Outer excludes the Baneling itself, :1758). Both effects inherit
+                // OffsetByUnitRadius 1 from DU_WEAP (core EffectData:128), but the impact unit is the
+                // Baneling, which has no edge facing an attacker: cleared, the Baneling's centre
+                // (Q0096, default).
                 splash: Some((
                     zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
-                    offset_by_unit_radius: true,
+                    offset_by_unit_radius: false,
+                    impact: Attacker,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("swarm_melee_attacks"),
@@ -3070,6 +3093,10 @@
                     leave_cast_ticks: 11,
                     cast_random_delay_max_ticks: 4.4643,
                     leave_random_delay_max_ticks: 4.4643,
+                    // LurkerMPBurrowed carries move and stop, so Stop and Hold Position (liberty
+                    // UnitData:793-796, void UnitData:767-769; plan 2026-11-23-anchored-commands
+                    // D-1, B-98).
+                    orders: (stop: true, hold_position: true),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,

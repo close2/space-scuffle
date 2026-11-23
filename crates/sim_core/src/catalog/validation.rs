@@ -21,7 +21,7 @@ use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
     PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
-    WeaponVisualKind,
+    SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -973,7 +973,15 @@ impl WeaponSpecDef {
             }
         }
         if let Some(splash) = &self.splash {
-            splash.validate(definition, &format!("{prefix}.splash"))?;
+            let field = format!("{prefix}.splash");
+            splash.validate(definition, &field)?;
+            if splash.impact == SplashImpact::Attacker && self.projectile_speed.is_some() {
+                return Err(invalid(
+                    definition,
+                    &format!("{field}.impact"),
+                    "an area at the attacker needs an instant weapon",
+                ));
+            }
         }
         Ok(())
     }
@@ -982,8 +990,43 @@ impl WeaponSpecDef {
 impl SplashSpecDef {
     /// Checks the zones: at least one; each radius finite and nonnegative and larger than the
     /// one before; each fraction in `0 < fraction <= 1`, the share of a strike a zone can deal.
-    /// A line needs at least one search point, each offset a finite fixed-point value.
+    /// A line needs at least one search point, each offset a finite fixed-point value. Then the
+    /// centre and the condition ([`Self::validate_centre`]).
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        self.validate_zones(definition, prefix)?;
+        self.validate_centre(definition, prefix)
+    }
+
+    /// Checks where the area is centred and when it opens (plan `2026-11-23-splash-centres` D-1,
+    /// D-3): an attacker-centred area is a circle (a line's searches are placed by its own
+    /// origin) and is not offset by a radius (the attacker is its own impact unit, so no edge
+    /// faces anything); a target radius condition is positive and finite. The weapon checks that
+    /// an attacker-centred area is on an instant weapon.
+    fn validate_centre(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.impact == SplashImpact::Attacker {
+            if !matches!(self.shape, SplashShapeDef::Circle) {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.impact"),
+                    "a line's searches are placed by its origin; impact applies to a circle",
+                ));
+            }
+            if self.offset_by_unit_radius {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.offset_by_unit_radius"),
+                    "an area centred on the attacker is not offset by a radius",
+                ));
+            }
+        }
+        if let Some(radius) = self.target_radius_below {
+            positive(definition, &format!("{prefix}.target_radius_below"), radius)?;
+        }
+        Ok(())
+    }
+
+    /// The zone and line checks of [`Self::validate`].
+    fn validate_zones(&self, definition: &str, prefix: &str) -> SimResult<()> {
         if self.zones.is_empty() {
             return Err(invalid(
                 definition,
@@ -3625,6 +3668,156 @@ mod attribute_tests {
             "shape",
             "only a structure row has a building shape",
         );
+        Ok(())
+    }
+}
+
+/// Splash centre and condition rules (plan `2026-11-23-splash-centres` D-1, D-3): an
+/// attacker-centred area is a circle, not offset by a radius, on an instant weapon; a target
+/// radius condition is positive; both fields default when omitted.
+#[cfg(test)]
+mod splash_centre_tests {
+    use crate::catalog::{CatalogFile, SplashShapeDef, SplashSpecDef, UnitArchetypeDef};
+    use crate::error::SimCoreError;
+    use sim_types::{SplashImpact, SplashLineAxis, SplashLineOrigin};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The first shipped unit row whose ground weapon (`weapon` or `ground_weapon`) is instant
+    /// with a circular splash; it validates as authored.
+    fn instant_splash_unit() -> Result<UnitArchetypeDef, Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let unit = file
+            .units
+            .into_iter()
+            .find(|unit| {
+                [&unit.weapon, &unit.ground_weapon]
+                    .into_iter()
+                    .any(|weapon| {
+                        weapon.as_ref().is_some_and(|weapon| {
+                            weapon.projectile_speed.is_none()
+                                && weapon.splash.as_ref().is_some_and(|splash| {
+                                    matches!(splash.shape, SplashShapeDef::Circle)
+                                })
+                        })
+                    })
+            })
+            .ok_or("the shipped catalog has an instant circular splash weapon")?;
+        unit.validate()?;
+        Ok(unit)
+    }
+
+    /// The field `unit` fails validation on after `edit` changes its instant splash weapon.
+    fn refused_field(
+        edit: impl FnOnce(&mut crate::catalog::WeaponSpecDef),
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut unit = instant_splash_unit()?;
+        let weapon = [&mut unit.weapon, &mut unit.ground_weapon]
+            .into_iter()
+            .flatten()
+            .find(|weapon| weapon.projectile_speed.is_none() && weapon.splash.is_some())
+            .ok_or("chosen for it")?;
+        edit(weapon);
+        Ok(match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            other => format!("not a field refusal: {other:?}"),
+        })
+    }
+
+    #[test]
+    fn omitted_fields_read_the_target_and_no_condition() -> TestResult {
+        let def: SplashSpecDef = ron::from_str("(zones: [(radius: 1.0, fraction: 1.0)])")?;
+        assert_eq!(def.impact, SplashImpact::Target);
+        assert_eq!(def.target_radius_below, None);
+        let def: SplashSpecDef = ron::from_str(
+            "(zones: [(radius: 1.0, fraction: 1.0)], impact: Attacker, target_radius_below: Some(1.25))",
+        )?;
+        assert_eq!(def.impact, SplashImpact::Attacker);
+        assert_eq!(def.target_radius_below, Some(1.25));
+        Ok(())
+    }
+
+    #[test]
+    fn an_attacker_centred_area_on_an_instant_circle_is_accepted() -> TestResult {
+        let field = refused_field(|weapon| {
+            let Some(splash) = weapon.splash.as_mut() else {
+                return;
+            };
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+        })?;
+        assert!(field.starts_with("not a field refusal: Ok"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_attacker_centred_line_is_refused() -> TestResult {
+        let field = refused_field(|weapon| {
+            let Some(splash) = weapon.splash.as_mut() else {
+                return;
+            };
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+            splash.shape = SplashShapeDef::Line {
+                origin: SplashLineOrigin::Attacker,
+                axis: SplashLineAxis::Along,
+                offsets: vec![1.0],
+                period_ticks: 0,
+            };
+        })?;
+        assert!(field.ends_with("splash.impact"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_attacker_centred_area_offset_by_a_radius_is_refused() -> TestResult {
+        let field = refused_field(|weapon| {
+            let Some(splash) = weapon.splash.as_mut() else {
+                return;
+            };
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = true;
+        })?;
+        assert!(field.ends_with("splash.offset_by_unit_radius"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_attacker_centred_area_on_a_projectile_is_refused() -> TestResult {
+        let field = refused_field(|weapon| {
+            weapon.projectile_speed = Some(1.0);
+            weapon.visual_kind = sim_types::WeaponVisualKind::Projectile;
+            weapon.max_projectile_lifetime_ticks = 10;
+            let Some(splash) = weapon.splash.as_mut() else {
+                return;
+            };
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+        })?;
+        assert!(field.ends_with("splash.impact"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_target_radius_condition_must_be_positive_and_finite() -> TestResult {
+        for value in [0.0_f32, -1.25, f32::NAN, f32::INFINITY, 1e-30] {
+            let field = refused_field(|weapon| {
+                if let Some(splash) = weapon.splash.as_mut() {
+                    splash.target_radius_below = Some(value);
+                }
+            })?;
+            assert!(
+                field.ends_with("splash.target_radius_below"),
+                "{value}: {field}"
+            );
+        }
+        let field = refused_field(|weapon| {
+            if let Some(splash) = weapon.splash.as_mut() {
+                splash.target_radius_below = Some(1.25);
+            }
+        })?;
+        assert!(field.starts_with("not a field refusal: Ok"), "{field}");
         Ok(())
     }
 }

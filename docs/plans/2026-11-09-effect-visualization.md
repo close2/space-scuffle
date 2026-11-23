@@ -143,7 +143,7 @@ in the live battle; "Gap" what a player misses.
 | 7 | Mode transition progress | same | Yes (channel) | No | No | As 2 |
 | 8 | Splash, circle | `railgun_crawler` sieged (0.47/0.78/1.25), `napalm_wheeler` (2.2), `sky_bastion` (1.5), `tripod_annihilator` (1.8/2.4/3.0), `burrow_scorpion` (1.5/2.0/2.5), `volatile_tick` (2.2, suicide), `stag_behemoth` (0.5/1.0/1.5) | Yes (`apply_splash`, zones) | **No event**; only the direct hit's tracer/projectile/slash | Nothing | No area read at all |
 | 9 | Splash, line | engine `SplashShape::Line`; shipped data holds circles (B-18, B-19) | Engine yes | No | No | Must follow the data automatically when B-18 lands |
-| 10 | Baneling burst | `volatile_tick`: `visual_kind: Projectile`, `suicide_on_attack` | Yes | A `ProjectileVisual` from the attacker and a `BubbleShatter` | Plasma orb card and generic glass shatter | No acid burst sized 2.2; centre is the target (B-83) |
+| 10 | Baneling burst | `volatile_tick`: `visual_kind: Projectile`, `suicide_on_attack` | Yes | A `ProjectileVisual` from the attacker and a `BubbleShatter` | Plasma orb card and generic glass shatter | No acid burst sized 2.2; centre is the target (B-83, taken up by plan [`2026-11-23-splash-centres`](2026-11-23-splash-centres.md): the burst is centred on the Baneling since its WP2) |
 | 11 | Lurker spines | `burrow_scorpion`: `visual_kind: MeleeSlash`, range 8 | Yes | `MeleeSlashVisual` at the target, radius 0.5 | A 0.2 s crescent at the target, 8 units from the Lurker | No line from the Lurker; wrong vocabulary |
 | 12 | Hellion flame, Colossus lance | `napalm_wheeler` (Hitscan), `tripod_annihilator` (LaserBeam) | Yes | Tracer / beam | Tracer ribbon / laser ribbon | No flame jet, no sweep |
 | 13 | Ultralisk cleave | `stag_behemoth` (MeleeSlash, circle splash) | Yes (circle, B-19) | Slash | Crescent | No cleave area |
@@ -862,7 +862,8 @@ independent and run at most two at a time.
   Widow-Mine-like units, permanent cloak of the Dark Templar and Observer analogues, Banshee cloak, burrow for other
   Zerg analogues, Tunneling Claws (B-38). The contracts of D-8 make their presentation data only (Q0077).
 - Simulation fixes the inventory found: anchored units never publish `Attack` (row 25, `current_anim` hashed);
-  B-18/B-19/B-83/B-85 (their own plan; the effects follow the data).
+  B-18/B-19/B-83/B-85 (their own plan; the effects follow the data; B-83 taken up by plan
+  [`2026-11-23-splash-centres`](2026-11-23-splash-centres.md)).
 - Motion-vector flipbook blending (optical flow baked offline): frame blending first; motion vectors only if the
   review finds visible stepping at the chosen frame counts.
 - Offline fluid simulation tools (EmberGen, Blender): excluded by the owner's rule on downloaded binaries; could be

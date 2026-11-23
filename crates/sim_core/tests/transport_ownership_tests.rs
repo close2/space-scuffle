@@ -84,6 +84,7 @@ impl Fixture {
             ground_weapon_override: None,
             air_weapon_override: None,
             energy_cost_per_second: SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
         }];
         let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
         Ok(Self {
@@ -714,6 +715,8 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
             shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
             offset_by_unit_radius: false,
+            impact: sim_types::SplashImpact::Target,
+            target_radius_below: None,
         });
         if route == 0 {
             f.world.catalog.get_mut(f.kind)?.ground_weapon = Some(weapon.clone());

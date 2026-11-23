@@ -9,6 +9,12 @@
 //! says why it cannot switch again. This is Q0070's proof that the Lurker analogue can fight in a
 //! skirmish (plan `2026-11-09-client-mode-commands` WP5, D-10).
 //!
+//! Stop and Hold Position on anchored units, by the stance's data (plan
+//! `2026-11-23-anchored-commands` P-5, P-6): `X` and the card's Stop clear an anchored unit's
+//! focused target, which then picks its target as it would idle, and leave a switch in progress
+//! running; `H` holds a stance that keeps Hold Position, which then fights an enemy walking into
+//! range; `H` reaches nothing in a stance without it, alone or beside a unit that takes it.
+//!
 //! # Limits
 //! Shares the limits of `support/battle_harness.rs`: no window and no renderer. Mode entries are
 //! drawn by the generic slot code, which the HUD window GPU tests render.
@@ -41,7 +47,7 @@ use client::battle_hud::model::HudModel;
 use client::battle_hud::HudGeometry;
 use client::battle_pipeline::commands::{is_armed, mode_of_ability, ModeDirection};
 use client::battle_pipeline::session::BattleSession;
-use client::input_bindings::SHIFT_MODIFIERS;
+use client::input_bindings::{HOLD_POSITION_KEY, SHIFT_MODIFIERS, STOP_KEY};
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::ClientMode;
 use sim_core::UnitArchetype;
@@ -205,6 +211,15 @@ fn spawn_mine(harness: &mut Harness, unit_type: UnitTypeId) -> EntityId {
 /// An enemy structure that dies to one hit, about `distance` world units from `unit`: the
 /// smallest presentable structure, which neither fights back nor walks out of range.
 fn frail_enemy(harness: &mut Harness, unit: EntityId, distance: f32) -> EntityId {
+    let enemy = enemy_structure(harness, unit, distance);
+    harness.world_mut().entities.get_mut(&enemy).unwrap().hp = SimScalar::ONE;
+    run_ticks(harness, 1);
+    enemy
+}
+
+/// An enemy structure at its full life, about `distance` world units from `unit`: the smallest
+/// presentable unarmed structure, which neither fights back nor walks out of range.
+fn enemy_structure(harness: &mut Harness, unit: EntityId, distance: f32) -> EntityId {
     let structure = harness
         .world()
         .catalog
@@ -239,7 +254,6 @@ fn frail_enemy(harness: &mut Harness, unit: EntityId, distance: f32) -> EntityId
                 .ok()
         })
         .expect("open ground for a structure near the unit");
-    harness.world_mut().entities.get_mut(&enemy).unwrap().hp = SimScalar::ONE;
     run_ticks(harness, 1);
     enemy
 }
@@ -562,4 +576,262 @@ fn a_click_on_the_mode_slot_does_the_same_as_its_key() {
     );
     run_ticks(&mut harness, CHANNEL_TICKS);
     assert!(in_mode(&harness, tank));
+}
+
+// --- Stop and Hold on anchored units (plan `2026-11-23-anchored-commands` P-5, P-6) ------------
+
+/// A presentable mobile archetype with a mode ability whose mode anchors it, arms it, accepts
+/// Stop, and accepts Hold Position exactly when `hold`; found by the mode's data.
+fn anchoring_type(harness: &Harness, hold: bool) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && mode_arms(archetype)
+                && mode_of(archetype)
+                    .and_then(|mode| archetype.get_mode(mode))
+                    .is_some_and(|mode| {
+                        mode.is_immobile && mode.orders.stop && mode.orders.hold_position == hold
+                    })
+                && presentable(harness, archetype.unit_type_id)
+        })
+        .map_or_else(
+            || panic!("a presentable anchoring archetype, hold {hold}"),
+            |archetype| archetype.unit_type_id,
+        )
+}
+
+/// A unit of `unit_type` of the local player, selected and switched into its mode by its key.
+fn anchored(harness: &mut Harness, unit_type: UnitTypeId) -> EntityId {
+    let unit = spawn_mine(harness, unit_type);
+    harness.select(unit);
+    assert_eq!(harness.selection().ids(), [unit]);
+    tap_mode(harness, ModeDirection::Enter);
+    run_ticks(harness, CHANNEL_TICKS);
+    assert!(in_mode(harness, unit), "anchored");
+    unit
+}
+
+/// The rejection status a refused press writes.
+fn refusal_status(error: &client::battle_pipeline::commands::SubmissionError) -> String {
+    let mut status = String::new();
+    client::battle_pipeline::status::write_submission_rejection(&mut status, error);
+    status
+}
+
+/// P-5: a sieged tank told to attack one enemy and then given Stop by `press` has an empty
+/// queue after the tick and picks the target it picked idle at that spot.
+fn stop_clears_a_focused_target(press: impl FnOnce(&mut Harness)) {
+    let mut harness = skirmish();
+    let tank = {
+        let unit_type = anchoring_type(&harness, false);
+        anchored(&mut harness, unit_type)
+    };
+    let near = enemy_structure(&mut harness, tank, 6.0);
+    let far = enemy_structure(&mut harness, tank, 10.0);
+    run_ticks(&mut harness, 10);
+    let idle_choice = harness.world().entities[&tank]
+        .current_target
+        .expect("idle, it acquires a target by itself");
+    assert!(idle_choice == near || idle_choice == far);
+    let other = if idle_choice == near { far } else { near };
+
+    let on_screen = harness.unit_on_screen(other);
+    harness.click(MouseButton::Right, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::attack(other));
+    run_ticks(&mut harness, 2);
+    assert_eq!(harness.world().entities[&tank].current_target, Some(other));
+
+    harness.step(1);
+    press(&mut harness);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::Stop);
+    assert_eq!(orders[0].entities, [tank]);
+    run_ticks(&mut harness, 1);
+    // The focused order is gone. The tick's own acquisition pass may already have put an
+    // `Acquired` attack in front, which is the unit picking its next target by itself.
+    let queue = &harness.world().entities[&tank].order_queue;
+    assert!(
+        queue.iter().all(|order| matches!(
+            order,
+            UnitOrder::AttackTarget {
+                origin: sim_types::AttackOrigin::Acquired,
+                ..
+            }
+        )),
+        "{queue:?}"
+    );
+    run_ticks(&mut harness, 10);
+    let entity = &harness.world().entities[&tank];
+    assert_eq!(
+        entity.current_target,
+        Some(idle_choice),
+        "it picks by the ordinary ranking again"
+    );
+    assert!(in_mode(&harness, tank), "still anchored");
+}
+
+#[test]
+fn stop_by_key_clears_a_sieged_tanks_focused_target() {
+    stop_clears_a_focused_target(|harness| harness.tap_key(STOP_KEY));
+}
+
+#[test]
+fn stop_by_card_clears_a_sieged_tanks_focused_target() {
+    stop_clears_a_focused_target(|harness| {
+        let rect = harness.app.world().resource::<HudGeometry>().card_fixed[0]
+            .expect("the card draws Stop for a sieged tank");
+        harness.click(MouseButton::Left, point(rect));
+    });
+}
+
+#[test]
+fn stop_while_sieging_leaves_the_switch_running() {
+    let mut harness = skirmish();
+    let tank = {
+        let unit_type = anchoring_type(&harness, false);
+        spawn_mine(&mut harness, unit_type)
+    };
+    harness.select(tank);
+    tap_mode(&mut harness, ModeDirection::Enter);
+    run_ticks(&mut harness, 2);
+    assert!(harness.world().entities[&tank].channeling_remaining_ticks > 0);
+
+    harness.tap_key(STOP_KEY);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::Stop);
+    run_ticks(&mut harness, CHANNEL_TICKS);
+    assert!(in_mode(&harness, tank), "the switch ran to its end");
+}
+
+#[test]
+fn hold_keeps_a_burrowed_unit_fighting_an_enemy_that_walks_into_range() {
+    let mut harness = skirmish();
+    let lurker = {
+        let unit_type = anchoring_type(&harness, true);
+        anchored(&mut harness, unit_type)
+    };
+    let place = harness.simulated_position(lurker);
+
+    harness.tap_key(HOLD_POSITION_KEY);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::HoldPosition);
+    assert_eq!(orders[0].entities, [lurker]);
+    run_ticks(&mut harness, 1);
+    assert_eq!(
+        harness.world().entities[&lurker].order_queue.front(),
+        Some(&UnitOrder::HoldPosition)
+    );
+
+    let walker = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && archetype.mover_type == sim_types::MoverType::Ground
+                && archetype.modes.is_empty()
+                && !archetype.is_detector
+                && presentable(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable ground walker")
+        .unit_type_id;
+    let enemy = spawn_at(&mut harness, place, 14.0, walker, ENEMY);
+    let goal = battle_harness::sim_position(place);
+    let world = harness.world_mut();
+    world.entities.get_mut(&enemy).unwrap().hp = SimScalar::ONE;
+    world
+        .entities
+        .get_mut(&enemy)
+        .unwrap()
+        .issue_order(UnitOrder::Move { target: goal }, false)
+        .expect("the enemy walks");
+    run_ticks(&mut harness, 300);
+    assert!(
+        harness
+            .world()
+            .entities
+            .get(&enemy)
+            .is_none_or(|entity| !entity.is_alive()),
+        "the holding unit killed the enemy that walked into range"
+    );
+    let entity = &harness.world().entities[&lurker];
+    assert_eq!(entity.order_queue.front(), Some(&UnitOrder::HoldPosition));
+    assert!(harness.simulated_position(lurker).distance(place) < 0.01);
+}
+
+#[test]
+fn hold_on_a_sieged_tank_alone_is_refused_with_its_status() {
+    let mut harness = skirmish();
+    let tank = {
+        let unit_type = anchoring_type(&harness, false);
+        anchored(&mut harness, unit_type)
+    };
+    harness.step(1);
+    assert!(
+        harness.app.world().resource::<HudGeometry>().card_fixed[1].is_none(),
+        "no Hold on the card"
+    );
+    harness.tap_key(HOLD_POSITION_KEY);
+    assert_eq!(harness.pending_orders(), 0, "nothing is queued");
+    let status =
+        refusal_status(&client::battle_pipeline::commands::SubmissionError::EmptySelection);
+    assert_eq!(harness.status(), status);
+    assert!(harness.world().entities[&tank].order_queue.is_empty());
+}
+
+#[test]
+fn hold_on_a_sieged_tank_beside_a_walker_reaches_the_walker_only() {
+    let mut harness = skirmish();
+    let tank = {
+        let unit_type = anchoring_type(&harness, false);
+        anchored(&mut harness, unit_type)
+    };
+    let walker_type = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && is_armed(archetype)
+                && archetype.modes.is_empty()
+                && archetype.capabilities.harvester.is_none()
+                && presentable(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable armed walker without modes")
+        .unit_type_id;
+    let near = harness.simulated_position(tank);
+    let walker = spawn_at(&mut harness, near, 2.5, walker_type, LOCAL_PLAYER);
+    let corners = [harness.unit_on_screen(tank), harness.unit_on_screen(walker)];
+    let from = corners[0].min(corners[1]) - Vec2::splat(12.0);
+    let to = corners[0].max(corners[1]) + Vec2::splat(12.0);
+    harness.drag(from, to);
+    let selected = harness.selection().ids().to_vec();
+    assert!(
+        selected.contains(&tank) && selected.contains(&walker),
+        "{selected:?}"
+    );
+
+    harness.tap_key(HOLD_POSITION_KEY);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::HoldPosition);
+    assert_eq!(
+        orders[0].entities,
+        [walker],
+        "the sieged tank takes no Hold"
+    );
+    run_ticks(&mut harness, 1);
+    assert!(harness.world().entities[&tank].order_queue.is_empty());
+    assert_eq!(
+        harness.world().entities[&walker].order_queue.front(),
+        Some(&UnitOrder::HoldPosition)
+    );
 }

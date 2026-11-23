@@ -225,6 +225,7 @@ mod tests {
             ground_weapon_override: None,
             air_weapon_override: None,
             energy_cost_per_second: sim_types::SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
         });
         assert!(moded.can_ever_move());
 

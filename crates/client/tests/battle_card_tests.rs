@@ -799,6 +799,62 @@ fn stop_and_hold_appear_and_their_keys_still_work() {
     );
 }
 
+/// Plan `2026-11-23-anchored-commands` D-4: a unit anchored in a stance that keeps Stop but not
+/// Hold Position (found by the mode's data, never by name) shows an empty Hold slot, and its Stop
+/// slot works by mouse and by key.
+#[test]
+fn an_anchored_selection_shows_stop_and_an_empty_hold_slot() {
+    let mut harness = skirmish();
+    let worker = worker(&harness);
+    let tank_type = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype
+                .modes
+                .iter()
+                .any(|mode| mode.is_immobile && mode.orders.stop && !mode.orders.hold_position)
+                && harness
+                    .app
+                    .world()
+                    .resource::<HudModel>()
+                    .catalog
+                    .archetype(archetype.unit_type_id)
+                    .is_some_and(|commands| commands.unpresentable.is_none())
+        })
+        .expect("a presentable unit anchoring in a stance without Hold Position")
+        .unit_type_id;
+    let tank = spawn_beside(&mut harness, worker, tank_type, LOCAL_PLAYER);
+    harness.select(tank);
+    harness.step(1);
+    let enter = position_of(&harness, |action| {
+        matches!(action, CardAction::SwitchMode { .. })
+    })
+    .expect("the mode entry");
+    harness.tap_key(key_at(&harness, enter));
+    assert_eq!(pending(&harness).len(), 1, "status: {}", harness.status());
+    run_ticks(&mut harness, 120);
+    assert!(harness.world().entities[&tank].active_mode.is_some());
+    assert!(harness.world().entities[&tank].is_immobile, "anchored");
+
+    harness.step(1);
+    assert!(card(&harness).fixed[1].is_none(), "no Hold in this stance");
+    let fixed = geometry(&harness).card_fixed;
+    assert!(fixed[1].is_none(), "the Hold slot is drawn empty");
+    let stop = fixed[0].expect("Stop");
+    harness.click(MouseButton::Left, point(stop));
+    let by_mouse: Vec<_> = pending(&harness).into_iter().map(|c| c.order).collect();
+    assert_eq!(by_mouse, [UnitOrder::Stop]);
+    assert_eq!(harness.selection().ids(), [tank]);
+
+    run_ticks(&mut harness, 1);
+    harness.tap_key(STOP_KEY);
+    harness.tap_key(HOLD_POSITION_KEY);
+    let by_key: Vec<_> = pending(&harness).into_iter().map(|c| c.order).collect();
+    assert_eq!(by_key, [UnitOrder::Stop], "Hold reaches no one");
+}
+
 #[test]
 fn a_card_order_is_queued_with_shift() {
     let mut harness = skirmish();

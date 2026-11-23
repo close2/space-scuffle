@@ -27,9 +27,9 @@ use sim_types::{
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec,
     FactionId, FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag,
     PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
-    SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
-    WeaponVisualKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -311,6 +311,22 @@ impl UnitArchetype {
     #[inline]
     pub fn is_immobile_by_default(&self) -> bool {
         matches!(self.shape, ShapeKind::BuildingDome { .. }) || self.max_speed <= SimScalar::ZERO
+    }
+
+    /// The plain orders a unit of this archetype accepts in `stance`: the mode's authored
+    /// [`UnitModeSpec::orders`], or, for the default stance (`None`), both Stop and Hold
+    /// Position when the archetype is mobile ([`Self::is_immobile_by_default`] is false) and
+    /// neither when it is not. Pure and allocation-free; the one rule the client's command card
+    /// and its admission share (plan `2026-11-23-anchored-commands` D-2). Every shipped mobile
+    /// unit has `stop` and `move` in `StarCraft` II 5.0.14; armed structures' Stop is B-171.
+    #[must_use]
+    #[inline]
+    pub fn stance_orders(&self, stance: Option<&UnitModeSpec>) -> StanceOrders {
+        match stance {
+            Some(mode) => mode.orders,
+            None if self.is_immobile_by_default() => StanceOrders::NONE,
+            None => StanceOrders::ALL,
+        }
     }
 
     /// Looks up a declarative mode specification by canonical mode name.
@@ -845,6 +861,31 @@ impl UnitCatalog {
                         "must reference an archetype with a weapon",
                     ));
                 }
+                // Plan `2026-11-23-splash-centres` D-1: a weapon whose area is centred on the
+                // attacker makes no direct strike, and hit effects run on direct strikes only.
+                let attacker_centred = |weapon: &WeaponSpec| {
+                    weapon
+                        .splash
+                        .as_ref()
+                        .is_some_and(|splash| splash.impact == SplashImpact::Attacker)
+                };
+                let mode_weapons = target.modes.iter().flat_map(|mode| {
+                    [&mode.ground_weapon_override, &mode.air_weapon_override]
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                });
+                let mut weapons = [&target.weapon, &target.ground_weapon, &target.air_weapon]
+                    .into_iter()
+                    .flatten()
+                    .chain(mode_weapons);
+                if weapons.all(attacker_centred) {
+                    return Err(unresolved(
+                        "WeaponHitEffect.target_slug",
+                        "must reference an archetype with a weapon that strikes its target directly; \
+                         an area centred on the attacker does not",
+                    ));
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -1071,6 +1112,9 @@ struct UnitModeSpecDef {
     air_weapon_override: Option<Option<WeaponSpecDef>>,
     #[serde(default)]
     energy_cost_per_second: f32,
+    /// The stance's plain orders; required, so a mode written without them fails to load
+    /// (plan `2026-11-23-anchored-commands` D-1).
+    orders: StanceOrders,
 }
 
 impl UnitModeSpecDef {
@@ -1107,6 +1151,7 @@ impl UnitModeSpecDef {
             ground_weapon_override: resolve(self.ground_weapon_override)?,
             air_weapon_override: resolve(self.air_weapon_override)?,
             energy_cost_per_second: SimScalar::from_f32_lossy(self.energy_cost_per_second),
+            orders: self.orders,
         })
     }
 }
@@ -1126,6 +1171,14 @@ struct SplashSpecDef {
     /// [`SplashSpec::offset_by_unit_radius`]); `false` when omitted.
     #[serde(default)]
     offset_by_unit_radius: bool,
+    /// Where the area is centred (see [`SplashSpec::impact`]); on the target when omitted, the
+    /// engine default.
+    #[serde(default)]
+    impact: SplashImpact,
+    /// The target radius in world units below which the area opens (see
+    /// [`SplashSpec::target_radius_below`]); always open when omitted.
+    #[serde(default)]
+    target_radius_below: Option<f32>,
 }
 
 /// An authored splash shape (see [`SplashShape`]).
@@ -1503,6 +1556,8 @@ impl UnitArchetypeDef {
                 shape: s.shape.resolve(),
                 friendly_fire: s.friendly_fire,
                 offset_by_unit_radius: s.offset_by_unit_radius,
+                impact: s.impact,
+                target_radius_below: s.target_radius_below.map(SimScalar::from_f32_lossy),
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
             weapon_class,
@@ -2087,6 +2142,49 @@ mod tests {
                 .get_by_name(&arch.display_name)
                 .expect("lookup by display name must succeed");
             assert_eq!(looked_up_name.unit_type_id, arch.unit_type_id);
+        }
+    }
+
+    /// Plan `2026-11-23-anchored-commands` D-1, D-2: the default stance accepts both plain
+    /// orders exactly when the archetype is mobile; a mode accepts what it authors, whatever
+    /// its mobility.
+    #[test]
+    fn stance_orders_follow_mobility_for_the_default_stance_and_data_for_a_mode() {
+        let catalog = crate::test_support::shipped_catalogs().units;
+        let mut walker = catalog
+            .archetypes()
+            .find(|arch| !arch.is_immobile_by_default())
+            .expect("invariant: the shipped catalog has a mobile archetype")
+            .clone();
+        assert_eq!(walker.stance_orders(None), StanceOrders::ALL);
+
+        walker.max_speed = SimScalar::ZERO;
+        assert_eq!(walker.stance_orders(None), StanceOrders::NONE, "speed 0");
+
+        let structure = catalog
+            .archetypes()
+            .find(|arch| matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+            .expect("invariant: the shipped catalog has a structure");
+        assert_eq!(structure.stance_orders(None), StanceOrders::NONE, "a dome");
+
+        let mut mode = catalog
+            .archetypes()
+            .flat_map(|arch| arch.modes.iter())
+            .next()
+            .expect("invariant: the shipped catalog has a mode")
+            .clone();
+        for stop in [false, true] {
+            for hold_position in [false, true] {
+                for is_immobile in [false, true] {
+                    mode.orders = StanceOrders {
+                        stop,
+                        hold_position,
+                    };
+                    mode.is_immobile = is_immobile;
+                    assert_eq!(walker.stance_orders(Some(&mode)), mode.orders);
+                    assert_eq!(structure.stance_orders(Some(&mode)), mode.orders);
+                }
+            }
         }
     }
 

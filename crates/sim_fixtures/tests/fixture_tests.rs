@@ -92,7 +92,10 @@ use std::path::PathBuf;
 /// encodes each unit's side-rule commitment and remembered gap (none under the legacy pipeline);
 /// a scratch build that leaves them unhashed and keeps schema 34 reproduces
 /// `16_199_664_925_193_234_964`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 14_665_724_469_072_757_732;
+/// Re-recorded for checksum schema 36 (plan `2026-11-23-splash-centres` WP1, D-6), which encodes
+/// each splash's impact and target-radius condition; a scratch build that leaves them unhashed
+/// and keeps schema 35 reproduces `14_665_724_469_072_757_732`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 10_589_561_826_036_639_628;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

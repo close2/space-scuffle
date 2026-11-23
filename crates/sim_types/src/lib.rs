@@ -39,7 +39,7 @@ pub mod weapon;
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
     AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand,
-    RallyTarget, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
+    RallyTarget, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -82,8 +82,8 @@ pub use upgrades::{
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, Attribute, AttributeBonuses, ProjectileTargetLossBehavior,
-    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
-    StructureStrike, TurretIdle, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
+    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec,
+    SplashZone, StructureStrike, TurretIdle, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
 /// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,
