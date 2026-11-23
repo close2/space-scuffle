@@ -74,3 +74,25 @@ supply", and `validate_unit_job` checks the front's supply against `in_productio
 | Worlds (`world-wp2/`) | 420 files byte-identical to `world-wp0/`, logs included |
 | Clippy, fmt, `workspace_checks` | clean |
 | Skirmish match (release, radv; `impl/client-wp2/skirmish.log`) | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486 |
+
+## 3. WP3: the rally command and the new unit's order (plan D-3 to D-5; B-60; §8 rule 3)
+
+`UnitOrder::SetRally { target }` (appended last; encoded with tag 18 in order queues, though it never enters one) is
+admitted by the economy dispatcher (`admit_set_rally`) for every recipient that is alive, completed, owned, unloaded
+and trains units; a rally on the recipient itself clears it; refusals are `NoCapableProducer`, `RallyOutsideMap`,
+`InvalidRallyTarget` (absent, dead or foreign unit) and `UnknownResourceNode`. `SimWorld::rally_point` resolves a
+rally; after `commit_spawn` the child takes its rally's order through the ordinary admission (`Move`, `Harvest`,
+`Load`, or a `Move` to the resolved point), a dead target clears the rally and sends no order, a carried one sends
+none. `PlayerView::rallies` lists the viewer's own resolved rallies as `RallyView { entity, point: [f32; 2] }`.
+
+| Check (`impl/verify-wp3/`, `impl/client-wp3/`) | Result |
+|---|---|
+| New tests, red on WP2 (they name `SetRally`, `rally_point` and `rallies`) | `rally_tests`: `set_rally_is_admitted_only_for_producers`, `a_rally_on_the_producer_itself_clears_it`, `a_unit_moves_to_a_point_rally`, `a_worker_rallied_to_a_mineral_field_harvests_it`, `a_soldier_rallied_to_a_field_walks_to_it`, `a_worker_rallied_to_a_geyser_without_an_extractor_walks_to_it`, `a_unit_rallied_to_a_friend_goes_where_the_friend_stood`, `a_dead_rally_target_sends_no_order_and_clears_the_rally`, `a_unit_rallied_to_its_carrier_boards_it`, `a_town_halls_auto_rally_sends_its_workers_to_harvest`, `a_world_without_a_rally_is_unchanged`; `player_view_tests::the_view_lists_only_the_viewers_own_resolved_rallies` |
+| A `Move` to a node | movement admission moves a target inside the node's footprint to the nearest point the child can stand on (S-4): (25.5, 5.5) for the field whose centre is (25, 6.5) in the first draft of the test; the tests assert a `Move` within the footprint's half-diagonal plus one of the centre, not the centre itself |
+| `cargo test --release -p sim_types -p sim_core -p sim_fixtures` | every simulation target passes; `sim_types`' own unit test fixture (`populated()`) lacked the new field on the first run and was completed |
+| Goldens | 4 of 4 on native debug and release, `wasm32-wasip1` release and debug, unchanged |
+| Worlds (`world-wp3/`) | 420 files byte-identical to `world-wp0/`, logs included |
+| Skirmish match | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486 |
+| Client, release, radv (`impl/client-wp3/`) | `sync_steady_state_tests` 8, `battle_hud_tests` 34, `battle_context_order_tests` 24, `battle_card_path_tests` 4, `battle_fog_tests` 25, `battle_flipbook_tests` 9 pass. `client --lib battle_` first failed to compile: `status/tests.rs`' exhaustive table of `GameCommandError` lacked the three rally refusals; added (slots 22 to 24), then 102 pass |
+| Client arms needed to compile | `capable` and `order_subject` arms for `SetRally` and the three refusal messages of `write_game_reason`, which plan §10 gives to WP5, land here because the new variants make the client's exhaustive matches fail to compile (a deviation of file ownership only; WP5 adds the input, display and tests) |
+| `PlayerView` | loses `Eq` (keeps `PartialEq`): `RallyView::point` is `[f32; 2]`, presentation output (plan D-10; the plan's `Vec2` is a Bevy type `sim_types` cannot name). C7 gains `crates/sim_types/src/player_view.rs`, 1 float token |

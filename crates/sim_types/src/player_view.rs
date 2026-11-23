@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 // Why: The HUD reads queues every frame and they are rewritten every tick.
 // What: One flat job slab addressed by range, refilled in place.
 // Trade-off: Readers slice by range rather than holding a nested Vec.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerView {
     /// Executed tick this view describes.
     pub tick: Tick,
@@ -79,6 +79,10 @@ pub struct PlayerView {
     /// locks here.
     #[serde(default)]
     pub cast_states: Vec<CastStateView>,
+    /// The viewer's production structures whose rally resolves to a point, by entity ID (plan
+    /// `2026-11-23-production-queue` D-10).
+    #[serde(default)]
+    pub rallies: Vec<RallyView>,
 }
 
 impl PlayerView {
@@ -102,6 +106,7 @@ impl PlayerView {
         self.ability_locks.clear();
         self.revealed.clear();
         self.cast_states.clear();
+        self.rallies.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -141,6 +146,18 @@ pub struct StructureQueueView {
     /// `2026-11-23-production-queue` D-2).
     #[serde(default)]
     pub supply_blocked: bool,
+}
+
+/// Where one of the viewer's production structures sends its units (plan
+/// `2026-11-23-production-queue` D-5, D-10).
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RallyView {
+    /// The structure.
+    pub entity: EntityId,
+    /// Its rally resolved to a point on the map plane, world units `[x, y]`: presentation
+    /// output, converted from fixed point (charter §3.2). A rally to a unit follows it, since
+    /// the view resolves it every tick.
+    pub point: [f32; 2],
 }
 
 /// One job in a production queue.
@@ -296,6 +313,10 @@ pub enum SiteRefusal {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one literal of every list of the record; test code is exempt (charter §2.4)"
+    )]
     fn populated() -> PlayerView {
         PlayerView {
             tick: Tick(90),
@@ -393,6 +414,10 @@ mod tests {
                 ability_index: 2,
                 cooldown_ticks: 40,
                 short_of_energy: true,
+            }],
+            rallies: vec![RallyView {
+                entity: EntityId(3),
+                point: [12.5, 7.25],
             }],
         }
     }

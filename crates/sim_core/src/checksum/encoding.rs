@@ -920,6 +920,10 @@ impl Canonical for UnitOrder {
                 carrier.encode(encoder);
             }
             Self::UnloadAll => 17_u8.encode(encoder),
+            Self::SetRally { target } => {
+                18_u8.encode(encoder);
+                target.encode(encoder);
+            }
         }
     }
 }

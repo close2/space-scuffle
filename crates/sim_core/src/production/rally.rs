@@ -2,14 +2,27 @@
 //!
 //! # Responsibility
 //! A production structure holds at most one [`RallyTarget`] in `Entity::rally`. This module owns
-//! the town hall's auto-rally: when an entity whose archetype carries an [`AutoRallySpec`] is
-//! created (a scenario's or fixture's `spawn_structure`, or a foundation laid by `Build`), its
-//! rally is set to a resource node, as 5.0.14's `CommandStructureAutoRally` does from the town
-//! halls' `CreateSet` effects (voidmulti `EffectData` 2507–2537).
+//! everything about it:
+//! - **Setting it** (`SetRally`, D-3): admitted through the economy dispatcher for every
+//!   recipient that is alive, completed, owned, unloaded and of an archetype that trains units
+//!   (the capability; no identity is named). A rally on the recipient itself clears it.
+//! - **Resolving it** ([`SimWorld::rally_point`], D-5): one function, so the exit order, the new
+//!   unit's order and the player view agree.
+//! - **The new unit's order** (D-4): after a spawn, the child takes the order its producer's rally
+//!   means, through the admission a player's order takes. An ordinary refusal of that order (a
+//!   point outside the child's terrain-radius domain, say) leaves the child idle, as a refused
+//!   player order would; an invariant failure is reported as a diagnostic. This is the rule, not
+//!   a silent fallback.
+//! - **The town hall's auto-rally** (D-7): when an entity whose archetype carries an
+//!   [`AutoRallySpec`] is created (a scenario's or fixture's `spawn_structure`, or a foundation
+//!   laid by `Build`), its rally is set to a resource node, as 5.0.14's
+//!   `CommandStructureAutoRally` does from the town halls' `CreateSet` effects (voidmulti
+//!   `EffectData` 2507–2537).
 //!
 //! # How it fits
-//! The search reads the map's resource nodes and the archetype's capability, both run-time data;
-//! no identity is named. It writes only the created structure's `rally`.
+//! The searches read the map's resource nodes and the archetypes' capabilities, both run-time
+//! data. Admission writes only the recipients' `rally`; the spawn writes only the child's orders
+//! and, when the rally's unit is gone, clears the producer's rally (S7).
 //!
 //! # Invariants
 //! - The chosen node is standing, has resources left, is of a kind in the spec's set, and its
@@ -19,8 +32,11 @@
 //! - Distances compare squared in raw fixed point, so the choice is exact on every target.
 //! - No node qualifies: the rally is left as it was (`None` on a new structure).
 
+use crate::economy::{GameCommandError, GameCommandReceipt};
 use crate::SimWorld;
-use sim_types::{AutoRallySpec, EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
+use sim_types::{
+    AutoRallySpec, EntityId, PlayerId, RallyTarget, ResourceNodeId, SimScalar, SimVec2, UnitOrder,
+};
 
 /// The squared distance between two points in raw Q32.32 units squared, exact in `i128`.
 fn squared_raw(a: SimVec2, b: SimVec2) -> i128 {
@@ -95,6 +111,164 @@ impl SimWorld {
         if let Some(entity) = self.entities.get_mut(&id) {
             entity.rally = Some(RallyTarget::Node(node));
         }
+    }
+}
+
+impl SimWorld {
+    /// Admits `SetRally` (D-3): every capable recipient's rally becomes `target`, or is cleared
+    /// when `target` is the recipient itself. Shift (`queue`) is ignored: there are no rally
+    /// waypoints (B-165).
+    ///
+    /// A capable recipient is an alive, completed, owned and unloaded entity whose archetype
+    /// trains units (S5: every production structure has a rally).
+    ///
+    /// # Errors
+    /// The selection's own refusals; [`GameCommandError::NoCapableProducer`] when no recipient
+    /// can rally; [`GameCommandError::RallyOutsideMap`] for a point off the map;
+    /// [`GameCommandError::InvalidRallyTarget`] for a unit that does not exist, is dead or is
+    /// another player's; [`GameCommandError::UnknownResourceNode`] for a node not on the map.
+    pub(crate) fn admit_set_rally(
+        &mut self,
+        player: PlayerId,
+        recipients: &[EntityId],
+        target: RallyTarget,
+    ) -> Result<GameCommandReceipt, GameCommandError> {
+        self.validate_selection(player, recipients)?;
+        match target {
+            RallyTarget::Point(point) => {
+                let inside = |value: SimScalar, extent: u32| {
+                    value >= SimScalar::ZERO && value <= SimScalar::from_num(extent)
+                };
+                if !inside(point.x, self.map.width()) || !inside(point.y, self.map.height()) {
+                    return Err(GameCommandError::RallyOutsideMap(point));
+                }
+            }
+            RallyTarget::Unit(unit) => {
+                let valid = self
+                    .entities
+                    .get(&unit)
+                    .is_some_and(|entity| entity.owner == player && entity.is_alive());
+                if !valid {
+                    return Err(GameCommandError::InvalidRallyTarget(unit));
+                }
+            }
+            RallyTarget::Node(node) => {
+                if self.map.resources().get(node.0 as usize).is_none() {
+                    return Err(GameCommandError::UnknownResourceNode(node));
+                }
+            }
+        }
+        let mut count = 0;
+        for &id in recipients {
+            if !self.can_rally(id) {
+                continue;
+            }
+            if let Some(entity) = self.entities.get_mut(&id) {
+                entity.rally = (target != RallyTarget::Unit(id)).then_some(target);
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return Err(GameCommandError::NoCapableProducer);
+        }
+        Ok(GameCommandReceipt::Accepted { recipients: count })
+    }
+
+    /// Whether `id` can hold a rally: alive, completed, unloaded, and of an archetype that
+    /// trains units (D-3). Ownership is the selection's check.
+    fn can_rally(&self, id: EntityId) -> bool {
+        self.entities.get(&id).is_some_and(|entity| {
+            entity.is_alive()
+                && entity.is_completed
+                && !entity.is_loaded_in_transport()
+                && self
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|arch| !arch.trains_units.is_empty())
+        })
+    }
+
+    /// The point `producer`'s rally resolves to now, in world units (D-5): the point itself, the
+    /// node's centre, or where the target unit stands while it is alive and not carried. `None`
+    /// without a rally, for a rally to a unit that is dead, gone or carried, and for a node not on
+    /// the map. The exit order, the new unit's order and the player view all read this one
+    /// resolution, so they agree.
+    #[must_use]
+    pub fn rally_point(&self, producer: EntityId) -> Option<SimVec2> {
+        match self.entities.get(&producer)?.rally? {
+            RallyTarget::Point(point) => Some(point),
+            RallyTarget::Node(node) => self.map.resources().get(node.0 as usize).map(|n| n.pos),
+            RallyTarget::Unit(unit) => self
+                .entities
+                .get(&unit)
+                .filter(|entity| entity.is_alive() && !entity.is_loaded_in_transport())
+                .map(|entity| entity.position),
+        }
+    }
+
+    /// Gives `child`, just made by `producer`, the order `producer`'s rally means (D-4), through
+    /// the admission a player's order takes, so every rule of that order applies. Returns the
+    /// order the child took, if any.
+    ///
+    /// | Rally | Order |
+    /// |---|---|
+    /// | none | none |
+    /// | a point | `Move` to it |
+    /// | a node | `Harvest` when admission accepts the child for it; else `Move` to its centre |
+    /// | a unit, alive and not carried | `Load` when it is the player's and admission accepts the child as its passenger; else `Move` to where it stands now |
+    /// | a unit, alive but carried | none; the rally stays |
+    /// | a unit, dead or gone | none, and the rally is cleared |
+    ///
+    /// An ordinary refusal of the child's order leaves the child idle, as a refused player order
+    /// would; an invariant failure is reported as a diagnostic and leaves it idle too.
+    pub(super) fn give_rally_order(
+        &mut self,
+        producer: EntityId,
+        child: EntityId,
+    ) -> Option<UnitOrder> {
+        let rally = self.entities.get(&producer)?.rally?;
+        let owner = self.entities.get(&child)?.owner;
+        let recipients = [child];
+        let target = match rally {
+            RallyTarget::Point(point) => point,
+            RallyTarget::Node(node) => match self.admit_harvest(owner, &recipients, node, false) {
+                Ok(_) => return Some(UnitOrder::Harvest { target: node }),
+                Err(GameCommandError::Invariant(source)) => {
+                    self.report_production_failure(source);
+                    return None;
+                }
+                Err(_) => self.map.resources().get(node.0 as usize)?.pos,
+            },
+            RallyTarget::Unit(unit) => {
+                let Some(target) = self.entities.get(&unit).filter(|e| e.is_alive()) else {
+                    // "As if there'd never been a rally point" (S7).
+                    if let Some(entity) = self.entities.get_mut(&producer) {
+                        entity.rally = None;
+                    }
+                    return None;
+                };
+                if target.is_loaded_in_transport() {
+                    return None;
+                }
+                let (position, own) = (target.position, target.owner == owner);
+                if own {
+                    match self.admit_load(owner, &recipients, unit, false) {
+                        Ok(_) => return Some(UnitOrder::Load { carrier: unit }),
+                        Err(GameCommandError::Invariant(source)) => {
+                            self.report_production_failure(source);
+                            return None;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                position
+            }
+        };
+        // Movement admission reports its own invariant failures as diagnostics.
+        let order = UnitOrder::Move { target };
+        self.issue_movement_prevalidated(owner, &recipients, &order, false)
+            .ok()
+            .map(|_| order)
     }
 }
 

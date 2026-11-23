@@ -1476,3 +1476,39 @@ fn only_the_structure_waiting_for_supply_is_marked() -> TestResult {
     assert_eq!(blocked(second), Some(true));
     Ok(())
 }
+
+/// Plan `2026-11-23-production-queue` D-5, D-10: the view lists the viewer's own structures whose
+/// rally resolves, at the resolved point; another player's rally, and a rally to a unit that is
+/// gone, are absent.
+#[test]
+fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
+    let mut world = skirmish()?;
+    let (home, _) = base_of(&world, HOME)?;
+    let (away, _) = base_of(&world, AWAY)?;
+    let rally = |world: &SimWorld, id| world.entities[&id].rally;
+    assert!(rally(&world, home).is_some() && rally(&world, away).is_some());
+    let point = world
+        .rally_point(home)
+        .ok_or("the home hall's rally resolves")?;
+    let view = view_of(&world, HOME);
+    assert_eq!(view.rallies.len(), 1);
+    assert_eq!(view.rallies[0].entity, home);
+    assert_eq!(view.rallies[0].point, point.to_f32_array());
+    // A rally to a unit that is gone does not resolve, so it is not shown.
+    let crew = builders(&world, HOME);
+    step(
+        &mut world,
+        vec![command(
+            HOME,
+            vec![home],
+            UnitOrder::SetRally {
+                target: sim_types::RallyTarget::Unit(crew[0]),
+            },
+        )],
+    );
+    assert_eq!(view_of(&world, HOME).rallies.len(), 1);
+    world.entities.get_mut(&crew[0]).ok_or("worker absent")?.hp = SimScalar::ZERO;
+    step(&mut world, Vec::new());
+    assert_eq!(view_of(&world, HOME).rallies, []);
+    Ok(())
+}

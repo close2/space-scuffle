@@ -59,6 +59,7 @@ impl SimWorld {
                 | UnitOrder::CancelProduction { .. }
                 | UnitOrder::Load { .. }
                 | UnitOrder::UnloadAll
+                | UnitOrder::SetRally { .. }
         ) {
             self.dispatch_game_command(command_index, cmd);
             return;
@@ -100,7 +101,8 @@ impl SimWorld {
         }
     }
 
-    /// Admits a construction, harvest, cancellation or transport command through the economy.
+    /// Admits a construction, harvest, cancellation, transport or rally command through the
+    /// economy.
     fn dispatch_game_command(&mut self, command_index: usize, cmd: &PlayerCommand) {
         let result = self.admit_game_command(cmd);
         if let Err(GameCommandError::Invariant(source)) = &result {

@@ -171,13 +171,16 @@ const fn game_error_slot(error: &GameCommandError) -> usize {
         GameCommandError::NotACarrier(_) => 19,
         GameCommandError::CarrierFull { .. } => 20,
         GameCommandError::NothingToUnload => 21,
-        GameCommandError::Transport(_) => 22,
-        GameCommandError::Production(_) => 23,
-        GameCommandError::Invariant(_) => 24,
+        GameCommandError::NoCapableProducer => 22,
+        GameCommandError::RallyOutsideMap(_) => 23,
+        GameCommandError::InvalidRallyTarget(_) => 24,
+        GameCommandError::Transport(_) => 25,
+        GameCommandError::Production(_) => 26,
+        GameCommandError::Invariant(_) => 27,
     }
 }
 
-fn game_errors() -> [GameCommandError; 25] {
+fn game_errors() -> [GameCommandError; 28] {
     let node = ResourceNodeId(7);
     [
         GameCommandError::MatchOver,
@@ -209,6 +212,9 @@ fn game_errors() -> [GameCommandError; 25] {
             needed: 4,
         },
         GameCommandError::NothingToUnload,
+        GameCommandError::NoCapableProducer,
+        GameCommandError::RallyOutsideMap(sim_types::SimVec2::ZERO),
+        GameCommandError::InvalidRallyTarget(ID),
         GameCommandError::Transport(TransportAdmissionError::MissingEntity(ID)),
         GameCommandError::Production(ProductionAdmissionError::EmptySelection),
         GameCommandError::Invariant(INVARIANT),

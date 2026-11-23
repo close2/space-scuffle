@@ -145,6 +145,9 @@ impl SimWorld {
                     let child = self.commit_spawn(prepared);
                     self.production.occupancy.insert(child, position);
                     self.production.max_radius = self.production.max_radius.max(radius);
+                    // The new unit takes its rally's order in this tick, so it moves in this
+                    // tick's movement phase (plan `2026-11-23-production-queue` D-4).
+                    self.give_rally_order(producer, child);
                 }
                 Ok(None) => self
                     .production

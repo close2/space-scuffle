@@ -119,6 +119,12 @@ pub enum UnitOrder {
     },
     /// Set every passenger down around this carrier.
     UnloadAll,
+    /// Set the rally of the selected production structures (plan `2026-11-23-production-queue`
+    /// D-3); a rally on the structure itself clears it.
+    SetRally {
+        /// Where the structures send the units they make.
+        target: RallyTarget,
+    },
 }
 
 impl UnitOrder {
