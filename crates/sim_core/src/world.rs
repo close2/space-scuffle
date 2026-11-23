@@ -68,7 +68,8 @@ pub struct PlayerResources {
     pub minerals: u32,
     /// Vespene gas resource reserve.
     pub gas: u32,
-    /// Registered entity supply plus all queued reservations; death releases on reap.
+    /// Registered entity supply plus the supply of the jobs in production (plan
+    /// `2026-11-23-production-queue` D-1); death releases on reap.
     pub supply_used: u32,
     /// Effective supply capacity from completed providers, capped at 200.
     pub supply_max: u32,
@@ -285,6 +286,7 @@ impl SimWorld {
 
     /// Atomically spawns a completed setup structure at minimum grid cell `(cell_x, cell_y)`.
     /// Setup does not charge resources, but captures supply and never consumes an ID on failure.
+    /// A town hall sets its auto-rally (plan `2026-11-23-production-queue` D-7).
     ///
     /// # Errors
     /// Returns typed identity, owner, vitals, allocator, supply or placement failures.
@@ -340,6 +342,7 @@ impl SimWorld {
             y: cell_y,
         })?;
         let id = self.commit_spawn(prepared);
+        self.apply_auto_rally(id);
         self.pathfinder.recompute_clearance(&self.map);
         Ok(id)
     }

@@ -1200,3 +1200,63 @@ fn an_edited_status_changes_a_blinding_cloud_range_without_recompiling() -> Test
     bundle.finish()?;
     Ok(())
 }
+
+/// The showcase's world built from the catalogs of `bundle`, and the rallies of its structures.
+fn showcase_rallies(
+    catalogs: RuntimeCatalogs,
+) -> Result<Vec<Option<sim_types::RallyTarget>>, Box<dyn std::error::Error>> {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let manifest = sim_core::scenario::ScenarioManifest::from_ron_str(&std::fs::read_to_string(
+        assets.join("scenarios/showcase.ron"),
+    )?)?;
+    let document = MapFile::load(&assets.join(&manifest.map))?.decode()?;
+    let loadouts = StartLoadoutCatalog::load(catalog_directory().join("start_loadouts.ron"))?;
+    let world = build_world_with_catalogs(
+        &document,
+        &loadouts,
+        &manifest.players,
+        manifest.seed,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    Ok(world
+        .entities
+        .values()
+        .filter(|entity| entity.is_immobile)
+        .map(|entity| entity.rally)
+        .collect())
+}
+
+/// Plan `2026-11-23-production-queue` D-8 (charter §3.3, C6): the town hall's auto-rally is read
+/// from `structures.ron` at run time. The shipped rows rally the showcase's halls; the same
+/// binary with every `auto_rally` removed, or with a radius below every field's reach, gives
+/// none.
+#[test]
+fn an_edited_auto_rally_changes_the_halls_rally() -> TestResult {
+    let bundle = Bundle::new("auto-rally")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    let without: String = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("auto_rally:"))
+        .flat_map(|line| [line, "\n"])
+        .collect();
+    std::fs::write(&path, &without)?;
+    let removed = bundle.load()?;
+    std::fs::write(
+        &path,
+        text.replace("radius: 6.5, kinds", "radius: 0.5, kinds"),
+    )?;
+    let short = bundle.load()?;
+    bundle.finish()?;
+    let rallied = showcase_rallies(shipped)?;
+    assert_eq!(rallied.len(), 2, "the showcase's two halls");
+    assert!(rallied.iter().all(Option::is_some), "{rallied:?}");
+    for edited in [removed, short] {
+        let rallies = showcase_rallies(edited)?;
+        assert_eq!(rallies.len(), rallied.len());
+        assert!(rallies.iter().all(Option::is_none), "{rallies:?}");
+    }
+    Ok(())
+}

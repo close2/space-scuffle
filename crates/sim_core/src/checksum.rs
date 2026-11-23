@@ -76,7 +76,10 @@ use std::collections::BTreeMap;
 /// a box, then its three values; 1 for an outline, then its vertices).
 /// Schema 33 adds each unit's return-delay countdown, `UnitTask::return_ticks`, after
 /// `gather_ticks` (plan `2026-11-22-harvest-timing` D-5).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 33;
+/// Schema 34 adds each queued job's `ProductionJob::in_production`, after `reserved_supply`, and
+/// each entity's rally, `Entity::rally`, after `captured_supply_provided` (an `Option` of a tag,
+/// 0 point, 1 unit, 2 node, and its payload; plan `2026-11-23-production-queue` D-6).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 34;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

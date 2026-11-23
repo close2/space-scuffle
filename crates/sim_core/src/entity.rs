@@ -473,6 +473,10 @@ pub struct Entity {
     pub captured_supply_used: u32,
     /// Completed supply provision captured at spawn, independent of later catalog edits.
     pub captured_supply_provided: u32,
+    /// Where this production structure sends the units it makes (plan
+    /// `2026-11-23-production-queue` D-3); `None` without a rally. Set by the town hall's
+    /// auto-rally at creation (D-7).
+    pub rally: Option<sim_types::RallyTarget>,
     /// Task order progress carried between ticks.
     pub task: UnitTask,
     /// Resources this harvester holds; survives order changes until delivered.
@@ -637,6 +641,7 @@ impl Entity {
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,
             captured_supply_provided: archetype.supply_provided,
+            rally: None,
             task: UnitTask::default(),
             cargo: None,
             construction: None,

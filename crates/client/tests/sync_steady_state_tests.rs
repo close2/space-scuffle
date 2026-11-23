@@ -914,6 +914,18 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
         Vec::new(),
         "retained buffers that moved or grew"
     );
+    // Plan `2026-11-23-production-queue` D-10: the selected base's auto-rally is drawn from the
+    // pool, which was filled before the window, so the census above holds with it shown.
+    let world = harness.app.world_mut();
+    let shown = world
+        .query::<(
+            &client::battle_input::rally_marker::RallyMarker,
+            &Visibility,
+        )>()
+        .iter(world)
+        .filter(|(_, visibility)| **visibility != Visibility::Hidden)
+        .count();
+    assert_eq!(shown, 2, "the base's rally reticle and line");
 }
 
 #[test]

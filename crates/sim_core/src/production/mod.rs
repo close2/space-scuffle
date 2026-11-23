@@ -1,14 +1,19 @@
 //! Atomic capability-driven training, research, construction and supply accounting.
 //!
-//! Authored catalogs authorize products. Commands pay and reserve full FIFO supply at
-//! admission; completion transfers that reservation into a registered entity, or into a
-//! researched upgrade. Cancelling a queued job returns exactly what its admission took.
+//! Authored catalogs authorize products. Commands pay minerals and gas at admission. Only the
+//! job in production holds supply (plan `2026-11-23-production-queue` D-1, D-2; 5.0.14
+//! `WaitForFood`): a job admitted to an empty queue starts at once and takes its supply with its
+//! price, refused if the supply is not there; a job admitted behind others holds none and takes
+//! it when it reaches the front, waiting there, its countdown not started, while it does not fit.
+//! Completion transfers the running job's supply into a registered entity, or into a researched
+//! upgrade. Cancelling a queued job returns exactly what it holds.
 //! Logical failures occur before authoritative writes. Scratch/output buffers are
 //! derived, reusable and excluded from checksums; clients must consume outcomes.
 
 pub mod construction;
 mod exits;
 mod lifecycle;
+mod rally;
 mod research;
 
 use crate::upgrades::UpgradeId;
@@ -40,8 +45,13 @@ pub struct ProductionJob {
     pub remaining_ticks: u32,
     /// Countdown length at admission, the denominator of published progress.
     pub total_ticks: u32,
-    /// Full supply captured and reserved at admission, including waiting jobs.
+    /// Supply this job holds now: the product's supply cost while it is in production, 0 while
+    /// it waits; research jobs hold 0 always (plan `2026-11-23-production-queue` D-1).
     pub reserved_supply: u32,
+    /// Whether this job has started: true for at most the front job of a queue, from the update
+    /// in which it starts (at admission to an empty queue, or when it reaches the front and
+    /// counts down) until it leaves the queue (plan `2026-11-23-production-queue` D-1).
+    pub in_production: bool,
     /// Minerals taken at admission, which cancelling returns.
     pub paid_minerals: u32,
     /// Gas taken at admission, which cancelling returns.
@@ -156,7 +166,7 @@ pub enum ProductionAdmissionError {
         /// Current gas.
         available: u32,
     },
-    /// Full enqueue reservation would exceed capacity.
+    /// A job admitted to an idle producer starts at once, and its supply would exceed capacity.
     #[error("insufficient supply: used {used}, requested {required}, capacity {capacity}")]
     Supply {
         /// Registered usage and reservations.
@@ -211,8 +221,15 @@ pub struct ProductionOutcome {
 /// Current nonfatal obstruction observed for a ready producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductionBlock {
-    /// No connected, unoccupied local exit can fit this product.
+    /// No cell of the map can take this product: ring 0 has no connected free cell and no outer
+    /// ring a free cell on the producer's level (plan `2026-11-23-production-queue` D-9).
     ExitObstructed {
+        /// Waiting producer.
+        producer: EntityId,
+    },
+    /// The front job has not started because its supply does not fit (plan
+    /// `2026-11-23-production-queue` D-2; 5.0.14 `WaitForFood`); its countdown waits.
+    SupplyWait {
         /// Waiting producer.
         producer: EntityId,
     },
@@ -225,6 +242,11 @@ pub(crate) struct ProductionWorkspace {
     pub occupancy: SpatialHashGrid,
     pub neighbors: Vec<EntityId>,
     pub max_radius: SimScalar,
+    /// The exit search's candidate cells of one ring, `(squared distance to the rally point,
+    /// clockwise index, x, y)`: retained, so a search allocates only on growth (D-9 rule 7).
+    pub exit_order: Vec<(i128, u32, i64, i64)>,
+    /// Map cells the latest exit search examined; derived, for the bound of D-9 rule 4.
+    pub exit_cells_visited: u32,
 }
 
 impl ProductionWorkspace {
@@ -236,6 +258,8 @@ impl ProductionWorkspace {
             occupancy: SpatialHashGrid::new(width as usize, height as usize, SPATIAL_CELL_SIZE),
             neighbors: Vec::new(),
             max_radius: SimScalar::ZERO,
+            exit_order: Vec::new(),
+            exit_cells_visited: 0,
         }
     }
 }
@@ -386,7 +410,8 @@ impl SimWorld {
     }
 
     /// Admits one job to the first completed selected producer whose authored list permits it.
-    /// All selections must exist, be alive and owned. Full FIFO supply is reserved immediately.
+    /// All selections must exist, be alive and owned. A job admitted to an empty queue starts at
+    /// once and takes its supply; one behind others takes it when it reaches the front (D-2).
     ///
     /// # Errors
     /// Rejections preserve authoritative state. Corruption additionally emits a fatal diagnostic.
@@ -450,14 +475,6 @@ impl SimWorld {
             })?
             .ok_or(ProductionAdmissionError::NoEligibleProducer)?;
         self.validate_supply_ledger()?;
-        let job = ProductionJob {
-            item: ProductionItem::Unit(product),
-            remaining_ticks: arch.build_time_ticks,
-            total_ticks: arch.build_time_ticks,
-            reserved_supply: arch.supply_cost,
-            paid_minerals: arch.mineral_cost,
-            paid_gas: arch.gas_cost,
-        };
         let source = self
             .entities
             .get(&producer)
@@ -465,6 +482,22 @@ impl SimWorld {
                 entity: producer,
                 reason: "selected producer disappeared during preparation",
             })?;
+        // A job admitted to an empty queue starts at once (D-2).
+        let job = ProductionJob {
+            item: ProductionItem::Unit(product),
+            remaining_ticks: arch.build_time_ticks,
+            total_ticks: arch.build_time_ticks,
+            // Only the job in production holds supply (D-1); one behind others pays its price
+            // and is not checked against supply (D-2).
+            reserved_supply: if source.production_queue.is_empty() {
+                arch.supply_cost
+            } else {
+                0
+            },
+            in_production: source.production_queue.is_empty(),
+            paid_minerals: arch.mineral_cost,
+            paid_gas: arch.gas_cost,
+        };
         lifecycle::validate_job_source(
             &self.catalog,
             &self.upgrade_catalog,
@@ -593,7 +626,8 @@ impl SimWorld {
         })
     }
 
-    /// The player's economy after paying for `job`, or the shortage that refuses it.
+    /// The player's economy after paying for `job`, or the shortage that refuses it. Supply is
+    /// checked only for the supply the job takes now, which a job behind others does not.
     fn charge_job(
         resources: &PlayerResources,
         job: &ProductionJob,

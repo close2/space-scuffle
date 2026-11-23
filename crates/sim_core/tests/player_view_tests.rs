@@ -1425,3 +1425,90 @@ fn cast_states_report_the_viewers_casters_cooldown_and_energy() -> TestResult {
     assert!(view.cast_states.windows(2).all(|pair| pair[0] < pair[1]));
     Ok(())
 }
+
+/// Plan `2026-11-23-production-queue` D-2, D-10: a structure whose front job waits for supply is
+/// marked `supply_blocked`, and no other. Two producers' second jobs become ready to start on
+/// the same update with room for one: the lower `EntityId` starts, the other waits.
+#[test]
+fn only_the_structure_waiting_for_supply_is_marked() -> TestResult {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = SimWorld::with_catalogs(map, 5, units()?, UpgradeCatalog::default())?;
+    let (hall, product) = world
+        .catalog
+        .archetypes()
+        .filter(|arch| arch.supply_provided > 0)
+        .find_map(|arch| {
+            arch.trains_units.iter().find_map(|slug| {
+                world
+                    .catalog
+                    .get_by_slug(slug)
+                    .filter(|p| {
+                        !matches!(p.shape, ShapeKind::BuildingDome { .. }) && p.supply_cost > 0
+                    })
+                    .map(|p| (arch.unit_type_id, p.unit_type_id))
+            })
+        })
+        .ok_or("no producer of a mobile product with supply")?;
+    let supply = world.catalog.get(product)?.supply_cost;
+    let first = world.spawn_structure(hall, HOME, 4, 4)?;
+    let second = world.spawn_structure(hall, HOME, 20, 4)?;
+    let slot = PlayerSlot::ALL[0];
+    world.player_resources[slot].minerals = RICH;
+    world.player_resources[slot].gas = RICH;
+    let room = |world: &SimWorld| {
+        world.player_resources[slot].supply_max - world.player_resources[slot].supply_used
+    };
+    let mut x = 1;
+    while room(&world) >= 4 * supply {
+        let at = SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(26));
+        world.spawn_unit(product, HOME, at)?;
+        x += 1;
+    }
+    for producer in [first, first, second, second] {
+        world.try_queue_production(HOME, &[producer], product)?;
+    }
+    let build_time = world.catalog.get(product)?.build_time_ticks;
+    idle(&mut world, build_time + 1);
+    assert_eq!(world.diagnostics(), []);
+    let view = view_of(&world, HOME);
+    let blocked = |producer| view.queue_of(producer).map(|queue| queue.supply_blocked);
+    assert_eq!(blocked(first), Some(false));
+    assert_eq!(blocked(second), Some(true));
+    Ok(())
+}
+
+/// Plan `2026-11-23-production-queue` D-5, D-10: the view lists the viewer's own structures whose
+/// rally resolves, at the resolved point; another player's rally, and a rally to a unit that is
+/// gone, are absent.
+#[test]
+fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
+    let mut world = skirmish()?;
+    let (home, _) = base_of(&world, HOME)?;
+    let (away, _) = base_of(&world, AWAY)?;
+    let rally = |world: &SimWorld, id| world.entities[&id].rally;
+    assert!(rally(&world, home).is_some() && rally(&world, away).is_some());
+    let point = world
+        .rally_point(home)
+        .ok_or("the home hall's rally resolves")?;
+    let view = view_of(&world, HOME);
+    assert_eq!(view.rallies.len(), 1);
+    assert_eq!(view.rallies[0].entity, home);
+    assert_eq!(view.rallies[0].point, point.to_f32_array());
+    // A rally to a unit that is gone does not resolve, so it is not shown.
+    let crew = builders(&world, HOME);
+    step(
+        &mut world,
+        vec![command(
+            HOME,
+            vec![home],
+            UnitOrder::SetRally {
+                target: sim_types::RallyTarget::Unit(crew[0]),
+            },
+        )],
+    );
+    assert_eq!(view_of(&world, HOME).rallies.len(), 1);
+    world.entities.get_mut(&crew[0]).ok_or("worker absent")?.hp = SimScalar::ZERO;
+    step(&mut world, Vec::new());
+    assert_eq!(view_of(&world, HOME).rallies, []);
+    Ok(())
+}

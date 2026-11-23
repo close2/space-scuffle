@@ -130,6 +130,15 @@ pub enum GameCommandError {
     /// The carrier holds nobody to unload.
     #[error("no selected carrier holds passengers")]
     NothingToUnload,
+    /// Nothing selected is a completed structure that trains units, so nothing can rally.
+    #[error("no selected structure can set a rally")]
+    NoCapableProducer,
+    /// A rally point must lie on the map (world units).
+    #[error("rally point {0:?} lies outside the map")]
+    RallyOutsideMap(SimVec2),
+    /// A rally unit must exist, be alive and be the player's own.
+    #[error("{0:?} cannot be a rally target")]
+    InvalidRallyTarget(EntityId),
     /// The transport lifecycle refused the operation.
     #[error(transparent)]
     Transport(#[from] TransportAdmissionError),
@@ -358,7 +367,7 @@ impl SimWorld {
         self.economy.events.clear();
     }
 
-    /// Admits one economy, construction, cancellation or transport command.
+    /// Admits one economy, construction, cancellation, transport or rally command.
     pub(crate) fn admit_game_command(
         &mut self,
         cmd: &PlayerCommand,
@@ -379,6 +388,7 @@ impl SimWorld {
             }
             UnitOrder::Load { carrier } => self.admit_load(player, recipients, carrier, cmd.queue),
             UnitOrder::UnloadAll => self.admit_unload(player, recipients, cmd.queue),
+            UnitOrder::SetRally { target } => self.admit_set_rally(player, recipients, target),
             _ => Err(GameCommandError::UnsupportedOrder),
         }
     }

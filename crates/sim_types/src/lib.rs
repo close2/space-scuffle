@@ -38,8 +38,8 @@ pub mod weapon;
 // Flat convenient re-exports
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
-    AttackOrigin, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand, TickBundle,
-    TickInputBundle, UnitModeSpec, UnitOrder,
+    AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand,
+    RallyTarget, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -64,7 +64,7 @@ pub use math::{SimAngle, SimScalar, SimVec2};
 pub use placement::{PlacementFlag, PlacementFlags};
 pub use player_view::{
     AbilityLockView, CarrierView, CastStateView, CommandOptionView, CommandSubject, ModeStateView,
-    OptionLock, PlayerView, QueuedItem, QueuedJobView, SiteRefusal, StructureQueueView,
+    OptionLock, PlayerView, QueuedItem, QueuedJobView, RallyView, SiteRefusal, StructureQueueView,
     VisibleNodeView,
 };
 pub use presentation::{

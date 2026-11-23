@@ -279,6 +279,9 @@ pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
             return;
         }
         GameCommandError::NothingToUnload => "no selected carrier holds passengers",
+        GameCommandError::NoCapableProducer => "no selected structure can set a rally",
+        GameCommandError::RallyOutsideMap(_) => "the rally point lies outside the map",
+        GameCommandError::InvalidRallyTarget(_) => "that unit cannot be a rally target",
         GameCommandError::Transport(error) => transport_reason(error),
         GameCommandError::Production(error) => {
             write_production_reason(output, error);

@@ -358,8 +358,13 @@
 // previous checksums on all 20 + 60 checkpoints. Nothing in this replay harvests, so the field is 0
 // on every unit at every checkpoint. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-production-queue WP1 (checksum schema 33 -> 34): each job's
+// `in_production` and each entity's `rally` are hashed; the town halls' auto-rally sets their
+// rally. No behaviour changed: with both fields excluded from the encoding, every checkpoint
+// stays as recorded before. Native debug and release and wasm32-wasip1 release and debug agree
+// on the list below.
 (
-    checksum_schema: 33,
+    checksum_schema: 34,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -385,25 +390,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xa1c22188b7b0258e,
-        0x49b383e5b5c1822e,
-        0x4f8786d4f4ec6e72,
-        0x35742e85d8e37cd0,
-        0xd9520b5386cce612,
-        0xa2906410ef3a082f,
-        0x6ab2c5dc1f173c33,
-        0xfaaf552ae9edfdd5,
-        0x2596362a314ec394,
-        0x7d28f23fd4c84963,
-        0x11ac9b26f7c22fab,
-        0x89886e99ee17c52e,
-        0x04cc6d7c9fdc4e3b,
-        0xd70b96b3e396d76a,
-        0x8aad19353fd19115,
-        0x9c43e2145adcabef,
-        0x86bca3812965e9df,
-        0x5bdb6063e4716f50,
-        0x86ea6f714a7173cb,
-        0x3bd12ed783e6f5f9,
+        0xa545a9c2c8b7e7c3,
+        0xcc6d6bc4f4a017f1,
+        0xe55ca877c751d559,
+        0xdfa617a829f344a1,
+        0x9cad378549be188c,
+        0x9c5a58ebe1784094,
+        0x74626ade24785b46,
+        0xb1f0201433668b6a,
+        0x4a7a83ec8d1aefd7,
+        0x004edd1f5c38a15a,
+        0xe929a0e08c9d5167,
+        0x2c1935be61d4e572,
+        0x54705f3712382761,
+        0xf0c7ba2630702598,
+        0x66f9d289bac8e237,
+        0x51dcd17bfbbaedb5,
+        0xa4aea6b78d373d74,
+        0x17a18d63b8c432f3,
+        0xf5f7447b569fc364,
+        0x5026aadac25ad07d,
     ],
 )

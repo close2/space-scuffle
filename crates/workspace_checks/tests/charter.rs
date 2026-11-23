@@ -55,6 +55,12 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
         reason: "presentation: `RenderSnapshot` is the documented fixed-point to GPU boundary",
     },
     FloatAllowance {
+        path: "crates/sim_types/src/player_view.rs",
+        count: 1,
+        reason: "presentation: a rally's point in `PlayerView`, the viewer's record for the HUD \
+                 (plan `2026-11-23-production-queue` D-10)",
+    },
+    FloatAllowance {
         path: "crates/sim_types/src/presentation.rs",
         count: 6,
         reason: "presentation: line-splash, area and spell-missile geometry carried by \
@@ -67,7 +73,7 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog.rs",
-        count: 71,
+        count: 72,
         reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load",
     },
     FloatAllowance {
