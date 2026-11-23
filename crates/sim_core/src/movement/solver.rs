@@ -308,6 +308,8 @@ pub(crate) struct ContactSolver {
     /// Each body's position when the pair list was last built.
     anchors: Vec<SimVec2>,
     sums: Vec<Accumulator>,
+    /// Per body: the scale of its summed step in a hard pass ([`Self::bound_summed_steps`]).
+    scales: Vec<SimScalar>,
     /// Per body: the state of its last terrain step, for the active set.
     steps: Vec<BodyStep>,
     grid: BodyGrid,
@@ -479,7 +481,10 @@ impl ContactSolver {
         // enemy and fixed constraints, so that no friend's correction is the last word against
         // an enemy or a fixed body.
         self.accumulate(Pass::HardFriends, report);
+        self.bound_summed_steps(report);
         self.apply(false, &mut terrain, report);
+        // The enemy and fixed constraints keep the last word unbounded: D-α never relaxes them,
+        // and a body may close on a friend to clear an enemy.
         self.accumulate(Pass::EnemyAndFixed, report);
         self.apply(false, &mut terrain, report);
         done.pairs = self.pairs.len();
@@ -534,6 +539,59 @@ impl ContactSolver {
                     operation: "contact solver pair",
                     source,
                 }),
+            }
+        }
+    }
+
+    /// Keeps the hard friend pass monotone (plan Amendment 15, O1): a body whose summed step has a
+    /// component toward a body it already overlaps does not take that step in this pass. No
+    /// overlapping pair then closes in a summed pass, so no overlap grows and no pair's order along
+    /// its line of centres reverses. Without it, a walker's whole overlap with an idle body carried
+    /// the idle body across its idle partner, and the two swapped places every tick (A0's traces).
+    /// The averaged iterations of the next tick resolve what the pass left. The decision is a
+    /// minimum over pairs, so it does not depend on their order.
+    // PERFORMANCE RATIONALE:
+    // Why: The bound needs each overlapping pair's distance, a root per pair.
+    // What: It runs only in the two summed passes, only for pairs with a body that has a summed
+    // step, and keeps one scale per body in a retained buffer.
+    // Trade-off: One more scan of the pair list per summed pass.
+    fn bound_summed_steps(&mut self, report: &mut impl FnMut(MovementInvariant)) {
+        self.scales.clear();
+        self.scales.resize(self.bodies.len(), SimScalar::ONE);
+        for pair in &self.pairs {
+            let (ia, ib) = (pair.a as usize, pair.b as usize);
+            if self.sums[ia].count == 0 && self.sums[ib].count == 0 {
+                continue;
+            }
+            let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
+            let bound = pair_bound(a, b, pair.radius_sum).and_then(|bound| {
+                let Some((toward_b, half)) = bound else {
+                    return Ok((SimScalar::ONE, SimScalar::ONE));
+                };
+                let toward_a = super::math::checked_vec_neg(toward_b)?;
+                Ok((
+                    step_scale(self.sums[ia].sum, toward_b, half)?,
+                    step_scale(self.sums[ib].sum, toward_a, half)?,
+                ))
+            });
+            match bound {
+                Ok((scale_a, scale_b)) => {
+                    self.scales[ia] = self.scales[ia].min(scale_a);
+                    self.scales[ib] = self.scales[ib].min(scale_b);
+                }
+                Err(source) => report(MovementInvariant::Arithmetic {
+                    entity: a.id,
+                    operation: "contact solver step bound",
+                    source,
+                }),
+            }
+        }
+        for (acc, &scale) in self.sums.iter_mut().zip(&self.scales) {
+            if scale < SimScalar::ONE {
+                acc.sum = SimVec2::new(
+                    acc.sum.x.saturating_mul(scale),
+                    acc.sum.y.saturating_mul(scale),
+                );
             }
         }
     }
@@ -642,6 +700,39 @@ fn settled_step(
         return Ok(None);
     };
     settle_on_terrain(map, pathfinder, policy, start, current, accepted)
+}
+
+/// For an overlapping pair, the unit vector from `a` toward `b` and the step either may take
+/// toward the other in a summed pass (none); `None` when the pair does not overlap. Coincident centres take the direction the pair's
+/// correction uses ([`pair_normal`], reversed: from `a` toward `b`).
+fn pair_bound(
+    a: &SolverBody,
+    b: &SolverBody,
+    radius_sum: SimScalar,
+) -> Result<Option<(SimVec2, SimScalar)>, MovementMathError> {
+    let distance = super::checked_distance(a.position, b.position)
+        .ok_or(MovementMathError::Unrepresentable)?;
+    if distance >= radius_sum {
+        return Ok(None);
+    }
+    let toward_b = super::math::checked_vec_neg(pair_normal(a, b)?)?;
+    Ok(Some((toward_b, SimScalar::ZERO)))
+}
+
+/// The largest factor in [0, 1] by which `step` may be taken so that its component along `toward`
+/// (a unit vector) is at most `half` (zero for a step that closes on `toward`).
+fn step_scale(
+    step: SimVec2,
+    toward: SimVec2,
+    half: SimScalar,
+) -> Result<SimScalar, MovementMathError> {
+    let along = super::math::checked_dot(step, toward)?;
+    if along <= half {
+        return Ok(SimScalar::ONE);
+    }
+    half.checked_div(along)
+        .ok_or(MovementMathError::Unrepresentable)
+        .map(|scale| scale.clamp(SimScalar::ZERO, SimScalar::ONE))
 }
 
 /// Adds `share` of `delta` to slot `index`'s sum, counting it, when the share is positive.
@@ -1114,6 +1205,95 @@ mod tests {
                 assert!((share - 0.008).abs() < 1e-6, "friend overlap {share}");
             }
         }
+        Ok(())
+    }
+
+    /// A column of walker, idle, idle, walker of radius 0.875, its centres 0.584 apart (a third
+    /// of the radius sum; acceptance seed 100804's and development seed 967's knot), the walkers
+    /// stepping 0.071 inward every tick; each tick's solve starts where the last ended. Returns the
+    /// two idle bodies' x after every tick.
+    fn column_ticks(world: &mut crate::SimWorld, ticks: usize) -> Vec<(f64, f64)> {
+        let spacing = 0.584;
+        let press = 0.071;
+        let walker = ContactParty {
+            moving: true,
+            idle: false,
+            ..party(0)
+        };
+        let idle = ContactParty {
+            idle: true,
+            moving: false,
+            ..party(0)
+        };
+        let mut xs = [
+            20.0,
+            20.0 + spacing,
+            20.0 + 2.0 * spacing,
+            20.0 + 3.0 * spacing,
+        ];
+        let mut out = Vec::new();
+        for _ in 0..ticks {
+            let bodies = [
+                solver_body(20, walker, 0.875, at(xs[0] - press, 20.0), at(xs[0], 20.0)),
+                solver_body(24, idle, 0.875, at(xs[1], 20.0), at(xs[1], 20.0)),
+                solver_body(9, idle, 0.875, at(xs[2], 20.0), at(xs[2], 20.0)),
+                solver_body(5, walker, 0.875, at(xs[3] + press, 20.0), at(xs[3], 20.0)),
+            ];
+            let (solved, _) = solve_on(world, &bodies, SETTINGS);
+            for (k, body) in solved.bodies.iter().enumerate() {
+                xs[k] = f64::from(body.position.x.to_f32());
+            }
+            out.push((xs[1], xs[2]));
+        }
+        out
+    }
+
+    /// Plan Amendment 15, O1: the hard pass never carries a body across a partner it overlaps.
+    /// Before, the summed hard correction of each walker–idle pair (the whole overlap, 1.17)
+    /// carried each idle body past its idle partner (0.584 away), and the two swapped places
+    /// every tick. Now they keep their order and stand still from tick to tick.
+    #[test]
+    fn a_pressed_column_keeps_its_order_and_settles() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let ticks = column_ticks(&mut world, 8);
+        for (tick, &(left, right)) in ticks.iter().enumerate() {
+            assert!(
+                left < right,
+                "tick {tick}: the idle pair swapped ({left}, {right})"
+            );
+        }
+        assert_eq!(ticks[6], ticks[7], "the column still moves: {ticks:?}");
+        Ok(())
+    }
+
+    /// Plan Amendment 15, O1: two idle units placed overlapping by 0.8 separate monotonically:
+    /// along their line of centres each moves one way only, and their overlap never grows.
+    #[test]
+    fn an_overlapped_idle_pair_separates_monotonically() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let idle = ContactParty {
+            idle: true,
+            moving: false,
+            ..party(0)
+        };
+        let mut xs = [20.0, 20.0 + 1.75 - 0.8];
+        let mut gaps = Vec::new();
+        for _ in 0..4 {
+            let bodies = [
+                solver_body(1, idle, 0.875, at(xs[0], 20.0), at(xs[0], 20.0)),
+                solver_body(2, idle, 0.875, at(xs[1], 20.0), at(xs[1], 20.0)),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            let next = [
+                f64::from(solved.bodies[0].position.x.to_f32()),
+                f64::from(solved.bodies[1].position.x.to_f32()),
+            ];
+            assert!(next[0] <= xs[0] && next[1] >= xs[1], "{xs:?} -> {next:?}");
+            xs = next;
+            gaps.push(xs[1] - xs[0]);
+        }
+        assert!(gaps.windows(2).all(|w| w[1] >= w[0]), "{gaps:?}");
         Ok(())
     }
 
