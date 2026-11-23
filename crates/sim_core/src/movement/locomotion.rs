@@ -31,21 +31,24 @@
 
 use super::contact::{probe_permits, settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
+use super::intent::{intent_heading, IntentInput, SideMemory};
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
     direction, distance, within_distance,
 };
+use super::ring::{RingAim, RingChase};
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
-    ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
-    STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON,
-    WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, ARRIVAL_WITNESS_REACH, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
+    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
+    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD,
+    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
     RouteOutcome, RouteOutcomeKind,
 };
-use crate::entity::{Entity, MovementMemory};
+use crate::catalog::{ContactRules, MovementPipeline};
+use crate::entity::{Entity, MovementMemory, SlotClaim};
 use crate::steering::{
     check_cluster_arrival_with, remove_blocked_velocity, steer_body, surround_side, ContactBody,
     SteeringObstacle,
@@ -270,6 +273,10 @@ impl MotionProposal {
 
 pub(crate) type CastRequest = (EntityId, u8, Option<SimVec2>, Option<EntityId>);
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a proposal is built and moved once per actor per tick; boxing it would allocate there"
+)]
 enum MotionAction {
     Commit(MotionProposal),
     Pursue(EntityId, AttackOrigin),
@@ -305,6 +312,36 @@ struct StepContext<'a> {
     surround: Option<Option<EntityId>>,
     /// The unit's auto-acquisition scan range in world units, edge to edge.
     scan_range: SimScalar,
+    /// Under the solver pipeline, the side rule's horizon factor (`contact.side_horizon_factor`,
+    /// plan `2026-11-20-contact-solver` I-3a): the step steers by intent and contact is the
+    /// solver's. `None` under the legacy pipeline.
+    intent: Option<u8>,
+    /// The near reach's margin beyond the radius sum, world units ([`near_margin`]): a
+    /// neighbour beyond it was listed without its ground test ([`Self::admits`]).
+    near_margin: SimScalar,
+}
+
+impl StepContext<'_> {
+    /// Whether `obstacle`, one of [`Self::neighbours`], lies within the near reach: the reach
+    /// every rule but the side rule reads (the legacy pipeline's whole reach).
+    fn is_near(&self, obstacle: &SteeringObstacle) -> bool {
+        let radii = i128::from(self.body.radius.raw()) + i128::from(obstacle.radius.raw());
+        within_distance(
+            self.body.pos,
+            obstacle.pos,
+            radii + i128::from(self.near_margin.raw()),
+        )
+    }
+
+    /// Whether `obstacle`, one of [`Self::neighbours`], is a neighbour by the ground test that
+    /// [`gather_neighbours`] defers for bodies beyond the near reach: always for an air unit or a
+    /// near body, else when the ground between the two is connected. Only the side rule reads
+    /// bodies beyond the near reach.
+    fn admits(&self, obstacle: &SteeringObstacle) -> bool {
+        self.policy.layer == MovementLayer::Air
+            || self.is_near(obstacle)
+            || on_connected_ground(self.map, self.body.pos, obstacle.pos)
+    }
 }
 
 /// What gates a `turn_before_move` unit's step: its tick-start heading and its moving hull rate.
@@ -383,36 +420,61 @@ struct NeighbourIndex<'a> {
     largest_radius: SimScalar,
 }
 
+/// The margin beyond the radius sum within which a body is a neighbour under the legacy
+/// pipeline, world units: the steering lookahead and two steps at `entry`'s speed. Under the
+/// solver pipeline it is the **near** reach, inside which neighbours are read by every rule.
+fn near_margin(entry: MotionEntry) -> SimScalar {
+    STEERING_LOOKAHEAD + entry.speed + entry.speed
+}
+
 /// Collects the bodies that can affect `entry` this tick from the tick-start snapshot.
 ///
-/// Bodies across a cliff are left out: ground units cannot touch through terrain.
+/// Bodies across a cliff are left out: ground units cannot touch through terrain. Under the
+/// solver pipeline (`horizon` set) the reach adds the side rule's horizon, `h · (r + r_b)` world
+/// units for the largest `r_b` (plan `2026-11-20-contact-solver` WP3, I-3a); a body beyond the
+/// near reach ([`near_margin`]) is listed without its ground test, which
+/// [`StepContext::admits`] makes for the side rule, the only rule that reads such far bodies;
+/// every other rule reads the near reach alone ([`StepContext::is_near`]).
 // PERFORMANCE RATIONALE:
-// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units.
+// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units. Under
+// the solver the horizon widens the reach about fivefold in area, and the ground test of each
+// far body walks the cells between the two (evidence §5.3: the gather tripled its share).
 // What: Read candidates from a grid built once at the start of the phase, and copy the few that
-// pass an exact distance test into one retained buffer.
+// pass an exact distance test into one retained buffer. A far body's ground test is deferred to
+// the rule that can act on it: the side rule, for a body that is a threat or the committed
+// partner (plan Amendment 3, item 1, option 4).
 // Trade-off: Copies ~56-byte records per neighbour, in exchange for flat scans downstream and
-// O(N) work per tick; `out` stops growing once the densest crowd has been seen.
+// O(N) work per tick; `out` stops growing once the densest crowd has been seen. Every rule that
+// reads far bodies must ask [`StepContext::admits`]; the rules that do not read them are bounded
+// by the near reach.
 fn gather_neighbours(
     index: &NeighbourIndex<'_>,
     map: &SimMap,
-    entry: MotionEntry,
-    position: SimVec2,
+    (entry, position): (MotionEntry, SimVec2),
+    horizon: Option<u8>,
     out: &mut Vec<SteeringObstacle>,
 ) {
     out.clear();
-    let margin = STEERING_LOOKAHEAD + entry.speed + entry.speed;
+    let horizon_reach = horizon.map_or(SimScalar::ZERO, |factor| {
+        (entry.policy.radius + index.largest_radius).saturating_mul(SimScalar::from_num(factor))
+    });
+    let near = near_margin(entry);
+    let margin = near + horizon_reach;
     let reach = entry.policy.radius + index.largest_radius + margin;
     index.grid.for_each_near(position, reach, |body| {
         let obstacle = &index.obstacles[body];
         if obstacle.id == entry.id {
             return;
         }
-        let touching = i128::from(entry.policy.radius.raw())
-            + i128::from(obstacle.radius.raw())
-            + i128::from(margin.raw());
-        if within_distance(position, obstacle.pos, touching)
-            && (entry.policy.layer == MovementLayer::Air
-                || on_connected_ground(map, position, obstacle.pos))
+        let radii = i128::from(entry.policy.radius.raw()) + i128::from(obstacle.radius.raw());
+        if !within_distance(position, obstacle.pos, radii + i128::from(margin.raw())) {
+            return;
+        }
+        let deferred = horizon_reach > SimScalar::ZERO
+            && !within_distance(position, obstacle.pos, radii + i128::from(near.raw()));
+        if entry.policy.layer == MovementLayer::Air
+            || deferred
+            || on_connected_ground(map, position, obstacle.pos)
         {
             out.push(*obstacle);
         }
@@ -697,6 +759,44 @@ impl SimWorld {
         ) || (actor.velocity == SimVec2::ZERO && front_attacks() && target_lives())
     }
 
+    /// Whether `actor` stands engaged, so friendly traffic does not push it: under the legacy
+    /// pipeline [`Self::is_anchored_in_combat`]; under the solver pipeline, in range of a live
+    /// target it attacks (plan `2026-11-20-contact-solver` Amendment 7, item 1). With hold,
+    /// immobile and unpushable this is the one definition of anchored, and under the solver
+    /// only contact reads it: the contact shares (C-2) and the idle-yield test of intent, which
+    /// asks whether contact would push the body aside.
+    pub(crate) fn engaged(&self, entry: MotionEntry, actor: &Entity) -> bool {
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            self.in_range_of_live_target(entry, actor)
+        } else {
+            self.is_anchored_in_combat(actor)
+        }
+    }
+
+    /// Whether `actor` stands within its weapon's band of a live target: its current target, or
+    /// the target of its attack order.
+    fn in_range_of_live_target(&self, entry: MotionEntry, actor: &Entity) -> bool {
+        let target = actor.current_target.or(match actor.order_queue.front() {
+            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+            _ => None,
+        });
+        let Some((id, target)) = target.and_then(|id| {
+            self.entities
+                .get(&id)
+                .filter(|t| t.is_alive())
+                .map(|t| (id, t))
+        }) else {
+            return false;
+        };
+        let Ok(Some(band)) = self.pursuit_band(entry, actor, target, id, AttackOrigin::Explicit)
+        else {
+            return false;
+        };
+        distance(actor.position, target.position)
+            .map(|d| i128::from(d.raw()))
+            .is_ok_and(|d| d <= band.max && d >= band.min)
+    }
+
     fn obstacle_of(&self, entry: MotionEntry, actor: &Entity) -> SteeringObstacle {
         let idle = matches!(actor.order_queue.front(), None | Some(UnitOrder::Idle));
         SteeringObstacle {
@@ -706,7 +806,7 @@ impl SimWorld {
             velocity: actor.velocity,
             owner: actor.owner,
             push_priority: entry.push_priority,
-            anchored: actor.cannot_be_pushed() || self.is_anchored_in_combat(actor),
+            anchored: actor.cannot_be_pushed() || self.engaged(entry, actor),
             idle: actor.is_idle(),
             settled_on: actor.movement.arrived_at.filter(|_| idle),
         }
@@ -726,7 +826,14 @@ impl SimWorld {
         for layer in &mut self.movement.obstacles {
             layer.clear();
         }
+        // `ids` follow the entity table's order, so the record is sorted by id.
+        self.movement.tick_start.clear();
         for &id in &ids {
+            if let Some(actor) = self.entities.get(&id) {
+                self.movement
+                    .tick_start
+                    .push((id, actor.position, actor.velocity));
+            }
             match self.motion_entry(id) {
                 Ok(entry) => {
                     // A body without collision (mining, or a status's suppression) is no
@@ -940,6 +1047,7 @@ impl SimWorld {
             current_tick: self.current_tick,
             route_groups: &self.route_groups,
             lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
+            contact: self.catalog.movement_rules().contact(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let walked = draft.walk(&mut scene, &mut neighbours, check_route, map_news);
@@ -1088,7 +1196,9 @@ impl SimWorld {
 
     /// Prepares one pursuer's motion toward `target_id`: aim when in range, otherwise chase.
     ///
-    /// The range check runs first and needs the whole world. The chase then runs in stages over a
+    /// The range check runs first and needs the whole world. Under the solver pipeline the ring
+    /// rule then decides whether the unit stands for want of room (plan
+    /// `2026-11-20-contact-solver` Amendment 7, item 2). The chase then runs in stages over a
     /// [`MotionDraft`], like walking, with the target's position as the goal.
     fn prepare_pursuit(
         &mut self,
@@ -1096,8 +1206,67 @@ impl SimWorld {
         target_id: EntityId,
         origin: AttackOrigin,
     ) -> Result<MotionProposal, MovementInvariant> {
+        let (mut proposal, mut pursuit) = match self.start_pursuit(entry, target_id, origin)? {
+            PursuitStart::Settled(proposal) => return Ok(proposal),
+            PursuitStart::Chase(proposal, pursuit) => (proposal, pursuit),
+        };
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            let position = self
+                .entities
+                .get(&entry.id)
+                .map_or(SimVec2::ZERO, |a| a.position);
+            let leash = (pursuit.origin == AttackOrigin::Acquired).then(|| {
+                (
+                    proposal.memory.leash_origin.unwrap_or(position),
+                    pursuit.leash,
+                )
+            });
+            let kept = proposal.memory.slot.filter(|gap| gap.target == target_id);
+            let aim = self.ring_aim(RingChase {
+                entry,
+                position,
+                target: target_id,
+                band_max: pursuit.max,
+                leash,
+                kept: kept.map(|gap| gap.point),
+            })?;
+            proposal.memory.slot = None;
+            match aim {
+                RingAim::Stand => {
+                    // G-6: no free angle on the ring; the order stays and no stall accrues
+                    // (Q0089).
+                    proposal.velocity = SimVec2::ZERO;
+                    proposal.anim = AnimState::Idle;
+                    return Ok(proposal);
+                }
+                RingAim::Straight => {}
+                RingAim::Gap(_, point) => {
+                    // A unit walking to a gap measures its progress to the gap point; a new
+                    // gap starts that measure afresh.
+                    if kept.is_none_or(|gap| gap.point != point) {
+                        proposal.memory.progress_best = None;
+                    }
+                    proposal.memory.slot = Some(SlotClaim {
+                        target: target_id,
+                        point,
+                    });
+                    pursuit.gap = Some(point);
+                }
+            }
+        }
+        self.chase_target(entry, target_id, proposal, &pursuit)
+    }
+
+    /// The pursuit's first stage: a proposal that settles the tick when the target is gone, the
+    /// unit has no weapon against it, or it stands in range and aims; otherwise the chase's
+    /// facts.
+    fn start_pursuit(
+        &self,
+        entry: MotionEntry,
+        target_id: EntityId,
+        origin: AttackOrigin,
+    ) -> Result<PursuitStart, MovementInvariant> {
         let id = entry.id;
-        let policy = entry.policy;
         let actor = self
             .entities
             .get(&id)
@@ -1105,11 +1274,11 @@ impl SimWorld {
                 entity: id,
                 reason: "validated pursuer disappeared",
             })?;
-        let mut proposal = MotionProposal::new(actor, policy);
+        let mut proposal = MotionProposal::new(actor, entry.policy);
         if !self.is_entity_available_for_combat(actor.owner, target_id) {
             proposal.end_attack();
             self.coast(entry, actor, &mut proposal)?;
-            return Ok(proposal);
+            return Ok(PursuitStart::Settled(proposal));
         }
         let target = self
             .entities
@@ -1121,13 +1290,44 @@ impl SimWorld {
         let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
             proposal.end_attack();
             self.coast(entry, actor, &mut proposal)?;
-            return Ok(proposal);
+            return Ok(PursuitStart::Settled(proposal));
         };
-        if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
-            return Ok(proposal);
+        let (target_at, _) = self.pursued_motion(target_id, target);
+        if pursuit.aim_if_in_range(id, actor, target_at, &mut proposal)? {
+            return Ok(PursuitStart::Settled(proposal));
         }
+        Ok(PursuitStart::Chase(proposal, pursuit))
+    }
 
-        let goal = target.position;
+    /// The chase toward `target_id` as a [`MotionDraft`], once the unit is out of range.
+    fn chase_target(
+        &mut self,
+        entry: MotionEntry,
+        target_id: EntityId,
+        proposal: MotionProposal,
+        pursuit: &Pursuit,
+    ) -> Result<MotionProposal, MovementInvariant> {
+        let id = entry.id;
+        let policy = entry.policy;
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(MovementInvariant::InvalidState {
+                entity: id,
+                reason: "validated pursuer disappeared",
+            })?;
+        let goal = if let Some(point) = pursuit.gap {
+            point
+        } else {
+            let target = self
+                .entities
+                .get(&target_id)
+                .ok_or(MovementInvariant::InvalidState {
+                    entity: target_id,
+                    reason: "available target disappeared",
+                })?;
+            self.pursued_motion(target_id, target).0
+        };
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
         let owner = actor
             .owner
@@ -1153,12 +1353,25 @@ impl SimWorld {
             current_tick: self.current_tick,
             route_groups: &self.route_groups,
             lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
+            contact: self.catalog.movement_rules().contact(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
-        let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
+        let chased = draft.chase(&mut scene, &mut neighbours, pursuit);
         scene.movement.neighbours = neighbours;
         chased?;
         Ok(draft.proposal)
+    }
+
+    /// Where a pursuer sees its target, world units, and the target's last displacement, world
+    /// units per tick: under the solver pipeline the target's tick-start position and motion
+    /// (plan `2026-11-20-contact-solver` WP5, §5.4), so a pursuer processed after its target does
+    /// not see where the target went this tick; under the legacy pipeline the live entity.
+    fn pursued_motion(&self, target_id: EntityId, target: &Entity) -> (SimVec2, SimVec2) {
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            self.tick_start_motion(target_id)
+        } else {
+            (target.position, target.velocity)
+        }
     }
 
     /// The range band `actor` attacks `target` from, or `None` when it has no weapon against it.
@@ -1216,13 +1429,22 @@ impl SimWorld {
         Ok(Some(Pursuit {
             target: target_id,
             origin,
-            target_moving: target.velocity != SimVec2::ZERO,
+            target_moving: self.pursued_motion(target_id, target).1 != SimVec2::ZERO,
             has_turret: weapon.has_turret,
             max,
             min,
             leash: self.catalog.movement_rules().acquire_leash_radius(),
+            gap: None,
         }))
     }
+}
+
+/// How a pursuit's first stage ended ([`SimWorld::start_pursuit`]).
+enum PursuitStart {
+    /// The tick is settled: the proposal is final.
+    Settled(MotionProposal),
+    /// The unit is out of range: chase.
+    Chase(MotionProposal, Pursuit),
 }
 
 /// One chase's fixed facts: whom, why, and from how far the pursuer may fire.
@@ -1240,6 +1462,10 @@ struct Pursuit {
     /// The leash of an automatic chase, world units: 5.0.14's `AcquireLeashRadius`, measured
     /// from where the chase began (B-142).
     leash: SimScalar,
+    /// Under the solver pipeline, the free point of the ring the unit walks to when its own
+    /// bearing is blocked (plan `2026-11-20-contact-solver` Amendment 7, item 2): the chase's
+    /// goal, which it brakes onto and measures its progress against.
+    gap: Option<SimVec2>,
 }
 
 impl Pursuit {
@@ -1291,6 +1517,8 @@ struct MotionScene<'a> {
     route_groups: &'a [super::groups::RouteGroup],
     /// The catalog's lane tolerance in permille; 0 switches group routing off.
     lane_tolerance: u16,
+    /// The catalog's contact rules: which pipeline runs, and its side horizon.
+    contact: ContactRules,
 }
 
 impl MotionScene<'_> {
@@ -1309,10 +1537,16 @@ impl MotionScene<'_> {
                 largest_radius: self.movement.largest_radius[class],
             },
             self.map,
-            entry,
-            position,
+            (entry, position),
+            self.intent(),
             out,
         );
+    }
+
+    /// The side rule's horizon factor under the solver pipeline, `None` under the legacy one.
+    fn intent(&self) -> Option<u8> {
+        (self.contact.pipeline == MovementPipeline::Solver)
+            .then_some(self.contact.side_horizon_factor)
     }
 }
 
@@ -1346,6 +1580,7 @@ impl MotionDraft<'_> {
         &self,
         map: &'n SimMap,
         neighbours: &'n [SteeringObstacle],
+        intent: Option<u8>,
     ) -> StepContext<'n> {
         StepContext {
             map,
@@ -1362,6 +1597,8 @@ impl MotionDraft<'_> {
             hull: self.hull_gate(),
             surround: None,
             scan_range: self.entry.scan_range,
+            intent,
+            near_margin: near_margin(self.entry),
         }
     }
 
@@ -1412,9 +1649,11 @@ impl MotionDraft<'_> {
             self.actor.order_queue.front(),
             Some(UnitOrder::AttackMove { .. })
         );
+        let intent = scene.intent();
         let context = StepContext {
-            surround: (self.entry.surround_walk && attack_moving).then_some(None),
-            ..self.step_context(scene.map, neighbours)
+            surround: (self.entry.surround_walk && attack_moving && intent.is_none())
+                .then_some(None),
+            ..self.step_context(scene.map, neighbours, intent)
         };
         let on_last_leg = match self.decide_arrival(&context, scene.pathfinder)? {
             ControlFlow::Continue(on_last_leg) => on_last_leg,
@@ -1423,17 +1662,29 @@ impl MotionDraft<'_> {
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         // An attack-move queued behind a friend that holds its ground is not stalled (D-4); a
         // plain move into a blocked spot still is.
+        // Under the solver the stall rule reads no class of another body (plan Amendment 7,
+        // item 1): a unit with no room stands by the ring rule instead.
         let queued = attack_moving
+            && intent.is_none()
             && friend_holds_ahead(
                 &context,
                 direction(next, self.actor.position).map_err(self.fault())?,
             )
             .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
+        let reported = routes.len();
         if self
             .check_progress(routes, on_last_leg, gap, map_news, queued)?
             .is_break()
         {
+            // Under the solver a give-up is no arrival: the unit is no witness of the group-arrival
+            // chain (WP3b), so a clump's chain never runs back through units that gave up.
+            let gave_up = routes[reported..]
+                .iter()
+                .any(|outcome| outcome.kind == RouteOutcomeKind::NoProgress);
+            if gave_up && context.intent.is_some() {
+                self.proposal.memory.arrived_at = None;
+            }
             return Ok(());
         }
         self.propose_step(&context, scene.pathfinder, next, gap)
@@ -1576,19 +1827,29 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let on_last_leg = self.proposal.route(actor).len() <= 1;
-        if on_last_leg
-            && check_cluster_arrival_with(
+        let priority = self.entry.push_priority;
+        let witness = |witness: &SteeringObstacle| {
+            witness.owner == actor.owner
+                && (!ground || on_connected_ground(context.map, witness.pos, goal))
+        };
+        let arrived = |reach, unpushable_only: bool| {
+            check_cluster_arrival_with(
                 Some(id),
                 actor.position,
                 self.entry.policy.radius,
                 goal,
                 context.neighbours,
-                |witness| {
-                    witness.owner == actor.owner
-                        && (!ground || on_connected_ground(context.map, witness.pos, goal))
-                },
+                (reach, |seen: &SteeringObstacle| {
+                    (!unpushable_only || seen.push_priority > priority) && witness(seen)
+                }),
             )
-            .map_err(self.fault())?
+        };
+        // Under the solver an arrival this unit cannot push (C-2 row 6: a higher priority) is a
+        // witness wherever it stands (WP3b, B-158): the unit gains nothing by pressing on. Only
+        // arrivals are witnesses, since a give-up records none (`check_progress`).
+        if on_last_leg
+            && (arrived(Some(ARRIVAL_WITNESS_REACH), false).map_err(self.fault())?
+                || (context.intent.is_some() && arrived(None, true).map_err(self.fault())?))
         {
             self.proposal.finish(goal);
             return Ok(ControlFlow::Break(()));
@@ -1737,13 +1998,20 @@ impl MotionDraft<'_> {
         if self.ground && self.cooled_down && stale {
             self.proposal.drop_route();
         }
-        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39).
-        let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
+        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39), or on
+        // the gap point, which lies on that edge.
+        let reach = if pursuit.gap.is_some() {
+            SimScalar::ZERO
+        } else {
+            SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX))
+        };
         self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
+        let intent = scene.intent();
         let context = StepContext {
-            surround: self.entry.surround_walk.then_some(Some(pursuit.target)),
-            ..self.step_context(scene.map, neighbours)
+            surround: (self.entry.surround_walk && intent.is_none())
+                .then_some(Some(pursuit.target)),
+            ..self.step_context(scene.map, neighbours, intent)
         };
         drop_passed_waypoints(
             &context,
@@ -1754,12 +2022,14 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
-        // A chase queued behind a friend that holds its ground is not stalled (D-4).
-        let queued = friend_holds_ahead(
-            &context,
-            direction(next, self.actor.position).map_err(self.fault())?,
-        )
-        .map_err(self.fault())?;
+        // A chase queued behind a friend that holds its ground is not stalled (D-4). Under the
+        // solver the stall rule reads no class of another body (plan Amendment 7, item 1).
+        let queued = context.intent.is_none()
+            && friend_holds_ahead(
+                &context,
+                direction(next, self.actor.position).map_err(self.fault())?,
+            )
+            .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
         if self.beyond_leash(pursuit) {
             self.abandon_pursuit(routes, pursuit.target);
@@ -1909,6 +2179,7 @@ fn parked_on_corner<'n>(
                 corner,
                 i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
             )
+            && context.is_near(obstacle)
     })
 }
 
@@ -2124,22 +2395,25 @@ fn step_toward(
         gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
-    let heading = steer_body(body, next, ignored, neighbours)?;
+    let heading = proposed_heading(context, proposal, next, ignored)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
     }
-    let unblocked = velocity;
-    let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
-    // Bodies that will not yield cut this step: the queue the waiting rule is for.
-    let crowded = velocity != unblocked;
-    if let Some(target) = context.surround {
-        velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
-    }
-    if is_waiting(velocity, speed) {
-        proposal.velocity = SimVec2::ZERO;
-        proposal.anim = AnimState::Idle;
-        return Ok(false);
+    let mut crowded = false;
+    if context.intent.is_none() {
+        let unblocked = velocity;
+        velocity = remove_blocked_velocity(body, velocity, neighbours)?;
+        // Bodies that will not yield cut this step: the queue the waiting rule is for.
+        crowded = velocity != unblocked;
+        if let Some(target) = context.surround {
+            velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
+        }
+        if is_waiting(velocity, speed) {
+            proposal.velocity = SimVec2::ZERO;
+            proposal.anim = AnimState::Idle;
+            return Ok(false);
+        }
     }
     // The probe is the disc's (plan `2026-11-11-contact-and-missiles` D-3, R-3): a step that
     // would press the disc into a wall slides along it instead, or waits on a sliver of slide
@@ -2181,6 +2455,38 @@ fn step_toward(
     }
     gate_step_by_facing(hull, origin, proposal);
     Ok(refused)
+}
+
+/// The unit heading of a step toward `next`: legacy steering, or under the solver pipeline the
+/// intent of plan `2026-11-20-contact-solver` (I-1 to I-4), whose one-pair side commitment is kept
+/// in the proposal's memory.
+fn proposed_heading(
+    context: &StepContext<'_>,
+    proposal: &mut MotionProposal,
+    next: SimVec2,
+    ignored: Option<EntityId>,
+) -> Result<SimVec2, MovementMathError> {
+    let Some(horizon_factor) = context.intent else {
+        return steer_body(context.body, next, ignored, context.neighbours);
+    };
+    let decided = intent_heading(
+        &IntentInput {
+            body: context.body,
+            next,
+            speed: context.speed,
+            ignored,
+            neighbours: context.neighbours,
+            horizon_factor,
+            side: SideMemory {
+                partner: proposal.memory.side_partner,
+                left: proposal.memory.side_left,
+            },
+        },
+        |obstacle| context.admits(obstacle),
+    )?;
+    proposal.memory.side_partner = decided.side.partner;
+    proposal.memory.side_left = decided.side.left;
+    Ok(decided.heading)
 }
 
 /// What a step that the disc probe refused becomes after [`slide_along_wall`].
@@ -2796,6 +3102,8 @@ mod tests {
             hull: None,
             surround: Some(Some(EntityId(99))),
             scan_range: SimScalar::from_num(5.5),
+            intent: None,
+            near_margin: SimScalar::from_num(8),
         };
         Ok(probe(&context, &mut world.pathfinder))
     }

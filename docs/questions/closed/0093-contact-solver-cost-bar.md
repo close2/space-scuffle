@@ -41,6 +41,19 @@ or fewer iterations (more overlap). The charter only requires real time (25 tick
   or more on the reference machine, and instructions at most +60 %. Gauss–Seidel then becomes an optional later
   optimisation.
 - **(c)** Another bar you name.
+
+## Update (2026-11-23, after the acceptance run)
+
+- **No switch-over is near.** On the acceptance seeds (100,001 to 101,000) the Solver still fails several behaviour
+  thresholds (T1, T4 with E1, T5, T7 in several families; plan evidence §12). A further design iteration comes
+  first, so this question decides nothing yet and the default stands.
+- **Cost now**, after the slot rule (WP4), the wall slide and the pursuit read: +71 % on the 64×64 battle (71 ticks
+  per second), +7 % on 128×128 (132), +56 % on the canyon (72). Of the 64×64 excess, the solver itself is about half;
+  target acquisition and the slot scan are the rest.
+- **Correction to option (b):** as worded, (b) would fail on both of its bars today (71 ticks per second is below
+  4× real time, and +71 % is above +60 %). If you prefer a real-time margin, please name the margin, for example
+  "at least 2× real time (50 ticks per second) on every scenario".
+
 ## Answer
 
 - **Option (c):** Replace the `+10 %` instruction bar with a real-time margin of **at least 2× real time (50 ticks per second, ≤ 20 ms/tick)** on every throughput scenario on the reference machine, and **instructions at most +60 %**.

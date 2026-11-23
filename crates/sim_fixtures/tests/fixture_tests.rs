@@ -88,7 +88,11 @@ use std::path::PathBuf;
 /// encodes each queued job's `in_production` and each entity's rally; the sandbox's town halls
 /// rally themselves at creation (D-7). A scratch build that does not encode either field and keeps
 /// schema 33 reproduces `3_827_951_643_646_962_361`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_199_664_925_193_234_964;
+/// Re-recorded for checksum schema 35 (plan `2026-11-20-contact-solver`, Amendment 10), which
+/// encodes each unit's side-rule commitment and remembered gap (none under the legacy pipeline);
+/// a scratch build that leaves them unhashed and keeps schema 34 reproduces
+/// `16_199_664_925_193_234_964`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 14_665_724_469_072_757_732;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

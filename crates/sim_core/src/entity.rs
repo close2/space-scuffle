@@ -286,10 +286,36 @@ pub struct MovementMemory {
     /// `2026-11-18-contour-footprints` Amendment 4, B-142). `None` while it chases no automatically
     /// acquired target; an ordered attack and a new order clear it.
     pub leash_origin: Option<SimVec2>,
+    /// The body this unit passes on its committed side: the partner of the side rule's one-pair
+    /// commitment (plan `2026-11-20-contact-solver` I-3). Written only by the solver pipeline;
+    /// `None` under the legacy pipeline and when no pair is committed.
+    pub side_partner: Option<EntityId>,
+    /// The committed side of the side rule: the unit passes [`Self::side_partner`] on its left
+    /// when true (I-3). Written only by the solver pipeline.
+    pub side_left: bool,
+    /// The gap this attacker walked to last tick: the free point of the ring round its target
+    /// (its weapon band's outer edge) nearest its bearing, kept while it stays free (plan
+    /// `2026-11-20-contact-solver` Amendment 7, item 2). One remembered point, not a claim:
+    /// nobody else reads it. Written only by the solver pipeline; `None` under the legacy
+    /// pipeline and while the unit's own bearing point is free.
+    pub slot: Option<SlotClaim>,
+}
+
+/// The gap an attacker walks to on the ring round its target (plan `2026-11-20-contact-solver`
+/// Amendment 7, item 2): renewed every tick from the tick-start snapshot, kept while it stays
+/// free and reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotClaim {
+    /// The target the slot is round.
+    pub target: EntityId,
+    /// The gap's point, world units: on the ring (the band's outer edge) round the target's
+    /// tick-start position of the tick it was chosen.
+    pub point: SimVec2,
 }
 
 impl MovementMemory {
-    /// Clears everything tied to the current order.
+    /// Clears everything tied to the current order, the side rule's commitment and any slot
+    /// claim included.
     pub(crate) fn restart(&mut self) {
         *self = Self {
             abandoned_target: self.abandoned_target,

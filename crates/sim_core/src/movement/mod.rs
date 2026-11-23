@@ -9,13 +9,17 @@
 //! surface invariant diagnostics before advancing an unhealthy match.
 
 pub(crate) mod collision;
+pub(crate) mod concave;
 pub(crate) mod contact;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
 pub mod groups;
+pub(crate) mod intent;
 mod locomotion;
 pub(crate) mod math;
+mod ring;
+pub mod solver;
 pub(crate) mod tuning;
 pub use math::MovementMathError;
 
@@ -244,8 +248,22 @@ pub(crate) struct MovementWorkspace {
     pushes: Vec<collision::BodyPush>,
     collision_grid: grid::BodyGrid,
     pair_scratch: Vec<usize>,
+    /// The contact solver's retained buffers (plan `2026-11-20-contact-solver` C-1).
+    pub(crate) solver: solver::ContactSolver,
+    /// Averaged iterations the contact solver ran in the latest collision phase; 0 under the legacy
+    /// pipeline. Derived output for the cost report: never read by the simulation, never hashed.
+    contact_iterations: u8,
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (Verlet rule).
+    /// Derived output for the cost report, like [`Self::contact_iterations`].
+    contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
+    /// Each movement actor's position and last displacement when the phase began, sorted by
+    /// entity id (plan `2026-11-20-contact-solver` Amendment 7 and WP5: the ring rule and, under
+    /// the solver pipeline, the pursuit read it).
+    tick_start: Vec<(EntityId, SimVec2, SimVec2)>,
+    /// The ring rule's blocked arcs, cleared per chase (Amendment 7, item 2).
+    ring_intervals: Vec<concave::ArcInterval>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
@@ -257,7 +275,7 @@ pub(crate) struct MovementWorkspace {
     seen_nav_version: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MotionPolicy {
     pub layer: MovementLayer,
     /// The body's size against other bodies (`collision_radius`), in world units.
@@ -414,6 +432,22 @@ impl SimWorld {
             .binary_search_by_key(&id, |&(entity, _)| entity)
             .ok()
             .map(|index| steps[index].1)
+    }
+
+    /// Averaged iterations the contact solver ran in the latest collision phase (plan
+    /// `2026-11-20-contact-solver` C-1, the early stop); 0 under the legacy pipeline. Derived
+    /// output for the cost report, excluded from checksums and never consulted by the simulation.
+    #[must_use]
+    pub fn contact_iterations(&self) -> u8 {
+        self.movement.contact_iterations
+    }
+
+    /// Pair-list rebuilds of the contact solver in the latest collision phase (plan
+    /// `2026-11-20-contact-solver` Amendment 1, the Verlet rule); 0 under the legacy pipeline.
+    /// Derived output for the cost report, excluded from checksums.
+    #[must_use]
+    pub fn contact_rebuilds(&self) -> u8 {
+        self.movement.contact_rebuilds
     }
 
     /// Total pathfinder searches this world has run. Derived output for tests and benchmarks.
@@ -643,20 +677,54 @@ pub fn checked_distance(a: SimVec2, b: SimVec2) -> Option<SimScalar> {
     i64::try_from(root).ok().map(SimScalar::from_raw)
 }
 
-fn integer_sqrt(value: u128) -> u128 {
-    if value == 0 {
-        return 0;
+/// The floor of the square root of `value`: the largest `r` with `r² ≤ value`.
+// PERFORMANCE RATIONALE:
+// Why: Every contact pair, steering normal and distance takes one root; a Newton loop on u128
+// spends five to seven 128-bit software divisions per root (plan `2026-11-20-contact-solver`
+// Amendment 3, item 1).
+// What: Below 2^64 the 64-bit integer root. Above, the root of the top 64 bits gives the high
+// bits exactly (`⌊√⌊v / 4^k⌋⌋ = ⌊√v / 2^k⌋`), one 64-bit division of the remainder by twice
+// that root gives the low bits to within one, and squaring corrects the last unit. The floor
+// root is unique, so the result equals the Newton loop's bit for bit (tested against it).
+// Trade-off: Three paths instead of one loop, for about half the time and no more instructions.
+pub(crate) fn integer_sqrt(value: u128) -> u128 {
+    if let Ok(small) = u64::try_from(value) {
+        return u128::from(small.isqrt());
     }
-    // Initial upper bound has at most 65 bits. Newton iterates decrease, so
-    // x + value/x remains below 2^66 and division never uses zero.
-    let mut x = 1_u128 << (128 - value.leading_zeros()).div_ceil(2);
-    loop {
-        let next = u128::midpoint(x, value / x);
-        if next >= x {
-            return x;
+    let bits = 128 - value.leading_zeros();
+    let shift = (bits - 64).div_ceil(2);
+    let top = u64::try_from(value >> (2 * shift)).unwrap_or(u64::MAX);
+    let high = u128::from(top.isqrt()) << shift;
+    // high ≤ ⌊√value⌋ < 2^64, so its square does not exceed `value` and fits.
+    let rest = value - high * high;
+    let mut root = match (u64::try_from(rest), u64::try_from(2 * high)) {
+        (Ok(rest), Ok(twice)) => high + u128::from(rest / twice),
+        _ => low_bits_by_squares(value, high, shift),
+    };
+    while root.checked_mul(root).is_none_or(|square| square > value) {
+        root -= 1;
+    }
+    while (root + 1)
+        .checked_mul(root + 1)
+        .is_some_and(|square| square <= value)
+    {
+        root += 1;
+    }
+    root
+}
+
+/// Completes the root `high` of `value`, exact in all but its `shift` low bits, one bit at a
+/// time from the top: the wide fallback of [`integer_sqrt`].
+fn low_bits_by_squares(value: u128, high: u128, shift: u32) -> u128 {
+    let mut root = high;
+    for bit in (0..shift).rev() {
+        // The root of a u128 is below 2^64, so the candidate's square fits.
+        let candidate = root | (1_u128 << bit);
+        if candidate * candidate <= value {
+            root = candidate;
         }
-        x = next;
     }
+    root
 }
 
 #[cfg(test)]
@@ -872,5 +940,61 @@ mod tests {
         let min = SimVec2::new(SimScalar::from_raw(i64::MIN), SimScalar::ZERO);
         assert_eq!(checked_distance(min, max), None);
         assert_eq!(integer_sqrt(u128::MAX), u128::from(u64::MAX));
+    }
+
+    /// The Newton loop the root replaced (plan `2026-11-20-contact-solver` Amendment 3, item 1):
+    /// the oracle of [`integer_sqrt_equals_the_newton_root_bit_for_bit`].
+    fn newton_sqrt(value: u128) -> u128 {
+        if value == 0 {
+            return 0;
+        }
+        let mut x = 1_u128 << (128 - value.leading_zeros()).div_ceil(2);
+        loop {
+            let next = u128::midpoint(x, value / x);
+            if next >= x {
+                return x;
+            }
+            x = next;
+        }
+    }
+
+    /// The faster root is the floor root at every magnitude, at perfect squares and on both
+    /// sides of them, so no movement result changes with it.
+    #[test]
+    fn integer_sqrt_equals_the_newton_root_bit_for_bit() {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        for index in 0..200_000_u32 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let wide = (u128::from(state) << 64) | u128::from(state.rotate_left(29));
+            let value = wide >> (index % 128);
+            assert_eq!(integer_sqrt(value), newton_sqrt(value), "value {value}");
+        }
+        for root in [
+            1_u128,
+            3,
+            (1 << 32) - 1,
+            1 << 32,
+            (1 << 40) + 7,
+            (1 << 63) + 5,
+        ] {
+            for square in [root * root - 1, root * root, root * root + 1] {
+                assert_eq!(integer_sqrt(square), newton_sqrt(square), "value {square}");
+            }
+        }
+        let top = (1_u128 << 64) - 1;
+        for value in [
+            0,
+            1,
+            2,
+            1 << 64,
+            (1 << 64) - 1,
+            (1 << 64) + 1,
+            top * top,
+            u128::MAX,
+        ] {
+            assert_eq!(integer_sqrt(value), newton_sqrt(value), "value {value}");
+        }
     }
 }

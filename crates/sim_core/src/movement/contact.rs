@@ -38,7 +38,7 @@ use sim_types::{SimScalar, SimVec2};
 
 /// The physical request of a body of `radius` at `point`: true terrain and every structure, no
 /// vision, as the segment predicate of movement uses.
-fn contact_request(point: SimVec2, radius: SimScalar) -> PathRequestWithVision<'static> {
+pub(crate) fn contact_request(point: SimVec2, radius: SimScalar) -> PathRequestWithVision<'static> {
     PathRequestWithVision {
         start: point,
         goal: point,

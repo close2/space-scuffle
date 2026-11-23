@@ -765,7 +765,7 @@ pub fn check_cluster_arrival_except(
         unit_radius,
         target_pos,
         obstacles,
-        |_| true,
+        (Some(ARRIVAL_WITNESS_REACH), |_| true),
     )
 }
 
@@ -777,13 +777,19 @@ pub fn check_cluster_arrival_except(
 /// `witness_allowed` is called only for settled, geometrically eligible, nonexcluded neighbors
 /// until the first accepted witness. Every nonexcluded radius is validated even after success.
 /// World callers supply pure read-only predicates, so skipping later callbacks hides no effects.
+/// `witness_reach` bounds how far beyond the radius sum a witness may stand from the destination
+/// ([`ARRIVAL_WITNESS_REACH`]); `None` lifts the bound, which the solver pipeline does only for
+/// arrivals the unit cannot push (plan `2026-11-20-contact-solver` §3.10, the arrival rule).
 pub(crate) fn check_cluster_arrival_with(
     excluded: Option<EntityId>,
     unit_pos: SimVec2,
     unit_radius: SimScalar,
     target_pos: SimVec2,
     obstacles: &[SteeringObstacle],
-    mut witness_allowed: impl FnMut(&SteeringObstacle) -> bool,
+    (witness_reach, mut witness_allowed): (
+        Option<SimScalar>,
+        impl FnMut(&SteeringObstacle) -> bool,
+    ),
 ) -> Result<bool, PushGeometryError> {
     if unit_radius <= SimScalar::ZERO {
         return Err(PushGeometryError::InvalidDistance);
@@ -806,11 +812,9 @@ pub(crate) fn check_cluster_arrival_with(
             continue;
         }
         let combined = i128::from(unit_radius.raw()) + i128::from(obs.radius.raw());
-        arrived = within_distance(
-            obs.pos,
-            target_pos,
-            combined + i128::from(ARRIVAL_WITNESS_REACH.raw()),
-        ) && within_distance(
+        arrived = witness_reach.is_none_or(|reach| {
+            within_distance(obs.pos, target_pos, combined + i128::from(reach.raw()))
+        }) && within_distance(
             unit_pos,
             obs.pos,
             combined + i128::from(ARRIVAL_TOUCH_MARGIN.raw()),
@@ -1426,10 +1430,10 @@ mod cluster_arrival_tests {
             SimScalar::HALF,
             goal,
             &candidates,
-            |obs| {
+            (Some(ARRIVAL_WITNESS_REACH), |obs| {
                 visited.push(obs.id);
                 obs.id == EntityId(5)
-            },
+            }),
         )?);
         assert_eq!(visited, [EntityId(4), EntityId(5)]);
         assert!(!check_cluster_arrival_with(
@@ -1438,7 +1442,7 @@ mod cluster_arrival_tests {
             SimScalar::HALF,
             goal,
             &candidates,
-            |_| false,
+            (Some(ARRIVAL_WITNESS_REACH), |_| false),
         )?);
         // The public compatibility query deliberately remains geometry-only.
         assert!(check_cluster_arrival_except(
@@ -1466,19 +1470,26 @@ mod cluster_arrival_tests {
                 SimScalar::HALF,
                 goal,
                 &[witness(goal, 2, goal), invalid],
-                |_| {
+                (Some(ARRIVAL_WITNESS_REACH), |_| {
                     count += 1;
                     true
-                },
+                }),
             ),
             Err(PushGeometryError::InvalidDistance)
         );
         assert_eq!(count, 1);
         assert_eq!(
-            check_cluster_arrival_with(None, origin, SimScalar::ZERO, goal, &[], |_| {
-                count += 1;
-                true
-            },),
+            check_cluster_arrival_with(
+                None,
+                origin,
+                SimScalar::ZERO,
+                goal,
+                &[],
+                (Some(ARRIVAL_WITNESS_REACH), |_| {
+                    count += 1;
+                    true
+                },)
+            ),
             Err(PushGeometryError::InvalidDistance)
         );
         assert_eq!(count, 1);
@@ -1514,7 +1525,7 @@ mod cluster_arrival_tests {
                 SimScalar::ONE,
                 goal,
                 &candidates,
-                allowed
+                (Some(ARRIVAL_WITNESS_REACH), allowed)
             )?);
         }
         let mut invalid = side;
@@ -1527,7 +1538,7 @@ mod cluster_arrival_tests {
                     SimScalar::ONE,
                     goal,
                     &candidates,
-                    allowed
+                    (Some(ARRIVAL_WITNESS_REACH), allowed)
                 ),
                 Err(PushGeometryError::InvalidDistance)
             );
@@ -1555,10 +1566,10 @@ mod cluster_arrival_tests {
             SimScalar::ONE,
             goal,
             &[obs],
-            |w| {
+            (Some(ARRIVAL_WITNESS_REACH), |w| {
                 map.ground_segment_is_connected(origin, w.pos, |_, _| true)
                     && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
-            }
+            },)
         )?);
         map.cell_mut(5, 4)?.cliff_level = CliffLevel(0);
         assert!(check_cluster_arrival_with(
@@ -1567,10 +1578,10 @@ mod cluster_arrival_tests {
             SimScalar::ONE,
             goal,
             &[obs],
-            |w| {
+            (Some(ARRIVAL_WITNESS_REACH), |w| {
                 map.ground_segment_is_connected(origin, w.pos, |_, _| true)
                     && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
-            }
+            },)
         )?);
         let cell = map.cell_mut(5, 5)?;
         cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
@@ -1581,10 +1592,10 @@ mod cluster_arrival_tests {
             SimScalar::ONE,
             goal,
             &[obs],
-            |w| {
+            (Some(ARRIVAL_WITNESS_REACH), |w| {
                 map.ground_segment_is_connected(origin, w.pos, |_, _| true)
                     && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
-            }
+            },)
         )?);
         Ok(())
     }
