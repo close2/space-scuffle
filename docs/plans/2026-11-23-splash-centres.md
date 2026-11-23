@@ -611,7 +611,8 @@ fires at units).
 - **F-2: B-170, area damage keeps to a cliff level.** `SameCliff` on every `CEffectDamage` area (S14) and the
   Baneling's fallback for a target on another level (S6). Needs the flag's meaning for ramps and air targets
   (**verify**), a cliff-level query on the search centre, and the fallback as a data rule (a direct strike when the
-  target is on another level than the attacker). Its own plan; it moves every splash near a cliff.
+  target is on another level than the attacker). Its own plan; it moves every splash near a cliff. Taken up by plan
+  [`2026-11-23-splash-cliff-levels`](2026-11-23-splash-cliff-levels.md).
 - **F-3: the Baneling ordered onto a friendly unit** (`SuicideTargetFriendlySwitch`): a direct strike, no area.
   **verify** whether our orders allow it; if they do, register it.
 - **F-4: the Baneling's manual Explode and structure-attack toggle** (deviation-fixes WP18).

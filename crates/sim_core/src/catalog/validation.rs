@@ -21,7 +21,7 @@ use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
     PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
-    SplashImpact, WeaponVisualKind,
+    SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -1007,7 +1007,7 @@ impl SplashSpecDef {
     /// Checks the zones: at least one; each radius finite and nonnegative and larger than the
     /// one before; each fraction in `0 < fraction <= 1`, the share of a strike a zone can deal.
     /// A line needs at least one search point, each offset a finite fixed-point value. Then the
-    /// centre and the condition ([`Self::validate_centre`]).
+    /// centre, the condition and the cliff rule ([`Self::validate_centre`]).
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
         self.validate_zones(definition, prefix)?;
         self.validate_centre(definition, prefix)
@@ -1016,8 +1016,9 @@ impl SplashSpecDef {
     /// Checks where the area is centred and when it opens (plan `2026-11-23-splash-centres` D-1,
     /// D-3): an attacker-centred area is a circle (a line's searches are placed by its own
     /// origin) and is not offset by a radius (the attacker is its own impact unit, so no edge
-    /// faces anything); a target radius condition is positive and finite. The weapon checks that
-    /// an attacker-centred area is on an instant weapon.
+    /// faces anything); a target radius condition is positive and finite; then the cliff rule
+    /// ([`Self::validate_cliff`]). The weapon checks that an attacker-centred area is on an
+    /// instant weapon.
     fn validate_centre(&self, definition: &str, prefix: &str) -> SimResult<()> {
         if self.impact == SplashImpact::Attacker {
             if !matches!(self.shape, SplashShapeDef::Circle) {
@@ -1037,6 +1038,32 @@ impl SplashSpecDef {
         }
         if let Some(radius) = self.target_radius_below {
             positive(definition, &format!("{prefix}.target_radius_below"), radius)?;
+        }
+        self.validate_cliff(definition, prefix)
+    }
+
+    /// Checks the cliff rule (plan `2026-11-23-splash-cliff-levels` D-3): either level rule
+    /// suits either shape, but the other-level target strike needs an area centred on the
+    /// attacker (a target-centred area strikes its target directly already) that keeps to its
+    /// level (an area reaching every level always reaches its target).
+    fn validate_cliff(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if !self.strike_target_on_other_level {
+            return Ok(());
+        }
+        let field = format!("{prefix}.strike_target_on_other_level");
+        if self.impact != SplashImpact::Attacker {
+            return Err(invalid(
+                definition,
+                &field,
+                "a target-centred area strikes its target directly already; needs impact Attacker",
+            ));
+        }
+        if self.cliff != SplashCliff::Same {
+            return Err(invalid(
+                definition,
+                &field,
+                "an area reaching every level always reaches its target; needs cliff Same",
+            ));
         }
         Ok(())
     }
@@ -3834,6 +3861,149 @@ mod splash_centre_tests {
             }
         })?;
         assert!(field.starts_with("not a field refusal: Ok"), "{field}");
+        Ok(())
+    }
+}
+
+/// Splash cliff rules (plan `2026-11-23-splash-cliff-levels` D-1, D-3): both cliff fields
+/// default when omitted; the other-level target strike needs an attacker-centred area kept to
+/// its level, and each refusal names the field.
+#[cfg(test)]
+mod splash_cliff_tests {
+    use crate::catalog::{CatalogFile, SplashShapeDef, SplashSpecDef, UnitArchetypeDef};
+    use crate::error::SimCoreError;
+    use sim_types::{SplashCliff, SplashImpact};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The first shipped unit row whose ground weapon (`weapon` or `ground_weapon`) is instant
+    /// with a circular splash; it validates as authored.
+    fn instant_splash_unit() -> Result<UnitArchetypeDef, Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let unit = file
+            .units
+            .into_iter()
+            .find(|unit| {
+                [&unit.weapon, &unit.ground_weapon]
+                    .into_iter()
+                    .any(|weapon| {
+                        weapon.as_ref().is_some_and(|weapon| {
+                            weapon.projectile_speed.is_none()
+                                && weapon.splash.as_ref().is_some_and(|splash| {
+                                    matches!(splash.shape, SplashShapeDef::Circle)
+                                })
+                        })
+                    })
+            })
+            .ok_or("the shipped catalog has an instant circular splash weapon")?;
+        unit.validate()?;
+        Ok(unit)
+    }
+
+    /// The field `unit` fails validation on after `edit` changes the splash of its instant
+    /// splash weapon, or a description of a result that is not a field refusal.
+    fn refused_field(
+        edit: impl FnOnce(&mut SplashSpecDef),
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut unit = instant_splash_unit()?;
+        let splash = [&mut unit.weapon, &mut unit.ground_weapon]
+            .into_iter()
+            .flatten()
+            .filter(|weapon| weapon.projectile_speed.is_none())
+            .find_map(|weapon| weapon.splash.as_mut())
+            .ok_or("chosen for it")?;
+        edit(splash);
+        Ok(match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            other => format!("not a field refusal: {other:?}"),
+        })
+    }
+
+    #[test]
+    fn omitted_fields_read_the_same_level_and_no_other_level_strike() -> TestResult {
+        let def: SplashSpecDef = ron::from_str("(zones: [(radius: 1.0, fraction: 1.0)])")?;
+        assert_eq!(def.cliff, SplashCliff::Same);
+        assert!(!def.strike_target_on_other_level);
+        let def: SplashSpecDef = ron::from_str(
+            "(zones: [(radius: 1.0, fraction: 1.0)], cliff: Any, strike_target_on_other_level: true)",
+        )?;
+        assert_eq!(def.cliff, SplashCliff::Any);
+        assert!(def.strike_target_on_other_level);
+        Ok(())
+    }
+
+    #[test]
+    fn either_level_rule_is_accepted_for_a_circle_and_a_line() -> TestResult {
+        for cliff in [SplashCliff::Same, SplashCliff::Any] {
+            // The other-level strike is cleared: it needs `Same` (tested below), and the row
+            // chosen may be the burst that carries it.
+            let field = refused_field(|splash| {
+                splash.cliff = cliff;
+                splash.strike_target_on_other_level = false;
+            })?;
+            assert!(
+                field.starts_with("not a field refusal: Ok"),
+                "{cliff:?}: {field}"
+            );
+            let field = refused_field(|splash| {
+                splash.cliff = cliff;
+                splash.strike_target_on_other_level = false;
+                splash.impact = SplashImpact::Target;
+                splash.shape = SplashShapeDef::Line {
+                    origin: sim_types::SplashLineOrigin::Attacker,
+                    axis: sim_types::SplashLineAxis::Along,
+                    offsets: vec![1.0],
+                    period_ticks: 0,
+                };
+            })?;
+            assert!(
+                field.starts_with("not a field refusal: Ok"),
+                "line {cliff:?}: {field}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_other_level_strike_on_an_attacker_centred_area_kept_to_its_level_is_accepted(
+    ) -> TestResult {
+        let field = refused_field(|splash| {
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+            splash.cliff = SplashCliff::Same;
+            splash.strike_target_on_other_level = true;
+        })?;
+        assert!(field.starts_with("not a field refusal: Ok"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn the_other_level_strike_on_a_target_centred_area_is_refused() -> TestResult {
+        let field = refused_field(|splash| {
+            splash.impact = SplashImpact::Target;
+            splash.cliff = SplashCliff::Same;
+            splash.strike_target_on_other_level = true;
+        })?;
+        assert!(
+            field.ends_with("splash.strike_target_on_other_level"),
+            "{field}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_other_level_strike_on_an_area_reaching_every_level_is_refused() -> TestResult {
+        let field = refused_field(|splash| {
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+            splash.cliff = SplashCliff::Any;
+            splash.strike_target_on_other_level = true;
+        })?;
+        assert!(
+            field.ends_with("splash.strike_target_on_other_level"),
+            "{field}"
+        );
         Ok(())
     }
 }

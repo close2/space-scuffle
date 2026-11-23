@@ -337,6 +337,8 @@ fn test_circular_splash_falloff() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     };
     let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
 
@@ -768,6 +770,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             offset_by_unit_radius: false,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         }),
         projectile_speed: None,
         weapon_class: None,
@@ -803,6 +807,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             offset_by_unit_radius: false,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         }),
         ..friendly_fire_weapon.clone()
     };
@@ -976,6 +982,8 @@ fn s13_splash_falloff_scales_stat_bonus_damage() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     };
     let mut attacker = PlayerUpgradeState::default();
     attacker.unit_stat_modifiers.insert(
@@ -1101,6 +1109,8 @@ fn b16_each_splash_zone_deals_its_own_fraction() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     };
     let at = |distance: f32| {
         calculate_splash_damage(
@@ -1145,6 +1155,8 @@ fn b16_a_single_zone_deals_full_damage_to_its_edge() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     };
     let life_damage = calculate_splash_damage(
         &weapon,
@@ -1246,6 +1258,8 @@ fn b18_line_weapon(line: sim_types::SplashLine, strikes: u8) -> WeaponSpec {
             offset_by_unit_radius: false,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         }),
         ..dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO)
     }
@@ -1518,6 +1532,8 @@ fn q0063_circle_weapon(offset: bool) -> WeaponSpec {
             offset_by_unit_radius: offset,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         }),
         ..dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO)
     }

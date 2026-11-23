@@ -18,9 +18,13 @@
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
 //! 4. An attacker-centred area ([`SplashImpact::Attacker`]) is the only damage of its shot: no
 //!    direct strike, so no weapon hit effect; its target is struck by the area like any other
-//!    unit in it (plan `2026-11-23-splash-centres` D-1).
+//!    unit in it (plan `2026-11-23-splash-centres` D-1), or, when it stands on another cliff
+//!    level and the area says so, by the area's other-level strike, which is part of the area
+//!    and passes the area's own filters (plan `2026-11-23-splash-cliff-levels` D-3).
 //! 5. An area with a target radius condition opens only around a target whose collision radius
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
+//! 6. An area whose `cliff` is `Same` strikes only units on the cliff level of a search point
+//!    that reaches them (plan `2026-11-23-splash-cliff-levels` D-1).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -34,12 +38,12 @@ use crate::entity::{
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
-use sim_map::{PlayerVisionMap, SimMap};
+use sim_map::{CliffLevel, PlayerVisionMap, SimMap};
 use sim_types::{
     AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
     LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, SimVec2, SplashImpact, SplashShape, StrikeEnds, Tick, UnitOrder,
-    UnitTypeId, WeaponVisualKind,
+    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashShape, StrikeEnds, Tick,
+    UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -138,6 +142,14 @@ pub(crate) struct CombatWorkspace {
     splash_hits: Vec<(EntityId, SimScalar)>,
     /// Centres of the current splash's searches (one for a circle, one per offset for a line).
     splash_points: Vec<SimVec2>,
+    // PERFORMANCE RATIONALE:
+    // Why: An area kept to its level compares each unit in reach with the level of every search
+    // point, and a strike must not allocate.
+    // What: The levels of the current strike's search points, read once per strike beside the
+    // points, in the same order.
+    // Trade-off: One more buffer held at its high-water mark (a line's point count).
+    /// Cliff level of each of the current strike's search points, for an area kept to its level.
+    splash_levels: Vec<CliffLevel>,
     /// Units with pending line searches this tick, in `EntityId` order.
     line_owners: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
@@ -848,7 +860,8 @@ impl SimWorld {
     ///
     /// A shot whose area is centred on the attacker ([`SplashImpact::Attacker`]) makes no direct
     /// strike: its area is searched around the attacker's release position, whether or not the
-    /// target still stands, and strikes the target like any other unit in it.
+    /// target still stands, and strikes the target like any other unit in it; then, if the area
+    /// says so, its other-level strike runs (see [`Self::strike_target_on_other_level`]).
     fn resolve_instant_shot(&mut self, shot: &PreparedShot) {
         let source = HitSource {
             weapon: &shot.weapon,
@@ -867,6 +880,14 @@ impl SimWorld {
         {
             let (area, aimed) = self.area_at_attacker(shot);
             self.apply_splash(source, splash, area, None);
+            if splash.strike_target_on_other_level {
+                let strike = AreaStrike {
+                    plane: area.plane,
+                    angle: area.angle,
+                    primary: None,
+                };
+                self.strike_target_on_other_level(source, splash, strike, shot.target);
+            }
             if let Some(aimed) = aimed {
                 self.emit_instant_hit_visual(shot, aimed);
             }
@@ -1102,63 +1123,165 @@ impl SimWorld {
     /// point to the unit's centre, less the unit's collision radius, and never below zero (owner
     /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
     /// nearest search point, and a unit in `struck` not at all (the game's `noMarkers` validator
-    /// on the damage effect); each unit struck is appended to `struck`. Spares `area.primary`,
-    /// already struck directly, and the attacker, which never damages itself. Each struck entity
-    /// then runs its retaliation against the attacker.
+    /// on the damage effect); each unit struck is appended to `struck`. An area kept to its level
+    /// ([`SplashCliff::Same`]) counts only the search points on the unit's own cliff level (plan
+    /// `2026-11-23-splash-cliff-levels` D-1). Spares `area.primary`, already struck directly,
+    /// and the attacker, which never damages itself. Each struck entity then runs its
+    /// retaliation against the attacker.
     fn strike_area(
         &mut self,
         source: HitSource<'_>,
         splash: &SplashSpec,
         area: AreaStrike,
         points: &[SimVec2],
-        mut struck: Option<&mut Vec<EntityId>>,
+        struck: Option<&mut Vec<EntityId>>,
     ) {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
-        let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
+        let mut levels = std::mem::take(&mut self.combat.splash_levels);
+        levels.clear();
+        let same_level = splash.cliff == SplashCliff::Same;
+        if same_level {
+            levels.extend(points.iter().map(|&point| self.map.cliff_level_at(point)));
+        }
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
-            if Some(other_id) == area.primary
-                || Some(other_id) == source.attacker
-                || struck
-                    .as_deref()
-                    .is_some_and(|struck| struck.contains(&other_id))
-                || !Self::is_damageable(other)
-                || (!splash.friendly_fire && other.owner == source.owner)
+            if struck
+                .as_deref()
+                .is_some_and(|struck| struck.contains(&other_id))
+                || !Self::area_may_strike(source, splash, area, other_id, other)
             {
                 continue;
             }
             let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {
                 continue;
             };
-            let Some(distance) = points
+            let edge_distance = |point: &SimVec2| {
+                (point.distance(other.position) - other_arch.collision_radius).max(SimScalar::ZERO)
+            };
+            let Some(mut distance) = points
                 .iter()
-                .map(|point| {
-                    (point.distance(other.position) - other_arch.collision_radius)
-                        .max(SimScalar::ZERO)
-                })
+                .map(edge_distance)
                 .min()
                 .filter(|&distance| distance <= reach)
             else {
                 continue;
             };
-            if !shares_combat_plane(area.plane, other_arch.mover_type)
-                || !source.weapon.target_flags.intersects(other_arch.attributes)
-            {
-                continue;
+            if same_level {
+                // Only a unit already in reach reads its level, so the map is read once per
+                // unit the area could strike, not once per entity.
+                let own = self.map.cliff_level_at(other.position);
+                let Some(on_level) = points
+                    .iter()
+                    .zip(&levels)
+                    .filter(|&(_, &level)| level == own)
+                    .map(|(point, _)| edge_distance(point))
+                    .min()
+                    .filter(|&distance| distance <= reach)
+                else {
+                    continue;
+                };
+                distance = on_level;
             }
-            if let Some(raw) = splash_raw_damage(
-                source.weapon,
-                source.slug,
-                attacker_upgrades,
-                splash,
-                distance,
-                other_arch,
-            ) {
+            if let Some(raw) = self.area_raw_damage(source, splash, area, other_arch, distance) {
                 splash_hits.push((other_id, raw));
             }
         }
-        for &(id, raw) in &splash_hits {
+        self.combat.splash_levels = levels;
+        self.land_area_hits(source, area, &splash_hits, struck);
+        self.combat.splash_hits = splash_hits;
+    }
+
+    /// The other-level strike of an attacker-centred area (plan `2026-11-23-splash-cliff-levels`
+    /// D-3, `StarCraft` II's `BanelingVolatileBurstDirectFallbackSet` on `CliffLevelNotEqual`):
+    /// when `target_id` stands on another cliff level than the attacker's release position
+    /// (`source.origin`), the target takes `splash`'s strike directly, at the fraction of the
+    /// first zone (distance zero), once, and runs its retaliation. It passes the area's own
+    /// filters, as `strike_area` applies them, without their distance and level tests. It runs
+    /// whether or not the area opened, and does nothing when the target is gone or on the
+    /// attacker's level, where the area alone strikes it.
+    fn strike_target_on_other_level(
+        &mut self,
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        area: AreaStrike,
+        target_id: EntityId,
+    ) {
+        let Some(target) = self.entities.get(&target_id) else {
+            return;
+        };
+        if self.map.cliff_level_at(target.position) == self.map.cliff_level_at(source.origin)
+            || !Self::area_may_strike(source, splash, area, target_id, target)
+        {
+            return;
+        }
+        let Ok(target_arch) = self.catalog.get(target.unit_type_id) else {
+            return;
+        };
+        let Some(raw) = self.area_raw_damage(source, splash, area, target_arch, SimScalar::ZERO)
+        else {
+            return;
+        };
+        let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
+        splash_hits.clear();
+        splash_hits.push((target_id, raw));
+        self.land_area_hits(source, area, &splash_hits, None);
+        self.combat.splash_hits = splash_hits;
+    }
+
+    /// Whether an area of `source` may strike `other` (id `other_id`) at all, before its reach:
+    /// not the primary target `area` spares, not the attacker, damageable, and an enemy unless
+    /// the area has friendly fire.
+    fn area_may_strike(
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        area: AreaStrike,
+        other_id: EntityId,
+        other: &Entity,
+    ) -> bool {
+        Some(other_id) != area.primary
+            && Some(other_id) != source.attacker
+            && Self::is_damageable(other)
+            && (splash.friendly_fire || other.owner != source.owner)
+    }
+
+    /// The raw damage, before barrier and armour, an area of `source` deals a unit of
+    /// `other_arch` whose edge lies `distance` world units from the search point, or `None`
+    /// when the unit is off the area's plane, outside the weapon's target flags, or beyond the
+    /// last zone.
+    fn area_raw_damage(
+        &self,
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        area: AreaStrike,
+        other_arch: &UnitArchetype,
+        distance: SimScalar,
+    ) -> Option<SimScalar> {
+        if !shares_combat_plane(area.plane, other_arch.mover_type)
+            || !source.weapon.target_flags.intersects(other_arch.attributes)
+        {
+            return None;
+        }
+        splash_raw_damage(
+            source.weapon,
+            source.slug,
+            Self::upgrades_of(&self.player_upgrades, source.owner),
+            splash,
+            distance,
+            other_arch,
+        )
+    }
+
+    /// Strikes each entity of `hits` with its raw damage through its barrier and armour, from
+    /// `area`'s direction, appends it to `struck` and runs its retaliation against the attacker.
+    fn land_area_hits(
+        &mut self,
+        source: HitSource<'_>,
+        area: AreaStrike,
+        hits: &[(EntityId, SimScalar)],
+        mut struck: Option<&mut Vec<EntityId>>,
+    ) {
+        for &(id, raw) in hits {
             if let Some(entity) = self.entities.get_mut(&id) {
                 if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
                     let upgrades = Self::upgrades_of(&self.player_upgrades, entity.owner);
@@ -1180,7 +1303,6 @@ impl SimWorld {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }
         }
-        self.combat.splash_hits = splash_hits;
     }
 
     /// Records one renderer event per search of `splash` at `points`, on `plane`, for an attack
@@ -1753,5 +1875,94 @@ mod tests {
             "the area landed"
         );
         assert_eq!(strike(SplashImpact::Target), SimScalar::ZERO, "the control");
+    }
+
+    /// Plan `2026-11-23-splash-cliff-levels` D-3: the other-level strike passes the area's own
+    /// filters. A burst from the plateau at a target below it strikes an enemy the weapon may
+    /// strike (the control), but not a unit of the attacker's own player (friendly fire off) nor
+    /// one whose attributes the weapon's target flags exclude. No order reaches the first (an
+    /// attack order on one's own unit is an attack-move), so the shot is dispatched directly.
+    #[test]
+    fn the_other_level_strike_keeps_the_areas_filters() {
+        use sim_types::{AttributeFlags, SplashCliff, SplashImpact, SplashShape};
+        let strike = |target_owner: PlayerId, flags: AttributeFlags| {
+            let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+                .expect("invariant: a valid size");
+            for y in 0..32 {
+                for x in 16..32 {
+                    map.cell_mut(x, y)
+                        .expect("invariant: inside the map")
+                        .cliff_level = CliffLevel(1);
+                }
+            }
+            let mut world = world(map, 0x5_C11F);
+            let arch = world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    arch.mover_type == MoverType::Ground
+                        && arch.max_speed > SimScalar::ZERO
+                        && arch.collision_radius <= SimScalar::HALF
+                })
+                .cloned()
+                .expect("the shipped catalog has a small mobile ground unit");
+            let mut weapon = world
+                .catalog
+                .archetypes()
+                .flat_map(|arch| [&arch.weapon, &arch.ground_weapon, &arch.air_weapon])
+                .flatten()
+                .find(|weapon| {
+                    weapon.splash.as_ref().is_some_and(|splash| {
+                        splash.shape == SplashShape::Circle && splash.reach() >= SimScalar::ONE
+                    })
+                })
+                .cloned()
+                .expect("the shipped catalog has a circular splash of reach 1 or more");
+            weapon.target_flags = flags;
+            weapon.projectile_speed = None;
+            weapon.suicide_on_attack = false;
+            weapon.structure_strike = None;
+            let splash = weapon.splash.as_mut().expect("chosen for its splash");
+            splash.impact = SplashImpact::Attacker;
+            splash.offset_by_unit_radius = false;
+            splash.friendly_fire = false;
+            splash.cliff = SplashCliff::Same;
+            splash.strike_target_on_other_level = true;
+            let origin = SimVec2::new(SimScalar::from_num(16.6), SimScalar::from_num(10));
+            let attacker = world
+                .spawn_unit(arch.unit_type_id, PlayerId(0), origin)
+                .expect("open ground");
+            let below = SimVec2::new(SimScalar::from_num(15.4), SimScalar::from_num(10));
+            let target = world
+                .spawn_unit(arch.unit_type_id, target_owner, below)
+                .expect("open ground");
+            let full = world.entities[&target].hp + world.entities[&target].shields;
+            let source = super::weapon_source(&arch, &world.entities[&attacker], &weapon);
+            world.dispatch_shot(super::PreparedShot {
+                attacker,
+                target,
+                weapon,
+                source_slug: arch.slug.clone(),
+                origin,
+                owner: PlayerId(0),
+                strikes: 1,
+                source,
+            });
+            full - (world.entities[&target].hp + world.entities[&target].shields)
+        };
+        assert!(
+            strike(PlayerId(1), AttributeFlags::all()) > SimScalar::ZERO,
+            "the control: an enemy across the cliff is struck"
+        );
+        assert_eq!(
+            strike(PlayerId(0), AttributeFlags::all()),
+            SimScalar::ZERO,
+            "the attacker's own unit"
+        );
+        assert_eq!(
+            strike(PlayerId(1), AttributeFlags::empty()),
+            SimScalar::ZERO,
+            "an enemy the weapon's target flags exclude"
+        );
     }
 }

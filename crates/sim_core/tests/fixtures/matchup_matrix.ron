@@ -1303,5 +1303,35 @@
         ),
         expect: (blue: (1, 1), red: (2, 3)),
     ),
+    // Battle 40 (plan 2026-11-23-splash-cliff-levels §7.4): battle 39b's tank and roach sides,
+    // the caster removed, on an arena with a plateau. Every cell with x >= 47 (midway between the
+    // sides' centres) is level 1; a ramp of width 4 on the sides' line (rows 43 to 46) climbs East
+    // over columns 44 to 46 from level 0. The tanks, sieged on the plateau, take no order (as 39b
+    // since plan 2026-11-23-stance-checked-orders D-5); the roaches attack-move up the ramp. Recorded under the rule of WP3's tree, where every area reaches every level: the
+    // tanks win all 20 seeds with 2 or 3 left (3 on the four seeds of record but 33, which keeps
+    // 2), ending on ticks 243 to 312.
+    (
+        name: "40_sieged_tanks_above_a_ramp",
+        claim: "Sieged tanks above a ramp: a shell on a unit that crested the ramp spares the units still on it (5.0.14 SameCliff)",
+        map_cells: 96,
+        terrain: [
+            (from: (47, 0), to: (95, 95), level: 1),
+            (from: (44, 43), to: (46, 46), level: 0, ramp: Some(East)),
+        ],
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 8, columns: 2, origin: (38.0, 44.5), spacing: 1.1),
+            ],
+            order: AttackMove(60, 46),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
+            ],
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (0, 0), red: (2, 3)),
+    ),
     ],
 )

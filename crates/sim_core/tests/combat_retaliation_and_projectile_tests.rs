@@ -554,6 +554,8 @@ fn test_ballistic_impact_last_known_position_splash() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     };
     let weapon = custom_projectile_weapon(
         SimScalar::from_f32_lossy(0.60),
