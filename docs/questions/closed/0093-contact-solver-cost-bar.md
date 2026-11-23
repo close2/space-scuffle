@@ -53,3 +53,9 @@ or fewer iterations (more overlap). The charter only requires real time (25 tick
 - **Correction to option (b):** as worded, (b) would fail on both of its bars today (71 ticks per second is below
   4× real time, and +71 % is above +60 %). If you prefer a real-time margin, please name the margin, for example
   "at least 2× real time (50 ticks per second) on every scenario".
+
+## Answer
+
+- **Option (c):** Replace the `+10 %` instruction bar with a real-time margin of **at least 2× real time (50 ticks per second, ≤ 20 ms/tick)** on every throughput scenario on the reference machine, and **instructions at most +60 %**.
+
+**Reasoning:** The new contact solver delivers a massive quality improvement across all movement metrics (back-and-forth `-94 %` to `-98 %`, crossing give-ups `-99 %`, gap overlap `-89 %`, gap throughput `0.66 → 0.78`), and the slowest stress scenario (`400-unit 64×64 battle`) still runs at `~70` TPS (`~2.8×` real time, `~14.3 ms`/tick). Setting the floor to `100` TPS (`4×` real time, Option b) risks accidentally blocking WP6 if the reference machine measures near `~70` TPS on that worst-case clump. A `50` TPS (`2×` real time) floor with a `+60 %` instruction cap preserves at least 50 % single-core CPU headroom at normal `25` TPS (`40 ms`/tick) gameplay while unblocking WP6 immediately. Gauss–Seidel (or other single-threaded optimisations such as SoA/SIMD or sleeping non-overlapping units) remains an optional later optimisation.
