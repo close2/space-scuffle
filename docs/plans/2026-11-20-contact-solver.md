@@ -1522,3 +1522,99 @@ The WP7 deletion takes 36.
   release and debug.
 - The re-recorded lists agree on all four builds.
 - No behaviour changed: the legacy pipeline never writes these fields.
+
+## Amendment 11 (orchestrator, 2026-11-23): the acceptance run failed; a second independent review is adopted; a fresh acceptance range; the owner's cost bar
+
+**Status.** WP1 to WP5 are merged into `main` dormant (`6b221620`): `Legacy` stays the default and plays
+bit-identically, schema 35. The acceptance run on seeds 100,001 to 101,000 failed T1 (gap, arc, cross), T4 with E1
+(arc, corridor, gap, corner), T5 (arc) and T7 (gap, arc, corner, cross) (evidence §12). The Solver is not eligible to
+switch over.
+
+**Owner rulings since Amendment 10.**
+- **Q0093 answered (c).** The cost bar of §6.5 and WP6 is replaced: every throughput scenario runs at **at least
+  2× real time (50 ticks per second)** on the reference machine **and** costs **at most +60 % instructions** against
+  `Legacy`. Today the 64 × 64 battle is at +71 %, so the cost step below is required, not optional.
+- **Q0094** does not concern this plan.
+
+**A second independent review** (read-only, given the code, the evidence and the failure figures but not the
+orchestrator's reading) traced each failure to a root cause. Its findings are adopted as the work list below; its
+measured fact that arc scenes **without** give-ups still fill only 0.81 (Legacy 0.98) is recorded: removing give-ups
+alone cannot pass T5.
+
+| # | Failures | Root cause | Kind |
+|---|---|---|---|
+| R1 | arc E1, T5, arc T1; corridor E1 | `locomotion.rs:chase_target` aims straight at the kept gap point; the chord runs into the engaged front rank (contact share 0); a blocker on the line of centres leaves no sideways part (goal-attractor local minimum). `intent.rs:threat_of` turns the side rule off at contact, `tangent_heading` takes full responsibility | goal selection, with local layer |
+| R2 | arc T5 | `concave.rs:blocking_interval` uses half-width `asin((r+r_o)/ρ)`; the exact half-width at which a ring point clears a body at distance `d` is `acos((ρ²+d²−R²)/(2ρd))`. The rule over-blocks; at `ρ ≤ 2r` one body blocks the whole ring (28 scenes, fill 0.204) | geometry defect |
+| R3 | pursuit give-ups | `check_pursuit_progress` abandons after 10 s while the target lives and a route reaches range, contrary to the scene's known answer and SC-10 | give-up rule |
+| R4 | gap T4, corner T4 | `check_progress` gives a `Move` up after 10 s; a single file drains in `n·2r/(lanes·v)` (≈ 16 s at seed 100166) | give-up rule |
+| R5 | T7 friend maximum (gap, corner, cross) | 0/1 shares become infeasible when the share-1 body cannot move (idle body at a wall, low-priority mover between two higher, arrived unit squeezed by passers); `solver.rs:apply` and `contact_shares` never move the share to the partner, though C-6 says a body held by terrain "acts as fixed after one iteration" | local layer |
+| R6 | T7 enemy (46 scenes in (0.005, 0.00995]) | `solver.rs:add_pair` applies the 1 % dead band to enemy pairs; T7 allows 0.5 % and D-α says "never enemies" | plan inconsistency |
+| R7 | cross T1, gap M1-hi | `tangent_heading` gives each mover the full velocity-obstacle answer; two movers doing so oscillate (the reason RVO exists, van den Berg et al. 2008) | local layer |
+| R8 | corridor two-abreast (301/301) | the goal set is the band's outer circle and engaged units never move; greedy arrival puts the first unit on the axis | not a T-figure; needs an owner deviation |
+| R9 | cost +71 % | solver +3.6 G; one ring scan per chaser per tick though all chasers of a target and radius see the same intervals (≈ 0.95 G); target acquisition +1.5 G | cost |
+
+**Contamination and the next acceptance.** Range 100,001–101,000 informed this amendment. It is reported again only
+as a regression check, never as evidence. A **fresh acceptance range, 200,001 to 201,000,** is registered now, before
+any code change, and is run **once** after step 6 below, both pipelines from one binary. At most one further
+acceptance attempt, on yet another fresh range registered before its code changes, is allowed before the trade-off
+goes to the owner. The held-out range 9,000,001 to 9,001,000 stays untouched until WP6.
+
+**Frozen before any measurement** (binding on the fresh range):
+- T1 to T9 and E1 as in §6.5, judged on the **point estimate** (no confidence-interval reading is introduced now).
+- T7's enemy bound stays 0.5 %; R6 is fixed in the solver (step 1), not in the threshold.
+- Corner's T4 is read strictly: the comparator treats the corner as a passable gap (complete and no give-ups).
+- The cost bar is Q0093 (c), above.
+- **New pre-registered diagnostic D-S** (reported, not a threshold): unit-ticks of units under an order with no
+  progress for 10 s while an admissible free ring angle exists ("stuck with room").
+- The corridor two-abreast miss stays a reported figure, not a T-figure.
+
+**Work list, in order.** Each step is judged on the development range (1 to 1,000) under Amendment 8's step rule
+and §6.4's noise rule. Traces quoted from acceptance seeds are hypotheses only: reproduce each on development seeds
+before changing code. Each behaviour change lands with a test that is red before it.
+
+0. **Diagnostics, no behaviour change.** Per-tick log, for walkers in their stall window, of the ring decision, the
+   proposal and the solver correction; the D-S counter in the harness; and the mechanism of the exact ±0.04
+   alternation seen at acceptance seed 100804, reproduced on a development seed. The three candidates are the
+   aim-contact cycle, the side rule switching off at contact, and the summed hard pass overshooting in a wedge.
+1. **P1, exact blocking geometry (R2),** with a unit test against §4's capacity formula, then **P7, enemy pairs
+   take no dead band (R6)**, applying D-α as written. Both are defect fixes.
+2. **P2, stateless detour for gap walkers (R1).** If the segment from the unit to its gap point crosses any
+   tick-start body's disc inflated by `r`, aim instead at a point on the outer circle of radius
+   `max(|x−T|, ρ + r + r_max)`, its angle stepped toward the gap by a bounded amount per tick; dive in once the
+   segment is clear (Bug/TangentBug obstacle following: Lumelsky & Stepanov 1987; Kamon, Rivlin & Rimon 1998; SC-2's
+   "aim for the gap"). **Stop** if arc E1 does not fall beyond noise, or if fill in arc scenes without give-ups
+   stays below 0.85. In that case try **once** the fallback: one integer wavefront per contested target on a local
+   grid (Barraquand & Latombe 1991; Emerson, flow fields, *Game AI Pro* ch. 23). If that also fails, stop and report.
+3. **P5, a pursuit under the Solver does not abandon on a stall (R3)**, only after P2: a stall drops the kept gap
+   and repaths; abandonment stays for the leash and for "no route reaches range". Then **P6, group-level progress
+   for `Move` (R4)**: a member's stall counter advances only on ticks when its group (shared destination,
+   `groups.rs`) made no progress (no arrival and no fall in summed potential); a lone unit or a whole group truly
+   blocked still gives up, and `a_blocked_move_is_still_given_up` holds. **Before P6, check §3's source for the
+   10 s `Move` give-up (SC-8 fact 9).** If the game gives up a `Move` after 10 s in a crowd, P6 is dropped and
+   recorded; if the 10 s rule is this project's own, P6 proceeds.
+4. **P3, shock propagation (R5).** A body whose correction terrain refused, or whose summed correction cancels,
+   counts as fixed for its pairs in the next iteration; the partner with share 0 takes share 1 (Guendelman,
+   Bridson & Fedkiw 2003). This makes C-6 true. Finite mass ratios are **not** adopted (they change D-β's
+   sanctioned semantics).
+5. **P4, reciprocal half-share (R7).** Against a threat that is a mover running the same rule, take half the
+   avoidance (RVO); keep the committed side; keep full responsibility against standing bodies and enemies.
+6. **P8, cost (R9).** Cache the ring intervals per (target, radius) per tick, exact and behaviour-preserving (a
+   test proves bit-identity with the cache off). Then measure against the Q0093 bar; if any scenario still fails it,
+   report the cost split and stop. Over-relaxation (Macklin et al. 2014) is **not** adopted in this amendment.
+7. **The fresh acceptance run (200,001 to 201,000)**, once, with D-S, the cost split and the corridor figure,
+   reporting every failure with a trace. No rule is added after it.
+
+**Rejected** (fitting the thresholds or already measured worse): revising T7's enemy bound because the run sits
+there; a confidence-interval reading adopted after the result; a loose reading of corner's T4; deriving the
+corridor known answer from the solver's own behaviour; per-family timers, horizons or dead bands; P5 without P2;
+the summed TTC term and side hysteresis (Amendment 9).
+
+**Limits.** At most the steps above and the one fallback of step 2. A new rule beyond them needs a further
+amendment with a literature citation. After step 6, if any T-figure fails on development, stop and report: the
+trade-off then goes to the owner, who may sanction deviations instead, since the Solver already beats `Legacy` on
+M1, M2, overlaps and on gap and cross completion.
+
+**R8, the corridor two-abreast miss.** Its only principled lever is letting engaged units be pushed along the
+band's tangent (they keep range but can be nudged sideways), which departs from SC-8. That is the owner's call:
+[Q0095](../questions/open/0095-engaged-units-nudged-sideways.md), default **no** (engaged units stay fixed; the miss
+stays a reported figure).
