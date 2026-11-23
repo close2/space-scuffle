@@ -713,3 +713,21 @@ Then the change: D-5. **Acceptance:** §8 rule 3.
   slot, kind, mode and `k`), `world/`, `golden/`, `sim_core_tests.log`, `skirmish/`.
 - The scratch worktree `harvest-occupancy-proto` and its target directory were removed at hand-back; the diff
   rebuilds the prototype on `f399d403`.
+
+## Amendment 1 (orchestrator, 2026-11-23): `sync_steady_state_tests`' warm-up follows the workers, not the first delivery
+
+**Why.** WP2 stopped under §8 rule 2 (evidence §3 on `harvest-occupancy-wp2-wip`).
+`sync_steady_state_tests::selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick` sends six workers to
+one field and starts its window after the first delivery. Under occupancy the six spread over six fields and fall
+out of phase. So the `laden` list reaches its working size for the first time inside the window, at tick 287, not
+before it. The list fills once; it does not churn. The simulation does what D-2 and D-3 derive, and it is the
+test's premise that no longer holds.
+
+**Decision.** This is a test-only change, and the window and its assertions are unchanged.
+
+- The test's warm-up runs until every local worker has completed at least one delivery. That state is the steady
+  state the test means, and it is read from the simulation, not from a tick count.
+- §9 lists `sync_steady_state_tests` among the client tests WP2 re-derives.
+- No `player_view` reserve is added.
+
+WP2 then lands with that change and its client re-run, followed by WP3 (B-160, D-5) and WP4.
