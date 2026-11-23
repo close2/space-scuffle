@@ -124,6 +124,11 @@ pub struct ScenarioRow {
     /// Ticks by iterations used: entry `k` counts the ticks on which the solver ran `k`
     /// iterations (plan `2026-11-20-contact-solver` Amendment 2, 4: the early stop's effect).
     pub iteration_ticks: Vec<u32>,
+    /// M1 split (plan `2026-11-20-contact-solver` Amendment 7, E4): the reversals counted in
+    /// [`Self::rev_amp`] on a tick the unit had no order (idle, as an abandoned attacker is).
+    pub rev_amp_idle: u32,
+    /// M1 split (E4): the moving unit-ticks of [`Self::moving_ticks`] on which the unit was idle.
+    pub moving_ticks_idle: u32,
 }
 
 impl ScenarioRow {
@@ -132,14 +137,15 @@ impl ScenarioRow {
         deadlocked,giveups,rev_amp,rev_amp_hi,path,wasted,rev_legacy,moving_ticks,progress_viol,\
         progress_windows,through,in_range,throughput,fo_move_max,fo_rest_max,fo_move_over,\
         fo_rest_over,pair_ticks_move,pair_ticks_rest,enemy_ov_max,terrain_pen_max,mean_done_tick,\
-        standing_wasted,diagnostics,contact_ticks,contact_iterations,iteration_ticks";
+        standing_wasted,diagnostics,contact_ticks,contact_iterations,iteration_ticks,rev_amp_idle,\
+        moving_ticks_idle";
 
     /// The row as one CSV line, without a line end.
     #[must_use]
     pub fn to_csv(&self) -> String {
         format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{},{},{},{},{},{},{:.4},{:.5},{:.5},\
-             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{}",
+             {},{},{},{},{:.5},{:.5},{:.1},{:.4},{},{},{},{},{},{}",
             self.family,
             self.seed,
             u8::from(self.relabel),
@@ -179,6 +185,8 @@ impl ScenarioRow {
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join("/"),
+            self.rev_amp_idle,
+            self.moving_ticks_idle,
         )
     }
 }
@@ -463,6 +471,7 @@ impl ScenarioMeter {
         let speed = track.speed;
         if length > speed / 8.0 {
             self.row.moving_ticks += 1;
+            self.row.moving_ticks_idle += u32::from(idle);
             track.still_ticks = 0;
         } else {
             track.still_ticks += 1;
@@ -470,6 +479,7 @@ impl ScenarioMeter {
         if let Some(before) = track.step {
             if reverses(before, step, speed / 4.0, -0.5) {
                 self.row.rev_amp += 1;
+                self.row.rev_amp_idle += u32::from(idle);
                 if reverses(before, step, speed / 2.0, -0.5) {
                     self.row.rev_amp_hi += 1;
                 }

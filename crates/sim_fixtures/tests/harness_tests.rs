@@ -17,7 +17,7 @@
 
 use sim_fixtures::harness::corpus::{generate, Answer, Role, RADII, SPEEDS};
 use sim_fixtures::harness::metrics::{reverses, ScenarioMeter};
-use sim_fixtures::harness::report::{parse_csv, sign_test, wilson};
+use sim_fixtures::harness::report::{aggregate, parse_csv, sign_test, verdicts, wilson, Run};
 use sim_fixtures::harness::{build_world, run_range, Family, RunOptions};
 use sim_types::{SimScalar, SimVec2, Tick, TickBundle};
 use std::error::Error;
@@ -147,6 +147,10 @@ fn the_meter_counts_reversals_and_waste_on_a_synthetic_track() -> TestResult {
     assert_eq!(row.rev_amp, 1, "{row:?}");
     assert_eq!(row.rev_amp_hi, 1);
     assert_eq!(row.moving_ticks, 25);
+    // E4 (plan Amendment 7): the unit has no order, so its reversal and its moving ticks are all
+    // idle ones.
+    assert_eq!(row.rev_amp_idle, 1);
+    assert_eq!(row.moving_ticks_idle, 25);
     // M2: 25 steps of 0.1 walked, net displacement 0.1: 2.4 wasted of 2.5.
     assert!((row.path - 2.5).abs() < 1e-6, "{}", row.path);
     assert!((row.wasted - 2.4).abs() < 1e-6, "{}", row.wasted);
@@ -276,4 +280,34 @@ fn a_harness_world_steps_like_any_world() -> TestResult {
     });
     assert_eq!(world.diagnostics(), []);
     Ok(())
+}
+
+/// E1 and E4 of plan Amendment 7 on hand-written rows: M1 splits into ticks under an order and
+/// idle ticks, and in the ring families a single give-up fails T4 (the pillar lives and a route
+/// reaches range in every such scene).
+#[test]
+fn ring_give_ups_fail_t4_and_m1_splits_by_order() {
+    let header = "family,seed,expected,in_range,units,giveups,rev_amp,moving_ticks,rev_amp_idle,\
+                  moving_ticks_idle";
+    let rows = |giveups: u32| {
+        parse_csv(&format!(
+            "{header}\narc,1,4,4,4,{giveups},6,3000,4,1000\narc,2,4,4,4,0,0,1000,0,0\n"
+        ))
+    };
+    let split = aggregate("arc", &rows(0));
+    // Under an order: 2 reversals in 3,000 moving ticks; idle: 4 in 1,000.
+    assert!((split.get("M1_order") - 2.0 / 3.0).abs() < 1e-9);
+    assert!((split.get("M1_idle") - 4.0).abs() < 1e-9);
+    let run = |label: &str, giveups: u32| {
+        let mut run = Run {
+            label: label.to_owned(),
+            ..Run::default()
+        };
+        run.scenes.insert("arc".to_owned(), rows(giveups));
+        run
+    };
+    let held = verdicts(&[run("today", 0), run("new", 0)]);
+    assert!(held.contains("| T4 | arc | holds |"), "{held}");
+    let failed = verdicts(&[run("today", 0), run("new", 1)]);
+    assert!(failed.contains("| T4 | arc | **fails** |"), "{failed}");
 }

@@ -238,6 +238,24 @@ pub fn aggregate(family: &str, rows: &[Row]) -> Aggregates {
     let m1 = |s: &[&Row]| rate(s, "rev_amp", "moving_ticks", 1000.0);
     let m2 = |s: &[&Row]| rate(s, "wasted", "path", 1.0);
     out.values.insert("M1", m1(&all));
+    // E4 (plan Amendment 7): M1 split into ticks under an order and idle ticks.
+    let idle_ticks: f64 = all.iter().map(|r| number(r, "moving_ticks_idle")).sum();
+    let idle_reversals: f64 = all.iter().map(|r| number(r, "rev_amp_idle")).sum();
+    let moving: f64 = all.iter().map(|r| number(r, "moving_ticks")).sum();
+    let reversals: f64 = all.iter().map(|r| number(r, "rev_amp")).sum();
+    let per_thousand = |count: f64, ticks: f64| {
+        if ticks > 0.0 {
+            1000.0 * count / ticks
+        } else {
+            f64::NAN
+        }
+    };
+    out.values.insert(
+        "M1_order",
+        per_thousand(reversals - idle_reversals, moving - idle_ticks),
+    );
+    out.values
+        .insert("M1_idle", per_thousand(idle_reversals, idle_ticks));
     out.intervals.insert("M1", bootstrap(&all, m1));
     out.values
         .insert("M1hi", rate(&all, "rev_amp_hi", "moving_ticks", 1000.0));
@@ -421,8 +439,10 @@ pub fn mirror_counts(rows: &[Row]) -> (u32, u32, u32) {
 }
 
 /// The rows of each table: label, aggregate name, decimals.
-const TABLE: [(&str, &str, usize); 22] = [
+const TABLE: [(&str, &str, usize); 24] = [
     ("M1 per 1,000 moving unit-ticks", "M1", 2),
+    ("M1 under an order (E4)", "M1_order", 2),
+    ("M1 idle (E4)", "M1_idle", 2),
     ("M1-hi", "M1hi", 2),
     ("M2 wasted share", "M2", 4),
     ("M3 standing waste per unit", "M3", 3),
@@ -640,6 +660,12 @@ fn verdict(
                 new.get("giveups"),
                 new.get("complete_scen")
             ),
+        )),
+        // E1 (plan Amendment 7), added to T4: in the ring families the pillar lives and a route
+        // reaches range, so no attacker gives its target up.
+        "T4" if matches!(family, "arc" | "corridor") => Some((
+            le("giveups", 0.0),
+            format!("give-ups {} (E1)", new.get("giveups")),
         )),
         "T5" if family == "arc" => Some((
             ge("fill_mean", 0.90) && ge("fill_p5", 0.7476),
