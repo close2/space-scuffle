@@ -1046,3 +1046,43 @@ Against WP3's thresholds, arc T5 and arc T7 now hold on development. Arc M1-hi (
 - But under Amendment 8's rule it stops: arc T1 (M1-hi) gets worse than WP3.
 - The wavefront fallback is conditional on P2's own criteria failing, and they did not fail, so it was not run.
 - Hand-back point (orchestrator's request): after step 2's verdict.
+
+### 13.4 Step 1b (Amendment 12): a closing body in contact stays a threat: stopped by the step rule (side branch `contact-solver-1b-wip`)
+
+**Built** (`56cb6c1d` on the side branch).
+- `threat_of` returns a body in contact that the unit still closes on as a threat with time to contact zero (ORCA's
+  colliding case). A body in contact that the unit moves away from stays no threat.
+- Test `a_closing_body_in_contact_stays_the_threat` is red before.
+
+**Development, against step 1** (`runs/p17-1` → `runs/p1b-1`).
+
+| Family | Figure | Step 1 | 1b | Rule |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **2** | better |
+| arc | D-S | 102,537 | 19,626 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **7.86 / 5.21** | **stop**: M1-hi passed T1 and now fails |
+| arc | relabel p, completion (T8) | 0.871 | **0.001** | **stop**: T8 passed and now fails |
+| gap | M1 / M1-hi (T1, WP3 fails) | 1.11 / 0.283 | **3.64 / 2.17** | **stop**: worse |
+| cross | M1 / M1-hi (T1, WP3 fails) | 1.19 / 0.486 | **2.42 / 1.88** | **stop**: worse |
+| cross | give-ups (T4, WP3 fails) | 2 | **16** | **stop**: worse |
+| corner | M1 / M1-hi (T1) | 0.499 / 0.111 | **1.95 / 1.11** | **stop**: T1 passed and now fails |
+| corridor | give-ups | 20 | 0 | better |
+
+**Trace** (`trace/1b/`; gap seed 481, cross seed 721, corner seed 852, the largest rises in M1-hi).
+- **Counts:** 581 of the 642 reversals are units touching a body (gap −0.05 to 0), and 483 come after a change of
+  side partner or side since the unit's previous reversal.
+- **Ties at contact.** In a dense crowd (the gap mouth, the corner, two groups meeting head-on) a unit touches
+  several bodies it still closes on. Every one is now a threat with time to contact zero. The earliest threat is a
+  tie, decided by the smallest id, so the partner and its geometric side change as contacts come and go.
+- **A full right angle at contact.** `tangent_heading` turns onto the tangent of a disc the unit already overlaps,
+  which is the perpendicular to the line of centres (sin α clamps to 1). So each change of partner is a 90° sideways
+  step, which contact pushes back. For example, gap seed 481 unit 16: proposal (0, 0.099), correction (0, −0.069).
+
+**Reading.**
+- The fix removes the arc give-ups (305 → 2), as step 0's diagnosis predicted for the ring families.
+- But treating contact as a threat with time zero hands the one-partner rule a tie wherever several bodies touch,
+  and the rule then turns fully sideways. That defect is outside the ring families' single-contact case.
+- By Amendment 12, this is a stop.
+- Step 2′ (the wavefront) is built (`contact-solver-1b-wip`, commit after `56cb6c1d`) on top of 1b, but was not
+  measured: its baseline step stopped, and a run on top of 1b would be confounded. The run started in the queue was
+  cancelled.
