@@ -10,6 +10,8 @@
 //!   the exact head-on tie passes right to right; a converging pair does not vibrate;
 //! - a body spawned into a crowd (K-3) leaves it within a bounded number of ticks and never
 //!   through a wall.
+//! - WP4's ring rule (Amendments 7 and 8): in the ring families attackers aim for free gaps and
+//!   the rest stand with their orders: no corridor give-up, no standing jitter.
 //!
 //! Worlds use the shipped catalog with its rules switched to the solver pipeline, or scratch
 //! archetypes; positions are converted to `f64` for measurement only.
@@ -75,6 +77,28 @@ fn gaps_and_crossings_meet_t4_and_t7_under_the_solver() -> TestResult {
         );
         assert!(get("fo_max") <= 0.15, "{family:?} T7 max {}", get("fo_max"));
         assert_eq!(get("diagnostics"), 0.0);
+    }
+    Ok(())
+}
+
+/// WP4's ring rule (plan Amendments 7 and 8) on 20 development seeds of the ring families: an
+/// attacker whose bearing point is taken walks to the nearest free gap, and one with no free angle
+/// stands with its order. So no corridor attacker gives its target up (E1), nobody left without
+/// room jitters (M3 ≤ 0.5, T2), and the corridor's queue does not oscillate (T1). Red under WP3,
+/// where the queue gave up (68 give-ups on these seeds) and jostled.
+#[test]
+fn ring_attackers_aim_for_gaps_and_the_rest_stand() -> TestResult {
+    let options = solver_options()?;
+    let corridor = twenty(Family::Corridor, &options)?;
+    assert_eq!(corridor.get("giveups"), 0.0, "corridor E1");
+    assert!(
+        corridor.get("M1") <= 1.0,
+        "corridor T1 {}",
+        corridor.get("M1")
+    );
+    for family in [Family::Arc, Family::Corridor] {
+        let a = twenty(family, &options)?;
+        assert!(a.get("M3") <= 0.5, "{family:?} M3 {}", a.get("M3"));
     }
     Ok(())
 }

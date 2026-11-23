@@ -589,16 +589,6 @@ fn send_workers_to_harvest(harness: &mut Harness) {
     );
 }
 
-/// The local player's bank of minerals.
-fn minerals(harness: &Harness) -> u32 {
-    harness
-        .world()
-        .player_resources
-        .get(LOCAL_PLAYER)
-        .expect("invariant: LOCAL_PLAYER has a player slot")
-        .minerals
-}
-
 /// Selects the local town hall and queues [`QUEUED_JOBS`] jobs on it with the card's train key.
 fn queue_jobs_at_town_hall(harness: &mut Harness) -> EntityId {
     harness
@@ -841,15 +831,32 @@ fn selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick() {
     let mut harness = skirmish();
     settle(&mut harness, true);
     send_workers_to_harvest(&mut harness);
-    // The first delivery grows the lists of laden workers to their working size, which is a
-    // buffer's first use, not churn, so the window starts after it.
+    // The lists of laden workers grow to their working size as the workers' trips settle: one
+    // at a time gathers a field, so the workers sent together spread over the line and carry
+    // out of phase (plan `2026-11-23-harvest-occupancy` D-2, D-3). That growth is a buffer's
+    // first use, not churn, so the window starts once every worker has delivered at least once
+    // (the plan's Amendment 1), read from the simulation.
     harness.resume();
-    let unpaid = minerals(&harness);
+    let crew = local_workers(&harness);
+    let mut carried = vec![false; crew.len()];
+    let mut delivered = vec![false; crew.len()];
     let mut frames = 0;
-    while minerals(&harness) <= unpaid {
+    while !delivered.iter().all(|&done| done) {
         harness.step(1);
+        let world = harness.world();
+        for ((worker, carried), delivered) in crew.iter().zip(&mut carried).zip(&mut delivered) {
+            let carrying = world
+                .entities
+                .get(worker)
+                .is_some_and(|e| e.cargo.is_some());
+            *delivered |= *carried && !carrying;
+            *carried = carrying;
+        }
         frames += 1;
-        assert!(frames < READY_FRAMES * 4, "the workers never delivered");
+        assert!(
+            frames < READY_FRAMES * 4,
+            "not every worker delivered: {delivered:?}"
+        );
     }
     harness.pause();
     let base = queue_jobs_at_town_hall(&mut harness);

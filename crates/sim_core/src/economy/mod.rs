@@ -21,6 +21,9 @@
 //! - Outcomes and events are derived output, excluded from checksums and never read back.
 //! - Task iteration follows entity ID order, so simultaneous workers resolve identically on
 //!   every peer.
+//! - No task step reads another unit's claim on a resource: the claims of a tick are resolved
+//!   after every step, in a key of hashed state (`harvest`, plan
+//!   `2026-11-23-harvest-occupancy` D-2), so iteration order never decides who gathers.
 
 mod harvest;
 
@@ -215,12 +218,26 @@ pub struct TaskEvent {
 }
 
 /// Retained buffers and derived output of the task phase; excluded from checksums.
+// PERFORMANCE RATIONALE:
+// Why: The claims on resources are made and resolved every tick a worker waits at a node, and
+//      fresh vectors would allocate on each of those ticks.
+// What: The claims, the per-node tally and the waiting claimants are retained buffers, cleared
+//      and refilled in place; none is read across ticks.
+// Trade-off: They keep their high-water capacity (the most claims of a tick, the map's node
+//      count) for the world's lifetime.
 #[derive(Default)]
 pub(crate) struct EconomyWorkspace {
     pub outcomes: Vec<GameCommandOutcome>,
     pub events: Vec<TaskEvent>,
     pub passengers: Vec<EntityId>,
     ids: Vec<EntityId>,
+    /// This tick's claims on resources (plan `2026-11-23-harvest-occupancy` D-2); cleared
+    /// every tick, never hashed.
+    claims: Vec<harvest::Claim>,
+    /// Per node of the map, its occupancy, claim and assigned count on a tick with claims.
+    tally: Vec<harvest::NodeTally>,
+    /// The claimants of a tick that were not granted their node.
+    waiting: Vec<harvest::Claim>,
 }
 
 /// A rectangle of grid cells, a building's or a resource node's.
@@ -497,6 +514,7 @@ impl SimWorld {
             }
         }
         self.economy.ids = ids;
+        self.resolve_resource_claims();
     }
 
     /// The radius of `actor`, in world units.

@@ -1438,3 +1438,43 @@ stays for reference only.
 7. **Stop rule.** If Arm A or Arm B is worse than WP3 beyond the noise rule on any T-figure, stop with a trace. The
    schema shrinks as `SideMemory`'s fields go. Take the next free number at merge with proof headers on all four
    builds, or keep 34 if the field set ends up equal to WP2's.
+
+## Amendment 8 (orchestrator, 2026-11-23): Arm B is adopted; the step-to-step stop rule is restated against the thresholds
+
+**Why** (evidence §10 on `contact-solver-wp4b-wip`).
+
+- **Arm A is not a design.** It is the control arm of the review's two-arm experiment: stand when the bearing is
+  blocked, with no gap aim. Its arc give-ups double, because blocked units chase straight into the front rank.
+  The review's §5 predicted this (the gap aim is the cure).
+- **Arm B improves almost everything:**
+
+  | Family | Figure | WP3 | Arm B |
+  |---|---|---:|---:|
+  | arc | M1 (reversals) | 29.85 | 3.77 |
+  | arc | give-ups | 4,827 | 1,204 |
+  | arc | fill | 0.609 | 0.806 |
+  | arc | overlap scenes over the bound | 317 | 29 |
+  | corridor | M1 (reversals) | 25.76 | 0.003 |
+  | corridor | give-ups | 4,991 | 16 |
+  | corridor | overlaps | many | 0 |
+
+  T8 holds everywhere.
+- **Its only regression beyond the noise rule is arc M4 (T3):** 0.015 % → 0.051 %, against a threshold of 1 %.
+- **Amendment 7 item 7 needs restating.** As written ("worse than WP3 beyond the noise rule on any T-figure")
+  it would stop a step that is twenty times inside its threshold while it improves every failing figure. That rule
+  was mine, for the development steps. It is not a pre-registered threshold.
+
+**Decision.**
+
+1. **Arm B is adopted** and lands on `contact-solver-plan` as WP4's ring rule. Arm A is not committed.
+2. **Restated step-to-step stop rule.** A development step stops if either of these holds beyond the noise rule:
+   - a T-figure that WP3 passes now fails its pre-registered threshold;
+   - a T-figure that WP3 already fails gets worse.
+
+   A figure that stays within its threshold may move. The movement is reported, with a trace.
+3. **Continue with steps 3 to 6 of Amendment 7 item 5:** the summed TTC term, then the wall-sliding hard pass, then
+   WP5, then the single acceptance run with the cost split. E1, E2 and E4, and the comparator rules the
+   implementer fixed before measuring (maxima judged by scene counts over the T7 bound, T8 by its p threshold, T9 by
+   leaving WP3's interval), are accepted as written in evidence §10.
+4. **Open, not a T-figure:** corridor two-abreast packing misses the scene's known capacity in about 29 % of short
+   scenes. Report it at the acceptance run; it is not fixed by a further rule here.

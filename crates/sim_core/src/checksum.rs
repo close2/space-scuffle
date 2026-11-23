@@ -76,9 +76,10 @@ use std::collections::BTreeMap;
 /// a box, then its three values; 1 for an outline, then its vertices).
 /// Schema 33 adds each unit's return-delay countdown, `UnitTask::return_ticks`, after
 /// `gather_ticks` (plan `2026-11-22-harvest-timing` D-5).
-/// Schema 34 adds each unit's side-rule commitment (its partner, then its side) and its slot claim
-/// (the target, then the point) to its movement memory, after the leash origin (plan
-/// `2026-11-20-contact-solver` §3.7). Only the solver pipeline writes them.
+/// Schema 34 adds each unit's remembered gap on the ring round its chase target (the target, then
+/// the point) to its movement memory, after the leash origin (plan `2026-11-20-contact-solver`
+/// §3.7, Amendment 7 items 2 and 3: the side rule keeps no memory). Only the solver pipeline
+/// writes it.
 pub const CHECKSUM_SCHEMA_VERSION: u32 = 34;
 
 // PERFORMANCE RATIONALE:

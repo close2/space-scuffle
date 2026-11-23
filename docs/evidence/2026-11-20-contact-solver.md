@@ -827,3 +827,70 @@ Full tables: `wp4b/cmp-a0.md` and `wp4b/cmp-b0.md`.
   - T7: arc enemy over 0.005 in 40 scenes;
   - T1: arc M1 3.77;
   - T9: the mirror.
+
+## 11. WP4 step 3 (Amendment 7 item 3, the summed TTC term): stopped under Amendment 8's rule
+
+Base: `contact-solver-plan` at `d9c2e763` (WP4's ring rule, Arm B). Development range, run `wp4b/runs/t0-1`;
+tables `wp4b/cmp-t0.md` (against WP3) and `wp4b/cmp-t0-vs-b0.md` (against Arm B). Work on
+`contact-solver-wp4b-wip`.
+
+**Built.**
+- `intent.rs` is rewritten as the summed tangential term. Each candidate (I-4, L6 and the chase target
+  excluded) adds `w · (R − m) / max(τ, 1)` along the normal of the relative velocity away from it, where:
+  - `w = 1 − τ/H`;
+  - `m` is the straight course's miss distance;
+  - the term is right-handed at `v × p = 0`;
+  - a pair already in contact and closing counts with `τ = 0`.
+- Collisions beyond the unit's planned stop are skipped. The planned stop is the rest of the route, less the
+  weapon's reach for a chase, measured where braking measures it.
+- The bent heading is capped at `asin(1/h)`.
+- Every constant is derived in the module documentation. There is no memory and no id.
+- `SideMemory`, `side_partner` and `side_left` are deleted.
+- **Schema 34 restated:** the remembered gap only. **Goldens proved:**
+  - A scratch build of the tree with the two fields restored (unwritten) reproduces the previous 20 + 60
+    checksums and `DEFAULT_SANDBOX_CHECKSUM` on native debug and release and `wasm32-wasip1` release and debug
+    (runner `wasmtime --dir=<real path>`).
+  - The re-recorded lists agree on all four builds.
+
+**Figures against WP3** (development, 95 % intervals). Rows marked **stop** meet Amendment 8's rule.
+
+| Family | Figure | WP3 | Arm B | Step 3 | Rule |
+|---|---|---:|---:|---:|---|
+| gap | M1 (T1, WP3 fails) | 1.11 [1.00, 1.22] | 1.11 | **1.58** [1.44, 1.71] | **stop**: a failing figure got worse |
+| gap | M1-hi (T1, WP3 fails) | 0.282 [0.252, 0.312] | 0.282 | **0.318** | **stop** |
+| gap | give-ups (T4) | 46 [25, 69] | 46 | 56 [31, 85] | within noise |
+| gap | η median / 5th | 0.784 / 0.381 | same | 0.806 / 0.407 | better |
+| cross | M1 (T1, WP3 fails) | 1.19 [1.10, 1.29] | 1.19 | **1.42** [1.24, 1.61] | **stop** |
+| cross | M1-hi / M4 | 0.486 / 0.50 % | same | 0.321 / 0.03 % | better |
+| cross | give-ups | 2 | 2 | 0 | |
+| cross | scenes over the friend bound (T7, WP3 passes) | 0 | 0 | **1** (seed 945, 0.162) | **stop**: a passing figure now fails |
+| corner | M1 (T1 passes) | 0.506 | 0.506 | 0.714 | moves within the threshold |
+| arc | M1 / give-ups / fill | 29.85 / 4,827 / 0.609 | 3.77 / 1,204 / 0.806 | 4.82 / 246 / 0.828 | |
+| arc | M4 | 0.015 % | 0.051 % | 0.021 % | |
+| arc | friend / enemy scenes over the bound | 317 / 91 | 29 / 40 | 5 / 25 | |
+| corridor | M1 / give-ups | 25.76 / 4,991 | 0.003 / 16 | 0.007 / 4 | |
+| mirror | blue share | 0.452 [0.414, 0.490] | 0.458 | 0.427 [0.389, 0.465] | within WP3's interval |
+
+T8 holds everywhere except corner's completion test, p = 0.029 (≥ 0.01, holds).
+
+**Traces.**
+- **Cross, seed 777** (`trace/cross777-t0.txt`; θ 180°, n 12, r 1; reversals 14 → 122).
+  - Every reversal falls at ticks 73 to 76, as the two head-on groups meet. Units step sideways about 0.05 a tick
+    and reverse the next tick, for example unit 22 `(−0.041, 0.048) → (0.040, −0.042)`.
+  - The side of each candidate is `sign(v × p)`, and a body nearly dead ahead lies close to `v × p = 0`. One
+    tick's sideways step moves it across the line, so the side flips. Without memory, the sum of several such
+    bodies alternates.
+  - This is the reciprocal dance that the one-partner commitment, and HRVO, exist to prevent (review §2.1).
+- **Gap, seed 481** (`trace/gap481-t0.txt`; w 2, r 0.875, n 23; 51 → 109): the same lateral alternation at the
+  mouth, among the queue's slow bodies.
+
+**Reading (no rule proposed).**
+- The term does what the review expected on the ring families:
+  - arc give-ups 1,204 → 246;
+  - arc overlap scenes 29 → 5;
+  - corridor flips not reintroduced;
+  - T8 restored where WP3 was close (gap completion p 0.036 → 0.650).
+- But a memoryless side choice dances near `v × p = 0` in head-on and mouth crowds. That makes T1 worse in gap
+  and cross, which WP3 already fails, and puts one crossing scene over T7's maximum.
+- By Amendment 8 this is a stop. The steps after it (wall-sliding hard pass, WP5, acceptance, cost split) were not
+  started.

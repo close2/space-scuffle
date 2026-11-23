@@ -26,9 +26,9 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId,
     FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
-    ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashLine,
-    SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, TurretIdle, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
+    SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
+    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -945,12 +945,20 @@ struct OverclockSpecDef {
     attack_rate_multiplier: f32,
 }
 
-/// An authored harvester capability, written `harvester: Some(())`. It has no fields: harvest
-/// time, amount and return delay are the resource's (`placement_rules.ron`, plan
+/// An authored harvester capability, written
+/// `harvester: Some((acquire_radius: 10.0, acquires: [Mineral]))`: the harvest ability's
+/// acquire fields (plan `2026-11-23-harvest-occupancy` D-4). Both are required. Harvest time,
+/// amount and return delay are the resource's (`placement_rules.ron`, plan
 /// `2026-11-22-harvest-timing` D-3), and a row still naming one is refused, not ignored.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HarvesterSpecDef {}
+struct HarvesterSpecDef {
+    /// How far the worker looks for another node, world units (`AcquireRadius`); finite and
+    /// nonnegative.
+    acquire_radius: f32,
+    /// The kinds it looks for another node of (`ResourceAcquire`); no kind twice, may be empty.
+    acquires: Vec<ResourceKind>,
+}
 
 /// An authored barrier (`StarCraft` II's Immortal Barrier); see [`BarrierSpec`].
 #[derive(Debug, Deserialize)]
@@ -1505,9 +1513,10 @@ impl UnitArchetypeDef {
             speed_multiplier: SimScalar::from_f32_lossy(o.speed_multiplier),
             attack_rate_multiplier: SimScalar::from_f32_lossy(o.attack_rate_multiplier),
         });
-        let harvester = authored
-            .harvester
-            .map(|HarvesterSpecDef {}| HarvesterSpec {});
+        let harvester = authored.harvester.map(|h| HarvesterSpec {
+            acquire_radius: SimScalar::from_f32_lossy(h.acquire_radius),
+            acquires: ResourceKindSet::of(&h.acquires),
+        });
         let barrier = authored.barrier.map(|b| BarrierSpec {
             absorb_limit: SimScalar::from_f32_lossy(b.absorb_limit),
             duration_ticks: b.duration_ticks,

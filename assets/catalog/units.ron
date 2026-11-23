@@ -79,7 +79,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // CAbilHarvest default (core AbilData:353-380), inherited unchanged by the three workers'
+                // abilities: AcquireRadius 10 (game units = cells), ResourceAcquire Minerals 1 (no other kind).
+                harvester: Some((acquire_radius: 10.0, acquires: [Mineral])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -1569,7 +1571,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // CAbilHarvest default (core AbilData:353-380), inherited unchanged by the three workers'
+                // abilities: AcquireRadius 10 (game units = cells), ResourceAcquire Minerals 1 (no other kind).
+                harvester: Some((acquire_radius: 10.0, acquires: [Mineral])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -2623,7 +2627,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // CAbilHarvest default (core AbilData:353-380), inherited unchanged by the three workers'
+                // abilities: AcquireRadius 10 (game units = cells), ResourceAcquire Minerals 1 (no other kind).
+                harvester: Some((acquire_radius: 10.0, acquires: [Mineral])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
