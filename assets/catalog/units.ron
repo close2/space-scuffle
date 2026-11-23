@@ -79,7 +79,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // Today's search for the next node (plan 2026-11-23-harvest-occupancy WP1, first
+                // step): radius 12 for minerals and gas.
+                harvester: Some((acquire_radius: 12.0, acquires: [Mineral, Gas])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -1569,7 +1571,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // Today's search for the next node (plan 2026-11-23-harvest-occupancy WP1, first
+                // step): radius 12 for minerals and gas.
+                harvester: Some((acquire_radius: 12.0, acquires: [Mineral, Gas])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -2623,7 +2627,9 @@
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
                 // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
                 // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
-                harvester: Some(()),
+                // Today's search for the next node (plan 2026-11-23-harvest-occupancy WP1, first
+                // step): radius 12 for minerals and gas.
+                harvester: Some((acquire_radius: 12.0, acquires: [Mineral, Gas])),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),

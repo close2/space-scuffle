@@ -442,16 +442,17 @@ fn an_edited_resource_harvest_changes_the_gather() -> TestResult {
     Err("the worker never gathered".into())
 }
 
-/// Plan `2026-11-22-harvest-timing` D-3: the worker's harvester capability has no numbers, so a
-/// units catalog still naming the old per-worker fields is refused, not silently ignored.
+/// Plan `2026-11-22-harvest-timing` D-3: the worker's harvester capability names no harvest
+/// numbers (they are the resource's), so a units catalog still naming the old per-worker fields
+/// is refused, not silently ignored.
 #[test]
 fn a_harvester_naming_a_harvest_field_is_refused() -> TestResult {
     let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
-    assert!(units.contains("harvester: Some(())"));
+    assert!(units.contains("harvester: Some((acquire_radius:"));
     for field in ["harvest_capacity: 5", "harvest_rate_ticks: 50"] {
         let edited = units.replacen(
-            "harvester: Some(())",
-            &format!("harvester: Some(({field}))"),
+            "harvester: Some((acquire_radius:",
+            &format!("harvester: Some(({field}, acquire_radius:"),
             1,
         );
         let result = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &edited);
@@ -461,6 +462,162 @@ fn a_harvester_naming_a_harvest_field_is_refused() -> TestResult {
             "{field}: {result:?}"
         );
     }
+    Ok(())
+}
+
+/// Plan `2026-11-23-harvest-occupancy` D-4: both acquire fields are required, so a harvester row
+/// without one fails to load with the deserialization error naming it.
+#[test]
+fn a_harvester_without_its_acquire_fields_is_refused() -> TestResult {
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    let row = units
+        .find("harvester: Some((acquire_radius:")
+        .ok_or("a harvester row")?;
+    let end = row + units[row..].find("))").ok_or("the row's end")? + 2;
+    for (missing, replacement) in [
+        ("acquire_radius", "harvester: Some((acquires: [Mineral]))"),
+        ("acquires", "harvester: Some((acquire_radius: 10.0))"),
+    ] {
+        let edited = format!("{}{replacement}{}", &units[..row], &units[end..]);
+        let result = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &edited);
+        assert!(
+            matches!(&result, Err(SimCoreError::RonDeserializationError(message)) if message.contains(missing)),
+            "{missing}: {result:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Sets every harvester row's `acquire_radius` in `units` to `radius`.
+fn with_acquire_radius(units: &str, radius: &str) -> String {
+    let marker = "harvester: Some((acquire_radius: ";
+    let mut out = String::with_capacity(units.len());
+    let mut rest = units;
+    while let Some(at) = rest.find(marker) {
+        let value = at + marker.len();
+        let end = value
+            + rest[value..]
+                .find(',')
+                .expect("the radius ends with a comma");
+        out.push_str(&rest[..value]);
+        out.push_str(radius);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What a worker does when its only field runs dry: the first step's event, if it ended its
+/// order, or the node it moved on to. One field of one load beside the hall and a second field
+/// about 6 world units from where the worker stands when it finds the first empty.
+fn exhaustion_outcome(
+    catalogs: RuntimeCatalogs,
+) -> Result<
+    Result<sim_types::ResourceNodeId, sim_core::economy::TaskEventKind>,
+    Box<dyn std::error::Error>,
+> {
+    let amount = catalogs
+        .units
+        .placement_rules()
+        .harvest(sim_types::ResourceKind::Mineral)
+        .ok_or("the mineral harvest")?
+        .amount;
+    let field = |cell: (u32, u32), remaining: u32| sim_map::ResourceNode {
+        pos: SimVec2::new(
+            SimScalar::from_num(cell.0) + SimScalar::HALF,
+            SimScalar::from_num(cell.1) + SimScalar::HALF,
+        ),
+        kind: sim_types::ResourceKind::Mineral,
+        remaining,
+        cell,
+        placed: None,
+    };
+    let side = 32_u32;
+    let cells = vec![MapCell::default_ground(CliffLevel(0)); (side * side) as usize];
+    let map = GameMap::from_cells(
+        side,
+        side,
+        cells,
+        vec![field((14, 8), amount), field((14, 13), 1_000)],
+        Vec::new(),
+    )?;
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    let worker_type = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.capabilities.harvester.is_some())
+        .ok_or("a harvester")?
+        .unit_type_id;
+    let hall_type = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.is_resource_dropoff && arch.requires_structures.is_empty())
+        .ok_or("a depot")?
+        .unit_type_id;
+    world.spawn_structure(hall_type, PlayerId(0), 4, 6)?;
+    let worker = world.spawn_unit(
+        worker_type,
+        PlayerId(0),
+        SimVec2::new(SimScalar::from_num(11.5), SimScalar::from_num(8.5)),
+    )?;
+    let mut commands = vec![sim_types::PlayerCommand {
+        player_id: PlayerId(0),
+        entities: vec![worker],
+        order: sim_types::UnitOrder::Harvest {
+            target: sim_types::ResourceNodeId(0),
+        },
+        queue: false,
+    }];
+    for _ in 0..1_000 {
+        let tick = world.current_tick;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        if let Some(event) = world.task_events().first() {
+            return Ok(Err(event.kind.clone()));
+        }
+        if let Some(sim_types::UnitOrder::Harvest { target }) =
+            world.entities[&worker].order_queue.front()
+        {
+            if target.0 != 0 {
+                return Ok(Ok(*target));
+            }
+        }
+    }
+    Err("the worker neither moved on nor ended its order".into())
+}
+
+/// Plan `2026-11-23-harvest-occupancy` D-4 (charter §3.3, C6): the acquire radius is read from
+/// `units.ron` at run time. With the shipped radius an exhausted field's worker moves on to the
+/// second field; the same binary with a radius below the distance to it ends the order instead.
+#[test]
+fn an_edited_acquire_radius_changes_the_next_field() -> TestResult {
+    let bundle = Bundle::new("acquire-radius")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    std::fs::write(&path, with_acquire_radius(&text, "2.0"))?;
+    let edited = bundle.load()?;
+    bundle.finish()?;
+    let radius = |catalogs: &RuntimeCatalogs| {
+        catalogs
+            .units
+            .archetypes()
+            .find_map(|arch| arch.capabilities.harvester)
+            .map(|spec| spec.acquire_radius)
+    };
+    assert_eq!(radius(&edited), Some(SimScalar::from_num(2)));
+    assert_ne!(radius(&shipped), radius(&edited));
+    assert_eq!(
+        exhaustion_outcome(shipped)?,
+        Ok(sim_types::ResourceNodeId(1))
+    );
+    assert_eq!(
+        exhaustion_outcome(edited)?,
+        Err(sim_core::economy::TaskEventKind::ResourceExhausted)
+    );
     Ok(())
 }
 

@@ -21,8 +21,10 @@
 //!   it is free for the next worker during the wait.
 //! - The wait is part of the leg: a new order replaces it at once, and the cargo stays on the
 //!   unit (D-4; 5.0.14 marks the stage uninterruptible, B-160). `ReturnCargo` does not wait.
-//! - An exhausted node sends its worker to the nearest live node of the same kind within
-//!   [`NEXT_NODE_RADIUS`]. With none left the order ends with an event.
+//! - An exhausted node sends its worker to the nearest live node of the same kind within its
+//!   harvester's `acquire_radius`, if the harvester acquires that kind (`AcquireRadius` and
+//!   `ResourceAcquire`, plan `2026-11-23-harvest-occupancy` D-4). With none, or a kind it does
+//!   not acquire, the order ends with an event.
 //! - What a distant node holds is private until the player sees it. An order to an exhausted
 //!   node out of sight is taken, and the worker walks there to find out, so neither admission
 //!   nor an event reveals it early.
@@ -46,12 +48,9 @@ use crate::production::ProductionInvariant;
 use crate::SimWorld;
 use sim_map::PlacedFootprint;
 use sim_types::{
-    AnimState, EntityId, HarvesterSpec, PlayerId, ResourceKind, ResourceNodeId, SimScalar, SimVec2,
-    UnitOrder, VisibilityState,
+    AnimState, EntityId, HarvesterSpec, PlayerId, ResourceKind, ResourceNodeId, SimVec2, UnitOrder,
+    VisibilityState,
 };
-
-/// How far an exhausted node's workers look for the next one, in world units.
-const NEXT_NODE_RADIUS: SimScalar = SimScalar::from_raw(12 << 32);
 
 impl SimWorld {
     /// The cells and shape a player's worker gathers from at `node`, if it can gather there
@@ -166,10 +165,10 @@ impl SimWorld {
 
     /// One tick of a `Harvest` order at the front of `id`'s queue.
     pub(crate) fn step_harvest(&mut self, id: EntityId, target: ResourceNodeId) {
-        if self.harvester_spec(id).is_none() {
+        let Some(spec) = self.harvester_spec(id) else {
             self.end_task(id, Some(TaskEventKind::NotCapable));
             return;
-        }
+        };
         let Some(actor) = self.entities.get_mut(&id) else {
             return;
         };
@@ -201,7 +200,7 @@ impl SimWorld {
                     Approach::Arrived => {}
                 }
             }
-            match self.next_node(owner, kind, position) {
+            match self.next_node(owner, &spec, kind, position) {
                 Some(next) => self.replace_task_order(id, UnitOrder::Harvest { target: next }),
                 None => self.end_task(id, Some(TaskEventKind::ResourceExhausted)),
             }
@@ -292,14 +291,20 @@ impl SimWorld {
         }
     }
 
-    /// The nearest node of `kind` near `from` that `player` can gather from now.
+    /// The nearest node of `kind` within the harvester's acquire radius of `from` that `player`
+    /// can gather from now; none if the harvester does not acquire `kind` (plan
+    /// `2026-11-23-harvest-occupancy` D-4).
     fn next_node(
         &self,
         player: PlayerId,
+        spec: &HarvesterSpec,
         kind: ResourceKind,
         from: SimVec2,
     ) -> Option<ResourceNodeId> {
-        let reach = i128::from(NEXT_NODE_RADIUS.raw());
+        if !spec.acquires.contains(kind) {
+            return None;
+        }
+        let reach = i128::from(spec.acquire_radius.raw());
         self.map
             .resources()
             .iter()
