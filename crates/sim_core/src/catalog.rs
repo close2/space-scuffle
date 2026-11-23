@@ -27,7 +27,7 @@ use sim_types::{
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec,
     FactionId, FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag,
     PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashImpact, SplashLine, SplashLineAxis,
+    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
     SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
     UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
@@ -1179,6 +1179,14 @@ struct SplashSpecDef {
     /// [`SplashSpec::target_radius_below`]); always open when omitted.
     #[serde(default)]
     target_radius_below: Option<f32>,
+    /// Which cliff levels the area reaches (see [`SplashSpec::cliff`]); the search point's
+    /// level when omitted, the default of a `StarCraft` II damage effect.
+    #[serde(default)]
+    cliff: SplashCliff,
+    /// Whether a target on another cliff level than the attacker is struck directly (see
+    /// [`SplashSpec::strike_target_on_other_level`]); `false` when omitted.
+    #[serde(default)]
+    strike_target_on_other_level: bool,
 }
 
 /// An authored splash shape (see [`SplashShape`]).
@@ -1558,6 +1566,8 @@ impl UnitArchetypeDef {
                 offset_by_unit_radius: s.offset_by_unit_radius,
                 impact: s.impact,
                 target_radius_below: s.target_radius_below.map(SimScalar::from_f32_lossy),
+                cliff: s.cliff,
+                strike_target_on_other_level: s.strike_target_on_other_level,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
             weapon_class,

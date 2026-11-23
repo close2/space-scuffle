@@ -172,6 +172,8 @@
                         (radius: 1.25, fraction: 0.375),
                     ],
                     friendly_fire: false,
+                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
+                    cliff: Any,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("directorate_vehicle_weapons"),

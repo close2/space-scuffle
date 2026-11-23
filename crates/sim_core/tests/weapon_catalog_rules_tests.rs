@@ -1524,6 +1524,10 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
                 offset_by_unit_radius: false,
                 impact: SplashImpact::Target,
                 target_radius_below: None,
+                // A line's searches are `CEffectEnumArea`s, which do not set `SameCliff`
+                // (plan `2026-11-23-splash-cliff-levels` S3, S11 to S13).
+                cliff: sim_types::SplashCliff::Any,
+                strike_target_on_other_level: false,
             };
             assert_eq!(
                 splash, &expected,

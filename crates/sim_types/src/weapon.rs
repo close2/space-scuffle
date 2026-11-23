@@ -187,6 +187,21 @@ pub enum SplashImpact {
     Attacker,
 }
 
+/// Which cliff levels a weapon's area reaches: `StarCraft` II's `SearchFlags` `SameCliff`.
+///
+/// A level is read from the map under a position (`sim_map::GameMap::cliff_level_at`): a ramp
+/// counts as its lower landing and an air unit has the level of the ground below it (plan
+/// `2026-11-23-splash-cliff-levels` D-2, owner question Q0099's defaults).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplashCliff {
+    /// Only units on the cliff level of the search point that reaches them (`SameCliff 1`, the
+    /// default of every `CEffectDamage`, `core` EffectData:67).
+    #[default]
+    Same,
+    /// Units on every level (`SameCliff 0`; a `CEffectEnumArea` search, which does not set it).
+    Any,
+}
+
 /// Area damage: a list of zones with their own radii and fractions, searched around one point
 /// (a circle) or around each point of a line, read per weapon from the catalog.
 ///
@@ -199,9 +214,11 @@ pub enum SplashImpact {
 /// the game's damage effects check `noMarkers` against the attack's marker. A zone reaches a
 /// unit whose edge lies within it, and a target-centred circle with `offset_by_unit_radius` is
 /// centred on the target's edge facing the attacker (owner answer to Q0063, bug B-17 fixed). A
-/// line's searches land together, where the game spaces some of them in time (bug B-85), no
-/// area is an arc (bug B-19), and an area reaches every cliff level (bug B-170). See the
-/// `DESIGN.md` bug register.
+/// line's searches land together, where the game spaces some of them in time (bug B-85), and
+/// no area is an arc (bug B-19). An area keeps to the cliff level of each search point unless
+/// [`SplashSpec::cliff`] says it reaches every level, and an attacker-centred area may strike
+/// its target directly across a cliff ([`SplashSpec::strike_target_on_other_level`], bug B-170
+/// fixed). See the `DESIGN.md` bug register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
     /// The zones, radii strictly increasing; a unit takes the fraction of the innermost zone
@@ -233,6 +250,19 @@ pub struct SplashSpec {
     /// point has radius zero, so it always opens. `None`: the area always opens.
     #[serde(default)]
     pub target_radius_below: Option<SimScalar>,
+    /// Which cliff levels the area reaches: with [`SplashCliff::Same`] (the default) a unit is
+    /// struck only from a search point on its own level, at that point's fraction; the primary
+    /// target, struck directly, is struck on any level (plan `2026-11-23-splash-cliff-levels`
+    /// D-1).
+    #[serde(default)]
+    pub cliff: SplashCliff,
+    /// When the target stands on another cliff level than the attacker, the target takes this
+    /// area's strike directly, at the first zone's fraction, once. `StarCraft` II's
+    /// `BanelingVolatileBurstDirectFallbackSet` (`voidmulti` EffectData:2327–2358) on
+    /// `CliffLevelNotEqual` (ValidatorData:894–898). Meaningful only for an attacker-centred area
+    /// that keeps to its level, which validation requires (D-3).
+    #[serde(default)]
+    pub strike_target_on_other_level: bool,
 }
 
 impl SplashSpec {
@@ -494,8 +524,8 @@ pub struct StructureStrike {
 #[cfg(test)]
 mod tests {
     use super::{
-        Attribute, AttributeBonuses, AttributeFlags, SimScalar, SimVec2, SplashImpact, SplashLine,
-        SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
+        Attribute, AttributeBonuses, AttributeFlags, SimScalar, SimVec2, SplashCliff, SplashImpact,
+        SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
     };
 
     #[test]
@@ -549,6 +579,8 @@ mod tests {
             offset_by_unit_radius: false,
             impact: SplashImpact::Target,
             target_radius_below: None,
+            cliff: SplashCliff::Same,
+            strike_target_on_other_level: false,
         };
         assert_eq!(splash.fraction_at(SimScalar::ZERO), Some(SimScalar::ONE));
         assert_eq!(splash.fraction_at(SimScalar::ONE), Some(SimScalar::ONE));
@@ -565,6 +597,8 @@ mod tests {
             offset_by_unit_radius: false,
             impact: SplashImpact::Target,
             target_radius_below: None,
+            cliff: SplashCliff::Same,
+            strike_target_on_other_level: false,
         };
         assert_eq!(empty.fraction_at(SimScalar::ZERO), None);
         assert_eq!(empty.reach(), SimScalar::ZERO);
@@ -588,6 +622,8 @@ mod tests {
             offset_by_unit_radius: false,
             impact: SplashImpact::Target,
             target_radius_below: None,
+            cliff: SplashCliff::Same,
+            strike_target_on_other_level: false,
         };
         let (attacker, impact, east) = (v(0, 0), v(5, 0), v(1, 0));
         let mut points = vec![v(9, 9)];
@@ -621,6 +657,23 @@ mod tests {
         let splash: SplashSpec = ron::from_str("(zones: [])")?;
         assert_eq!(splash.impact, SplashImpact::Target);
         assert_eq!(splash.target_radius_below, None);
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-splash-cliff-levels` D-1, D-3: a splash written without the two cliff
+    /// fields keeps to its search point's level (`SameCliff 1`, the default of every
+    /// `CEffectDamage`) and strikes no target across a cliff.
+    #[test]
+    fn a_splash_defaults_to_its_level_and_no_other_level_strike(
+    ) -> Result<(), ron::error::SpannedError> {
+        assert_eq!(SplashCliff::default(), SplashCliff::Same);
+        let splash: SplashSpec = ron::from_str("(zones: [])")?;
+        assert_eq!(splash.cliff, SplashCliff::Same);
+        assert!(!splash.strike_target_on_other_level);
+        let splash: SplashSpec =
+            ron::from_str("(zones: [], cliff: Any, strike_target_on_other_level: true)")?;
+        assert_eq!(splash.cliff, SplashCliff::Any);
+        assert!(splash.strike_target_on_other_level);
         Ok(())
     }
 }

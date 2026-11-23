@@ -298,6 +298,8 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             offset_by_unit_radius: false,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         }),
         projectile_speed: None,
         weapon_class: None,

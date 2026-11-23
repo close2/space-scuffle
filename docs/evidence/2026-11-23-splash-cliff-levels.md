@@ -75,3 +75,35 @@ pass, and every other test of `ramp_profile_tests` passes as before.
 ### Worlds
 
 `compare.sh world-wp0 world-wp1`: `files base=483 new=483 differing=0`. The function has no caller yet.
+
+## WP2: the two rules, latent
+
+### Red run
+
+On the WP1 tree the new tests did not compile (`~/scratch/splash-cliff/red/wp2.log`, 47 errors): no
+`sim_types::SplashCliff`, no field `cliff` or `strike_target_on_other_level` on `SplashSpec` or `SplashSpecDef`, in
+`splash_cliff_tests` (9 tests: P-1 at a cliff edge for a target above and below, P-1 on a ramp, the target struck on
+any level, P-2 against a flat map, a line kept to its level per search point, an air area over each level, P-3 across
+a cliff, on its own level and at a structure), the `sim_types` unit test of the defaults, the five
+`catalog::validation::splash_cliff_tests`, `combat_resolution::tests::the_other_level_strike_keeps_the_areas_filters`
+and `checksum_state_tests`. With the code in and the two fields still unhashed,
+`checksum_state_tests::embedded_weapon_fields_and_splash_are_sensitive` failed with "checksum omitted cliff"
+(`red/wp2-checksum-unhashed.log`).
+
+A mutation check: with the level rule and the other-level strike disabled in `combat_resolution.rs` (scratch, not
+kept), 7 of the 9 `splash_cliff_tests` failed; the two that passed are P-2's (which the rule must not change) and the
+structure case, which was then extended with the strike switched off (the structure untouched), so it fails too.
+
+### Golden proof
+
+`~/scratch/splash-cliff/proof/run.sh` replays both goldens (`golden_replay_tests`) and the sandbox
+(`fixture_tests default_sandbox_spawns_both_armies_and_bases_whole`) on native debug and release and on
+`wasm32-wasip1` release and debug (`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<worktree>"`):
+
+| Tree | Native debug | Native release | wasm32-wasip1 debug | wasm32-wasip1 release |
+|---|---|---|---|---|
+| WP2 code and data, `cliff` and `strike_target_on_other_level` in `unhashed`, schema 36, fixtures as recorded on `d0fd365b` | pass | pass | pass | pass |
+| The fields hashed, schema 37, both fixtures and `DEFAULT_SANDBOX_CHECKSUM` re-recorded | pass | pass | pass | pass |
+
+`DEFAULT_SANDBOX_CHECKSUM`: `10_589_561_826_036_639_628` at schema 36 (reproduced with the fields unhashed),
+`18_404_512_489_137_112_834` at schema 37.

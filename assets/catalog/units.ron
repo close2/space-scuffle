@@ -512,6 +512,8 @@
                                 (radius: 1.25, fraction: 0.25),
                             ],
                             friendly_fire: true,
+                            // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
+                            cliff: Any,
                             target_radius_below: Some(1.25),
                         )),
                         projectile_speed: None,
@@ -976,6 +978,8 @@
                         offsets: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.5],
                     ),
                     friendly_fire: false,
+                    // InfernalFlameThrowerE is a CEffectEnumArea without SameCliff (liberty EffectData:2609-2616): every level.
+                    cliff: Any,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("directorate_vehicle_weapons"),
@@ -1346,6 +1350,8 @@
                 splash: Some((
                     zones: [(radius: 1.5, fraction: 1.0)],
                     friendly_fire: false,
+                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
+                    cliff: Any,
                     offset_by_unit_radius: true,
                 )),
                 projectile_speed: Some(1.2),
@@ -2238,6 +2244,9 @@
                         offsets: [-1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25],
                     ),
                     friendly_fire: false,
+                    // ThermalLancesE is a CEffectEnumArea without SameCliff (liberty EffectData:2412-2418; voidmulti EffectData:964-970
+                    // drops the former cliff validator): every level.
+                    cliff: Any,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("enclave_ground_weapons"),
@@ -2816,6 +2825,8 @@
                 splash: Some((
                     zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
+                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
+                    cliff: Any,
                     offset_by_unit_radius: false,
                     impact: Attacker,
                 )),
@@ -3131,6 +3142,9 @@
                                 period_ticks: 2,
                             ),
                             friendly_fire: false,
+                            // LurkerMPSearch is a CEffectEnumArea without SameCliff, LurkerMPDamage clears it (swarm EffectData:3022-3037):
+                            // every level.
+                            cliff: Any,
                         )),
                         projectile_speed: None,
                         weapon_class: Some("swarm_missile_attacks"),
@@ -3543,6 +3557,8 @@
                         (radius: 1.5, fraction: 0.25),
                     ],
                     friendly_fire: false,
+                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
+                    cliff: Any,
                     offset_by_unit_radius: true,
                 )),
                 projectile_speed: None,

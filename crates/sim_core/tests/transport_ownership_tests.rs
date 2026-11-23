@@ -717,6 +717,8 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
             offset_by_unit_radius: false,
             impact: sim_types::SplashImpact::Target,
             target_radius_below: None,
+            cliff: sim_types::SplashCliff::Same,
+            strike_target_on_other_level: false,
         });
         if route == 0 {
             f.world.catalog.get_mut(f.kind)?.ground_weapon = Some(weapon.clone());
