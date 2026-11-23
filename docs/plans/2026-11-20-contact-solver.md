@@ -1734,3 +1734,43 @@ S is judged under Amendment 8's rule against step 1 + P8. On a stop it is report
 passes, the already built wavefront (`75871a42`) may be re-measured once on top of it, by a further registering
 amendment. **Barred as fitting:** choosing h, ρ, the bias or the weight after seeing figures; per-family switches;
 any tie-break or hysteresis added after a trace.
+
+## Amendment 15 (orchestrator, 2026-11-23): the owner's answers to Q0095 and Q0097; the final design round
+
+**Owner rulings.**
+- **[Q0097](../questions/closed/0097-movement-solver-next-step.md), option (a), capped at one design round.** The round
+  is rule S of Amendment 14 (not ORCA), together with a fix for the overlap oscillation that ablation A0 exposed. If
+  the round cleanly beats step 1 + P8 on crossings, arcs and the Q0093 (c) cost, the held-out seeds are run and the
+  Solver switches over (WP6). If it stalls or regresses without a clear win, the work falls back to option (b): switch
+  over with step 1 + P8 and sanction the remaining failures. There is no further loop.
+- **[Q0095](../questions/closed/0095-engaged-units-nudged-sideways.md), option (b): deviation D-δ (Q0052 addendum).**
+  Allies who need room may nudge an attacking melee unit sideways along its attack ring. It is a data switch
+  (`contact.nudge_engaged_along_ring`), default on. The unit is never pushed out of attack range and never by enemies.
+  A unit on Hold Position is never nudged.
+
+**The round, in order.** Each step runs on development seeds 1–1,000 under Amendment 8's step rule against its
+predecessor, with a test that is red before the change. A stop means reporting, never a variant.
+
+1. **O1, the overlap oscillation (a solver defect; A0's traces).** For two idle units left deeply overlapped (gaps
+   −0.19 to −1.17), the solver's correction alternates sign every tick, moving them ±0.4 a tick from a zero proposal.
+   Diagnose the mechanism in `solver.rs` (a Jacobi overshoot for deep or near-coincident pairs, or the coincident-centre
+   direction) and fix it as a defect. The correction must be monotone: a pair's overlap never grows from one iteration
+   to the next, and the separation direction is stable across ticks for a static pair. Test: two idle units placed
+   overlapping by 0.8 separate monotonically, with no sign change. It runs first because S relies on the solver
+   settling contacts.
+2. **S, rule S as specified in Amendment 14**, with its four red-before tests and the mechanism check on the named
+   trace seeds. The parameters (h, ρ, the bias, the weight shape) are fixed by the amendment's derivation before any
+   run.
+3. **N, nudge D-δ**, only if S passes. Under the Solver, an engaged melee unit that is not on Hold Position takes a
+   share along its ring's tangent in friend pairs. Its radial share stays 0, so it is never pushed out of range. Enemies
+   never move it. The data switch is off in a test that proves bit-identity with step S. The corridor two-abreast figure
+   is reported, but it is not a T-figure, as before.
+4. **W, the wavefront** (`75871a42`), re-measured once on top of S (and N), by Amendment 14's provision.
+5. **Cost:** Q0093 (c) on the three throughput scenarios.
+6. **The fresh acceptance run** (200,001–201,000), once, both pipelines from one binary. Then report to the
+   orchestrator, who decides on WP6 by the owner's rule.
+
+**Fallback.** If S stops at step 2, report with figures. The orchestrator then proceeds to option (b) on step 1 + P8
+with O1 (if O1 passed): a cost step or an owner sanction for the 64 × 64 cost, then held-out, then switch-over. N is
+built under either branch, since the owner sanctioned it independently, and it is judged by the step rule like any
+step.
