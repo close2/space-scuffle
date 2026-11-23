@@ -102,6 +102,9 @@ SuiteCatalog(
         "client/capture_path_gpu_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/concealment_gpu_tests": (class: Gpu),
+        // A selected structure's rally (plan 2026-11-23-production-queue WP5): one child, three
+        // shots.
+        "client/rally_gpu_tests": (class: Gpu),
         // Mode atlases in a real battle (plan 2026-11-09-effect-visualization WP13): one child,
         // three shots.
         "client/mode_atlas_gpu_tests": (class: Gpu),
@@ -205,6 +208,7 @@ SuiteCatalog(
                 "client/battle_result_window_tests",
                 // The fog's detection rule is applied to the bubbles in `battle_hud/fog.rs`.
                 "client/concealment_gpu_tests",
+                "client/rally_gpu_tests",
                 "client/stance_gpu_tests",
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",
@@ -214,6 +218,12 @@ SuiteCatalog(
             ],
         ),
         (
+            // Plan 2026-11-23-production-queue WP5: the rally reticle and line.
+            name: "rally display",
+            paths: ["crates/client/src/battle_input/rally_marker.rs"],
+            targets: ["client/rally_gpu_tests"],
+        ),
+        (
             name: "live sync",
             paths: ["crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**}"],
             targets: [
@@ -221,6 +231,7 @@ SuiteCatalog(
                 "client/skirmish_match_tests",
                 "client/runtime_battle_tests",
                 "client/concealment_gpu_tests",
+                "client/rally_gpu_tests",
                 "client/stance_gpu_tests",
                 "client/status_gpu_tests",
                 "client/area_link_gpu_tests",

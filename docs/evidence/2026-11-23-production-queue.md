@@ -134,10 +134,33 @@ list each frame. The queue panel marks a front job waiting for supply ("Needs su
 | `sync_steady_state_tests` 8, `battle_hud_tests` 35, `battle_card_path_tests` 4, `battle_fog_tests` 25, `battle_flipbook_tests` 9, `client --lib battle_` 213 | pass |
 | Worlds (`world-wp5/`) | 420 files byte-identical to `world-wp0/` (no simulation source changed) |
 | Clippy, fmt, `workspace_checks` | clean |
-| Windowed GPU check and capture | **not done** (open item): the plan's windowed check in `runtime_media_tests` style and the radv capture of a selected producer with its rally were not built; the headless harness test above checks the reticle's transform and visibility, not pixels |
+| Windowed GPU check | WP5B, below |
 
 ## 6. WP6
 
 `DESIGN.md`: B-59, B-60 and B-66 fixed with their commits; the Production and research row names supply at the start
 of production, rally points and placed exits with the two new test files; the HUD row names the supply mark and the
 rally display. The plan's `## As built` and the README row `Done`.
+
+## 5B. WP5B: the rally display by pixels (the orchestrator's follow-up)
+
+The plan's windowed check, `crates/client/tests/rally_gpu_tests.rs`: one child through `support/gpu_run.rs`, the
+production client on the shipped skirmish. The child gives the local base a rally on open ground in sight, 8 to 11
+world units away, publishes it with one tick, stops the clock with the viewer's units holding position, and takes
+three screenshots that differ only by the selection: the base unselected, selected, and unselected again. The parent
+compares the square around the projected rally point (the reticle) and the square around the point three quarters of
+the way from the base (the line). Registered in `crates/gate/suites.ron` as a GPU target, with the "rally display"
+rule (`battle_input/rally_marker.rs`) and in the "HUD windows" and "live sync" rules.
+
+| Driver | Reticle patch: changed when selected | Line patch: changed when selected | Changed when deselected |
+|---|---|---|---|
+| radv (kwin) | 103 of 900 pixels, up to 139 levels | 52 pixels, up to 85 levels | 0 and 0 |
+| lavapipe (xvfb, as CI) | 91 of 900 pixels, up to 139 levels | 52 pixels, up to 77 levels | 0 and 0 |
+
+The first radv run failed its own bound: the reticle is the selection ring's material, an annulus with a clear middle,
+so it covers about a tenth of its patch, and the 20 % share first written was set from the full square. The bound is
+now 5 % of the patch (line: at least 4 pixels; deselected: at most 2), stated with the measured figures in the test.
+
+The radv capture is dropped from WP5's acceptance (plan §14): the windowed test child replaces it, and no capture
+goal is added to `client_diagnostics`.
+

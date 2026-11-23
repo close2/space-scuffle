@@ -648,6 +648,7 @@ Failing tests first (red on WP4's tree): §9's tests. Then the change: D-10. **A
 - **`CAbilTrain` `Range 2`** (S1): its meaning is not in the data.
 - **Larva, eggs and warp-in** (B-63): no queue, no rally here.
 - **A rally to a foundation** making a worker resume construction (the game's smart order): the worker moves there.
+- **No radv capture for WP5's acceptance** (orchestrator, 2026-11-23): the windowed test child replaces the capture; no capture goal is added to `client_diagnostics`. `crates/client/tests/rally_gpu_tests.rs` shows the rally by pixels on radv locally and lavapipe in CI.
 
 ---
 
@@ -670,7 +671,7 @@ Failing tests first (red on WP4's tree): §9's tests. Then the change: D-10. **A
 | WP2 | `19edaebe` | `start_front_job` in `lifecycle.rs`; P-2 checked against WP1's tree |
 | WP3 | `e9268383` | `RallyView::point` is `[f32; 2]` (the plan's `Vec2` is a Bevy type), so `PlayerView` loses `Eq`; C7 gains `sim_types/src/player_view.rs`. The client's `capable`, `order_subject` and refusal-message arms land here because the new variants break the client's exhaustive matches. `a_world_without_a_rally_is_unchanged` asserts that a child of a structure without a rally takes no order; the byte comparison of WP2's and WP3's trees is §7's worlds |
 | WP4 | `d4486d19` | `RingTest { Zero, Outer(level) }` names the cell test; `exit_cells_visited` counts the bound. The plan's `an_exit_is_never_on_another_level` is the kept `clear_but_disconnected_plateau_is_not_a_production_exit` |
-| WP5 | `365f7568` | `battle_input::rally_marker`; the windowed GPU check and the radv capture (§9, WP5 acceptance) were not built: open |
+| WP5 | `365f7568`, WP5B | `battle_input::rally_marker`. The windowed check is `rally_gpu_tests` (WP5B: one child through `gpu_run.rs`, three shots: unselected, selected, deselected, compared at the reticle and along the line); the radv capture was dropped from the acceptance (§14) |
 | WP6 | this commit | Register, Production and HUD rows, evidence, README |
 
 Figures are in [`docs/evidence/2026-11-23-production-queue.md`](../evidence/2026-11-23-production-queue.md): the
