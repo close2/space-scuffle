@@ -39,7 +39,7 @@ pub mod weapon;
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
     AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand,
-    RallyTarget, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
+    RallyTarget, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,

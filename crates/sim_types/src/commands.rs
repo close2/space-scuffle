@@ -294,6 +294,35 @@ pub enum AbilityEffectSpec {
     Effect(String),
 }
 
+/// The plain orders a unit accepts in one stance (`StarCraft` II: whether the stance's unit type
+/// carries the `stop` ability, and the `move` ability whose `HoldPos` command is Hold Position;
+/// `core` AbilData:552-554, :1362, :1371). Plan `2026-11-23-anchored-commands` D-1.
+///
+/// The two facts are independent of each other and of mobility: 5.0.14's burrowed Lurker has
+/// both (`liberty` UnitData:793-796), the sieged Siege Tank Stop only (`liberty`
+/// UnitData:5172-5174), and the burrowed Widow Mine neither (`swarm` UnitData:3312-3313).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StanceOrders {
+    /// Whether a `Stop` order reaches the unit.
+    pub stop: bool,
+    /// Whether a `HoldPosition` order reaches the unit.
+    pub hold_position: bool,
+}
+
+impl StanceOrders {
+    /// Both plain orders: the default stance of every mobile archetype.
+    pub const ALL: Self = Self {
+        stop: true,
+        hold_position: true,
+    };
+    /// Neither plain order: the default stance of an immobile archetype.
+    pub const NONE: Self = Self {
+        stop: false,
+        hold_position: false,
+    };
+}
+
 /// Declarative specification of a toggleable unit stance or transformation mode
 /// (e.g., Siege Mode, Burrowed Mode, Fighter/Assault Mode, High-Impact Payload, Surveillance Mode, Cloak).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -356,6 +385,14 @@ pub struct UnitModeSpec {
     /// Continuous energy drain per second (25 ticks) while this mode is active; mode deactivates if energy hits 0.
     #[serde(default)]
     pub energy_cost_per_second: SimScalar,
+    /// The plain orders a unit in this mode accepts (plan `2026-11-23-anchored-commands` D-1):
+    /// `StarCraft` II's morphed unit type's `stop` and `move` abilities, for example the sieged
+    /// Siege Tank's Stop without Hold Position (`liberty` UnitData:5172-5174, no `move`) and
+    /// the burrowed Lurker's both (`liberty` UnitData:793-796, `void` UnitData:767-769). The
+    /// `units.ron` loader requires it; the client's command card and admission read it through
+    /// `sim_core`'s `UnitArchetype::stance_orders`. Catalog data, not hashed.
+    #[serde(default)]
+    pub orders: StanceOrders,
 }
 
 /// Static ability specification in the unit archetype.
@@ -451,6 +488,28 @@ pub type TickBundle = TickInputBundle;
 mod tests {
     use super::*;
     use crate::math::SimScalar;
+
+    #[test]
+    fn stance_orders_constants_and_round_trip() {
+        assert_eq!(StanceOrders::default(), StanceOrders::NONE);
+        assert_eq!(
+            StanceOrders::ALL,
+            StanceOrders {
+                stop: true,
+                hold_position: true
+            }
+        );
+        let stop_only = StanceOrders {
+            stop: true,
+            hold_position: false,
+        };
+        let text = ron::to_string(&stop_only).expect("invariant: plain data serializes");
+        assert_eq!(
+            ron::from_str::<StanceOrders>(&text).expect("invariant: its own output parses"),
+            stop_only
+        );
+        assert!(ron::from_str::<StanceOrders>("(stop: true, hold: true)").is_err());
+    }
 
     #[test]
     fn test_commands_serde() {

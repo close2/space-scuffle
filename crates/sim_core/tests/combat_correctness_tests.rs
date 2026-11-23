@@ -634,6 +634,7 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
         ground_weapon_override,
         air_weapon_override: None,
         energy_cost_per_second: SimScalar::ZERO,
+        orders: sim_types::StanceOrders::ALL,
     };
     let switch = |name: &str| AbilitySpec {
         name: name.to_owned(),

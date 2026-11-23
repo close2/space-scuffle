@@ -119,6 +119,7 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
             ground_weapon_override: Some(Some(spines())),
             air_weapon_override: None,
             energy_cost_per_second: SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
         }];
         arch.abilities = vec![AbilitySpec {
             name: "Burrow".to_string(),
@@ -379,6 +380,7 @@ fn register_burrow_body(
             ground_weapon_override: None,
             air_weapon_override: None,
             energy_cost_per_second: SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
         }];
         arch.abilities = vec![AbilitySpec {
             name: "Burrow".to_string(),

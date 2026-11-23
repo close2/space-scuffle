@@ -3023,6 +3023,48 @@ fn b4_siege_mode_timings_follow_starcraft() {
     }
 }
 
+/// The plain orders of each shipped anchoring stance, `(analogue, stop, hold_position)` (plan
+/// `2026-11-23-anchored-commands` D-1, P-4). A stance accepts Stop when its unit type carries the
+/// `stop` ability and Hold Position when it carries `move`, whose `HoldPos` command it is (`core`
+/// AbilData:552-554, :1362, :1371). `SiegeTankSieged` has `stop`, `attack` and `Unsiege` and no
+/// `move` (`liberty` UnitData:5172-5174; no later layer sets its `AbilArray`); `LurkerMPBurrowed`
+/// has `move` and `stop` (`liberty` UnitData:793-796, `void` UnitData:767-769).
+const SC2_STANCE_ORDERS: [(&str, bool, bool, &str); 2] = [
+    (
+        "Siege Tank",
+        true,
+        false,
+        "liberty UnitData:5172-5174 (SiegeTankSieged)",
+    ),
+    (
+        "Lurker",
+        true,
+        true,
+        "liberty UnitData:793-796, void UnitData:767-769 (LurkerMPBurrowed)",
+    ),
+];
+
+#[test]
+fn b98_anchoring_stances_accept_the_orders_of_their_starcraft_unit_type() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (name, stop, hold_position, source) in SC2_STANCE_ORDERS {
+        let modes: Vec<_> = catalogs
+            .units
+            .archetypes()
+            .filter(|arch| analogue(arch) == name)
+            .flat_map(|arch| arch.modes.iter())
+            .filter(|mode| mode.is_immobile)
+            .collect();
+        assert_eq!(modes.len(), 1, "the {name} analogue has one anchoring mode");
+        let orders = modes[0].orders;
+        assert_eq!(
+            (orders.stop, orders.hold_position),
+            (stop, hold_position),
+            "{name}: Stop and Hold Position, StarCraft II {source}"
+        );
+    }
+}
+
 /// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan
 /// `2026-11-05-sc2-deviation-fixes` WP12 (B-39). `1000` is instant.
 const SC2_ACCELERATION: [(&str, f32, &str); 42] = [
