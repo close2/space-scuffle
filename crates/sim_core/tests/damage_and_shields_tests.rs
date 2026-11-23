@@ -124,6 +124,7 @@ fn dummy_weapon_spec(
             .with(Attribute::Armored, bonus_armored)
             .with(Attribute::Light, bonus_light),
         attacks_count: 1,
+        first_strike_delay_ticks: 0,
         strike_interval_ticks: 0,
         followup_max_distance: None,
         channeled: false,
@@ -740,6 +741,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        first_strike_delay_ticks: 0,
         strike_interval_ticks: 0,
         followup_max_distance: None,
         channeled: false,

@@ -135,6 +135,7 @@ fn catalog_ron_with_mount(
             base_damage: 10.0,
             attribute_bonuses: [],
             attacks_count: 1,
+            first_strike_delay_ticks: 0,
             strike_interval_ticks: 0,
             period_ticks: {period},
             damage_point_ticks: {damage_point},

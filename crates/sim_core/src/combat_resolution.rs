@@ -73,7 +73,9 @@ struct PreparedShot {
     origin: SimVec2,
     owner: PlayerId,
     /// Strikes of `weapon` this shot lands: all of them on a release whose strikes land
-    /// together, one on a release that spaces them and on each later strike.
+    /// together, one on a release that spaces them and on each later strike, and every strike
+    /// left of a delayed volley on its due tick. A release whose first strike is delayed queues
+    /// no shot.
     strikes: u8,
     /// The attacker's type and weapon, for the shot's renderer events.
     source: EffectSource,
@@ -537,16 +539,18 @@ impl SimWorld {
                 charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
                     let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
-                    combat.shots.push(PreparedShot {
-                        attacker: *id,
-                        target: target.id,
-                        weapon,
-                        source_slug: arch.slug.clone(),
-                        origin: entity.position,
-                        owner: entity.owner,
-                        strikes,
-                        source,
-                    });
+                    if strikes > 0 {
+                        combat.shots.push(PreparedShot {
+                            attacker: *id,
+                            target: target.id,
+                            weapon,
+                            source_slug: arch.slug.clone(),
+                            origin: entity.position,
+                            owner: entity.owner,
+                            strikes,
+                            source,
+                        });
+                    }
                 }
             }
         }
@@ -555,17 +559,31 @@ impl SimWorld {
     /// Starts the strikes of an attack `entity` releases with `weapon` at `target` on `plane`,
     /// returning how many land on this release tick.
     ///
-    /// A weapon whose strikes land together (`strike_interval_ticks` 0, or a single strike)
-    /// lands them all now. Otherwise the first lands now and the rest wait in
-    /// [`Entity::pending_strikes`], one every interval (B-2). A burst still pending is replaced;
-    /// catalog validation ends every burst within its attack period, so only a period shortened
-    /// below the burst (by upgrades or buffs) can do that.
+    /// A weapon whose first strike is delayed (`first_strike_delay_ticks` above 0) lands none
+    /// now: every strike waits in [`Entity::pending_strikes`], the first falling due that many
+    /// ticks after the release and each validated when it does, as `StarCraft` II validates each
+    /// period of a persistent on its own (plan `2026-11-23-strike-delays` D-2, B-81). Otherwise
+    /// a weapon whose strikes land together (`strike_interval_ticks` 0, or a single strike)
+    /// lands them all now, and a weapon that spaces them lands the first now and keeps the rest
+    /// pending, one every interval (B-2). A burst still pending is replaced; catalog validation
+    /// ends every burst within its attack period, so only a period shortened below the burst
+    /// (by upgrades or buffs) can do that.
     fn begin_strikes(
         entity: &mut Entity,
         weapon: &WeaponSpec,
         target: EntityId,
         plane: MoverType,
     ) -> u8 {
+        if weapon.first_strike_delay_ticks > 0 {
+            entity.pending_strikes = Some(PendingStrikes {
+                target_id: target,
+                plane,
+                remaining: weapon.attacks_count,
+                ticks_until_next: weapon.first_strike_delay_ticks,
+                channeled: weapon.channeled,
+            });
+            return 0;
+        }
         if weapon.strike_interval_ticks == 0 || weapon.attacks_count < 2 {
             entity.pending_strikes = None;
             return weapon.attacks_count;
@@ -580,7 +598,9 @@ impl SimWorld {
         1
     }
 
-    /// Counts down the pending strikes of `entity` (`id`) and queues the one that falls due.
+    /// Counts down the pending strikes of `entity` (`id`) and queues the strikes that fall due:
+    /// one of a spaced burst, or every strike left of a delayed volley (`strike_interval_ticks`
+    /// 0), which lands whole as on a release.
     ///
     /// The burst ends when the attacker dies or boards a transport, when an explicit order ends a
     /// channeled burst ([`Entity::pending_strikes`], Q0058), or when it no longer has the
@@ -621,7 +641,12 @@ impl SimWorld {
         else {
             return;
         };
-        let remaining = pending.remaining.saturating_sub(1);
+        let strikes = if weapon.strike_interval_ticks == 0 {
+            pending.remaining
+        } else {
+            1
+        };
+        let remaining = pending.remaining.saturating_sub(strikes);
         if remaining > 0 && weapon.strike_interval_ticks > 0 {
             entity.pending_strikes = Some(PendingStrikes {
                 remaining,
@@ -643,7 +668,7 @@ impl SimWorld {
                 source_slug: arch.slug.clone(),
                 origin: entity.position,
                 owner: entity.owner,
-                strikes: 1,
+                strikes,
                 source,
             });
         }

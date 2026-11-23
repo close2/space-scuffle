@@ -93,6 +93,7 @@ fn catalog_ron(bonuses: &str) -> String {
             base_damage: {BASE}.0,
             {bonuses}
             attacks_count: 1,
+            first_strike_delay_ticks: 0,
             strike_interval_ticks: 0,
             period_ticks: 20,
             damage_point_ticks: 0,

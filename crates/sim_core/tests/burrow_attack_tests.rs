@@ -53,6 +53,7 @@ fn spines() -> WeaponSpec {
         base_damage: SimScalar::from_num(10),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        first_strike_delay_ticks: 0,
         strike_interval_ticks: 0,
         followup_max_distance: None,
         channeled: false,
