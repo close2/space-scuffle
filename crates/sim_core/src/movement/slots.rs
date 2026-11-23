@@ -22,8 +22,8 @@
 //! - Distances and angles are Q32.32 world units and binary angles; no float.
 
 use super::concave::{
-    blocking_interval, choose_slot, claim_fate, resolve_claims, slot_point, ArcInterval, ClaimFate,
-    SlotRequest,
+    blocking_interval, choose_slot, claim_fate, is_free, resolve_claims, slot_point, ArcInterval,
+    ClaimFate, SlotRequest,
 };
 use super::locomotion::MotionEntry;
 use super::math::{difference_product, within_distance};
@@ -93,7 +93,9 @@ impl SimWorld {
             for chase in &wanting {
                 match self.slot_request(chase, &kept, &mut intervals) {
                     Ok(Some(request)) => requests.push(request),
-                    Ok(None) => stand.push(chase.entry.id),
+                    // A unit in band attacks; it never stands for want of a slot.
+                    Ok(None) if !chase.in_band => stand.push(chase.entry.id),
+                    Ok(None) => {}
                     Err(error) => self.report_movement_invariant(error),
                 }
             }
@@ -113,7 +115,7 @@ impl SimWorld {
                             point: request.point,
                         });
                     }
-                } else {
+                } else if !request.in_band {
                     // A refused claimant tries again next tick and stands meanwhile (G-4, G-6).
                     stand.push(request.unit);
                 }
@@ -154,11 +156,14 @@ impl SimWorld {
         let wants = match claim {
             Some(claim) => {
                 let taken = self.claim_taken(&chase, claim.point).map_err(fault)?;
+                // Amendment 5, 3: a unit standing in band at its claim keeps it, so later claims
+                // pack against it; one in band elsewhere frees it and claims its own angle.
+                let away = chase.in_band && !stands_at(&chase, claim.point).map_err(fault)?;
                 let fate = claim_fate(
                     (claim.target, claim.point),
                     (target, chase.centre),
                     (chase.rho, radius),
-                    chase.in_band,
+                    away,
                     taken,
                 )
                 .map_err(fault)?;
@@ -176,11 +181,11 @@ impl SimWorld {
                         if let Some(actor) = self.entities.get_mut(&entry.id) {
                             actor.movement.slot = None;
                         }
-                        fate == ClaimFate::Rechoose && !chase.in_band
+                        fate == ClaimFate::Rechoose || chase.in_band
                     }
                 }
             }
-            None => !chase.in_band && self.queued_toward(&chase).map_err(fault)?,
+            None => chase.in_band || self.queued_toward(&chase).map_err(fault)?,
         };
         Ok(wants.then_some(chase))
     }
@@ -202,16 +207,13 @@ impl SimWorld {
             return Ok(None);
         };
         let centre = self.tick_start_position(target);
-        let half_radius = i128::from(entry.policy.radius.raw()) / 2;
-        let rho = i64::try_from(band.max - half_radius)
-            .map(SimScalar::from_raw)
-            .unwrap_or(SimScalar::MAX);
+        // Amendment 5, 2: slots lie where the weapon just reaches, the band's outer edge.
+        let rho = i64::try_from(band.max).map_or(SimScalar::MAX, SimScalar::from_raw);
         if rho <= SimScalar::ZERO {
             return Ok(None);
         }
         let separation = super::checked_distance(actor.position, centre)
-            .map(|d| i128::from(d.raw()))
-            .unwrap_or(i128::MAX);
+            .map_or(i128::MAX, |d| i128::from(d.raw()));
         Ok(Some(Chase {
             entry,
             target,
@@ -338,13 +340,18 @@ impl SimWorld {
         }
         let bearing = angle_from(chase.centre, chase.position);
         let leash_origin = self.leash_origin_of(chase);
-        let chosen = choose_slot(bearing, intervals, |angle| {
-            slot_point(chase.centre, chase.rho, angle).is_ok_and(|point| {
-                leash_origin.is_none_or(|origin| {
-                    within_distance(origin, point, i128::from(chase.leash.raw()))
-                }) && self.arc_stays_on_ground(chase, bearing, angle)
+        // Amendment 5, 3: a unit in band claims its own angle, if free within its body width.
+        let chosen = if chase.in_band {
+            is_free(bearing, intervals).then_some(bearing)
+        } else {
+            choose_slot(bearing, intervals, |angle| {
+                slot_point(chase.centre, chase.rho, angle).is_ok_and(|point| {
+                    leash_origin.is_none_or(|origin| {
+                        within_distance(origin, point, i128::from(chase.leash.raw()))
+                    }) && self.arc_stays_on_ground(chase, bearing, angle)
+                })
             })
-        });
+        };
         let Some(angle) = chosen else {
             return Ok(None);
         };
@@ -362,6 +369,7 @@ impl SimWorld {
             radius,
             distance,
             admitted: false,
+            in_band: chase.in_band,
         }))
     }
 
@@ -417,5 +425,16 @@ fn angle_from(centre: SimVec2, point: SimVec2) -> SimAngle {
     SimAngle::atan2(
         point.y.saturating_sub(centre.y),
         point.x.saturating_sub(centre.x),
+    )
+}
+
+/// Whether the unit of `chase` stands at its claimed `point`: its bearing from the target lies
+/// within the arc a body of its radius at the point covers (Amendment 5, 3).
+fn stands_at(chase: &Chase, point: SimVec2) -> Result<bool, MovementMathError> {
+    let radius = chase.entry.policy.radius;
+    let bearing = angle_from(chase.centre, chase.position);
+    Ok(
+        blocking_interval(chase.centre, chase.rho, radius, point, radius)?
+            .is_some_and(|interval| interval.blocks(bearing)),
     )
 }

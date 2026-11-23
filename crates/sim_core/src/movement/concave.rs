@@ -175,6 +175,9 @@ pub(crate) struct SlotRequest {
     pub distance: SimScalar,
     /// Set by [`resolve_claims`]: whether the claim stands.
     pub admitted: bool,
+    /// The claimant already stands in its weapon's band (plan Amendment 5, 3): refused, it
+    /// attacks from where it is rather than standing for a slot.
+    pub in_band: bool,
 }
 
 impl SlotRequest {
@@ -339,6 +342,7 @@ mod tests {
             radius: SimScalar::HALF,
             distance: SimScalar::from_num(5),
             admitted: false,
+            in_band: false,
         })
     }
 

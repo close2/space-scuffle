@@ -25,7 +25,7 @@
 //!   turn; no trigonometric table.
 
 use super::math::{checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
-use super::tuning::{COMOVING_MIN_COSINE, STEERING_CORRIDOR_MARGIN};
+use super::tuning::{COMOVING_MIN_COSINE, STANDING_DRIFT, STEERING_CORRIDOR_MARGIN};
 use super::MovementMathError;
 use crate::steering::{ContactBody, SteeringObstacle};
 use sim_types::{EntityId, SimScalar, SimVec2};
@@ -103,11 +103,14 @@ fn sub(a: SimScalar, b: SimScalar) -> Result<SimScalar, MovementMathError> {
     a.checked_sub(b).ok_or(MovementMathError::Unrepresentable)
 }
 
-/// Whether `obstacle` is a friend moving with the unit, whose heading is `heading` (I-4): its
-/// last displacement points within 60° of the heading.
+/// Whether `obstacle`, a friend, is passed like one moving with the unit, whose heading is
+/// `heading` (I-4): its last displacement points within 60° of the heading, or it stands
+/// (moved at most `STANDING_DRIFT`) without being anchored, waiting rather than holding or firing
+/// (plan Amendment 5, 1: no committed side against a waiting friend, which contact handles).
 fn co_moving(heading: SimVec2, obstacle: &SteeringObstacle) -> Result<bool, MovementMathError> {
-    if obstacle.velocity == SimVec2::ZERO {
-        return Ok(false);
+    let drift = i128::from(STANDING_DRIFT.raw());
+    if super::math::within_distance(obstacle.velocity, SimVec2::ZERO, drift) {
+        return Ok(!obstacle.anchored);
     }
     let along = direction(obstacle.velocity, SimVec2::ZERO)?;
     Ok(checked_dot(heading, along)? >= COMOVING_MIN_COSINE)

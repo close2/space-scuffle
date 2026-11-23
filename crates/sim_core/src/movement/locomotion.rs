@@ -750,6 +750,19 @@ impl SimWorld {
                 })
                 .is_some_and(|id| self.entities.get(&id).is_some_and(Entity::is_alive))
         };
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            // Plan `2026-11-20-contact-solver` Amendment 5, 1: under the solver a unit is anchored
+            // in combat only while in its attack cycle with a live target: winding up, in
+            // backswing, or standing between shots while its weapon cools down. Standing and
+            // waiting under an attack order is not anchored, so no waiting column anchors the
+            // units behind it.
+            let firing = match actor.weapon_phase {
+                WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. } => true,
+                WeaponPhase::Cooldown => actor.velocity == SimVec2::ZERO,
+                WeaponPhase::Ready | WeaponPhase::RotatingToTarget { .. } => false,
+            };
+            return firing && target_lives();
+        }
         matches!(
             actor.weapon_phase,
             WeaponPhase::RotatingToTarget { .. }
