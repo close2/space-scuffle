@@ -22,14 +22,17 @@ use super::locomotion::{slide_target, MotionEntry};
 use super::math::{
     checked_normalize, checked_vec_add, checked_vec_scale, checked_vec_sub, within_distance,
 };
+use super::solver::{bodies_touch, terrain_step, ContactParty, SolverBody, SolverSettings};
+use super::tuning::STANDING_DRIFT;
 use super::tuning::{SOFT_PUSH_FLOOR, SOFT_PUSH_SPEED_SHARE};
 use super::{MovementInvariant, MovementMathError};
+use crate::catalog::MovementPipeline;
 use crate::entity::Entity;
 use crate::steering::{
     compute_push_displacement_with_mobility, CollisionMobility, PushEntityParams,
 };
-use crate::SimWorld;
-use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
+use crate::{SimWorld, SimulationDiagnostic};
+use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick};
 
 /// One body's fixed state for the phase, so pair tests touch flat memory only.
 #[derive(Clone, Copy)]
@@ -317,6 +320,13 @@ impl SimWorld {
                 }
             }
         }
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            self.solve_contacts(&entries);
+            self.movement.entries = entries;
+            return;
+        }
+        self.movement.contact_iterations = 0;
+        self.movement.contact_rebuilds = 0;
         let mut bodies = std::mem::take(&mut self.movement.bodies);
         let mut pushes = std::mem::take(&mut self.movement.pushes);
         let mut grid = std::mem::take(&mut self.movement.collision_grid);
@@ -382,6 +392,79 @@ impl SimWorld {
         self.movement.bodies = bodies;
         self.movement.pushes = pushes;
         self.movement.collision_grid = grid;
+    }
+}
+
+impl SimWorld {
+    /// The solver pipeline's contact phase (plan `2026-11-20-contact-solver` C-1 to C-8): every
+    /// body of `entries` but a registered structure goes into the contact solver from where its
+    /// proposal put it, the solver separates them from their tick-start positions with the terrain
+    /// step of the legacy phase, and each body's velocity becomes what it achieved this tick.
+    fn solve_contacts(&mut self, entries: &[MotionEntry]) {
+        let contact = self.catalog.movement_rules().contact();
+        let mut solver = std::mem::take(&mut self.movement.solver);
+        solver.bodies.clear();
+        for entry in entries.iter().filter(|entry| !entry.foundation) {
+            if let Some(actor) = self.entities.get(&entry.id) {
+                solver.bodies.push(self.solver_body(*entry, actor));
+            }
+        }
+        let settings = SolverSettings {
+            iterations: contact.iterations,
+            dead_band_permille: contact.dead_band_permille,
+            moving_friends_push: contact.moving_friends_push,
+        };
+        let (map, pathfinder) = (&self.map, &mut self.pathfinder);
+        let diagnostics = &mut self.tick_diagnostics;
+        let tick = Tick(self.current_tick);
+        let solved = solver.solve(
+            (settings, (map.width(), map.height())),
+            |a, b| bodies_touch(map, a, b),
+            |body, target| {
+                terrain_step(
+                    map,
+                    pathfinder,
+                    body.policy,
+                    (body.start, body.position),
+                    target,
+                )
+            },
+            &mut |source| {
+                diagnostics.push(SimulationDiagnostic::MovementInvariant { tick, source });
+            },
+        );
+        self.movement.contact_iterations = solved.iterations;
+        self.movement.contact_rebuilds = solved.rebuilds;
+        for body in &solver.bodies {
+            if let Some(actor) = self.entities.get_mut(&body.id) {
+                actor.position = body.position;
+                if let Ok(achieved) = checked_vec_sub(body.position, body.start) {
+                    actor.velocity = achieved;
+                }
+            }
+        }
+        self.movement.solver = solver;
+    }
+
+    /// One body as the contact solver sees it (C-2's parties).
+    fn solver_body(&self, entry: MotionEntry, actor: &Entity) -> SolverBody {
+        let step = i128::from(STANDING_DRIFT.raw());
+        SolverBody {
+            id: entry.id,
+            party: ContactParty {
+                owner: actor.owner,
+                push_priority: entry.push_priority,
+                fixed: actor.is_immobile || actor.unpushable,
+                holding: actor.cannot_be_pushed(),
+                engaged: self.engaged(entry, actor),
+                idle: actor.is_idle(),
+                moving: !within_distance(actor.position, actor.pos_at_tick_start, step),
+            },
+            policy: entry.policy,
+            start: actor.pos_at_tick_start,
+            position: actor.position,
+            ghost: actor.is_mineral_walking || actor.status_modifiers().suppress_collision,
+        }
     }
 }
 

@@ -79,7 +79,11 @@ use std::collections::BTreeMap;
 /// Schema 34 adds each queued job's `ProductionJob::in_production`, after `reserved_supply`, and
 /// each entity's rally, `Entity::rally`, after `captured_supply_provided` (an `Option` of a tag,
 /// 0 point, 1 unit, 2 node, and its payload; plan `2026-11-23-production-queue` D-6).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 34;
+/// Schema 35 adds each unit's side-rule commitment (its partner, then its side) and its
+/// remembered gap on the ring round its chase target (the target, then the point) to its movement
+/// memory, after the leash origin (plan `2026-11-20-contact-solver` §3.7, Amendments 7 to 10).
+/// Only the solver pipeline writes them.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 35;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

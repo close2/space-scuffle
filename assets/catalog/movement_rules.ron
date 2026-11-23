@@ -14,11 +14,42 @@
 // `docs/plans/2026-11-18-contour-footprints.md` Amendment 4, B-142). 5.0.14's
 // `AcquireLeashResetRadius` 5 and `AcquireMovementLimit` 21 (GameData.xml:10 and 8) are not
 // modelled: what they do is not sourced (recorded in B-142). Whole world units, at least 1.
+//
+// `contact`: the contact rules of plan `docs/plans/2026-11-20-contact-solver.md` (§3.6; owner
+// answer Q0092 (a); sanctioned deviations D-alpha and D-beta of
+// `docs/questions/closed/0052-sanctioned-sc2-deviations.md`).
+// - `pipeline`: the migration switch, Legacy (today's local movement) or Solver (intent steering
+//   and the contact solver). Removed when the legacy pipeline is deleted (the plan's WP7).
+// - `iterations` (C-3, plan Amendments 1 and 2): Jacobi iterations of the contact solver per tick:
+//   the smallest count with at most 2 of 2,000 generated crowds ending with a friendly pair above
+//   the moving bound and none above 8 %, each crowd a 9 x 9 hexagonal crowd standing in contact with
+//   every body stepped by up to the catalog's worst injection rho (two jet_jumper bodies:
+//   (s_a + s_b) / (r_a + r_b) = 0.56, s the top speed times the largest speed multiplier);
+//   confirmed once on 1,000 unseen crowds (none above 5 %, worst 4.95 %). The test
+//   `k_iterations_bring_injected_overlap_below_the_moving_bound` is its derivation. A second test
+//   requires it to stay at least the closed-form bound ceil(ln(moving / rho) / ln(5/6)) (14).
+// - `dead_band_permille` (C-4, D-alpha at rest): an overlap of at most this many thousandths of
+//   the radius sum is not corrected; 1 % of the smallest radius sum (0.75) is 0.0075 world units.
+// - `moving_overlap_permille` (D-alpha while moving): the bound `iterations` is derived for.
+// - `side_horizon_factor` (I-3a): a threat counts from factor * (r + r_b) / speed ticks before
+//   contact; 2 caps the side rule's turn at 30 degrees (sin = 1 / factor).
+// - `moving_friends_push` (D-beta): moving friends push each other by priority (true), or each
+//   yields its own approach (false).
+// Validated at load: iterations >= 1, 0 < dead_band_permille < moving_overlap_permille < 1000,
+// side_horizon_factor >= 1.
 (
     group_routing: (
         lane_tolerance_permille: 75,
     ),
     pursuit: (
         acquire_leash_radius: 21,
+    ),
+    contact: (
+        pipeline: Legacy,
+        iterations: 21,
+        dead_band_permille: 10,
+        moving_overlap_permille: 50,
+        side_horizon_factor: 2,
+        moving_friends_push: true,
     ),
 )
