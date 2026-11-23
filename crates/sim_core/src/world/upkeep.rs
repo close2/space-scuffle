@@ -10,7 +10,9 @@
 //! The second phase of `step_into`, after commands and before unit tasks. Damage (phase 9,
 //! effects here) resets `Entity::ticks_since_last_damage` through `Entity::apply_damage`; this
 //! phase counts it up and gates life and shield regeneration on the archetype's catalog delays
-//! (`hp_regen_delay_ticks`, `shield_regen_delay_ticks`).
+//! (`hp_regen_delay_ticks`, `shield_regen_delay_ticks`). Construction (phase of unit tasks,
+//! `production::construction`) completes a foundation after this phase, so regeneration
+//! starts on the tick after completion.
 //!
 //! # Invariants
 //! - Dead entities are skipped: regeneration never resurrects them before reap.
@@ -18,8 +20,15 @@
 //! - `ticks_since_last_damage` rises by exactly one per tick per living entity, before any
 //!   regeneration reads it, and is reset to 0 only by `Entity::apply_damage`, for damage to
 //!   shields or life.
-//! - Life regenerates on a tick if and only if that counter is at least `hp_regen_delay_ticks`:
-//!   a delay of d regenerates first on the d-th tick after the damage, and 0 means every tick.
+//! - No vital regenerates before the entity is completed (plan `2026-11-23-regeneration`
+//!   D-1): a foundation gains life only from the work done on it and holds its energy, and
+//!   regeneration starts on the tick after completion. The counter counts during
+//!   construction all the same.
+//! - Life regenerates on a tick if and only if the entity is completed and that counter is at
+//!   least `hp_regen_delay_ticks`: a delay of d regenerates first on the d-th tick after the
+//!   damage, and 0 means every tick.
+//! - Energy regenerates on every tick the entity is completed, with no delay: neither a cast
+//!   nor damage pauses it, as no layer of the 5.0.14 data sets `EnergyRegenDelay`.
 //! - Shields regenerate on a tick if and only if the counter is at least
 //!   `shield_regen_delay_ticks` and the entity is completed.
 //! - Regeneration never exceeds `max_hp` or `max_shields`.
@@ -54,8 +63,8 @@ impl SimWorld {
 }
 
 /// Advances one living entity's channel, cooldown, buff, damage-delay, life and energy
-/// regeneration, mode-drain, shield regeneration and hit-flash timers by one tick, in that
-/// order. Dead entities are left untouched until reap.
+/// regeneration (completed entities only), mode-drain, shield regeneration and hit-flash timers
+/// by one tick, in that order. Dead entities are left untouched until reap.
 fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     // Dead entities retain their ledger until reap; passive regeneration
     // must never resurrect them or resume their production.
@@ -96,13 +105,18 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     }
     entity.active_buffs.retain(|b| b.remaining_ticks > 0);
 
-    // Passive Vitals & regeneration delays: the counter rises before either delay reads it.
+    // Passive Vitals & regeneration delays: the counter rises before either delay reads it,
+    // and counts on a foundation too, so a structure finished under fire still waits its delays.
     if let Ok(arch) = catalog.get(entity.unit_type_id) {
         entity.ticks_since_last_damage = entity.ticks_since_last_damage.saturating_add(1);
-        if entity.ticks_since_last_damage >= arch.hp_regen_delay_ticks {
-            entity.hp = (entity.hp + arch.hp_regen_per_tick).min(entity.max_hp);
+        // A foundation gains life only from the work done on it (plan
+        // `2026-11-23-regeneration` D-1); energy has no delay (no `EnergyRegenDelay` in 5.0.14).
+        if entity.is_completed {
+            if entity.ticks_since_last_damage >= arch.hp_regen_delay_ticks {
+                entity.hp = (entity.hp + arch.hp_regen_per_tick).min(entity.max_hp);
+            }
+            entity.energy = (entity.energy + arch.energy_regen_per_tick).min(arch.max_energy);
         }
-        entity.energy = (entity.energy + arch.energy_regen_per_tick).min(arch.max_energy);
 
         // Continuous energy drain for active stance/mode
         if let Some(ref mode_name) = entity.active_mode {

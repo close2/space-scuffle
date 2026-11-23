@@ -9,8 +9,9 @@
 //!    the money has gone, the order ends with a [`TaskEventKind::BuildAbandoned`] event.
 //! 4. **Raising.** The foundation's countdown advances one tick for each tick a builder works
 //!    at its edge, however many are there. Hit points rise with it from a tenth of the
-//!    maximum, and damage taken stays taken. Shields, supply, weapons and production wait for
-//!    completion.
+//!    maximum, and damage taken stays taken. Nothing regenerates until completion: life moves
+//!    only with the work and with damage, and energy holds the archetype's start energy.
+//!    Shields, supply, weapons and production wait for completion.
 //!
 //! # Interruptions
 //! - **Builder lost or called away:** construction pauses. The foundation keeps its progress,

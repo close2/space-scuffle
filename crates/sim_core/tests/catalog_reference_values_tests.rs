@@ -4568,3 +4568,33 @@ fn the_shipped_town_halls_auto_rally_as_5_0_14() {
         ]
     );
 }
+
+/// Structure energy regeneration (plan `2026-11-23-regeneration` D-2, B-168): every structure
+/// with energy regenerates `EnergyRegenRate` 0.5625 per Normal second, 0.5625 × 1.4 ÷ 25 =
+/// 0.0315 per tick. Orbital Command `liberty UnitData:10513–10515`; Nexus
+/// `liberty UnitData:4239–4240` (`voidmulti UnitData:1094–1096` sets its maximum and start, not
+/// the rate); Shield Battery `liberty UnitData:1591–1593`. The three are the only structures
+/// with energy, and every other structure regenerates none.
+#[test]
+fn structures_with_energy_regenerate_as_5_0_14() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut with_energy = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes().filter(|a| is_structure(a)) {
+        let rate = f(archetype.energy_regen_per_tick);
+        if archetype.max_energy > SimScalar::ZERO {
+            assert!(
+                (rate - 0.0315).abs() < 0.001,
+                "{} ({}): energy regeneration {rate}, StarCraft II 0.0315 per tick",
+                archetype.slug,
+                analogue(archetype)
+            );
+            with_energy.insert(analogue(archetype).to_owned());
+        } else {
+            assert_eq!(rate, 0.0, "{}: no energy, no rate", archetype.slug);
+        }
+    }
+    assert_eq!(
+        with_energy.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["Nexus", "Orbital Command", "Shield Battery"]
+    );
+}

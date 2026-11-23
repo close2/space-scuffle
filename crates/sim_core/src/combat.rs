@@ -11,7 +11,8 @@
 //! 3. Minimum damage is clamped to 0.5 HP for non-zero attacks.
 //! 4. Shield and life regeneration wait for the archetype's catalog delays
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
-//!    to shields or life, restarts both.
+//!    to shields or life, restarts both. No vital regenerates before the entity is completed,
+//!    and energy regenerates without a delay (`world::upkeep`).
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};

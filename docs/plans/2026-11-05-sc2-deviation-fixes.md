@@ -869,7 +869,7 @@ WP12's wait for the turn-before-move package is satisfied.
 |---|---|
 | WP0 | Item 5 drops B-75 (already true). Done with this amendment |
 | WP14 | Shrinks: B-53 and U-11's lifetime question leave; B-52 and U-15 ask only for flight times, not the phase shape. Left: B-52 (narrowed), B-54 to B-57, U-11 (dodging), U-12 to U-15, U-17 |
-| WP15 | Shrinks: B-37 and U-9 leave. Left: B-35, B-36, B-38, U-10, U-21 |
+| WP15 | Shrinks: B-37 and U-9 leave. Left: B-35, B-36, B-38, U-10, U-21. Then B-35 (not a deviation), B-36 done by plan `2026-11-23-regeneration`; B-38 to WP18; U-10 and U-21 answered |
 | WP17 | Shrinks: B-58 leaves the bug list (the plan may offer a configurable limit); U-19 keeps supply timing, blocked exits and the unload interval; B-67 keeps the next-patch radius only |
 | WP19 | The register lists open (i) items only; (ii) items stay recorded here |
 | Others | Unchanged |
