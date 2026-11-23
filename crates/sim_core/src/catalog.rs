@@ -106,7 +106,11 @@ pub struct UnitArchetype {
     pub silhouette: SilhouetteClass,
     /// Locomotion classification (Ground, Air, `CliffWalker`).
     pub mover_type: MoverType,
-    /// Armor classification and category bitflags.
+    /// Armor classification and category bitflags. For every catalog that loads, `STRUCTURE`
+    /// is set exactly on the archetypes loaded from `structures.ron`, which are exactly those
+    /// whose [`Self::shape`] is [`ShapeKind::BuildingDome`] (validation, plan
+    /// `2026-11-23-structure-attributes` D-3), so combat's attribute test and the effect filters'
+    /// shape test agree.
     pub attributes: AttributeFlags,
     /// Maximum hull hit points.
     pub max_hp: SimScalar,
@@ -931,6 +935,16 @@ enum AttributeFlagsDef {
 }
 
 impl AttributeFlagsDef {
+    /// The authored bits as written, before any unknown bit is dropped, so validation can refuse
+    /// a bit no attribute has.
+    pub(super) const fn bits(&self) -> u16 {
+        match self {
+            Self::Bits { bits } => *bits,
+            Self::Num(num) => *num,
+            Self::Named(flags) => flags.bits(),
+        }
+    }
+
     fn into_flags(self) -> AttributeFlags {
         match self {
             Self::Bits { bits } => AttributeFlags::from_bits_truncate(bits),
@@ -1752,6 +1766,10 @@ struct StructureArchetypeDef {
     pub gas_cost: u32,
     /// Construction duration in ticks (at 25 Hz).
     pub build_time_ticks: u32,
+    /// The structure's attributes (`CUnit` `Attributes`), by name; must name `Structure`.
+    /// Required, so a catalog written before the field fails to load (plan
+    /// `2026-11-23-structure-attributes` D-1, D-2).
+    pub attributes: Vec<Attribute>,
     /// Maximum hull hit points.
     pub max_hp: f64,
     /// Maximum plasma shield points.
@@ -1885,13 +1903,7 @@ impl StructureArchetypeDef {
         let air_weapon = convert(self.air_weapon)?;
         // `weapon` is the ground fallback of `weapon_against`, so an air weapon must never fill it.
         let weapon = ground_weapon.clone();
-
-        let mut attributes = AttributeFlags::STRUCTURE | AttributeFlags::ARMORED;
-        if self.max_shields > 0.0 {
-            attributes |= AttributeFlags::PSIONIC;
-        } else {
-            attributes |= AttributeFlags::MECHANICAL;
-        }
+        let attributes = spells::attribute_flags(&self.attributes);
 
         Ok(UnitArchetype {
             unit_type_id: UnitTypeId(u16::try_from(self.structure_type_id).unwrap_or(u16::MAX)),
