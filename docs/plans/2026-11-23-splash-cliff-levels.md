@@ -677,3 +677,9 @@ The question number is the next free at filing (0099 on `d0fd365b`).
   north first: row = 63 − y).
 - No prototype: WP1 and WP2 are latent by construction, and WP4's direction is predicted (P-8) and measured in the
   package itself after WP0's probe.
+
+## Amendment 1 (orchestrator, 2026-11-23): bug number
+
+B-174 to B-176 are taken by plan `2026-11-23-stance-checked-orders`, which is merging first. The Lurker spine-search
+row this plan registers takes the next free number at its WP0 commit (expected B-177). Every mention of "B-174" in
+this plan means that row.
