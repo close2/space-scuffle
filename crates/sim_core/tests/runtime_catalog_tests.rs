@@ -1944,3 +1944,239 @@ fn an_edited_cliff_rule_changes_who_an_area_strikes() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// `source` with the first `field` after the first `anchor` given `replacement` (see
+/// [`replace_first_field`]).
+fn replace_field_after(source: &str, anchor: &str, field: &str, replacement: &str) -> String {
+    let at = source.find(anchor).expect("fixture has the anchor");
+    format!(
+        "{}{}",
+        &source[..at],
+        replace_first_field(&source[at..], field, replacement)
+    )
+}
+
+/// A world on `catalogs` with nothing in it but what the caller spawns.
+fn bare_world(catalogs: &RuntimeCatalogs) -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    Ok(SimWorld::with_catalogs(
+        map,
+        11,
+        catalogs.units.clone(),
+        catalogs.upgrades.clone(),
+    )?)
+}
+
+/// Steps `world` one tick with `commands`.
+fn step_with(world: &mut SimWorld, commands: Vec<sim_types::PlayerCommand>) {
+    world.step(&sim_types::TickBundle {
+        tick: sim_types::Tick(world.current_tick),
+        commands,
+        state_checksum: None,
+    });
+}
+
+/// Whether a queued `order` from player 0 reaches `unit` of `world` (it ends the tick at the
+/// back of the unit's queue).
+fn queued_order_reaches(
+    world: &mut SimWorld,
+    unit: sim_types::EntityId,
+    order: &sim_types::UnitOrder,
+) -> bool {
+    step_with(
+        world,
+        vec![sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![unit],
+            order: order.clone(),
+            queue: true,
+        }],
+    );
+    world.entities[&unit].order_queue.back() == Some(order)
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-171, B-172, C6): with
+/// every weapon of the armed structures removed from `structures.ron` at run time, they lose
+/// Stop in the default stance's rule and in the simulation's admission, with no rebuild.
+#[test]
+fn an_armed_structure_disarmed_in_its_file_loses_stop() -> TestResult {
+    let bundle = Bundle::new("disarmed-structures")?;
+    let shipped = bundle.load()?;
+    let armed: Vec<_> = shipped
+        .units
+        .archetypes()
+        .filter(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. }) && arch.stance_armed(None)
+        })
+        .map(|arch| (arch.unit_type_id, arch.slug.clone()))
+        .collect();
+    assert!(
+        !armed.is_empty(),
+        "the shipped catalog has an armed structure"
+    );
+    let path = bundle.directory.join(FILES[1]);
+    let mut text = std::fs::read_to_string(&path)?;
+    for (_, slug) in &armed {
+        let anchor = format!("slug: \"{slug}\"");
+        text = replace_field_after(&text, &anchor, "ground_weapon", "None");
+        text = replace_field_after(&text, &anchor, "air_weapon", "None");
+        // A structure without a weapon has no acquisition range either.
+        text = replace_field_after(&text, &anchor, "scan_range", "None");
+    }
+    std::fs::write(&path, text)?;
+    let edited = bundle.load()?;
+    for (id, slug) in &armed {
+        let before = shipped.units.get(*id)?;
+        let after = edited.units.get(*id)?;
+        assert!(before.stance_orders(None).stop, "{slug}: shipped with Stop");
+        assert!(!after.stance_armed(None), "{slug}: disarmed");
+        assert_eq!(
+            after.stance_orders(None),
+            sim_types::StanceOrders::NONE,
+            "{slug}"
+        );
+        for (catalogs, takes) in [(&shipped, true), (&edited, false)] {
+            let mut world = bare_world(catalogs)?;
+            let unit = world.spawn_structure(*id, PlayerId(0), 10, 10)?;
+            assert_eq!(
+                queued_order_reaches(&mut world, unit, &sim_types::UnitOrder::Stop),
+                takes,
+                "{slug}: the simulation's Stop"
+            );
+        }
+    }
+    bundle.finish()?;
+    Ok(())
+}
+
+/// The mode switch ability of `arch` for its mode `mode`.
+fn switch_of(
+    arch: &sim_core::UnitArchetype,
+    mode: usize,
+) -> Result<u8, Box<dyn std::error::Error>> {
+    let name = &arch.modes[mode].mode_name;
+    let ability = arch
+        .abilities
+        .iter()
+        .position(|ability| {
+            matches!(&ability.effect,
+                sim_types::AbilityEffectSpec::SwitchMode { mode_name } if mode_name == name)
+        })
+        .ok_or("the mode's switch ability")?;
+    Ok(u8::try_from(ability)?)
+}
+
+/// `arch`'s unit spawned in `world` and settled in its mode `mode`.
+fn settled_in(
+    world: &mut SimWorld,
+    arch: &sim_core::UnitArchetype,
+    mode: usize,
+) -> Result<sim_types::EntityId, Box<dyn std::error::Error>> {
+    let unit = world.spawn_unit(
+        arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::new(SimScalar::from_num(12), SimScalar::from_num(12)),
+    )?;
+    assert!(world.execute_ability(unit, switch_of(arch, mode)?, None, None));
+    for _ in 0..400 {
+        if world.entities[&unit].channeling_remaining_ticks == 0 {
+            return Ok(unit);
+        }
+        step_with(world, Vec::new());
+    }
+    Err("the switch ends within 400 ticks".into())
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-172, C6): an anchoring
+/// mode authored with Hold Position at run time lets the simulation hold a unit settled in it.
+#[test]
+fn an_anchoring_mode_given_hold_position_in_its_file_holds() -> TestResult {
+    let bundle = Bundle::new("hold-anchored")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch
+                .modes
+                .iter()
+                .position(|mode| mode.is_immobile && !mode.orders.hold_position)?;
+            Some((arch.clone(), mode))
+        })
+        .ok_or("an anchoring mode without Hold Position")?;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let stop = if arch.modes[mode].orders.stop {
+        "true"
+    } else {
+        "false"
+    };
+    std::fs::write(
+        &path,
+        replace_field_after(
+            &text,
+            &anchor,
+            "orders",
+            &format!("(stop: {stop}, hold_position: true)"),
+        ),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, holds) in [(&shipped, false), (&edited, true)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        step_with(
+            &mut world,
+            vec![sim_types::PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![unit],
+                order: sim_types::UnitOrder::HoldPosition,
+                queue: false,
+            }],
+        );
+        assert_eq!(
+            world.entities[&unit].is_holding_position, holds,
+            "edited {holds}"
+        );
+    }
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-173, C6): a mode whose
+/// replacement ground weapon is removed at run time leaves a unit armed only in that mode
+/// unarmed there, by `stance_armed` and by the settled unit.
+#[test]
+fn a_mode_without_its_replacement_weapon_in_its_file_is_unarmed() -> TestResult {
+    let bundle = Bundle::new("unarmed-mode")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch
+                .modes
+                .iter()
+                .position(|mode| matches!(mode.ground_weapon_override, Some(Some(_))))?;
+            (!arch.stance_armed(None)).then(|| (arch.clone(), mode))
+        })
+        .ok_or("an archetype armed only in a mode")?;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        replace_field_after(&text, &anchor, "ground_weapon_override", "None"),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, armed) in [(&shipped, true), (&edited, false)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        assert_eq!(loaded.stance_armed(Some(&loaded.modes[mode])), armed);
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        assert_eq!(world.entities[&unit].settled_armed(loaded), armed);
+    }
+    bundle.finish()?;
+    Ok(())
+}

@@ -3065,6 +3065,74 @@ fn b98_anchoring_stances_accept_the_orders_of_their_starcraft_unit_type() {
     }
 }
 
+/// The default stance's plain orders of the structures whose `AbilArray` 5.0.14 sources, as
+/// `(analogue, stop, hold_position, source)` (plan `2026-11-23-stance-checked-orders` D-2, P-4,
+/// B-171). Armed structures carry `stop` and no `move`; unarmed ones carry neither. The Shield
+/// Battery's `stop` (its `liberty` entry 2) is removed in 5.0.14; the Nexus's requires
+/// `PurifyNexusRequirements`, unmet in multiplayer; the Bunker's redirects to passengers it
+/// does not carry here.
+const SC2_STRUCTURE_ORDERS: [(&str, bool, bool, &str); 10] = [
+    ("Photon Cannon", true, false, "liberty UnitData:11083-11084"),
+    ("Missile Turret", true, false, "liberty UnitData:6064-6065"),
+    (
+        "Planetary Fortress",
+        true,
+        false,
+        "liberty UnitData:10696-10697",
+    ),
+    ("Spine Crawler", true, false, "liberty UnitData:8652-8653"),
+    ("Spore Crawler", true, false, "liberty UnitData:8784-8785"),
+    (
+        "Command Center",
+        false,
+        false,
+        "liberty UnitData:10411-10418",
+    ),
+    (
+        "Orbital Command",
+        false,
+        false,
+        "liberty UnitData:10557-10564",
+    ),
+    (
+        "Nexus",
+        false,
+        false,
+        "liberty UnitData:4218-4223; swarm AbilData:954-960, :968-970 (PurifyNexusRequirements)",
+    ),
+    (
+        "Shield Battery",
+        false,
+        false,
+        "liberty UnitData:1603-1605; voidmulti UnitData:1557; balancemulti UnitData:1463 (removed)",
+    ),
+    (
+        "Bunker",
+        false,
+        false,
+        "liberty UnitData:6192-6193; AbilData:3606-3611, :3633-3638 (passenger redirects)",
+    ),
+];
+
+#[test]
+fn b171_structures_take_the_plain_orders_of_their_starcraft_unit_type() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (name, stop, hold_position, source) in SC2_STRUCTURE_ORDERS {
+        let structures: Vec<_> = catalogs
+            .units
+            .archetypes()
+            .filter(|arch| is_structure(arch) && analogue(arch) == name)
+            .collect();
+        assert_eq!(structures.len(), 1, "one {name} analogue");
+        let orders = structures[0].stance_orders(None);
+        assert_eq!(
+            (orders.stop, orders.hold_position),
+            (stop, hold_position),
+            "{name}: Stop and Hold Position, StarCraft II {source}"
+        );
+    }
+}
+
 /// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan
 /// `2026-11-05-sc2-deviation-fixes` WP12 (B-39). `1000` is instant.
 const SC2_ACCELERATION: [(&str, f32, &str); 42] = [

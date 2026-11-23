@@ -575,3 +575,6 @@ Deviations from the text above, none of which changes a decision:
 6. **`UnitModeSpec` literals in tests** take `StanceOrders::ALL`; none of those tests reads the field.
 
 The gate catalog needs no rule: `stance_orders_tests` runs in under a second and is `Fast` by default.
+
+B-171, B-172 and B-173, registered here, were fixed by plan
+[`2026-11-23-stance-checked-orders`](2026-11-23-stance-checked-orders.md) (WP2 `48041dc5`, WP3 `e4cb94fa`).

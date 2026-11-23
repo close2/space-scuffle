@@ -835,3 +835,150 @@ fn hold_on_a_sieged_tank_beside_a_walker_reaches_the_walker_only() {
         Some(&UnitOrder::HoldPosition)
     );
 }
+
+// --- Attack by stance (plan `2026-11-23-stance-checked-orders` D-4, D-6, D-7; P-7) -------------
+
+/// The armed command mode.
+fn command_mode(harness: &Harness) -> client::battle_input::command_mode::CommandMode {
+    *harness
+        .app
+        .world()
+        .resource::<client::battle_input::command_mode::CommandMode>()
+}
+
+/// Arms the Attack mode by the key of the card's Attack entry.
+fn arm_attack(harness: &mut Harness) {
+    use client::battle_input::command_mode::CommandMode;
+    harness.step(1);
+    let position = card(harness)
+        .slots
+        .iter()
+        .position(|slot| {
+            slot.as_ref()
+                .is_some_and(|slot| slot.action == CardAction::Mode(CommandMode::AttackMove))
+        })
+        .unwrap_or_else(|| panic!("no Attack entry: {:?}", card(harness).slots));
+    let key = key_at(harness, position);
+    harness.tap_key(key);
+    assert_eq!(command_mode(harness), CommandMode::AttackMove);
+}
+
+/// Whether `unit` carries an attack it was told to make on `target`.
+fn attacks(harness: &Harness, unit: EntityId, target: EntityId) -> bool {
+    harness.world().entities[&unit]
+        .order_queue
+        .iter()
+        .any(|order| {
+            *order
+                == UnitOrder::AttackTarget {
+                    target,
+                    origin: sim_types::AttackOrigin::Explicit,
+                }
+        })
+}
+
+/// An anchored unit of `unit_type`: `A` arms Attack, a click on a visible enemy in range
+/// attacks it, and a click on the ground is refused with the `EmptySelection` status while the
+/// mode stays armed (Q0098's default, D-7).
+fn anchored_unit_attacks_by_click(hold: bool) {
+    use client::battle_input::command_mode::CommandMode;
+    let mut harness = skirmish();
+    let unit = {
+        let unit_type = anchoring_type(&harness, hold);
+        anchored(&mut harness, unit_type)
+    };
+    let enemy = enemy_structure(&mut harness, unit, 5.0);
+    harness.select(unit);
+    arm_attack(&mut harness);
+    let on_screen = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Left, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::attack(enemy));
+    assert_eq!(orders[0].entities, [unit]);
+    assert_eq!(
+        command_mode(&harness),
+        CommandMode::Normal,
+        "the order ends the mode"
+    );
+    run_ticks(&mut harness, 1);
+    assert!(
+        attacks(&harness, unit, enemy) || !harness.world().entities.contains_key(&enemy),
+        "an explicit attack on the clicked enemy"
+    );
+
+    arm_attack(&mut harness);
+    let ground = harness.open_ground(harness.simulated_position(unit), 4.0);
+    let on_screen = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Left, on_screen);
+    assert_eq!(harness.pending_orders(), 0, "nothing is queued");
+    let status =
+        refusal_status(&client::battle_pipeline::commands::SubmissionError::EmptySelection);
+    assert_eq!(harness.status(), status);
+    assert_eq!(
+        command_mode(&harness),
+        CommandMode::AttackMove,
+        "the mode stays armed"
+    );
+    assert!(in_mode(&harness, unit), "still anchored");
+}
+
+#[test]
+fn a_sieged_tank_attacks_a_clicked_enemy_and_refuses_the_ground() {
+    anchored_unit_attacks_by_click(false);
+}
+
+#[test]
+fn a_burrowed_unit_shows_attack_and_attacks_a_clicked_enemy() {
+    anchored_unit_attacks_by_click(true);
+}
+
+#[test]
+fn attack_on_the_ground_with_a_sieged_tank_and_a_walker_moves_the_walker_only() {
+    let mut harness = skirmish();
+    let tank = {
+        let unit_type = anchoring_type(&harness, false);
+        anchored(&mut harness, unit_type)
+    };
+    let walker_type = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && is_armed(archetype)
+                && archetype.modes.is_empty()
+                && archetype.capabilities.harvester.is_none()
+                && presentable(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable armed walker without modes")
+        .unit_type_id;
+    let near = harness.simulated_position(tank);
+    let walker = spawn_at(&mut harness, near, 2.5, walker_type, LOCAL_PLAYER);
+    let corners = [harness.unit_on_screen(tank), harness.unit_on_screen(walker)];
+    let from = corners[0].min(corners[1]) - Vec2::splat(12.0);
+    let to = corners[0].max(corners[1]) + Vec2::splat(12.0);
+    harness.drag(from, to);
+    let selected = harness.selection().ids().to_vec();
+    assert!(
+        selected.contains(&tank) && selected.contains(&walker),
+        "{selected:?}"
+    );
+
+    arm_attack(&mut harness);
+    let ground = harness.open_ground(near, 6.0);
+    let on_screen = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Left, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::AttackMove { .. }),
+        "{:?}",
+        orders[0].order
+    );
+    assert_eq!(
+        orders[0].entities,
+        [walker],
+        "the sieged tank takes no attack-move"
+    );
+}

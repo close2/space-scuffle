@@ -1169,14 +1169,36 @@ mod tests {
         Ok(())
     }
 
+    /// The slug and mode name of the first shipped archetype with an ability that switches it
+    /// into a mode whose stance takes Hold Position, found by property, not by name (C5).
+    fn a_mode_that_takes_hold_position() -> Result<(String, String), Box<dyn std::error::Error>> {
+        let catalogs = crate::shipped_catalogs();
+        let found = catalogs.units.archetypes().find_map(|archetype| {
+            archetype
+                .abilities
+                .iter()
+                .find_map(|ability| match &ability.effect {
+                    AbilityEffectSpec::SwitchMode { mode_name } => archetype
+                        .get_mode(mode_name)
+                        .filter(|mode| mode.orders.hold_position)
+                        .map(|_| (archetype.slug.clone(), mode_name.clone())),
+                    _ => None,
+                })
+        });
+        found.ok_or_else(|| "no shipped mode takes Hold Position".into())
+    }
+
     #[test]
     fn mode_commands_precede_the_standing_order_which_survives_the_switch(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // A standing order given after a switch survives it, for a stance that takes the order
+        // (plan 2026-11-23-stance-checked-orders D-5).
+        let (unit, mode) = a_mode_that_takes_hold_position()?;
         let matrix = Matrix::from_ron_str(MATRIX_RON)?;
         let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
         battle.blue = row((10.0, 10.0), 2);
-        battle.blue.squads[0].unit = "railgun_crawler".to_owned();
-        battle.blue.mode = Some("siege_mode".to_owned());
+        battle.blue.squads[0].unit = unit;
+        battle.blue.mode = Some(mode);
         battle.blue.order = SideOrder::HoldPosition;
         battle.red = row((40.0, 40.0), 1);
         let mut run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
@@ -1185,6 +1207,7 @@ mod tests {
             .iter()
             .position(|command| !matches!(command.order, UnitOrder::CastAbility { .. }))
             .ok_or("the side has a standing order")?;
+        assert!(first_side_order > 0, "the side casts its switch");
         assert!(
             run.commands[first_side_order..]
                 .iter()
@@ -1194,11 +1217,86 @@ mod tests {
         run.step();
         for id in &run.blue {
             let unit = run.world.entities.get(id).ok_or("unit missing")?;
+            assert!(unit.channeling_remaining_ticks > 0, "the switch has begun");
             assert!(
-                !unit.order_queue.is_empty(),
+                unit.is_holding_position,
                 "the switch did not clear the order given after it"
             );
         }
+        Ok(())
+    }
+
+    /// Whether `unit`, named in a first-tick `order`, took it: its settled stance has the order
+    /// and, after the tick, it holds (Hold Position) or carries no order but an acquired attack
+    /// (Stop).
+    fn took(world: &SimWorld, unit: EntityId, order: &UnitOrder) -> Result<bool, String> {
+        let entity = world
+            .entities
+            .get(&unit)
+            .ok_or_else(|| format!("unit {unit:?} missing"))?;
+        let archetype = world
+            .catalog
+            .get(entity.unit_type_id)
+            .map_err(|error| error.to_string())?;
+        let stance = entity.settled_stance_orders(archetype);
+        Ok(match order {
+            UnitOrder::HoldPosition => stance.hold_position && entity.is_holding_position,
+            UnitOrder::Stop => {
+                stance.stop
+                    && entity.order_queue.iter().all(|queued| {
+                        matches!(
+                            queued,
+                            UnitOrder::AttackTarget {
+                                origin: sim_types::AttackOrigin::Acquired,
+                                ..
+                            }
+                        )
+                    })
+            }
+            _ => true,
+        })
+    }
+
+    #[test]
+    fn no_matrix_battle_scripts_a_stop_or_hold_that_misses_a_unit_it_names(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // P-9 (plan 2026-11-23-stance-checked-orders D-5): a scripted Stop or Hold Position
+        // reaches every unit it names, so no battle depends on an order its unit's stance lacks.
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let seed = matrix.seeds[0];
+        let mut missed = Vec::new();
+        for battle in &matrix.battles {
+            let mut run = BattleRun::new(
+                battle,
+                crate::shipped_catalogs(),
+                seed,
+                matrix.jitter_for(seed),
+            )?;
+            let named: Vec<(EntityId, UnitOrder)> = run
+                .commands
+                .iter()
+                .filter(|command| {
+                    matches!(command.order, UnitOrder::Stop | UnitOrder::HoldPosition)
+                })
+                .flat_map(|command| {
+                    command
+                        .entities
+                        .iter()
+                        .map(|&unit| (unit, command.order.clone()))
+                })
+                .collect();
+            run.step();
+            for (unit, order) in &named {
+                if !took(&run.world, *unit, order)? {
+                    missed.push(battle.name.clone());
+                    break;
+                }
+            }
+        }
+        assert!(
+            missed.is_empty(),
+            "battles whose scripted Stop or Hold Position misses a unit: {missed:?}"
+        );
         Ok(())
     }
 

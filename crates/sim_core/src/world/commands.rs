@@ -298,21 +298,41 @@ impl SimWorld {
 
     /// Issues any other order to every commanded unit the player owns.
     ///
+    /// A unit takes Stop or Hold Position only when its settled stance has the command
+    /// ([`Entity::settled_stance_orders`]), as `StarCraft` II sends a command to every selected
+    /// unit that has it and to no other (`ToSelection`, `core` AbilData:1015-1016, :553; plan
+    /// `2026-11-23-stance-checked-orders` D-1). A unit that does not take it is left exactly as
+    /// it was; that is the game's admission rule, not a failure, so it raises no diagnostic,
+    /// and a command no named unit takes is valid and does nothing. A unit whose archetype is
+    /// missing from the catalog takes neither.
+    ///
     /// A stop or hold-position order ends a move without arriving. A unit whose archetype brakes
     /// over several ticks keeps the velocity it had, and movement glides it to rest (B-39, the
     /// owner's answer to Q0067); any other unit stops at once.
+    ///
+    /// [`Entity::settled_stance_orders`]: crate::entity::Entity::settled_stance_orders
     fn issue_plain_order(&mut self, cmd: &PlayerCommand) {
         let ends_motion =
             !cmd.queue && matches!(cmd.order, UnitOrder::Stop | UnitOrder::HoldPosition);
         for &ent_id in &cmd.entities {
             if let Some(ent) = self.entities.get_mut(&ent_id) {
                 if ent.owner == cmd.player_id {
+                    let arch = self.catalog.get(ent.unit_type_id).ok();
+                    let takes = match cmd.order {
+                        UnitOrder::Stop => {
+                            arch.is_some_and(|arch| ent.settled_stance_orders(arch).stop)
+                        }
+                        UnitOrder::HoldPosition => {
+                            arch.is_some_and(|arch| ent.settled_stance_orders(arch).hold_position)
+                        }
+                        _ => true,
+                    };
+                    if !takes {
+                        continue;
+                    }
                     let momentum = ent.velocity;
-                    let glides = ends_motion
-                        && self
-                            .catalog
-                            .get(ent.unit_type_id)
-                            .is_ok_and(|arch| arch.deceleration < arch.max_speed);
+                    let glides =
+                        ends_motion && arch.is_some_and(|arch| arch.deceleration < arch.max_speed);
                     let issued = ent.issue_order(cmd.order.clone(), cmd.queue);
                     if glides && issued.is_ok() {
                         ent.velocity = momentum;
