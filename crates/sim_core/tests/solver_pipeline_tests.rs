@@ -351,7 +351,7 @@ fn a_body_spawned_into_a_crowd_leaves_it_within_a_second_and_never_through_a_wal
     Ok(())
 }
 
-/// WP3b (Amendment 3, item 4, B-158): in the mixed-priority gap scenes of development seeds 12,
+/// The arrival rule (plan §3.10, Amendment 3 item 4, B-158): in the mixed-priority gap scenes of development seeds 12,
 /// 15 and 16, lower-priority walkers reached the clump of higher-priority arrivals at the shared
 /// point, could not push them (C-2) and touched only arrivals beyond the bounded witness reach,
 /// so they gave their `Move` up. Under the group-arrival chain each of them arrives.
@@ -368,7 +368,7 @@ fn mixed_priority_walkers_all_arrive_at_the_shared_point() -> TestResult {
     Ok(())
 }
 
-/// WP3b: the arrival chain runs only through arrivals. A walker that gave its `Move` up in front
+/// The arrival rule (plan §3.10): the arrival chain runs only through arrivals. A walker that gave its `Move` up in front
 /// of a closed way (here a line of friends on Hold Position across a corridor) is no witness, so a
 /// second walker to the same point that touches it keeps its order instead of ending it short of
 /// the way through (the failure of the unbounded chain measured in §5.3 of the plan).
@@ -436,6 +436,11 @@ fn a_give_up_is_no_witness_of_the_arrival_chain() -> TestResult {
     Ok(())
 }
 
+/// A unit heading as a unit vector, `f64` for measurement only.
+type Heading = (f64, f64);
+/// A turn between two headings: the tick, its sign and its size in degrees.
+type Turn = (u32, f64, f64);
+
 /// Amendment 3, item 5: the kept `battlefield_bubble_trajectories_are_smooth_without_micro_jitter`
 /// played under the solver pipeline. Its zig-zag was traced to the parked-corner aim (L24)
 /// reading a body beyond the legacy reach, which the side rule's wider neighbour list had let in;
@@ -494,7 +499,7 @@ fn the_canyon_march_has_no_zig_zag_under_the_solver() -> TestResult {
         }],
     );
     // Per unit: the last heading and the last turn (tick, sign, degrees), as the kept test counts.
-    let mut last: std::collections::BTreeMap<EntityId, ((f64, f64), Option<(u32, f64, f64)>)> =
+    let mut last: std::collections::BTreeMap<EntityId, (Heading, Option<Turn>)> =
         std::collections::BTreeMap::new();
     let mut zig_zags = Vec::new();
     for tick in 1..=window {
