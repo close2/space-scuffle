@@ -1,9 +1,17 @@
 //! Local producer egress geometry and refreshed collision admission.
 //!
-//! Candidate order is clockwise from the expanded rectangle's minimum corner.
-//! Every ground exit connects to the actual producer boundary at the product's terrain
-//! radius; only that producer's footprint is waived, on the leg from the footprint to the
-//! exit, never terrain or another structure's footprint.
+//! Ring 0 is the footprint expanded by the product's terrain radius. Its cells are tried
+//! clockwise from the minimum corner, or nearest the producer's rally point first (plan
+//! `2026-11-23-production-queue` D-9). Every ring-0 ground exit connects to the actual producer
+//! boundary at the product's terrain radius; only that producer's footprint is waived, on the
+//! leg from the footprint to the exit, never terrain or another structure's footprint.
+//!
+//! When ring 0 has no free cell, outer rings one cell wider each are searched in the same order
+//! until a ring lies wholly off the map (B-66): an outer cell needs legal ground for the
+//! product's disc on the producer's cliff level and no body, but no connection, since the game
+//! places units that "may become stuck" rather than holding the queue. The search visits every
+//! map cell at most once, and only on a tick a ready producer's ring 0 is full;
+//! `ExitObstructed` is published only when the whole map has no cell.
 //!
 //! Occupancy holds the live units, never registered structures: a structure is not a body
 //! and meets the product only through its footprint, which both egress checks test at the
@@ -12,6 +20,7 @@
 
 use super::ProductionInvariant;
 use crate::SimWorld;
+use sim_map::CliffLevel;
 use sim_types::{EntityId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 impl SimWorld {
@@ -43,26 +52,145 @@ impl SimWorld {
         Ok(())
     }
 
-    /// The first free cell centre on the clockwise exit ring around `producer`, in world units,
-    /// for a new `product`; `None` while every candidate is blocked or none can exist.
+    /// Where a new `product` of `producer` emerges, a cell centre in world units, or `None`
+    /// when no cell of the map can take it (plan `2026-11-23-production-queue` D-9, B-66).
+    ///
+    /// Ring 0 is the cells around the producer at the product's terrain radius, each tested as
+    /// before (on the map, connected to the producer on the ground, clear of bodies). Only when
+    /// ring 0 has no free cell are the outer rings searched, one cell wider each, until a ring
+    /// lies wholly off the map; an outer cell needs no connection, only legal ground on the
+    /// producer's level and no body. Within a ring, cells are tried clockwise from the minimum
+    /// corner, or nearest the producer's rally point first when it has one.
     pub(crate) fn production_exit(
         &mut self,
         producer: EntityId,
         product: UnitTypeId,
     ) -> Result<Option<SimVec2>, ProductionInvariant> {
+        self.production.exit_cells_visited = 0;
         let Some(ring) = self.exit_ring(producer, product)? else {
             return Ok(None);
         };
-        // PERFORMANCE RATIONALE:
-        // Why: Ready jobs retry while exits are blocked, without allocating routes.
-        // What: Stream the finite clockwise perimeter and query reusable buckets.
-        // Trade-off: Conservative cell-center exits can wait despite a sub-cell gap.
-        for (x, y) in exit_ring_candidates(ring.bounds) {
-            if let Some(point) = self.free_exit_point(&ring, x, y)? {
+        let rally = self.rally_point(producer);
+        if let Some(point) = self.search_exit_ring(&ring, ring.bounds, rally, RingTest::Zero)? {
+            return Ok(Some(point));
+        }
+        let level = if ring.airborne {
+            None
+        } else {
+            Some(self.producer_level(&ring)?)
+        };
+        let (width, height) = (i64::from(self.map.width()), i64::from(self.map.height()));
+        for step in 1_i64.. {
+            let (left, bottom, right, top) = ring.bounds;
+            let bounds = (left - step, bottom - step, right + step, top + step);
+            // A ring that encloses the whole map has no cell on it: every cell was tried.
+            if bounds.0 < 0 && bounds.1 < 0 && bounds.2 >= width && bounds.3 >= height {
+                break;
+            }
+            if let Some(point) =
+                self.search_exit_ring(&ring, bounds, rally, RingTest::Outer(level))?
+            {
                 return Ok(Some(point));
             }
         }
         Ok(None)
+    }
+
+    /// The first free cell of the ring `bounds`, in the order D-9 states: clockwise from the
+    /// minimum corner, or by squared distance from the cell centre to `rally` and then clockwise
+    /// index, each cell under the test `test` names.
+    fn search_exit_ring(
+        &mut self,
+        ring: &ExitRing,
+        bounds: (i64, i64, i64, i64),
+        rally: Option<SimVec2>,
+        test: RingTest,
+    ) -> Result<Option<SimVec2>, ProductionInvariant> {
+        // PERFORMANCE RATIONALE:
+        // Why: A ready producer whose exit is blocked retries every tick, and a rally orders
+        // every ring it searches.
+        // What: Stream the clockwise perimeter; with a rally, sort it in a retained buffer.
+        // Trade-off: The buffer keeps the largest perimeter's capacity for the match.
+        let mut order = std::mem::take(&mut self.production.exit_order);
+        order.clear();
+        if let Some(rally) = rally {
+            order.extend(
+                (0_u32..)
+                    .zip(exit_ring_candidates(bounds))
+                    .map(|(index, (x, y))| {
+                        let dx = cell_centre_raw(x) - i128::from(rally.x.raw());
+                        let dy = cell_centre_raw(y) - i128::from(rally.y.raw());
+                        (dx * dx + dy * dy, index, x, y)
+                    }),
+            );
+            order.sort_unstable_by_key(|&(distance, index, _, _)| (distance, index));
+        } else {
+            order.extend(
+                (0_u32..)
+                    .zip(exit_ring_candidates(bounds))
+                    .map(|(index, (x, y))| (0, index, x, y)),
+            );
+        }
+        let mut found = Ok(None);
+        for &(_, _, x, y) in &order {
+            let free = match test {
+                RingTest::Zero => self.free_exit_point(ring, x, y),
+                RingTest::Outer(level) => self.free_outer_exit_point(ring, x, y, level),
+            };
+            match free {
+                Ok(None) => {}
+                other => {
+                    found = other;
+                    break;
+                }
+            }
+        }
+        self.production.exit_order = order;
+        found
+    }
+
+    /// The cliff level of the producer's ground: its footprint's minimum corner cell, or the
+    /// cell under a mobile producer.
+    fn producer_level(&self, ring: &ExitRing) -> Result<CliffLevel, ProductionInvariant> {
+        let (x, y) = match ring.footprint {
+            Some((left, bottom, _, _)) => (left, bottom),
+            None => (ring.origin.x.raw() >> 32, ring.origin.y.raw() >> 32),
+        };
+        u32::try_from(x)
+            .ok()
+            .zip(u32::try_from(y).ok())
+            .and_then(|(x, y)| self.map.cell(x, y).ok())
+            .map(|cell| cell.cliff_level)
+            .ok_or(ProductionInvariant::EntityState {
+                entity: ring.producer,
+                reason: "producer stands off the map",
+            })
+    }
+
+    /// The centre of outer-ring cell `(x, y)` when the product may appear there (D-9 rule 3): on
+    /// the map at its terrain radius; for a ground product, on legal ground at that disc and on
+    /// the producer's `level`; and clear of every body of the product's layer.
+    fn free_outer_exit_point(
+        &mut self,
+        ring: &ExitRing,
+        x: i64,
+        y: i64,
+        level: Option<CliffLevel>,
+    ) -> Result<Option<SimVec2>, ProductionInvariant> {
+        let Some(point) = self.exit_point_on_map(ring, x, y) else {
+            return Ok(None);
+        };
+        if let Some(level) = level {
+            let on_level = u32::try_from(x)
+                .ok()
+                .zip(u32::try_from(y).ok())
+                .and_then(|(x, y)| self.map.cell(x, y).ok())
+                .is_some_and(|cell| cell.cliff_level == level);
+            if !on_level || !self.egress_connected(point, point, ring.terrain_radius, None) {
+                return Ok(None);
+            }
+        }
+        self.exit_point_clear(ring, point)
     }
 
     /// Measures the ring of candidate exit cells around `producer` for a new `product`.
@@ -168,22 +296,9 @@ impl SimWorld {
         x: i64,
         y: i64,
     ) -> Result<Option<SimVec2>, ProductionInvariant> {
-        let radius = ring.radius;
-        if x < 0 || y < 0 || x >= i64::from(self.map.width()) || y >= i64::from(self.map.height()) {
+        let Some(point) = self.exit_point_on_map(ring, x, y) else {
             return Ok(None);
-        }
-        let point = SimVec2::new(
-            SimScalar::from_raw((x << 32) + (1_i64 << 31)),
-            SimScalar::from_raw((y << 32) + (1_i64 << 31)),
-        );
-        let raw_radius = i128::from(ring.terrain_radius.raw());
-        if i128::from(point.x.raw()) - raw_radius < 0
-            || i128::from(point.y.raw()) - raw_radius < 0
-            || i128::from(point.x.raw()) + raw_radius > (i128::from(self.map.width()) << 32)
-            || i128::from(point.y.raw()) + raw_radius > (i128::from(self.map.height()) << 32)
-        {
-            return Ok(None);
-        }
+        };
         if !ring.airborne {
             let anchor = if let Some((left, bottom, right, top)) = ring.footprint {
                 SimVec2::new(
@@ -200,6 +315,39 @@ impl SimWorld {
                 return Ok(None);
             }
         }
+        self.exit_point_clear(ring, point)
+    }
+
+    /// The centre of cell `(x, y)` in world units when the product's terrain disc fits the map
+    /// there, counting the cell as visited (D-9 rule 4's bound); `None` off the map.
+    fn exit_point_on_map(&mut self, ring: &ExitRing, x: i64, y: i64) -> Option<SimVec2> {
+        if x < 0 || y < 0 || x >= i64::from(self.map.width()) || y >= i64::from(self.map.height()) {
+            return None;
+        }
+        self.production.exit_cells_visited = self.production.exit_cells_visited.saturating_add(1);
+        let point = SimVec2::new(
+            SimScalar::from_raw((x << 32) + (1_i64 << 31)),
+            SimScalar::from_raw((y << 32) + (1_i64 << 31)),
+        );
+        let raw_radius = i128::from(ring.terrain_radius.raw());
+        if i128::from(point.x.raw()) - raw_radius < 0
+            || i128::from(point.y.raw()) - raw_radius < 0
+            || i128::from(point.x.raw()) + raw_radius > (i128::from(self.map.width()) << 32)
+            || i128::from(point.y.raw()) + raw_radius > (i128::from(self.map.height()) << 32)
+        {
+            return None;
+        }
+        Some(point)
+    }
+
+    /// `Some(point)` when no unit of the product's own layer overlaps the product at `point` at
+    /// the sum of their collision radii.
+    fn exit_point_clear(
+        &mut self,
+        ring: &ExitRing,
+        point: SimVec2,
+    ) -> Result<Option<SimVec2>, ProductionInvariant> {
+        let radius = ring.radius;
         let reach_raw = i128::from(radius.raw()) + i128::from(self.production.max_radius.raw());
         let ceil = ((reach_raw + (1_i128 << 32) - 1) >> 32)
             .min(i128::from(self.map.width().max(self.map.height())));
@@ -264,6 +412,21 @@ struct ExitRing {
     terrain_radius: SimScalar,
     /// Whether the product flies, so ground connectivity does not apply and only air bodies block.
     airborne: bool,
+}
+
+/// Which test a ring's cells take (plan `2026-11-23-production-queue` D-9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RingTest {
+    /// Ring 0: connected to the producer on the ground.
+    Zero,
+    /// An outer ring: on the producer's cliff level for a ground product (`None` for an air
+    /// product, which needs only the map and the air bodies).
+    Outer(Option<CliffLevel>),
+}
+
+/// The centre of cell coordinate `cell` in raw Q32.32 world units, widened to `i128`.
+fn cell_centre_raw(cell: i64) -> i128 {
+    (i128::from(cell) << 32) + (1_i128 << 31)
 }
 
 /// The cells on the perimeter of `bounds` `(left, bottom, right, top)`, clockwise from the
@@ -535,6 +698,74 @@ mod tests {
             None,
             "a unit within the collision radii still occupies it"
         );
+        Ok(())
+    }
+
+    /// P-6 (plan `2026-11-23-production-queue` D-9 rule 4): with a body on every cell of a small
+    /// map, the search ends with no exit after examining every map cell outside ring 0's interior
+    /// exactly once (rings are disjoint perimeters, so the count is that number only if no cell
+    /// is examined twice), and it stops at the ring that encloses the map.
+    #[test]
+    fn a_full_map_publishes_exit_obstructed_after_one_visit_per_cell(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+        const SIDE: u32 = 12;
+        let map = sim_map::GameMap::new(
+            SIDE,
+            SIDE,
+            sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+        )?;
+        let mut world = crate::test_support::world(map, 4);
+        let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
+        let producer_type = world
+            .catalog
+            .archetypes()
+            .filter(|a| dome(&a.shape))
+            .min_by_key(|a| {
+                a.shape
+                    .footprint()
+                    .map(|(w, h)| u32::from(w) * u32::from(h))
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("catalog has no structure")?;
+        let product = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                !dome(&a.shape)
+                    && a.mover_type == MoverType::Ground
+                    && a.max_speed > SimScalar::ZERO
+            })
+            .map(|a| a.unit_type_id)
+            .ok_or("a ground unit")?;
+        let arch = world.catalog.get_mut(product)?;
+        arch.collision_radius = SimScalar::from_num(0.375);
+        arch.terrain_radius = SimScalar::from_num(0.375);
+        let producer = world.spawn_structure(producer_type, PlayerId(0), 3, 4)?;
+        for y in 0..SIDE {
+            for x in 0..SIDE {
+                if world.map.cell(x, y)?.occupying_structure.is_none() {
+                    let centre = SimVec2::new(
+                        SimScalar::from_num(x) + SimScalar::HALF,
+                        SimScalar::from_num(y) + SimScalar::HALF,
+                    );
+                    world.spawn_unit(product, PlayerId(1), centre)?;
+                }
+            }
+        }
+        world.rebuild_production_occupancy()?;
+        assert_eq!(world.production_exit(producer, product)?, None);
+        let ring = world
+            .exit_ring(producer, product)?
+            .ok_or("the product fits the map")?;
+        let (left, bottom, right, top) = ring.bounds;
+        let side = i64::from(SIDE);
+        let interior = (0..side)
+            .flat_map(|y| (0..side).map(move |x| (x, y)))
+            .filter(|&(x, y)| x > left && x < right && y > bottom && y < top)
+            .count();
+        let expected = SIDE * SIDE - u32::try_from(interior)?;
+        assert_eq!(world.production.exit_cells_visited, expected);
         Ok(())
     }
 

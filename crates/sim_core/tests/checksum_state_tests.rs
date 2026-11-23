@@ -116,6 +116,42 @@ macro_rules! mutations {
     };
 }
 
+/// Plan `2026-11-23-production-queue` D-1, D-6: every field of a queued job is hashed,
+/// `in_production` included, each mutated alone on a job in an entity's queue.
+#[test]
+fn every_production_job_field_changes_the_world_checksum() {
+    let mut world = world();
+    let original = sim_core::production::ProductionJob {
+        item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)),
+        remaining_ticks: 7,
+        total_ticks: 9,
+        reserved_supply: 3,
+        in_production: false,
+        paid_minerals: 5,
+        paid_gas: 6,
+    };
+    assert_mutations(
+        &original,
+        mutations! { sim_core::production::ProductionJob;
+            item => sim_core::production::ProductionItem::Research(4),
+            remaining_ticks => 8,
+            total_ticks => 10,
+            reserved_supply => 2,
+            in_production => true,
+            paid_minerals => 4,
+            paid_gas => 5,
+        },
+        |job| {
+            world
+                .entities
+                .get_mut(&EntityId(1))
+                .expect("fixture has entity 1")
+                .production_queue = [*job].into();
+            world.compute_checksum()
+        },
+    );
+}
+
 #[test]
 fn every_public_entity_field_changes_the_world_checksum() {
     let mut world = world();
@@ -143,7 +179,7 @@ fn every_public_entity_field_changes_the_world_checksum() {
             pending_strikes => Some(sim_core::PendingStrikes { target_id: EntityId(2), plane: MoverType::Ground, remaining: 1, ticks_until_next: 5, channeled: false }),
             pending_line => Some(sim_core::PendingLine { points: vec![point(1, 2)], ticks_until_next: 2, plane: MoverType::Ground, angle: SimAngle::PI, primary: EntityId(2), struck: vec![EntityId(3)], view: sim_core::PendingLineView { effect: sim_types::EffectSource::default(), line: None, count: 2 } }),
             active_buffs => vec![ActiveBuff { buff_id: 1, remaining_ticks: 2, speed_multiplier: SimScalar::ONE, attack_rate_multiplier: SimScalar::ONE }],
-            production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, paid_minerals: 5, paid_gas: 6 }].into(),
+            production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, in_production: true, paid_minerals: 5, paid_gas: 6 }].into(),
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
             // Plan `2026-11-22-harvest-timing` D-5: the return-delay countdown.
             task => sim_core::UnitTask { return_ticks: 3, ..Default::default() },
@@ -159,6 +195,10 @@ fn every_public_entity_field_changes_the_world_checksum() {
             }),
             captured_supply_used => 99,
             captured_supply_provided => 99,
+            // Plan `2026-11-23-production-queue` D-3, D-6: each rally variant is hashed.
+            rally => Some(sim_types::RallyTarget::Point(point(3, 5))),
+            rally => Some(sim_types::RallyTarget::Unit(EntityId(2))),
+            rally => Some(sim_types::RallyTarget::Node(sim_types::ResourceNodeId(0))),
             is_mineral_walking => true,
             is_holding_position => true,
             current_anim => AnimState::Attack,

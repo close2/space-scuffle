@@ -1506,3 +1506,19 @@ given up.
 3. **The acceptance run decides switch-over eligibility,** together with Q0093's cost bar, which is still with the
    owner. Whatever fails there is reported with traces. No further rule is added before that report. The
    orchestrator then weighs the whole picture against Legacy, with the owner if needed.
+
+## Amendment 10 (implementer, 2026-11-23, at the orchestrator's direction): checksum schema 35
+
+Main took schema 34 for the production queue (`2bb84a5b`: `ProductionJob::in_production`, `Entity::rally`). This
+plan's movement-memory fields therefore take **schema 35** at the merge:
+- the side rule's commitment, `side_partner` and `side_left`;
+- the remembered gap, `slot`.
+
+The WP7 deletion takes 36.
+
+**Proof.**
+- A scratch build of the merged tree that leaves the three fields unhashed and holds the schema at 34 reproduces
+  main's 20 + 60 golden checksums and `DEFAULT_SANDBOX_CHECKSUM` on native debug and release and `wasm32-wasip1`
+  release and debug.
+- The re-recorded lists agree on all four builds.
+- No behaviour changed: the legacy pipeline never writes these fields.

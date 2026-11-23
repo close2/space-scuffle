@@ -723,6 +723,9 @@ fn capable(
                 && MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground
         }
         UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
+        // The simulation's rule (plan `2026-11-23-production-queue` D-3): a completed structure
+        // that trains units has a rally; completion is `can_receive_order`'s check.
+        UnitOrder::SetRally { .. } => !archetype.trains_units.is_empty(),
         // Only a targeted effect-tree cast (plan `2026-11-10-spellcaster-mechanics` D-10). A
         // mode switch needs a direction, which only `submit_mode_switch` carries and checks
         // again at its tick (plan `2026-11-09-client-mode-commands` D-4). Other abilities have
@@ -819,7 +822,8 @@ fn order_subject<'w>(
         | UnitOrder::Research { .. }
         | UnitOrder::CancelProduction { .. }
         | UnitOrder::Load { .. }
-        | UnitOrder::UnloadAll => return Ok(None),
+        | UnitOrder::UnloadAll
+        | UnitOrder::SetRally { .. } => return Ok(None),
     };
     let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world

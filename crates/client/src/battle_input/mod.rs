@@ -29,6 +29,7 @@ pub mod command_mode;
 pub mod context_order;
 pub mod gesture;
 pub mod order_marker;
+pub mod rally_marker;
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
@@ -39,7 +40,7 @@ use sim_core::SimWorld;
 use sim_types::enums::ShapeKind;
 use sim_types::{EntityId, PlayerId, ResourceNodeId, SimVec2, UnitOrder};
 
-use crate::battle_pipeline::commands::{CastOrder, SubmissionError};
+use crate::battle_pipeline::commands::{any_recipient, CastOrder, SubmissionError};
 use crate::battle_pipeline::fog::{presence_of, BattleFog};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
@@ -59,7 +60,7 @@ use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
 use command_mode::{orders_open, CommandMode};
-use context_order::{context_order, resolve_target, PointerTarget};
+use context_order::{context_order, rally_target, resolve_target, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
 use order_marker::{OrderMarkerKind, OrderMarkers};
 
@@ -88,7 +89,11 @@ impl Plugin for BattleInputPlugin {
             .init_resource::<CommandMode>()
             .add_systems(
                 Startup,
-                order_marker::setup_order_markers.after(crate::setup_indicator_assets_system),
+                (
+                    order_marker::setup_order_markers,
+                    rally_marker::setup_rally_markers,
+                )
+                    .after(crate::setup_indicator_assets_system),
             )
             .add_systems(
                 Update,
@@ -103,6 +108,7 @@ impl Plugin for BattleInputPlugin {
                         .after(crate::lab_ui_system)
                         .in_set(BattleSet::CollectIntent),
                     order_marker::update_order_markers.in_set(BattleSet::Present),
+                    rally_marker::update_rally_markers.in_set(BattleSet::Present),
                 ),
             );
     }
@@ -597,9 +603,24 @@ fn issue_pointer_order(
         return;
     };
     let (order, kind, position) = context_order(world, owner, selection.ids(), target);
-    match queue.submit_selection(world, owner, selection.ids(), order, shift) {
-        Ok(_) => markers.show(kind, position),
-        Err(error) => queue.reject(&error),
+    // The selection's production structures take the click as their rally (plan
+    // `2026-11-23-production-queue` D-10); the units take the context order. A selection of
+    // structures alone submits only the rally, and the click is accepted when either submission
+    // is, so a mixed selection reports no refusal its other half was spared.
+    let rally = UnitOrder::SetRally {
+        target: rally_target(target),
+    };
+    let rallies = any_recipient(world, owner, selection.ids(), &rally);
+    let orders = !rallies || any_recipient(world, owner, selection.ids(), &order);
+    let ordered =
+        orders.then(|| queue.submit_selection(world, owner, selection.ids(), order, shift));
+    let rallied =
+        rallies.then(|| queue.submit_selection(world, owner, selection.ids(), rally, shift));
+    match (ordered, rallied) {
+        (Some(Ok(_)), _) => markers.show(kind, position),
+        (_, Some(Ok(_))) => markers.show(OrderMarkerKind::Rally, position),
+        (Some(Err(error)), _) | (None, Some(Err(error))) => queue.reject(&error),
+        (None, None) => {}
     }
 }
 

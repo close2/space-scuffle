@@ -827,3 +827,117 @@ Full tables: `wp4b/cmp-a0.md` and `wp4b/cmp-b0.md`.
   - T7: arc enemy over 0.005 in 40 scenes;
   - T1: arc M1 3.77;
   - T9: the mirror.
+
+## 12. Step 4, WP5 and the acceptance run (Amendment 9)
+
+Base: `contact-solver-plan`. Every development figure is on seeds 1 to 1,000. The acceptance run is the single run
+of Amendment 9, seeds 100,001 to 101,000, both pipelines from one binary (`bin/harness-w5`). The held-out range was
+not run. Data: `~/scratch/contact-solver/wp4b/` (`runs/s4-1`, `runs/w5-1`, `runs/acc-*-100001`,
+`acc-aggregate.md`, `cmp-*.md`, `perf/`, `trace/acc/`).
+
+### 12.1 Arm B's goldens
+
+Arm B's tree (`d9c2e763`) reproduces the committed schema 34 lists and `DEFAULT_SANDBOX_CHECKSUM` unchanged on all
+four builds. The hashed field set is WP2's (`side_partner`, `side_left`, `slot`), and the legacy pipeline never
+writes the gap.
+
+### 12.2 Step 4: wall slide and prioritised hard pass (`949d517a`)
+
+- A correction that terrain refuses whole slides along the wall (`slide_along_wall`).
+- The hard pass runs in two parts: the hard friend pairs first, then the enemy and fixed constraints, last.
+- Test `enemy_constraints_have_the_last_word` is red before.
+- `a_refused_correction_slides_along_the_wall` passes before too: `settle_on_terrain` already projects most
+  refused corrections. It pins the behaviour.
+- **Development, against Arm B:** nothing worse beyond noise. Arc scenes over the enemy bound fall from 40 to 25.
+
+### 12.3 WP5: tick-start pursuit (`6f967150`, Solver only)
+
+- The pursuit reads the target's tick-start position and motion.
+- Test `a_mirrored_pair_reaches_range_and_fires_on_the_same_tick` fails without the read: range on ticks 73 and 74.
+- **Development, against step 4:** scene families byte-identical. Mirror blue share 0.458 → 0.506 [0.403, 0.608];
+  draws 347 → 913, of which 907 end with both sides dead. The symmetric fights now end symmetrically.
+- The prescribed WP3 test `gaps_and_crossings_meet_t4_and_t7_under_the_solver`, judged at WP5: T4 holds on its 20
+  seeds; T7 fails (gap 1.91 % of moving near pair-ticks above 5 %). It stays ignored, with that reason.
+
+### 12.4 Acceptance (T1 to T9 with E1; today = Legacy on the same range)
+
+| Threshold | Family | Legacy | Solver | Verdict |
+|---|---|---|---|---|
+| T1 | gap | M1 17.97, M1-hi 3.82 | 1.00 / **0.26** | fails (M1-hi > 0.25) |
+| T1 | arc | 3.15 / 1.97 | **4.36** / **0.26** | fails |
+| T1 | cross | 3.86 / 1.23 | **1.29** / **0.51** | fails |
+| T1 | corridor, corner | 11.23, 20.38 | 0.00, 0.48 | holds |
+| T2 | all | | | holds |
+| T3 | all | | arc 0.05 %, cross 0.46 % | holds |
+| T4 | gap | 322 give-ups, 84.3 % complete | **29**, 98.0 % | fails |
+| T4 | cross | 121 | 0, 100 % | holds |
+| T4 | corner | 0 | **11**, 99.7 % | fails |
+| T4 (E1) | arc | 41 | **1,290** | fails |
+| T4 (E1) | corridor | 325 | **17** | fails |
+| T5 | arc | fill 0.978, 5th 0.889 | **0.802, 0.600** | fails |
+| T6 | gap | η 0.640 | 0.764, 5th 0.385, no drop | holds |
+| T7 | gap | friends > 5 % moving 14.78 % | **1.40 %**, max **0.990** | fails |
+| T7 | arc | enemy 0.0196 | enemy **0.0100**, friend max **0.715** | fails |
+| T7 | corner | max 0.575 | max **0.632** | fails |
+| T7 | cross | max 0.538 | max **0.240** | fails |
+| T7 | corridor | enemy 0.0484, max 0.966 | 0, 0.047 | holds |
+| T8 | all | cross p 0.000, corridor p 0.019 | lowest arc 0.020 | holds |
+| T9 | mirror | 0.452 [0.415, 0.490] | 0.544 [0.427, 0.657], 932 draws | holds |
+
+The relative thresholds, M1 and M2 not above Legacy's, hold everywhere except arc M1 (3.15 → 4.36).
+
+- **Solver iterations per tick:** mean 2.55, median 1, 99th 21.
+- **Corridor two-abreast (open item, not a T-figure):** every capacity-2 corridor scene misses its known answer
+  under the Solver: 301 of 301, against 210 of 301 under Legacy. With the first attacker on the axis, the ring has no
+  free angle beside it (§10.3).
+
+### 12.5 Traces of the failures (`trace/acc/`)
+
+- **Arc give-ups and T5** (seed 100313: P 1.5, R 1, k 23, capacity 15; 11 in band at the end).
+  - The abandoning units stand 0.5 to 1.7 from the ring with their bearing point blocked: walkers to a gap.
+  - The gap aim walks the straight chord toward the gap, which runs into the front rank. Contact holds the unit
+    there, it makes no progress toward the gap point, and it abandons after 10 s.
+  - The give-ups are the shortfall of T5: Legacy, whose units walk round the crowd, has 41 give-ups and fills 0.978.
+- **Arc T1** (seed 100804; 459 reversals).
+  - Every reversal is a gap walker under its order, with a fixed gap point, stepping ±0.04 for hundreds of ticks.
+  - It steps toward a gap point on the band edge beside a front-rank body and is pushed back each tick: a limit cycle
+    between the aim and contact.
+- **Arc T7 enemy.** All 46 scenes over 0.005 lie in (0.005, 0.00995]: inside the solver's dead band,
+  `dead_band_permille: 10`, which never corrects an overlap of at most 1 % (C-4). T7's enemy bound (0.5 %) is below
+  the solver's own dead band.
+- **Gap T4** (seed 100166: w 2, r 0.875, single file).
+  - `NoProgress` give-ups of walkers queued 15 to 17 from the goal, moving slowly (0.03 to 0.06 a tick) behind the
+    file.
+  - These are the residual of B-158 / WP3b (46 on development).
+- **Corner T4 and T7** (seed 100390).
+  - Walkers at the mouth give up (`NoProgress`).
+  - The idle units they leave are then pressed above 0.15 by walkers (0.16 to 0.28).
+- **Gap T7** (seed 100667: w 6, mixed priorities): moving pairs of the starting block pressed above 0.15 in the
+  first 50 ticks. 230 scenes go over the friend maximum.
+- **Cross T7** (seed 100996, θ 90°): an arrived, idle unit pressed to 0.17 by passing walkers; 2 scenes.
+- **Cross T1** (seed 100050, θ 180°): reversals at ticks 113 to 174 as the head-on groups meet. This is WP3's side
+  rule's residual (Amendment 9 kept it).
+- **Corridor E1** (seed 100016, capacity 3): one unit gives up 1.05 from the ring, with two in band. It is a gap
+  walker that cannot reach the third place.
+
+### 12.6 Cost (release benchmark, 400 units, 300 ticks, `perf stat -e instructions:u`, under the gate lock)
+
+| Scenario | Legacy | Solver | Change |
+|---|---:|---:|---:|
+| 64 × 64, armies meet | 9.86 G | 16.82 G | **+71 %** |
+| 128 × 128, armies apart | 10.33 G | 11.08 G | +7 % |
+| showcase canyon | 17.49 G | 27.22 G | +56 % |
+
+**Split on 64 × 64.** The method: `perf record --call-graph=dwarf`, inclusive cycles, each part's share scaled by
+the run's instructions retired.
+
+| Part | Legacy | Solver | Change |
+|---|---:|---:|---:|
+| Contact (`resolve_collisions_and_push`; the solver is 22.2 % of the run) | 0.27 G | 3.86 G | +3.6 G |
+| Target acquisition | 4.41 G | 5.95 G | +1.5 G |
+| Movement phase | 3.22 G | 4.92 G | +1.7 G |
+| — of which intent | — | 1.03 G | |
+| — of which the ring scan | — | 0.95 G | |
+
+The ring rule raises the 64 × 64 battle from +55 % (WP3) to +71 %. Every scenario still runs faster than real time
+(ticks per second at the median: 71, 132 and 72).

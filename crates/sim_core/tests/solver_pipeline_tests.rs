@@ -47,7 +47,7 @@ fn twenty(
 /// these seeds but not T7 (gap: 1.91 % of moving near pair-ticks above 5 %, evidence §6.5).
 /// The thresholds are unchanged.
 #[test]
-#[ignore = "judged at WP5 (plan 2026-11-20-contact-solver Amendment 4, 3): WP3 alone meets T4 on these 20 seeds, not T7 (gap 1.91 % of moving near pair-ticks above 5 %, evidence §6.5); thresholds unchanged"]
+#[ignore = "judged at WP5 (plan 2026-11-20-contact-solver Amendment 4, 3; evidence §12): still meets T4 on these 20 seeds, not T7 (gap 1.91 % of moving near pair-ticks above 5 %); reported with the acceptance run, thresholds unchanged"]
 fn gaps_and_crossings_meet_t4_and_t7_under_the_solver() -> TestResult {
     let options = solver_options()?;
     for family in [Family::Gap, Family::Cross] {

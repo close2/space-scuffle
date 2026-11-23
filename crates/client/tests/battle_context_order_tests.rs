@@ -41,7 +41,8 @@ use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
 use client::LabState;
 use sim_core::entity::Cargo;
 use sim_types::{
-    EntityId, PlayerCommand, ResourceKind, ResourceNodeId, SimScalar, UnitOrder, UnitTypeId,
+    EntityId, PlayerCommand, RallyTarget, ResourceKind, ResourceNodeId, SimScalar, UnitOrder,
+    UnitTypeId,
 };
 
 #[allow(
@@ -899,4 +900,188 @@ fn a_right_press_alone_issues_the_order() {
     assert_eq!(pending(&harness).len(), 1, "orders go on the press");
     harness.send_mouse(MouseButton::Right, ButtonState::Released);
     assert_eq!(pending(&harness).len(), 1, "the release adds nothing");
+}
+
+/// Selects the home base alone, with the camera on it, and returns it.
+fn select_base(harness: &mut Harness) -> EntityId {
+    let base = harness.local_structure();
+    harness.look_at_unit(base);
+    harness.select(base);
+    assert_eq!(harness.selection().ids(), [base]);
+    base
+}
+
+/// The one captured rally of `structure`, or a failure naming what was captured.
+fn captured_rally(harness: &Harness, structure: EntityId) -> RallyTarget {
+    let orders = pending(harness);
+    let rallies: Vec<RallyTarget> = orders
+        .iter()
+        .filter_map(|command| match command.order {
+            UnitOrder::SetRally { target } if command.entities == [structure] => Some(target),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rallies.len(), 1, "captured: {orders:?}");
+    rallies[0]
+}
+
+/// Plan `2026-11-23-production-queue` D-10: a right click on open ground with only a structure
+/// selected submits its rally at the clicked point and nothing else, and marks it as a rally.
+#[test]
+fn right_click_on_the_ground_sets_a_selected_structures_rally() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let ground = harness.open_ground(harness.simulated_position(base), 8.0);
+    let at = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(pending(&harness).len(), 1, "status: {}", harness.status());
+    let RallyTarget::Point(point) = captured_rally(&harness, base) else {
+        panic!("a point rally");
+    };
+    let clicked = Vec2::new(point.x.to_f32(), point.y.to_f32());
+    assert!(clicked.distance(ground) < 0.5, "{clicked} against {ground}");
+    assert!(matches!(
+        harness.marker(),
+        Some((OrderMarkerKind::Rally, _))
+    ));
+    harness.resume();
+    harness.step(2);
+    assert_eq!(
+        harness.world().entities[&base].rally,
+        Some(RallyTarget::Point(point))
+    );
+}
+
+/// D-10: with a structure and a unit selected, one right click gives the unit its order and the
+/// structure its rally.
+#[test]
+fn a_mixed_selection_orders_its_units_and_rallies_its_structures() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let worker = workers(&harness)[0];
+    let at = harness.unit_on_screen(worker);
+    harness.with_key_held(SHIFT_MODIFIERS[0], |harness| {
+        harness.click(MouseButton::Left, at);
+    });
+    assert!(harness.selection().contains(base) && harness.selection().contains(worker));
+    let ground = harness.open_ground(harness.simulated_position(base), 8.0);
+    let at = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Right, at);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 2, "captured: {orders:?}");
+    assert!(orders
+        .iter()
+        .any(|command| matches!(command.order, UnitOrder::Move { .. })
+            && command.entities == [worker]));
+    assert!(matches!(
+        captured_rally(&harness, base),
+        RallyTarget::Point(_)
+    ));
+}
+
+/// D-10: a right click on a mineral field rallies the structure to the node.
+#[test]
+fn right_click_on_a_node_rallies_to_the_node() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let node = clear_mineral(&harness, harness.simulated_position(base));
+    let at = node_on_screen(&mut harness, node);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(captured_rally(&harness, base), RallyTarget::Node(node));
+}
+
+/// D-10: a right click on one of the player's units rallies to it; on the structure itself it
+/// clears the rally (the simulation's rule, D-3).
+#[test]
+fn right_click_on_a_friend_or_the_structure_itself_rallies_to_it() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let worker = workers(&harness)[0];
+    let at = harness.unit_on_screen(worker);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(captured_rally(&harness, base), RallyTarget::Unit(worker));
+
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    assert!(
+        harness.world().entities[&base].rally.is_some(),
+        "auto-rally"
+    );
+    let at = harness.unit_on_screen(base);
+    harness.click(MouseButton::Right, at);
+    assert_eq!(captured_rally(&harness, base), RallyTarget::Unit(base));
+    harness.resume();
+    harness.step(2);
+    assert_eq!(harness.world().entities[&base].rally, None);
+}
+
+/// D-10, B-166: a right click on an enemy rallies to the ground under it.
+#[test]
+fn right_click_on_an_enemy_rallies_to_the_ground_under_it() {
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    let worker = workers(&harness)[0];
+    let mut spot = harness.world().entities[&worker].position;
+    spot.x += SimScalar::from_num(3);
+    let enemy_type = harness.world().entities[&worker].unit_type_id;
+    let enemy = harness
+        .world_mut()
+        .spawn_unit(enemy_type, ENEMY, spot)
+        .expect("an enemy beside the worker");
+    // A tick publishes its bubble.
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    let position = harness.world().entities[&enemy].position;
+    let at = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Right, at);
+    let RallyTarget::Point(point) = captured_rally(&harness, base) else {
+        panic!("a point rally");
+    };
+    let gap = (point - position).length_sq().to_f32().sqrt();
+    assert!(gap < 1.5, "{point:?} against {position:?}");
+}
+
+/// D-10: while the base is selected its rally reticle stands on the ground at the rally point the
+/// view publishes, with a line to it; once the base is deselected both are hidden.
+#[test]
+fn a_selected_structures_rally_is_drawn_and_hidden_when_deselected() {
+    use client::battle_input::rally_marker::RallyMarker;
+    let mut harness = skirmish();
+    let base = select_base(&mut harness);
+    harness.step(2);
+    let point = harness
+        .world()
+        .rally_point(base)
+        .expect("the base auto-rallied");
+    let drawn = |harness: &mut Harness| -> Vec<(RallyMarker, Vec3)> {
+        let world = harness.app.world_mut();
+        world
+            .query::<(&RallyMarker, &Transform, &Visibility)>()
+            .iter(world)
+            .filter(|(_, _, visibility)| **visibility != Visibility::Hidden)
+            .map(|(marker, transform, _)| (*marker, transform.translation))
+            .collect()
+    };
+    let shown = drawn(&mut harness);
+    assert_eq!(shown.len(), 2, "{shown:?}");
+    let reticle = shown
+        .iter()
+        .find(|(marker, _)| matches!(marker, RallyMarker::Reticle(_)))
+        .expect("a reticle")
+        .1;
+    assert!((reticle.x - point.x.to_f32()).abs() < 1e-3);
+    assert!((reticle.z - point.y.to_f32()).abs() < 1e-3);
+    let ground = harness.world().map.terrain_altitude_at(point);
+    assert!(
+        reticle.y > ground && reticle.y < ground + 0.2,
+        "{reticle} over {ground}"
+    );
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<client::battle_selection::BattleSelection>()
+        .clear();
+    harness.step(2);
+    assert_eq!(drawn(&mut harness), Vec::new());
 }

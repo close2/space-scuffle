@@ -620,13 +620,115 @@ fn only_capable_units_of_a_mixed_selection_receive_an_order() {
     assert_eq!(command.entities, [unit], "a structure cannot move");
 }
 
-#[test]
-fn a_structure_alone_reports_why_it_cannot_move() {
-    let mut harness = Harness::battle();
+/// A completed local structure whose archetype trains units.
+fn local_producer(harness: &Harness) -> EntityId {
+    let world = harness.world();
+    world
+        .entities
+        .values()
+        .find(|entity| {
+            entity.owner == LOCAL_PLAYER
+                && entity.is_immobile
+                && world
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|arch| !arch.trains_units.is_empty())
+        })
+        .expect("the battle gives the player a producer")
+        .id
+}
+
+/// Places a completed local structure that trains nothing, the smallest of the base's
+/// faction, on open ground near the base, and shows its bubble.
+fn place_structure_that_trains_nothing(harness: &mut Harness) -> EntityId {
     let base = harness.local_structure();
+    let ground = harness.open_ground(harness.simulated_position(base), 8.0);
+    let world = harness.world_mut();
+    let faction = world
+        .catalog
+        .get(world.entities[&base].unit_type_id)
+        .expect("the base's archetype")
+        .faction;
+    let structure_type = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            arch.faction == faction
+                && arch.trains_units.is_empty()
+                && !arch.capabilities.is_gas_extractor
+        })
+        .filter_map(|arch| {
+            arch.shape
+                .footprint()
+                .map(|(w, h)| (u32::from(w) * u32::from(h), arch.unit_type_id))
+        })
+        .min()
+        .expect("the faction has a structure that trains nothing")
+        .1;
+    let (cell_x, cell_y) = world
+        .map
+        .world_to_cell(sim_position(ground))
+        .expect("open ground lies on the map");
+    let structure = world
+        .spawn_structure(structure_type, LOCAL_PLAYER, cell_x, cell_y)
+        .expect("open ground near the base");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    structure
+}
+
+/// Plan `2026-11-23-production-queue` D-10 (Amendment 1): a right click with only a structure
+/// that trains units selected sets its rally at the ground clicked, the one order it takes, and
+/// marks it as a rally.
+#[test]
+fn a_producer_alone_takes_a_right_click_as_its_rally() {
+    let mut harness = Harness::battle();
+    let base = local_producer(&harness);
     harness.select(base);
     assert_eq!(harness.selection().ids(), [base]);
     let position = harness.simulated_position(base);
+    let ground = harness.ground_on_screen(position + Vec2::new(-5.0, 0.0));
+
+    harness.click(MouseButton::Right, ground);
+
+    assert_eq!(harness.pending_orders(), 1, "status: {}", harness.status());
+    let command = harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .commands
+        .pending_commands()
+        .map(|(_, command)| command.clone())
+        .next()
+        .expect("an order");
+    assert_eq!(command.entities, [base]);
+    assert!(
+        matches!(
+            command.order,
+            UnitOrder::SetRally {
+                target: sim_types::RallyTarget::Point(_)
+            }
+        ),
+        "{:?}",
+        command.order
+    );
+    assert!(matches!(
+        harness.marker(),
+        Some((OrderMarkerKind::Rally, _))
+    ));
+}
+
+/// A structure that trains nothing has no rally and cannot move, so a right click with it alone
+/// selected is refused and says why (unchanged by plan `2026-11-23-production-queue`, whose D-3
+/// gives a rally only to structures that train units; Amendment 1).
+#[test]
+fn a_structure_alone_reports_why_it_cannot_move() {
+    let mut harness = Harness::battle();
+    let structure = place_structure_that_trains_nothing(&mut harness);
+    harness.select(structure);
+    assert_eq!(harness.selection().ids(), [structure]);
+    let position = harness.simulated_position(structure);
     let ground = harness.ground_on_screen(position + Vec2::new(-5.0, 0.0));
 
     harness.click(MouseButton::Right, ground);

@@ -20,6 +20,22 @@ pub enum AttackOrigin {
     Acquired,
 }
 
+/// Where a production structure sends the units it makes (`StarCraft` II's rally, 5.0.14
+/// `CAbilRally`, plan `2026-11-23-production-queue` D-3).
+///
+/// A structure holds at most one rally (`Entity::rally` in `sim_core`). The simulation resolves
+/// it to a point (world units) when a unit leaves the structure, when the exit is chosen and when
+/// the player view publishes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RallyTarget {
+    /// A point on the map, world units.
+    Point(SimVec2),
+    /// One of the player's own units: new units go where it stands when they leave.
+    Unit(EntityId),
+    /// A resource node: workers harvest it, other units go to its centre.
+    Node(ResourceNodeId),
+}
+
 /// Concrete order issued to an individual unit or selection group.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnitOrder {
@@ -103,6 +119,12 @@ pub enum UnitOrder {
     },
     /// Set every passenger down around this carrier.
     UnloadAll,
+    /// Set the rally of the selected production structures (plan `2026-11-23-production-queue`
+    /// D-3); a rally on the structure itself clears it.
+    SetRally {
+        /// Where the structures send the units they make.
+        target: RallyTarget,
+    },
 }
 
 impl UnitOrder {
@@ -160,6 +182,23 @@ pub struct HarvesterSpec {
     /// worker whose node is of a kind outside the set waits at it while it is occupied and ends
     /// its order when it is exhausted.
     pub acquires: ResourceKindSet,
+}
+
+/// The capability of a town hall to rally itself to a resource when it is created (`StarCraft` II
+/// 5.0.14's `CommandStructureAutoRally`, voidmulti `EffectData` 2507–2537, run by the town halls'
+/// `CreateSet` effects; plan `2026-11-23-production-queue` D-7).
+///
+/// When an entity of an archetype with this capability is created, its rally is set to the
+/// farthest standing node of a kind in [`Self::kinds`] whose footprint comes within
+/// [`Self::radius`] of the structure's centre (`TSFarthestDistance`, `MaxCount 1`), the lower
+/// node id breaking a tie. No such node leaves the structure without a rally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AutoRallySpec {
+    /// How far from the structure's centre the search reaches a node's footprint, in world units
+    /// (one game unit is one cell; the effect's `Radius`).
+    pub radius: SimScalar,
+    /// The kinds of resource the search accepts (the effect's validator, `Minerals`).
+    pub kinds: ResourceKindSet,
 }
 
 /// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's
@@ -370,6 +409,9 @@ pub struct ArchetypeCapabilities {
     /// Speed dash an attack order triggers by itself (if capable).
     #[serde(default)]
     pub attack_dash: Option<AttackDashSpec>,
+    /// Rally set by itself when the structure is created (if capable; town halls).
+    #[serde(default)]
+    pub auto_rally: Option<AutoRallySpec>,
     /// Whether this structure serves as a resource dropoff node.
     pub is_resource_dropoff: bool,
     /// Whether this structure extracts vespene gas for harvesters.

@@ -882,6 +882,7 @@ fn buffers(model: &HudModel) -> Vec<(usize, usize)> {
             view.visible_nodes.as_ptr() as usize,
             view.visible_nodes.capacity(),
         ),
+        (view.rallies.as_ptr() as usize, view.rallies.capacity()),
         (groups.as_ptr() as usize, groups.len()),
         (
             groups[0].label.as_ptr() as usize,
@@ -1135,4 +1136,52 @@ fn the_catalog_derives_labels_and_capabilities_from_data() {
     assert!(builders > 0, "the catalog must have a builder");
     assert_eq!(catalog.label(UnitTypeId(u16::MAX)), "");
     assert_eq!(catalog.upgrade(u32::MAX), None);
+}
+
+/// Plan `2026-11-23-production-queue` D-10: a selected structure whose front job waits for supply
+/// marks the first slot of its queue panel.
+#[test]
+fn a_job_waiting_for_supply_is_marked_in_the_queue_panel() {
+    let mut harness = skirmish();
+    let base = structure_of(&harness, LOCAL_PLAYER);
+    let worker = workers(&harness, LOCAL_PLAYER)[0];
+    let product = harness.world().entities[&worker].unit_type_id;
+    let world = harness.world_mut();
+    let slot = PlayerSlot::ALL[0];
+    world.player_resources[slot].minerals = 100_000;
+    // Place workers until one more fits, so the first job takes the last supply.
+    let supply = world
+        .catalog
+        .get(product)
+        .expect("the worker type")
+        .supply_cost;
+    let mut position = world.entities[&worker].position;
+    while world.player_resources[slot].supply_max - world.player_resources[slot].supply_used
+        >= 2 * supply
+    {
+        position.y += SimScalar::from_num(0.5);
+        world
+            .spawn_unit(product, LOCAL_PLAYER, position)
+            .expect("a placed worker");
+    }
+    for _ in 0..2 {
+        world
+            .try_queue_production(LOCAL_PLAYER, &[base], product)
+            .expect("the base trains its worker");
+    }
+    let build_time = world
+        .catalog
+        .get(product)
+        .expect("the worker type")
+        .build_time_ticks;
+    harness.look_at_unit(base);
+    harness.select(base);
+    run_ticks(&mut harness, build_time + 2);
+    let panel = harness
+        .app
+        .world()
+        .resource::<client::battle_hud::queue::QueuePanel>();
+    assert_eq!(panel.structure, Some(base));
+    assert!(panel.supply_blocked, "the front job waits for supply");
+    assert!(!panel.exit_blocked);
 }

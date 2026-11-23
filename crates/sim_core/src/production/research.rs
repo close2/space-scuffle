@@ -148,6 +148,7 @@ impl SimWorld {
             remaining_ticks: def.research_ticks,
             total_ticks: def.research_ticks,
             reserved_supply: 0,
+            in_production: source.production_queue.is_empty(),
             paid_minerals: def.mineral_cost,
             paid_gas: def.gas_cost,
         };

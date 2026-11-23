@@ -27,8 +27,8 @@ use sim_map::PlacementFailureReason;
 use sim_types::{
     AbilityEffectSpec, AbilityLockView, CarrierView, CastStateView, CommandOptionView,
     CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView, PlayerView,
-    QueuedItem, QueuedJobView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick,
-    UnitTypeId, VisibilityState, VisibleNodeView,
+    QueuedItem, QueuedJobView, RallyView, ResourceNodeId, ShapeKind, SiteRefusal,
+    StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -111,10 +111,20 @@ impl SimWorld {
                     matches!(block, ProductionBlock::ExitObstructed { producer }
                         if *producer == entity.id)
                 }),
+                supply_blocked: self.production_blocks().iter().any(|block| {
+                    matches!(block, ProductionBlock::SupplyWait { producer }
+                        if *producer == entity.id)
+                }),
             });
         }
         if entity.cargo.is_some() {
             out.laden.push(entity.id);
+        }
+        if let Some(point) = self.rally_point(entity.id) {
+            out.rallies.push(RallyView {
+                entity: entity.id,
+                point: point.to_f32_array(),
+            });
         }
         if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
             let capacity = arch.capabilities.transport_capacity;

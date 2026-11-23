@@ -24,11 +24,12 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
-    AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId,
-    FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
-    ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
-    SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
-    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec,
+    FactionId, FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag,
+    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
+    SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
+    WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -960,6 +961,18 @@ struct HarvesterSpecDef {
     acquires: Vec<ResourceKind>,
 }
 
+/// An authored town hall auto-rally, written `auto_rally: Some((radius: 6.5, kinds: [Mineral]))`
+/// (plan `2026-11-23-production-queue` D-7); see [`AutoRallySpec`]. Both fields are required.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AutoRallySpecDef {
+    /// How far from the structure's centre the search reaches a node's footprint, world units
+    /// (`Radius`); finite and nonnegative.
+    radius: f64,
+    /// The kinds the search accepts (the effect's validator); no kind twice.
+    kinds: Vec<ResourceKind>,
+}
+
 /// An authored barrier (`StarCraft` II's Immortal Barrier); see [`BarrierSpec`].
 #[derive(Debug, Deserialize)]
 struct BarrierSpecDef {
@@ -1548,6 +1561,7 @@ impl UnitArchetypeDef {
             harvester,
             barrier,
             attack_dash,
+            auto_rally: None,
             is_resource_dropoff: authored.is_resource_dropoff,
             is_gas_extractor: false,
             can_construct: authored.can_construct,
@@ -1776,6 +1790,11 @@ struct StructureArchetypeDef {
     pub supply_provided: u32,
     /// Whether this structure serves as a resource dropoff node.
     pub is_resource_dropoff: bool,
+    /// The rally the structure sets itself when it is created (5.0.14
+    /// `CommandStructureAutoRally`, plan `2026-11-23-production-queue` D-7); `None` when omitted.
+    /// Only a structure that trains units may carry one.
+    #[serde(default)]
+    pub auto_rally: Option<AutoRallySpecDef>,
     /// Whether this structure extracts vespene gas.
     pub is_gas_extractor: bool,
     /// Whether this structure detects cloaked / burrowed units.
@@ -1814,11 +1833,33 @@ struct StructureArchetypeDef {
 }
 
 impl StructureArchetypeDef {
+    /// The capability bundle of this structure: a dropoff, an extractor, its abilities and its
+    /// auto-rally (plan `2026-11-23-production-queue` D-7); no unit capability.
+    fn capabilities(&self) -> ArchetypeCapabilities {
+        ArchetypeCapabilities {
+            overclock: None,
+            harvester: None,
+            barrier: None,
+            attack_dash: None,
+            auto_rally: self.auto_rally.as_ref().map(|rally| AutoRallySpec {
+                radius: SimScalar::from_num(rally.radius),
+                kinds: ResourceKindSet::of(&rally.kinds),
+            }),
+            is_resource_dropoff: self.is_resource_dropoff,
+            is_gas_extractor: self.is_gas_extractor,
+            can_construct: false,
+            transport_capacity: 0,
+            abilities: self.abilities.clone(),
+            modes: Vec::new(),
+        }
+    }
+
     /// Converts a structure definition into a unified [`UnitArchetype`], resolving its faction
     /// and weapon classes against `factions`.
     pub fn into_archetype(self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
         // Exact: validation admits only multiples of 1/16 (plan `2026-11-18-structure-radius` D-2).
         let radius = SimScalar::from_num(self.radius);
+        let capabilities = self.capabilities();
         // No rule reads a structure's terrain radius (units meet its shape, B-131, B-134, and it
         // never moves). The shape's smaller half-extent keeps `motion_entry`'s map-edge domain
         // check true for a footprint flush with the border (it is at most half the footprint's
@@ -1844,19 +1885,6 @@ impl StructureArchetypeDef {
         } else {
             attributes |= AttributeFlags::MECHANICAL;
         }
-
-        let capabilities = ArchetypeCapabilities {
-            overclock: None,
-            harvester: None,
-            barrier: None,
-            attack_dash: None,
-            is_resource_dropoff: self.is_resource_dropoff,
-            is_gas_extractor: self.is_gas_extractor,
-            can_construct: false,
-            transport_capacity: 0,
-            abilities: self.abilities.clone(),
-            modes: Vec::new(),
-        };
 
         Ok(UnitArchetype {
             unit_type_id: UnitTypeId(u16::try_from(self.structure_type_id).unwrap_or(u16::MAX)),
