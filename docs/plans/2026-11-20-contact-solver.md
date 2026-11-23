@@ -1478,3 +1478,31 @@ stays for reference only.
    leaving WP3's interval), are accepted as written in evidence §10.
 4. **Open, not a T-figure:** corridor two-abreast packing misses the scene's known capacity in about 29 % of short
    scenes. Report it at the acceptance run; it is not fixed by a further rule here.
+
+## Amendment 9 (orchestrator, 2026-11-23): step 3 is not adopted; the WP3 side rule stays; go to the remaining steps and the acceptance run
+
+**Why** (evidence §11 on `contact-solver-wp4b-wip`). The summed, memoryless TTC term (step 3) improves the ring
+families further:
+
+- arc give-ups 1,204 → 246, fill 0.806 → 0.828;
+- corridor give-ups 16 → 4.
+
+But it makes T1 worse in gap (M1 1.11 → 1.58) and cross (1.19 → 1.42), which WP3 already fails, and puts one cross
+scene over T7. The trace shows the reciprocal dance near dead-ahead: one sideways step flips the side of a body
+almost straight ahead. That is the problem the one-partner commitment exists to prevent. Under Amendment 8's rule
+step 3 stops. Another rule on top of it (side hysteresis per pair) would be one more patch, which this plan has
+given up.
+
+**Decision.**
+
+1. **Step 3 is not adopted.** The WP3 one-partner side rule stays as it is on `contact-solver-plan`.
+   - With Arm B the ring rule handles standing bodies, the case where the review found that rule failing.
+   - Under Arm B it holds T8 everywhere and leaves gap, cross and corner byte-identical to WP3.
+   - `SideMemory` stays, so schema 34 keeps WP2's field set plus the remembered gap.
+   - Re-prove the goldens for Arm B's tree, if they have not been re-proven already.
+2. **Continue with step 4** (the wall-sliding hard pass, last), **then WP5** (tick-start pursuit, Solver only),
+   **then the single acceptance run** on seeds 100,001 to 101,000 against T1 to T9 with E1, plus the cost split.
+   The step stop rule of Amendment 8 applies to step 4 and WP5.
+3. **The acceptance run decides switch-over eligibility,** together with Q0093's cost bar, which is still with the
+   owner. Whatever fails there is reported with traces. No further rule is added before that report. The
+   orchestrator then weighs the whole picture against Legacy, with the owner if needed.
