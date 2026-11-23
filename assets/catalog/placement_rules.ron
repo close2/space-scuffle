@@ -38,9 +38,11 @@
             // ticks, HarvestAmount 5, ReturnDelay 0.5 Normal s = 8.93 ticks (S-5 whole-tick rounding);
             // no later layer changes them.
             harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9,
-            // Hand-off to the next worker in line (plan 2026-11-23-harvest-handoff D-1): none, the
-            // next worker starts on the tick of the take.
-            handoff_ticks: 0),
+            // Hand-off to the next worker in line (plan 2026-11-23-harvest-handoff §2.2, §2.4, verify):
+            // released on entering WaitToReturn, one engine step after the take (ReturnDelay present:
+            // liberty BehaviorData:750); the next worker starts one step later: 2 loops = 2 ticks (S-5).
+            // Liquipedia Resources: three workers 143 / min = 47 loops a load against HarvestTime's 45.
+            handoff_ticks: 2),
         // 5.0.14 FootprintGeyserRounded (liberty Footprint:1535-1576, rows 0, 1, 7 and 8 and
         // Shape as void Footprint:3-21; liberty UnitData:2127). The anchor is the centre cell (the
         // extractor's 3x3 is centred on it). Shape: void Footprint:18-19, the +-1 square with its
@@ -64,8 +66,8 @@
             // HarvestableVespeneGeyserGas (liberty BehaviorData:817-852, the three races alike): HarvestTime
             // 1.981 Normal s = 35.375 ticks, HarvestAmount 4; no ReturnDelay.
             harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0,
-            // Hand-off to the next worker in line (plan 2026-11-23-harvest-handoff D-1): none, the
-            // next worker starts on the tick of the take.
-            handoff_ticks: 0),
+            // No ReturnDelay, so no WaitToReturn stage: released at the take; the next worker starts one
+            // step later: 1 loop = 1 tick (S-5). Liquipedia: 163 / min = 33 loops against 32.
+            handoff_ticks: 1),
     ],
 )

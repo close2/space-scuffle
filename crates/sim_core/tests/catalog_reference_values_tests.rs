@@ -4856,6 +4856,31 @@ fn the_shipped_resource_harvests_are_5_0_14() -> TestResult {
     Ok(())
 }
 
+/// Plan `2026-11-23-harvest-handoff` §2.2, §2.4 (**verify**: an inference, B-162, Q0100): the
+/// next worker in a resource's line starts whole engine steps after the take, one step for it to
+/// start plus one if the gatherer passes through a `WaitToReturn` stage, where the field is
+/// released. Read in game loops (16 a Normal second, 22.4 a Faster second), Liquipedia's
+/// saturated figures are whole loops: three workers on a mineral field earn 143 a minute, 5 a load,
+/// a period of 46.99 loops (47) against a `HarvestTime 2.786` that the engine ends on loop 45 (a
+/// gap of 2); a gold field's 200, 7 a load, gives 47.04 loops, the same 47; a geyser's 163, 4 a
+/// load, gives 32.98 loops (33) against `HarvestTime 1.981` ending on loop 32 (a gap of 1). The
+/// mineral row has a `ReturnDelay` (liberty BehaviorData:750) and so a `WaitToReturn` stage, 1 + 1
+/// = 2 steps; gas has none (:817-852), 1 step. One loop is 1.12 ticks, so 2 loops are 2 ticks and
+/// 1 loop 1 tick (S-5, whole-tick rounding).
+#[test]
+fn the_shipped_handoffs_follow_the_stage_reading() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let rules = catalogs.units.placement_rules();
+    let mineral = rules
+        .harvest(sim_types::ResourceKind::Mineral)
+        .ok_or("a mineral harvest")?;
+    let gas = rules
+        .harvest(sim_types::ResourceKind::Gas)
+        .ok_or("a gas harvest")?;
+    assert_eq!((mineral.handoff_ticks, gas.handoff_ticks), (2, 1));
+    Ok(())
+}
+
 #[test]
 fn the_shipped_resource_footprints_are_5_0_14() -> TestResult {
     let catalogs = sim_fixtures::shipped_catalogs();
