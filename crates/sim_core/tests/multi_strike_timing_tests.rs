@@ -22,14 +22,16 @@
 //! of the new fields is checked through `UnitCatalog::from_ron_str`.
 //!
 //! # Invariants
-//! Every archetype is a scratch archetype written in this file, never a shipped identity (C5).
+//! Every archetype is a scratch archetype written in this file, never a shipped identity (C5),
+//! except in the test of the shipped Liberator analogue, which finds it by its weapon's property
+//! (a delayed first strike) and its target by plane and faction, never by name.
 //! Ticks are 25 Hz simulation ticks; distances are world units, centre to centre.
 
 use sim_core::catalog::UnitCatalog;
-use sim_core::SimWorld;
+use sim_core::{SimWorld, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    EntityId, MoverType, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -920,6 +922,123 @@ fn a_delayed_burst_that_is_not_channeled_survives_an_order() -> TestResult {
         assert!(
             (damage - 2.0 * STRIKE).abs() < 1e-3,
             "{name} in the delay keeps a burst that is not channeled: damage {damage}"
+        );
+    }
+    Ok(())
+}
+
+/// What the shipped archetype whose weapon delays its first strike did while it attacked a held
+/// air unit: the trace index of the tick its weapon first released, and each missile it
+/// launched, as the tick it left on, where it left from and where the shooter was on that tick.
+struct ShippedVolley {
+    release: usize,
+    launches: Vec<(usize, SimVec2, SimVec2)>,
+}
+
+/// Plays the shipped archetype whose weapon delays its first strike (the Liberator analogue,
+/// found by that property, never by name) attacking a held air unit of another faction 4 world
+/// units away for 60 ticks.
+fn shipped_delayed_volley() -> Result<ShippedVolley, Box<dyn std::error::Error>> {
+    let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, 7);
+    let shooter_arch = world
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            [
+                &archetype.ground_weapon,
+                &archetype.air_weapon,
+                &archetype.weapon,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|weapon| weapon.first_strike_delay_ticks > 0)
+        })
+        .ok_or("a shipped weapon delays its first strike")?;
+    let (shooter_type, faction) = (shooter_arch.unit_type_id, shooter_arch.faction.clone());
+    let target_type = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == MoverType::Air
+                && archetype.faction != faction
+                && archetype.max_hp >= SimScalar::from_i32(100)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("an air unit of another faction")?
+        .unit_type_id;
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(20, 24))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), SimVec2::from_i32(24, 24))?;
+    assert!(
+        !world.entities[&target].is_concealed(),
+        "premise: the target is not cloaked"
+    );
+    let commands = vec![
+        PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: UnitOrder::attack(target),
+            queue: false,
+        },
+        PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![target],
+            order: UnitOrder::HoldPosition,
+            queue: false,
+        },
+    ];
+    let mut release = None;
+    let mut launches = Vec::new();
+    let mut seen: Vec<u32> = Vec::new();
+    for tick in 0..60_u32 {
+        let commands = if tick == 0 {
+            commands.clone()
+        } else {
+            Vec::new()
+        };
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands,
+            state_checksum: None,
+        });
+        let index = usize::try_from(tick)?;
+        let entity = world.entities.get(&shooter).ok_or("the shooter survives")?;
+        if release.is_none() && matches!(entity.weapon_phase, WeaponPhase::Backswing { .. }) {
+            release = Some(index);
+        }
+        let here = entity.position;
+        for projectile in &world.projectiles {
+            if projectile.attacker_id == Some(shooter) && !seen.contains(&projectile.id) {
+                seen.push(projectile.id);
+                launches.push((index, projectile.source_pos, here));
+            }
+        }
+    }
+    Ok(ShippedVolley {
+        release: release.ok_or("the shooter released an attack")?,
+        launches,
+    })
+}
+
+#[test]
+fn the_liberators_missiles_leave_after_its_first_period() -> TestResult {
+    let volley = shipped_delayed_volley()?;
+    let first_two: Vec<usize> = volley
+        .launches
+        .iter()
+        .take(2)
+        .map(|&(tick, ..)| tick)
+        .collect();
+    assert_eq!(
+        first_two,
+        vec![volley.release + 1, volley.release + 2],
+        "the missiles leave on the first and second ticks after the release {}",
+        volley.release
+    );
+    for &(tick, origin, shooter) in volley.launches.iter().take(2) {
+        assert_eq!(
+            origin, shooter,
+            "the missile of tick {tick} leaves from the shooter"
         );
     }
     Ok(())

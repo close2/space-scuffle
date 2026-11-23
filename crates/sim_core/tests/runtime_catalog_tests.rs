@@ -1978,3 +1978,118 @@ fn a_mode_without_its_replacement_weapon_in_its_file_is_unarmed() -> TestResult 
     bundle.finish()?;
     Ok(())
 }
+
+/// Ticks from the release of `shooter_type`'s first attack to its first missile, attacking a held
+/// `target_type` 4 world units away, in a world built from `catalogs`.
+fn first_missile_after_release(
+    catalogs: RuntimeCatalogs,
+    shooter_type: UnitTypeId,
+    target_type: UnitTypeId,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut world = SimWorld::with_catalogs(empty_map()?, 7, catalogs.units, catalogs.upgrades)?;
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::from_i32(5, 8))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), SimVec2::from_i32(9, 8))?;
+    let mut commands = vec![
+        sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: sim_types::UnitOrder::attack(target),
+            queue: false,
+        },
+        sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![target],
+            order: sim_types::UnitOrder::HoldPosition,
+            queue: false,
+        },
+    ];
+    let mut release = None;
+    for tick in 0..60_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        let index = usize::try_from(tick)?;
+        let entity = world.entities.get(&shooter).ok_or("the shooter survives")?;
+        if release.is_none()
+            && matches!(entity.weapon_phase, sim_core::WeaponPhase::Backswing { .. })
+        {
+            release = Some(index);
+        }
+        if world
+            .projectiles
+            .iter()
+            .any(|projectile| projectile.attacker_id == Some(shooter))
+        {
+            let release = release.ok_or("a missile before any release")?;
+            return Ok(index - release);
+        }
+    }
+    Err("no missile in 60 ticks".into())
+}
+
+/// Plan `2026-11-23-strike-delays` P-8: setting the shipped first-strike delay to 0 in a copied
+/// `units.ron` launches the first missile on the release tick again, with no recompilation.
+#[test]
+fn an_edited_first_strike_delay_moves_the_first_missile_without_recompiling() -> TestResult {
+    let shipped = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let shooter = shipped
+        .units
+        .archetypes()
+        .find(|archetype| {
+            [
+                &archetype.ground_weapon,
+                &archetype.air_weapon,
+                &archetype.weapon,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|weapon| weapon.first_strike_delay_ticks > 0 && weapon.projectile_speed.is_some())
+        })
+        .ok_or("a shipped missile weapon delays its first strike")?;
+    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction.clone());
+    let target_type = shipped
+        .units
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == sim_types::MoverType::Air
+                && archetype.faction != faction
+                && archetype.max_hp >= SimScalar::from_i32(100)
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("an air unit of another faction")?
+        .unit_type_id;
+
+    let bundle = Bundle::new("strike-delay")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    std::fs::write(
+        bundle.directory.join(FILES[0]),
+        replace_first_field(&units, "first_strike_delay_ticks", "0"),
+    )?;
+    let edited = bundle.load()?;
+    assert!(
+        edited
+            .units
+            .archetypes()
+            .flat_map(|archetype| [
+                &archetype.ground_weapon,
+                &archetype.air_weapon,
+                &archetype.weapon
+            ])
+            .flatten()
+            .all(|weapon| weapon.first_strike_delay_ticks == 0),
+        "premise: the edited catalog delays no first strike"
+    );
+    let after = [
+        first_missile_after_release(shipped, shooter_type, target_type)?,
+        first_missile_after_release(edited, shooter_type, target_type)?,
+    ];
+    assert_eq!(
+        after,
+        [1, 0],
+        "the shipped missile leaves a tick after the release, the edited one on it"
+    );
+    bundle.finish()?;
+    Ok(())
+}

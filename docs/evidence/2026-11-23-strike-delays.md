@@ -114,3 +114,55 @@ After the rule all of them pass, and WP5's existing tests in `multi_strike_timin
 
 `compare.sh world-wp0 world-wp1`: "files base=483 new=483 differing=0". The probe's `matrix.csv` is byte-identical
 to WP0's. Stop rule 1 holds.
+
+## WP2: the Liberator's first missile (B-81)
+
+### Red run (on the WP1 tree, before the data)
+
+`~/scratch/strike-delays/red/wp2.log`:
+
+- `weapon_catalog_rules_tests::b81_first_strike_delay_follows_starcraft`: "sky_bastion Lexington Rockets: the first
+  strike's delay as StarCraft II's first period", left 0, right 1.
+- `multi_strike_timing_tests::the_liberators_missiles_leave_after_its_first_period`: `Error: "a shipped weapon
+  delays its first strike"`.
+- `runtime_catalog_tests::an_edited_first_strike_delay_moves_the_first_missile_without_recompiling`: `Error: "a
+  shipped missile weapon delays its first strike"`.
+
+With `first_strike_delay_ticks: 1` on the `sky_bastion` air weapon all three pass: the shipped missiles leave on
+`T + 1` and `T + 2`, each from the Liberator's position on its tick, and the catalog copy with the delay set to 0
+launches on `T` again. `grep -rln sky_bastion crates/*/tests crates/*/src` finds only the client's look tables and
+media tests (`effect_catalog_tests.rs`, `smog_golden_tests.rs`, `flipbook_coverage.ron`) and the prompt golden of
+`asset_baker`, none of which reads a tick (§12's verify).
+
+### Worlds
+
+`compare.sh world-wp0 world-wp2`: "files base=483 new=483 differing=0". Both goldens and
+`DEFAULT_SANDBOX_CHECKSUM` pass unchanged on the WP2 tree. Stop rule 2 holds: no measured world moved.
+
+### Probe (24 seeds each)
+
+| Battle | Tree | Blue wins | Red wins | Survivors blue – red | End tick (mean) |
+|---|---|---|---|---|---|
+| p1, 4 Liberators vs 8 Mutalisks | WP0 | 24 | 0 | 1.67 – 0.00 | 472.9 |
+| | WP2 | 23 | 1 | 1.62 – 0.04 | 472.4 |
+| p2, 2 Liberators vs 2 Vikings | WP0 | 0 | 24 | 0.00 – 2.00 | 246.2 |
+| | WP2 | 0 | 24 | 0.00 – 2.00 | 246.2 |
+
+**First differing tick of every seed** (`~/scratch/strike-delays/scripts/firstdiff.py` over the per-tick unit
+traces, output `firstdiff-wp2.txt`). The trace samples units, not projectiles, so the first observable difference
+is the impact of the first Liberator missiles, not their launch. In all 48 seeds it is a loss of life on the red
+side, 2 ticks after the last blue release in p2 (release on tick 4, impact on tick 6) and 1 to 4 ticks after it in
+p1 (ticks 23 to 26), and in every seed WP2 shows on the next tick the life WP0 shows on that tick, except where a
+missile launched a tick later from a moved Liberator strikes a different set of Mutalisks. Example, p1 seed 9: the
+Mutalisks 5, 9 and 10 go 120 → 110 → 100.056 on ticks 24 to 26 in WP0 and on ticks 25 to 27 in WP2; Mutalisk 6
+takes one missile's splash on tick 25 in WP0 (115) and both on tick 26 in WP2 (110). No other field of any unit
+differs on the first differing tick.
+
+**P-10, traced (stop rule 3).** The prediction holds for wins (the Liberators win 23 seeds, not 24) and survivors
+(1.62, not 1.67). It does not hold literally for the mean end tick of p1, which falls by 0.5 ticks (472.9 → 472.4):
+16 seeds end later, 7 earlier and 1 on the same tick. The fall comes from two long chases, seeds 4 (584 → 487) and
+18 (590 → 492). Their kill timelines start one tick later in WP2 (seed 4: the first two Mutalisks die on tick 121,
+not 120; seed 18: 124, not 123) and then diverge, the clumped fight ordering its later kills differently. The first
+difference of both seeds is the delayed impact above, and no unit field differs before it, so the trace finds no
+second cause: the move is the delay, amplified by a chaotic fight. p2's battles end on the same ticks (the Vikings
+outrange and outlast the Liberators whatever the missiles' tick).
