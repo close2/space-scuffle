@@ -96,6 +96,7 @@ const WINDUP_MELEE_RON: &str = r#"(
                 base_damage: 8.0,
                 attribute_bonuses: [],
                 attacks_count: 2,
+                first_strike_delay_ticks: 0,
                 strike_interval_ticks: 0,
                 period_ticks: 22,
                 damage_point_ticks: 4,
@@ -669,4 +670,38 @@ fn the_matrix_mode_and_a_single_battle_are_exclusive() {
     ] {
         assert!(matches!(matrix_args(bad), Err(RunError::Usage(_))), "{bad}");
     }
+}
+
+/// The wasted-shot replay counts only the strikes a release lands on its own tick (plan
+/// `2026-11-23-strike-delays` §3): every strike of a volley, one of a spaced burst, and none of a
+/// burst whose first strike is delayed. The weapons are copies of shipped instant weapons, found
+/// by property, with the delay set.
+#[test]
+fn a_delayed_instant_weapons_release_replays_no_strike() -> TestResult {
+    use sim_fixtures::trace::strikes_on_release;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let instant: Vec<sim_types::WeaponSpec> = catalogs
+        .units
+        .archetypes()
+        .flat_map(|arch| [&arch.weapon, &arch.ground_weapon, &arch.air_weapon])
+        .flatten()
+        .filter(|weapon| weapon.projectile_speed.is_none() && weapon.attacks_count >= 2)
+        .cloned()
+        .collect();
+    let volley = instant
+        .iter()
+        .find(|weapon| weapon.strike_interval_ticks == 0)
+        .ok_or("a shipped instant volley")?;
+    let spaced = instant
+        .iter()
+        .find(|weapon| weapon.strike_interval_ticks > 0)
+        .ok_or("a shipped instant spaced burst")?;
+    assert_eq!(strikes_on_release(volley), volley.attacks_count);
+    assert_eq!(strikes_on_release(spaced), 1);
+    for weapon in [volley, spaced] {
+        let mut delayed = weapon.clone();
+        delayed.first_strike_delay_ticks = 1;
+        assert_eq!(strikes_on_release(&delayed), 0, "{}", weapon.name);
+    }
+    Ok(())
 }

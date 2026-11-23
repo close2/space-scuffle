@@ -72,3 +72,45 @@ the matrix spawns it in no battle.
 | p2, 2 Liberators vs 2 Vikings | 0 | 24 | 0.00 – 2.00 | 246.2 |
 
 The per-seed traces (`--battle`, every tick) are in `~/scratch/strike-delays/world-wp0-probe/trace/`.
+
+## WP1: the rule, latent
+
+### Red runs
+
+On the WP0 tree the new tests did not compile (`~/scratch/strike-delays/red/wp1-compile.log`): 12 × `E0609 no field
+first_strike_delay_ticks` (on `WeaponSpec` and `WeaponSpecDef`, in the validation unit tests and
+`checksum_state_tests`) and `E0432 unresolved import sim_fixtures::trace::strikes_on_release`. The scratch RON of
+`multi_strike_timing_tests` compiled; its delay field was not read yet.
+
+With a field-only stub (the field in `WeaponSpec`, `WeaponSpecDef`, its conversion and its encoding; the trace's
+old rule moved into `strikes_on_release` unchanged; no rule), `~/scratch/strike-delays/red/wp1-stub.log`:
+
+- `multi_strike_timing_tests`: 8 of the new tests failed, the 10 existing passed. Each delayed trace landed its
+  first strike on the release tick ("a single strike, delay 1, tick 0: expected 0, got 10"; the same for the
+  volley and the spaced burst), "no strike on the release tick", "premise: nothing has landed yet" (both order
+  tests), and "the first strike is lost on a cloaked target, the second lands: damage 20". The projectile test
+  failed on its own premise (three attacks fit the window, not two); the premise was corrected to "at least two".
+- `catalog::validation::strike_delay_tests`: 3 of 5 failed (the delay counted in the bound; a delayed volley
+  naming a distance; a delay on a suicide weapon). The single-strike and omitted-field tests passed on the stub,
+  as they must: they pin what the stub already allows.
+- `trace_tests::a_delayed_instant_weapons_release_replays_no_strike` failed.
+- `checksum_state_tests::a_projectiles_first_strike_delay_changes_the_world_checksum` passed on the stub, which
+  already hashed the field; it guards the encoding.
+
+After the rule all of them pass, and WP5's existing tests in `multi_strike_timing_tests.rs` pass unchanged.
+
+### Golden proof
+
+1. With the field left out of the encoding (`unhashed`) at schema 36, `golden_replay_tests` (both fixtures, 4
+   tests) and `fixture_tests` (`DEFAULT_SANDBOX_CHECKSUM` 10_589_561_826_036_639_628) passed on native debug,
+   native release, `wasm32-wasip1` release and `wasm32-wasip1` debug
+   (`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<worktree>"`), logs in
+   `~/scratch/strike-delays/proof-unhashed36/`.
+2. With the field hashed after `attacks_count` and schema 37 (the next free number on `main` at `cdf4ea93`), both
+   fixtures were re-recorded under the plan's header and the sandbox checksum became 18_404_512_489_137_112_834. All
+   four builds reproduce them (`~/scratch/strike-delays/proof-hashed37/`).
+
+### Worlds
+
+`compare.sh world-wp0 world-wp1`: "files base=483 new=483 differing=0". The probe's `matrix.csv` is byte-identical
+to WP0's. Stop rule 1 holds.

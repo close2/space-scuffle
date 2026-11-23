@@ -270,6 +270,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        first_strike_delay_ticks: 0,
         strike_interval_ticks: 0,
         followup_max_distance: None,
         channeled: false,

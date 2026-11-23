@@ -85,7 +85,9 @@ use std::collections::BTreeMap;
 /// Only the solver pipeline writes them.
 /// Schema 36 adds each splash's impact (0 target, 1 attacker) and its target-radius condition (an
 /// `Option` of a scalar), after `offset_by_unit_radius` (plan `2026-11-23-splash-centres` D-6).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 36;
+/// Schema 37 adds each weapon's first-strike delay, `WeaponSpec::first_strike_delay_ticks`, after
+/// `attacks_count` (plan `2026-11-23-strike-delays` D-6).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 37;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

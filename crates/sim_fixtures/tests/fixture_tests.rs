@@ -95,7 +95,10 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 36 (plan `2026-11-23-splash-centres` WP1, D-6), which encodes
 /// each splash's impact and target-radius condition; a scratch build that leaves them unhashed
 /// and keeps schema 35 reproduces `14_665_724_469_072_757_732`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 10_589_561_826_036_639_628;
+/// Re-recorded for checksum schema 37 (plan `2026-11-23-strike-delays` WP1, D-6), which encodes
+/// each weapon's first-strike delay; a scratch build that leaves it unhashed and keeps schema 36
+/// reproduces `10_589_561_826_036_639_628`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 18_404_512_489_137_112_834;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
