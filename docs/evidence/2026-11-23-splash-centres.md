@@ -166,3 +166,16 @@ the helper had never met one; it now applies the structure rule. All pass with t
 
 `compare.sh world-wp3 world-wp4`: `files base=483 new=483 differing=0`. No measured world places a Planetary Fortress
 analogue; goldens and sandbox unchanged.
+
+## WP5: records
+
+B-83, B-84 and B-169 are fixed in `DESIGN.md` §4 with their commits; B-170 stays open and deferred; the Combat row
+names the two splash rules. The deviation-fixes plan's B-83 and B-84 rows and the effect-visualization plan's row 10
+and §12 point to this plan. The plan has its `As built` and its index row is `Done`. `origin/main` had nothing new
+at hand-back, so schema 36 stands.
+
+| World | WP0 → WP4 |
+|---|---|
+| Matrix (seeds of record and 16) | battle 32 only (WP2) |
+| Battles 31, 33; showcase and showcase effects, default seed and 1–8 | byte-identical |
+| Goldens, sandbox | the schema byte only (WP1, proved) |

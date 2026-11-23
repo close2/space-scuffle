@@ -22,7 +22,7 @@ all (`target_radius_below`). No code names a unit (charter §3.3, C5). The neigh
 A full plan is required (charter §6): a new rule in the simulation, a change of hashed encoding (checksum schema),
 and data that moves battle outcomes (matrix battles 11a, 11b and 32 contain Banelings).
 
-**Status of this document:** a stage 1 blueprint under charter §6, written on 2026-11-23 against `main` at
+**Status of this document:** a stage 1 blueprint under charter §6 (implemented, see As built), written on 2026-11-23 against `main` at
 `e7153b8b` (checksum schema 35).
 - Line numbers drift, so search for the quoted symbol.
 - Claims not confirmed while planning are marked **verify**.
@@ -662,3 +662,49 @@ The question number is the next free at filing (0096 on `e7153b8b`).
 - Baseline figures: `~/scratch/structure-attributes/world-wp1/matrix/matrix.md`.
 - No prototype: WP1 is latent by construction, WP3 and WP4 act on no measured world, and WP2's direction is
   predicted (P-8) and measured in the package itself.
+
+---
+
+## As built
+
+Implemented on branch `splash-centres-plan` in one session, one commit per package, measured against the WP0 tree
+([evidence](../evidence/2026-11-23-splash-centres.md)).
+
+| WP | Commit | What landed | Worlds |
+|---|---|---|---|
+| WP0 | `1bc18eb6` | B-169, B-170 registered; B-83, B-84 pointed here; baseline of every §7 world (483 files, `showcase_effects` included) | — |
+| WP1 | `ffe2a55f` | `SplashImpact`, `impact`, `target_radius_below`; D-1 and D-3 rules, validation and the unlock refusal; schema 35 → 36 with §5's proof on the four builds | none moved |
+| WP2 | `37a6c003` | The Baneling's burst centred on it (D-2, D-4) | battle 32 only (marine wins 4 → 16 of 20); 11a, 11b byte-identical; every first differing tick a burst |
+| WP3 | `235bbccf` | The sieged cannon's condition `Some(1.25)`; its block names `cannon_hit` (D-8 item 2) | none moved |
+| WP4 | `b70d3200` | The Planetary Fortress analogue's three zones and `shell_impact` look | none moved |
+| WP5 | this commit | Records | — |
+
+Deviations from the text above, none of which changes a decision:
+
+1. **The radius an attacker-centred hit carries.** §4 D-1's sketch gives the attacker-centred `ResolvedHit` radius 0.
+   It carries the target's collision radius (0 when the target is gone), so a `target_radius_below` on an
+   attacker-centred area reads the struck target as D-3 says; an attacker-centred area is never offset, so nothing
+   else reads it. No shipped row combines the two.
+2. **Where two WP1 tests live.** `an_attacker_centred_area_lands_without_its_target` is a unit test in
+   `combat_resolution.rs`: no public path removes a target between a shot's preparation and its dispatch, so it calls
+   `dispatch_shot` with a missing target. The validation tests are the module `catalog::validation::splash_centre_tests`.
+   The unlock refusal sits in `UnitCatalog::validate_upgrade_effect` (`catalog.rs`), beside the existing slug
+   resolution of `WeaponHitEffect`.
+3. **P-3 and P-4 on structures.** A bystander cannot stand in a sieged area's first zone around a structure's centre
+   (it lies inside the footprint), so the structure tests read the area by its `SplashVisual` and place a bystander
+   touching the footprint where the outermost zone (1.25) could reach it: every open-ground structure below 1.25,
+   and the Supply Depot analogue. Gas extractors, which stand only over a geyser, are not spawned.
+4. **"Retaliation runs once".** Observed as the struck, unarmed target fleeing the attacker (its retaliation for a
+   helpless unit); the count of calls is not observable through the public API.
+5. **A client test helper** (`effect_catalog_tests.rs` `splash_weapons`, WP4) read a structure's ground weapon as
+   `Primary`; the simulation publishes it as `Ground`. The Planetary Fortress analogue is the first structure with an
+   area, so WP4 aligned the helper with `tagged_weapons` (§10 assigns the file to WP3 only).
+6. **`docs/03-sc2-mechanics-reference.md`** has no Baneling or splash-centre text to change (D-9); the effect inventory's
+   row 10 is in plan `2026-11-09-effect-visualization`, which was updated.
+
+Answers to the **verify** items: no client test asserts the burst's position against its target (D-8 item 1;
+`effect_catalog_tests` and `effect_lab_blocks.ron` name the look only); `weapon_battle_gpu_tests` compares against a
+blank run, not a stored image (D-8 item 4); `effect_snapshot_tests`, `spells_and_abilities_tests`,
+`sc2_battle_benchmarks_tests` and `structure_radius_tests` fire the sieged tank at units or at a scratch weapon and
+pass unchanged (§9, §12); the showcase effects scenario never has a sieged tank fire at a town hall (WP3 moved no
+world). B-170 stays open and deferred (§14 F-2); Q0096 is open with its default followed.
