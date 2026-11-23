@@ -308,6 +308,30 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// A harvester's acquire radius is finite and nonnegative, and its acquired kinds name no
+    /// kind twice; an empty list is a worker that never looks for another node (plan
+    /// `2026-11-23-harvest-occupancy` D-4).
+    fn validate_harvester(&self) -> SimResult<()> {
+        let Some(harvester) = &self.capabilities.harvester else {
+            return Ok(());
+        };
+        nonnegative(
+            &self.slug,
+            "capabilities.harvester.acquire_radius",
+            f64::from(harvester.acquire_radius),
+        )?;
+        for (index, kind) in harvester.acquires.iter().enumerate() {
+            if harvester.acquires[..index].contains(kind) {
+                return Err(invalid(
+                    &self.slug,
+                    "capabilities.harvester.acquires",
+                    "must not name a resource kind twice",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// An attack dash speeds its unit up, lasts at least a tick, and reaches some distance;
     /// its minimum gap may be 0 (every target beyond contact).
     fn validate_attack_dash(&self) -> SimResult<()> {
@@ -490,6 +514,7 @@ impl UnitArchetypeDef {
         self.validate_regeneration_delays()?;
         self.validate_weapons()?;
         self.validate_barrier()?;
+        self.validate_harvester()?;
         self.validate_attack_dash()?;
         if let Some(overclock) = &self.capabilities.overclock {
             for (field, value) in [
@@ -1820,6 +1845,70 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// Plan `2026-11-23-harvest-occupancy` D-4: the acquire radius is finite and nonnegative,
+    /// the acquired kinds are not repeated, and an empty list is a valid worker that never moves
+    /// on.
+    #[test]
+    fn a_harvester_acquires_within_a_finite_radius_and_names_each_kind_once(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{CatalogFile, HarvesterSpecDef};
+        use sim_types::ResourceKind::{self, Gas, Mineral};
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let cases: [(f32, Vec<ResourceKind>, Option<&str>); 7] = [
+            (10.0, vec![Mineral], None),
+            (0.0, vec![Mineral, Gas], None),
+            (10.0, vec![], None),
+            (
+                -1.0,
+                vec![Mineral],
+                Some("capabilities.harvester.acquire_radius"),
+            ),
+            (
+                f32::NAN,
+                vec![Mineral],
+                Some("capabilities.harvester.acquire_radius"),
+            ),
+            (
+                f32::INFINITY,
+                vec![],
+                Some("capabilities.harvester.acquire_radius"),
+            ),
+            (
+                10.0,
+                vec![Gas, Mineral, Gas],
+                Some("capabilities.harvester.acquires"),
+            ),
+        ];
+        for (acquire_radius, acquires, rejected) in cases {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file.units.first_mut().ok_or("real catalog has no unit")?;
+            let case = format!("{acquire_radius} {acquires:?}");
+            unit.capabilities.harvester = Some(HarvesterSpecDef {
+                acquire_radius,
+                acquires,
+            });
+            let result = unit.validate();
+            match rejected {
+                None => assert!(result.is_ok(), "{case}: {result:?}"),
+                Some(field) => assert_eq!(rejected_field(&result), Some(field), "{case}"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Both acquire fields are required: a harvester row without one fails to load.
+    #[test]
+    fn a_harvester_row_without_its_acquire_fields_is_refused() {
+        for row in ["(acquires: [Mineral])", "(acquire_radius: 10.0)", "()"] {
+            let parsed = ron::from_str::<crate::catalog::HarvesterSpecDef>(row);
+            assert!(parsed.is_err(), "{row} loaded");
+        }
+        let parsed = ron::from_str::<crate::catalog::HarvesterSpecDef>(
+            "(acquire_radius: 10.0, acquires: [])",
+        );
+        assert!(parsed.is_ok(), "{parsed:?}");
     }
 
     #[test]

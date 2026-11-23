@@ -29,6 +29,7 @@ pub mod math;
 pub mod placement;
 pub mod player_view;
 pub mod presentation;
+pub mod resource_kind_set;
 mod sin_table;
 pub mod snapshot;
 pub mod upgrades;
@@ -71,6 +72,7 @@ pub use presentation::{
     SpellMissileView, StanceView, StatusFlags, StatusKind, StatusView, StrikeEnds, WeaponKey,
     WeaponSlot,
 };
+pub use resource_kind_set::ResourceKindSet;
 pub use snapshot::{
     AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,
     RenderSnapshot, ResourceNodeView,

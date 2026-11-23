@@ -347,7 +347,8 @@ pub struct UnitTask {
     /// Ticks left waiting at the node with cargo before the return leg (the resource's
     /// `ReturnDelay`, plan `2026-11-22-harvest-timing` D-1); zero when not waiting.
     pub return_ticks: u16,
-    /// Ticks spent waiting for a site or for ground to clear.
+    /// Ticks spent waiting for a site or for ground to clear, or for a resource to be free
+    /// (plan `2026-11-23-harvest-occupancy` D-2: the line's order, most ticks first).
     pub wait_ticks: u16,
     /// Depot a carrying unit is heading for.
     pub depot: Option<EntityId>,
@@ -560,8 +561,10 @@ pub struct Entity {
     /// queued ([`Self::active_route_ordinal`]); route groups bind members by it. Only
     /// [`Self::enqueue_order`] changes it.
     pub route_orders_issued: u32,
-    /// Ticks the unit stays locked after a cast (`CastOutroTime`, plan
-    /// `2026-11-10-spellcaster-mechanics` D-7.4): no movement, attack or other cast.
+    /// Ticks the unit stays locked by an uninterruptible stage: a cast's backswing
+    /// (`CastOutroTime`, plan `2026-11-10-spellcaster-mechanics` D-7.4) or the rest of a
+    /// harvest's `WaitToReturn` that a new order cut into (plan `2026-11-23-harvest-occupancy`
+    /// D-5). No movement, attack or other cast meanwhile; its orders wait.
     pub cast_lock_ticks: u16,
     /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
     pub displacement: Option<crate::effects::Displacement>,
@@ -863,6 +866,19 @@ impl Entity {
         self.commit_order(order, queue);
     }
 
+    /// Carries the rest of a harvest's `ReturnDelay` wait into the action lock before a
+    /// non-queued order clears the leg (plan `2026-11-23-harvest-occupancy` D-5, B-160): 5.0.14
+    /// marks the stage uninterruptible (`UninterruptibleArray WaitToReturn 1`, core
+    /// AbilData:379), so the new order starts on the tick the wait would have ended, as a cast's
+    /// backswing holds the next order. The cargo stays on the unit.
+    fn hold_through_return_wait(&mut self) {
+        if matches!(self.order_queue.front(), Some(UnitOrder::Harvest { .. }))
+            && self.task.return_ticks > 0
+        {
+            self.cast_lock_ticks = self.cast_lock_ticks.max(self.task.return_ticks);
+        }
+    }
+
     // An immediate UseStim is refused by the public wrapper; the concrete movement
     // helper only constructs Move/AttackMove. No fallible work follows admission.
     fn commit_order(&mut self, order: UnitOrder, queue: bool) {
@@ -871,6 +887,7 @@ impl Entity {
             return;
         }
 
+        self.hold_through_return_wait();
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
