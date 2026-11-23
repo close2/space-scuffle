@@ -3,11 +3,12 @@
 //!
 //! # Responsibility
 //! Proves that one worker at a time gathers a mineral field or is inside an extractor; that the
-//! next worker in line starts on the tick the gatherer takes; that the line is first come, first
-//! served, the lower `EntityId` first on a tie, whatever order the units were made in; that a
-//! rival's worker occupies a field too; that gas workers wait and never move on; that workers sent
-//! to one field spread over the line while a balanced line stays put; that a worker moves on only
-//! to a field with at least two fewer workers assigned, and only within its acquire radius.
+//! line is first come, first served, the lower `EntityId` first on a tie, whatever order the
+//! units were made in; that a rival's worker occupies a field too; that gas workers wait and
+//! never move on; that workers sent to one field spread over the line while a balanced line stays
+//! put; that a worker moves on only to a field with at least two fewer workers assigned, and only
+//! within its acquire radius. When the next worker in line starts after a take is proved by
+//! `harvest_handoff_tests` (plan `2026-11-23-harvest-handoff`).
 //!
 //! # How it fits
 //! Worlds come from `sim_fixtures` with the shipped catalog; the worker, the hall and the extractor
@@ -215,55 +216,6 @@ fn one_worker_gathers_a_field_at_a_time() -> TestResult {
     Ok(())
 }
 
-/// D-1 (B-61's restatement, Liquipedia "The next worker can already begin operations during the
-/// pause"): whenever a gatherer takes its load while others wait, exactly one waiter starts
-/// gathering, for the row's `time_ticks`, on that tick. Three workers on a field near the hall
-/// (a trip shorter than three gathers) keep a line standing.
-#[test]
-fn the_next_worker_starts_on_the_tick_of_the_take() -> TestResult {
-    let mut world = flat_world(vec![node(ResourceKind::Mineral, (12, 4), 5_000)])?;
-    let mineral = harvest_of(&world, ResourceKind::Mineral)?;
-    let crew = workers(&mut world, ME, centre((9, 4)), 3)?;
-    harvest(&mut world, crew.clone(), ResourceNodeId(0));
-    let mut hand_offs = 0;
-    for _ in 0..1_500 {
-        let carrying: Vec<bool> = crew
-            .iter()
-            .map(|&w| world.entities[&w].cargo.is_some())
-            .collect();
-        let waiting: Vec<bool> = crew
-            .iter()
-            .map(|&w| world.entities[&w].task.wait_ticks > 0)
-            .collect();
-        step(&mut world, Vec::new());
-        let took = crew
-            .iter()
-            .zip(&carrying)
-            .any(|(&w, &held)| !held && world.entities[&w].cargo.is_some());
-        if !took || !waiting.contains(&true) {
-            continue;
-        }
-        let started: Vec<EntityId> = crew
-            .iter()
-            .zip(&waiting)
-            .filter(|(&w, &waited)| waited && gathering(&world, w))
-            .map(|(&w, _)| w)
-            .collect();
-        assert_eq!(
-            started.len(),
-            1,
-            "one waiter starts on the tick of the take"
-        );
-        assert_eq!(
-            world.entities[&started[0]].task.gather_ticks,
-            mineral.time_ticks
-        );
-        hand_offs += 1;
-    }
-    assert!(hand_offs >= 10, "{hand_offs} hand-offs");
-    Ok(())
-}
-
 /// The tick each of `line` first gathers after the current tick, stepping at most `limit` ticks.
 fn first_gathers(world: &mut SimWorld, line: &[EntityId], limit: u32) -> Vec<Option<u32>> {
     let mut started = vec![None; line.len()];
@@ -348,7 +300,7 @@ fn waiter_start(gatherer_first: bool) -> Result<u32, Box<dyn Error>> {
         if gathering(&world, waiter) {
             assert!(
                 world.entities[&gatherer].cargo.is_some() && !gathering(&world, gatherer),
-                "the waiter starts on the gatherer's take"
+                "the waiter starts after the gatherer's take, while it holds the load"
             );
             return Ok(world.current_tick - ordered);
         }
@@ -357,7 +309,8 @@ fn waiter_start(gatherer_first: bool) -> Result<u32, Box<dyn Error>> {
 }
 
 /// D-2, T5: the grant waits for the resolution after every task step, so the waiter starts on the
-/// tick of the gatherer's take whether the gatherer is stepped before it or after it.
+/// same tick after the gatherer's take (its hand-off later, plan `2026-11-23-harvest-handoff`)
+/// whether the gatherer is stepped before it or after it.
 #[test]
 fn the_grant_does_not_depend_on_entity_order() -> TestResult {
     assert_eq!(waiter_start(true)?, waiter_start(false)?);
@@ -433,7 +386,8 @@ fn slot0_fields(world: &SimWorld) -> Vec<ResourceNodeId> {
 
 /// D-3, rule 4 (Blizzard: "more than one worker queued up waiting for the geyser"): three workers
 /// on showcase slot 0's near geyser with a second extractor free on the corner geyser never move
-/// to it; one at a time is inside, and once saturated the geyser is taken every `time_ticks`.
+/// to it; one at a time is inside, and once saturated the geyser is taken every `time_ticks`
+/// plus `handoff_ticks` of its row (plan `2026-11-23-harvest-handoff` D-1).
 #[test]
 fn one_worker_at_a_time_in_an_extractor_and_gas_workers_wait() -> TestResult {
     let (mut world, start) = showcase()?;
@@ -472,7 +426,11 @@ fn one_worker_at_a_time_in_an_extractor_and_gas_workers_wait() -> TestResult {
     }
     assert!(takes.len() > 50, "{} takes", takes.len());
     for pair in takes.windows(2) {
-        assert_eq!(pair[1] - pair[0], u32::from(gas.time_ticks), "{takes:?}");
+        assert_eq!(
+            pair[1] - pair[0],
+            u32::from(gas.time_ticks) + u32::from(gas.handoff_ticks),
+            "{takes:?}"
+        );
     }
     Ok(())
 }

@@ -27,9 +27,13 @@
 //!
 //! # The line (plan `2026-11-23-harvest-occupancy` D-1 to D-3, B-61)
 //! - **One gatherer per node.** A node is occupied by the alive unit whose front order is
-//!   `Harvest` on it and whose `gather_ticks` is above 0, of any player. Nothing records it, so
-//!   every way a gather ends (the take, a new order, death, loading) frees the node. It is free
-//!   again at the take, before the return wait, so the next worker gathers from that tick.
+//!   `Harvest` on it and whose `gather_ticks` is above 0, of any player. Nothing records the
+//!   gatherer, so every way a gather ends (the take, a new order, death, loading) frees the node.
+//! - **The hand-off** (plan `2026-11-23-harvest-handoff` D-1, B-162). A take that yields cargo
+//!   records the node's release tick, the take's tick plus its kind's `handoff_ticks`, in
+//!   [`ResourceLines`](super::ResourceLines), and the node counts as occupied until then, whoever
+//!   took. So the next worker in line is granted it `handoff_ticks` after the take; with 0 it
+//!   gathers from the tick of the take. A worker reaching a free node starts at once.
 //! - **Claims.** An empty worker whose body touches its node does not start gathering in its own
 //!   step: it halts, counts `task.wait_ticks` up and records a claim for the tick.
 //!   [`SimWorld::resolve_resource_claims`], after every task step, grants each free node to its
@@ -84,7 +88,8 @@ pub(crate) struct Claim {
 /// stored across ticks.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeTally {
-    /// A unit is gathering at it (`gather_ticks > 0`), or has just been granted it.
+    /// A unit is gathering at it (`gather_ticks > 0`), has just been granted it, or it is in its
+    /// hand-off (before its release tick).
     occupied: bool,
     /// A claim on it has been resolved this tick, or a mover has been sent to it.
     claimed: bool,
@@ -307,6 +312,14 @@ impl SimWorld {
         let amount = harvest.amount.min(node.remaining);
         node.remaining -= amount;
         let kind = node.kind;
+        if amount > 0 {
+            // The line's next worker starts after the hand-off (plan `2026-11-23-harvest-handoff`
+            // D-1); resolved after every step of the tick, so no step reads this write.
+            let release = self
+                .current_tick
+                .saturating_add(u32::from(harvest.handoff_ticks));
+            self.resource_lines.set_release_tick(target, release);
+        }
         if node.remaining == 0 && amount > 0 {
             self.remove_if_empty(target, kind);
         }
@@ -403,10 +416,16 @@ impl SimWorld {
     }
 
     /// Fills `tally`, one entry per node of the map, with each node's occupancy and assigned
-    /// count (D-1), from the tick's task units.
+    /// count (D-1), from the tick's task units and each node's hand-off (plan
+    /// `2026-11-23-harvest-handoff` D-1: a node is occupied until its release tick).
     fn tally_nodes(&self, tally: &mut Vec<NodeTally>) {
         tally.clear();
         tally.resize(self.map.resources().len(), NodeTally::default());
+        for (index, node) in (0_u32..).zip(tally.iter_mut()) {
+            node.occupied = self
+                .resource_lines
+                .in_handoff(ResourceNodeId(index), self.current_tick);
+        }
         for id in &self.economy.ids {
             let Some(actor) = self.entities.get(id).filter(|actor| actor.is_alive()) else {
                 continue;
