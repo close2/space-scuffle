@@ -166,3 +166,18 @@ not 120; seed 18: 124, not 123) and then diverge, the clumped fight ordering its
 difference of both seeds is the delayed impact above, and no unit field differs before it, so the trace finds no
 second cause: the move is the delay, amplified by a chaotic fight. p2's battles end on the same ticks (the Vikings
 outrange and outlast the Liberators whatever the missiles' tick).
+
+## WP3: records and the schema at merge
+
+`main` took schema 37 for plan `2026-11-23-splash-cliff-levels` (`e8cc3f80`) while this branch was open, so the
+merge (`36fe3f1a`) renumbered the delay to **schema 38** and repeated the proof (§5 step 3) on the merged tree,
+which carries the Liberator's data:
+
+1. With the field unhashed at schema 37, both goldens and `DEFAULT_SANDBOX_CHECKSUM`
+   (18_404_512_489_137_112_834) reproduce `main`'s recordings on native debug, native release, `wasm32-wasip1`
+   release and `wasm32-wasip1` debug (`~/scratch/strike-delays/proof-unhashed37-merged/`).
+2. Hashed at schema 38, both goldens are re-recorded under the plan's header (37 -> 38) and the sandbox checksum
+   becomes 5_609_708_170_486_988_781; the four builds reproduce them (`proof-hashed38-merged/`).
+
+The schema-37 recording of WP1 (`bec1f37c`) never reached `main`; its proof above stands for that commit's tree.
+No measured world of `main` contains `sky_bastion` after the merge (the new matrix battle 40 does not spawn it).

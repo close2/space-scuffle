@@ -584,3 +584,46 @@ marked **verify**. It is not asked. Q0100 stays free.
   copies are in the planning session's scratchpad.
 - The probe fixture `~/scratch/strike-delays/liberator_probe.ron` (WP0).
 - No prototype: WP1 is latent by construction, and WP2 acts on no measured world.
+
+---
+
+## As built
+
+Implemented on branch `strike-delays-plan`, one commit per package, then merged with `main`:
+
+| Package | Commit | What |
+|---|---|---|
+| WP0 | `3b748790` | B-81's register row points here; evidence file with the survey material, the probe fixture and the baseline (483 files) |
+| WP1 | `bec1f37c` | D-1, D-2, D-3, D-6, the trace tool, the mechanical literals; schema 37 on `cdf4ea93` with the proof; every measured world and the probe byte-identical |
+| WP2 | `b8d20d12` | D-4: `sky_bastion`'s air weapon `first_strike_delay_ticks: 1`; P-5, P-6, P-8; no measured world moved; the probe moved |
+| merge | `36fe3f1a` | `main` at `e8cc3f80` took schema 37 (splash cliff levels): renumbered to **38**, proof repeated (§5 step 3) |
+| WP3 | this commit | D-8's records, the evidence, this section, the index row `Done` |
+
+Measurements, red runs and the proofs are in [`docs/evidence/2026-11-23-strike-delays.md`](../evidence/2026-11-23-strike-delays.md).
+
+**Deviations from the text above, none of which changes a decision:**
+
+- **Mechanical literals (§10).** Only thirteen test files construct `WeaponSpec` or a scratch weapon row that needed
+  `first_strike_delay_ticks: 0`; `combat_correctness`, `sc2_battle_benchmarks` and `weapon_catalog_rules` read the
+  field set only by name and needed no literal. `checksum_state_tests` gained the field in its mutation list and a
+  test of its own (`a_projectiles_first_strike_delay_changes_the_world_checksum`).
+- **Trace tool.** The rule for the strikes a release lands became a public function,
+  `sim_fixtures::trace::strikes_on_release`, so that `trace_tests` checks it on copies of shipped instant weapons
+  (found by property) with a delay; the wasted-shot replay calls it.
+- **Validation (D-3).** The refusal of a delay on a suicide weapon and the bound are checked in `validate_strikes`;
+  the bound names `first_strike_delay_ticks` whenever the delay is above 0 and the burst breaks the bound, and
+  `strike_interval_ticks` otherwise, so WP5's message for an undelayed burst is unchanged.
+- **Probe output.** The probe was written beside each measured world (`world-<wp>-probe/`) rather than inside it,
+  so that `compare.sh` compares the measured worlds only.
+- **The first differing tick (P-10, stop rule 3).** The per-tick trace samples units, not projectiles, so the first
+  observable difference of each probe seed is the impact of the first Liberator missiles, not their launch one tick
+  after the release. In all 48 seeds that difference is red life arriving one tick later (or a missile launched a
+  tick later striking a different set of Mutalisks); no other field differs first.
+- **P-10's end tick.** p1's mean end tick fell by 0.5 ticks (472.9 → 472.4; 16 seeds later, 7 earlier), against the
+  prediction, while wins (24 → 23) and survivors (1.67 → 1.62) moved as predicted. The fall comes from two long
+  chases (seeds 4 and 18) whose kill timelines start one tick later and then diverge. The trace found no second
+  cause (evidence, WP2), so WP2 landed under stop rule 3.
+- **Client skirmish stage log (§7).** Not compared: the implementation hand-back runs `cargo gate quick` and the
+  simulation targets; the pilot trains `pulse_bot`, and no measured simulation world moved. The package gate's
+  client selection covers the skirmish.
+- **`crates/gate/suites.ron`** needed no change (§10's verify): every test added is in an existing target.
