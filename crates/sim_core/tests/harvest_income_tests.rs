@@ -24,6 +24,9 @@ const ME: PlayerId = PlayerId(0);
 const MINERAL: ResourceNodeId = ResourceNodeId(0);
 const SECOND_MINERAL: ResourceNodeId = ResourceNodeId(1);
 const GAS: ResourceNodeId = ResourceNodeId(2);
+/// The first and second geysers of `an_exhausted_geyser_ends_the_order`'s map.
+const GAS_FIRST: ResourceNodeId = ResourceNodeId(0);
+const GAS_SECOND: ResourceNodeId = ResourceNodeId(1);
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -445,5 +448,77 @@ fn gas_needs_a_completed_extractor_of_ones_own() -> TestResult {
             .any(|event| event.kind == TaskEventKind::ExtractorLost);
     }
     assert!(lost);
+    Ok(())
+}
+
+/// Plan `2026-11-23-harvest-occupancy` D-4: the harvest ability acquires only minerals
+/// (`ResourceAcquire Minerals 1`, core AbilData:368), so a worker whose geyser runs dry ends its
+/// order with `ResourceExhausted` and does not walk to a second extractor 6 cells away, well
+/// within its acquire radius (Blizzard: "move them to a new geyser" is the player's task).
+#[test]
+fn an_exhausted_geyser_ends_the_order() -> TestResult {
+    let mut f = fixture(1000)?;
+    let gas_amount = f.gas.amount;
+    let map = GameMap::from_cells(
+        40,
+        40,
+        vec![MapCell::default_ground(CliffLevel(0)); 1600],
+        vec![
+            node(ResourceKind::Gas, (22, 16), gas_amount),
+            node(ResourceKind::Gas, (22, 22), 100),
+        ],
+        Vec::new(),
+    )?;
+    let mut world = sim_fixtures::world(map, 11);
+    let extractor = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.is_gas_extractor)
+        .map(|a| a.unit_type_id)
+        .ok_or("no extractor in the catalog")?;
+    let worker_type = f.world.entities[&f.worker].unit_type_id;
+    world.spawn_structure(depot(&world)?, ME, 14, 14)?;
+    world.spawn_structure(extractor, ME, 21, 15)?;
+    world.spawn_structure(extractor, ME, 21, 21)?;
+    let worker = world.spawn_unit(worker_type, ME, at(19, 16))?;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 0;
+    f.world = world;
+    f.worker = worker;
+    f.order(vec![worker], UnitOrder::Harvest { target: GAS_FIRST });
+    let radius = f
+        .world
+        .catalog
+        .get(worker_type)?
+        .capabilities
+        .harvester
+        .ok_or("a harvester")?
+        .acquire_radius;
+    let second = f.world.map.resources()[1].pos;
+    let mut ended = false;
+    for _ in 0..2_000 {
+        f.idle(1);
+        assert_ne!(
+            f.world.entities[&worker].order_queue.front(),
+            Some(&UnitOrder::Harvest { target: GAS_SECOND }),
+            "the worker moved on to the second geyser"
+        );
+        if f.world
+            .task_events()
+            .iter()
+            .any(|event| event.kind == TaskEventKind::ResourceExhausted)
+        {
+            ended = true;
+            break;
+        }
+    }
+    assert!(ended, "the order ended with ResourceExhausted");
+    let position = f.world.entities[&worker].position;
+    let (dx, dy) = (second.x - position.x, second.y - position.y);
+    assert!(
+        dx * dx + dy * dy < radius * radius,
+        "the second geyser is within the acquire radius, so only the kind stops the search"
+    );
+    assert!(f.world.entities[&worker].order_queue.is_empty());
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].gas, gas_amount);
     Ok(())
 }
