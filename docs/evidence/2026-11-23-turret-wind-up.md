@@ -73,3 +73,38 @@ of record, 4 over all seeds".
   `rhino_beetle`, `psi_grey`), so no enemy its weapon can attack is in reach of its pass. `golden_replay.ron` has no
   air unit; its turreted squad, "red_siege" (`railgun_crawler`), takes `AttackMove` at tick 120 and `Stop` at tick
   760.
+
+## WP1: the fields and their data, latent
+
+### Red runs
+
+On the WP0 tree the new tests did not compile (`~/scratch/turret-wind-up/red/wp1-compile.log`): `E0432`/`E0433`/
+`E0425` for the missing `sim_types::AllowedMovement` (in `weapon_catalog_rules_tests`, `checksum_state_tests` and
+the validation unit tests) and `E0609 no field allowed_movement` / `fires_outside_attack_order` on `WeaponSpec` and
+`WeaponSpecDef`.
+
+With a field-only stub (the enum, both fields in `WeaponSpec` and `WeaponSpecDef`, their conversion, and the
+encoding listing them `unhashed`; no data, no validation), `~/scratch/turret-wind-up/red/wp1-stub.log`:
+
+- `weapon_catalog_rules_tests::b90_weapon_movement_follows_starcraft` failed on the first listed analogue: "welder_drone
+  Drill Slash: AllowedMovement and OnlyFireWhileInAttackOrder as StarCraft II's weapon (FusionCutter AllowedMovement
+  Slowing: voidmulti WeaponData:104)", left `(Stopped, false)`, right `(Slowing, false)`.
+- `catalog::validation::weapon_movement_tests::a_suicide_weapon_may_not_fire_outside_an_attack_order` failed:
+  "accepted". The two other unit tests passed on the stub, as they must: they pin what the stub already allows (the
+  option and `Moving` are independent; omitted fields read the defaults).
+- `checksum_state_tests::a_projectiles_movement_and_order_rules_change_the_world_checksum` failed: "checksum omitted
+  Slowing" (both 11589841332170337729).
+
+After the data, the validation and the encoding all of them pass.
+
+### Golden proof
+
+1. With both fields left out of the encoding (`unhashed`) at schema 38, and the D-7 data in place,
+   `golden_replay_tests` (both fixtures, 4 tests) and `fixture_tests` (`DEFAULT_SANDBOX_CHECKSUM`
+   5_609_708_170_486_988_781) passed on native debug, native release, `wasm32-wasip1` release and `wasm32-wasip1`
+   debug (`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<worktree>"`), logs in
+   `~/scratch/turret-wind-up/proof-unhashed38/`.
+2. With both fields hashed after `turret_idle` and schema 40, both fixtures were re-recorded under the plan's header
+   and the sandbox checksum became 17_151_758_586_245_851_116. All four builds reproduce them
+   (`~/scratch/turret-wind-up/proof-hashed40/`). Schema 40, not 39: `main` was still at 38 (`d71f7153`) when WP1
+   was recorded, but the harvest-handoff branch, about to merge, holds 39.

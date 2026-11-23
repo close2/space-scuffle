@@ -77,6 +77,8 @@ fn custom_projectile_weapon(
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         turret_idle: sim_types::TurretIdle::Hold,
+        allowed_movement: sim_types::AllowedMovement::Stopped,
+        fires_outside_attack_order: false,
         base_damage: SimScalar::from_num(30),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,

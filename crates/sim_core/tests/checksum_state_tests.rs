@@ -298,6 +298,32 @@ fn a_projectiles_first_strike_delay_changes_the_world_checksum() {
     );
 }
 
+/// Whether a weapon's unit may move while it attacks, and whether it fires outside an attack
+/// order (plan `2026-11-23-turret-wind-up` D-9), are hashed with the weapon a projectile in flight
+/// carries: each field alone changes the checksum.
+#[test]
+fn a_projectiles_movement_and_order_rules_change_the_world_checksum() {
+    let mut world = world();
+    let mut checksum_with = |movement: sim_types::AllowedMovement, outside: bool| {
+        let mut projectile = projectile();
+        projectile.weapon_spec.allowed_movement = movement;
+        projectile.weapon_spec.fires_outside_attack_order = outside;
+        world.projectiles = vec![projectile];
+        world.compute_checksum()
+    };
+    let stopped = checksum_with(sim_types::AllowedMovement::Stopped, false);
+    let slowing = checksum_with(sim_types::AllowedMovement::Slowing, false);
+    let moving = checksum_with(sim_types::AllowedMovement::Moving, false);
+    assert_ne!(stopped, slowing, "checksum omitted Slowing");
+    assert_ne!(stopped, moving, "checksum omitted Moving");
+    assert_ne!(slowing, moving, "checksum confused Slowing and Moving");
+    assert_ne!(
+        stopped,
+        checksum_with(sim_types::AllowedMovement::Stopped, true),
+        "checksum omitted whether the weapon fires outside an attack order"
+    );
+}
+
 #[test]
 fn embedded_weapon_fields_and_splash_are_sensitive() {
     let mut world = world();
@@ -312,6 +338,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.turret_turn_rate = SimAngle::ZERO;
     original.base_damage = SimScalar::ONE;
     original.attribute_bonuses = AttributeBonuses::NONE;
+    original.allowed_movement = sim_types::AllowedMovement::Stopped;
+    original.fires_outside_attack_order = false;
     original.attacks_count = 1;
     original.first_strike_delay_ticks = 0;
     original.strike_interval_ticks = 0;
@@ -364,7 +392,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 name => "different-weapon".to_owned(), visual_kind => WeaponVisualKind::Projectile,
                 target_flags => AttributeFlags::ARMORED, min_range => SimScalar::ONE,
                 max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
-                turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
+                turret_turn_rate => SimAngle::PI,
+                allowed_movement => sim_types::AllowedMovement::Moving, fires_outside_attack_order => true,
+                base_damage => SimScalar::from_i32(2),
                 attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
                 first_strike_delay_ticks => 1, strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE), channeled => true,
                 period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,

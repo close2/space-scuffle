@@ -791,7 +791,8 @@ impl WeaponSpecDef {
     /// whole burst (its first strike's delay included) ends before the next attack can start, a
     /// follow-up distance belongs to strikes that land after the release tick and is positive,
     /// and a weapon that removes its attacker when it fires delays no strike (plan
-    /// `2026-11-23-strike-delays` D-3).
+    /// `2026-11-23-strike-delays` D-3) and fires only in an attack order (plan
+    /// `2026-11-23-turret-wind-up` D-8).
     fn validate_strikes(&self, definition: &str, prefix: &str) -> SimResult<()> {
         let interval = &format!("{prefix}.strike_interval_ticks");
         let delay = &format!("{prefix}.first_strike_delay_ticks");
@@ -824,6 +825,15 @@ impl WeaponSpecDef {
                 definition,
                 delay,
                 "a weapon that removes its attacker when it fires has no attacker to strike from later",
+            ));
+        }
+        // Plan `2026-11-23-turret-wind-up` D-8: such a unit would detonate at a target it never
+        // chose; no 5.0.14 weapon combines the two (the Baneling's keeps the option).
+        if self.fires_outside_attack_order && self.suicide_on_attack {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.fires_outside_attack_order"),
+                "a weapon that removes its attacker when it fires fires only in an attack order",
             ));
         }
         if let Some(distance) = self.followup_max_distance {
@@ -4019,14 +4029,14 @@ mod strike_delay_tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     /// The shipped unit rows, every weapon of each in a list.
-    fn shipped_units() -> Result<Vec<UnitArchetypeDef>, Box<dyn std::error::Error>> {
+    pub(super) fn shipped_units() -> Result<Vec<UnitArchetypeDef>, Box<dyn std::error::Error>> {
         let file: CatalogFile =
             ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
         Ok(file.units)
     }
 
     /// The weapons of `unit`, in slot order.
-    fn weapons(unit: &mut UnitArchetypeDef) -> impl Iterator<Item = &mut WeaponSpecDef> {
+    pub(super) fn weapons(unit: &mut UnitArchetypeDef) -> impl Iterator<Item = &mut WeaponSpecDef> {
         [
             &mut unit.weapon,
             &mut unit.ground_weapon,
@@ -4038,7 +4048,7 @@ mod strike_delay_tests {
 
     /// The field the first shipped unit with a weapon that `pick` chooses fails validation on,
     /// after `edit` changes that weapon; "accepted" when it validates.
-    fn refused_field(
+    pub(super) fn refused_field(
         pick: impl Fn(&WeaponSpecDef) -> bool,
         edit: impl FnOnce(&mut WeaponSpecDef),
     ) -> Result<String, Box<dyn std::error::Error>> {
@@ -4146,6 +4156,81 @@ mod strike_delay_tests {
         for mut unit in file.units {
             for weapon in weapons(&mut unit) {
                 assert_eq!(weapon.first_strike_delay_ticks, 0, "{}", weapon.name);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "premise: the catalog has weapons");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod weapon_movement_tests {
+    //! D-8 of plan `2026-11-23-turret-wind-up` (P-8): a weapon that removes its attacker when it
+    //! fires may not fire outside an attack order, and both fields read the engine defaults when
+    //! omitted.
+    use super::strike_delay_tests::{refused_field, weapons};
+    use crate::catalog::{CatalogFile, WeaponSpecDef};
+    use sim_types::AllowedMovement;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn a_suicide_weapon_may_not_fire_outside_an_attack_order() -> TestResult {
+        let suicide = |weapon: &WeaponSpecDef| weapon.suicide_on_attack;
+        let field = refused_field(suicide, |_| {})?;
+        assert_eq!(field, "accepted", "premise: the shipped row validates");
+        let field = refused_field(suicide, |weapon| {
+            weapon.fires_outside_attack_order = true;
+        })?;
+        assert!(field.ends_with(".fires_outside_attack_order"), "{field}");
+        let field = refused_field(suicide, |weapon| {
+            weapon.allowed_movement = AllowedMovement::Stopped;
+        })?;
+        assert_eq!(
+            field, "accepted",
+            "any movement rule suits a suicide weapon"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_option_and_moving_are_independent() -> TestResult {
+        let other = |weapon: &WeaponSpecDef| !weapon.suicide_on_attack;
+        for (movement, outside) in [
+            (AllowedMovement::Moving, false),
+            (AllowedMovement::Slowing, true),
+            (AllowedMovement::Stopped, true),
+            (AllowedMovement::Moving, true),
+        ] {
+            let field = refused_field(other, |weapon| {
+                weapon.allowed_movement = movement;
+                weapon.fires_outside_attack_order = outside;
+            })?;
+            assert_eq!(field, "accepted", "{movement:?} with the option {outside}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn omitted_fields_read_the_engine_defaults() -> TestResult {
+        let text: String = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| {
+                !line.contains("allowed_movement") && !line.contains("fires_outside_attack_order")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        let mut checked = 0_usize;
+        for mut unit in file.units {
+            for weapon in weapons(&mut unit) {
+                assert_eq!(
+                    (weapon.allowed_movement, weapon.fires_outside_attack_order),
+                    (AllowedMovement::Stopped, false),
+                    "{}",
+                    weapon.name
+                );
                 checked += 1;
             }
         }

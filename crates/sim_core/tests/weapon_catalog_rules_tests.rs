@@ -15,7 +15,7 @@
 use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitArchetype, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{Attribute, AttributeBonuses, SplashImpact};
+use sim_types::{AllowedMovement, Attribute, AttributeBonuses, SplashImpact};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
 
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
@@ -1652,6 +1652,151 @@ fn b81_first_strike_delay_follows_starcraft() -> TestResult {
                 weapon.first_strike_delay_ticks, delay,
                 "{} {}: the first strike's delay as StarCraft II's first period",
                 archetype.slug, weapon.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 weapons whose `AllowedMovement` or `OnlyFireWhileInAttackOrder` differs
+/// from the engine defaults, resolved through the override chain with XML comments stripped:
+/// `(analogue, allowed_movement, fires_outside_attack_order, source)` (plan
+/// `2026-11-23-turret-wind-up` §2.3, B-90, B-45). Every weapon of every other archetype, and every
+/// mode's weapon, has the defaults: no `CWeapon` default sets `AllowedMovement` (S2, `core`
+/// WeaponData:3–31), so the unit stands to fire (`Stopped`), and `Options
+/// OnlyFireWhileInAttackOrder 1` is on the `CWeapon` default (`core` WeaponData:20–21) — among them
+/// the Siege Tank's `90mmCannons` and `CrucioShockCannon`, the Hellion's `InfernalFlameThrower` and
+/// the Lurker's `LurkerMP` (S8). The Void Ray's options that would clear the attack-order
+/// condition are commented out (`void` WeaponData:171–174), so it keeps it.
+const SC2_WEAPON_MOVEMENT: [(&str, AllowedMovement, bool, &str); 14] = [
+    (
+        "Phoenix",
+        AllowedMovement::Moving,
+        true,
+        "IonCannons AllowedMovement Moving: swarm WeaponData:181; OnlyFireWhileInAttackOrder 0: swarm WeaponData:177",
+    ),
+    (
+        "Void Ray",
+        AllowedMovement::Moving,
+        false,
+        "VoidRaySwarm AllowedMovement Moving: void WeaponData:176; the options are commented out: void WeaponData:171-174",
+    ),
+    (
+        "Immortal",
+        AllowedMovement::Slowing,
+        true,
+        "PhaseDisruptors AllowedMovement Slowing: voidmulti WeaponData:207; OnlyFireWhileInAttackOrder 0: balancemulti WeaponData:185",
+    ),
+    (
+        "Colossus",
+        AllowedMovement::Stopped,
+        true,
+        "ThermalLances no AllowedMovement; OnlyFireWhileInAttackOrder 0: balancemulti WeaponData:229",
+    ),
+    (
+        "Baneling",
+        AllowedMovement::Moving,
+        false,
+        "VolatileBurst AllowedMovement Moving: liberty WeaponData:470",
+    ),
+    (
+        "SCV",
+        AllowedMovement::Slowing,
+        false,
+        "FusionCutter AllowedMovement Slowing: voidmulti WeaponData:104",
+    ),
+    (
+        "Probe",
+        AllowedMovement::Slowing,
+        false,
+        "ParticleBeam AllowedMovement Slowing: voidmulti WeaponData:196",
+    ),
+    (
+        "Drone",
+        AllowedMovement::Slowing,
+        false,
+        "Spines AllowedMovement Slowing: voidmulti WeaponData:219",
+    ),
+    (
+        "Viking",
+        AllowedMovement::Slowing,
+        false,
+        "LanzerTorpedoes AllowedMovement Slowing: liberty WeaponData:274",
+    ),
+    (
+        "Liberator",
+        AllowedMovement::Slowing,
+        false,
+        "LiberatorMissileLaunchers AllowedMovement Slowing: void WeaponData:329",
+    ),
+    (
+        "Banshee",
+        AllowedMovement::Slowing,
+        false,
+        "BacklashRockets AllowedMovement Slowing: liberty WeaponData:557",
+    ),
+    (
+        "Mutalisk",
+        AllowedMovement::Slowing,
+        false,
+        "GlaiveWurm AllowedMovement Slowing: liberty WeaponData:406",
+    ),
+    (
+        "Corruptor",
+        AllowedMovement::Slowing,
+        false,
+        "ParasiteSpore AllowedMovement Slowing: liberty WeaponData:569",
+    ),
+    (
+        "Brood Lord",
+        AllowedMovement::Slowing,
+        false,
+        "BroodlingStrike AllowedMovement Slowing: liberty WeaponData:418",
+    ),
+];
+
+/// The weapons an archetype's modes put in place of its own (the sieged tank's, the burrowed
+/// Lurker's).
+fn mode_weapons(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
+    archetype.modes.iter().flat_map(|mode| {
+        [&mode.ground_weapon_override, &mode.air_weapon_override]
+            .into_iter()
+            .filter_map(|weapon| weapon.as_ref()?.as_ref())
+    })
+}
+
+#[test]
+fn b90_weapon_movement_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, _, source) in SC2_WEAPON_MOVEMENT {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    let defaults = (AllowedMovement::Stopped, false);
+    let default_source = "core WeaponData:20-21, no AllowedMovement";
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_WEAPON_MOVEMENT
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue);
+        let (expected, source) =
+            listed.map_or((defaults, default_source), |row| ((row.1, row.2), row.3));
+        // A mode's weapon is another 5.0.14 weapon; no modelled one differs from the defaults.
+        let checks = own_weapons(archetype)
+            .map(|weapon| (weapon, expected, source))
+            .chain(mode_weapons(archetype).map(|weapon| (weapon, defaults, default_source)));
+        for (weapon, expected, source) in checks {
+            assert_eq!(
+                (weapon.allowed_movement, weapon.fires_outside_attack_order),
+                expected,
+                "{} {}: AllowedMovement and OnlyFireWhileInAttackOrder as StarCraft II's weapon \
+                 ({source})",
+                archetype.slug,
+                weapon.name,
             );
         }
     }
