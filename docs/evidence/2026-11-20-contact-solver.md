@@ -1086,3 +1086,58 @@ Against WP3's thresholds, arc T5 and arc T7 now hold on development. Arc M1-hi (
 - Step 2′ (the wavefront) is built (`contact-solver-1b-wip`, commit after `56cb6c1d`) on top of 1b, but was not
   measured: its baseline step stopped, and a run on top of 1b would be confounded. The run started in the queue was
   cancelled.
+
+### 13.5 Step 2′ (Amendments 12 and 13): the wavefront fallback, measured once on step 1: stopped by the step rule (side branch `contact-solver-w2-wip`)
+
+**Built** (`75871a42` on the side branch; module `movement/wavefront.rs`).
+- **Field:** one integer breadth-first distance field per contested target and walker radius per tick, built on
+  first request and shared.
+  - Cell size `h = r/2`. Square of half-size `ρ + 3r + 2·r_max`, at most 512 cells a side.
+  - Seeded from the free ring points of step 1's exact intervals.
+  - Cells blocked by terrain and by the inflated discs of the target, enemies and anchored friends.
+  - 4-connected spread; the walker steps to the lowest of its 8 neighbours, ties in a fixed order.
+- **Use:** only while the walker's straight segment to its gap point is blocked. Progress is measured to the gap.
+- **Tests:** `the_wave_goes_round_a_wall_and_the_walker_follows_it`, `a_disc_blocks_the_cells_inside_it`.
+
+**Development, against step 1** (`runs/p17-1` → `runs/w2b-1`).
+
+| Family | Figure | Step 1 | 2′ | Verdict |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **2** | P2 criterion met: falls beyond noise |
+| arc | fill, scenes without give-ups | 0.979 | 0.957 | P2 criterion met: at least 0.85 |
+| arc | D-S | 102,537 | 4,396 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | 2.40 / **1.28** | **stop**: M1-hi passed T1 and now fails (worse than WP3's 0.71) |
+| arc | fill mean / 5th (T5) | 0.967 / 0.857 | 0.957 / 0.857 | holds |
+| corridor | M1 / M1-hi (T1) | 0 / 0 | **1.58 / 1.54** | **stop**: T1 passed and now fails |
+| corridor | give-ups / D-S | 20 / 2,502 | 12 / 6,365 | |
+| gap, cross, corner | | | | byte-identical |
+| mirror | blue share | 0.554 [0.453, 0.652] | 0.463 [0.418, 0.508], draws 529 | holds |
+
+**Traces** (`trace/w2/`).
+- **Arc, seed 211** (M1-hi 0 → 32): a gap walker following the field along the front rank touches its bodies (gap
+  −0.016 to 0). Its side partner switches between 3 and 9, and the proposal reverses each tick.
+- **Corridor, seed 458** (M1-hi 0 → 655): 655 of the 656 reversals are gap walkers with a fixed gap point. The
+  side partner of the touching body (gap 0.000) comes and goes (None ↔ 2), and the proposal flips between two
+  directions each tick.
+- Both are step 0's mechanism, the side rule switching at contact. The field brings walkers to the front rank's
+  edge, where that mechanism operates far more often. Step 1b, the fix for it, was stopped (§13.4).
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired; `Legacy` re-measured on this tree, whose
+catalog has changed since §12.6).
+
+| Scenario | Legacy | Step 1 | Step 2′ | Q0093 (c): ≤ +60 % and ≥ 50 ticks per second |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 17.06 G (+65 %, 98 tps) | 25.22 G (**+144 %**, 65 tps) | step 1 fails by 5 points |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7 %, 171 tps) | 11.49 G (+7 %, 161 tps) | holds |
+| showcase canyon | 18.03 G | 27.75 G (+54 %, 78 tps) | 27.74 G (+54 %, 82 tps) | holds |
+
+**The field's share on 64 × 64** (`perf record`, inclusive cycles of the run):
+- the bodies' discs: `block_holding_bodies` 11.4 % with `block_disc` 11.2 %;
+- cell centres: 6.4 %;
+- the spread: 3.8 %;
+- seeding: 1.8 %.
+
+That is about 35 % of the run, roughly +8.2 G.
+
+**Reading.** Step 2′ meets P2's two criteria but stops under Amendment 8's rule. By Amendments 12 and 13 the
+remaining steps are not run, and the trade-off goes to the owner with step 1's figures.
