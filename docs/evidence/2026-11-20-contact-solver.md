@@ -975,3 +975,74 @@ previous step's development run; the first baseline is WP5's run, `wp4b/runs/w5-
     to it and the side flips. Contact then separates the pair, and the first body is a threat again.
   - The aim–contact cycle is how the swing becomes a reversal, but the swing comes from the side rule.
   - The hard pass does not appear: the corrections are friendly and averaged.
+
+### 13.2 Step 1: P1 exact blocking geometry, P7 no enemy dead band (`f27acf84`, `0cc50327`)
+
+- **P1.** `blocking_interval` takes the exact half-width `acos((ρ² + d² − R²) / (2ρd))`.
+  - Test `a_ring_filled_greedily_holds_its_capacity` runs over all 175 arc rings and is red before (for example
+    P 0.5, R 0.1, r 0.5625: 4 placed against a capacity of 6).
+- **P7.** Enemy pairs take no dead band.
+  - Test `enemy_pairs_take_no_dead_band` is red before: a 0.8 % enemy overlap stays.
+  - The slide test now allows the wall rule's rounding, which the enemy's last word reaches.
+
+**Development, against WP5** (`runs/w5-1` → `runs/p17-1`): nothing is worse beyond noise.
+
+| Family | Figure | WP5 | Step 1 |
+|---|---|---:|---:|
+| arc | M1 / M1-hi | 3.64 / 0.223 | **2.48 / 0.192** |
+| arc | give-ups (E1) | 1,208 | **305** |
+| arc | fill mean / 5th (T5) | 0.805 / 0.600 | **0.967 / 0.857** |
+| arc | fill, scenes without give-ups | 0.804 | 0.979 |
+| arc | M4 | 0.052 % | 0.006 % |
+| arc | scenes over the friend / enemy bound | 32 / 25 | **1 / 0** |
+| arc | D-S, unit-ticks | — | 102,537 |
+| corridor | fill / give-ups | 0.869 / 16 | 0.908 / 20 |
+| corridor | D-S | — | 2,502 |
+| gap, cross, corner | | | byte-identical |
+| mirror | blue share | 0.506 [0.403, 0.608] | 0.554 [0.453, 0.652] |
+
+Against WP3's thresholds, arc T5 and arc T7 now hold on development. Arc M1-hi (0.192) is within T1's 0.25, but arc M1
+(2.48) still fails T1's 1.0. `cargo gate quick` is green on this tree.
+
+### 13.3 Step 2: P2, the detour for gap walkers: stopped by Amendment 8's rule (side branch `contact-solver-p2-wip`)
+
+**Built.**
+- When the segment from a gap walker to its gap point passes a tick-start body closer than the two radii, the unit
+  aims at the point of the outer circle of radius `max(|x − T|, ρ + r + r_max)` one diameter of arc on from its
+  bearing toward the gap, never past the gap.
+- Its progress is still measured to the gap point. It dives in once the way is clear.
+- The design is stateless.
+
+**Development, against step 1** (`runs/p2-1`).
+
+| Family | Figure | Step 1 | P2 | Verdict |
+|---|---|---:|---:|---|
+| arc | give-ups (E1) | 305 | **1** | P2 criterion met: falls beyond noise |
+| arc | fill, scenes without give-ups | 0.979 | 0.924 | P2 criterion met: at least 0.85 |
+| arc | fill mean / 5th | 0.967 / 0.857 | 0.924 / 0.786 | worse, still within T5 |
+| arc | D-S | 102,537 | 4,588 | |
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **9.85 / 8.15** | **stop**: arc M1-hi fails T1 and is worse than WP3's 0.71 |
+| arc | M4 | 0.006 % | 0.231 % | within T3 |
+| corridor | M1 / give-ups / D-S | 0.00 / 20 / 2,502 | **12.96 / 618 / 53,260** | far worse than step 1; not worse than WP3 |
+| corridor | scenes over the friend / enemy bound | 0 / 0 | **114 / 16** | |
+| gap, cross, corner | | | | byte-identical |
+
+**Traces** (`trace/p2/`).
+- **Arc, seed 150** (M1-hi 0 → 934): units 5 and 2 alternate every tick between two states.
+  - One tick they are a gap walker on a detour: their bearing point is blocked and they step out along the outer
+    circle at full speed, proposal (0.033, −0.184).
+  - The next tick their bearing point is free, so they chase straight in: no gap, proposal (−0.041, 0.183).
+  - The detour step itself moves the bearing onto a free point, and the straight chase moves it back.
+  - This is a two-tick limit cycle between the detour and the ring rule's "own bearing free, chase straight". Each
+    swing is a full-speed reversal.
+- **Corridor, seed 976** (M1-hi 0 → 283, give-ups 0 → 2):
+  - In the corridor the outer circle lies in the walls beyond the corridor's width.
+  - Gap walkers aim at points they cannot reach, are corrected back (corrections up to 0.14 a tick), and stall into
+    give-ups.
+  - The detour has no terrain test.
+
+**Reading.**
+- P2 meets the two stop criteria that Amendment 11 gives it.
+- But under Amendment 8's rule it stops: arc T1 (M1-hi) gets worse than WP3.
+- The wavefront fallback is conditional on P2's own criteria failing, and they did not fail, so it was not run.
+- Hand-back point (orchestrator's request): after step 2's verdict.
