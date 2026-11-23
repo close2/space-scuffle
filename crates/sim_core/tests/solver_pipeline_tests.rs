@@ -103,6 +103,51 @@ fn ring_attackers_aim_for_gaps_and_the_rest_stand() -> TestResult {
     Ok(())
 }
 
+/// WP5 (plan §5.4, §7): two identical units placed point-symmetrically, each attacking the other,
+/// reach range on the same tick and start firing on the same tick. Under the solver pipeline the
+/// pursuit reads its target's tick-start position, so the unit processed second does not see
+/// where the first went this tick. Red when the pursuit reads the live target.
+#[test]
+fn a_mirrored_pair_reaches_range_and_fires_on_the_same_tick() -> TestResult {
+    let mut world = solver_world(0x5EED_0005, true)?;
+    let unit = kind(&world)?;
+    let blue = world.spawn_unit(unit, PlayerId(0), at(20.0, 32.0))?;
+    let red = world.spawn_unit(unit, PlayerId(1), at(44.0, 32.0))?;
+    let attack = |player: u8, unit: EntityId, target: EntityId| PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![unit],
+        order: UnitOrder::AttackTarget {
+            target,
+            origin: sim_types::AttackOrigin::Explicit,
+        },
+        queue: false,
+    };
+    step(&mut world, vec![attack(0, blue, red), attack(1, red, blue)]);
+    let (mut stopped, mut fired) = ([None; 2], [None; 2]);
+    for _ in 0..400 {
+        step(&mut world, vec![]);
+        let tick = world.current_tick;
+        for (slot, id) in [blue, red].into_iter().enumerate() {
+            let Some(entity) = world.entities.get(&id) else {
+                continue;
+            };
+            if stopped[slot].is_none() && entity.velocity == SimVec2::ZERO {
+                stopped[slot] = Some(tick);
+            }
+            if fired[slot].is_none() && entity.current_anim == sim_types::AnimState::Attack {
+                fired[slot] = Some(tick);
+            }
+        }
+        if fired.iter().all(Option::is_some) {
+            break;
+        }
+    }
+    assert!(fired[0].is_some(), "the pair never fired: {fired:?}");
+    assert_eq!(stopped[0], stopped[1], "reached range on different ticks");
+    assert_eq!(fired[0], fired[1], "fired on different ticks");
+    Ok(())
+}
+
 /// The shipped catalog on a flat 64 × 64 map with the rules switched to the solver pipeline,
 /// D-β as `push`.
 fn solver_world(seed: u64, push: bool) -> Result<SimWorld, Box<dyn std::error::Error>> {

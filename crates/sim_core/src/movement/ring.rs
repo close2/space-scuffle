@@ -288,13 +288,22 @@ impl SimWorld {
     /// The position `id` had when this tick's movement phase began, world units: from the
     /// phase's record, or the entity's position when it takes no part in movement.
     pub(crate) fn tick_start_position(&self, id: EntityId) -> SimVec2 {
+        self.tick_start_motion(id).0
+    }
+
+    /// The position and last displacement `id` had when this tick's movement phase began, world
+    /// units and world units per tick: from the phase's record, or the entity's current ones when
+    /// it takes no part in movement (plan `2026-11-20-contact-solver` WP5).
+    pub(crate) fn tick_start_motion(&self, id: EntityId) -> (SimVec2, SimVec2) {
         let starts = &self.movement.tick_start;
-        match starts.binary_search_by_key(&id, |&(entity, _)| entity) {
-            Ok(index) => starts[index].1,
+        match starts.binary_search_by_key(&id, |&(entity, _, _)| entity) {
+            Ok(index) => (starts[index].1, starts[index].2),
             Err(_) => self
                 .entities
                 .get(&id)
-                .map_or(SimVec2::ZERO, |entity| entity.position),
+                .map_or((SimVec2::ZERO, SimVec2::ZERO), |entity| {
+                    (entity.position, entity.velocity)
+                }),
         }
     }
 }

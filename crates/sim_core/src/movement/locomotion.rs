@@ -830,7 +830,9 @@ impl SimWorld {
         self.movement.tick_start.clear();
         for &id in &ids {
             if let Some(actor) = self.entities.get(&id) {
-                self.movement.tick_start.push((id, actor.position));
+                self.movement
+                    .tick_start
+                    .push((id, actor.position, actor.velocity));
             }
             match self.motion_entry(id) {
                 Ok(entry) => {
@@ -1290,7 +1292,8 @@ impl SimWorld {
             self.coast(entry, actor, &mut proposal)?;
             return Ok(PursuitStart::Settled(proposal));
         };
-        if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
+        let (target_at, _) = self.pursued_motion(target_id, target);
+        if pursuit.aim_if_in_range(id, actor, target_at, &mut proposal)? {
             return Ok(PursuitStart::Settled(proposal));
         }
         Ok(PursuitStart::Chase(proposal, pursuit))
@@ -1313,17 +1316,17 @@ impl SimWorld {
                 entity: id,
                 reason: "validated pursuer disappeared",
             })?;
-        let goal = match pursuit.gap {
-            Some(point) => point,
-            None => {
-                self.entities
-                    .get(&target_id)
-                    .ok_or(MovementInvariant::InvalidState {
-                        entity: target_id,
-                        reason: "available target disappeared",
-                    })?
-                    .position
-            }
+        let goal = if let Some(point) = pursuit.gap {
+            point
+        } else {
+            let target = self
+                .entities
+                .get(&target_id)
+                .ok_or(MovementInvariant::InvalidState {
+                    entity: target_id,
+                    reason: "available target disappeared",
+                })?;
+            self.pursued_motion(target_id, target).0
         };
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
         let owner = actor
@@ -1357,6 +1360,18 @@ impl SimWorld {
         scene.movement.neighbours = neighbours;
         chased?;
         Ok(draft.proposal)
+    }
+
+    /// Where a pursuer sees its target, world units, and the target's last displacement, world
+    /// units per tick: under the solver pipeline the target's tick-start position and motion
+    /// (plan `2026-11-20-contact-solver` WP5, §5.4), so a pursuer processed after its target does
+    /// not see where the target went this tick; under the legacy pipeline the live entity.
+    fn pursued_motion(&self, target_id: EntityId, target: &Entity) -> (SimVec2, SimVec2) {
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            self.tick_start_motion(target_id)
+        } else {
+            (target.position, target.velocity)
+        }
     }
 
     /// The range band `actor` attacks `target` from, or `None` when it has no weapon against it.
@@ -1414,7 +1429,7 @@ impl SimWorld {
         Ok(Some(Pursuit {
             target: target_id,
             origin,
-            target_moving: target.velocity != SimVec2::ZERO,
+            target_moving: self.pursued_motion(target_id, target).1 != SimVec2::ZERO,
             has_turret: weapon.has_turret,
             max,
             min,

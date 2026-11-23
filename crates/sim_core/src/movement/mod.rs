@@ -258,9 +258,10 @@ pub(crate) struct MovementWorkspace {
     contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
-    /// Each movement actor's position when the phase began, sorted by entity id (plan
-    /// `2026-11-20-contact-solver` Amendment 7: the ring rule and the pursuit read it).
-    tick_start: Vec<(EntityId, SimVec2)>,
+    /// Each movement actor's position and last displacement when the phase began, sorted by
+    /// entity id (plan `2026-11-20-contact-solver` Amendment 7 and WP5: the ring rule and, under
+    /// the solver pipeline, the pursuit read it).
+    tick_start: Vec<(EntityId, SimVec2, SimVec2)>,
     /// The ring rule's blocked arcs, cleared per chase (Amendment 7, item 2).
     ring_intervals: Vec<concave::ArcInterval>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
