@@ -955,7 +955,7 @@ fn shipped_delayed_volley() -> Result<ShippedVolley, Box<dyn std::error::Error>>
             .any(|weapon| weapon.first_strike_delay_ticks > 0)
         })
         .ok_or("a shipped weapon delays its first strike")?;
-    let (shooter_type, faction) = (shooter_arch.unit_type_id, shooter_arch.faction.clone());
+    let (shooter_type, faction) = (shooter_arch.unit_type_id, shooter_arch.faction);
     let target_type = world
         .catalog
         .archetypes()

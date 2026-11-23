@@ -2250,7 +2250,7 @@ fn an_edited_first_strike_delay_moves_the_first_missile_without_recompiling() ->
             .any(|weapon| weapon.first_strike_delay_ticks > 0 && weapon.projectile_speed.is_some())
         })
         .ok_or("a shipped missile weapon delays its first strike")?;
-    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction.clone());
+    let (shooter_type, faction) = (shooter.unit_type_id, shooter.faction);
     let target_type = shipped
         .units
         .archetypes()
