@@ -57,3 +57,20 @@ of record, 4 over all seeds". The four battles whose orders WP1 restates read (2
 | 37b, control | 0 | 0 | 20 | 1.00 – 6.00 | 600.0 | 141.45 (20) |
 | 39a, Blinding Cloud on sieged tanks | 20 | 0 | 0 | 7.90 – 0.00 | 280.1 | — |
 | 39b, control | 0 | 0 | 20 | 1.00 – 2.50 | 600.0 | 82.35 (17) |
+
+## WP1: the four battles restated
+
+### Red run (on the WP0 tree)
+
+`cargo test -p sim_fixtures --lib matchup` with the new tests and the WP0 fixture (log
+`~/scratch/stance-orders/red/wp1-red.log`): `no_matrix_battle_scripts_a_stop_or_hold_that_misses_a_unit_it_names`
+(P-9) failed with "battles whose scripted Stop or Hold Position misses a unit: [37a_abduct_sieged_tank,
+37b_sieged_tank_survives_without_abduct, 39a_cloud_on_tanks, 39b_tanks_beat_roaches_without_cloud]"; the rewritten
+`mode_commands_precede_the_standing_order_which_survives_the_switch` passed. 13 passed, 1 failed.
+
+### Worlds
+
+After D-5's orders, `compare.sh world-wp0 world-wp1`: `files base=483 new=483 differing=0`. Battles 37a, 37b, 39a
+and 39b are byte-identical on all 20 seeds (wins, survivors, end tick, lead fate and every other `matrix.csv`
+column), as §3.3 predicted, so no tank target was traced and no expectation re-recorded.
+`sim_core/sc2_who_wins_matchup_matrix_tests` (release) passed (3 tests); every `sim_fixtures` test passed.
