@@ -1,5 +1,5 @@
 //! Regeneration of life and energy against construction, casts and damage (plan
-//! `2026-11-23-regeneration`, B-35 and B-36).
+//! `2026-11-23-regeneration`, B-35, B-36 and B-168).
 //!
 //! # Responsibility
 //! Checks the regeneration rules `world::upkeep` documents on the public tick API:
@@ -11,6 +11,8 @@
 //!   after damage alike (P-4; no 5.0.14 layer sets `EnergyRegenDelay`, so B-35 is no
 //!   deviation).
 //! - An uncompleted entity cannot cast, so nothing spends a foundation's energy.
+//! - Every shipped structure with energy regenerates it at its catalog rate up to its maximum
+//!   (P-5, B-168).
 //!
 //! # Invariants
 //! Archetypes are found by property (`hp_regen_per_tick > 0`, an ability with an energy
@@ -569,5 +571,52 @@ fn an_uncompleted_entity_cannot_cast() -> TestResult {
         .is_completed = false;
     assert!(!world.would_accept_cast_order(caster, index, Some(point), None));
     assert!(!world.would_admit_cast(caster, index, Some(point), None));
+    Ok(())
+}
+
+#[test]
+fn a_structure_with_energy_regenerates_it() -> TestResult {
+    let mut world = sim_fixtures::world(flat_map(Vec::new())?, 7);
+    let structures: Vec<UnitTypeId> = world
+        .catalog
+        .archetypes()
+        .filter(|a| matches!(a.shape, ShapeKind::BuildingDome { .. }))
+        .filter(|a| a.max_energy > SimScalar::ZERO)
+        .map(|a| a.unit_type_id)
+        .collect();
+    assert!(
+        !structures.is_empty(),
+        "the catalog has structures with energy"
+    );
+    let mut placed = Vec::new();
+    for (slot, &structure) in (0_u32..).zip(&structures) {
+        let id = world.spawn_structure(structure, ME, 2 + 8 * slot, 2)?;
+        let arch = world.catalog.get(structure)?;
+        assert!(
+            arch.energy_regen_per_tick > SimScalar::ZERO,
+            "{structure:?}"
+        );
+        // Spawned complete; three ticks short of full, so the clamp shows as well.
+        let near_full = arch.max_energy - arch.energy_regen_per_tick * SimScalar::from_num(3)
+            + arch.energy_regen_per_tick / SimScalar::from_num(2);
+        world.entities.get_mut(&id).ok_or("structure")?.energy = near_full;
+        placed.push((id, arch.energy_regen_per_tick, arch.max_energy));
+    }
+    for _ in 0..4 {
+        let before: Vec<SimScalar> = placed
+            .iter()
+            .map(|(id, ..)| world.entities[id].energy)
+            .collect();
+        idle(&mut world, 1);
+        for (&(id, rate, max), old) in placed.iter().zip(before) {
+            assert_eq!(world.entities[&id].energy, (old + rate).min(max), "{id:?}");
+        }
+    }
+    for (id, _, max) in placed {
+        assert_eq!(
+            world.entities[&id].energy, max,
+            "{id:?} stops at its maximum"
+        );
+    }
     Ok(())
 }

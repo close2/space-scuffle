@@ -589,3 +589,14 @@ Recorded by the implementation session on 2026-11-23, one branch (`regeneration-
 4. **Damage** in the tests is applied between ticks with `Entity::apply_damage`, the function every damage path
    ends in (it resets `ticks_since_last_damage`); a twentieth of `max_hp`, so that even the old rule leaves the
    structure short of full at completion.
+
+### WP2
+
+1. **Validation** adds `energy_regen_per_tick` to the structure's finite and nonnegative lists and calls the new
+   `energy_regen` rule from both `UnitArchetypeDef::validate` and `StructureArchetypeDef::validate`, as D-2 says.
+   The shared test helper `assert_rejects_delay_field` now names a regeneration delay or rate field.
+2. **`structures_with_energy_regenerate_as_5_0_14`** checks every structure: those with energy author 0.0315, all
+   others read 0, and the set with energy is exactly the Nexus, Orbital Command and Shield Battery analogues (by
+   analogue, never slug).
+3. **The runtime test** (`an_edited_structure_energy_rate_changes_the_regeneration`) edits the first authored rate
+   to 0.063 and compares one tick's gain of a completed structure spawned at zero energy in two worlds.

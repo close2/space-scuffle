@@ -86,3 +86,38 @@ Logs: `~/scratch/regeneration/wp1-life-at-completion-before.log`, `~/scratch/reg
 The caster refusal: `world/abilities.rs` `admit_cast` and `world/casts.rs` `would_accept_cast_order` read no
 completion before WP1 (plan D-1 invariant 3, **verify**), so WP1 adds it to both. No shipped structure has an
 ability, so no world moves.
+
+## WP2: structure energy regeneration
+
+### Red run (WP1 tree)
+
+`cargo test --no-fail-fast -p sim_core --test regeneration_tests --test catalog_reference_values_tests --test
+runtime_catalog_tests` before the change: `structures_with_energy_regenerate_as_5_0_14` failed (the three
+structures with energy read a rate of 0), `a_structure_with_energy_regenerates_it` failed (no gain), and
+`an_edited_structure_energy_rate_changes_the_regeneration` failed (`structures.ron` had no `energy_regen_per_tick`
+to edit). The three `catalog/validation.rs` unit tests (`a_structure_without_energy_rejects_an_energy_rate`,
+`a_unit_without_energy_rejects_an_energy_rate`, `an_omitted_structure_energy_rate_reads_as_zero`) did not compile,
+as `StructureArchetypeDef` had no `energy_regen_per_tick` field. Logs: `~/scratch/regeneration/wp2-red.log`,
+`~/scratch/regeneration/wp2-red-lib.log`.
+
+### Constructed worlds and data
+
+- P-5: each shipped structure with energy (the Orbital Command, Nexus and Shield Battery analogues), spawned
+  complete two and a half ticks below its maximum, gains 0.0315 per tick and stops at `max_energy`
+  (`regeneration_tests::a_structure_with_energy_regenerates_it`).
+- Every structure with energy authors 0.0315, every other structure reads 0, and the set with energy is exactly
+  those three analogues (`catalog_reference_values_tests::structures_with_energy_regenerate_as_5_0_14`).
+- P-7: a catalog copy with the first authored rate set to 0.063 doubles that structure's gain per tick in the same
+  binary (`runtime_catalog_tests::an_edited_structure_energy_rate_changes_the_regeneration`).
+- Validation refuses a positive rate without energy and a negative rate, for structures and units alike, naming
+  `energy_regen_per_tick`; every shipped unit with a rate has energy.
+
+### Worlds
+
+| World | Result |
+|---|---|
+| Matrix, battles 31 and 33, showcase on 9 seeds (`compare.sh world-wp0 world-wp2`, run from the WP2 tree's assets) | byte-identical: "files base=420 new=420 differing=0" |
+| `golden_replay_tests` (native debug) | 4 passed, no checksum moved |
+| `sim_fixtures` tests (`DEFAULT_SANDBOX_CHECKSUM`) | passed, unchanged |
+
+No measured world holds a structure with energy, so none moves.

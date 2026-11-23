@@ -166,6 +166,20 @@ fn structure_scan_range(definition: &str, armed: bool, scan_range: Option<f64>) 
     }
 }
 
+/// Requires `energy_regen_per_tick` to be 0 when the archetype has no energy (`max_energy` 0):
+/// a rate nothing can show is a value nothing reads (plan `2026-11-23-regeneration` D-2). Both
+/// values are authored decimals, already checked finite and nonnegative.
+fn energy_regen(definition: &str, max_energy: f64, rate: f64) -> SimResult<()> {
+    if max_energy == 0.0 && rate > 0.0 {
+        return Err(invalid(
+            definition,
+            "energy_regen_per_tick",
+            "must be zero when max_energy is zero",
+        ));
+    }
+    Ok(())
+}
+
 /// Requires `hp_regen_delay_ticks` to be 0 when the archetype does not regenerate life: a delay
 /// on an archetype with no life regeneration is a value nothing reads. `regenerates` is
 /// `hp_regen_per_tick > 0` as authored; any delay, 0 included, is legal when it regenerates.
@@ -508,6 +522,11 @@ impl UnitArchetypeDef {
             &self.slug,
             f64::from(self.start_energy),
             f64::from(self.max_energy),
+        )?;
+        energy_regen(
+            &self.slug,
+            f64::from(self.max_energy),
+            f64::from(self.energy_regen_per_tick),
         )?;
         self.validate_terrain_radius()?;
         self.validate_hull_turning()?;
@@ -1128,6 +1147,7 @@ impl StructureArchetypeDef {
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
             ("start_energy", self.start_energy),
+            ("energy_regen_per_tick", self.energy_regen_per_tick),
             ("life_armor", self.life_armor),
             ("shield_armor", self.shield_armor),
             ("sight_radius", self.sight_radius),
@@ -1139,6 +1159,7 @@ impl StructureArchetypeDef {
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
             ("start_energy", self.start_energy),
+            ("energy_regen_per_tick", self.energy_regen_per_tick),
         ] {
             nonnegative(&self.slug, field, value)?;
         }
@@ -1151,6 +1172,7 @@ impl StructureArchetypeDef {
             self.scan_range,
         )?;
         start_energy(&self.slug, self.start_energy, self.max_energy)?;
+        energy_regen(&self.slug, self.max_energy, self.energy_regen_per_tick)?;
         shield_regen_delay(
             &self.slug,
             self.max_shields > 0.0,
@@ -1423,8 +1445,8 @@ mod tests {
         Ok(())
     }
 
-    /// Asserts that `result` is the typed invalid-value error naming `expected_field`, one of
-    /// the two regeneration-delay fields.
+    /// Asserts that `result` is the typed invalid-value error naming `expected_field`, a
+    /// regeneration delay or rate field.
     fn assert_rejects_delay_field(
         result: &crate::error::SimResult<()>,
         expected_field: &str,
@@ -1648,6 +1670,108 @@ mod tests {
         for structure in &structures.structures {
             assert_eq!(
                 structure.hp_regen_delay_ticks, 0,
+                "structure {}",
+                structure.slug
+            );
+        }
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-regeneration` D-2: a structure regenerates energy only if it has energy,
+    /// and never at a negative rate. Each refusal names `energy_regen_per_tick`.
+    #[test]
+    fn a_structure_without_energy_rejects_an_energy_rate() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::catalog::StructureCatalogFile;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        for structure in &file.structures {
+            structure.validate()?;
+        }
+        let without = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.max_energy == 0.0)
+            .ok_or("real catalog has no structure without energy")?;
+        without.energy_regen_per_tick = 0.0315;
+        assert_rejects_delay_field(
+            &without.validate(),
+            "energy_regen_per_tick",
+            "structure without energy with an energy rate",
+        );
+        let with = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.max_energy > 0.0)
+            .ok_or("real catalog has no structure with energy")?;
+        with.energy_regen_per_tick = -0.0315;
+        assert_rejects_delay_field(
+            &with.validate(),
+            "energy_regen_per_tick",
+            "structure with a negative energy rate",
+        );
+        with.energy_regen_per_tick = 0.063;
+        with.validate()?;
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-regeneration` D-2: the rule applies to units alike, and every shipped
+    /// unit with a rate has energy.
+    #[test]
+    fn a_unit_without_energy_rejects_an_energy_rate() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let mut file: CatalogFile = ron::from_str(units)?;
+        for unit in &file.units {
+            unit.validate()?;
+            assert!(
+                unit.energy_regen_per_tick == 0.0 || unit.max_energy > 0.0,
+                "unit {}",
+                unit.slug
+            );
+        }
+        let without = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.max_energy == 0.0)
+            .ok_or("real catalog has no unit without energy")?;
+        without.energy_regen_per_tick = 0.0315;
+        assert_rejects_delay_field(
+            &without.validate(),
+            "energy_regen_per_tick",
+            "unit without energy with an energy rate",
+        );
+        without.energy_regen_per_tick = -0.0315;
+        assert_rejects_delay_field(
+            &without.validate(),
+            "energy_regen_per_tick",
+            "unit with a negative energy rate",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_omitted_structure_energy_rate_reads_as_zero() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::StructureCatalogFile;
+        let text = include_str!("../../../../assets/catalog/structures.ron");
+        let shipped: StructureCatalogFile = ron::from_str(text)?;
+        for structure in shipped.structures.iter().filter(|s| s.max_energy == 0.0) {
+            assert_eq!(
+                structure.energy_regen_per_tick, 0.0,
+                "structure {}",
+                structure.slug
+            );
+        }
+        let stripped = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("energy_regen_per_tick:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let omitted: StructureCatalogFile = ron::from_str(&stripped)?;
+        assert!(!omitted.structures.is_empty());
+        for structure in &omitted.structures {
+            assert_eq!(
+                structure.energy_regen_per_tick, 0.0,
                 "structure {}",
                 structure.slug
             );

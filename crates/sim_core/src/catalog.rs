@@ -139,7 +139,9 @@ pub struct UnitArchetype {
     /// enforces this for authored data. `None` means the archetype never regenerates shields.
     /// `StarCraft` II stores this per unit as `ShieldRegenDelay`.
     pub shield_regen_delay_ticks: Option<u16>,
-    /// Passive energy regeneration per tick.
+    /// Passive energy regeneration per tick (25 per Faster second), applied only on completed
+    /// entities and with no delay: neither a cast nor damage pauses it (no 5.0.14 layer sets
+    /// `EnergyRegenDelay`). Validation requires 0 when [`Self::max_energy`] is zero.
     pub energy_regen_per_tick: SimScalar,
     /// Maximum linear translation speed per tick.
     pub max_speed: SimScalar,
@@ -1757,6 +1759,11 @@ struct StructureArchetypeDef {
     /// Energy a new structure starts with (`EnergyStart`), `0 ≤ start_energy ≤ max_energy`.
     /// Required, so a catalog written before the field fails to load.
     pub start_energy: f64,
+    /// Energy regenerated per tick (25 per Faster second) once the structure is complete
+    /// (`EnergyRegenRate` × 1.4 ÷ 25); omitted reads as 0, the value of every structure without
+    /// energy. Validation refuses a negative rate, and a positive one when `max_energy` is 0.
+    #[serde(default)]
+    pub energy_regen_per_tick: f64,
     /// Hull hit points regenerated per tick.
     #[serde(default)]
     pub hp_regen_per_tick: f64,
@@ -1917,7 +1924,7 @@ impl StructureArchetypeDef {
             hp_regen_delay_ticks: self.hp_regen_delay_ticks,
             shield_regen_per_tick: SimScalar::from_num(self.shield_regen_per_tick),
             shield_regen_delay_ticks: self.shield_regen_delay_ticks,
-            energy_regen_per_tick: SimScalar::ZERO,
+            energy_regen_per_tick: SimScalar::from_num(self.energy_regen_per_tick),
             max_speed: SimScalar::ZERO,
             acceleration: SimScalar::ZERO,
             deceleration: SimScalar::ZERO,
