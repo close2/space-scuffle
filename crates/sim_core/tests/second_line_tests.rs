@@ -77,6 +77,7 @@ fn scratch_unit(slug: &str, id: u16, radius: f32, speed: f32, range: Option<f32>
                 base_damage: 6.0,
                 attribute_bonuses: [],
                 attacks_count: 1,
+                first_strike_delay_ticks: 0,
                 strike_interval_ticks: 0,
                 period_ticks: 15,
                 damage_point_ticks: 1,

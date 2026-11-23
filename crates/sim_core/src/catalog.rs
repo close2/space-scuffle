@@ -1351,6 +1351,10 @@ struct WeaponSpecDef {
     /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
     attribute_bonuses: Vec<(Attribute, f32)>,
     attacks_count: u8,
+    /// Ticks from the release to the first strike (see
+    /// [`WeaponSpec::first_strike_delay_ticks`]). Omitted reads as 0, the engine default.
+    #[serde(default)]
+    first_strike_delay_ticks: u16,
     /// Ticks between consecutive strikes of one attack; required, 0 for a single strike or a
     /// volley that lands at once (see [`WeaponSpec::strike_interval_ticks`]).
     strike_interval_ticks: u16,
@@ -1575,6 +1579,7 @@ impl UnitArchetypeDef {
                 },
             ),
             attacks_count: w.attacks_count,
+            first_strike_delay_ticks: w.first_strike_delay_ticks,
             strike_interval_ticks: w.strike_interval_ticks,
             followup_max_distance: w.followup_max_distance.map(SimScalar::from_f32_lossy),
             channeled: w.channeled,

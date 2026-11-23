@@ -383,8 +383,14 @@
 // recorded for plan 2026-11-23-splash-centres WP1 (schema 35 -> 36), on native debug and release
 // and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-strike-delays WP1 (checksum schema 37 -> 38): each weapon also
+// encodes the delay of its first strike, so every checkpoint changed. No behaviour did: neither
+// fixture contains the Liberator analogue, the one weapon with a delay, and with the field left
+// out of the encoding at schema 37, both fixtures reproduce as recorded for plan
+// 2026-11-23-splash-cliff-levels WP2, on native debug and release and wasm32-wasip1 release and
+// debug. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 37,
+    checksum_schema: 38,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -410,25 +416,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xf8c6bc08e4227cfb,
-        0x4dd9cc27f9b32a3d,
-        0x626e1ae227997069,
-        0x9aab95a95e78b761,
-        0xf5ab25300bc448fb,
-        0x3b6a7f6f06605cf8,
-        0xb7a4911b5f3d45c0,
-        0xd9ad31274f3bf4b1,
-        0x829593d7880a1d17,
-        0x2e5f8374d896a5f5,
-        0x4f84c7b8b4821e48,
-        0xd5b9db7ddb034c78,
-        0x8041143b3cb72cf8,
-        0x8b29537a2cd1429d,
-        0x6604ee8a58234562,
-        0xe02b85062bd38788,
-        0xab41e48f4e306e8c,
-        0x3c4fc0ea49bd2a64,
-        0xe4a6408ccfbf55f1,
-        0xbf8312fe2e257805,
+        0xaaf7b0d951840d01,
+        0x0ed4302a82d430ce,
+        0x38d13478f56f3850,
+        0x6f7db9588ecb86f9,
+        0x1f46e1efe376a072,
+        0x2e01cedd3e093e01,
+        0xf325a93a93acca49,
+        0xc349abfe932ce446,
+        0x53f1b25be04102fa,
+        0xd6e3879e0254118c,
+        0x2b2d39fcf4a26295,
+        0xc7ebe30a75f39729,
+        0xc05371a9dd11644b,
+        0x8269e3376a72a54f,
+        0xd52ad81677b43ee1,
+        0x5729c84e3bdeffd4,
+        0x58830b6e1af41ec0,
+        0x95fbfc9ddb53ab50,
+        0xe3957d9c18865d02,
+        0xa083a63573ac1bf8,
     ],
 )
