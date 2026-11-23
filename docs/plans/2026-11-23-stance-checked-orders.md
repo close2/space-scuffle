@@ -770,4 +770,4 @@ Findings, not changed here:
 - §14's finding stands: a mode's `Some(None)` ground override and `air_weapon_override` are not applied to a live
   unit; `stance_armed` follows the live unit (P-6).
 
-Q0098 is filed with default (a), which WP3 implements.
+Q0098 was answered (a) during the implementation, as WP3 already built it; it is resolved and closed.

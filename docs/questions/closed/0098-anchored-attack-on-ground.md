@@ -26,3 +26,12 @@ selected unit is anchored.
 - **Option (a): Refused.** For a selection of only anchored units/structures (sieged Siege Tank, burrowed Lurker, Photon Cannon, Spine Crawler, etc.), clicking empty ground with Attack does nothing, reports on the status line that no unit can do that, and keeps the Attack cursor active so the player can click an enemy next. Walking units in a mixed selection still attack-move normally.
 
 **Reasoning:** Matches StarCraft II verbatim — anchored units and armed structures cannot attack-move and cannot fire at empty ground (SC2 displays *"Must target a unit"* and leaves the attack cursor armed), which also prevents a slight misclick next to an enemy unit from silently cancelling an active focus-fire order.
+
+## Resolution
+
+Carried out as answered (option (a)) by plan `2026-11-23-stance-checked-orders` WP3 (`e4cb94fa`): a ground click in
+Attack mode sends `AttackMove` only to mobile members armed in their settled stance; a selection of only anchored
+units or armed structures is refused with the `EmptySelection` status line and the Attack mode stays armed, and a
+click on an enemy unit attacks it (`battle_mode_tests::a_sieged_tank_attacks_a_clicked_enemy_and_refuses_the_ground`).
+The status line keeps the client's existing wording for an order no selected unit can carry out, not StarCraft II's
+"Must target a unit". No simulation rule changed (B-176 stays deferred).
