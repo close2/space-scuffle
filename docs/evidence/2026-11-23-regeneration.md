@@ -121,3 +121,16 @@ as `StructureArchetypeDef` had no `energy_regen_per_tick` field. Logs: `~/scratc
 | `sim_fixtures` tests (`DEFAULT_SANDBOX_CHECKSUM`) | passed, unchanged |
 
 No measured world holds a structure with energy, so none moves.
+
+## WP3: the final tree
+
+- `golden_replay_tests` in release (native): 4 passed, no checksum moved. The package gate runs the
+  `wasm32-wasip1` goldens.
+- Client skirmish match (`cargo test --release -p client --test skirmish_match_tests -- --nocapture`, the
+  physical GPU through the harness's own lock): 7 passed, 1 ignored. Its stage log equals the one recorded for the
+  production-queue plan's last package on `main`'s tree `2bb84a5b`
+  (`~/scratch/production-queue/impl/client-wp5/status`): "match won in 1683 frames, 6494 ticks", and every stage
+  on the same tick (Raise 22, Site 550, Foundation 586, Train 642, Group 4502, March 4526, the three Command and
+  Assault pairs at 4822/4834, 5086/5098 and 5350/5362, Done 6486). The pilot raises a Barracks analogue, which has
+  neither life regeneration nor energy, so neither rule can act there (plan §7 **verify**, confirmed).
+  Log: `~/scratch/regeneration/skirmish.log`.

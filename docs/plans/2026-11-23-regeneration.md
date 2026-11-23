@@ -600,3 +600,17 @@ Recorded by the implementation session on 2026-11-23, one branch (`regeneration-
    analogue, never slug).
 3. **The runtime test** (`an_edited_structure_energy_rate_changes_the_regeneration`) edits the first authored rate
    to 0.063 and compares one tick's gain of a completed structure spawned at zero energy in two worlds.
+
+### WP3
+
+1. **Q0094 is filed** (`docs/questions/open/0094-zerg-structure-regeneration-under-construction.md`, commit
+   `27e3d96c`), so the questions table's draft row is now that question; its default (no regeneration under
+   construction) is what WP1 built.
+2. **The register** keeps the three rows with their outcome, as the production-queue plan's rows do: B-35 "not a
+   deviation", B-36 and B-168 "fixed", each with its commit and the evidence.
+3. **Results.** Every world of §7 was byte-identical after WP1 and after WP2 (420 files each against WP0); the
+   goldens passed unchanged in native debug and release, and the sandbox checksum did not move; the client
+   skirmish's stage log is the one of `main`'s tree. The `wasm32-wasip1` goldens and the rest of the package gate
+   are left to the verifier (Q0061).
+4. **Outside this plan, noticed:** `DESIGN.md` §4 holds three stray `=== end` lines between B-38 and B-45 since
+   commit `464e0b21` (where B-39 and B-43 were removed). Not touched here.
