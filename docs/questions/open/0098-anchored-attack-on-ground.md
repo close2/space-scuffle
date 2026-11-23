@@ -23,3 +23,6 @@ selected unit is anchored.
 
 ## Answer
 
+- **Option (a): Refused.** For a selection of only anchored units/structures (sieged Siege Tank, burrowed Lurker, Photon Cannon, Spine Crawler, etc.), clicking empty ground with Attack does nothing, reports on the status line that no unit can do that, and keeps the Attack cursor active so the player can click an enemy next. Walking units in a mixed selection still attack-move normally.
+
+**Reasoning:** Matches StarCraft II verbatim — anchored units and armed structures cannot attack-move and cannot fire at empty ground (SC2 displays *"Must target a unit"* and leaves the attack cursor armed), which also prevents a slight misclick next to an enemy unit from silently cancelling an active focus-fire order.
