@@ -1428,3 +1428,62 @@ derivation before the run:
 - But it removes the sideways motion that let gap walkers reach their gaps, so arc E1 and T5 lose ground and corner
   give-ups rise.
 - By Amendment 15, S is stopped, and the orchestrator takes the fallback, option (b), on step 1 + P8 + O1.
+
+### 13.10 Amendment 16, option (b): N adopted; the cost bar is still missed by 2.6 points
+
+**Merges.** Main `d71f7153` (schema 38) and then `e212ca44` (schema 39) are merged into the plan branch. The plan
+branch adds no hashed state of its own.
+
+**N, deviation D-δ** (`b53c076c`, committed).
+- **Rule:** under the Solver, an engaged melee unit that is not on Hold Position (nor immobile or unpushable) is
+  shared with friends as if not engaged. It takes only the part of its correction along its ring's tangent: never
+  out of range, never by enemies.
+- **Switch:** `contact.nudge_engaged_along_ring` in `movement_rules.ron`, on by default (absent means on). The
+  catalog is not hashed, so no schema change.
+- **Tests:**
+  - `a_nudged_attacker_slides_along_its_ring_only` is red before (the engaged unit took no share);
+  - `the_nudge_switch_defaults_on_and_can_be_switched_off`.
+- **Development:**
+  - With the switch off, all 11 CSVs are byte-identical to O1's.
+  - With it on, the five scene families are byte-identical: the harness's scratch attackers are ranged, so D-δ does
+    not reach them.
+  - The mirror moves to blue 0.538 [0.448, 0.626] with 883 draws; T9 holds. Nothing is worse beyond noise.
+  - **The corridor two-abreast figure is unchanged** (301 of 301 capacity-2 scenes missed): those attackers are
+    ranged, and D-δ applies to melee units only, as the owner worded it.
+
+**Cost against Q0093 (c).** Head `1b3c33ed` (step 1 + P8 + O1 + N, main merged); release benchmark, 400 units, 300
+ticks, `perf stat -e instructions:u`, under the gate lock. The machine was shared (load 24 to 50), so ticks per
+second are indicative only; §13.7's quieter reading of the same code was 104, 154 and 80.
+
+| Scenario | Legacy | Solver | Change | Ticks per second (Solver) | Bar |
+|---|---:|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 16.83 G | **+62.6 %** | 65 (104 quiet) | **fails** (+60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.51 G | +7.2 % | 92 (154 quiet) | holds |
+| showcase canyon | 18.03 G | 27.88 G | +54.7 % | 65 (80 quiet) | holds |
+
+**Split on 64 × 64** (`perf record --call-graph=dwarf`, inclusive cycles, each share scaled by the run's
+instructions).
+
+| Part | Legacy | Solver | Change |
+|---|---:|---:|---:|
+| Contact (`resolve_collisions_and_push`) | 0.32 G | 4.02 G | +3.70 G |
+| — the solver | — | 3.82 G | |
+| — of which the pair sums | — | 1.60 G | |
+| — of which the terrain steps | — | 1.39 G | |
+| — of which the pair builds | — | 0.77 G | |
+| Target acquisition | 4.74 G | 6.17 G | +1.43 G |
+| Movement phase | 3.42 G | 4.54 G | +1.12 G |
+| — of which intent | — | 0.82 G | |
+| — of which the ring scan | — | 0.62 G | |
+| Total | 10.35 G | 16.83 G | +6.48 G |
+
+**Behaviour-preserving optimisation tried.**
+- **Bar arithmetic:** reaching +60 % needs 0.27 G off the Solver alone. Work shared with Legacy, chiefly target
+  acquisition's distances (u128 roots, 5.4 % of either run), lowers both runs and raises the ratio.
+- **The one Solver-only candidate measured:** intent's two `SimScalar::sqrt` calls, replaced by the movement
+  module's exact `integer_sqrt`, tested equal on 100,000 values. It saved 5.4 M instructions (0.03 %) and was not
+  kept.
+- **No other exact change was found** that removes 0.27 G without changing results. The solver's own cost (pair
+  sums, terrain steps, pair builds) is the Jacobi solve itself.
+- **By Amendment 16, step 2, this is a stop:** the bar fails by 2.6 points, and the split goes to the orchestrator
+  for the owner.
