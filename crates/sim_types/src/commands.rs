@@ -2,6 +2,7 @@
 
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
 use crate::math::{SimScalar, SimVec2};
+use crate::resource_kind_set::ResourceKindSet;
 use crate::weapon::WeaponSpec;
 use serde::{Deserialize, Serialize};
 
@@ -144,13 +145,22 @@ pub struct OverclockSpec {
 /// The capability to harvest resources: a unit whose archetype has one gathers from resource
 /// nodes and delivers to depots.
 ///
-/// It carries no numbers. How long a gather takes, how much it yields and how long the worker
-/// waits at the node before it returns are the resource's (`StarCraft` II 5.0.14's
-/// `CBehaviorResource` `HarvestTime`, `HarvestAmount` and `ReturnDelay`), authored per resource
-/// kind in `placement_rules.ron` (plan `2026-11-22-harvest-timing` D-2, D-3). The game's workers
-/// set no per-resource multiplier on them, so a worker adds nothing of its own.
+/// How long a gather takes, how much it yields and how long the worker waits at the node before
+/// it returns are the resource's (`StarCraft` II 5.0.14's `CBehaviorResource` `HarvestTime`,
+/// `HarvestAmount` and `ReturnDelay`), authored per resource kind in `placement_rules.ron` (plan
+/// `2026-11-22-harvest-timing` D-2, D-3). The worker's own numbers are its harvest ability's
+/// acquire fields (`CAbilHarvest`, core `AbilData` 353–380; plan `2026-11-23-harvest-occupancy`
+/// D-4): how far and for which kinds it looks for another node by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct HarvesterSpec {}
+pub struct HarvesterSpec {
+    /// How far from the worker's position it looks for another node, in world units (one game
+    /// unit is one cell): when its node is occupied and when it is exhausted (`AcquireRadius`).
+    pub acquire_radius: SimScalar,
+    /// The kinds for which the worker looks for another node at all (`ResourceAcquire`). A
+    /// worker whose node is of a kind outside the set waits at it while it is occupied and ends
+    /// its order when it is exhausted.
+    pub acquires: ResourceKindSet,
+}
 
 /// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's
 /// Immortal Barrier: the `BarrierDamageResponse` and `ImmortalOverload` behaviours).

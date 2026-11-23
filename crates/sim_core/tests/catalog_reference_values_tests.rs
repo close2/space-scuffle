@@ -4505,3 +4505,28 @@ fn the_shipped_resource_footprints_are_5_0_14() -> TestResult {
     assert_eq!(gas_reach.cells.len(), 69);
     Ok(())
 }
+
+/// Plan `2026-11-23-harvest-occupancy` D-4: every harvester acquires as the 5.0.14 harvest
+/// ability does. `CAbilHarvest`'s default (core AbilData:353-380), which `SCVHarvest`,
+/// `ProbeHarvest` and `DroneHarvest` inherit unchanged (liberty AbilData:1094-1099, 2241-2243):
+/// `AcquireRadius 10` (:361, game units = cells = world units) and `ResourceAcquire Minerals 1`
+/// (:368), with no `ResourceAcquire` for Vespene.
+#[test]
+fn the_shipped_harvesters_acquire_as_5_0_14() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut harvesters = 0;
+    for archetype in catalogs.units.archetypes() {
+        let Some(spec) = archetype.capabilities.harvester else {
+            continue;
+        };
+        harvesters += 1;
+        let name = analogue(archetype);
+        assert_eq!(spec.acquire_radius, SimScalar::from_num(10), "{name}");
+        assert_eq!(
+            spec.acquires,
+            sim_types::ResourceKindSet::of(&[sim_types::ResourceKind::Mineral]),
+            "{name}"
+        );
+    }
+    assert_eq!(harvesters, 3, "the three races' workers");
+}
