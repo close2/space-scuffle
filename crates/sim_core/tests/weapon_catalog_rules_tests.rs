@@ -1323,8 +1323,11 @@ const SC2_SPLASH_IMPACT: [(&str, SplashImpact, Option<f32>, &str); 7] = [
     (
         "Siege Tank",
         SplashImpact::Target,
-        None,
-        "CrucioShockCannonBlast impacts its target: liberty EffectData:1668-1681",
+        Some(1.25),
+        "CrucioShockCannonBlast impacts its target (liberty EffectData:1668-1681); the weapon's \
+         CrucioShockCannonSwitch (swarm WeaponData:169-171, EffectData:2183-2187) gives a target \
+         of Radius 1.25 or more the area-less CrucioShockCannonDirected (TargetRadiusLarge, \
+         liberty ValidatorData:824-833)",
     ),
     (
         "Baneling",

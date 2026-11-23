@@ -2294,6 +2294,19 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
                 splash.is_some(),
                 "{label}: a splash weapon, and only one, names its splash"
             );
+            // Plan `2026-11-23-splash-centres` D-8 item 2: an area that opens only below a
+            // target radius publishes nothing at a larger target, so the shot names an impact
+            // and still shows a landing there.
+            if spec
+                .splash
+                .as_ref()
+                .is_some_and(|splash| splash.target_radius_below.is_some())
+            {
+                assert!(
+                    impact.is_some(),
+                    "{label}: a conditional area names an impact for the shots it does not open on"
+                );
+            }
             match delivery {
                 Delivery::Projectile => {
                     let travel = travel.unwrap_or_else(|| panic!("{label}: no travel"));

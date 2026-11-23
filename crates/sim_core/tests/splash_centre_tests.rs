@@ -729,7 +729,176 @@ fn the_banelings_burst_is_centred_on_it() {
         "beyond the target, outside its reach"
     );
     assert!(
-        !world.entities.get(&baneling).is_some_and(|b| b.is_alive()),
+        !world
+            .entities
+            .get(&baneling)
+            .is_some_and(sim_core::Entity::is_alive),
         "the Baneling is spent"
     );
+}
+
+/// The shipped mode weapon with a circular area (the sieged Siege Tank analogue's cannon), found
+/// by property, as a scratch copy that fires at once from where it stands: no minimum range,
+/// aimed all round, no turret delay. Its damage, area and condition are as shipped.
+fn shipped_sieged_cannon(world: &SimWorld) -> WeaponSpec {
+    let mut weapon = world
+        .catalog
+        .archetypes()
+        .flat_map(|arch| &arch.modes)
+        .filter_map(|mode| {
+            mode.ground_weapon_override
+                .as_ref()
+                .and_then(Option::as_ref)
+        })
+        .find(|weapon| {
+            weapon
+                .splash
+                .as_ref()
+                .is_some_and(|splash| splash.shape == SplashShape::Circle)
+        })
+        .cloned()
+        .expect("invariant: the shipped catalog has a mode weapon with a circular area");
+    weapon.min_range = SimScalar::ZERO;
+    weapon.firing_arc = SimAngle::from_degrees(360);
+    weapon.acquire_arc = SimAngle::from_degrees(360);
+    weapon.has_turret = false;
+    weapon
+}
+
+/// Every shipped structure that stands on open ground (a gas extractor stands only over a
+/// geyser), with its collision radius and its footprint's half height in world units.
+fn open_ground_structures(world: &SimWorld) -> Vec<(UnitTypeId, SimScalar, SimScalar)> {
+    world
+        .catalog
+        .archetypes()
+        .filter(|arch| !arch.capabilities.is_gas_extractor)
+        .filter_map(|arch| match arch.shape {
+            ShapeKind::BuildingDome { footprint_h, .. } => Some((
+                arch.unit_type_id,
+                arch.collision_radius,
+                SimScalar::from_num(footprint_h) * SimScalar::HALF,
+            )),
+            ShapeKind::UnitSphere => None,
+        })
+        .collect()
+}
+
+/// One sieged shot at a red `structure` (radius `radius`, half height `half`) placed at cells
+/// (20, 20), with a red bystander touching its footprint's north face when the area's reach
+/// could find it. Returns the `SplashVisual` count of the strike's tick and whether the
+/// bystander lost life (`None` when none was placed).
+fn sieged_shot_at(
+    structure: UnitTypeId,
+    radius: SimScalar,
+    half: SimScalar,
+) -> (usize, Option<bool>) {
+    let mut world = world();
+    let weapon = shipped_sieged_cannon(&world);
+    let reach = splash_of(&weapon).reach();
+    let target = world
+        .spawn_structure(structure, RED, 20, 20)
+        .expect("open ground");
+    let at = world.entities[&target].position;
+    let attacker = {
+        let kind = register(&mut world, "splash_centre_cannon", s(BODY), |arch| {
+            arch.weapon = Some(weapon.clone());
+            arch.ground_weapon = Some(weapon.clone());
+        });
+        world
+            .spawn_unit(
+                kind,
+                BLUE,
+                offset(at, -(radius + s(BODY) + s(3.0)), SimScalar::ZERO),
+            )
+            .expect("open ground")
+    };
+    let gap = s(0.05);
+    let bystander = (half + gap <= reach).then(|| {
+        body(
+            &mut world,
+            RED,
+            s(BODY),
+            offset(at, SimScalar::ZERO, half + s(BODY) + gap),
+        )
+    });
+    let watched: Vec<_> = std::iter::once(target).chain(bystander).collect();
+    let (losses, snapshot) = first_strike(&mut world, attacker, target, &watched);
+    assert!(losses[0] > SimScalar::ZERO, "the structure is struck");
+    (
+        splash_visuals(&snapshot),
+        bystander.map(|_| losses[1] > SimScalar::ZERO),
+    )
+}
+
+/// The target radius condition of the shipped sieged cannon.
+fn sieged_limit(world: &SimWorld) -> SimScalar {
+    splash_of(&shipped_sieged_cannon(world))
+        .target_radius_below
+        .expect("the sieged cannon's area is conditional (B-84)")
+}
+
+/// P-3, P-4 (B-84): a sieged shot at a shipped structure of radius 1.25 or more (the Supply Depot
+/// analogue and larger) opens no area: no `SplashVisual`, and a bystander touching its footprint,
+/// inside the reach of an area around its centre, is untouched.
+#[test]
+fn a_sieged_shot_at_a_large_structure_has_no_area() {
+    let world = world();
+    let limit = sieged_limit(&world);
+    let large: Vec<_> = open_ground_structures(&world)
+        .into_iter()
+        .filter(|&(_, radius, _)| radius >= limit)
+        .collect();
+    assert!(
+        !large.is_empty(),
+        "the shipped catalog has large structures"
+    );
+    for (kind, radius, half) in large {
+        let (visuals, bystander) = sieged_shot_at(kind, radius, half);
+        assert_eq!(visuals, 0, "{kind:?} (radius {radius}): no area");
+        assert_ne!(
+            bystander,
+            Some(true),
+            "{kind:?} (radius {radius}): nobody else struck"
+        );
+    }
+}
+
+/// P-3, P-4 (B-84): a sieged shot at a shipped structure of radius below 1.25 opens its area:
+/// one `SplashVisual`, and a bystander touching its footprint is struck.
+#[test]
+fn a_sieged_shot_at_a_small_structure_splashes() {
+    let world = world();
+    let limit = sieged_limit(&world);
+    let small: Vec<_> = open_ground_structures(&world)
+        .into_iter()
+        .filter(|&(_, radius, _)| radius < limit)
+        .collect();
+    assert!(
+        !small.is_empty(),
+        "the shipped catalog has small structures"
+    );
+    for (kind, radius, half) in small {
+        let (visuals, bystander) = sieged_shot_at(kind, radius, half);
+        assert_eq!(visuals, 1, "{kind:?} (radius {radius}): the area opens");
+        assert_eq!(
+            bystander,
+            Some(true),
+            "{kind:?} (radius {radius}): the bystander is struck"
+        );
+    }
+}
+
+/// P-4: no shipped mobile ground unit has a radius of 1.25 or more, so the sieged cannon's
+/// condition takes its area from no unit.
+#[test]
+fn no_shipped_ground_unit_is_too_large_for_the_sieged_area() {
+    let world = world();
+    let limit = sieged_limit(&world);
+    for arch in world.catalog.archetypes() {
+        if arch.mover_type == MoverType::Ground
+            && !matches!(arch.shape, ShapeKind::BuildingDome { .. })
+        {
+            assert!(arch.collision_radius < limit, "{} is too large", arch.slug);
+        }
+    }
 }

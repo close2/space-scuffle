@@ -120,3 +120,27 @@ beyond 2.2 of the Baneling's centre while within 2.2 of the target's near edge.
 | 3203386110 | 13 (two Banelings) | 13 | 8 | five marines beyond 2.2 of the Banelings |
 
 The 11a and 11b traces of the seeds of record are byte-identical between the trees.
+
+## WP3: the Siege Tank's large targets (B-84)
+
+### Red run (on the WP2 tree)
+
+Logs `~/scratch/splash-centres/red/wp3-*.log`:
+
+| Test | Result | Failure |
+|---|---|---|
+| `weapon_catalog_rules_tests::splash_impact_and_condition_follow_starcraft` (Siege Tank cell `Some(1.25)`) | failed | `railgun_crawler` Crucio Shock Cannon: `(Target, None)`, StarCraft II `(Target, Some(1.25))` |
+| `splash_centre_tests::a_sieged_shot_at_a_large_structure_has_no_area`, `…_at_a_small_structure_splashes`, `no_shipped_ground_unit_is_too_large_for_the_sieged_area` (P-3, P-4) | failed | "the sieged cannon's area is conditional (B-84)": the shipped cannon had no condition |
+| `runtime_catalog_tests::an_edited_target_radius_condition_opens_the_sieged_area` (P-7), run against the WP2 `units.ron` | failed | "the shipped catalog has the condition" |
+| `client` `effect_catalog_tests::every_shipped_weapon_names_the_looks_of_the_event_it_publishes` (D-8 item 2), with the condition in the data and no impact look | failed | "railgun_crawler Primary Some("siege_mode") Hitscan: a conditional area names an impact for the shots it does not open on" |
+
+All pass with the data of D-4 and D-8 item 2. P-4 holds on the shipped data: every open-ground structure below
+radius 1.25 opens the area (one `SplashVisual`, a bystander touching its footprint struck); the Supply Depot
+analogue and every larger one open none (no `SplashVisual`, the bystander untouched where one fits within 1.25 of the
+centre); no shipped mobile ground unit has radius 1.25 or more.
+
+### Worlds
+
+`compare.sh world-wp2 world-wp3`: `files base=483 new=483 differing=0`. No measured world moved, the showcase effects
+scenario included (no sieged tank there fires at a town hall in 6,000 ticks on any of its nine seeds). Against WP0 the
+only differences are WP2's battle 32 rows.

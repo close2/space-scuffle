@@ -1506,7 +1506,11 @@ fn an_edited_splash_impact_moves_the_burst() -> TestResult {
                 commands: Vec::new(),
                 state_checksum: None,
             });
-            if !world.entities.get(&baneling).is_some_and(|b| b.is_alive()) {
+            if !world
+                .entities
+                .get(&baneling)
+                .is_some_and(sim_core::Entity::is_alive)
+            {
                 break;
             }
         }
@@ -1514,6 +1518,124 @@ fn an_edited_splash_impact_moves_the_burst() -> TestResult {
     };
     assert_eq!(struck(shipped)?, (true, false), "centred on the Baneling");
     assert_eq!(struck(edited)?, (false, true), "centred on its target");
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-23-splash-centres` P-7 (B-84): the sieged cannon's target radius condition is
+/// read from `units.ron` at run time. The cannon, found by property (a mode weapon with a
+/// conditional circular area), fires at the first shipped structure the condition exempts; the
+/// shipped catalog publishes no `SplashVisual`, and the same binary with the condition removed
+/// from the row publishes one.
+#[test]
+fn an_edited_target_radius_condition_opens_the_sieged_area() -> TestResult {
+    let bundle = Bundle::new("splash-condition")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let condition = "target_radius_below: Some(1.25),";
+    assert!(
+        text.contains(condition),
+        "the shipped catalog has the condition"
+    );
+    std::fs::write(&path, text.replacen(condition, "", 1))?;
+    let edited = bundle.load()?;
+    // The sieged cannon of `catalogs` by property, and the first structure its shipped
+    // condition exempts.
+    let shipped_cannon = shipped
+        .units
+        .archetypes()
+        .flat_map(|arch| &arch.modes)
+        .filter_map(|mode| {
+            mode.ground_weapon_override
+                .as_ref()
+                .and_then(Option::as_ref)
+        })
+        .find(|weapon| {
+            weapon
+                .splash
+                .as_ref()
+                .is_some_and(|splash| splash.target_radius_below.is_some())
+        })
+        .cloned()
+        .ok_or("a conditional mode weapon")?;
+    let limit = shipped_cannon
+        .splash
+        .as_ref()
+        .and_then(|splash| splash.target_radius_below)
+        .ok_or("conditional")?;
+    let large = shipped
+        .units
+        .archetypes()
+        .find(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                && !arch.capabilities.is_gas_extractor
+                && arch.collision_radius >= limit
+        })
+        .map(|arch| (arch.unit_type_id, arch.collision_radius))
+        .ok_or("a large structure")?;
+    let visuals = |catalogs: RuntimeCatalogs| -> Result<usize, Box<dyn std::error::Error>> {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+        sim_fixtures::without_random_delays(&mut world.catalog);
+        // The same mode weapon as `catalogs` authors it, made to fire from where it stands.
+        let (owner_kind, mut cannon) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                arch.modes
+                    .iter()
+                    .filter_map(|mode| {
+                        mode.ground_weapon_override
+                            .as_ref()
+                            .and_then(Option::as_ref)
+                    })
+                    .find(|weapon| weapon.name == shipped_cannon.name)
+                    .map(|weapon| (arch.unit_type_id, weapon.clone()))
+            })
+            .ok_or("the cannon")?;
+        cannon.min_range = SimScalar::ZERO;
+        cannon.firing_arc = sim_types::SimAngle::from_degrees(360);
+        cannon.acquire_arc = sim_types::SimAngle::from_degrees(360);
+        cannon.has_turret = false;
+        let arch = world.catalog.get_mut(owner_kind)?;
+        arch.weapon = Some(cannon.clone());
+        arch.ground_weapon = Some(cannon);
+        let (kind, radius) = large;
+        let structure = world.spawn_structure(kind, PlayerId(1), 12, 12)?;
+        let at = world.entities[&structure].position;
+        let gunner = world.spawn_unit(
+            owner_kind,
+            PlayerId(0),
+            SimVec2::new(at.x - radius - SimScalar::from_num(4), at.y),
+        )?;
+        world
+            .entities
+            .get_mut(&gunner)
+            .ok_or("spawned")?
+            .issue_order(sim_types::UnitOrder::attack(structure), false)?;
+        let full = world.entities[&structure].hp + world.entities[&structure].shields;
+        for tick in 0..120 {
+            let snapshot = world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+            let now = world.entities[&structure].hp + world.entities[&structure].shields;
+            if now < full {
+                return Ok(snapshot
+                    .combat_events
+                    .iter()
+                    .filter(|event| {
+                        matches!(event, sim_types::CombatEventVisual::SplashVisual { .. })
+                    })
+                    .count());
+            }
+        }
+        Err("the cannon never struck".into())
+    };
+    assert_eq!(visuals(shipped)?, 0, "the shipped condition: no area");
+    assert_eq!(visuals(edited)?, 1, "the condition removed: the area opens");
     bundle.finish()?;
     Ok(())
 }
