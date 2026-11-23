@@ -1663,3 +1663,19 @@ traces. Requirements:
 steps are not run, and the trade-off goes to the owner with step 1b's figures.
 
 **If step 2′ passes,** continue with Amendment 11 steps 3 to 7 unchanged.
+
+## Amendment 13 (orchestrator, 2026-11-23): step 1b stopped; step 2′ is measured on step 1
+
+**Step 1b is stopped** by Amendment 8's step rule (evidence §13.4). It does what it was meant to do where a unit
+touches one body: arc give-ups 305 → 2 and corridor give-ups 20 → 0. Where several bodies touch, it breaks T1 and
+T8: arc M1-hi rises from 0.192 to 5.21, corner and gap reversals rise, and cross give-ups rise. The traces show why.
+Several touching, closing bodies tie at time to contact zero, so the side partner changes as contacts come and go.
+The tangent of a disc a unit already overlaps is perpendicular to the line between them, so each change of partner
+is a 90° sideways step that contact pushes back. Recorded on `contact-solver-1b-wip` (`56cb6c1d`). No variant is
+tried: a tie-break or a contact-only rule would be a new rule on a failed step.
+
+**Step 2′ stays the one fallback of Amendment 11 step 2.** It addresses R1 (the goal attractor behind the front
+rank), not 1b's mechanism, and does not depend on 1b. It is rebased onto step 1, without `56cb6c1d`, and measured
+once under Amendment 8's step rule against step 1 and by P2's two criteria. The outcomes are as Amendment 12 states:
+if it fails, stop and report; if it passes, continue with Amendment 11 steps 3 to 7, handing back before the fresh
+acceptance run.
