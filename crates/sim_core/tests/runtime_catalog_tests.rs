@@ -1304,3 +1304,120 @@ fn an_edited_structure_energy_rate_changes_the_regeneration() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// `structures` with the first definition `pick` accepts authoring `attributes` (a RON list):
+/// any authored `attributes` line of that definition is removed and the list written before its
+/// `max_hp`. Returns the edited text and that definition's slug, read from the file (C5).
+fn with_structure_attributes(
+    structures: &str,
+    pick: impl Fn(&str) -> bool,
+    attributes: &str,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    const OPENING: &str = "\n        (\n            structure_type_id";
+    let mut definitions = structures.split(OPENING);
+    let mut source = definitions.next().unwrap_or_default().to_owned();
+    let mut chosen = None;
+    for definition in definitions {
+        source.push_str(OPENING);
+        if chosen.is_some() || !pick(definition) {
+            source.push_str(definition);
+            continue;
+        }
+        let slug = definition
+            .split("slug: \"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .ok_or("every definition has a slug")?;
+        chosen = Some(slug.to_owned());
+        for line in definition.split_inclusive('\n') {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("attributes:") {
+                continue;
+            }
+            if trimmed.starts_with("max_hp:") {
+                source.push_str("            attributes: ");
+                source.push_str(attributes);
+                source.push_str(",\n");
+            }
+            source.push_str(line);
+        }
+    }
+    Ok((source, chosen.ok_or("no definition was picked")?))
+}
+
+/// Whether a structure definition authors shields.
+fn is_shielded(definition: &str) -> bool {
+    definition
+        .split("max_shields:")
+        .nth(1)
+        .and_then(|rest| rest.split(',').next())
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .is_some_and(|value| value > 0.0)
+}
+
+/// Plan `2026-11-23-structure-attributes` P-3 (B-88, charter §3.3, C6): a structure's attributes
+/// are read as written, in the same binary. A shielded structure given `[Armored, Mechanical,
+/// Structure]` loads with exactly those (shields add no Psionic), and an unshielded one given
+/// `[Armored, Light, Structure]` takes a shipped weapon's `Light` bonus (found by property).
+#[test]
+fn an_edited_structure_attribute_list_is_read_as_written() -> TestResult {
+    use sim_types::{Attribute, AttributeFlags};
+    let bundle = Bundle::new("structure-attributes")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    let (text, shielded) =
+        with_structure_attributes(&text, is_shielded, "[Armored, Mechanical, Structure]")?;
+    let (text, unshielded) = with_structure_attributes(
+        &text,
+        |definition| !is_shielded(definition),
+        "[Armored, Light, Structure]",
+    )?;
+    std::fs::write(&path, text)?;
+    let edited = bundle.load()?;
+    let archetype =
+        |catalogs: &RuntimeCatalogs, slug: &str| -> Result<_, Box<dyn std::error::Error>> {
+            Ok(catalogs
+                .units
+                .get(
+                    catalogs
+                        .units
+                        .id_by_slug(slug)
+                        .ok_or("the edited structure loads")?,
+                )?
+                .clone())
+        };
+    assert_eq!(
+        archetype(&edited, &shielded)?.attributes,
+        AttributeFlags::ARMORED | AttributeFlags::MECHANICAL | AttributeFlags::STRUCTURE,
+        "{shielded}: shields add no attribute"
+    );
+    let light = archetype(&edited, &unshielded)?;
+    assert_eq!(
+        light.attributes,
+        AttributeFlags::ARMORED | AttributeFlags::LIGHT | AttributeFlags::STRUCTURE
+    );
+    let before = archetype(&shipped, &unshielded)?;
+    assert!(!before.attributes.contains(AttributeFlags::LIGHT));
+    let weapon = edited
+        .units
+        .archetypes()
+        .flat_map(|a| [&a.ground_weapon, &a.air_weapon, &a.weapon])
+        .flatten()
+        .find(|weapon| {
+            weapon.structure_strike.is_none()
+                && weapon.attribute_bonuses.get(Attribute::Light) > SimScalar::ZERO
+        })
+        .expect("a shipped weapon has a Light bonus");
+    let damage = |target: &sim_core::catalog::UnitArchetype| {
+        sim_core::calculate_hit_damage(weapon, target, SimScalar::ZERO, target.max_hp).life_damage
+    };
+    assert_eq!(
+        damage(&light),
+        damage(&before) + weapon.attribute_bonuses.get(Attribute::Light),
+        "{unshielded} takes {}'s Light bonus",
+        weapon.name
+    );
+    bundle.finish()?;
+    Ok(())
+}

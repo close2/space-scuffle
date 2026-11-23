@@ -19,8 +19,9 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, MoverType, PlacementFlag,
-    ProjectileTargetLossBehavior, ResourceKind, SimAngle, SimScalar, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
+    PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
+    WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -247,6 +248,66 @@ fn positive_rate(definition: &str, field: &str, rate: SimScalar) -> SimResult<()
     Ok(())
 }
 
+/// Checks a structure row's attributes (plan `2026-11-23-structure-attributes` D-2): at least one,
+/// none twice, and `Structure` among them. Any other attribute is allowed, because the game puts
+/// `Light` on a structure (the Creep Tumor); `Structure` is the one every structure has.
+fn structure_attributes(definition: &str, attributes: &[Attribute]) -> SimResult<()> {
+    if attributes.is_empty() {
+        return Err(invalid(
+            definition,
+            "attributes",
+            "must name at least one attribute",
+        ));
+    }
+    for (index, attribute) in attributes.iter().enumerate() {
+        if attributes[..index].contains(attribute) {
+            return Err(invalid(
+                definition,
+                &format!("attributes.{attribute:?}"),
+                "listed twice",
+            ));
+        }
+    }
+    if !attributes.contains(&Attribute::Structure) {
+        return Err(invalid(
+            definition,
+            "attributes",
+            "a structure has the Structure attribute",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks a unit row's authored attribute `bits` (plan `2026-11-23-structure-attributes` D-3):
+/// every bit names an attribute, at least one is set (an archetype with none matches no weapon's
+/// target flags, so nothing could attack it), and `Structure` is not among them, which only a
+/// structure row has.
+fn unit_attributes(definition: &str, bits: u16) -> SimResult<()> {
+    let Some(flags) = AttributeFlags::from_bits(bits) else {
+        return Err(invalid(
+            definition,
+            "attributes",
+            "names a bit no attribute has",
+        ));
+    };
+    if flags.is_empty() {
+        return Err(invalid(
+            definition,
+            "attributes",
+            "must name at least one attribute; an archetype without one matches no weapon's \
+             target flags",
+        ));
+    }
+    if flags.contains(AttributeFlags::STRUCTURE) {
+        return Err(invalid(
+            definition,
+            "attributes",
+            "only a structure row has the Structure attribute",
+        ));
+    }
+    Ok(())
+}
+
 fn ability_rates(definition: &str, prefix: &str, abilities: &[AbilitySpec]) -> SimResult<()> {
     for (index, ability) in abilities.iter().enumerate() {
         for (field, value) in [
@@ -294,6 +355,58 @@ fn ability_rates(definition: &str, prefix: &str, abilities: &[AbilitySpec]) -> S
 }
 
 impl UnitArchetypeDef {
+    /// Checks the Overclock capability's rates, when authored: each finite, the HP cost and speed
+    /// multiplier nonnegative, and the attack-rate multiplier a positive rate.
+    fn validate_overclock(&self) -> SimResult<()> {
+        if let Some(overclock) = &self.capabilities.overclock {
+            for (field, value) in [
+                ("capabilities.overclock.hp_cost", overclock.hp_cost),
+                (
+                    "capabilities.overclock.speed_multiplier",
+                    overclock.speed_multiplier,
+                ),
+                (
+                    "capabilities.overclock.attack_rate_multiplier",
+                    overclock.attack_rate_multiplier,
+                ),
+            ] {
+                scalar(&self.slug, field, f64::from(value))?;
+            }
+            nonnegative(
+                &self.slug,
+                "capabilities.overclock.speed_multiplier",
+                f64::from(overclock.speed_multiplier),
+            )?;
+            nonnegative(
+                &self.slug,
+                "capabilities.overclock.hp_cost",
+                f64::from(overclock.hp_cost),
+            )?;
+            positive_rate(
+                &self.slug,
+                "capabilities.overclock.attack_rate_multiplier",
+                SimScalar::from_f32_lossy(overclock.attack_rate_multiplier),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Checks the attributes ([`unit_attributes`]) and that the shape is not a building's: the
+    /// structure conversion alone builds that shape, so with [`structure_attributes`] an
+    /// archetype has `Structure` exactly when it has a building shape (plan
+    /// `2026-11-23-structure-attributes` D-3).
+    fn validate_attributes(&self) -> SimResult<()> {
+        unit_attributes(&self.slug, self.attributes.bits())?;
+        if matches!(self.shape, ShapeKind::BuildingDome { .. }) {
+            return Err(invalid(
+                &self.slug,
+                "shape",
+                "only a structure row has a building shape",
+            ));
+        }
+        Ok(())
+    }
+
     /// A barrier absorbs a positive amount, stays raised at least one tick, and cannot be
     /// raised again while it is still up.
     fn validate_barrier(&self) -> SimResult<()> {
@@ -476,6 +589,7 @@ impl UnitArchetypeDef {
 
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
+        self.validate_attributes()?;
         for (field, value) in [
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
@@ -535,36 +649,7 @@ impl UnitArchetypeDef {
         self.validate_barrier()?;
         self.validate_harvester()?;
         self.validate_attack_dash()?;
-        if let Some(overclock) = &self.capabilities.overclock {
-            for (field, value) in [
-                ("capabilities.overclock.hp_cost", overclock.hp_cost),
-                (
-                    "capabilities.overclock.speed_multiplier",
-                    overclock.speed_multiplier,
-                ),
-                (
-                    "capabilities.overclock.attack_rate_multiplier",
-                    overclock.attack_rate_multiplier,
-                ),
-            ] {
-                scalar(&self.slug, field, f64::from(value))?;
-            }
-            nonnegative(
-                &self.slug,
-                "capabilities.overclock.speed_multiplier",
-                f64::from(overclock.speed_multiplier),
-            )?;
-            nonnegative(
-                &self.slug,
-                "capabilities.overclock.hp_cost",
-                f64::from(overclock.hp_cost),
-            )?;
-            positive_rate(
-                &self.slug,
-                "capabilities.overclock.attack_rate_multiplier",
-                SimScalar::from_f32_lossy(overclock.attack_rate_multiplier),
-            )?;
-        }
+        self.validate_overclock()?;
         ability_rates(&self.slug, "abilities", &self.abilities)?;
         ability_rates(
             &self.slug,
@@ -1111,6 +1196,7 @@ impl StructureArchetypeDef {
 
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
+        structure_attributes(&self.slug, &self.attributes)?;
         self.validate_auto_rally()?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
@@ -3345,6 +3431,200 @@ mod placement_flag_tests {
             assert!(reach.covers(0, 0), "{:?} holds its node's cell", reach.kind);
             assert_eq!(reach.applies, PlacementFlag::NearResources.bit());
         }
+        Ok(())
+    }
+}
+
+/// Attribute rules (plan `2026-11-23-structure-attributes` D-2, D-3, P-4): a structure row
+/// authors a non-empty list without repeats that names `Structure`; a unit row authors known bits,
+/// at least one, never `Structure`, and no building shape.
+#[cfg(test)]
+mod attribute_tests {
+    use crate::catalog::{AttributeFlagsDef, StructureCatalogFile, UnitArchetypeDef};
+    use crate::error::{SimCoreError, SimResult};
+    use sim_types::{Attribute, ShapeKind};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    const STRUCTURES: &str = include_str!("../../../../assets/catalog/structures.ron");
+
+    fn shipped_structures() -> Result<StructureCatalogFile, Box<dyn std::error::Error>> {
+        let file: StructureCatalogFile = ron::from_str(STRUCTURES)?;
+        assert!(
+            !file.structures.is_empty(),
+            "the shipped catalog has structures"
+        );
+        Ok(file)
+    }
+
+    /// The first shipped unit row, which validates as authored.
+    fn shipped_unit() -> Result<UnitArchetypeDef, Box<dyn std::error::Error>> {
+        let file: crate::catalog::CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let unit = file
+            .units
+            .into_iter()
+            .next()
+            .ok_or("the shipped catalog has units")?;
+        unit.validate()?;
+        Ok(unit)
+    }
+
+    /// Asserts that `result` is a refusal naming `field` with `reason`.
+    fn assert_refused(result: &SimResult<()>, field: &str, reason: &str) {
+        assert!(
+            matches!(
+                result,
+                Err(SimCoreError::CatalogInvalidValue { field: f, reason: r, .. })
+                    if f == field && *r == reason
+            ),
+            "expected `{field}`: {reason}; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_structure_without_the_attributes_field_does_not_parse() {
+        let stripped = STRUCTURES
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("attributes:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let error = ron::from_str::<StructureCatalogFile>(&stripped)
+            .err()
+            .map(|error| error.to_string());
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|error| error.contains("attributes")),
+            "a structure row without `attributes` must fail to parse naming it; got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_structure_with_no_attribute_is_refused() -> TestResult {
+        let mut file = shipped_structures()?;
+        for structure in &mut file.structures {
+            structure.validate()?;
+            structure.attributes.clear();
+            assert_refused(
+                &structure.validate(),
+                "attributes",
+                "must name at least one attribute",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_attribute_listed_twice_is_refused() -> TestResult {
+        let mut file = shipped_structures()?;
+        for structure in &mut file.structures {
+            let first = *structure
+                .attributes
+                .first()
+                .ok_or("an authored attribute")?;
+            structure.attributes.push(first);
+            assert_refused(
+                &structure.validate(),
+                &format!("attributes.{first:?}"),
+                "listed twice",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_without_the_structure_attribute_is_refused() -> TestResult {
+        let mut file = shipped_structures()?;
+        for structure in &mut file.structures {
+            structure
+                .attributes
+                .retain(|&attribute| attribute != Attribute::Structure);
+            assert!(!structure.attributes.is_empty(), "{}", structure.slug);
+            assert_refused(
+                &structure.validate(),
+                "attributes",
+                "a structure has the Structure attribute",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_may_author_any_attribute_besides_structure() -> TestResult {
+        // The game's Creep Tumor is Light, Biological, Structure (plan §2.2 rule 3), so no
+        // attribute but `Structure` is required or refused on a structure row.
+        let mut file = shipped_structures()?;
+        let structure = file.structures.first_mut().ok_or("a structure")?;
+        structure.attributes = Attribute::ALL.to_vec();
+        structure.validate()?;
+        structure.attributes = vec![Attribute::Structure];
+        structure.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_with_the_structure_attribute_is_refused() -> TestResult {
+        let mut unit = shipped_unit()?;
+        unit.attributes = AttributeFlagsDef::Bits {
+            bits: unit.attributes.bits() | sim_types::AttributeFlags::STRUCTURE.bits(),
+        };
+        assert_refused(
+            &unit.validate(),
+            "attributes",
+            "only a structure row has the Structure attribute",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_with_no_attribute_is_refused() -> TestResult {
+        let mut unit = shipped_unit()?;
+        unit.attributes = AttributeFlagsDef::Bits { bits: 0 };
+        assert_refused(
+            &unit.validate(),
+            "attributes",
+            "must name at least one attribute; an archetype without one matches no weapon's \
+             target flags",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_with_an_unknown_attribute_bit_is_refused() -> TestResult {
+        let mut unit = shipped_unit()?;
+        for attributes in [
+            AttributeFlagsDef::Bits { bits: 256 },
+            AttributeFlagsDef::Num(unit.attributes.bits() | 256),
+        ] {
+            unit.attributes = attributes;
+            assert_refused(
+                &unit.validate(),
+                "attributes",
+                "names a bit no attribute has",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_with_a_building_shape_is_refused() -> TestResult {
+        let mut unit = shipped_unit()?;
+        let structure = shipped_structures()?
+            .structures
+            .into_iter()
+            .next()
+            .ok_or("a structure")?;
+        unit.shape = ShapeKind::BuildingDome {
+            footprint_w: 2,
+            footprint_h: 2,
+            shape: structure.footprint_shape.resolve(),
+        };
+        assert_refused(
+            &unit.validate(),
+            "shape",
+            "only a structure row has a building shape",
+        );
         Ok(())
     }
 }
