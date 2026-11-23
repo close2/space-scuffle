@@ -144,3 +144,25 @@ centre); no shipped mobile ground unit has radius 1.25 or more.
 `compare.sh world-wp2 world-wp3`: `files base=483 new=483 differing=0`. No measured world moved, the showcase effects
 scenario included (no sieged tank there fires at a town hall in 6,000 ticks on any of its nine seeds). Against WP0 the
 only differences are WP2's battle 32 rows.
+
+## WP4: the Planetary Fortress splashes (B-169)
+
+### Red run (on the WP3 tree)
+
+Logs `~/scratch/splash-centres/red/wp4-*.log`:
+
+| Test | Result | Failure |
+|---|---|---|
+| `weapon_catalog_rules_tests::b16_splash_zones_follow_starcraft`, `q0063_splash_offset_follows_starcraft`, `splash_impact_and_condition_follow_starcraft` (Planetary Fortress rows, S12) | failed | "every row reaches a (shipped) weapon": 3 of 4, 7 of 8, 7 of 8 |
+| `splash_centre_tests::the_planetary_fortress_splashes` (P-5) | failed | "a shipped structure splashes (B-169)" |
+| `client` `effect_catalog_tests` with the splash in the data and no look | 2 failed | `every_shipped_weapon_names_the_looks_of_the_event_it_publishes` ("a splash weapon, and only one, names its splash") and `every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_extent` ("the block names no splash effect") |
+
+With the look named, the second client test still failed, on the slot: its helper `splash_weapons` read a structure's
+ground weapon as `Primary`, while the simulation (`world/presentation.rs` `ground_slot`) and the sibling helper
+`tagged_weapons` publish it as `Ground`. The Planetary Fortress analogue is the first structure with an area, so
+the helper had never met one; it now applies the structure rule. All pass with the data of D-5 and D-8 item 3.
+
+### Worlds
+
+`compare.sh world-wp3 world-wp4`: `files base=483 new=483 differing=0`. No measured world places a Planetary Fortress
+analogue; goldens and sandbox unchanged.

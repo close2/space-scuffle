@@ -902,3 +902,111 @@ fn no_shipped_ground_unit_is_too_large_for_the_sieged_area() {
         }
     }
 }
+
+/// P-5 (B-169): the Planetary Fortress analogue, found by property (the shipped structure with a
+/// ground weapon and an area), splashes with `TwinIbiksCannon`'s zones (`liberty`
+/// EffectData:2540–2542) around its target's centre: the target struck once, an enemy in each
+/// zone at its fraction, an enemy beyond the last zone and a friendly unit inside it untouched.
+#[test]
+fn the_planetary_fortress_splashes() {
+    let mut world = world();
+    let (fortress, weapon) = world
+        .catalog
+        .archetypes()
+        .filter(|arch| matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+        .find_map(|arch| {
+            arch.ground_weapon
+                .as_ref()
+                .filter(|weapon| weapon.splash.is_some())
+                .map(|weapon| (arch.unit_type_id, weapon.clone()))
+        })
+        .expect("a shipped structure splashes (B-169)");
+    let splash = splash_of(&weapon).clone();
+    let expected: Vec<SplashZone> = [(0.5, 1.0), (0.8, 0.75), (1.25, 0.375)]
+        .into_iter()
+        .map(|(radius, fraction)| SplashZone {
+            radius: SimScalar::from_f32_lossy(radius),
+            fraction: SimScalar::from_f32_lossy(fraction),
+        })
+        .collect();
+    assert_eq!(splash.zones, expected, "TwinIbiksCannon's zones");
+    assert!(!splash.friendly_fire && !splash.offset_by_unit_radius);
+    assert_eq!(splash.impact, SplashImpact::Target);
+    assert_eq!(splash.target_radius_below, None);
+
+    let structure = world
+        .spawn_structure(fortress, BLUE, 4, 20)
+        .expect("open ground");
+    let origin = world.entities[&structure].position;
+    // The target stands east of the fortress, inside its range; the others around the target.
+    let target_at = offset(origin, s(5.0), SimScalar::ZERO);
+    let radius = s(BODY);
+    let target = body(&mut world, RED, radius, target_at);
+    // Edges 0.45, 0.75, 1.2 and 1.3 from the target's centre: one per zone, then beyond.
+    // Each body along a unit direction `(dx, dy)` from the target.
+    let ring = |world: &mut SimWorld, edge: f64, (dx, dy): (f64, f64), owner: PlayerId| {
+        let d = s(edge) + radius;
+        body(
+            world,
+            owner,
+            radius,
+            offset(target_at, d * s(dx), d * s(dy)),
+        )
+    };
+    let first = ring(&mut world, 0.45, (0.0, 1.0), RED);
+    let second = ring(&mut world, 0.75, (0.0, -1.0), RED);
+    let third = ring(&mut world, 1.2, (1.0, 0.0), RED);
+    let outside = ring(&mut world, 1.3, (0.6, 0.8), RED);
+    let friend = ring(&mut world, 0.75, (-0.6, 0.8), BLUE);
+    let watched = [target, first, second, third, outside, friend];
+    let order = PlayerCommand {
+        player_id: BLUE,
+        entities: vec![structure],
+        order: UnitOrder::attack(target),
+        queue: false,
+    };
+    let before: Vec<_> = watched.iter().map(|&id| vitals(&world, id)).collect();
+    step_with(&mut world, vec![order]);
+    for _ in 0..80 {
+        if vitals(&world, target) < before[0] {
+            break;
+        }
+        step_with(&mut world, Vec::new());
+    }
+    let losses: Vec<_> = watched
+        .iter()
+        .zip(&before)
+        .map(|(&id, &full)| full - vitals(&world, id))
+        .collect();
+    let target_arch = world
+        .catalog
+        .get(world.entities[&target].unit_type_id)
+        .expect("registered")
+        .clone();
+    let strike = sim_core::calculate_hit_damage(&weapon, &target_arch, SimScalar::ZERO, before[0]);
+    let whole = strike.life_damage + strike.shield_damage;
+    assert!(whole > SimScalar::ZERO);
+    assert_eq!(losses[0], whole, "the target, struck once");
+    let at = |fraction: f32| {
+        let resolution = sim_core::calculate_splash_damage(
+            &weapon,
+            &splash,
+            splash
+                .zones
+                .iter()
+                .find(|zone| zone.fraction == SimScalar::from_f32_lossy(fraction))
+                .expect("a zone")
+                .radius,
+            &target_arch,
+            SimScalar::ZERO,
+            before[0],
+        )
+        .expect("inside the zone");
+        resolution.life_damage + resolution.shield_damage
+    };
+    assert_eq!(losses[1], at(1.0), "first zone");
+    assert_eq!(losses[2], at(0.75), "second zone");
+    assert_eq!(losses[3], at(0.375), "third zone");
+    assert_eq!(losses[4], SimScalar::ZERO, "beyond the last zone");
+    assert_eq!(losses[5], SimScalar::ZERO, "a friendly unit");
+}

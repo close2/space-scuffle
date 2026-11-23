@@ -1148,7 +1148,7 @@ type SplashRow = (&'static str, &'static [(f32, f32)], &'static str);
 /// models: `(analogue, [(radius, fraction)], source)` (plan `2026-11-05-sc2-deviation-fixes`
 /// package 8a, B-16; evidence §8.1). The Hellion, Lurker, Colossus and Ultralisk areas are lines and an
 /// arc in the game, so their zones belong with their shapes (B-18, B-19; packages 8b, 8c).
-const SC2_SPLASH_ZONES: [SplashRow; 3] = [
+const SC2_SPLASH_ZONES: [SplashRow; 4] = [
     (
         "Siege Tank",
         &[(0.4687, 1.0), (0.7812, 0.5), (1.25, 0.25)],
@@ -1163,6 +1163,11 @@ const SC2_SPLASH_ZONES: [SplashRow; 3] = [
         "Liberator",
         &[(1.5, 1.0)],
         "LiberatorMissileDamage, void EffectData:2938",
+    ),
+    (
+        "Planetary Fortress",
+        &[(0.5, 1.0), (0.8, 0.75), (1.25, 0.375)],
+        "TwinIbiksCannon, liberty EffectData:2540-2542",
     ),
 ];
 
@@ -1236,7 +1241,7 @@ fn b16_splash_zones_follow_starcraft() -> TestResult {
 /// 22, package B). A `CEffectDamage` inherits 1 from `DU_WEAP` (`core` EffectData:128) unless it
 /// clears it; a line's searches are `CEffectEnumArea` effects, whose default sets no flag (`core`
 /// EffectData:71-77).
-const SC2_SPLASH_OFFSET: [(&str, bool, &str); 7] = [
+const SC2_SPLASH_OFFSET: [(&str, bool, &str); 8] = [
     (
         "Siege Tank",
         false,
@@ -1273,6 +1278,11 @@ const SC2_SPLASH_OFFSET: [(&str, bool, &str); 7] = [
         "Colossus",
         false,
         "ThermalLancesE, a CEffectEnumArea: liberty EffectData:2412",
+    ),
+    (
+        "Planetary Fortress",
+        false,
+        "TwinIbiksCannon clears it: liberty EffectData:2545",
     ),
 ];
 
@@ -1319,7 +1329,7 @@ fn q0063_splash_offset_follows_starcraft() -> TestResult {
 /// models: `(analogue, impact, target radius below which the area opens, source)` (plan
 /// `2026-11-23-splash-centres` D-1 to D-5). A `CEffectDamage` impacts `TargetUnitOrPoint` unless
 /// it says otherwise (`core` EffectData:66); a line's searches are placed by their persistent.
-const SC2_SPLASH_IMPACT: [(&str, SplashImpact, Option<f32>, &str); 7] = [
+const SC2_SPLASH_IMPACT: [(&str, SplashImpact, Option<f32>, &str); 8] = [
     (
         "Siege Tank",
         SplashImpact::Target,
@@ -1365,6 +1375,12 @@ const SC2_SPLASH_IMPACT: [(&str, SplashImpact, Option<f32>, &str); 7] = [
         SplashImpact::Target,
         None,
         "a line placed by its persistent: liberty EffectData:2412",
+    ),
+    (
+        "Planetary Fortress",
+        SplashImpact::Target,
+        None,
+        "TwinIbiksCannon, the default: liberty EffectData:2533-2546",
     ),
 ];
 
