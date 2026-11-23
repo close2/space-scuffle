@@ -1000,20 +1000,35 @@ fn an_edited_copy_of_the_shipped_vocabulary_loads_a_different_effect_without_a_r
 fn splash_weapons(
     archetype: &sim_core::catalog::UnitArchetype,
 ) -> Vec<(WeaponSlot, Option<String>)> {
-    let ground_slot = if archetype.ground_weapon == archetype.weapon {
-        WeaponSlot::Primary
-    } else {
+    // A structure's ground weapon is published as `Ground`, as `tagged_weapons` and the
+    // simulation's `weapon_source` read it (plan `2026-11-23-splash-centres` WP4: the Planetary
+    // Fortress analogue is the first structure with an area).
+    let structure = matches!(archetype.shape, sim_types::ShapeKind::BuildingDome { .. });
+    let ground_slot = if structure || archetype.ground_weapon != archetype.weapon {
         WeaponSlot::Ground
+    } else {
+        WeaponSlot::Primary
     };
     let mut weapons = Vec::new();
     let has_splash = |weapon: Option<&sim_types::WeaponSpec>| {
         weapon.is_some_and(|weapon| weapon.splash.is_some())
     };
-    if has_splash(archetype.weapon.as_ref()) {
-        weapons.push((WeaponSlot::Primary, None));
-    }
-    if ground_slot == WeaponSlot::Ground && has_splash(archetype.ground_weapon.as_ref()) {
-        weapons.push((WeaponSlot::Ground, None));
+    if structure {
+        if has_splash(
+            archetype
+                .ground_weapon
+                .as_ref()
+                .or(archetype.weapon.as_ref()),
+        ) {
+            weapons.push((WeaponSlot::Ground, None));
+        }
+    } else {
+        if has_splash(archetype.weapon.as_ref()) {
+            weapons.push((WeaponSlot::Primary, None));
+        }
+        if ground_slot == WeaponSlot::Ground && has_splash(archetype.ground_weapon.as_ref()) {
+            weapons.push((WeaponSlot::Ground, None));
+        }
     }
     if has_splash(archetype.air_weapon.as_ref()) {
         weapons.push((WeaponSlot::Air, None));
@@ -2294,6 +2309,19 @@ fn every_shipped_weapon_names_the_looks_of_the_event_it_publishes() {
                 splash.is_some(),
                 "{label}: a splash weapon, and only one, names its splash"
             );
+            // Plan `2026-11-23-splash-centres` D-8 item 2: an area that opens only below a
+            // target radius publishes nothing at a larger target, so the shot names an impact
+            // and still shows a landing there.
+            if spec
+                .splash
+                .as_ref()
+                .is_some_and(|splash| splash.target_radius_below.is_some())
+            {
+                assert!(
+                    impact.is_some(),
+                    "{label}: a conditional area names an impact for the shots it does not open on"
+                );
+            }
             match delivery {
                 Delivery::Projectile => {
                     let travel = travel.unwrap_or_else(|| panic!("{label}: no travel"));

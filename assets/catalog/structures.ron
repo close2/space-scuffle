@@ -161,7 +161,18 @@
                 damage_point_ticks: 3,
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
-                splash: None,
+                // B-169 (plan 2026-11-23-splash-centres D-5): TwinIbiksCannon's AreaArray (liberty
+                // EffectData:2540-2542), centred on the target (OffsetByUnitRadius 0, :2545), enemies
+                // only (SearchFilters exclude Player and Ally); the target itself is struck directly
+                // (ExcludeArray Target, :2544).
+                splash: Some((
+                    zones: [
+                        (radius: 0.5, fraction: 1.0),
+                        (radius: 0.8, fraction: 0.75),
+                        (radius: 1.25, fraction: 0.375),
+                    ],
+                    friendly_fire: false,
+                )),
                 projectile_speed: None,
                 weapon_class: Some("directorate_vehicle_weapons"),
                 upgrade_bonus_per_level: 0.0,
@@ -169,9 +180,11 @@
             )),
             air_weapon: None,
             abilities: [],
-            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks.
+            // Presentation (plan 2026-11-09-effect-visualization §5.3, WP11): each weapon's own looks;
+            // its splash (B-169) is the ground blast whose layers bind the published zones (plan
+            // 2026-11-23-splash-centres D-8).
             effects: (
-                weapons: [(weapon: Ground, travel: Some("cannon_tracer"), impact: Some("cannon_hit"))],
+                weapons: [(weapon: Ground, travel: Some("cannon_tracer"), impact: Some("cannon_hit"), splash: Some("shell_impact"))],
             ),
             veo_prompts: {
                 "Idle": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base and sloped armor, two long heavy cannon barrels mounted side by side on its top, aimed forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",

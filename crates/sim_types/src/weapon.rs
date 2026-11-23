@@ -174,17 +174,33 @@ pub enum SplashShape {
     Line(SplashLine),
 }
 
+/// Where a weapon's area is centred: `StarCraft` II's `ImpactLocation` of its damage effect.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplashImpact {
+    /// On the struck target (the engine default, `TargetUnitOrPoint`, `core` EffectData:66): the
+    /// target is struck directly and the area spares it.
+    #[default]
+    Target,
+    /// On the attacker at release (`CasterUnit`, the Baneling's bursts, `liberty`
+    /// EffectData:1759): no direct strike; the target is struck by the area like any other unit
+    /// in it.
+    Attacker,
+}
+
 /// Area damage: a list of zones with their own radii and fractions, searched around one point
 /// (a circle) or around each point of a line, read per weapon from the catalog.
 ///
 /// What this models of `StarCraft` II, and what it does not: the zones and fractions are the
 /// weapon's `AreaArray` (bug B-16 fixed), and a line weapon's search points are its
-/// persistent's offsets (bug B-18). A unit found by several searches of one strike takes that
-/// strike once, at the fraction of the nearest search point: the game's damage effects check
-/// `noMarkers` against the attack's marker. A zone reaches a unit whose edge lies within it, and
-/// a circle with `offset_by_unit_radius` is centred on the target's edge facing the attacker
-/// (owner answer to Q0063, bug B-17 fixed). A line's searches land together, where the game
-/// spaces some of them in time (bug B-85), and no area is an arc (bug B-19). See the
+/// persistent's offsets (bug B-18). A circle is searched around the struck target or, by
+/// [`SplashSpec::impact`], around the attacker (bug B-83), and it opens only below a target
+/// radius when [`SplashSpec::target_radius_below`] says so (bug B-84). A unit found by several
+/// searches of one strike takes that strike once, at the fraction of the nearest search point:
+/// the game's damage effects check `noMarkers` against the attack's marker. A zone reaches a
+/// unit whose edge lies within it, and a target-centred circle with `offset_by_unit_radius` is
+/// centred on the target's edge facing the attacker (owner answer to Q0063, bug B-17 fixed). A
+/// line's searches land together, where the game spaces some of them in time (bug B-85), no
+/// area is an arc (bug B-19), and an area reaches every cliff level (bug B-170). See the
 /// `DESIGN.md` bug register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
@@ -204,6 +220,19 @@ pub struct SplashSpec {
     /// searches are `CEffectEnumArea` effects, which do not set the flag.
     #[serde(default)]
     pub offset_by_unit_radius: bool,
+    /// Where the area is centred: on the struck target (the default) or on the attacker's
+    /// position at release. An attacker-centred area is a circle, not offset by a radius, on an
+    /// instant weapon, and it is the only damage of its shot (plan `2026-11-23-splash-centres`
+    /// D-1).
+    #[serde(default)]
+    pub impact: SplashImpact,
+    /// The area opens only when the struck target's collision radius, in world units, is below
+    /// this; a target of this radius or more takes the strike alone. `StarCraft` II's
+    /// `CEffectSwitch` between a splashing and a non-splashing damage effect on
+    /// `TargetRadiusSmall`/`TargetRadiusLarge` (`liberty` ValidatorData:824–833). A hit on a
+    /// point has radius zero, so it always opens. `None`: the area always opens.
+    #[serde(default)]
+    pub target_radius_below: Option<SimScalar>,
 }
 
 impl SplashSpec {
@@ -465,7 +494,7 @@ pub struct StructureStrike {
 #[cfg(test)]
 mod tests {
     use super::{
-        Attribute, AttributeBonuses, AttributeFlags, SimScalar, SimVec2, SplashLine,
+        Attribute, AttributeBonuses, AttributeFlags, SimScalar, SimVec2, SplashImpact, SplashLine,
         SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
     };
 
@@ -518,6 +547,8 @@ mod tests {
             shape: SplashShape::Circle,
             friendly_fire: false,
             offset_by_unit_radius: false,
+            impact: SplashImpact::Target,
+            target_radius_below: None,
         };
         assert_eq!(splash.fraction_at(SimScalar::ZERO), Some(SimScalar::ONE));
         assert_eq!(splash.fraction_at(SimScalar::ONE), Some(SimScalar::ONE));
@@ -532,6 +563,8 @@ mod tests {
             shape: SplashShape::Circle,
             friendly_fire: false,
             offset_by_unit_radius: false,
+            impact: SplashImpact::Target,
+            target_radius_below: None,
         };
         assert_eq!(empty.fraction_at(SimScalar::ZERO), None);
         assert_eq!(empty.reach(), SimScalar::ZERO);
@@ -553,6 +586,8 @@ mod tests {
             }),
             friendly_fire: false,
             offset_by_unit_radius: false,
+            impact: SplashImpact::Target,
+            target_radius_below: None,
         };
         let (attacker, impact, east) = (v(0, 0), v(5, 0), v(1, 0));
         let mut points = vec![v(9, 9)];
@@ -576,5 +611,16 @@ mod tests {
             &mut points,
         );
         assert_eq!(points, vec![v(5, -1), v(5, 2)]);
+    }
+
+    /// Plan `2026-11-23-splash-centres` D-1, D-3: a splash written without the two fields is
+    /// centred on its target and always opens, the engine defaults.
+    #[test]
+    fn a_splash_defaults_to_its_target_and_no_condition() -> Result<(), ron::error::SpannedError> {
+        assert_eq!(SplashImpact::default(), SplashImpact::Target);
+        let splash: SplashSpec = ron::from_str("(zones: [])")?;
+        assert_eq!(splash.impact, SplashImpact::Target);
+        assert_eq!(splash.target_radius_below, None);
+        Ok(())
     }
 }

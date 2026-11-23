@@ -16,6 +16,11 @@
 //! 2. Shots are prepared in `EntityId` order, then applied in that same order; projectile
 //!    impacts apply in descending launch-list order. Both orders are deterministic.
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
+//! 4. An attacker-centred area ([`SplashImpact::Attacker`]) is the only damage of its shot: no
+//!    direct strike, so no weapon hit effect; its target is struck by the area like any other
+//!    unit in it (plan `2026-11-23-splash-centres` D-1).
+//! 5. An area with a target radius condition opens only around a target whose collision radius
+//!    is below it; otherwise it searches nothing and publishes nothing (D-3).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -33,8 +38,8 @@ use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
     AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
     LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, SimVec2, SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId,
-    WeaponVisualKind,
+    SimAngle, SimScalar, SimVec2, SplashImpact, SplashShape, StrikeEnds, Tick, UnitOrder,
+    UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -815,6 +820,10 @@ impl SimWorld {
     }
 
     /// Resolves a hitscan, beam or melee shot: direct strikes, then splash, then visuals.
+    ///
+    /// A shot whose area is centred on the attacker ([`SplashImpact::Attacker`]) makes no direct
+    /// strike: its area is searched around the attacker's release position, whether or not the
+    /// target still stands, and strikes the target like any other unit in it.
     fn resolve_instant_shot(&mut self, shot: &PreparedShot) {
         let source = HitSource {
             weapon: &shot.weapon,
@@ -825,6 +834,19 @@ impl SimWorld {
             strikes: shot.strikes,
             effect: shot.source,
         };
+        if let Some(splash) = shot
+            .weapon
+            .splash
+            .as_ref()
+            .filter(|splash| splash.impact == SplashImpact::Attacker)
+        {
+            let (area, aimed) = self.area_at_attacker(shot);
+            self.apply_splash(source, splash, area, None);
+            if let Some(aimed) = aimed {
+                self.emit_instant_hit_visual(shot, aimed);
+            }
+            return;
+        }
         let Some(hit) = self.apply_weapon_hit(source, shot.target) else {
             return;
         };
@@ -832,6 +854,49 @@ impl SimWorld {
             self.apply_splash(source, splash, hit, Some(shot.target));
         }
         self.emit_instant_hit_visual(shot, hit);
+    }
+
+    /// Where the area of an attacker-centred `shot` lands, and where its delivery look aims.
+    ///
+    /// The area is searched around the attacker's release position (`shot.origin`), on the
+    /// plane of the target (the attacker's when the target is gone), its hits arriving from the
+    /// attacker's side (from its heading when the target is gone). Its radius is the target's
+    /// collision radius, zero when the target is gone, which only a target radius condition
+    /// reads (an attacker-centred area is never offset). The second value is the target's
+    /// position for the shot's delivery event, `None` when the target is gone.
+    fn area_at_attacker(&self, shot: &PreparedShot) -> (ResolvedHit, Option<ResolvedHit>) {
+        let attacker = self.entities.get(&shot.attacker);
+        let target = self.entities.get(&shot.target).and_then(|target| {
+            self.catalog
+                .get(target.unit_type_id)
+                .ok()
+                .map(|arch| (target.position, arch))
+        });
+        let plane = target.map_or_else(
+            || {
+                attacker
+                    .and_then(|attacker| self.catalog.get(attacker.unit_type_id).ok())
+                    .map_or(MoverType::Ground, |arch| arch.mover_type)
+            },
+            |(_, arch)| arch.mover_type,
+        );
+        let angle = target.map_or_else(
+            || attacker.map_or(SimAngle::ZERO, |attacker| attacker.heading),
+            |(position, _)| hit_angle(shot.origin, position),
+        );
+        let area = ResolvedHit {
+            position: shot.origin,
+            angle,
+            plane,
+            radius: target.map_or(SimScalar::ZERO, |(_, arch)| arch.collision_radius),
+        };
+        let aimed = target.map(|(position, arch)| ResolvedHit {
+            position,
+            angle,
+            plane,
+            radius: arch.collision_radius,
+        });
+        (area, aimed)
     }
 
     /// Applies the strikes `source` carries to `target_id`, then the target's retaliation.
@@ -941,6 +1006,10 @@ impl SimWorld {
     /// its first search now and leaves the rest to the attacker's [`Entity::pending_line`],
     /// replacing any line still pending; every other area lands whole now. See
     /// [`Self::strike_area`] for who is struck.
+    ///
+    /// An area with [`SplashSpec::target_radius_below`] does not open at all, searching nothing
+    /// and publishing nothing, when `hit.radius` (the struck target's collision radius, zero for
+    /// a point) is that limit or more (B-84).
     fn apply_splash(
         &mut self,
         source: HitSource<'_>,
@@ -948,6 +1017,12 @@ impl SimWorld {
         hit: ResolvedHit,
         primary: Option<EntityId>,
     ) {
+        if splash
+            .target_radius_below
+            .is_some_and(|limit| hit.radius >= limit)
+        {
+            return;
+        }
         let mut points = std::mem::take(&mut self.combat.splash_points);
         let direction = self.attack_direction(source, hit.position);
         let impact = if splash.offset_by_unit_radius {
@@ -1576,5 +1651,82 @@ mod tests {
         )]
         let published = (duration * f32::from(sim_types::TICKS_PER_SECOND)).round() as u32;
         assert_eq!(published, ticks, "the flight time follows the radius");
+    }
+
+    /// Plan `2026-11-23-splash-centres` D-1: an attacker-centred area does not depend on its
+    /// target. A shot whose target no longer exists when it is dispatched (no entity under its
+    /// id) still lands its area around the attacker, striking an enemy beside it; the same shot
+    /// centred on the target lands nothing.
+    #[test]
+    fn an_attacker_centred_area_lands_without_its_target() {
+        use sim_types::{AttributeFlags, EntityId, SplashImpact, SplashShape};
+        let strike = |impact: SplashImpact| {
+            let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+                .expect("invariant: a flat map");
+            let mut world = world(map, 0x5_C3E7);
+            let arch = world
+                .catalog
+                .archetypes()
+                .find(|arch| {
+                    arch.mover_type == MoverType::Ground
+                        && arch.max_speed > SimScalar::ZERO
+                        && arch.collision_radius <= SimScalar::ONE
+                })
+                .cloned()
+                .expect("the shipped catalog has a mobile ground unit");
+            let mut weapon = world
+                .catalog
+                .archetypes()
+                .flat_map(|arch| [&arch.weapon, &arch.ground_weapon, &arch.air_weapon])
+                .flatten()
+                .find(|weapon| {
+                    weapon.splash.as_ref().is_some_and(|splash| {
+                        splash.shape == SplashShape::Circle && splash.reach() >= SimScalar::ONE
+                    })
+                })
+                .cloned()
+                .expect("the shipped catalog has a circular splash of reach 1 or more");
+            weapon.target_flags = AttributeFlags::all();
+            weapon.projectile_speed = None;
+            weapon.suicide_on_attack = false;
+            weapon.structure_strike = None;
+            let splash = weapon.splash.as_mut().expect("chosen for its splash");
+            splash.impact = impact;
+            splash.offset_by_unit_radius = false;
+            splash.friendly_fire = false;
+            let origin = SimVec2::from_i32(10, 10);
+            let attacker = world
+                .spawn_unit(arch.unit_type_id, PlayerId(0), origin)
+                .expect("open ground");
+            // Edge to edge 0.1 from the attacker, so its edge lies within a reach of 1.
+            let beside = origin
+                + SimVec2::new(
+                    arch.collision_radius + arch.collision_radius + SimScalar::from_num(0.1),
+                    SimScalar::ZERO,
+                );
+            let bystander = world
+                .spawn_unit(arch.unit_type_id, PlayerId(1), beside)
+                .expect("open ground");
+            let missing = EntityId(u32::MAX);
+            assert!(!world.entities.contains_key(&missing));
+            let full = world.entities[&bystander].hp + world.entities[&bystander].shields;
+            let source = super::weapon_source(&arch, &world.entities[&attacker], &weapon);
+            world.dispatch_shot(super::PreparedShot {
+                attacker,
+                target: missing,
+                weapon,
+                source_slug: arch.slug.clone(),
+                origin,
+                owner: PlayerId(0),
+                strikes: 1,
+                source,
+            });
+            full - (world.entities[&bystander].hp + world.entities[&bystander].shields)
+        };
+        assert!(
+            strike(SplashImpact::Attacker) > SimScalar::ZERO,
+            "the area landed"
+        );
+        assert_eq!(strike(SplashImpact::Target), SimScalar::ZERO, "the control");
     }
 }

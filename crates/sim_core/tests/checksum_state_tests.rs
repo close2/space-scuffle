@@ -328,6 +328,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
         offset_by_unit_radius: false,
+        impact: sim_types::SplashImpact::Target,
+        target_radius_below: None,
     };
     let line = sim_types::SplashLine {
         origin: sim_types::SplashLineOrigin::Attacker,
@@ -354,6 +356,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
             offset_by_unit_radius: false,
+            impact: sim_types::SplashImpact::Target,
+            target_radius_below: None,
         }),
                 projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
                 upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
@@ -383,6 +387,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 period_ticks: 0,
             }),
             friendly_fire => true,
+            offset_by_unit_radius => true,
+            impact => sim_types::SplashImpact::Attacker,
+            target_radius_below => Some(SimScalar::ONE),
         },
         |splash| {
             let mut weapon = original.clone();

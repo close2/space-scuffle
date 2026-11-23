@@ -27,9 +27,9 @@ use sim_types::{
     AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec,
     FactionId, FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag,
     PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
-    SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
-    WeaponVisualKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId,
+    UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -845,6 +845,31 @@ impl UnitCatalog {
                         "must reference an archetype with a weapon",
                     ));
                 }
+                // Plan `2026-11-23-splash-centres` D-1: a weapon whose area is centred on the
+                // attacker makes no direct strike, and hit effects run on direct strikes only.
+                let attacker_centred = |weapon: &WeaponSpec| {
+                    weapon
+                        .splash
+                        .as_ref()
+                        .is_some_and(|splash| splash.impact == SplashImpact::Attacker)
+                };
+                let mode_weapons = target.modes.iter().flat_map(|mode| {
+                    [&mode.ground_weapon_override, &mode.air_weapon_override]
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                });
+                let mut weapons = [&target.weapon, &target.ground_weapon, &target.air_weapon]
+                    .into_iter()
+                    .flatten()
+                    .chain(mode_weapons);
+                if weapons.all(attacker_centred) {
+                    return Err(unresolved(
+                        "WeaponHitEffect.target_slug",
+                        "must reference an archetype with a weapon that strikes its target directly; \
+                         an area centred on the attacker does not",
+                    ));
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -1126,6 +1151,14 @@ struct SplashSpecDef {
     /// [`SplashSpec::offset_by_unit_radius`]); `false` when omitted.
     #[serde(default)]
     offset_by_unit_radius: bool,
+    /// Where the area is centred (see [`SplashSpec::impact`]); on the target when omitted, the
+    /// engine default.
+    #[serde(default)]
+    impact: SplashImpact,
+    /// The target radius in world units below which the area opens (see
+    /// [`SplashSpec::target_radius_below`]); always open when omitted.
+    #[serde(default)]
+    target_radius_below: Option<f32>,
 }
 
 /// An authored splash shape (see [`SplashShape`]).
@@ -1503,6 +1536,8 @@ impl UnitArchetypeDef {
                 shape: s.shape.resolve(),
                 friendly_fire: s.friendly_fire,
                 offset_by_unit_radius: s.offset_by_unit_radius,
+                impact: s.impact,
+                target_radius_below: s.target_radius_below.map(SimScalar::from_f32_lossy),
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
             weapon_class,
