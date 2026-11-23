@@ -21,14 +21,6 @@
 //!   clockwise (decreasing angle), so no id decides.
 //! - The admitted set of a tick depends on the set of requests, not their order: the sort key
 //!   ends with the claimant's id, which decides only exact ties.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "plan 2026-11-20-contact-solver WP2 builds this part as tested library code; the \
-                  solver pipeline calls it from WP3 on"
-    )
-)]
 
 use super::math::{checked_vec_add, checked_vec_scale};
 use super::MovementMathError;

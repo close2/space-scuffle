@@ -787,7 +787,11 @@ impl SimWorld {
         for layer in &mut self.movement.obstacles {
             layer.clear();
         }
+        self.movement.tick_start.clear();
         for &id in &ids {
+            if let Some(actor) = self.entities.get(&id) {
+                self.movement.tick_start.push((id, actor.position));
+            }
             match self.motion_entry(id) {
                 Ok(entry) => {
                     // A body without collision (mining, or a status's suppression) is no
@@ -870,6 +874,7 @@ impl SimWorld {
                 Err(source) => self.report_movement_invariant(source),
             }
         }
+        self.assign_slots(&pursuits);
         for (entry, target, origin) in pursuits.drain(..) {
             match self.prepare_pursuit(entry, target, origin) {
                 Ok(proposal) => self.commit_motion(entry, proposal),
@@ -1180,7 +1185,7 @@ impl SimWorld {
                 entity: target_id,
                 reason: "available target disappeared",
             })?;
-        let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
+        let Some(mut pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
             proposal.end_attack();
             self.coast(entry, actor, &mut proposal)?;
             return Ok(proposal);
@@ -1188,8 +1193,19 @@ impl SimWorld {
         if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
             return Ok(proposal);
         }
-
-        let goal = target.position;
+        // G-6: no free slot, stand; the order stays and no stall accrues (Q0089).
+        if self.stands_for_a_slot(id) {
+            proposal.velocity = SimVec2::ZERO;
+            proposal.anim = AnimState::Idle;
+            return Ok(proposal);
+        }
+        // G-7: a unit that holds a slot round this target walks to the slot's point.
+        let slot = proposal
+            .memory
+            .slot
+            .filter(|claim| claim.target == target_id);
+        pursuit.to_slot = slot.is_some();
+        let goal = slot.map_or(target.position, |claim| claim.point);
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
         let owner = actor
             .owner
@@ -1227,7 +1243,7 @@ impl SimWorld {
     /// The range band `actor` attacks `target` from, or `None` when it has no weapon against it.
     ///
     /// Range is measured between body centres, so both radii are added to the weapon's reach.
-    fn pursuit_band(
+    pub(super) fn pursuit_band(
         &self,
         entry: MotionEntry,
         actor: &Entity,
@@ -1284,12 +1300,13 @@ impl SimWorld {
             max,
             min,
             leash: self.catalog.movement_rules().acquire_leash_radius(),
+            to_slot: false,
         }))
     }
 }
 
 /// One chase's fixed facts: whom, why, and from how far the pursuer may fire.
-struct Pursuit {
+pub(super) struct Pursuit {
     target: EntityId,
     origin: AttackOrigin,
     /// Whether the target moved last tick, which voids the pursuer's stall evidence.
@@ -1297,12 +1314,16 @@ struct Pursuit {
     /// Whether the weapon aims a turret rather than the whole body.
     has_turret: bool,
     /// Furthest centre separation the weapon reaches, in raw fixed-point units.
-    max: i128,
+    pub(super) max: i128,
     /// Nearest centre separation the weapon reaches, in raw fixed-point units; 0 when unbounded.
-    min: i128,
+    pub(super) min: i128,
     /// The leash of an automatic chase, world units: 5.0.14's `AcquireLeashRadius`, measured
     /// from where the chase began (B-142).
-    leash: SimScalar,
+    pub(super) leash: SimScalar,
+    /// Under the solver pipeline, the chase walks to its slot's point rather than toward the
+    /// target (plan `2026-11-20-contact-solver` G-7): it brakes onto the point, and its
+    /// progress is not judged against the target (G-6, §3.5).
+    to_slot: bool,
 }
 
 impl Pursuit {
@@ -1832,8 +1853,13 @@ impl MotionDraft<'_> {
         if self.ground && self.cooled_down && stale {
             self.proposal.drop_route();
         }
-        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39).
-        let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
+        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39), or on
+        // the slot's point, which lies inside the band (G-7).
+        let reach = if pursuit.to_slot {
+            SimScalar::ZERO
+        } else {
+            SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX))
+        };
         self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         let intent = scene.intent();
@@ -1894,7 +1920,7 @@ impl MotionDraft<'_> {
         queued: bool,
     ) -> Result<Stage, MovementInvariant> {
         if self.entry.speed > SimScalar::ZERO {
-            if pursuit.target_moving || self.proposal.memory.flank_active {
+            if pursuit.target_moving || pursuit.to_slot || self.proposal.memory.flank_active {
                 // A moving goal says nothing about whether this unit is stuck, and a surround
                 // walk gains ground round the crowd, not toward the target (D-3).
                 self.proposal.memory.progress_best = None;

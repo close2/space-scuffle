@@ -18,6 +18,7 @@ pub mod groups;
 pub(crate) mod intent;
 mod locomotion;
 pub(crate) mod math;
+mod slots;
 pub mod solver;
 pub(crate) mod tuning;
 pub use math::MovementMathError;
@@ -257,6 +258,16 @@ pub(crate) struct MovementWorkspace {
     contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
+    /// Each movement actor's position when the phase began, by entity id (plan
+    /// `2026-11-20-contact-solver` WP4 and WP5: the slot pass and the pursuit read it).
+    tick_start: Vec<(EntityId, SimVec2)>,
+    /// The slot pass's retained buffers (plan `2026-11-20-contact-solver` WP4, G-2 to G-6).
+    slot_requests: Vec<concave::SlotRequest>,
+    slot_kept: Vec<slots::KeptClaim>,
+    /// Pursuers that stand this tick for want of a free slot (G-6), sorted by id.
+    slot_stand: Vec<EntityId>,
+    slot_wanting: Vec<slots::Chase>,
+    slot_intervals: Vec<concave::ArcInterval>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
