@@ -84,3 +84,28 @@ more because units pack more densely. Under (b), the switch-over would therefore
 step (e.g. over-relaxation, which re-derives the iteration count) or your acceptance of +61 % on that scenario.
 Meanwhile, per the default, the next step is planning option (a) only, a design review of the side rule. No code
 changes until you answer.
+
+## Update 2 (2026-11-23, a measurement only)
+
+A third independent review recommends that a further design round (option (a)) replace the side rule with a smooth,
+memoryless avoidance based on published crowd steering (Guy & Karamouzas). ORCA is rejected: it fights our contact
+solver, deadlocks at corners and costs more. Plan Amendment 14 has the full reasoning. Before any change it asked for
+one cheap measurement: the solver with the side rule switched off. This was measured on development seeds and is not
+built into anything.
+
+| Measure | Solver now | Side rule off |
+|---|---:|---:|
+| Back-and-forth at arcs / gaps / corners (M1) | 2.48 / 1.11 / 0.50 | **0.06 / 0.51 / 0.14** |
+| Give-ups filling an arc / in corridors | 305 / 20 | **61 / 0** |
+| Arc fill | 0.967 | **0.984** |
+| **Give-ups in head-on crossings** | 2 | **1,274** |
+| **Give-ups at gaps** | 46 | **124** |
+| Cost on the 400-unit battle against Legacy | +61.2 % | **+54.6 %** (inside the bar) |
+
+The side rule causes most of the remaining back-and-forth and arc give-ups. Head-on crossings, however, need some
+anticipation: without it two columns meeting head-on stall and give up. The measurement also exposed a solver
+defect. Two idle units left deeply overlapped are pushed back and forth by about 0.4 per tick, because the
+correction alternates sign. It will be fixed in whichever option goes ahead.
+
+This supports option (a)'s design: keep anticipation for oncoming units, make it smooth, drop the one-partner side
+memory. Option (b) remains possible.
