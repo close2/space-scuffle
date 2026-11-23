@@ -1,13 +1,14 @@
-//! Intent steering of plan `2026-11-20-contact-solver` (I-1 to I-4): the heading a unit wants
-//! before contact is resolved.
+//! Intent steering of plan `2026-11-20-contact-solver` (I-1 to I-4, Amendment 7 item 3): the
+//! heading a unit wants before contact is resolved.
 //!
 //! # Responsibility
 //! [`intent_heading`] turns a unit's direction to its next route point into the heading it
-//! proposes this tick: straight at the point, bent by at most one **time-to-collision side rule**
-//! against the earliest oncoming or crossing body that does not give way (I-3). The side chosen
-//! for a body is kept, as a one-pair commitment in [`SideMemory`], until the pair stops closing
-//! (I-3c). Friends moving with the unit are not threats (I-4), nor are idle friends that step
-//! aside (L6), nor bodies already in contact (the contact solver's job).
+//! proposes this tick: its preferred velocity plus a **summed tangential time-to-collision term**
+//! over every body it would collide with within its horizon (Weiss et al. 2019, §3.5: only the
+//! tangential part of the predicted contact correction, so units divert sideways and are not
+//! pushed back in a dense flow). The term has no memory and no partner: each candidate adds the
+//! sideways velocity that would clear it by the predicted contact, weighted linearly by how soon
+//! that contact comes, and the bent heading is capped at the horizon's angle.
 //!
 //! # How it fits
 //! The solver pipeline's `step_toward` calls it instead of legacy steering and scales the heading
@@ -15,14 +16,38 @@
 //! whatever contact the steps made. It reads only the tick-start neighbour snapshot, so the
 //! result does not depend on the order units are processed in.
 //!
+//! # The term and its constants (all derived, none tuned)
+//! For a candidate `b` with offset `p` (unit to body), relative velocity `v = v_pref − v_b` and
+//! reach `R = r + r_b + margin`:
+//! - **Time to collision** `τ`, ticks: the first root of `|p − τ v| = R`; `0` for a pair already
+//!   in contact and closing (the term does not switch off at contact).
+//! - **Horizon** `H = h · (r + r_b) / speed` (I-3a): a body farther than `h` radius sums of the
+//!   unit's own travel is no candidate. `h` is `contact.side_horizon_factor`.
+//! - **Planned stop** (Sunshine-Hill, *Game AI Pro 3* §19.7.3): a collision the unit would reach
+//!   only after travelling farther than its planned stop (`stop` world units: the rest of its
+//!   route, less the weapon's reach for a chase) is skipped: the unit stops short of it.
+//! - **Weight** `w = 1 − τ / H`: linear, `1` at contact and `0` at the horizon, so a candidate
+//!   enters and leaves the sum continuously. It is the first-order stand-in for Weiss's
+//!   `exp(−τ²/τ₀)` and has no constant of its own beyond `H`.
+//! - **Contribution** `w · (R − m) / max(τ, 1)` along the unit normal of `v` away from `b`, where
+//!   `m = |v × p| / |v|` is the miss distance of the straight course: the sideways speed that
+//!   clears `R` by the contact. The floor of one tick is the simulation's own resolution: no
+//!   offset can be made faster than in the next step.
+//! - **Cap** `asin(1 / h)` on the angle between the heading and the straight way (I-3a's 30° for
+//!   `h = 2`): the angle a body of radius sum `r + r_b` subtends from the horizon's distance
+//!   `h · (r + r_b)`, so no turn is larger than the one that clears a body met at the horizon;
+//!   it also keeps a crowd of candidates from turning the unit round.
+//!
 //! # Invariants
-//! - **Exact head-on tie (I-3b):** a threat dead ahead in relative motion (`cross = 0`) is passed
-//!   on the right; both bodies of a head-on pair do so, which separates them without any id.
-//! - **Antisymmetry:** off the tie the geometric side `cross(v_rel, p) < 0` is the same for both
-//!   bodies of a pair (swapping the pair negates `p` and `v_rel`, which keeps the cross product).
+//! - **No memory, no id:** the heading is a function of the snapshot; sums of Q32.32 values are
+//!   exact integer additions, so it does not depend on the neighbours' order.
+//! - **Exact head-on (I-3b):** a candidate dead ahead in relative motion (`v × p = 0`) is passed on
+//!   the right; both bodies of a head-on pair do so, which separates them without any id.
+//! - **Antisymmetry:** off the tie the side `sign(v × p)` is the same for both bodies of a pair
+//!   (swapping them negates `p` and `v`), so they pass on consistent sides.
+//! - Friends moving with the unit (I-4), idle friends that step aside (L6) and the chase target are
+//!   never candidates.
 //! - The heading is a unit vector, or zero when the unit stands on its point.
-//! - All arithmetic is checked Q32.32 with one square root per threat for its time and one for the
-//!   turn; no trigonometric table.
 
 use super::math::{checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
 use super::tuning::{COMOVING_MIN_COSINE, STEERING_CORRIDOR_MARGIN};
@@ -30,59 +55,23 @@ use super::MovementMathError;
 use crate::steering::{ContactBody, SteeringObstacle};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
-/// The side rule's one-pair commitment (I-3): the body passed and the side it is passed on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct SideMemory {
-    /// The committed partner, if any.
-    pub partner: Option<EntityId>,
-    /// Passes the partner on the unit's left when true.
-    pub left: bool,
-}
-
-/// What intent decided this tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Intent {
-    /// The unit heading to propose, or zero at the point.
-    pub heading: SimVec2,
-    /// The commitment after this tick.
-    pub side: SideMemory,
-    /// The body steered round this tick, if any.
-    pub threat: Option<EntityId>,
-}
-
 /// Everything [`intent_heading`] reads.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct IntentInput<'a> {
     /// The unit.
     pub body: ContactBody,
-    /// Its next route point (or slot point), world units.
+    /// Its next route point (or gap point), world units.
     pub next: SimVec2,
     /// Its step this tick, world units per tick (accelerated and braked).
     pub speed: SimScalar,
+    /// The travel left before the unit's planned stop, world units.
+    pub stop: SimScalar,
     /// A body never steered round: the chase target.
     pub ignored: Option<EntityId>,
     /// The tick-start neighbours.
     pub neighbours: &'a [SteeringObstacle],
-    /// `contact.side_horizon_factor` (I-3a).
+    /// `contact.side_horizon_factor` (I-3a), at least 1.
     pub horizon_factor: u8,
-    /// The commitment the unit carries into this tick.
-    pub side: SideMemory,
-}
-
-/// One body that will collide with the unit within its horizon.
-#[derive(Debug, Clone, Copy)]
-struct Threat {
-    id: EntityId,
-    /// Ticks to collision.
-    time: SimScalar,
-    /// Offset from the unit to the body, world units.
-    offset: SimVec2,
-    /// The unit's preferred velocity less the body's, world units per tick.
-    relative: SimVec2,
-    /// The body's last displacement, world units per tick.
-    velocity: SimVec2,
-    /// Radius sum plus the clearance margin, world units.
-    reach: SimScalar,
 }
 
 /// `a × b`, the z component of the cross product, checked.
@@ -99,8 +88,28 @@ fn mul(a: SimScalar, b: SimScalar) -> Result<SimScalar, MovementMathError> {
     a.checked_mul(b).ok_or(MovementMathError::Unrepresentable)
 }
 
+fn div(a: SimScalar, b: SimScalar) -> Result<SimScalar, MovementMathError> {
+    a.checked_div(b).ok_or(MovementMathError::Unrepresentable)
+}
+
 fn sub(a: SimScalar, b: SimScalar) -> Result<SimScalar, MovementMathError> {
     a.checked_sub(b).ok_or(MovementMathError::Unrepresentable)
+}
+
+fn root(value: SimScalar) -> Result<SimScalar, MovementMathError> {
+    value
+        .max(SimScalar::ZERO)
+        .sqrt()
+        .map_err(|_| MovementMathError::Unrepresentable)
+}
+
+/// The unit normal of `along` on its right (`left == false`) or its left.
+fn normal(along: SimVec2, left: bool) -> SimVec2 {
+    if left {
+        SimVec2::new(-along.y, along.x)
+    } else {
+        SimVec2::new(along.y, -along.x)
+    }
 }
 
 /// Whether `obstacle` is a friend moving with the unit, whose heading is `heading` (I-4): its
@@ -113,55 +122,6 @@ fn co_moving(heading: SimVec2, obstacle: &SteeringObstacle) -> Result<bool, Move
     Ok(checked_dot(heading, along)? >= COMOVING_MIN_COSINE)
 }
 
-/// The time to collision with `obstacle` within the horizon, if it is a threat (I-3).
-fn threat_of(
-    input: &IntentInput<'_>,
-    preferred: SimVec2,
-    obstacle: &SteeringObstacle,
-) -> Result<Option<Threat>, MovementMathError> {
-    let body = input.body;
-    let offset = checked_vec_sub(obstacle.pos, body.pos)?;
-    let relative = checked_vec_sub(preferred, obstacle.velocity)?;
-    let reach = body
-        .radius
-        .checked_add(obstacle.radius)
-        .and_then(|sum| sum.checked_add(STEERING_CORRIDOR_MARGIN))
-        .ok_or(MovementMathError::Unrepresentable)?;
-    let gap_sq = sub(checked_dot(offset, offset)?, mul(reach, reach)?)?;
-    let closing = checked_dot(offset, relative)?;
-    if gap_sq <= SimScalar::ZERO || closing <= SimScalar::ZERO {
-        // Already in contact (the solver's job), or not closing.
-        return Ok(None);
-    }
-    let speed_sq = checked_dot(relative, relative)?;
-    let discriminant = sub(mul(closing, closing)?, mul(speed_sq, gap_sq)?)?;
-    if speed_sq <= SimScalar::ZERO || discriminant < SimScalar::ZERO {
-        return Ok(None);
-    }
-    let root = discriminant
-        .sqrt()
-        .map_err(|_| MovementMathError::Unrepresentable)?;
-    let time = sub(closing, root)?
-        .checked_div(speed_sq)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    // I-3a: H = h · (r + r_b) / speed ticks.
-    let horizon = SimScalar::from_num(input.horizon_factor)
-        .checked_mul(body.radius.saturating_add(obstacle.radius))
-        .and_then(|span| span.checked_div(input.speed))
-        .unwrap_or(SimScalar::MAX);
-    if time > horizon {
-        return Ok(None);
-    }
-    Ok(Some(Threat {
-        id: obstacle.id,
-        time,
-        offset,
-        relative,
-        velocity: obstacle.velocity,
-        reach,
-    }))
-}
-
 /// Whether `obstacle` is excluded before any geometry: the unit itself, the ignored body (the
 /// chase target), or an idle friend that steps aside (L6).
 fn passed_over(input: &IntentInput<'_>, obstacle: &SteeringObstacle) -> bool {
@@ -171,131 +131,166 @@ fn passed_over(input: &IntentInput<'_>, obstacle: &SteeringObstacle) -> bool {
         || obstacle.yields_to(body.owner, body.push_priority)
 }
 
-/// The earliest threat among the neighbours (I-3) and whether the committed partner still
-/// closes. A neighbour counts when it is not passed over ([`passed_over`]), is not a co-moving
-/// friend (I-4), and `admits` it (the neighbour test deferred for far bodies, see
-/// `locomotion::gather_neighbours`).
+/// The predicted contact with one candidate, before its weight.
+struct Contact {
+    /// Ticks to collision; 0 when already in contact and closing.
+    time: SimScalar,
+    /// The horizon `H`, ticks.
+    horizon: SimScalar,
+    /// Offset from the unit to the body, world units.
+    offset: SimVec2,
+    /// The unit's preferred velocity less the body's, world units per tick.
+    relative: SimVec2,
+    /// `|relative|²`.
+    speed_sq: SimScalar,
+    /// Radius sum plus the clearance margin, world units.
+    reach: SimScalar,
+}
+
+/// The predicted contact with `obstacle` within the horizon and before the planned stop, if any.
+fn contact_with(
+    input: &IntentInput<'_>,
+    preferred: SimVec2,
+    obstacle: &SteeringObstacle,
+) -> Result<Option<Contact>, MovementMathError> {
+    let body = input.body;
+    let offset = checked_vec_sub(obstacle.pos, body.pos)?;
+    let relative = checked_vec_sub(preferred, obstacle.velocity)?;
+    let closing = checked_dot(offset, relative)?;
+    let speed_sq = checked_dot(relative, relative)?;
+    if closing <= SimScalar::ZERO || speed_sq <= SimScalar::ZERO {
+        return Ok(None);
+    }
+    let reach = body
+        .radius
+        .checked_add(obstacle.radius)
+        .and_then(|sum| sum.checked_add(STEERING_CORRIDOR_MARGIN))
+        .ok_or(MovementMathError::Unrepresentable)?;
+    let gap_sq = sub(checked_dot(offset, offset)?, mul(reach, reach)?)?;
+    let time = if gap_sq <= SimScalar::ZERO {
+        SimScalar::ZERO
+    } else {
+        let discriminant = sub(mul(closing, closing)?, mul(speed_sq, gap_sq)?)?;
+        if discriminant < SimScalar::ZERO {
+            return Ok(None);
+        }
+        div(sub(closing, root(discriminant)?)?, speed_sq)?
+    };
+    // I-3a: H = h · (r + r_b) / speed ticks.
+    let horizon = SimScalar::from_num(input.horizon_factor)
+        .checked_mul(body.radius.saturating_add(obstacle.radius))
+        .and_then(|span| span.checked_div(input.speed))
+        .unwrap_or(SimScalar::MAX);
+    // The planned stop: the unit's own travel to the contact exceeds what it has left.
+    let travel = time.saturating_mul(input.speed);
+    if time > horizon || travel > input.stop {
+        return Ok(None);
+    }
+    Ok(Some(Contact {
+        time,
+        horizon,
+        offset,
+        relative,
+        speed_sq,
+        reach,
+    }))
+}
+
+/// The weighted sideways velocity that clears `contact` (see the module documentation).
+fn tangential(contact: &Contact) -> Result<SimVec2, MovementMathError> {
+    let speed = root(contact.speed_sq)?;
+    let along = SimVec2::new(
+        div(contact.relative.x, speed)?,
+        div(contact.relative.y, speed)?,
+    );
+    let side = cross(contact.relative, contact.offset)?;
+    let miss = div(side.abs(), speed)?;
+    let need = sub(contact.reach, miss)?;
+    if need <= SimScalar::ZERO {
+        return Ok(SimVec2::ZERO);
+    }
+    let weight = sub(SimScalar::ONE, div(contact.time, contact.horizon)?)?
+        .clamp(SimScalar::ZERO, SimScalar::ONE);
+    let magnitude = mul(weight, div(need, contact.time.max(SimScalar::ONE))?)?;
+    // A body on the left of the relative motion is passed on the right, one on the right on the
+    // left; dead ahead (`side = 0`) on the right (I-3b).
+    checked_vec_scale(normal(along, side < SimScalar::ZERO), magnitude)
+}
+
+/// The summed tangential term over the neighbours. A neighbour counts when it is not passed over
+/// ([`passed_over`]), is not a co-moving friend (I-4), and `admits` it (the neighbour test
+/// deferred for far bodies, see `locomotion::gather_neighbours`).
 // PERFORMANCE RATIONALE:
 // Why: Under the solver the neighbour list is about five times longer than the legacy one, and
 // the co-moving test normalises each friend's velocity (a root and two divisions), most of it
 // for bodies that are not on a collision course at all (evidence §5.3).
-// What: The cheap geometry of [`threat_of`] runs first; the co-moving test and the deferred
-// ground test run only for a body that is a threat or the committed partner. Both tests are
-// exclusions that never fail (a unit normal of a finite velocity is always representable), so
-// the threat and the partner found are the same as testing in the order of the rules.
+// What: The cheap geometry of [`contact_with`] runs first; the co-moving test and the deferred
+// ground test run only for a body on a collision course. Both are exclusions that never fail
+// (a unit normal of a finite velocity is always representable), so the sum is the same as
+// testing in the order of the rules.
 // Trade-off: The rule's order in code differs from its order in the plan's text.
-fn scan_threats(
+fn summed_term(
     input: &IntentInput<'_>,
     (straight, preferred): (SimVec2, SimVec2),
     admits: &impl Fn(&SteeringObstacle) -> bool,
-) -> Result<(Option<Threat>, bool), MovementMathError> {
-    let mut earliest: Option<Threat> = None;
-    let mut partner_closes = false;
+) -> Result<SimVec2, MovementMathError> {
+    let mut sum = SimVec2::ZERO;
     for obstacle in input.neighbours {
         if passed_over(input, obstacle) {
             continue;
         }
-        let partner = Some(obstacle.id) == input.side.partner;
-        let threat = threat_of(input, preferred, obstacle);
-        if !partner && matches!(threat, Ok(None)) {
+        let Some(contact) = contact_with(input, preferred, obstacle)? else {
             continue;
-        }
+        };
         if (obstacle.owner == input.body.owner && co_moving(straight, obstacle)?)
             || !admits(obstacle)
         {
             continue;
         }
-        if partner {
-            let offset = checked_vec_sub(obstacle.pos, input.body.pos)?;
-            let relative = checked_vec_sub(preferred, obstacle.velocity)?;
-            partner_closes = checked_dot(offset, relative)? > SimScalar::ZERO;
-        }
-        if let Some(threat) = threat? {
-            let earlier = earliest.is_none_or(|best| {
-                threat.time < best.time || (threat.time == best.time && threat.id < best.id)
-            });
-            if earlier {
-                earliest = Some(threat);
-            }
-        }
+        sum = checked_vec_add(sum, tangential(&contact)?)?;
     }
-    Ok((earliest, partner_closes))
+    Ok(sum)
 }
 
-/// The heading the unit proposes this tick and its commitment (see the module documentation).
-/// `admits` completes the neighbour test of a listed body (`true` for every body when the list
-/// is exact).
+/// `heading` turned back toward `straight` so that the angle between them is at most
+/// `asin(1 / h)`, on the side it lies (a heading exactly opposite turns right).
+fn capped(straight: SimVec2, heading: SimVec2, factor: u8) -> Result<SimVec2, MovementMathError> {
+    let sine = div(SimScalar::ONE, SimScalar::from_num(factor.max(1)))?;
+    let cosine = root(sub(SimScalar::ONE, mul(sine, sine)?)?)?;
+    if checked_dot(straight, heading)? >= cosine {
+        return Ok(heading);
+    }
+    let left = cross(straight, heading)? > SimScalar::ZERO;
+    checked_vec_add(
+        checked_vec_scale(straight, cosine)?,
+        checked_vec_scale(normal(straight, left), sine)?,
+    )
+}
+
+/// The heading the unit proposes this tick (see the module documentation). `admits` completes
+/// the neighbour test of a listed body (`true` for every body when the list is exact).
 ///
 /// # Errors
-/// An unrepresentable intermediate of the side rule's geometry.
+/// An unrepresentable intermediate of the term's geometry.
 pub(crate) fn intent_heading(
     input: &IntentInput<'_>,
     admits: impl Fn(&SteeringObstacle) -> bool,
-) -> Result<Intent, MovementMathError> {
+) -> Result<SimVec2, MovementMathError> {
     let straight = direction(input.next, input.body.pos)?;
-    let mut decision = Intent {
-        heading: straight,
-        side: input.side,
-        threat: None,
-    };
     if straight == SimVec2::ZERO || input.speed <= SimScalar::ZERO {
-        return Ok(decision);
+        return Ok(straight);
     }
     let preferred = checked_vec_scale(straight, input.speed)?;
-    let (earliest, partner_closes) = scan_threats(input, (straight, preferred), &admits)?;
-    let Some(threat) = earliest else {
-        // Commitment ends when the partner no longer closes or has left the neighbours (I-3).
-        if !partner_closes {
-            decision.side = SideMemory::default();
-        }
-        return Ok(decision);
-    };
-    let left = if Some(threat.id) == input.side.partner {
-        input.side.left
-    } else {
-        // The threat to the right of the relative motion is passed on the left; dead ahead
-        // (`cross = 0`) on the right (I-3b).
-        cross(threat.relative, threat.offset)? < SimScalar::ZERO
-    };
-    decision.side = SideMemory {
-        partner: Some(threat.id),
-        left,
-    };
-    decision.threat = Some(threat.id);
-    decision.heading = tangent_heading(&threat, left)?.unwrap_or(straight);
-    Ok(decision)
-}
-
-/// The heading that turns the threat's relative velocity onto the tangent of its disc on the
-/// chosen side: `t̂ = p̂ cos α ± p̂⊥ sin α` with `sin α = R / |p|`, heading
-/// `normalize(v_b + |v_rel| t̂)`. `None` when that velocity is zero.
-fn tangent_heading(threat: &Threat, left: bool) -> Result<Option<SimVec2>, MovementMathError> {
-    let distance = super::checked_distance(threat.offset, SimVec2::ZERO)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    let toward = direction(threat.offset, SimVec2::ZERO)?;
-    let sine = threat
-        .reach
-        .checked_div(distance)
-        .ok_or(MovementMathError::Unrepresentable)?
-        .min(SimScalar::ONE);
-    let cosine = sub(SimScalar::ONE, mul(sine, sine)?)?
-        .max(SimScalar::ZERO)
-        .sqrt()
-        .map_err(|_| MovementMathError::Unrepresentable)?;
-    let normal = if left {
-        SimVec2::new(-toward.y, toward.x)
-    } else {
-        SimVec2::new(toward.y, -toward.x)
-    };
-    let tangent = checked_vec_add(
-        checked_vec_scale(toward, cosine)?,
-        checked_vec_scale(normal, sine)?,
-    )?;
-    let speed = super::checked_distance(threat.relative, SimVec2::ZERO)
-        .ok_or(MovementMathError::Unrepresentable)?;
-    let velocity = checked_vec_add(threat.velocity, checked_vec_scale(tangent, speed)?)?;
-    let heading = direction(velocity, SimVec2::ZERO)?;
-    Ok((heading != SimVec2::ZERO).then_some(heading))
+    let term = summed_term(input, (straight, preferred), &admits)?;
+    if term == SimVec2::ZERO {
+        return Ok(straight);
+    }
+    let bent = direction(checked_vec_add(preferred, term)?, SimVec2::ZERO)?;
+    if bent == SimVec2::ZERO {
+        // The term exactly cancels the preferred velocity: pass on the right (I-3b).
+        return capped(straight, normal(straight, false), input.horizon_factor);
+    }
+    capped(straight, bent, input.horizon_factor)
 }
 
 #[cfg(test)]
@@ -327,65 +322,35 @@ mod tests {
         }
     }
 
-    fn input(
-        body: ContactBody,
-        next: SimVec2,
-        neighbours: &[SteeringObstacle],
-        side: SideMemory,
-    ) -> IntentInput<'_> {
+    fn input(body: ContactBody, next: SimVec2, neighbours: &[SteeringObstacle]) -> IntentInput<'_> {
         IntentInput {
             body,
             next,
             speed: SimScalar::from_num(0.125),
+            stop: SimScalar::MAX,
             ignored: None,
             neighbours,
             horizon_factor: 2,
-            side,
         }
     }
 
-    /// The intent over a list whose every body is a neighbour.
-    fn intent_heading_all(input: &IntentInput<'_>) -> Result<Intent, MovementMathError> {
+    fn heading(input: &IntentInput<'_>) -> Result<SimVec2, MovementMathError> {
         intent_heading(input, |_| true)
     }
 
-    /// A body the deferred neighbour test refuses is no threat, and a committed partner it
-    /// refuses has left the neighbours, so the commitment ends (plan Amendment 3, item 1).
+    /// A body the deferred neighbour test refuses adds nothing.
     #[test]
-    fn a_body_the_neighbour_test_refuses_is_neither_threat_nor_partner(
-    ) -> Result<(), MovementMathError> {
+    fn a_body_the_neighbour_test_refuses_is_no_candidate() -> Result<(), MovementMathError> {
         let a = unit(1, at(10.0, 10.0));
-        let oncoming = body(2, 1, at(11.5, 10.0), at(-0.125, 0.0));
-        let seen = [oncoming];
-        let input = input(a, at(20.0, 10.0), &seen, SideMemory::default());
-        assert_eq!(intent_heading_all(&input)?.threat, Some(EntityId(2)));
-        let refused = intent_heading(&input, |_| false)?;
-        assert_eq!(refused.threat, None);
-        assert_eq!(
-            refused.heading,
-            SimVec2::new(SimScalar::ONE, SimScalar::ZERO)
-        );
-        let committed = SideMemory {
-            partner: Some(EntityId(2)),
-            left: true,
-        };
-        let input = IntentInput {
-            side: committed,
-            ..input
-        };
-        assert_eq!(
-            intent_heading(&input, |_| false)?.side,
-            SideMemory::default()
-        );
+        let seen = [body(2, 1, at(11.5, 10.1), at(-0.125, 0.0))];
+        let input = input(a, at(20.0, 10.0), &seen);
+        assert_ne!(heading(&input)?, SimVec2::X_AXIS);
+        assert_eq!(intent_heading(&input, |_| false)?, SimVec2::X_AXIS);
         Ok(())
     }
 
-    fn cross_of(heading: SimVec2, axis: SimVec2) -> SimScalar {
-        cross(axis, heading).unwrap_or(SimScalar::ZERO)
-    }
-
-    /// I-3b: two bodies exactly head-on both pass on their right, which separates them, and the
-    /// reflected scene decides the same way (mirror consistency).
+    /// I-3b: two bodies exactly head-on both pass on their right, and the reflected scene decides
+    /// the same way (mirror consistency).
     #[test]
     fn a_head_on_pair_passes_right_to_right_and_mirrors() -> Result<(), MovementMathError> {
         let speed = SimScalar::from_num(0.125);
@@ -393,110 +358,116 @@ mod tests {
         let west = SimVec2::new(-speed, SimScalar::ZERO);
         let a = unit(1, at(10.0, 10.0));
         let b = unit(2, at(12.5, 10.0));
-        let seen_by_a = [body(2, 0, b.pos, west)];
-        let seen_by_b = [body(1, 0, a.pos, east)];
-        let ia = intent_heading_all(&input(a, at(20.0, 10.0), &seen_by_a, SideMemory::default()))?;
-        let ib = intent_heading_all(&input(b, at(0.0, 10.0), &seen_by_b, SideMemory::default()))?;
-        assert_eq!(ia.threat, Some(EntityId(2)));
-        assert_eq!(ib.threat, Some(EntityId(1)));
-        assert!(!ia.side.left && !ib.side.left, "{ia:?} {ib:?}");
+        let ha = heading(&input(a, at(20.0, 10.0), &[body(2, 0, b.pos, west)]))?;
+        let hb = heading(&input(b, at(0.0, 10.0), &[body(1, 0, a.pos, east)]))?;
         // A heads east and turns right (south); B heads west and turns right (north).
         assert!(
-            ia.heading.y < SimScalar::ZERO && ib.heading.y > SimScalar::ZERO,
-            "{ia:?} {ib:?}"
+            ha.y < SimScalar::ZERO && hb.y > SimScalar::ZERO,
+            "{ha:?} {hb:?}"
         );
-        // Point reflection through (11.25, 10): the decisions reflect.
         let mirror = |p: SimVec2| SimVec2::new(at(22.5, 20.0).x - p.x, at(22.5, 20.0).y - p.y);
-        let ra = unit(1, mirror(a.pos));
-        let seen = [body(2, 0, mirror(b.pos), east)];
-        let reflected = intent_heading_all(&input(
-            ra,
+        let reflected = heading(&input(
+            unit(1, mirror(a.pos)),
             mirror(at(20.0, 10.0)),
-            &seen,
-            SideMemory::default(),
+            &[body(2, 0, mirror(b.pos), east)],
         ))?;
-        assert!(!reflected.side.left);
-        // The reflected heading is A's negated, up to the last bits of Q32.32 products, which
-        // round towards negative infinity and so are not odd functions.
+        // The reflected heading is A's negated, up to the last bits of Q32.32 products.
         let off = |a: SimScalar, b: SimScalar| (a.raw() + b.raw()).unsigned_abs();
-        assert!(
-            off(reflected.heading.x, ia.heading.x) <= 8,
-            "{reflected:?} {ia:?}"
-        );
-        assert!(
-            off(reflected.heading.y, ia.heading.y) <= 8,
-            "{reflected:?} {ia:?}"
+        assert!(off(reflected.x, ha.x) <= 64, "{reflected:?} {ha:?}");
+        assert!(off(reflected.y, ha.y) <= 64, "{reflected:?} {ha:?}");
+        Ok(())
+    }
+
+    /// Two equally urgent bodies placed symmetrically about the way cancel: the unit goes
+    /// straight (contact queues it). One of them alone bends the heading away from it.
+    #[test]
+    fn symmetric_threats_cancel_and_one_alone_bends() -> Result<(), MovementMathError> {
+        let a = unit(1, at(10.0, 10.0));
+        let left = body(2, 0, at(11.8, 10.6), SimVec2::ZERO);
+        let right = body(3, 0, at(11.8, 9.4), SimVec2::ZERO);
+        // Up to the last bits of Q32.32 products, which round toward negative infinity.
+        let both = heading(&input(a, at(20.0, 10.0), &[left, right]))?;
+        assert!(both.y.raw().unsigned_abs() <= 64, "{both:?}");
+        let alone = heading(&input(a, at(20.0, 10.0), &[left]))?;
+        assert!(alone.y < SimScalar::ZERO, "{alone:?}");
+        Ok(())
+    }
+
+    /// The term is a sum: the neighbours' order changes nothing, to the last bit.
+    #[test]
+    fn the_heading_does_not_depend_on_the_neighbours_order() -> Result<(), MovementMathError> {
+        let a = unit(1, at(10.0, 10.0));
+        let bodies = [
+            body(2, 1, at(11.9, 10.3), at(-0.1, 0.0)),
+            body(3, 0, at(12.4, 9.2), SimVec2::ZERO),
+            body(4, 1, at(11.0, 11.4), at(0.0, -0.1)),
+        ];
+        let reversed = [bodies[2], bodies[0], bodies[1]];
+        assert_eq!(
+            heading(&input(a, at(20.0, 10.0), &bodies))?,
+            heading(&input(a, at(20.0, 10.0), &reversed))?
         );
         Ok(())
     }
 
-    /// I-3: a crossing at 90° commits a side and keeps it while the pair closes, even when the
-    /// geometry alone would now choose the other side.
+    /// I-4 and L6: a friend moving the same way and an idle friend that steps aside are no
+    /// candidates; an enemy in the same place is.
     #[test]
-    fn a_crossing_commits_a_side_and_keeps_it_while_closing() -> Result<(), MovementMathError> {
+    fn co_moving_and_yielding_friends_are_no_candidates() -> Result<(), MovementMathError> {
         let a = unit(1, at(10.0, 10.0));
-        // B comes up from the south-east, crossing A's way east.
-        let north = SimVec2::new(SimScalar::ZERO, SimScalar::from_num(0.125));
-        let seen = [body(2, 0, at(11.5, 8.6), north)];
-        let first = intent_heading_all(&input(a, at(20.0, 10.0), &seen, SideMemory::default()))?;
-        let committed = first.side;
-        assert_eq!(committed.partner, Some(EntityId(2)));
-        // Same pair, the commitment flipped by hand: it is kept, not re-chosen.
-        let flipped = SideMemory {
-            partner: committed.partner,
-            left: !committed.left,
-        };
-        let kept = intent_heading_all(&input(a, at(20.0, 10.0), &seen, flipped))?;
-        assert_eq!(kept.side, flipped);
-        // Once B has passed and no longer closes, the commitment ends.
-        let gone = [body(2, 0, at(10.0, 12.0), north)];
-        let ended = intent_heading_all(&input(a, at(20.0, 10.0), &gone, committed))?;
-        assert_eq!(ended.side, SideMemory::default());
-        assert_eq!(ended.heading, SimVec2::X_AXIS);
-        Ok(())
-    }
-
-    /// I-4 and L6: a friend moving the same way and an idle friend that steps aside are not
-    /// threats; an enemy in the same place is.
-    #[test]
-    fn co_moving_and_yielding_friends_are_not_threats() -> Result<(), MovementMathError> {
-        let a = unit(1, at(10.0, 10.0));
-        let ahead = at(11.5, 10.0);
-        let same_way = SimVec2::new(SimScalar::from_num(0.1), SimScalar::ZERO);
-        let co = [body(2, 0, ahead, same_way)];
+        let ahead = at(11.5, 10.2);
+        let co = [body(2, 0, ahead, at(0.1, 0.0))];
         let idle = [SteeringObstacle {
             owner: PlayerId(0),
             push_priority: 10,
             ..SteeringObstacle::new(EntityId(3), ahead, SimScalar::HALF, SimVec2::ZERO)
         }];
         let enemy = [body(4, 1, ahead, SimVec2::ZERO)];
-        for (neighbours, threat) in [
-            (&co[..], None),
-            (&idle[..], None),
-            (&enemy[..], Some(EntityId(4))),
-        ] {
-            let decided =
-                intent_heading_all(&input(a, at(20.0, 10.0), neighbours, SideMemory::default()))?;
-            assert_eq!(decided.threat, threat);
-        }
+        assert_eq!(heading(&input(a, at(20.0, 10.0), &co))?, SimVec2::X_AXIS);
+        assert_eq!(heading(&input(a, at(20.0, 10.0), &idle))?, SimVec2::X_AXIS);
+        assert_ne!(heading(&input(a, at(20.0, 10.0), &enemy))?, SimVec2::X_AXIS);
         Ok(())
     }
 
-    /// I-3a: against a standing body dead ahead at the horizon, the turn is at most
-    /// `asin(1 / h)`; beyond the horizon there is none.
+    /// The planned stop: a standing body the unit would reach only after its stop is ignored.
+    #[test]
+    fn a_collision_beyond_the_planned_stop_is_ignored() -> Result<(), MovementMathError> {
+        let a = unit(1, at(10.0, 10.0));
+        let seen = [body(2, 0, at(12.0, 10.1), SimVec2::ZERO)];
+        let far = input(a, at(20.0, 10.0), &seen);
+        assert_ne!(heading(&far)?, SimVec2::X_AXIS);
+        // The contact lies about 0.95 ahead; a unit stopping after 0.5 never reaches it.
+        let short = IntentInput {
+            stop: SimScalar::HALF,
+            ..far
+        };
+        assert_eq!(heading(&short)?, SimVec2::X_AXIS);
+        Ok(())
+    }
+
+    /// I-3a: the turn never exceeds `asin(1 / h)`, however many bodies push the same way, and a
+    /// body beyond the horizon adds nothing. A body already in contact and closing still counts.
     #[test]
     fn the_deflection_never_exceeds_the_horizon_bound() -> Result<(), MovementMathError> {
         let a = unit(1, at(10.0, 10.0));
-        // h = 2, r + r_b = 1, speed 0.125: H = 16 ticks; reach R = 1.05; |p| = R + 16 · 0.125.
-        for (gap, steered) in [(1.9, true), (1.5, true), (2.1, false)] {
-            let seen = [body(2, 1, at(10.0 + 1.05 + gap, 10.0), SimVec2::ZERO)];
-            let decided =
-                intent_heading_all(&input(a, at(30.0, 10.0), &seen, SideMemory::default()))?;
-            assert_eq!(decided.threat.is_some(), steered, "gap {gap}");
-            // sin of the turn = |cross(x̂, heading)|; asin(1/2) is 30°, sin 0.5.
-            let sine = cross_of(decided.heading, SimVec2::X_AXIS).abs();
-            assert!(sine <= SimScalar::HALF, "gap {gap}: sin {sine}");
-        }
+        let crowd: Vec<SteeringObstacle> = (0..6)
+            .map(|i| body(2 + i, 1, at(11.0 + 0.2 * f64::from(i), 10.4), SimVec2::ZERO))
+            .collect();
+        let bent = heading(&input(a, at(30.0, 10.0), &crowd))?;
+        // sin of the turn = |cross(x̂, heading)|; asin(1/2) is 30°, sin 0.5.
+        assert!(
+            cross(SimVec2::X_AXIS, bent)?.abs() <= SimScalar::HALF,
+            "{bent:?}"
+        );
+        assert!(bent.y < SimScalar::ZERO, "{bent:?}");
+        // h = 2, r + r_b = 1, speed 0.125: H = 16 ticks, 2 world units of travel; R = 1.05.
+        let beyond = [body(2, 1, at(10.0 + 1.05 + 2.2, 10.0), SimVec2::ZERO)];
+        assert_eq!(
+            heading(&input(a, at(30.0, 10.0), &beyond))?,
+            SimVec2::X_AXIS
+        );
+        let touching = [body(2, 1, at(10.9, 10.2), SimVec2::ZERO)];
+        assert!(heading(&input(a, at(30.0, 10.0), &touching))?.y < SimScalar::ZERO);
         Ok(())
     }
 }

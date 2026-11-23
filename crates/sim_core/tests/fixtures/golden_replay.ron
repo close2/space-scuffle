@@ -365,6 +365,14 @@
 // unhashed and holds the schema at 33 reproduces main's (f399d403) checksums at every checkpoint
 // on native debug and release and wasm32-wasip1 release and debug. Native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-20-contact-solver WP4 step 3 (Amendment 7 item 3; schema 34 restated):
+// the side rule became a memoryless summed time-to-collision term, so `side_partner` and
+// `side_left` leave each unit's movement memory and the checksum; `slot` (the remembered gap)
+// stays. The legacy pipeline never wrote them, so every checkpoint changed and no behaviour did.
+// Proof: a scratch build of this tree with the two fields restored (unwritten) reproduces the
+// previous list at every checkpoint, and DEFAULT_SANDBOX_CHECKSUM, on native debug and release
+// and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and
+// debug agree on the list below.
 (
     checksum_schema: 34,
     seed: 0x5EED_0F_5CAFF1E,
@@ -392,25 +400,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x53d939cdb851a4db,
-        0x5de589dac5da8b10,
-        0x7e8724313da81a7f,
-        0x8a7b78657373d8a4,
-        0x8cac0c144f5183e3,
-        0xed447c1f27b74879,
-        0x84abb8abb3690d1c,
-        0x177a1735c795cb5f,
-        0x11dc33aea8a76091,
-        0x131b824155b8c983,
-        0xad3f134297da6d98,
-        0xbd8affad0ddc63c0,
-        0x54ee3ee1fc6813b7,
-        0x88558adf603502a3,
-        0x4dce9de8adf6a7de,
-        0xb86c36ef1249289e,
-        0x086d5ce411951081,
-        0x961e828a5902d636,
-        0xccf26742f21092f0,
-        0x3b017a2bfb499c25,
+        0x00c496af52efa11a,
+        0xadb4840aa7aa1287,
+        0xfa4bb5f46c99040f,
+        0xb3aa1419f0bddfdf,
+        0x299b816b08c91519,
+        0x45fa337b808afd90,
+        0x1b9910abdec921d5,
+        0xe683ff1907761583,
+        0xda61fce5fff7f64a,
+        0x2bec3a94d748e5e5,
+        0xab8591e444ff6e20,
+        0x57713d17bb1355dc,
+        0x7a85e637f4dcde3d,
+        0x2d38f9d2973e1c8c,
+        0x002ef3eb3ac63fa1,
+        0x1717eb76bff7737b,
+        0x26cfa96691ebd537,
+        0x8e175c285ae92275,
+        0xf803df88c778395e,
+        0x1d388de929d09692,
     ],
 )

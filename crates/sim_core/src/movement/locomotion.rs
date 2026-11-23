@@ -31,7 +31,7 @@
 
 use super::contact::{probe_permits, settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
-use super::intent::{intent_heading, IntentInput, SideMemory};
+use super::intent::{intent_heading, IntentInput};
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
     direction, distance, within_distance,
@@ -319,6 +319,10 @@ struct StepContext<'a> {
     /// The near reach's margin beyond the radius sum, world units ([`near_margin`]): a
     /// neighbour beyond it was listed without its ground test ([`Self::admits`]).
     near_margin: SimScalar,
+    /// The travel left before the unit's planned stop, world units: the rest of its route to
+    /// its goal, less the weapon's reach for a chase ([`MotionDraft::brake`]). Intent skips a
+    /// collision beyond it (plan `2026-11-20-contact-solver` Amendment 7, item 3).
+    stop: SimScalar,
 }
 
 impl StepContext<'_> {
@@ -1037,6 +1041,7 @@ impl SimWorld {
             tick: Tick(self.current_tick),
             ground: policy.layer == MovementLayer::Ground,
             cooled_down,
+            stop: SimScalar::MAX,
         };
         let mut scene = MotionScene {
             map: &self.map,
@@ -1342,6 +1347,7 @@ impl SimWorld {
             ground: policy.layer == MovementLayer::Ground,
             cooled_down: proposal.memory.repath_cooldown == 0,
             proposal,
+            stop: SimScalar::MAX,
         };
         let mut scene = MotionScene {
             map: &self.map,
@@ -1552,6 +1558,9 @@ struct MotionDraft<'a> {
     ground: bool,
     /// Whether a route search may run this tick.
     cooled_down: bool,
+    /// The travel left before the unit's planned stop, world units ([`Self::brake`]); unbounded
+    /// until braking measures it.
+    stop: SimScalar,
 }
 
 impl MotionDraft<'_> {
@@ -1584,6 +1593,7 @@ impl MotionDraft<'_> {
             scan_range: self.entry.scan_range,
             intent,
             near_margin: near_margin(self.entry),
+            stop: self.stop,
         }
     }
 
@@ -1625,7 +1635,7 @@ impl MotionDraft<'_> {
         check_route: bool,
         map_news: bool,
     ) -> Result<(), MovementInvariant> {
-        self.brake(SimScalar::ZERO)?;
+        self.brake(SimScalar::ZERO, scene.intent().is_some())?;
         if self.upkeep_route(scene, check_route)?.is_break() {
             return Ok(());
         }
@@ -1678,10 +1688,10 @@ impl MotionDraft<'_> {
     /// Lowers this tick's step so a unit with a finite deceleration can stop `short` world units
     /// before its goal (zero for a walk's destination, the weapon's reach between centres for a
     /// chase), measuring the way left along its stored route and on to the goal.
-    fn brake(&mut self, short: SimScalar) -> Result<(), MovementInvariant> {
-        let Some(deceleration) = self.entry.deceleration else {
+    fn brake(&mut self, short: SimScalar, intent: bool) -> Result<(), MovementInvariant> {
+        if self.entry.deceleration.is_none() && !intent {
             return Ok(());
-        };
+        }
         let mut remaining = SimScalar::ZERO;
         let mut from = self.actor.position;
         let route = self.proposal.route(self.actor);
@@ -1692,8 +1702,11 @@ impl MotionDraft<'_> {
             from = point;
         }
         let remaining = remaining.saturating_sub(short).max(SimScalar::ZERO);
-        let limit = braking_speed(remaining, deceleration).map_err(self.fault())?;
-        self.entry.step = self.entry.step.min(limit);
+        self.stop = remaining;
+        if let Some(deceleration) = self.entry.deceleration {
+            let limit = braking_speed(remaining, deceleration).map_err(self.fault())?;
+            self.entry.step = self.entry.step.min(limit);
+        }
         Ok(())
     }
 
@@ -1990,7 +2003,7 @@ impl MotionDraft<'_> {
         } else {
             SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX))
         };
-        self.brake(reach)?;
+        self.brake(reach, scene.intent().is_some())?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         let intent = scene.intent();
         let context = StepContext {
@@ -2380,7 +2393,7 @@ fn step_toward(
         gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
-    let heading = proposed_heading(context, proposal, next, ignored)?;
+    let heading = proposed_heading(context, next, ignored)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
@@ -2443,35 +2456,28 @@ fn step_toward(
 }
 
 /// The unit heading of a step toward `next`: legacy steering, or under the solver pipeline the
-/// intent of plan `2026-11-20-contact-solver` (I-1 to I-4), whose one-pair side commitment is kept
-/// in the proposal's memory.
+/// intent of plan `2026-11-20-contact-solver` (I-1 to I-4, Amendment 7 item 3), which keeps no
+/// memory.
 fn proposed_heading(
     context: &StepContext<'_>,
-    proposal: &mut MotionProposal,
     next: SimVec2,
     ignored: Option<EntityId>,
 ) -> Result<SimVec2, MovementMathError> {
     let Some(horizon_factor) = context.intent else {
         return steer_body(context.body, next, ignored, context.neighbours);
     };
-    let decided = intent_heading(
+    intent_heading(
         &IntentInput {
             body: context.body,
             next,
             speed: context.speed,
+            stop: context.stop,
             ignored,
             neighbours: context.neighbours,
             horizon_factor,
-            side: SideMemory {
-                partner: proposal.memory.side_partner,
-                left: proposal.memory.side_left,
-            },
         },
         |obstacle| context.admits(obstacle),
-    )?;
-    proposal.memory.side_partner = decided.side.partner;
-    proposal.memory.side_left = decided.side.left;
-    Ok(decided.heading)
+    )
 }
 
 /// What a step that the disc probe refused becomes after [`slide_along_wall`].
@@ -3089,6 +3095,7 @@ mod tests {
             scan_range: SimScalar::from_num(5.5),
             intent: None,
             near_margin: SimScalar::from_num(8),
+            stop: SimScalar::MAX,
         };
         Ok(probe(&context, &mut world.pathfinder))
     }

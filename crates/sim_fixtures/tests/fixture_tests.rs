@@ -88,7 +88,10 @@ use std::path::PathBuf;
 /// which encodes each unit's side-rule commitment and slot claim (none under the legacy pipeline);
 /// a scratch build that does not encode them and keeps schema 33 reproduces
 /// `3_827_951_643_646_962_361`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 8_078_240_594_761_352_058;
+/// Re-recorded for schema 34 restated (plan `2026-11-20-contact-solver` Amendment 7 item 3): the
+/// side rule keeps no memory, so `side_partner` and `side_left` leave the checksum; a scratch
+/// build that restores them (unwritten) reproduces `8_078_240_594_761_352_058`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 18_092_180_650_213_519_640;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
