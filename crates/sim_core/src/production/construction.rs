@@ -605,6 +605,8 @@ impl SimWorld {
         )
         .map_err(|_| BuildRejection::OutOfBounds)?;
         let id = self.commit_spawn(prepared);
+        // A town hall rallies itself when it is created (plan `2026-11-23-production-queue` D-7).
+        self.apply_auto_rally(id);
         self.pathfinder.recompute_clearance(&self.map);
         Ok(id)
     }

@@ -38,8 +38,8 @@ pub mod weapon;
 // Flat convenient re-exports
 pub use commands::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
-    AttackOrigin, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand, TickBundle,
-    TickInputBundle, UnitModeSpec, UnitOrder,
+    AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand,
+    RallyTarget, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,

@@ -1060,8 +1060,39 @@ impl StructureArchetypeDef {
         Ok(())
     }
 
+    /// Checks the authored auto-rally (plan `2026-11-23-production-queue` D-7): a finite,
+    /// nonnegative radius, no resource kind twice, and only on a structure that trains units,
+    /// since only those have a rally (D-3).
+    fn validate_auto_rally(&self) -> SimResult<()> {
+        let Some(rally) = &self.auto_rally else {
+            return Ok(());
+        };
+        nonnegative(&self.slug, "auto_rally.radius", rally.radius)?;
+        if rally
+            .kinds
+            .iter()
+            .enumerate()
+            .any(|(index, kind)| rally.kinds[..index].contains(kind))
+        {
+            return Err(invalid(
+                &self.slug,
+                "auto_rally.kinds",
+                "must not name a resource kind twice",
+            ));
+        }
+        if self.trains_units.is_empty() {
+            return Err(invalid(
+                &self.slug,
+                "auto_rally",
+                "only a structure that trains units has a rally",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
+        self.validate_auto_rally()?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
             &self.slug,
@@ -1438,6 +1469,69 @@ mod tests {
             .ok_or("real catalog has no unshielded unit")?;
         unshielded.shield_regen_delay_ticks = Some(10);
         assert_rejects_delay(&unshielded.validate(), "unshielded unit with a delay");
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-production-queue` D-7: an auto-rally has a finite, nonnegative radius,
+    /// names each kind once, and sits only on a structure that trains units. Each refusal names
+    /// its field.
+    #[test]
+    fn an_auto_rally_is_refused_unless_its_radius_kinds_and_owner_are_valid(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{AutoRallySpecDef, StructureCatalogFile};
+        use sim_types::ResourceKind;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        let trainer = file
+            .structures
+            .iter()
+            .position(|structure| !structure.trains_units.is_empty())
+            .ok_or("real catalog has no structure that trains units")?;
+        let idle = file
+            .structures
+            .iter()
+            .position(|structure| structure.trains_units.is_empty())
+            .ok_or("real catalog has no structure that trains nothing")?;
+        let cases = [
+            (
+                trainer,
+                -0.5,
+                vec![ResourceKind::Mineral],
+                Some("auto_rally.radius"),
+            ),
+            (
+                trainer,
+                f64::NAN,
+                vec![ResourceKind::Mineral],
+                Some("auto_rally.radius"),
+            ),
+            (
+                trainer,
+                6.5,
+                vec![ResourceKind::Mineral, ResourceKind::Mineral],
+                Some("auto_rally.kinds"),
+            ),
+            (idle, 6.5, vec![ResourceKind::Mineral], Some("auto_rally")),
+            (trainer, 0.0, vec![], None),
+            (
+                trainer,
+                6.5,
+                vec![ResourceKind::Mineral, ResourceKind::Gas],
+                None,
+            ),
+        ];
+        for (row, radius, kinds, rejected) in cases {
+            let case = format!("row {row}, {radius} {kinds:?}");
+            let structure = &mut file.structures[row];
+            structure.auto_rally = Some(AutoRallySpecDef { radius, kinds });
+            let refused = match structure.validate() {
+                Ok(()) => None,
+                Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+                Err(other) => return Err(format!("{case}: {other}").into()),
+            };
+            assert_eq!(refused.as_deref(), rejected, "{case}");
+            structure.auto_rally = None;
+        }
         Ok(())
     }
 

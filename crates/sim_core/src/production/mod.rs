@@ -9,6 +9,7 @@
 pub mod construction;
 mod exits;
 mod lifecycle;
+mod rally;
 mod research;
 
 use crate::upgrades::UpgradeId;
@@ -42,6 +43,10 @@ pub struct ProductionJob {
     pub total_ticks: u32,
     /// Full supply captured and reserved at admission, including waiting jobs.
     pub reserved_supply: u32,
+    /// Whether this job has started: true for at most the front job of a queue, from the update
+    /// in which it starts (at admission to an empty queue, or when it reaches the front and
+    /// counts down) until it leaves the queue (plan `2026-11-23-production-queue` D-1).
+    pub in_production: bool,
     /// Minerals taken at admission, which cancelling returns.
     pub paid_minerals: u32,
     /// Gas taken at admission, which cancelling returns.
@@ -450,14 +455,6 @@ impl SimWorld {
             })?
             .ok_or(ProductionAdmissionError::NoEligibleProducer)?;
         self.validate_supply_ledger()?;
-        let job = ProductionJob {
-            item: ProductionItem::Unit(product),
-            remaining_ticks: arch.build_time_ticks,
-            total_ticks: arch.build_time_ticks,
-            reserved_supply: arch.supply_cost,
-            paid_minerals: arch.mineral_cost,
-            paid_gas: arch.gas_cost,
-        };
         let source = self
             .entities
             .get(&producer)
@@ -465,6 +462,16 @@ impl SimWorld {
                 entity: producer,
                 reason: "selected producer disappeared during preparation",
             })?;
+        // A job admitted to an empty queue starts at once (D-2).
+        let job = ProductionJob {
+            item: ProductionItem::Unit(product),
+            remaining_ticks: arch.build_time_ticks,
+            total_ticks: arch.build_time_ticks,
+            reserved_supply: arch.supply_cost,
+            in_production: source.production_queue.is_empty(),
+            paid_minerals: arch.mineral_cost,
+            paid_gas: arch.gas_cost,
+        };
         lifecycle::validate_job_source(
             &self.catalog,
             &self.upgrade_catalog,

@@ -26,10 +26,10 @@ use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AnimState, ArmorClassId, AttackOrigin, AttributeBonuses, AttributeFlags, EntityId,
     FootprintShape, MatchResult, MoverType, PlayerId, PlayerUpgradeState,
-    ProjectileTargetLossBehavior, ResourceNodeId, SimAngle, SimScalar, SimVec2, SplashLine,
-    SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, Tick,
-    TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClassId, WeaponSpec,
-    WeaponVisualKind,
+    ProjectileTargetLossBehavior, RallyTarget, ResourceNodeId, SimAngle, SimScalar, SimVec2,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
+    StructureStrike, Tick, TurretIdle, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
+    WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -306,6 +306,7 @@ fields!(ProductionJob {
     remaining_ticks,
     total_ticks,
     reserved_supply,
+    in_production,
     paid_minerals,
     paid_gas
 });
@@ -336,6 +337,7 @@ fields!(Entity {
     production_queue,
     captured_supply_used,
     captured_supply_provided,
+    rally,
     task,
     cargo,
     construction,
@@ -831,6 +833,26 @@ impl Canonical for ProjectileTargetLossBehavior {
     }
 }
 
+// Plan `2026-11-23-production-queue` D-6: a rally's variant tag, then its payload.
+impl Canonical for RallyTarget {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Point(point) => {
+                0_u8.encode(encoder);
+                point.encode(encoder);
+            }
+            Self::Unit(unit) => {
+                1_u8.encode(encoder);
+                unit.encode(encoder);
+            }
+            Self::Node(node) => {
+                2_u8.encode(encoder);
+                node.encode(encoder);
+            }
+        }
+    }
+}
+
 impl Canonical for UnitOrder {
     fn encode(&self, encoder: &mut Encoder) {
         match self {
@@ -918,7 +940,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 33, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 34, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -994,7 +1016,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 33, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 34, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -1010,22 +1032,50 @@ mod tests {
                 remaining_ticks: 65_537,
                 total_ticks: 2,
                 reserved_supply: 0x1234_5678,
+                in_production: true,
                 paid_minerals: 3,
                 paid_gas: 4,
             }]
             .into();
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
-        // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
+        // then the full remaining duration u32 (0x0001_0001), total, supply, the started flag
+        // and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 33, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-            0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 34, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 1, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
     }
 
+    /// Plan `2026-11-23-production-queue` D-6: a rally encodes its tag (0 point, 1 unit, 2 node)
+    /// and then every byte of its payload.
+    #[test]
+    fn rally_targets_encode_their_tag_and_payload() {
+        use sim_types::{EntityId, RallyTarget, ResourceNodeId, SimScalar, SimVec2};
+        let header = [4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 34, 0, 0, 0];
+        let point = SimVec2::new(SimScalar::from_raw(0x0102), SimScalar::from_raw(-1));
+        let mut bytes = header.to_vec();
+        bytes.push(0);
+        bytes.extend(0x0102_i64.to_le_bytes());
+        bytes.extend((-1_i64).to_le_bytes());
+        assert_eq!(digest(&RallyTarget::Point(point)), xxh64(&bytes, 0));
+        let mut bytes = header.to_vec();
+        bytes.extend([1, 0x78, 0x56, 0x34, 0x12]);
+        assert_eq!(
+            digest(&RallyTarget::Unit(EntityId(0x1234_5678))),
+            xxh64(&bytes, 0)
+        );
+        let mut bytes = header.to_vec();
+        bytes.extend([2, 0x78, 0x56, 0x34, 0x12]);
+        assert_eq!(
+            digest(&RallyTarget::Node(ResourceNodeId(0x1234_5678))),
+            xxh64(&bytes, 0)
+        );
+    }
+
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 33, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 34, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

@@ -33,6 +33,10 @@
             attack_target_priority: 11,
             supply_provided: 15,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: [],
@@ -76,6 +80,10 @@
             attack_target_priority: 11,
             supply_provided: 15,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: ["assembly_bay_dome"],
@@ -118,6 +126,10 @@
             attack_target_priority: 20,
             supply_provided: 15,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: ["weapons_arsenal_dome"],
@@ -807,6 +819,10 @@
             attack_target_priority: 11,
             supply_provided: 15,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: [],
@@ -1474,6 +1490,10 @@
             attack_target_priority: 11,
             supply_provided: 6,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: [],
@@ -1513,6 +1533,10 @@
             attack_target_priority: 11,
             supply_provided: 6,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: ["spawning_hollow_dome"],
@@ -1552,6 +1576,10 @@
             attack_target_priority: 11,
             supply_provided: 6,
             is_resource_dropoff: true,
+            // CommandStructureAutoRally (voidmulti EffectData:2507-2537), run by CCCreateSet,
+            // NexusCreateSet and HatcheryCreateSet: on creation, rally to the farthest harvestable
+            // resource within Radius 6.5 (cells) that passes the Minerals validator.
+            auto_rally: Some((radius: 6.5, kinds: [Mineral])),
             is_gas_extractor: false,
             is_detector: false,
             requires_structures: ["infestation_nursery_dome"],

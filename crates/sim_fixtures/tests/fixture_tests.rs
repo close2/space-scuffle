@@ -84,7 +84,11 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 33 (plan `2026-11-22-harvest-timing` WP2, B-150, B-151), which
 /// encodes each unit's return-delay countdown, 0 at spawn; a scratch build that does not encode it
 /// and keeps schema 32 reproduces `6_458_594_406_894_179_644`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 3_827_951_643_646_962_361;
+/// Re-recorded for checksum schema 34 (plan `2026-11-23-production-queue` WP1, D-6), which
+/// encodes each queued job's `in_production` and each entity's rally; the sandbox's town halls
+/// rally themselves at creation (D-7). A scratch build that does not encode either field and keeps
+/// schema 33 reproduces `3_827_951_643_646_962_361`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_199_664_925_193_234_964;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -4530,3 +4530,41 @@ fn the_shipped_harvesters_acquire_as_5_0_14() {
     }
     assert_eq!(harvesters, 3, "the three races' workers");
 }
+
+/// Plan `2026-11-23-production-queue` D-7: every town hall auto-rallies as 5.0.14's
+/// `CommandStructureAutoRally` (voidmulti EffectData:2507-2537), which `CCCreateSet`,
+/// `NexusCreateSet` and `HatcheryCreateSet` run (voidmulti EffectData:166-169, 696-699, 713-716):
+/// a search of `HarvestableResource` within `Radius 6.5` (game units = cells = world units),
+/// sorted by `TSFarthestDistance`, `MaxCount 1`, validated by `Minerals`. The Orbital Command,
+/// Planetary Fortress, Lair and Hive keep their base hall's create set; no other structure has it.
+#[test]
+fn the_shipped_town_halls_auto_rally_as_5_0_14() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut halls: Vec<&str> = Vec::new();
+    for archetype in catalogs.units.archetypes() {
+        let Some(spec) = archetype.capabilities.auto_rally else {
+            continue;
+        };
+        let name = analogue(archetype);
+        halls.push(name);
+        assert_eq!(spec.radius, SimScalar::from_num(6.5), "{name}");
+        assert_eq!(
+            spec.kinds,
+            sim_types::ResourceKindSet::of(&[sim_types::ResourceKind::Mineral]),
+            "{name}"
+        );
+    }
+    halls.sort_unstable();
+    assert_eq!(
+        halls,
+        [
+            "Command Center",
+            "Hatchery",
+            "Hive",
+            "Lair",
+            "Nexus",
+            "Orbital Command",
+            "Planetary Fortress"
+        ]
+    );
+}

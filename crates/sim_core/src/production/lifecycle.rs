@@ -3,6 +3,9 @@
 //! A ready front remains registered until a legal child is committed. Dead entities
 //! retain ledger contributions until validated reap; no refund or resurrection occurs.
 //! Cancelling is the one voluntary exit from a queue: it returns the job's exact payment.
+//! Only the front job is ever in production, and a job that has not started has not counted
+//! down (plan `2026-11-23-production-queue` D-1); a queue that breaks either is an invariant
+//! failure.
 
 use super::{
     ProductionBlock, ProductionInvariant, ProductionItem, ProductionJob, STANDARD_SUPPLY_CAP,
@@ -41,6 +44,7 @@ impl SimWorld {
                         job,
                     )
                 })
+                .and_then(|()| validate_queue_states(entity))
             {
                 self.tick_diagnostics
                     .push(SimulationDiagnostic::ProductionInvariant {
@@ -60,6 +64,8 @@ impl SimWorld {
                     });
                 continue;
             };
+            // The front job starts on the update it first counts down (D-1, D-2).
+            job.in_production = true;
             job.remaining_ticks = job.remaining_ticks.saturating_sub(1);
             if job.remaining_ticks == 0 {
                 self.production.ready.push(entity.id);
@@ -283,6 +289,27 @@ impl SimWorld {
         // D-6).
         Ok((economy, dome, arch.drawn_radius()))
     }
+}
+
+/// Checks the start state of every job in `entity`'s queue (plan `2026-11-23-production-queue`
+/// D-1): only the front job may be in production, and a job that has not started has not
+/// counted down.
+pub(super) fn validate_queue_states(entity: &crate::Entity) -> Result<(), ProductionInvariant> {
+    for (index, job) in entity.production_queue.iter().enumerate() {
+        if index > 0 && job.in_production {
+            return Err(ProductionInvariant::EntityState {
+                entity: entity.id,
+                reason: "a job behind the front is in production",
+            });
+        }
+        if !job.in_production && job.remaining_ticks != job.total_ticks {
+            return Err(ProductionInvariant::EntityState {
+                entity: entity.id,
+                reason: "a job that has not started has counted down",
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn validate_job_source(

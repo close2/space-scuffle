@@ -748,6 +748,7 @@ fn cancel_production_needs_a_queued_job() -> TestResult {
             remaining_ticks: 10,
             total_ticks: 10,
             reserved_supply: 0,
+            in_production: true,
             paid_minerals: 0,
             paid_gas: 0,
         });

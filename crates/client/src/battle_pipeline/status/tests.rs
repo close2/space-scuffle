@@ -74,6 +74,7 @@ fn production_admission_distinguishes_acceptance_and_resource_shortage() {
                     remaining_ticks: 45,
                     total_ticks: 45,
                     reserved_supply: 2,
+                    in_production: true,
                     paid_minerals: 0,
                     paid_gas: 0,
                 },

@@ -127,6 +127,7 @@ fn malformed_links_block_tick_before_any_gameplay_side_effect() -> TestResult {
                 remaining_ticks: 2,
                 total_ticks: 2,
                 reserved_supply: 0,
+                in_production: true,
                 paid_minerals: 0,
                 paid_gas: 0,
             });
