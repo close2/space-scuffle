@@ -707,3 +707,63 @@ at K).
    a behaviour effect outside the solver, is measured and judged separately.
 5. **T1 and T4 on gap** remain just above their thresholds with the candidate (§6.5); the acceptance range stays
    unrun.
+
+## 7. WP4 under Amendment 4: stopped on a first build of the slot pass
+
+WP3 landed on `contact-solver-plan` (`65025a85`, `5e8ecc0f`): the Solver pipeline, the exact cost step, the near-reach
+fix and the bounded arrival rule (§3.10 of the plan), with the prescribed T4/T7 test marked to be judged at WP5.
+Legacy rows of seeds 1 to 20 of every scene family stay byte-identical, and the goldens and sandbox checksum pass.
+
+**WP4 as built** (`d70d90e5` on `contact-solver-wp4-wip`, not on the plan branch): `movement/slots.rs` runs the slot
+pass of §3.1 step 2 before the pursuits, from the tick-start snapshot and tick-start positions. G-1 asks for a slot
+when an anchored friend lies within one step of the unit's edge toward the target. Kept claims are decided first
+(G-5), new ones are chosen among the bodies and kept claims (G-2, G-3) and resolved by `resolve_claims` (G-4). A
+chase with a claim walks to its point and brakes onto it (G-7); a unit with no free slot, or a refused one, stands
+with its order (G-6). One addition to G-3: a slot is a candidate only if the arc to it from the unit's bearing stays
+inside the terrain domain. It made no difference on these seeds.
+
+**Development seeds 1 to 100** (a first look before the full range; fill is `min(in range, expected) / expected`
+summed, not the harness's mean):
+
+| Family | Measure | WP3 (candidate) | WP4 |
+|---|---|---:|---:|
+| arc | fill | 0.549 | 0.541 |
+| arc | give-ups | 554 | 132 |
+| arc | M1 | 29.21 | 18.91 |
+| corridor | fill | 0.882 | 0.865 |
+| corridor | give-ups | 472 | 384 |
+| corridor | **M1** | 18.60 | **34.12** |
+
+Corridor reversals nearly double and fill falls slightly in both families: a stop under the standing rule
+(worse T-figures on development).
+
+**Trace, corridor seed 97** (w 2, r 0.75, 4 attackers; 0 reversals under WP3, 693 under WP4). Unit 3, third in the
+queue, stands under G-6 (ticks 336 to 338), then walks and zig-zags with a period of two ticks: its side-rule partner
+alternates between friend 5 (pass left) and friend 4 (pass right), both standing ahead under G-6, and its heading
+swings by about 0.09 a tick. Two mechanisms meet:
+
+- **Standing friends are threats.** A unit standing under G-6 has an order and no velocity, so it does not yield
+  (L6) and is a threat to the side rule; two such friends side by side are equally urgent and the earliest one changes
+  each tick, so the one-pair commitment (I-3c) flips.
+- **G-1 reads the cascade of §6.2 again.** A unit standing with an attack order counts as anchored
+  (`is_anchored_in_combat`), so the units behind a G-6 stander are "queued", ask for a slot, find none, and stand in
+  turn. Arc seed 5 shows the same: most of the block stands with no slot, about 600 to 700 of 740 ticks.
+
+**Arc capacity.** The slot circle `ρ = band − r/2` holds fewer bodies than the harness's capacity, which is counted
+at the band's outer edge (`C = ⌊π / asin(r / (P + r + R))⌋`). Arc seed 5: C = 11 at radius 2.06, about 9 at
+ρ = 1.78. The attackers that reached the band before any slot existed are spread at random, so the arc fills like
+random parking.
+
+**Proposed amendment (for the orchestrator).**
+
+1. **G-1's trigger and the side rule use firing anchors only.** G-1 should test "anchored" as on hold, immobile,
+   unpushable or in a weapon cycle, not "standing under an attack order". The side rule should treat a G-6 stander as
+   a standing body of its own group (pass it like a co-moving friend, contact handles it), so standers neither
+   cascade nor flip commitments.
+2. **The slot circle is the band's outer edge less a margin.** Use `ρ = band_max − r/2` only if the harness's
+   capacity is also restated at that radius; otherwise put the circle where C is counted. That is a choice between the
+   design's ρ and T5's C, so it is the owner's or the orchestrator's.
+3. **Claims for units already in band.** Give units that reach the band without a slot a claim at their own angle, so
+   later choices pack against them (G-3's interval ends) and not against random gaps.
+
+WP5 was not started; the acceptance range was not run.
