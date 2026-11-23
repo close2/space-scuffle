@@ -289,8 +289,6 @@ fields!(MovementMemory {
     flank_retreat,
     flank_target,
     leash_origin,
-    side_partner,
-    side_left,
     slot
 });
 fields!(SlotClaim { target, point });

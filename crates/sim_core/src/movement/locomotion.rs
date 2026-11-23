@@ -31,7 +31,7 @@
 
 use super::contact::{probe_permits, settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
-use super::intent::{intent_heading, IntentInput, SideMemory};
+use super::intent::{intent_velocity, IntentInput};
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
     direction, distance, within_distance,
@@ -2397,7 +2397,7 @@ fn step_toward(
         gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
-    let heading = proposed_heading(context, proposal, next, ignored)?;
+    let heading = proposed_heading(context, next, ignored)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
@@ -2460,18 +2460,17 @@ fn step_toward(
 }
 
 /// The unit heading of a step toward `next`: legacy steering, or under the solver pipeline the
-/// intent of plan `2026-11-20-contact-solver` (I-1 to I-4), whose one-pair side commitment is kept
-/// in the proposal's memory.
+/// intent of plan `2026-11-20-contact-solver` (rule S, Amendments 14 and 15): a velocity as a
+/// fraction of the step, at most 1 long, with no memory.
 fn proposed_heading(
     context: &StepContext<'_>,
-    proposal: &mut MotionProposal,
     next: SimVec2,
     ignored: Option<EntityId>,
 ) -> Result<SimVec2, MovementMathError> {
     let Some(horizon_factor) = context.intent else {
         return steer_body(context.body, next, ignored, context.neighbours);
     };
-    let decided = intent_heading(
+    intent_velocity(
         &IntentInput {
             body: context.body,
             next,
@@ -2479,16 +2478,9 @@ fn proposed_heading(
             ignored,
             neighbours: context.neighbours,
             horizon_factor,
-            side: SideMemory {
-                partner: proposal.memory.side_partner,
-                left: proposal.memory.side_left,
-            },
         },
         |obstacle| context.admits(obstacle),
-    )?;
-    proposal.memory.side_partner = decided.side.partner;
-    proposal.memory.side_left = decided.side.left;
-    Ok(decided.heading)
+    )
 }
 
 /// What a step that the disc probe refused becomes after [`slide_along_wall`].
