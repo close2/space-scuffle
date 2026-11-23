@@ -770,4 +770,9 @@ Findings, not changed here:
 - §14's finding stands: a mode's `Some(None)` ground override and `air_weapon_override` are not applied to a live
   unit; `stance_armed` follows the live unit (P-6).
 
-Q0098 was answered (a) during the implementation, as WP3 already built it; it is resolved and closed.
+**Q0098 answered (a)** by the owner (refused, the Attack cursor stays on), the plan's default, which WP3 implements;
+the question is closed on `main` (`docs/questions/closed/0098-anchored-attack-on-ground.md`). The answer's one added
+detail, a status line saying that no unit can do that, is met by the existing `EmptySelection` text, "Order
+rejected: select units that can perform this order" (`battle_pipeline/status.rs`, outside this plan's files),
+which `battle_mode_tests::a_sieged_tank_attacks_a_clicked_enemy_and_refuses_the_ground` asserts. StarCraft II's own
+wording, "Must target a unit", is not copied.
