@@ -26,6 +26,9 @@
 //!   `2026-11-23-harvest-occupancy` D-2), so iteration order never decides who gathers.
 
 mod harvest;
+pub mod lines;
+
+pub use lines::ResourceLines;
 
 use crate::entity::UnitTask;
 use crate::movement::math::squared_distance;

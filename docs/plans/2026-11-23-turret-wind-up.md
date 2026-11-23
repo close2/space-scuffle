@@ -703,3 +703,35 @@ wording ("its position changes every tick of the pass"). B-45's Phoenix half is 
 `WeaponPhase::Windup`'s `target_id`, as `SimWorld::resolved_weapon` does), not the ground-first weapon, and hold the
 unit unless that weapon is `Moving`. Then make `turret_tracking_tests::a_turret_that_fires_while_moving_…` require a
 translation on every tick again.
+
+---
+
+## As built (WP0 to WP2; WP3 pending)
+
+WP0 to WP2 ran as one branch, `turret-wind-up-plan`, one commit each; WP3 waits for the contact-solver branch
+(§8 rule 5). Evidence: [`docs/evidence/2026-11-23-turret-wind-up.md`](../evidence/2026-11-23-turret-wind-up.md).
+
+- **WP0** (`9426c8c9`): B-45's and B-90's rows point here; B-178 to B-181 registered. Baseline 483 files; matrix
+  "0 failures of record, 4 over all seeds". Censuses: no turreted or flagged unit in the showcase; the effects
+  scenario has only initial orders; the golden Phoenix passes no enemy its air weapon reaches.
+- **WP1** (`a00053e6`): as D-1, D-7, D-8, D-9. Schema **40**: main was at 38 when WP1 was recorded and the
+  harvest-handoff branch held 39, which merged before hand-back (`e212ca44`); the proof was repeated on the merged
+  tree (unhashed at 39 reproduces main's checksums; hashed at 40 re-recorded). Every measured world byte-identical.
+- **WP2** (`01f963f7`): as D-2 to D-5. `Mandate` (`AttackOrder`, `OwnInitiative`) is a new public argument of
+  `step_entity_weapon`; `fires_without_attack_order` (in `combat.rs`) is the one place D-2's condition is written,
+  read by combat and acquisition. No measured world, golden or the sandbox checksum moved.
+- **Deviations.**
+  - Amendment 1: the Phoenix analogue still stands for its wind-up under WP2 (the movement phase reads the
+    ground-first weapon); P-6's Phoenix clause is restated for WP2.
+  - `order_walks` is classified from the order alone, as D-3 says; its unit test checks every `UnitOrder` variant
+    against an exhaustive table of `walking_goal`'s classification written in the test (the private
+    `walking_goal` cannot be called from `entity.rs`), so a new variant fails to compile until classified.
+  - P-1's "Stop followed by an order that walks" is a queue whose front is `Stop` with a `Move` behind it. P-1 and
+    P-2 drive the combat phase alone (`step_weapons_and_projectiles`), so that acquisition cannot turn an
+    attack-move into an attack order under the test.
+  - P-6 compares the units' positions with the same unit in a world without the enemy, rather than with a speed
+    times the tick count.
+  - P-5 also checks every mode's weapon (the sieged tank's, the burrowed Lurker's) at the defaults.
+- **WP3, what remains** (B-90 second half; B-45's Void Ray half and the Phoenix's hold): in `walking_goal`, hold a
+  unit in `Windup` unless the weapon of the swing's target plane is `Moving` (Amendment 1, D-6); restore P-6's
+  Phoenix clause to "translates on every tick"; add P-10's tests; measure (§7's WP3 column, stop rule 3).

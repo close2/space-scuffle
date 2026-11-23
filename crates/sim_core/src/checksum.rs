@@ -89,10 +89,12 @@ use std::collections::BTreeMap;
 /// strike (a `bool`), after `target_radius_below` (plan `2026-11-23-splash-cliff-levels` D-5).
 /// Schema 38 adds each weapon's first-strike delay, `WeaponSpec::first_strike_delay_ticks`, after
 /// `attacks_count` (plan `2026-11-23-strike-delays` D-6).
+/// Schema 39 adds each resource node's release tick, `ResourceLines::release_tick`, after the
+/// map's resource nodes (plan `2026-11-23-harvest-handoff` D-3).
 /// Schema 40 adds each weapon's movement rule (0 stopped, 1 slowing, 2 moving) and whether it fires
 /// outside an attack order (a `bool`), `WeaponSpec::allowed_movement` and
 /// `WeaponSpec::fires_outside_attack_order`, after `turret_idle` (plan `2026-11-23-turret-wind-up`
-/// D-9; 39 is the harvest-handoff plan's).
+/// D-9).
 pub const CHECKSUM_SCHEMA_VERSION: u32 = 40;
 
 // PERFORMANCE RATIONALE:
@@ -162,6 +164,8 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.map.cells().encode(&mut encoder);
     world.map.structures().encode(&mut encoder);
     world.map.resources().encode(&mut encoder);
+    "resource-lines".encode(&mut encoder);
+    world.resource_lines.release_ticks().encode(&mut encoder);
     world.map.watchtowers().encode(&mut encoder);
 
     "vision".encode(&mut encoder);

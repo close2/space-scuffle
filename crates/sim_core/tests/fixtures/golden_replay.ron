@@ -389,13 +389,19 @@
 // out of the encoding at schema 37, both fixtures reproduce as recorded for plan
 // 2026-11-23-splash-cliff-levels WP2, on native debug and release and wasm32-wasip1 release and
 // debug. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
-// Re-recorded for plan 2026-11-23-turret-wind-up WP1 (checksum schema 38 -> 40): each weapon also
+// Re-recorded for plan 2026-11-23-harvest-handoff WP1 (checksum schema 38 -> 39): the world also
+// encodes each resource node's release tick, so every checkpoint changed. No behaviour did: with
+// the field left out of the encoding at schema 38, both fixtures reproduce as recorded for plan
+// 2026-11-23-strike-delays WP1 (schema 37 -> 38), on native debug and release and wasm32-wasip1
+// release and debug. Native debug and release and wasm32-wasip1 release and debug agree on the list
+// below.
+// Re-recorded for plan 2026-11-23-turret-wind-up WP1 (checksum schema 39 -> 40): each weapon also
 // encodes whether its unit may move while it attacks and whether it fires outside an attack
-// order, so every checkpoint changed. No behaviour did: no rule reads either field yet, and with
-// them left out of the encoding at schema 38 both fixtures reproduce as recorded for plan
-// 2026-11-23-strike-delays WP1, on native debug and release and wasm32-wasip1 release and debug.
-// Native debug and release and wasm32-wasip1 release and debug agree on the list below. (Schema
-// 39 is the harvest-handoff plan's.)
+// order, so every checkpoint changed. No behaviour did: with the two fields left out of the
+// encoding at schema 39, both fixtures reproduce as recorded for plan 2026-11-23-harvest-handoff
+// (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
     checksum_schema: 40,
     seed: 0x5EED_0F_5CAFF1E,
@@ -423,25 +429,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x0676d05161ff79f6,
-        0xd043d154d4d0efaf,
-        0x52f7372de4cbe58e,
-        0x0baf621ccf302c6b,
-        0x1a3774692446637f,
-        0x8f450047e2933e77,
-        0x5aa29ae9f65d0c40,
-        0x93e3648c7c7d8629,
-        0x3947435dc4af24f3,
-        0x678a6df52ec000d6,
-        0x00475adfbb609223,
-        0x2b538cfdc323193f,
-        0x3d0b090f508f3a20,
-        0x82464d8c49c73ceb,
-        0x2e587beddab06bca,
-        0x2f59132c4503f8ee,
-        0xad7e0c6c157015f2,
-        0x9fa56cb0af1a7622,
-        0xb1735b5ca018f9c7,
-        0x564ea638380cfccf,
+        0x4d23fe955d0bf888,
+        0xf2ff677a82127c09,
+        0xea892e4ca9c19656,
+        0x185d0e7b754ac1d2,
+        0xd180e98c043fd160,
+        0x5edf82a36d5ccbe1,
+        0x835b445606053950,
+        0x18fac8f8994d7203,
+        0xfceeaf8611574889,
+        0xb7af12a6a96deea2,
+        0x8d34e6a64ef15a2f,
+        0x0ede47caed36d83f,
+        0x8a77d612f1ecfe9b,
+        0x6d36dd4c99bb8c06,
+        0x3818f506ed1ac480,
+        0x97cbbfec92789ebe,
+        0x29d45808cd839b06,
+        0xcd7c0a9a56a7a89f,
+        0xe021183181ce99c8,
+        0xe37d10215053579c,
     ],
 )

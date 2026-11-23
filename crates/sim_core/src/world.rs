@@ -134,6 +134,9 @@ pub struct SimWorld {
     pub(crate) transport_validation_count: std::cell::Cell<usize>,
     pub(crate) production: crate::production::ProductionWorkspace,
     pub(crate) economy: crate::economy::EconomyWorkspace,
+    /// Per resource node of `map`, the tick from which its line may start its next gather (plan
+    /// `2026-11-23-harvest-handoff` D-3); hashed.
+    pub resource_lines: crate::economy::ResourceLines,
     /// Authoritative standing of the match: participants, defeats and result.
     pub match_state: crate::match_state::MatchState,
     pub(crate) combat: crate::combat_resolution::CombatWorkspace,
@@ -186,6 +189,7 @@ impl SimWorld {
             .map_err(|error| SimCoreError::ResourceFootprint(Box::new(error)))?;
         let width = map.width();
         let height = map.height();
+        let resource_lines = crate::economy::ResourceLines::new(map.resources().len());
         let pathfinder = Pathfinder::new(&map);
         let spatial_hash = SpatialHashGrid::new(width as usize, height as usize, SPATIAL_CELL_SIZE);
 
@@ -223,6 +227,7 @@ impl SimWorld {
             transport_validation_count: std::cell::Cell::new(0),
             production: crate::production::ProductionWorkspace::new(width, height),
             economy: crate::economy::EconomyWorkspace::default(),
+            resource_lines,
             match_state: crate::match_state::MatchState::default(),
             combat: crate::combat_resolution::CombatWorkspace::default(),
             vision_aware_pathfinding: true,

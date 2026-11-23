@@ -154,3 +154,15 @@ goldens and `DEFAULT_SANDBOX_CHECKSUM` reproduce unchanged (no re-record). As §
 the matrix and scenarios give only attack-move, hold or no orders, "red_siege" fires inside attack orders, and the
 golden Phoenix passes no enemy its air weapon reaches. P-12's WP2 direction holds trivially. Stop rule 2 holds: there
 is no first difference to trace.
+
+## Merge of `main` (`e212ca44`, harvest hand-off, schema 39)
+
+`main` took schema 39 while WP1 held 40, so 40 stays. The goldens and the sandbox checksum were taken from `main` and
+§5's proof repeated on the merged tree, which carries WP1 and WP2:
+
+1. With both fields unhashed at schema 39, both fixtures and `DEFAULT_SANDBOX_CHECKSUM` (8_582_058_566_732_369_859)
+   reproduce `main`'s values on native debug and release and `wasm32-wasip1` release and debug
+   (`~/scratch/turret-wind-up/proof-merged-unhashed39/`). This also shows that WP2 moves neither golden on `main`.
+2. Hashed at 40, both fixtures were re-recorded (header "Re-recorded for plan 2026-11-23-turret-wind-up WP1
+   (checksum schema 39 -> 40)") and the sandbox checksum became 5_438_070_395_987_993_470; all four builds reproduce
+   them (`~/scratch/turret-wind-up/proof-merged-hashed40/`).
