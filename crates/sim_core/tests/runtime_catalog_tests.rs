@@ -1421,3 +1421,99 @@ fn an_edited_structure_attribute_list_is_read_as_written() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-23-splash-centres` P-7 (B-83): where the Baneling analogue's burst is centred is
+/// read from `units.ron` at run time. Its burst, found by property (a suicide weapon with an
+/// area), is fired at an enemy beside it, with one enemy behind the Baneling (inside the reach of
+/// the Baneling, outside that of the target) and one beyond the target (the other way round). The
+/// shipped catalog strikes the one behind and spares the one beyond; the same binary with the
+/// row's `impact: Attacker` edited to `impact: Target` does the opposite.
+#[test]
+fn an_edited_splash_impact_moves_the_burst() -> TestResult {
+    let bundle = Bundle::new("splash-impact")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    assert!(
+        text.contains("impact: Attacker"),
+        "the shipped catalog centres an area on its attacker"
+    );
+    std::fs::write(
+        &path,
+        text.replacen("impact: Attacker", "impact: Target", 1),
+    )?;
+    let edited = bundle.load()?;
+    let struck = |catalogs: RuntimeCatalogs| -> Result<(bool, bool), Box<dyn std::error::Error>> {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+        sim_fixtures::without_random_delays(&mut world.catalog);
+        let (burst, reach) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                arch.weapon
+                    .as_ref()
+                    .filter(|weapon| weapon.suicide_on_attack)
+                    .and_then(|weapon| weapon.splash.as_ref())
+                    .map(|splash| (arch.unit_type_id, splash.reach()))
+            })
+            .ok_or("a suicide weapon with an area")?;
+        let infantry = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                arch.unit_type_id != burst
+                    && arch.mover_type == sim_types::MoverType::Ground
+                    && arch.max_speed > SimScalar::ZERO
+                    && matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.collision_radius <= SimScalar::HALF
+            })
+            .map(|arch| (arch.unit_type_id, arch.collision_radius))
+            .ok_or("small infantry")?;
+        let arch = world.catalog.get_mut(burst)?;
+        arch.max_hp = SimScalar::from_num(100_000);
+        let own = arch.collision_radius;
+        let (kind, radius) = infantry;
+        let at = |x: SimScalar| SimVec2::new(x, SimScalar::from_num(16));
+        let centre = SimScalar::from_num(16);
+        let tenth = SimScalar::from_num(0.1);
+        let baneling = world.spawn_unit(burst, PlayerId(0), at(centre))?;
+        let target_x = centre + own + radius + tenth;
+        let mut spawn = |x: SimScalar| -> Result<sim_types::EntityId, Box<dyn std::error::Error>> {
+            let id = world.spawn_unit(kind, PlayerId(1), at(x))?;
+            world
+                .entities
+                .get_mut(&id)
+                .ok_or("spawned")?
+                .issue_order(sim_types::UnitOrder::HoldPosition, false)?;
+            Ok(id)
+        };
+        let target = spawn(target_x)?;
+        // Behind: edge `reach − 0.1` from the Baneling's centre, beyond `reach` from the target's.
+        let behind = spawn(centre - (reach + radius - tenth))?;
+        // Beyond: edge `reach − 0.1` from the target's centre, beyond `reach` from the Baneling's.
+        let beyond = spawn(target_x + reach + radius - tenth)?;
+        let life = |world: &SimWorld, id| world.entities.get(&id).map_or(SimScalar::ZERO, |e| e.hp);
+        let full = life(&world, behind);
+        world
+            .entities
+            .get_mut(&baneling)
+            .ok_or("spawned")?
+            .issue_order(sim_types::UnitOrder::attack(target), false)?;
+        for tick in 0..80 {
+            world.step(&sim_types::TickBundle {
+                tick: sim_types::Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+            if !world.entities.get(&baneling).is_some_and(|b| b.is_alive()) {
+                break;
+            }
+        }
+        Ok((life(&world, behind) < full, life(&world, beyond) < full))
+    };
+    assert_eq!(struck(shipped)?, (true, false), "centred on the Baneling");
+    assert_eq!(struck(edited)?, (false, true), "centred on its target");
+    bundle.finish()?;
+    Ok(())
+}

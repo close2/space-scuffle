@@ -2791,10 +2791,18 @@
                 damage_point_ticks: 0,
                 backswing_ticks: 9,
                 random_delay_ticks: (-1.1161, 2.2321),
+                // B-83 (plan 2026-11-23-splash-centres D-2, D-4): VolatileBurstU and VolatileBurstU2
+                // impact the caster (ImpactLocation CasterUnit, liberty EffectData:1759, :1055), so
+                // the 2.2 area is searched around the Baneling and its target is struck by it, once
+                // (ExcludeArray Outer excludes the Baneling itself, :1758). Both effects inherit
+                // OffsetByUnitRadius 1 from DU_WEAP (core EffectData:128), but the impact unit is the
+                // Baneling, which has no edge facing an attacker: cleared, the Baneling's centre
+                // (Q0096, default).
                 splash: Some((
                     zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
-                    offset_by_unit_radius: true,
+                    offset_by_unit_radius: false,
+                    impact: Attacker,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("swarm_melee_attacks"),

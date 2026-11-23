@@ -15,7 +15,7 @@
 use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitArchetype, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{Attribute, AttributeBonuses};
+use sim_types::{Attribute, AttributeBonuses, SplashImpact};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
 
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
@@ -1244,8 +1244,10 @@ const SC2_SPLASH_OFFSET: [(&str, bool, &str); 7] = [
     ),
     (
         "Baneling",
-        true,
-        "VolatileBurstU, parent DU_WEAP: liberty EffectData:1753",
+        false,
+        "VolatileBurstU inherits it from DU_WEAP (liberty EffectData:1753), but its area is \
+         centred on the Baneling itself (ImpactLocation CasterUnit, :1759), which has no edge \
+         facing an attacker: cleared, plan 2026-11-23-splash-centres D-2 (Q0096)",
     ),
     (
         "Liberator",
@@ -1308,6 +1310,97 @@ fn q0063_splash_offset_follows_starcraft() -> TestResult {
     assert_eq!(
         checked.len(),
         SC2_SPLASH_OFFSET.len(),
+        "every row reaches a weapon"
+    );
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 centre and opening condition of every splash weapon this catalog
+/// models: `(analogue, impact, target radius below which the area opens, source)` (plan
+/// `2026-11-23-splash-centres` D-1 to D-5). A `CEffectDamage` impacts `TargetUnitOrPoint` unless
+/// it says otherwise (`core` EffectData:66); a line's searches are placed by their persistent.
+const SC2_SPLASH_IMPACT: [(&str, SplashImpact, Option<f32>, &str); 7] = [
+    (
+        "Siege Tank",
+        SplashImpact::Target,
+        None,
+        "CrucioShockCannonBlast impacts its target: liberty EffectData:1668-1681",
+    ),
+    (
+        "Baneling",
+        SplashImpact::Attacker,
+        None,
+        "VolatileBurstU and VolatileBurstU2 ImpactLocation CasterUnit: liberty EffectData:1759, \
+         :1055",
+    ),
+    (
+        "Liberator",
+        SplashImpact::Target,
+        None,
+        "LiberatorMissileDamage, the default: void EffectData:2932",
+    ),
+    (
+        "Ultralisk",
+        SplashImpact::Target,
+        None,
+        "KaiserBladesDamage, the default: liberty EffectData:2296",
+    ),
+    (
+        "Hellion",
+        SplashImpact::Target,
+        None,
+        "a line placed by its persistent: liberty EffectData:2609",
+    ),
+    (
+        "Lurker",
+        SplashImpact::Target,
+        None,
+        "a line placed by its persistent: swarm EffectData:3022",
+    ),
+    (
+        "Colossus",
+        SplashImpact::Target,
+        None,
+        "a line placed by its persistent: liberty EffectData:2412",
+    ),
+];
+
+#[test]
+fn splash_impact_and_condition_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut checked = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            .unwrap_or_default();
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons) {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            let (_, impact, below, source) = SC2_SPLASH_IMPACT
+                .iter()
+                .find(|(unit, ..)| *unit == analogue)
+                .ok_or_else(|| format!("{} {}: no impact row", archetype.slug, weapon.name))?;
+            assert_eq!(
+                (splash.impact, splash.target_radius_below),
+                (*impact, below.map(SimScalar::from_f32_lossy)),
+                "{} {}: ImpactLocation and radius switch as StarCraft II's ({source})",
+                archetype.slug,
+                weapon.name
+            );
+            checked.insert(analogue);
+        }
+    }
+    assert_eq!(
+        checked.len(),
+        SC2_SPLASH_IMPACT.len(),
         "every row reaches a weapon"
     );
     Ok(())
@@ -1410,7 +1503,7 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
                 }),
                 friendly_fire: false,
                 offset_by_unit_radius: false,
-                impact: sim_types::SplashImpact::Target,
+                impact: SplashImpact::Target,
                 target_radius_below: None,
             };
             assert_eq!(

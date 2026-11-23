@@ -70,3 +70,53 @@ On the WP0 code the new tests did not compile (logs `~/scratch/splash-centres/re
 `compare.sh world-wp0 world-wp1`: `files base=483 new=483 differing=0` (matrix, battles 31 and 33, showcase and
 showcase effects on their default seed and seeds 1–8). Every test of `sim_types`, `sim_core`, `sim_fixtures` and
 `workspace_checks` passed on the WP1 tree (109 test executables and doc tests).
+
+## WP2: the Baneling's burst (B-83)
+
+### Red run (on the WP1 tree, before the data)
+
+Logs `~/scratch/splash-centres/red/wp2-*.log`:
+
+| Test | Result | Failure |
+|---|---|---|
+| `weapon_catalog_rules_tests::splash_impact_and_condition_follow_starcraft` | failed | `volatile_tick`: `(Target, None)`, StarCraft II `(Attacker, None)` |
+| `weapon_catalog_rules_tests::q0063_splash_offset_follows_starcraft` (Baneling row re-derived to `false`, D-2) | failed | `volatile_tick`: `true`, expected `false` |
+| `splash_centre_tests::the_banelings_burst_is_centred_on_it` (P-1, P-2) | failed | "behind the Baneling, inside its reach" |
+| `runtime_catalog_tests::an_edited_splash_impact_moves_the_burst` (P-7) | failed | "the shipped catalog centres an area on its attacker" |
+
+All four pass with the data of D-4.
+
+### Worlds
+
+`compare.sh world-wp0 world-wp2`: `files base=483 new=483 differing=2`, the two matrix files, and in them only
+battle 32's rows. Battles 11a and 11b are byte-identical on all 20 seeds, as P-8 predicted (11b: the Marauder is
+always inside the burst; 11a: the five marines stand within the burst under either centre). Every other battle,
+battles 31 and 33, the showcase and the showcase effects scenario are byte-identical. Goldens and the sandbox are
+unchanged.
+
+| Battle 32, 20 seeds | Blue (marines) wins | Red (Banelings) wins | Both gone | Survivors (blue – red) | End (s) |
+|---|---|---|---|---|---|
+| WP0 | 4 | 15 | 1 | 0.75 – 0.90 | 53.8 |
+| WP2 | 16 | 3 | 1 | 3.80 – 0.20 | 53.0 |
+
+The direction is P-8's: fewer marines struck per burst, more marine survivors, fewer Baneling wins. The matrix
+still reports "expectation failures 0 on the seeds of record, 4 over all seeds"; battle 32's expectation (blue 0 to
+15 survivors) holds on every seed, so it is not re-recorded. Its claim, "Banelings trade far above their cost
+against clumped marines", still describes the result: 15 Banelings (750 resources) kill on average 26.2 of 30
+marines (1,310 resources).
+
+### Traced bursts
+
+`~/scratch/splash-centres/tools/burst.py` on `matchup_trace --battle` of both trees (seeds of record; full output
+`~/scratch/splash-centres/trace-b32.txt`). On every seed the first differing tick is a Baneling burst, the target
+takes the same 35 (16 + 19 Light) in both trees, and the units no longer struck are exactly those whose edge lies
+beyond 2.2 of the Baneling's centre while within 2.2 of the target's near edge.
+
+| Seed | First differing tick | Marines struck before | After | Not struck any more (edge from the Baneling's centre / from the target's near edge) |
+|---|---|---|---|---|
+| 11 | 14 (Baneling 40 on marine 30) | 10 | 7 | 18 (2.700 / 2.189), 23 (2.530 / 1.897), 28 (2.381 / 1.664) |
+| 22 | 13 (two Banelings) | 17 | 12 | 4, 8, 13, 18, 23 (edges 2.339 to 2.851 from the nearer Baneling) |
+| 33 | 12 | 9 | 6 | three marines beyond 2.2 of the Baneling |
+| 3203386110 | 13 (two Banelings) | 13 | 8 | five marines beyond 2.2 of the Banelings |
+
+The 11a and 11b traces of the seeds of record are byte-identical between the trees.

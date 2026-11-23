@@ -625,3 +625,111 @@ fn an_unlock_for_an_attacker_centred_weapon_is_refused() {
         "{refused:?}"
     );
 }
+
+/// The shipped suicide weapon with an area (the Baneling's burst), found by property, with the
+/// type that carries it.
+fn shipped_burst(world: &SimWorld) -> (UnitTypeId, WeaponSpec) {
+    world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            [&arch.weapon, &arch.ground_weapon]
+                .into_iter()
+                .flatten()
+                .find(|weapon| weapon.suicide_on_attack && weapon.splash.is_some())
+                .map(|weapon| (arch.unit_type_id, weapon.clone()))
+        })
+        .expect("invariant: the shipped catalog has a suicide weapon with an area")
+}
+
+/// The first shipped mobile ground unit, other than `except`, without shields and of collision
+/// radius at most 0.5: the struck units of the shipped bursts.
+fn shipped_infantry(world: &SimWorld, except: UnitTypeId) -> UnitTypeId {
+    world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.unit_type_id != except
+                && arch.mover_type == MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && matches!(arch.shape, ShapeKind::UnitSphere)
+                && arch.max_shields == SimScalar::ZERO
+                && arch.collision_radius <= SimScalar::HALF
+                && !arch.attributes.contains(AttributeFlags::MASSIVE)
+        })
+        .map(|arch| arch.unit_type_id)
+        .expect("invariant: the shipped catalog has small unshielded infantry")
+}
+
+/// P-1, P-2 on the shipped row (B-83): the Baneling analogue's burst is centred on it. Its
+/// target takes exactly the strike a direct hit would deal; an enemy whose edge lies its reach
+/// less 2⁻¹⁶ behind the Baneling is struck; one whose edge lies the same distance beyond the
+/// target's near edge (where the former area, centred there, reached) but beyond the reach of
+/// the Baneling is not.
+#[test]
+fn the_banelings_burst_is_centred_on_it() {
+    let mut world = world();
+    let (burst, weapon) = shipped_burst(&world);
+    let infantry = shipped_infantry(&world, burst);
+    let reach = splash_of(&weapon).reach();
+    let arch = world.catalog.get_mut(burst).expect("shipped");
+    // The burst must land before the infantry's own fire could end the Baneling.
+    arch.max_hp = SimScalar::from_i32(100_000);
+    let own = arch.collision_radius;
+    let target_arch = world.catalog.get(infantry).expect("shipped").clone();
+    let radius = target_arch.collision_radius;
+    let baneling = world
+        .spawn_unit_facing(burst, BLUE, centre(), SimAngle::ZERO)
+        .expect("open ground");
+    let gap = s(0.1);
+    let target_at = offset(centre(), own + radius + gap, SimScalar::ZERO);
+    let spawn = |world: &mut SimWorld, at: SimVec2| {
+        let id = world.spawn_unit(infantry, RED, at).expect("open ground");
+        world
+            .entities
+            .get_mut(&id)
+            .expect("spawned")
+            .issue_order(UnitOrder::HoldPosition, false)
+            .expect("hold admitted");
+        id
+    };
+    let target = spawn(&mut world, target_at);
+    let behind = spawn(
+        &mut world,
+        offset(centre(), -(reach + radius - epsilon()), SimScalar::ZERO),
+    );
+    let near_edge = target_at.x - radius;
+    let beyond = spawn(
+        &mut world,
+        SimVec2::new(near_edge + reach + radius - epsilon(), s(CENTRE)),
+    );
+    assert!(
+        world.entities[&beyond].position.x - radius - centre().x > reach,
+        "the far body lies beyond the Baneling's reach"
+    );
+    let expected = sim_core::calculate_hit_damage(
+        &weapon,
+        &target_arch,
+        target_arch.max_shields,
+        target_arch.max_hp,
+    );
+    let (losses, _) = first_strike(&mut world, baneling, target, &[target, behind, beyond]);
+    assert_eq!(
+        losses[0],
+        expected.life_damage + expected.shield_damage,
+        "the target takes the whole strike, once"
+    );
+    assert!(
+        losses[1] > SimScalar::ZERO,
+        "behind the Baneling, inside its reach"
+    );
+    assert_eq!(
+        losses[2],
+        SimScalar::ZERO,
+        "beyond the target, outside its reach"
+    );
+    assert!(
+        !world.entities.get(&baneling).is_some_and(|b| b.is_alive()),
+        "the Baneling is spent"
+    );
+}
