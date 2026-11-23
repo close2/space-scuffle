@@ -660,3 +660,21 @@ Failing tests first (red on WP4's tree): §9's tests. Then the change: D-10. **A
   that day; no source here depends on them. The Blizzard guides (S7, S8) and S10 were read through the web the same
   day.
 - No prototype (§7).
+
+## As built (implementation agent, 2026-11-23)
+
+| WP | Commit | Notes |
+|---|---|---|
+| WP0 | `8807620e` | B-163 to B-167 registered (D-11); B-59, B-60 and B-66 point here |
+| WP1 | `0ddc0b4f` | Schema 34 (`main` at 33). D-6 proof on four builds; the sandbox checksum moves with it. `AutoRallySpec` and `RallyTarget` in `sim_types::commands`; the auto-rally in `production/rally.rs`. C7's count for `catalog.rs` 71 → 72 |
+| WP2 | `19edaebe` | `start_front_job` in `lifecycle.rs`; P-2 checked against WP1's tree |
+| WP3 | `e9268383` | `RallyView::point` is `[f32; 2]` (the plan's `Vec2` is a Bevy type), so `PlayerView` loses `Eq`; C7 gains `sim_types/src/player_view.rs`. The client's `capable`, `order_subject` and refusal-message arms land here because the new variants break the client's exhaustive matches. `a_world_without_a_rally_is_unchanged` asserts that a child of a structure without a rally takes no order; the byte comparison of WP2's and WP3's trees is §7's worlds |
+| WP4 | `d4486d19` | `RingTest { Zero, Outer(level) }` names the cell test; `exit_cells_visited` counts the bound. The plan's `an_exit_is_never_on_another_level` is the kept `clear_but_disconnected_plateau_is_not_a_production_exit` |
+| WP5 | `365f7568` | `battle_input::rally_marker`; the windowed GPU check and the radv capture (§9, WP5 acceptance) were not built: open |
+| WP6 | this commit | Register, Production and HUD rows, evidence, README |
+
+Figures are in [`docs/evidence/2026-11-23-production-queue.md`](../evidence/2026-11-23-production-queue.md): the
+matrix, battles 31 and 33 and the showcase on nine seeds byte-identical in every package; goldens re-recorded once
+(WP1) and unchanged after on four builds; the skirmish match won at tick 6,486 in every package, every stage
+unchanged.
+

@@ -135,3 +135,9 @@ list each frame. The queue panel marks a front job waiting for supply ("Needs su
 | Worlds (`world-wp5/`) | 420 files byte-identical to `world-wp0/` (no simulation source changed) |
 | Clippy, fmt, `workspace_checks` | clean |
 | Windowed GPU check and capture | **not done** (open item): the plan's windowed check in `runtime_media_tests` style and the radv capture of a selected producer with its rally were not built; the headless harness test above checks the reticle's transform and visibility, not pixels |
+
+## 6. WP6
+
+`DESIGN.md`: B-59, B-60 and B-66 fixed with their commits; the Production and research row names supply at the start
+of production, rally points and placed exits with the two new test files; the HUD row names the supply mark and the
+rally display. The plan's `## As built` and the README row `Done`.
