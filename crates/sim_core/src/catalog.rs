@@ -330,15 +330,13 @@ impl UnitArchetype {
     #[must_use]
     #[inline]
     pub fn stance_orders(&self, stance: Option<&UnitModeSpec>) -> StanceOrders {
-        match stance {
-            Some(mode) => mode.orders,
-            None => {
-                let mobile = !self.is_immobile_by_default();
-                StanceOrders {
-                    stop: mobile || self.stance_armed(None),
-                    hold_position: mobile,
-                }
-            }
+        if let Some(mode) = stance {
+            return mode.orders;
+        }
+        let mobile = !self.is_immobile_by_default();
+        StanceOrders {
+            stop: mobile || self.stance_armed(None),
+            hold_position: mobile,
         }
     }
 

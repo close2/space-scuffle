@@ -876,7 +876,11 @@ fn structure_near(
 ) -> EntityId {
     let origin = harness.simulated_position(near);
     let world = harness.world_mut();
-    let (cx, cy) = (origin.x as i64, origin.y as i64);
+    let (cx, cy) = world
+        .map
+        .world_to_cell(battle_harness::sim_position(origin))
+        .expect("the unit stands on the map");
+    let (cx, cy) = (i64::from(cx), i64::from(cy));
     for ring in 6_i64..30 {
         for (dx, dy) in [
             (ring, 0),
@@ -1015,7 +1019,7 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
     run_ticks(&mut harness, 1);
     let (queue, rally) = {
         let unit = &harness.world().entities[&structure];
-        (unit.production_queue.clone(), unit.rally.clone())
+        (unit.production_queue.clone(), unit.rally)
     };
     assert!(!queue.is_empty(), "a job: {}", harness.status());
     assert!(rally.is_some(), "a rally: {}", harness.status());

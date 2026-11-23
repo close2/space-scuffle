@@ -368,11 +368,14 @@ fn the_simulation_gives_stop_and_hold_only_to_a_stance_that_takes_them(
     Ok(())
 }
 
+/// An archetype, its mode switches (as [`switches_of`] lists them) and the index of one mode.
+type Anchored = (UnitArchetype, Vec<(usize, u8)>, usize);
+
 /// An anchoring mode whose stance lacks Hold Position (the sieged tank's), with its archetype
 /// and switch, and a mobile archetype armed by default without modes; both found by property.
 fn sieged_and_mobile(
     catalogs: &RuntimeCatalogs,
-) -> Result<((UnitArchetype, Vec<(usize, u8)>, usize), UnitArchetype), Box<dyn std::error::Error>> {
+) -> Result<(Anchored, UnitArchetype), Box<dyn std::error::Error>> {
     let anchored = catalogs
         .units
         .archetypes()

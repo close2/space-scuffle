@@ -1541,12 +1541,14 @@ fn card_fixed(world: &SimWorld, selection: &[EntityId]) -> (bool, bool) {
     (card.fixed[0].is_some(), card.fixed[1].is_some())
 }
 
+/// A world and its stance-set members, each with its role.
+type StanceSet = (SimWorld, Vec<(&'static str, EntityId)>);
+
 /// The members of the stance set: a worker, an unarmed and an armed completed structure, a
 /// foundation, and both anchoring units in each of their four stances (default, entering,
 /// anchored, leaving), each with its role. The world is built the same way every time, so a
 /// rebuilt world holds the same members under the same IDs.
-fn stance_members() -> Result<(SimWorld, Vec<(&'static str, EntityId)>), Box<dyn std::error::Error>>
-{
+fn stance_members() -> Result<StanceSet, Box<dyn std::error::Error>> {
     let (mut world, mut queue) = role_fixture()?;
     let (worker, foundation) = lay_foundation(&mut world, &mut queue)?;
     let structure_type = buildable(&world, worker)?;

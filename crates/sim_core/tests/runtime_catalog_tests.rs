@@ -1779,7 +1779,7 @@ fn step_with(world: &mut SimWorld, commands: Vec<sim_types::PlayerCommand>) {
 fn queued_order_reaches(
     world: &mut SimWorld,
     unit: sim_types::EntityId,
-    order: sim_types::UnitOrder,
+    order: &sim_types::UnitOrder,
 ) -> bool {
     step_with(
         world,
@@ -1790,7 +1790,7 @@ fn queued_order_reaches(
             queue: true,
         }],
     );
-    world.entities[&unit].order_queue.back() == Some(&order)
+    world.entities[&unit].order_queue.back() == Some(order)
 }
 
 /// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-171, B-172, C6): with
@@ -1837,7 +1837,7 @@ fn an_armed_structure_disarmed_in_its_file_loses_stop() -> TestResult {
             let mut world = bare_world(catalogs)?;
             let unit = world.spawn_structure(*id, PlayerId(0), 10, 10)?;
             assert_eq!(
-                queued_order_reaches(&mut world, unit, sim_types::UnitOrder::Stop),
+                queued_order_reaches(&mut world, unit, &sim_types::UnitOrder::Stop),
                 takes,
                 "{slug}: the simulation's Stop"
             );
