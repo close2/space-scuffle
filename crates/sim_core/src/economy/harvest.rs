@@ -19,8 +19,11 @@
 //! # Rules
 //! - Workers gathering, waiting or returning walk through other units, as mineral walking does
 //!   in `StarCraft` II, so a crowded line never jams on itself.
-//! - The wait is part of the leg: a new order replaces it at once, and the cargo stays on the
-//!   unit (D-4; 5.0.14 marks the stage uninterruptible, B-160). `ReturnCargo` does not wait.
+//! - The wait is uninterruptible (5.0.14 `WaitToReturn`, B-160): a non-queued order given
+//!   during it is taken, but the rest of the wait is carried into the unit's action lock
+//!   (`Entity::cast_lock_ticks`), so the new order starts when the wait would have ended; the
+//!   cargo stays on the unit (plan `2026-11-23-harvest-occupancy` D-5). A queued order waits
+//!   behind the `Harvest` order. `ReturnCargo` given outside the wait does not wait.
 //!
 //! # The line (plan `2026-11-23-harvest-occupancy` D-1 to D-3, B-61)
 //! - **One gatherer per node.** A node is occupied by the alive unit whose front order is

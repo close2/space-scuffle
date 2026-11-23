@@ -168,3 +168,17 @@ Re-run on WP2's tree with the change (release, radv, one target at a time under 
 | `skirmish_match_tests` | 7 passed, 1 ignored by design; Victory at tick 6,486, every stage unchanged; HUD child `Done` at 115 |
 | `sync_steady_state_tests` | **8 passed** |
 | `battle_hud_tests`, `battle_card_path_tests`, `battle_context_order_tests`, `battle_fog_tests`, `battle_flipbook_tests`, `client --lib battle_pipeline` | pass |
+
+## 4. WP3: the held order (D-5, B-160; plan §8 rule 3)
+
+`Entity::commit_order` carries the rest of a `Harvest` order's `ReturnDelay` wait into `cast_lock_ticks` before a
+non-queued order clears the leg.
+
+| Check | Result |
+|---|---|
+| `harvest_timing_tests::a_new_order_during_the_wait_starts_after_it`, `return_cargo_during_the_wait_is_held_then_delivers` | red on WP2 (the worker left at tick 79, before its twin), green on WP3: it leaves on its uninterrupted twin's first tick of the delivery leg |
+| `harvest_timing_tests::a_queued_order_during_the_wait_is_unchanged` | green on WP2 and WP3: a Shift order follows the twin to the tick |
+| Matrix, battles 31 and 33, the showcase on nine seeds (`world-wp3/`) | 420 files, every output file byte-identical to the base; logs differ only in their path |
+| Goldens | 4 of 4 on native debug and release, `wasm32-wasip1` release and debug (`impl/golden-wp3/`) |
+| `cargo test --release -p sim_types -p sim_core` | every target passes (95) |
+| Client, release, radv (`impl/client-wp3/`) | `skirmish_match_tests` 7 passed (1 ignored by design): Victory at 6,486, every stage on its WP2 tick; the windowed HUD child logged `Done` at 116 against 115, the run-to-run variance plan §7.5 recorded for that child (the prototype's `B160` alone gave 116). `battle_context_order_tests` and `sync_steady_state_tests` pass |

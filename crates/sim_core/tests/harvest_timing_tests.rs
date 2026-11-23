@@ -5,7 +5,8 @@
 //! yields its `harvest_amount`; a worker that has taken a load waits at the node, holding it, for
 //! the row's `return_delay_ticks` before it walks back, and a row without a delay sends it back at
 //! once; the node is drawn down at the take, before the wait, and a field emptied by the take
-//! leaves the map then; a new order during the wait drops it and keeps the cargo (D-4, B-160);
+//! leaves the map then; a new order during the wait starts when the wait would have ended and the
+//! cargo stays (plan `2026-11-23-harvest-occupancy` D-5, B-160), while a queued one changes nothing;
 //! a trip is its two walking legs plus the row's two times; and a near geyser of the showcase
 //! earns the game's rate (§6.2).
 //!
@@ -284,12 +285,10 @@ fn the_field_is_drawn_down_before_the_wait() -> TestResult {
     Ok(())
 }
 
-/// D-4 (B-160): a `Move` given during the wait replaces it at once: the countdown is cleared and
-/// the cargo stays on the worker; a later `Harvest` delivers that cargo before it gathers again.
-#[test]
-fn a_new_order_during_the_wait_drops_it_and_keeps_the_cargo() -> TestResult {
+/// A flat world whose worker has taken its first load and is one tick into its `ReturnDelay`
+/// wait at the field: built the same way every time, so two calls give twin worlds.
+fn waiting_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
     let (mut world, worker, _) = flat_world(vec![node(ResourceKind::Mineral, (12, 4), 1_000)])?;
-    let mineral = harvest_of(&world, ResourceKind::Mineral)?;
     order(
         &mut world,
         vec![worker],
@@ -299,24 +298,67 @@ fn a_new_order_during_the_wait_drops_it_and_keeps_the_cargo() -> TestResult {
     );
     gather_once(&mut world, worker)?;
     step(&mut world, Vec::new());
-    assert!(
-        world.entities[&worker].task.return_ticks > 0,
-        "it is waiting"
-    );
+    if world.entities[&worker].task.return_ticks == 0 {
+        return Err("the worker is not waiting".into());
+    }
+    Ok((world, worker))
+}
+
+/// The tick on which an uninterrupted twin of [`waiting_world`] first leaves the spot where it
+/// waits: the first tick of its delivery leg.
+fn twin_leaves() -> Result<u32, Box<dyn Error>> {
+    let (mut twin, worker) = waiting_world()?;
+    let spot = twin.entities[&worker].position;
+    for _ in 0..100 {
+        step(&mut twin, Vec::new());
+        if twin.entities[&worker].position != spot {
+            return Ok(twin.current_tick);
+        }
+    }
+    Err("the twin never left".into())
+}
+
+/// Steps until `worker` leaves the spot it stands on, at most 100 ticks; returns that tick.
+fn leaves(world: &mut SimWorld, worker: EntityId) -> Result<u32, Box<dyn Error>> {
+    let spot = world.entities[&worker].position;
+    for _ in 0..100 {
+        step(world, Vec::new());
+        if world.entities[&worker].position != spot {
+            return Ok(world.current_tick);
+        }
+    }
+    Err("the worker never left".into())
+}
+
+/// Plan `2026-11-23-harvest-occupancy` D-5 (B-160; 5.0.14 `UninterruptibleArray WaitToReturn 1`,
+/// core AbilData:379): a `Move` given during the wait does not cut it short. The worker stands
+/// until the tick an uninterrupted twin starts its delivery leg and moves from that tick; the
+/// cargo stays on it; a later `Harvest` delivers that cargo before it gathers again.
+#[test]
+fn a_new_order_during_the_wait_starts_after_it() -> TestResult {
+    let expected = twin_leaves()?;
+    let (mut world, worker) = waiting_world()?;
+    let mineral = harvest_of(&world, ResourceKind::Mineral)?;
     let target = SimVec2::new(SimScalar::from_num(14), SimScalar::from_num(14));
     order(&mut world, vec![worker], UnitOrder::Move { target });
-    let entity = &world.entities[&worker];
-    assert_eq!(entity.task.return_ticks, 0);
     assert_eq!(
-        entity.cargo,
-        Some(sim_core::Cargo {
-            kind: ResourceKind::Mineral,
-            amount: mineral.amount
-        })
+        world.entities[&worker].order_queue.front(),
+        Some(&UnitOrder::Move { target }),
+        "the order is taken at once"
     );
+    assert_eq!(leaves(&mut world, worker)?, expected);
+    let cargo = Some(sim_core::Cargo {
+        kind: ResourceKind::Mineral,
+        amount: mineral.amount,
+    });
+    assert_eq!(world.entities[&worker].cargo, cargo);
     for _ in 0..20 {
         step(&mut world, Vec::new());
     }
+    assert_eq!(
+        world.entities[&worker].cargo, cargo,
+        "cargo outlives orders"
+    );
     order(
         &mut world,
         vec![worker],
@@ -332,15 +374,86 @@ fn a_new_order_during_the_wait_drops_it_and_keeps_the_cargo() -> TestResult {
             );
             return Ok(());
         }
-        let entity = &world.entities[&worker];
         assert_eq!(
-            entity.task.gather_ticks, 0,
+            world.entities[&worker].task.gather_ticks, 0,
             "it delivers before it gathers again"
         );
         assert_eq!(world.map.resources()[0].remaining, 1_000 - mineral.amount);
         step(&mut world, Vec::new());
     }
     Err("the cargo was never delivered".into())
+}
+
+/// D-5: a queued (Shift) `Move` given during the wait lands behind the `Harvest` order and changes
+/// nothing else: the worker follows its uninterrupted twin to the tick.
+#[test]
+fn a_queued_order_during_the_wait_is_unchanged() -> TestResult {
+    let (mut twin, _) = waiting_world()?;
+    let (mut world, worker) = waiting_world()?;
+    let target = SimVec2::new(SimScalar::from_num(14), SimScalar::from_num(14));
+    let shift = |world: &mut SimWorld| {
+        step(
+            world,
+            vec![PlayerCommand {
+                player_id: ME,
+                entities: vec![worker],
+                order: UnitOrder::Move { target },
+                queue: true,
+            }],
+        );
+    };
+    shift(&mut world);
+    step(&mut twin, Vec::new());
+    assert_eq!(
+        world.entities[&worker]
+            .order_queue
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![
+            &UnitOrder::Harvest {
+                target: ResourceNodeId(0)
+            },
+            &UnitOrder::Move { target }
+        ]
+    );
+    for _ in 0..400 {
+        let (ours, theirs) = (&world.entities[&worker], &twin.entities[&worker]);
+        assert_eq!(
+            (ours.position, ours.cargo, ours.task.return_ticks),
+            (theirs.position, theirs.cargo, theirs.task.return_ticks),
+            "tick {}",
+            world.current_tick
+        );
+        assert_eq!(
+            world.player_resources[PlayerSlot::ALL[0]].minerals,
+            twin.player_resources[PlayerSlot::ALL[0]].minerals
+        );
+        step(&mut world, Vec::new());
+        step(&mut twin, Vec::new());
+    }
+    Ok(())
+}
+
+/// D-5: `ReturnCargo` given during the wait is held like any other order: the worker stands
+/// until the tick its uninterrupted twin leaves, then walks to the depot and delivers the load.
+#[test]
+fn return_cargo_during_the_wait_is_held_then_delivers() -> TestResult {
+    let expected = twin_leaves()?;
+    let (mut world, worker) = waiting_world()?;
+    let mineral = harvest_of(&world, ResourceKind::Mineral)?;
+    order(&mut world, vec![worker], UnitOrder::ReturnCargo);
+    assert_eq!(leaves(&mut world, worker)?, expected);
+    if !until(&mut world, 800, |w| {
+        w.player_resources[PlayerSlot::ALL[0]].minerals > 0
+    }) {
+        return Err("the cargo was never delivered".into());
+    }
+    assert_eq!(
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        mineral.amount
+    );
+    assert_eq!(world.entities[&worker].cargo, None);
+    Ok(())
 }
 
 /// Worker 0's trip on a node over the window of §6.3: deliveries, and the ticks between the first
