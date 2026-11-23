@@ -172,8 +172,7 @@
                         (radius: 1.25, fraction: 0.375),
                     ],
                     friendly_fire: false,
-                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
-                    cliff: Any,
+                    // TwinIbiksCannon keeps to its level (SameCliff 1 from CEffectDamage, core EffectData:67; liberty EffectData:2533-2546): cliff Same by default.
                 )),
                 projectile_speed: None,
                 weapon_class: Some("directorate_vehicle_weapons"),

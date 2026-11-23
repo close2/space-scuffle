@@ -1544,3 +1544,60 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
     );
     Ok(())
 }
+
+/// Plan `2026-11-23-splash-cliff-levels` P-5 (§2.3, B-170): every shipped area's cliff rule, by
+/// its shape and centre. A circle is a damage effect's own `AreaArray`, which keeps to the level
+/// of its search point (`CEffectDamage` `SearchFlags SameCliff 1`, `core` EffectData:67; the
+/// siege shot `CrucioShockCannonBlast`, `TwinIbiksCannon`, `KaiserBladesDamage`,
+/// `LiberatorMissileDamage`). A line is a persistent's `CEffectEnumArea` searches, which do not
+/// set the flag (`core` EffectData:71–77; `InfernalFlameThrowerE`, `ThermalLancesE`,
+/// `LurkerMPSearch`). Exactly the attacker-centred circle, the Baneling's burst, strikes a target
+/// on another level directly (`BanelingVolatileBurstDirectFallbackSet`, `voidmulti`
+/// EffectData:2327–2358, on `CliffLevelNotEqual`, ValidatorData:894–898).
+#[test]
+fn splash_cliff_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut seen = std::collections::BTreeSet::new();
+    let (mut lines, mut circles, mut bursts) = (0, 0, 0);
+    for archetype in world.catalog.archetypes() {
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons) {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            if !seen.insert((archetype.slug.clone(), weapon.name.clone())) {
+                continue;
+            }
+            let label = format!("{} {}", archetype.slug, weapon.name);
+            let line = matches!(splash.shape, sim_types::SplashShape::Line(_));
+            let burst = splash.impact == SplashImpact::Attacker;
+            let expected = if line {
+                lines += 1;
+                sim_types::SplashCliff::Any
+            } else {
+                if burst {
+                    bursts += 1;
+                } else {
+                    circles += 1;
+                }
+                sim_types::SplashCliff::Same
+            };
+            assert_eq!(splash.cliff, expected, "{label}: the cliff rule");
+            assert_eq!(
+                splash.strike_target_on_other_level, burst,
+                "{label}: the other-level strike"
+            );
+        }
+    }
+    assert_eq!(
+        (lines, circles, bursts),
+        (3, 4, 1),
+        "§2.3's eight shipped areas"
+    );
+    Ok(())
+}

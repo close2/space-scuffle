@@ -107,3 +107,27 @@ structure case, which was then extended with the strike switched off (the struct
 
 `DEFAULT_SANDBOX_CHECKSUM`: `10_589_561_826_036_639_628` at schema 36 (reproduced with the fields unhashed),
 `18_404_512_489_137_112_834` at schema 37.
+
+### Worlds
+
+`compare.sh world-wp0 world-wp2`: `files base=483 new=483 differing=0`. With every shipped area at `cliff: Any` the
+rules are latent. Every test of `sim_types`, `sim_map`, `sim_core`, `sim_fixtures` and `workspace_checks` passed in
+release on the WP2 tree (132 test executables and doc tests).
+
+## WP3: battle 40
+
+`compare.sh world-wp0 world-wp3`: `files base=483 new=483 differing=3`: `matrix/matrix.csv` and `matrix/matrix.md`
+gain battle 40's 20 rows and nothing else changes (every other row identical), and `matrix.log` reports 1,180 runs
+instead of 1,160 with "expectation failures 0 on the seeds of record, 4 over all seeds" as before.
+
+Battle 40 on the WP3 tree (`~/scratch/splash-cliff/b40/wp3-pre.log`): the tanks win all 20 seeds, 2 or 3 left (2 on
+seeds 33, 5, 14, 16, 17), ending on ticks 243 to 312. The roaches reach the plateau (largest blue x 51.1 on the first
+seed of record, 52.7 on seed 33).
+
+**The probe on battle 40 counts zero cross-level strikes.** The probe patch applied to the WP3 tree
+(`probe/probe-wp3.diff`, binaries `bin-probe-wp3`) played battle 40 on its 20 seeds
+(`b40/probe-wp3.err`): 408 area strikes, none on a unit whose cell level differs from its search point's, and no
+burst. The plan predicted that "the shell on a unit that crested the ramp spares the units still on it" (§7.3, §7.4);
+measured, no shell centred on a roach on the plateau reached a roach on the ramp or below (the cannon's outer zone is
+1.25 from its centre). So battle 40 is not expected to move in WP4 either
+(see WP4 and the plan's Amendment 2).

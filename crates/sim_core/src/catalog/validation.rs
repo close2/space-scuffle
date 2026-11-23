@@ -3920,13 +3920,19 @@ mod splash_cliff_tests {
     #[test]
     fn either_level_rule_is_accepted_for_a_circle_and_a_line() -> TestResult {
         for cliff in [SplashCliff::Same, SplashCliff::Any] {
-            let field = refused_field(|splash| splash.cliff = cliff)?;
+            // The other-level strike is cleared: it needs `Same` (tested below), and the row
+            // chosen may be the burst that carries it.
+            let field = refused_field(|splash| {
+                splash.cliff = cliff;
+                splash.strike_target_on_other_level = false;
+            })?;
             assert!(
                 field.starts_with("not a field refusal: Ok"),
                 "{cliff:?}: {field}"
             );
             let field = refused_field(|splash| {
                 splash.cliff = cliff;
+                splash.strike_target_on_other_level = false;
                 splash.impact = SplashImpact::Target;
                 splash.shape = SplashShapeDef::Line {
                     origin: sim_types::SplashLineOrigin::Attacker,

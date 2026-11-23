@@ -688,3 +688,129 @@ fn an_attacker_centred_area_strikes_a_structure_on_another_level_with_its_struct
         );
     }
 }
+
+/// The shipped mode weapon with a circular area (the sieged Siege Tank analogue's cannon), found
+/// by property, as a copy that fires at once from where it stands: no minimum range, aimed all
+/// round, no turret delay, range `RANGE`. Its damage, area, condition and cliff rule are as
+/// shipped.
+fn shipped_sieged_cannon(world: &SimWorld) -> WeaponSpec {
+    let mut weapon = world
+        .catalog
+        .archetypes()
+        .flat_map(|arch| &arch.modes)
+        .filter_map(|mode| {
+            mode.ground_weapon_override
+                .as_ref()
+                .and_then(Option::as_ref)
+        })
+        .find(|weapon| {
+            weapon
+                .splash
+                .as_ref()
+                .is_some_and(|splash| splash.shape == SplashShape::Circle)
+        })
+        .cloned()
+        .expect("invariant: the shipped catalog has a mode weapon with a circular area");
+    weapon.min_range = SimScalar::ZERO;
+    weapon.max_range = SimScalar::from_i32(RANGE);
+    weapon.firing_arc = SimAngle::from_degrees(360);
+    weapon.acquire_arc = SimAngle::from_degrees(360);
+    weapon.has_turret = false;
+    weapon
+}
+
+/// P-1 on the shipped row (B-170): the sieged cannon, fired from the plateau at a target below
+/// it, spares a unit on the plateau within its innermost zone of the target and strikes a unit
+/// below at the same distance.
+#[test]
+fn the_shipped_siege_shot_spares_the_other_level() {
+    let mut world = world(Terrain::Cliff);
+    let weapon = shipped_sieged_cannon(&world);
+    let splash = splash_of(&weapon);
+    assert_eq!(
+        splash.cliff,
+        SplashCliff::Same,
+        "the shipped cannon keeps to its level"
+    );
+    let gap = s(0.3);
+    assert!(gap <= splash.zones[0].radius, "inside the innermost zone");
+    let target_at = at(edge() - 0.35, ROW);
+    let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, ROW));
+    let target = body(&mut world, RED, target_at);
+    // Both edges `gap` from the target's centre: across the edge, and north on its level.
+    let across = body(
+        &mut world,
+        RED,
+        offset(target_at, gap + s(BODY), SimScalar::ZERO),
+    );
+    let below = body(
+        &mut world,
+        RED,
+        offset(target_at, SimScalar::ZERO, gap + s(BODY)),
+    );
+    assert!(
+        world.entities[&across].position.x >= s(edge()),
+        "on the plateau"
+    );
+    let losses = first_strike(&mut world, attacker, target, &[target, across, below]);
+    assert!(losses[0] > SimScalar::ZERO, "the target");
+    assert!(losses[2] > SimScalar::ZERO, "below, on the target's level");
+    assert_eq!(losses[1], SimScalar::ZERO, "the plateau, across the edge");
+}
+
+/// The shipped attacker-centred area's archetype (the Baneling analogue), found by property.
+fn shipped_burst(world: &SimWorld) -> (UnitTypeId, WeaponSpec) {
+    world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            arch.weapon
+                .as_ref()
+                .filter(|weapon| {
+                    weapon
+                        .splash
+                        .as_ref()
+                        .is_some_and(|splash| splash.impact == SplashImpact::Attacker)
+                })
+                .map(|weapon| (arch.unit_type_id, weapon.clone()))
+        })
+        .expect("invariant: the shipped catalog has an attacker-centred area")
+}
+
+/// The life a scratch body standing `gap` beyond the edge of the shipped burst's archetype,
+/// both on one level (`across` false) or the burst on the plateau and the body below (`across`
+/// true), loses to one burst.
+fn shipped_burst_loss(across: bool) -> SimScalar {
+    let mut world = world(if across {
+        Terrain::Cliff
+    } else {
+        Terrain::Flat
+    });
+    let (kind, weapon) = shipped_burst(&world);
+    let own = world.catalog.get(kind).expect("shipped").collision_radius;
+    let gap = weapon.max_range * SimScalar::HALF;
+    let origin = SimVec2::new(s(edge()) + own, s(ROW));
+    let burst = world.spawn_unit(kind, BLUE, origin).expect("open ground");
+    let target_at = offset(origin, -(own + s(BODY) + gap), SimScalar::ZERO);
+    assert!(
+        target_at.x < s(edge()),
+        "the target stands west of the edge"
+    );
+    let target = body(&mut world, RED, target_at);
+    first_strike(&mut world, burst, target, &[target])[0]
+}
+
+/// P-3 on the shipped row (B-170): the Baneling analogue's burst from the plateau strikes its
+/// target below directly, with the same damage as the same burst on a flat map (its first zone
+/// reaches the target there).
+#[test]
+fn the_shipped_burst_strikes_its_target_across_a_cliff() {
+    let world = world(Terrain::Flat);
+    let (_, weapon) = shipped_burst(&world);
+    let splash = splash_of(&weapon);
+    assert!(splash.strike_target_on_other_level, "the shipped fallback");
+    assert_eq!(splash.cliff, SplashCliff::Same);
+    let flat = shipped_burst_loss(false);
+    assert!(flat > SimScalar::ZERO, "the flat control");
+    assert_eq!(shipped_burst_loss(true), flat, "across the cliff, directly");
+}

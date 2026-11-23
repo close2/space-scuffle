@@ -512,8 +512,7 @@
                                 (radius: 1.25, fraction: 0.25),
                             ],
                             friendly_fire: true,
-                            // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
-                            cliff: Any,
+                            // CrucioShockCannonBlast keeps to its level (CEffectDamage SameCliff 1, core EffectData:67; liberty EffectData:1668-1681): cliff Same by default.
                             target_radius_below: Some(1.25),
                         )),
                         projectile_speed: None,
@@ -1350,8 +1349,7 @@
                 splash: Some((
                     zones: [(radius: 1.5, fraction: 1.0)],
                     friendly_fire: false,
-                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
-                    cliff: Any,
+                    // LiberatorMissileDamage keeps to its level (SameCliff 1 from CEffectDamage, core EffectData:67; void EffectData:2932-2940): cliff Same by default.
                     offset_by_unit_radius: true,
                 )),
                 projectile_speed: Some(1.2),
@@ -2825,8 +2823,11 @@
                 splash: Some((
                     zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
-                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
-                    cliff: Any,
+                    // VolatileBurstU and VolatileBurstU2 keep to the Baneling's level (SameCliff 1 from CEffectDamage, core
+                    // EffectData:67); a target on another level takes the burst directly, once
+                    // (BanelingVolatileBurstDirectFallbackSet, voidmulti EffectData:2327-2358, on CliffLevelNotEqual,
+                    // voidmulti ValidatorData:894-898).
+                    strike_target_on_other_level: true,
                     offset_by_unit_radius: false,
                     impact: Attacker,
                 )),
@@ -3557,8 +3558,7 @@
                         (radius: 1.5, fraction: 0.25),
                     ],
                     friendly_fire: false,
-                    // B-170: reaches every level until plan 2026-11-23-splash-cliff-levels WP4 applies SameCliff.
-                    cliff: Any,
+                    // KaiserBladesDamage keeps to its level (SameCliff 1 from CEffectDamage, core EffectData:67; swarm EffectData:2272-2281): cliff Same by default.
                     offset_by_unit_radius: true,
                 )),
                 projectile_speed: None,
