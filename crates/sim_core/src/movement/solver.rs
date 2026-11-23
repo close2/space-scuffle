@@ -418,7 +418,14 @@ impl ContactSolver {
         let Some(radius_sum) = a.policy.radius.checked_add(b.policy.radius) else {
             return report(fault(MovementMathError::Unrepresentable));
         };
-        let band = i128::from(radius_sum.raw()) * i128::from(settings.dead_band_permille) / 1000;
+        // D-α: the dead band applies to friends only; an enemy overlap is always corrected (plan
+        // Amendment 11, P7: T7 allows enemies 0.5 %, below the 1 % band).
+        let permille = if a.party.owner == b.party.owner {
+            i128::from(settings.dead_band_permille)
+        } else {
+            0
+        };
+        let band = i128::from(radius_sum.raw()) * permille / 1000;
         let dead_band = SimScalar::from_raw(i64::try_from(band).unwrap_or(i64::MAX));
         self.pairs.push(Pair {
             a: u32::try_from(low).unwrap_or(u32::MAX),
@@ -1076,6 +1083,40 @@ mod tests {
         Ok(())
     }
 
+    /// Plan Amendment 11, P7: an enemy overlap inside the friends' dead band (here 0.8 % of the
+    /// radius sum, under the 1 % band) is still corrected; a friendly one is left alone (C-4).
+    #[test]
+    fn enemy_pairs_take_no_dead_band() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let pillar = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
+        };
+        let touch = 1.0 - 0.008;
+        for (other, corrected) in [(pillar, true), (party(0), false)] {
+            let bodies = [
+                solver_body(1, party(0), 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+                solver_body(
+                    2,
+                    other,
+                    0.5,
+                    at(20.0 + touch, 20.0),
+                    at(20.0 + touch, 20.0),
+                ),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            let share = overlap_share(&solved.bodies[0], &solved.bodies[1]);
+            if corrected {
+                assert!(share <= 0.0001, "enemy overlap {share}");
+            } else {
+                assert!((share - 0.008).abs() < 1e-6, "friend overlap {share}");
+            }
+        }
+        Ok(())
+    }
+
     /// Amendment 7, item 4: a correction that terrain refuses whole slides along the wall. A body
     /// touching a wall is pressed by a fixed enemy from below and outward: before, its correction
     /// (half of it into the wall) was refused and the overlap stayed; now it slides along the wall
@@ -1094,7 +1135,13 @@ mod tests {
         ];
         let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
         assert_eq!(errors, []);
-        assert!(solved.bodies[0].position.x <= at(20.5, 0.0).x);
+        // Never deeper into the wall than the wall rule's rounding allowance.
+        let limit = at(20.5, 0.0).x + super::super::tuning::WALL_CONTACT_TOLERANCE;
+        assert!(
+            solved.bodies[0].position.x <= limit,
+            "{:?}",
+            solved.bodies[0].position
+        );
         assert!(solved.bodies[0].position.y > at(0.0, 20.0).y);
         assert!(overlap_share(&solved.bodies[0], &solved.bodies[1]) <= 0.005);
         Ok(())
