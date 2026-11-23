@@ -320,6 +320,9 @@ pub struct UnitTask {
     pub legs: u8,
     /// Ticks left gathering; zero when not gathering.
     pub gather_ticks: u16,
+    /// Ticks left waiting at the node with cargo before the return leg (the resource's
+    /// `ReturnDelay`, plan `2026-11-22-harvest-timing` D-1); zero when not waiting.
+    pub return_ticks: u16,
     /// Ticks spent waiting for a site or for ground to clear.
     pub wait_ticks: u16,
     /// Depot a carrying unit is heading for.

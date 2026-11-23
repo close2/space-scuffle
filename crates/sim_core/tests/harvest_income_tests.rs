@@ -6,14 +6,17 @@
 //!
 //! # Invariants
 //! Mechanics are reached by capability: the worker archetype is found by its harvester spec.
-//! Setup may place entities directly; behaviour is driven only by commands.
+//! Harvest times and amounts are read from the resource rows of the catalog's placement rules
+//! (plan `2026-11-22-harvest-timing` D-2), never written as literals. Setup may place entities
+//! directly; behaviour is driven only by commands.
 
+use sim_core::catalog::ResourceHarvest;
 use sim_core::economy::{GameCommandError, GameCommandReceipt, TaskEventKind};
 use sim_core::{Cargo, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
 use sim_types::{
-    EntityId, HarvesterSpec, PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, SimScalar,
-    SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    EntityId, PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder, UnitTypeId,
 };
 use std::error::Error;
 
@@ -45,7 +48,19 @@ struct Fixture {
     world: SimWorld,
     worker: EntityId,
     hall: EntityId,
-    spec: HarvesterSpec,
+    /// The mineral row's harvest.
+    mineral: ResourceHarvest,
+    /// The gas row's harvest.
+    gas: ResourceHarvest,
+}
+
+/// The harvest of `kind` in `world`'s catalog.
+fn harvest_of(world: &SimWorld, kind: ResourceKind) -> Result<ResourceHarvest, Box<dyn Error>> {
+    Ok(*world
+        .catalog
+        .placement_rules()
+        .harvest(kind)
+        .ok_or("no harvest row for the kind")?)
 }
 
 fn fixture(mineral: u32) -> Result<Fixture, Box<dyn Error>> {
@@ -61,11 +76,16 @@ fn fixture(mineral: u32) -> Result<Fixture, Box<dyn Error>> {
         Vec::new(),
     )?;
     let mut world = sim_fixtures::world(map, 11);
-    let (worker_type, spec) = world
+    let worker_type = world
         .catalog
         .archetypes()
-        .find_map(|a| a.capabilities.harvester.map(|spec| (a.unit_type_id, spec)))
+        .find(|a| a.capabilities.harvester.is_some())
+        .map(|a| a.unit_type_id)
         .ok_or("no harvester in the catalog")?;
+    let (mineral, gas) = (
+        harvest_of(&world, ResourceKind::Mineral)?,
+        harvest_of(&world, ResourceKind::Gas)?,
+    );
     let hall_type = depot(&world)?;
     let hall = world.spawn_structure(hall_type, ME, 2, 2)?;
     let worker = world.spawn_unit(worker_type, ME, at(10, 4))?;
@@ -75,7 +95,8 @@ fn fixture(mineral: u32) -> Result<Fixture, Box<dyn Error>> {
         world,
         worker,
         hall,
-        spec,
+        mineral,
+        gas,
     })
 }
 
@@ -143,7 +164,7 @@ fn harvesting_earns_income_and_draws_the_node_down() -> TestResult {
         f.world.game_command_outcomes()[0].result,
         Ok(GameCommandReceipt::Accepted { recipients: 1 })
     );
-    let capacity = f.spec.harvest_capacity;
+    let capacity = f.mineral.amount;
 
     f.until(800, |f| f.world.entities[&f.worker].cargo.is_some())?;
     assert_eq!(f.minerals(), 0, "cargo is not income until delivered");
@@ -181,7 +202,7 @@ fn gathering_takes_the_authored_time() -> TestResult {
     f.until(400, |f| f.world.entities[&f.worker].cargo.is_some())?;
     assert_eq!(
         f.world.current_tick - started,
-        u32::from(f.spec.harvest_rate_ticks)
+        u32::from(f.mineral.time_ticks)
     );
     Ok(())
 }
@@ -234,7 +255,7 @@ fn unknown_and_exhausted_nodes_are_refused() -> TestResult {
 
 #[test]
 fn an_exhausted_node_sends_workers_to_the_next() -> TestResult {
-    let capacity = fixture(1)?.spec.harvest_capacity;
+    let capacity = fixture(1)?.mineral.amount;
     let mut f = fixture(capacity)?;
     let worker = f.worker;
     f.order(vec![worker], UnitOrder::Harvest { target: MINERAL });
@@ -277,6 +298,10 @@ fn a_partial_last_load_is_delivered_and_the_order_then_ends() -> TestResult {
     Ok(())
 }
 
+/// The worker looks for its depot when its `ReturnDelay` wait ends (plan
+/// `2026-11-22-harvest-timing` D-1), so with the depot killed on the tick its cargo appears the
+/// order still stands through the wait and ends on the tick after it: the mineral row's
+/// `return_delay_ticks` + 1 ticks after the take (the hall's death is processed on the first).
 #[test]
 fn losing_the_depot_ends_the_order_and_keeps_the_cargo() -> TestResult {
     let mut f = fixture(1000)?;
@@ -285,7 +310,13 @@ fn losing_the_depot_ends_the_order_and_keeps_the_cargo() -> TestResult {
     f.until(800, |f| f.world.entities[&f.worker].cargo.is_some())?;
     f.world.entities.get_mut(&hall).ok_or("hall")?.hp = SimScalar::ZERO;
     f.idle(1);
-    f.idle(1);
+    for _ in 0..f.mineral.return_delay_ticks {
+        assert!(
+            !f.world.entities[&worker].order_queue.is_empty(),
+            "the order stands while the worker waits"
+        );
+        f.idle(1);
+    }
     assert!(f.world.entities[&worker].order_queue.is_empty());
     assert!(f.world.entities[&worker].cargo.is_some());
     assert_eq!(f.minerals(), 0);
@@ -343,7 +374,7 @@ fn workers_walk_through_each_other_while_harvesting() -> TestResult {
         crew.push(f.world.spawn_unit(worker_type, ME, at(9, 3 + y))?);
     }
     f.order(crew, UnitOrder::Harvest { target: MINERAL });
-    f.until(2000, |f| f.minerals() >= 5 * f.spec.harvest_capacity)?;
+    f.until(2000, |f| f.minerals() >= 5 * f.mineral.amount)?;
     Ok(())
 }
 
@@ -379,9 +410,26 @@ fn gas_needs_a_completed_extractor_of_ones_own() -> TestResult {
     let own = f.world.spawn_structure(extractor, ME, 19, 19)?;
     f.order(vec![worker], UnitOrder::Harvest { target: GAS });
     assert!(f.world.game_command_outcomes()[0].result.is_ok());
+    // The gather takes the gas row's time and yields the gas row's amount, not the mineral's.
+    f.until(3000, |f| f.world.entities[&f.worker].task.gather_ticks > 0)?;
+    let started = f.world.current_tick;
+    f.until(400, |f| f.world.entities[&f.worker].cargo.is_some())?;
+    assert_eq!(f.world.current_tick - started, u32::from(f.gas.time_ticks));
+    assert_eq!(
+        f.world.entities[&worker].cargo,
+        Some(Cargo {
+            kind: ResourceKind::Gas,
+            amount: f.gas.amount
+        })
+    );
+    assert_eq!(f.remaining(GAS), 100 - f.gas.amount);
     f.until(3000, |f| {
         f.world.player_resources[PlayerSlot::ALL[0]].gas > 0
     })?;
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].gas,
+        f.gas.amount
+    );
     assert_eq!(f.minerals(), 0);
 
     // A lost extractor stops the work.

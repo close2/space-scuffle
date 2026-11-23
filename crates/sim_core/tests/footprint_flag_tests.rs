@@ -527,7 +527,8 @@ fn the_rule_reads_the_catalog() -> TestResult {
         format!(
             "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"], \
              shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), \
-             remove_when_empty: true),{}",
+             remove_when_empty: true, \
+             harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0),{}",
             &text[..start],
             &text[end..]
         )

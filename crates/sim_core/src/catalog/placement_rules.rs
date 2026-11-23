@@ -5,18 +5,23 @@
 //! the node takes, `x`, and the `NearResources` ring around them, `o`) with the anchor cell the map
 //! file names, its pathing `Shape`, and whether it leaves the map when empty
 //! (`FootprintMineralsRounded`, `FootprintGeyserRounded`; plans `2026-11-19-footprint-flags`
-//! D-2 and `2026-11-20-resource-footprints` D-1). Loading parses the rows once into sorted cell
-//! offsets ([`ResourceReach`], the cells on which the node applies its flags: `x` and `o`) and
-//! into a [`ResourceFootprints`] table (the `x` rectangle, the shape in quarter cells and the
-//! removal flag) that `sim_map` places nodes by. The site check reads them without allocating.
+//! D-2 and `2026-11-20-resource-footprints` D-1). Each row also carries the resource's harvest
+//! data from the same 5.0.14 `CBehaviorResource` record as its removal flag: how long a gather
+//! takes, how much it yields and how long the worker waits at the node before it returns
+//! (`HarvestTime`, `HarvestAmount`, `ReturnDelay`; plan `2026-11-22-harvest-timing` D-2).
+//! Loading parses the rows once into sorted cell offsets ([`ResourceReach`], the cells on which
+//! the node applies its flags: `x` and `o`), into a [`ResourceFootprints`] table (the `x`
+//! rectangle, the shape in quarter cells and the removal flag) that `sim_map` places nodes by,
+//! and into one [`ResourceHarvest`] per kind that the economy reads. The site check reads them
+//! without allocating.
 //!
 //! # How it fits
 //! [`RuntimeCatalogs::load_from_directory`](super::RuntimeCatalogs::load_from_directory) reads the
 //! file beside `movement_rules.ron` and stores the result in the [`UnitCatalog`](super::UnitCatalog)
 //! ([`UnitCatalog::placement_rules`](super::UnitCatalog::placement_rules)). A catalog built from
 //! unit and structure text alone carries [`PlacementRules::NONE`], under which no resource applies
-//! a flag and no kind has a footprint. Like every catalog it is not hashed; lockstep peers must
-//! load equal files.
+//! a flag and no kind has a footprint or a harvest. Like every catalog it is not hashed; lockstep
+//! peers must load equal files.
 //!
 //! # Invariants
 //! - Each resource kind has exactly one row in a loaded file, holding its node's own cells as one
@@ -26,6 +31,8 @@
 //!   sorted by `dy` then `dx`, without repeats.
 //! - A shape lies in the own cells, every value is a multiple of 1/4 world unit (exact in quarter
 //!   cells), and an outline is simple with 3 to 16 vertices and edges along axes and diagonals.
+//! - A harvest takes at least one tick and yields at least one unit, so a worker never loops
+//!   without earning; its return delay may be zero. All three are whole ticks or units, read once.
 
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
@@ -65,11 +72,27 @@ impl ResourceReach {
     }
 }
 
+/// How one kind of resource is harvested (`StarCraft` II 5.0.14's `CBehaviorResource`; plan
+/// `2026-11-22-harvest-timing` D-2). A worker's harvest of a node of the kind is these values
+/// unchanged: the game's workers set no per-resource multiplier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceHarvest {
+    /// Ticks a worker gathers at the node before it takes its load (`HarvestTime`); at least 1.
+    pub time_ticks: u16,
+    /// Resource units one gather takes from the node (`HarvestAmount`), or what is left if
+    /// less; at least 1.
+    pub amount: u32,
+    /// Ticks a worker that has just taken its load waits at the node, holding it, before it
+    /// walks back (`ReturnDelay`); 0 for none.
+    pub return_delay_ticks: u16,
+}
+
 /// The placement rules loaded from `placement_rules.ron`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlacementRules {
     reaches: Vec<ResourceReach>,
     footprints: ResourceFootprints,
+    harvests: Vec<(ResourceKind, ResourceHarvest)>,
 }
 
 /// The file's top level.
@@ -96,6 +119,12 @@ pub(super) struct ResourceFootprintDef {
     pub(super) shape: ResourceShapeDef,
     /// Whether a node of the kind leaves the map when it empties.
     pub(super) remove_when_empty: bool,
+    /// Ticks a gather takes (`HarvestTime`, converted at 25 ticks per Faster second).
+    pub(super) harvest_time_ticks: u16,
+    /// Units one gather yields (`HarvestAmount`).
+    pub(super) harvest_amount: u32,
+    /// Ticks the worker waits at the node with its load before returning (`ReturnDelay`).
+    pub(super) return_delay_ticks: u16,
 }
 
 /// An authored resource shape, in world units from the centre of the node's own cells.
@@ -161,19 +190,20 @@ impl ResourceShapeDef {
 }
 
 impl PlacementRules {
-    /// No resource applies any flag and no kind has a footprint: the rules of a catalog that has
-    /// not loaded the file.
+    /// No resource applies any flag and no kind has a footprint or a harvest: the rules of a
+    /// catalog that has not loaded the file.
     pub const NONE: Self = Self {
         reaches: Vec::new(),
         footprints: ResourceFootprints::NONE,
+        harvests: Vec::new(),
     };
 
     /// Parses and validates the text of `placement_rules.ron`.
     ///
     /// # Errors
     /// [`SimCoreError::RonDeserializationError`] for malformed RON, unknown or missing fields and
-    /// unknown flag or kind names; [`SimCoreError::CatalogInvalidValue`] for a mask, shape or flag
-    /// list that breaks the module's invariants, or a kind without a row.
+    /// unknown flag or kind names; [`SimCoreError::CatalogInvalidValue`] for a mask, shape, flag
+    /// list or harvest that breaks the module's invariants, or a kind without a row.
     pub fn from_ron_str(ron_data: &str) -> SimResult<Self> {
         let file: PlacementRulesFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
@@ -188,9 +218,15 @@ impl PlacementRules {
             .iter()
             .map(|row| Ok((row.kind, row.to_footprint()?)))
             .collect::<SimResult<Vec<_>>>()?;
+        let harvests = file
+            .resource_footprints
+            .iter()
+            .map(|row| (row.kind, row.to_harvest()))
+            .collect();
         Ok(Self {
             reaches,
             footprints: ResourceFootprints::new(footprints),
+            harvests,
         })
     }
 
@@ -212,9 +248,28 @@ impl PlacementRules {
     pub const fn resource_footprints(&self) -> &ResourceFootprints {
         &self.footprints
     }
+
+    /// How nodes of `kind` are harvested (plan `2026-11-22-harvest-timing` D-2), or `None` for
+    /// [`Self::NONE`]. A loaded file has a row, and so a harvest, for every kind.
+    #[must_use]
+    pub fn harvest(&self, kind: ResourceKind) -> Option<&ResourceHarvest> {
+        self.harvests
+            .iter()
+            .find(|(row_kind, _)| *row_kind == kind)
+            .map(|(_, harvest)| harvest)
+    }
 }
 
 impl ResourceFootprintDef {
+    /// The row's harvest data, as authored; validation has checked the time and amount.
+    const fn to_harvest(&self) -> ResourceHarvest {
+        ResourceHarvest {
+            time_ticks: self.harvest_time_ticks,
+            amount: self.harvest_amount,
+            return_delay_ticks: self.return_delay_ticks,
+        }
+    }
+
     /// The offset of mask position `at` from the anchor's `anchor`.
     fn offset(&self, at: usize, anchor: u32) -> SimResult<i8> {
         let at = i64::try_from(at).ok();
@@ -327,9 +382,93 @@ mod tests {
                 {mineral},
                 (kind: Gas, applies: [NearResources], anchor: (0, 0), rows: ["x"],
                     shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0),
-                    remove_when_empty: false),
+                    remove_when_empty: false,
+                    harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0),
             ])"#
         )
+    }
+
+    /// A one-cell mineral row whose harvest fields are `harvest`.
+    fn mineral_harvesting(harvest: &str) -> String {
+        with_mineral(&format!(
+            r#"(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: ["x"],
+                shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0),
+                remove_when_empty: true, {harvest})"#
+        ))
+    }
+
+    /// Plan `2026-11-22-harvest-timing` D-2: each row's harvest is read as authored.
+    #[test]
+    fn the_harvest_is_the_rows() -> SimResult<()> {
+        let rules = PlacementRules::from_ron_str(&mineral_harvesting(
+            "harvest_time_ticks: 7, harvest_amount: 3, return_delay_ticks: 2",
+        ))?;
+        assert_eq!(
+            rules.harvest(ResourceKind::Mineral),
+            Some(&ResourceHarvest {
+                time_ticks: 7,
+                amount: 3,
+                return_delay_ticks: 2
+            })
+        );
+        assert_eq!(
+            rules.harvest(ResourceKind::Gas),
+            Some(&ResourceHarvest {
+                time_ticks: 35,
+                amount: 4,
+                return_delay_ticks: 0
+            })
+        );
+        Ok(())
+    }
+
+    /// The harvest fields are required: a row without one fails to parse, naming it.
+    #[test]
+    fn a_row_without_a_harvest_time_is_refused() {
+        let result = PlacementRules::from_ron_str(&mineral_harvesting(
+            "harvest_amount: 5, return_delay_ticks: 9",
+        ));
+        assert!(
+            matches!(
+                &result,
+                Err(SimCoreError::RonDeserializationError(message))
+                    if message.contains("harvest_time_ticks")
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// A gather of no time or no yield would loop forever without earning; no delay is allowed.
+    #[test]
+    fn a_harvest_of_no_time_or_no_amount_is_refused() {
+        let cases = [
+            (
+                "harvest_time_ticks: 0, harvest_amount: 5, return_delay_ticks: 9",
+                Some("harvest_time_ticks"),
+            ),
+            (
+                "harvest_time_ticks: 50, harvest_amount: 0, return_delay_ticks: 9",
+                Some("harvest_amount"),
+            ),
+            (
+                "harvest_time_ticks: 1, harvest_amount: 1, return_delay_ticks: 0",
+                None,
+            ),
+        ];
+        for (harvest, refused) in cases {
+            let result = PlacementRules::from_ron_str(&mineral_harvesting(harvest));
+            match refused {
+                Some(field) => assert!(
+                    matches!(
+                        &result,
+                        Err(SimCoreError::CatalogInvalidValue { field: named, definition, .. })
+                            if named == field && definition == "Mineral"
+                    ),
+                    "{harvest}: {result:?}"
+                ),
+                None => assert!(result.is_ok(), "{harvest}: {result:?}"),
+            }
+        }
     }
 
     #[test]
@@ -337,7 +476,8 @@ mod tests {
         let rules = PlacementRules::from_ron_str(&with_mineral(
             r#"(kind: Mineral, applies: [NearResources], anchor: (1, 0), rows: ["xx.", ".o."],
                 shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.25),
-                remove_when_empty: true)"#,
+                remove_when_empty: true,
+                harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9)"#,
         ))?;
         let reach = rules
             .reach(ResourceKind::Mineral)
@@ -375,6 +515,8 @@ mod tests {
             PlacementRules::NONE.resource_footprints(),
             &ResourceFootprints::NONE
         );
+        assert_eq!(PlacementRules::NONE.harvest(ResourceKind::Mineral), None);
+        assert_eq!(PlacementRules::NONE.harvest(ResourceKind::Gas), None);
         assert_eq!(PlacementRules::default(), PlacementRules::NONE);
     }
 }

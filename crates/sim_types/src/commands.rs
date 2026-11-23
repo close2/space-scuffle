@@ -141,14 +141,16 @@ pub struct OverclockSpec {
     pub attack_rate_multiplier: SimScalar,
 }
 
-/// Specifications for resource harvesting units.
+/// The capability to harvest resources: a unit whose archetype has one gathers from resource
+/// nodes and delivers to depots.
+///
+/// It carries no numbers. How long a gather takes, how much it yields and how long the worker
+/// waits at the node before it returns are the resource's (`StarCraft` II 5.0.14's
+/// `CBehaviorResource` `HarvestTime`, `HarvestAmount` and `ReturnDelay`), authored per resource
+/// kind in `placement_rules.ron` (plan `2026-11-22-harvest-timing` D-2, D-3). The game's workers
+/// set no per-resource multiplier on them, so a worker adds nothing of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct HarvesterSpec {
-    /// Maximum resource units carried per trip.
-    pub harvest_capacity: u32,
-    /// Ticks required to harvest a single batch from a resource node.
-    pub harvest_rate_ticks: u16,
-}
+pub struct HarvesterSpec {}
 
 /// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's
 /// Immortal Barrier: the `BarrierDamageResponse` and `ImmortalOverload` behaviours).
