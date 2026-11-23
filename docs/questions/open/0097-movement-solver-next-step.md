@@ -67,3 +67,20 @@ one row that both fail, arc give-ups, it is clearly worse. The plan's absolute t
 also fails most of them. Option (a) can still follow (b) as ordinary bug work on the new default.
 
 ## Answer
+
+## Update (2026-11-23, after the cache)
+
+The ring-interval cache is built. It changes no behaviour: the development corpus is byte-identical, and a test
+compares cache on and off tick by tick. It saved less than expected: 0.37 G, not 0.95 G.
+
+| Scenario | Solver against Legacy | Ticks per second (load average 15–23) | Q0093 (c) |
+|---|---:|---:|---|
+| 400 units, 64 × 64, armies meet | **+61.2 %** | 104 | fails by 1.2 points on instructions; holds on speed |
+| 128 × 128, armies apart | +7.0 % | 154 | holds |
+| Showcase canyon | +53.9 % | 80 | holds |
+
+What remains on 64 × 64 is the contact solver itself (+3.4 G) and target acquisition (+1.9 G); acquisition costs
+more because units pack more densely. Under (b), the switch-over would therefore also need either a solver cost
+step (e.g. over-relaxation, which re-derives the iteration count) or your acceptance of +61 % on that scenario.
+Meanwhile, per the default, the next step is planning option (a) only, a design review of the side rule. No code
+changes until you answer.
