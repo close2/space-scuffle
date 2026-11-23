@@ -564,3 +564,28 @@ The question number is the next free at filing (0094 on `2bb84a5b`).
   rests on the search excerpt. No source in this plan depends on a page that could not be read, except the
   **verify** items.
 - No prototype (§7).
+
+---
+
+## As built
+
+Recorded by the implementation session on 2026-11-23, one branch (`regeneration-plan`) and one commit per package.
+
+### WP1
+
+1. **The caster refusal (D-1 invariant 3) is in two files.** The **verify** found no completion check on either
+   admission path, so WP1 adds `is_completed` to `world/casts.rs` `would_accept_cast_order` (the file §10 names)
+   and to `world/abilities.rs` `admit_cast`, the shared admission that `would_admit_cast` and the tick's cast use;
+   §10 does not list `abilities.rs`. The refusal is one condition in each and is tested by
+   `regeneration_tests::an_uncompleted_entity_cannot_cast`. No shipped structure has an ability, so no world moves.
+2. **The scratch structure with energy** (`a_foundation_holds_its_start_energy`) is a shipped structure the
+   catalog's first builder raises without prerequisites, changed in the world's catalog through
+   `UnitCatalog::get_mut` (maximum 100, start 50, rate 1) instead of a `UnitArchetype` struct literal: the same
+   archetype, without restating every field.
+3. **The P-1 helper** takes the foundations' vitals captured before the tick (`foundation_vitals`) and the world
+   after it, instead of two worlds, so no world is cloned per tick. It runs after every tick of the foundation
+   tests. `a_completed_structure_regenerates_from_the_next_tick` steps without it (`Check::DiagnosticsOnly`), so
+   that test is green before and after WP1 as §11 requires; the other foundation tests run it on every tick.
+4. **Damage** in the tests is applied between ticks with `Entity::apply_damage`, the function every damage path
+   ends in (it resets `ticks_since_last_damage`); a twentieth of `max_hp`, so that even the old rule leaves the
+   structure short of full at completion.

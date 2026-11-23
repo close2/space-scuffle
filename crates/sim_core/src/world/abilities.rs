@@ -187,8 +187,9 @@ impl SimWorld {
     /// world units, would be admitted now: the simulation's own admission, run without mutation
     /// and without drawing from the generator.
     ///
-    /// `false` for every ordinary refusal (dead, carried, channelling, stunned or locked after a
-    /// cast, unknown or locked ability, cooldown, energy, range, target or placement) and also
+    /// `false` for every ordinary refusal (dead, uncompleted, carried, channelling, stunned or
+    /// locked after a cast, unknown or locked ability, cooldown, energy, range, target or
+    /// placement) and also
     /// for malformed authored data,
     /// which a real cast reports as a tick diagnostic. The client asks this before it submits
     /// a mode switch, so its admission cannot drift from the tick's (plan
@@ -209,8 +210,9 @@ impl SimWorld {
 
     /// Runs every check of a cast, in order, without mutation.
     ///
-    /// Returns `Ok(None)` for an ordinary refusal (dead, carried, channeling, unknown or locked
-    /// ability, cooldown, energy, range or placement) and an error for malformed authored data.
+    /// Returns `Ok(None)` for an ordinary refusal (dead, uncompleted, carried, channeling, unknown
+    /// or locked ability, cooldown, energy, range or placement) and an error for malformed
+    /// authored data.
     fn admit_cast(
         &self,
         entity_id: EntityId,
@@ -223,7 +225,10 @@ impl SimWorld {
             _ => return Ok(None),
         };
 
-        if entity.is_loaded_in_transport()
+        // An uncompleted entity casts nothing, so a foundation's energy is never spent (plan
+        // `2026-11-23-regeneration` D-1 invariant 3).
+        if !entity.is_completed
+            || entity.is_loaded_in_transport()
             || entity.channeling_remaining_ticks > 0
             || entity.is_action_locked()
         {

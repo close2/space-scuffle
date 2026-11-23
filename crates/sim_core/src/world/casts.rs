@@ -34,9 +34,10 @@ use sim_types::{
 
 impl SimWorld {
     /// Whether `entity_id` could take an order to cast the ability at `ability_index` of its
-    /// archetype at `target_pos` (world units) or on `target_entity`: alive and not carried,
-    /// the ability unlocked and off cooldown, the energy at hand, and the target valid, visible
-    /// to the caster's owner and admitted by the ability's target filter (plan D-7.2).
+    /// archetype at `target_pos` (world units) or on `target_entity`: alive, completed and not
+    /// carried, the ability unlocked and off cooldown, the energy at hand, and the target
+    /// valid, visible to the caster's owner and admitted by the ability's target filter (plan
+    /// D-7.2).
     ///
     /// Range is not asked, because the caster walks into range; nor is the caster's freedom to
     /// act now (a channel, a stun or the after-cast lock), because the order waits for it. The
@@ -57,6 +58,7 @@ impl SimWorld {
             return self.would_admit_cast(entity_id, ability_index, target_pos, target_entity);
         };
         entity.is_alive()
+            && entity.is_completed
             && !entity.is_loaded_in_transport()
             && self.is_ability_unlocked(arch, entity.owner, &ability.name)
             && entity
