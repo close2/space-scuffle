@@ -855,6 +855,214 @@ fn an_anchored_selection_shows_stop_and_an_empty_hold_slot() {
     assert_eq!(by_key, [UnitOrder::Stop], "Hold reaches no one");
 }
 
+/// Whether the HUD can present `unit_type` (its media ships).
+fn shows(harness: &Harness, unit_type: UnitTypeId) -> bool {
+    harness
+        .app
+        .world()
+        .resource::<HudModel>()
+        .catalog
+        .archetype(unit_type)
+        .is_some_and(|commands| commands.unpresentable.is_none())
+}
+
+/// Spawns a completed structure of `unit_type` for `owner` on the first free cells of a spiral
+/// round `near`'s cell, and returns it.
+fn structure_near(
+    harness: &mut Harness,
+    near: EntityId,
+    unit_type: UnitTypeId,
+    owner: PlayerId,
+) -> EntityId {
+    let origin = harness.simulated_position(near);
+    let world = harness.world_mut();
+    let (cx, cy) = (origin.x as i64, origin.y as i64);
+    for ring in 6_i64..30 {
+        for (dx, dy) in [
+            (ring, 0),
+            (0, ring),
+            (-ring, 0),
+            (0, -ring),
+            (ring, ring),
+            (-ring, -ring),
+        ] {
+            let (Ok(x), Ok(y)) = (u32::try_from(cx + dx), u32::try_from(cy + dy)) else {
+                continue;
+            };
+            if let Ok(structure) = world.spawn_structure(unit_type, owner, x, y) {
+                return structure;
+            }
+        }
+    }
+    panic!("no free cells for the structure near {origin}");
+}
+
+/// Whether `unit` carries an attack it was told to make.
+fn has_explicit_attack(harness: &Harness, unit: EntityId) -> bool {
+    harness.world().entities[&unit]
+        .order_queue
+        .iter()
+        .any(|order| {
+            matches!(
+                order,
+                UnitOrder::AttackTarget {
+                    origin: sim_types::AttackOrigin::Explicit,
+                    ..
+                }
+            )
+        })
+}
+
+/// Runs ticks until `unit` has a target of its own choosing, and returns it.
+fn acquired_target(harness: &mut Harness, unit: EntityId) -> EntityId {
+    for _ in 0..200 {
+        if let Some(target) = harness.world().entities[&unit].current_target {
+            return target;
+        }
+        run_ticks(harness, 1);
+    }
+    panic!("{unit:?} acquired nothing: {}", harness.status());
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-5 (B-171): an armed producing structure (found by
+/// property) told to attack one enemy drops that attack on Stop, by key and by its card button,
+/// and then picks the target it picks when idle at the same spot; its production queue and its
+/// rally survive the Stop (5.0.14 `CAbilStop` drops orders only, `core` AbilData:1013-1027).
+#[test]
+fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() {
+    let mut harness = skirmish();
+    fund(&mut harness);
+    let worker = worker(&harness);
+    let (structure_type, enemy_type) = {
+        let world = harness.world();
+        let structure_type = world
+            .catalog
+            .archetypes()
+            .find(|archetype| {
+                archetype.is_immobile_by_default()
+                    && archetype.stance_armed(None)
+                    && !archetype.trains_units.is_empty()
+                    && archetype.ground_weapon.is_some()
+                    && shows(&harness, archetype.unit_type_id)
+            })
+            .expect("a presentable armed structure that trains units")
+            .unit_type_id;
+        let enemy_type = world
+            .catalog
+            .archetypes()
+            .filter(|archetype| {
+                !archetype.is_immobile_by_default()
+                    && archetype.mover_type == sim_types::MoverType::Ground
+                    && shows(&harness, archetype.unit_type_id)
+            })
+            .max_by_key(|archetype| archetype.max_hp)
+            .expect("a ground unit")
+            .unit_type_id;
+        (structure_type, enemy_type)
+    };
+    let structure = structure_near(&mut harness, worker, structure_type, LOCAL_PLAYER);
+    let (centre, reach) = {
+        let world = harness.world();
+        let archetype = world.catalog.get(structure_type).expect("its archetype");
+        let range = archetype
+            .ground_weapon
+            .as_ref()
+            .expect("a ground weapon")
+            .max_range
+            .to_f32();
+        let radius = archetype.collision_radius.to_f32()
+            + world
+                .catalog
+                .get(enemy_type)
+                .expect("enemy")
+                .collision_radius
+                .to_f32();
+        (harness.simulated_position(structure), (radius, range))
+    };
+    // Two held enemies in range, one nearer than the other; the setup holds them so that they
+    // stand still, and every order under test arrives by input.
+    let (radius, range) = reach;
+    let mut enemies = Vec::new();
+    for (side, gap) in [(1.0_f32, 0.5_f32), (-1.0, range - 1.0)] {
+        let at = centre + Vec2::new(side * (radius + gap), 0.0);
+        let world = harness.world_mut();
+        let enemy = world
+            .spawn_unit(enemy_type, ENEMY, battle_harness::sim_position(at))
+            .expect("an enemy beside the structure");
+        world
+            .entities
+            .get_mut(&enemy)
+            .expect("just spawned")
+            .issue_order(UnitOrder::HoldPosition, false)
+            .expect("a hold");
+        enemies.push(enemy);
+    }
+    let idle = acquired_target(&mut harness, structure);
+    let focus = *enemies
+        .iter()
+        .find(|enemy| **enemy != idle)
+        .expect("two enemies");
+
+    harness.look_at_unit(structure);
+    harness.select(structure);
+    harness.step(1);
+    let rally_at = harness.open_ground(centre, 8.0);
+    let on_screen = harness.ground_on_screen(rally_at);
+    harness.click(MouseButton::Right, on_screen);
+    let train = position_of(&harness, |action| matches!(action, CardAction::Train(_)))
+        .expect("the structure trains something");
+    harness.tap_key(key_at(&harness, train));
+    run_ticks(&mut harness, 1);
+    let (queue, rally) = {
+        let unit = &harness.world().entities[&structure];
+        (unit.production_queue.clone(), unit.rally.clone())
+    };
+    assert!(!queue.is_empty(), "a job: {}", harness.status());
+    assert!(rally.is_some(), "a rally: {}", harness.status());
+
+    for by_key in [true, false] {
+        harness
+            .world_mut()
+            .entities
+            .get_mut(&structure)
+            .expect("the structure")
+            .issue_order(UnitOrder::attack(focus), false)
+            .expect("an attack");
+        run_ticks(&mut harness, 1);
+        assert!(has_explicit_attack(&harness, structure), "told to attack");
+        assert_eq!(
+            harness.world().entities[&structure].current_target,
+            Some(focus)
+        );
+        if by_key {
+            harness.tap_key(STOP_KEY);
+        } else {
+            harness.step(1);
+            let stop = geometry(&harness).card_fixed[0].expect("Stop on the card");
+            harness.click(MouseButton::Left, point(stop));
+        }
+        assert_eq!(
+            pending(&harness)
+                .into_iter()
+                .map(|c| c.order)
+                .collect::<Vec<_>>(),
+            [UnitOrder::Stop],
+            "by key {by_key}: {}",
+            harness.status()
+        );
+        run_ticks(&mut harness, 1);
+        assert!(!has_explicit_attack(&harness, structure), "by key {by_key}");
+        assert_eq!(
+            acquired_target(&mut harness, structure),
+            idle,
+            "by key {by_key}"
+        );
+        let unit = &harness.world().entities[&structure];
+        assert_eq!(unit.production_queue.len(), queue.len(), "by key {by_key}");
+        assert_eq!(unit.rally, rally, "by key {by_key}");
+    }
+}
+
 #[test]
 fn a_card_order_is_queued_with_shift() {
     let mut harness = skirmish();

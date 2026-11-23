@@ -74,3 +74,47 @@ After D-5's orders, `compare.sh world-wp0 world-wp1`: `files base=483 new=483 di
 and 39b are byte-identical on all 20 seeds (wins, survivors, end tick, lead fate and every other `matrix.csv`
 column), as §3.3 predicted, so no tank target was traced and no expectation re-recorded.
 `sim_core/sc2_who_wins_matchup_matrix_tests` (release) passed (3 tests); every `sim_fixtures` test passed.
+
+## WP2: the simulation's rule; Stop for armed structures
+
+### Red run (on the WP1 tree, with `stance_armed` and `settled_armed` in and the old rules)
+
+Logs `~/scratch/stance-orders/red/wp2-*.log`:
+
+| Test | Failure |
+|---|---|
+| `stance_orders_tests::the_simulation_gives_stop_and_hold_only_to_a_stance_that_takes_them` (P-1) | `railgun_crawler Entering(0) HoldPosition queue false: takes false`: the entering tank was given the Hold |
+| `stance_orders_tests::one_command_reaches_each_named_unit_whose_stance_takes_it` (P-2) | "the sieged unit is left as it was" |
+| `stance_orders_tests::the_default_stance_takes_stop_when_mobile_or_armed_and_hold_when_mobile` (P-4 rule) | `tesla_sentinel_dome`: `NONE` |
+| `catalog_reference_values_tests::b171_structures_take_the_plain_orders_of_their_starcraft_unit_type` (P-4) | "Photon Cannon: Stop and Hold Position, StarCraft II liberty UnitData:11083-11084" |
+| `runtime_catalog_tests::an_armed_structure_disarmed_in_its_file_loses_stop` (P-8) | "tesla_sentinel_dome: shipped with Stop" |
+| `runtime_catalog_tests::an_anchoring_mode_given_hold_position_in_its_file_holds` (P-8) | the shipped sieged tank held (left `true`, right `false`) |
+| `catalog::tests::the_default_stance_takes_stop_when_mobile_or_armed` | "slot 0": an armed structure had no Stop |
+| client `battle_hud::card::tests::an_armed_structure_shows_stop_and_no_hold` | `(false, false)` |
+| client `battle_pipeline::commands::tests::the_simulation_delivers_stop_and_hold_exactly_when_the_card_shows_them` (P-3) | "unarmed structure Stop": the simulation gave Stop to a structure the card shows none for |
+| client `battle_card_tests::stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally` (P-5) | "Order rejected: select units that can perform this order" for `X` |
+
+`armed_in_a_stance_means_the_live_unit_has_a_weapon` (P-6), `a_unit_armed_only_in_its_mode_is_armed_for_the_stance_it_settles_in`,
+`a_mode_without_its_replacement_weapon_in_its_file_is_unarmed` (P-8) and the extended
+`the_card_shows_stop_and_hold_exactly_when_admission_takes_them` passed on both trees: they pin the new queries, which
+exist before the rules change.
+
+### Tests rewritten by §8 rule 4
+
+- `stance_orders_tests::the_default_stance_accepts_both_orders_exactly_when_the_archetype_is_mobile` asserted `NONE`
+  for every immobile archetype; it is replaced by `the_default_stance_takes_stop_when_mobile_or_armed_and_hold_when_mobile`.
+- `catalog::tests::stance_orders_follow_mobility_for_the_default_stance_and_data_for_a_mode`: the speed-0 walker
+  (armed) now keeps Stop, and the dome it checks is found unarmed.
+- `multi_strike_timing_tests::q0058_an_explicit_order_ends_a_channeled_burst` sent Hold Position to a scratch shooter
+  with speed 0, which the simulation now refuses; the bench's shooter is given a speed of 0.1 so every overriding
+  order reaches it (it is never told to walk before the order under test). All 10 tests of the file pass.
+
+No other test in `sim_core`, `sim_fixtures` or the client library failed. The grep of plan §11 found every other
+Stop and Hold Position in `crates/sim_core/tests/` and `crates/client/tests/` either sent to mobile units, issued
+straight through `Entity::issue_order` (which the rule does not gate), or submitted through client admission, which
+applies the same `settled_stance_orders`.
+
+### Worlds
+
+`compare.sh world-wp0 world-wp2`: `files base=483 new=483 differing=0`. The golden replays (`golden_replay_tests`)
+and `DEFAULT_SANDBOX_CHECKSUM` (`sim_fixtures`) pass unchanged on native debug.

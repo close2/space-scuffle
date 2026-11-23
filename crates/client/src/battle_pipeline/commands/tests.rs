@@ -1541,18 +1541,27 @@ fn card_fixed(world: &SimWorld, selection: &[EntityId]) -> (bool, bool) {
     (card.fixed[0].is_some(), card.fixed[1].is_some())
 }
 
-/// P-1: over a worker, both anchoring units in each of their four stances (default, entering,
-/// anchored, leaving), a completed structure and a foundation, alone and in every pair, the card
-/// shows Stop exactly when a Stop would reach a member, and Hold exactly when a Hold would.
-#[test]
-fn the_card_shows_stop_and_hold_exactly_when_admission_takes_them() -> TestResult {
+/// The members of the stance set: a worker, an unarmed and an armed completed structure, a
+/// foundation, and both anchoring units in each of their four stances (default, entering,
+/// anchored, leaving), each with its role. The world is built the same way every time, so a
+/// rebuilt world holds the same members under the same IDs.
+fn stance_members() -> Result<(SimWorld, Vec<(&'static str, EntityId)>), Box<dyn std::error::Error>>
+{
     let (mut world, mut queue) = role_fixture()?;
     let (worker, foundation) = lay_foundation(&mut world, &mut queue)?;
     let structure_type = buildable(&world, worker)?;
     let structure = world.spawn_structure(structure_type, ME, 40, 40)?;
     assert!(world.entities[&structure].is_completed);
+    assert!(!is_armed(world.catalog.get(structure_type)?));
+    let armed_type = type_where(&world, |a| is_dome(a) && is_armed(a))?;
+    let armed = world.spawn_structure(armed_type, ME, 50, 50)?;
+    assert!(world.entities[&armed].is_completed);
 
-    let mut members = vec![("worker", worker), ("structure", structure)];
+    let mut members = vec![
+        ("worker", worker),
+        ("unarmed structure", structure),
+        ("armed structure", armed),
+    ];
     members.push(("foundation", foundation));
     let mut slot = 1;
     let mut spawn = |world: &mut SimWorld, hold: bool| {
@@ -1584,16 +1593,30 @@ fn the_card_shows_stop_and_hold_exactly_when_admission_takes_them() -> TestResul
         let (fresh, _) = spawn(&mut world, hold)?;
         members.push(("default", fresh));
     }
-    assert_eq!(members.len(), 11);
+    assert_eq!(members.len(), 12);
+    Ok((world, members))
+}
 
+/// Every selection of the stance set: each member alone and every pair.
+fn stance_selections(members: &[(&'static str, EntityId)]) -> Vec<Vec<(&'static str, EntityId)>> {
     let mut selections: Vec<Vec<(&str, EntityId)>> = members.iter().map(|m| vec![*m]).collect();
     for (first, a) in members.iter().enumerate() {
         for b in &members[first + 1..] {
             selections.push(vec![*a, *b]);
         }
     }
+    selections
+}
+
+/// P-1 (plan `2026-11-23-anchored-commands`), extended by plan
+/// `2026-11-23-stance-checked-orders` P-3 with an armed and an unarmed structure: over the
+/// stance set, alone and in every pair, the card shows Stop exactly when a Stop would reach a
+/// member, and Hold exactly when a Hold would.
+#[test]
+fn the_card_shows_stop_and_hold_exactly_when_admission_takes_them() -> TestResult {
+    let (world, members) = stance_members()?;
     let mut stop_without_hold = 0;
-    for selection in &selections {
+    for selection in &stance_selections(&members) {
         let ids: Vec<_> = selection.iter().map(|(_, id)| *id).collect();
         let admitted = (
             any_recipient(&world, ME, &ids, &UnitOrder::Stop),
@@ -1605,6 +1628,46 @@ fn the_card_shows_stop_and_hold_exactly_when_admission_takes_them() -> TestResul
         }
     }
     assert!(stop_without_hold > 0, "a stance takes Stop without Hold");
+    Ok(())
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-3, the simulation half (B-172): the simulation
+/// gives a Stop or Hold Position to a member of the stance set exactly when admission would,
+/// so over every selection of the set it delivers the order to some member exactly when the
+/// card shows it. Each member is commanded in a rebuilt world (the simulation admits unit by
+/// unit, `ToSelection`), and a member took the order when it ends the tick unlike the same
+/// member of a world that received no command.
+#[test]
+fn the_simulation_delivers_stop_and_hold_exactly_when_the_card_shows_them() -> TestResult {
+    let (mut untouched, members) = stance_members()?;
+    let mut input = bundle();
+    input.tick = Tick(untouched.current_tick);
+    untouched.step(&input);
+    let mut delivered = std::collections::BTreeMap::new();
+    for order in [UnitOrder::Stop, UnitOrder::HoldPosition] {
+        for &(role, member) in &members {
+            let (mut world, rebuilt) = stance_members()?;
+            assert_eq!(rebuilt, members, "the set is rebuilt identically");
+            let admitted = any_recipient(&world, ME, &[member], &order);
+            let mut input = bundle();
+            input.tick = Tick(world.current_tick);
+            input.commands = vec![command(member, ME, order.clone(), true)];
+            world.step(&input);
+            let took = world.entities[&member] != untouched.entities[&member];
+            assert_eq!(took, admitted, "{role} {order:?}");
+            delivered.insert((member, order == UnitOrder::Stop), took);
+        }
+    }
+    let (world, _) = stance_members()?;
+    for selection in &stance_selections(&members) {
+        let ids: Vec<_> = selection.iter().map(|(_, id)| *id).collect();
+        let reaches = |stop: bool| ids.iter().any(|id| delivered[&(*id, stop)]);
+        assert_eq!(
+            card_fixed(&world, &ids),
+            (reaches(true), reaches(false)),
+            "{selection:?}"
+        );
+    }
     Ok(())
 }
 

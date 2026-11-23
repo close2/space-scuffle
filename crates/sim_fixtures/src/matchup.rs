@@ -994,18 +994,18 @@ mod tests {
     /// into a mode whose stance takes Hold Position, found by property, not by name (C5).
     fn a_mode_that_takes_hold_position() -> Result<(String, String), Box<dyn std::error::Error>> {
         let catalogs = crate::shipped_catalogs();
-        let found = catalogs
-            .units
-            .archetypes()
-            .find_map(|archetype| {
-                archetype.abilities.iter().find_map(|ability| match &ability.effect {
+        let found = catalogs.units.archetypes().find_map(|archetype| {
+            archetype
+                .abilities
+                .iter()
+                .find_map(|ability| match &ability.effect {
                     AbilityEffectSpec::SwitchMode { mode_name } => archetype
                         .get_mode(mode_name)
                         .filter(|mode| mode.orders.hold_position)
                         .map(|_| (archetype.slug.clone(), mode_name.clone())),
                     _ => None,
                 })
-            });
+        });
         found.ok_or_else(|| "no shipped mode takes Hold Position".into())
     }
 
@@ -1087,8 +1087,12 @@ mod tests {
         let seed = matrix.seeds[0];
         let mut missed = Vec::new();
         for battle in &matrix.battles {
-            let mut run =
-                BattleRun::new(battle, crate::shipped_catalogs(), seed, matrix.jitter_for(seed))?;
+            let mut run = BattleRun::new(
+                battle,
+                crate::shipped_catalogs(),
+                seed,
+                matrix.jitter_for(seed),
+            )?;
             let named: Vec<(EntityId, UnitOrder)> = run
                 .commands
                 .iter()

@@ -1766,6 +1766,26 @@ mod tests {
         Ok(())
     }
 
+    /// A completed armed structure of `ME` at cells (`corner`, `corner`), found by capability.
+    fn armed_structure(world: &mut SimWorld, corner: u32) -> Outcome<EntityId> {
+        let unit_type = type_where(world, |a| {
+            is_dome(a) && crate::battle_pipeline::commands::is_armed(a)
+        })?;
+        Ok(world.spawn_structure(unit_type, ME, corner, corner)?)
+    }
+
+    /// Plan `2026-11-23-stance-checked-orders` D-2 (B-171): an armed structure takes Stop, as
+    /// 5.0.14's armed structures carry `stop`, and no Hold Position, since none has `move`.
+    #[test]
+    fn an_armed_structure_shows_stop_and_no_hold() -> TestResult {
+        let mut world = flat_world()?;
+        let structure = armed_structure(&mut world, 30)?;
+        let card = card_for(&world, &[structure]);
+        assert_eq!(fixed_shown(&card), (true, false));
+        assert_eq!(card.fixed[0].as_ref().ok_or("Stop")?.key, STOP_KEY);
+        Ok(())
+    }
+
     /// P-3, the client half: the HUD catalog reads a stance's orders from the catalog it is
     /// built from, so an edited catalog changes the card without a rebuild.
     #[test]
