@@ -540,3 +540,38 @@ crate rule, and the client targets already exist. If `stance_orders_tests` is fa
 - No web source was used. Rule 3 and the items marked **verify** wait for an in-game card or the editor's
   documentation.
 - No prototype (§7).
+
+---
+
+## As built
+
+Implemented on branch `anchored-commands-plan` in one session, one commit per package, measured against the WP0 tree
+([evidence](../evidence/2026-11-23-anchored-commands.md)).
+
+| WP | Commit | What landed | Worlds |
+|---|---|---|---|
+| WP0 | `00de5b4f` | B-98 corrected; B-171 to B-173 registered; deviation-fixes row; README row; baseline of every §7 world (483 files) | — |
+| WP1 | `5f553bad` | `StanceOrders` (D-1), required in `units.ron`; `UnitArchetype::stance_orders` and `Entity::settled_stance_orders` (D-2) | none moved (483 files, differing 0); goldens and sandbox unchanged, schema 36 |
+| WP2 | `5212e264` | `capable` by stance (D-3); `default_orders` and `mode_orders` in the HUD catalog and `derive_fixed` by stance (D-4); B-98 fixed | skirmish stage log identical |
+| WP3 | this commit | Records | — |
+
+Deviations from the text above, none of which changes a decision:
+
+1. **P-5's "empty queue after the tick".** The tick that carries the Stop also runs the acquisition pass, which
+   already puts the unit's own `AttackTarget { origin: Acquired }` in front of its queue. The test therefore checks
+   that no ordered (`Explicit`) target is left after the tick, and then that the unit's target is the one it chose
+   idle at that spot. This is rule 5 (the unit acquires its next target by itself), seen one pass earlier.
+2. **P-6's burrowed unit is the shipped Lurker analogue.** It now has media and is presentable, so
+   `battle_mode_tests` finds it by data (an anchoring, arming mode with `hold_position`) and needs no stand-in. The
+   approaching enemy is a presentable ground walker set to one life and given a `Move` through `world_mut` (setup,
+   not an order under test).
+3. **The card allocation test (P-8)** is `battle_hud::card::tests::a_warm_card_of_an_anchored_selection_allocates_no_new_text`,
+   a sibling of the two warm-card tests, which checks that both fixed slots keep their text buffers when warm.
+   `sync_steady_state_tests` passes unchanged.
+4. **`battle_mode_tests`' `frail_enemy`** is split into `enemy_structure` (full life) and `frail_enemy` (one life),
+   with the same behaviour for its existing callers, because P-5 needs enemies that survive a few shots.
+5. **The subgroup note (§14)** went into plan `2026-11-09-client-mode-commands` as a new closing section, since that
+   plan has no As-built section.
+6. **`UnitModeSpec` literals in tests** take `StanceOrders::ALL`; none of those tests reads the field.
+
+The gate catalog needs no rule: `stance_orders_tests` runs in under a second and is `Fast` by default.

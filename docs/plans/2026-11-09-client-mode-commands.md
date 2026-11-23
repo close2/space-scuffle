@@ -592,3 +592,10 @@ Deferred without asking, as charter §8 allows when written down (Q0002):
   not fight back or walk out of range. Q0070's practical goal also needs the Lurker analogue's media (Veo plan).
 - **WP5 memory.** `battle_mode_tests` peaks at 5.67 to 5.76 GiB at 2 threads (debug, process tree sampled every
   0.2 s), so `test_threads: Some(2)` stands.
+
+## As built note (plan `2026-11-23-anchored-commands`, 2026-11-23): the burrowed Lurker's subgroup
+
+§2's row "The burrowed Lurker has no `SubgroupAlias`" read `liberty` alone. In 5.0.14 the burrowed Lurker shares the
+unburrowed Lurker's subgroup (`SubgroupAlias value="LurkerMP"`, `voidmulti` UnitData:990; `balancemulti`
+UnitData:921), as the sieged and unsieged tanks share theirs. This card shows both directions of a mixed selection
+regardless (phase-5 D-7, no subgroups), so nothing changes in the code.
