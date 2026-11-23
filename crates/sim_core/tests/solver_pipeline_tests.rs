@@ -307,6 +307,7 @@ fn a_waiting_friend_takes_at_most_half() {
         engaged: false,
         idle: false,
         moving: true,
+        nudge: None,
     };
     let waiting = ContactParty {
         moving: false,

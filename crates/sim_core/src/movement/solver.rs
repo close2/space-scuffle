@@ -60,6 +60,11 @@ pub struct ContactParty {
     pub idle: bool,
     /// Its committed step this tick is longer than `STANDING_DRIFT` (1/64 world units).
     pub moving: bool,
+    /// Deviation D-δ (Q0095, plan Amendment 15, N): for an engaged melee unit that allies may nudge
+    /// along its attack ring, the unit vector from its target to it; `None` otherwise. In a
+    /// friend pair such a unit is shared as if not engaged, but only the part of its correction
+    /// along the ring's tangent is taken, so it never leaves its range.
+    pub nudge: Option<SimVec2>,
 }
 
 impl ContactParty {
@@ -130,7 +135,12 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, moving_friends_push: b
         (false, true) => return weights(one, zero),
         (false, false) => {}
     }
-    match (a.engaged, b.engaged) {
+    // D-δ: an engaged unit allies may nudge is shared with them as if not engaged; the radial
+    // part of its correction is removed when the pair is built.
+    match (
+        a.engaged && a.nudge.is_none(),
+        b.engaged && b.nudge.is_none(),
+    ) {
         (true, true) => return weights(half, half),
         (true, false) => return weights(zero, one),
         (false, true) => return weights(one, zero),
@@ -226,6 +236,10 @@ struct Pair {
     hard: bool,
     /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
     last: bool,
+    /// D-δ: in a friend pair, the radial direction of a body that may only be nudged along its
+    /// ring; its correction keeps only the part perpendicular to it.
+    nudge_a: Option<SimVec2>,
+    nudge_b: Option<SimVec2>,
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
@@ -402,6 +416,7 @@ impl ContactSolver {
             operation: "contact solver pair",
             source,
         };
+        let friends = a.party.owner == b.party.owner;
         let (share_a, share_b) =
             match contact_shares(&a.party, &b.party, settings.moving_friends_push) {
                 PairShares::None => return,
@@ -438,6 +453,8 @@ impl ContactSolver {
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
+            nudge_a: a.party.nudge.filter(|_| friends),
+            nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
             dead_band,
             cached: None,
@@ -735,6 +752,15 @@ fn step_scale(
         .map(|scale| scale.clamp(SimScalar::ZERO, SimScalar::ONE))
 }
 
+/// `delta` without its component along `radial` (D-δ), or `delta` itself when there is none.
+fn along_ring(delta: SimVec2, radial: Option<SimVec2>) -> Result<SimVec2, MovementMathError> {
+    let Some(radial) = radial else {
+        return Ok(delta);
+    };
+    let out = super::math::checked_dot(delta, radial)?;
+    checked_vec_sub(delta, checked_vec_scale(radial, out)?)
+}
+
 /// Adds `share` of `delta` to slot `index`'s sum, counting it, when the share is positive.
 fn add_to(
     sums: &mut [Accumulator],
@@ -806,8 +832,11 @@ fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
             .ok_or(MovementMathError::Unrepresentable)
             .and_then(|amount| checked_vec_scale(normal, amount))
     };
-    let delta_a = push(pair.share_a)?;
-    let delta_b = super::math::checked_vec_neg(push(pair.share_b)?)?;
+    let delta_a = along_ring(push(pair.share_a)?, pair.nudge_a)?;
+    let delta_b = along_ring(
+        super::math::checked_vec_neg(push(pair.share_b)?)?,
+        pair.nudge_b,
+    )?;
     Ok(Some((delta_a, delta_b)))
 }
 
@@ -824,6 +853,7 @@ mod tests {
             engaged: false,
             idle: false,
             moving: false,
+            nudge: None,
         }
     }
 
@@ -1035,6 +1065,7 @@ mod tests {
                     engaged: rng.below(8) == 0,
                     idle: rng.below(3) == 0,
                     moving: rng.below(2) == 0,
+                    nudge: None,
                 };
                 let party = ContactParty {
                     holding: party.holding || party.fixed,
@@ -1294,6 +1325,68 @@ mod tests {
             gaps.push(xs[1] - xs[0]);
         }
         assert!(gaps.windows(2).all(|w| w[1] >= w[0]), "{gaps:?}");
+        Ok(())
+    }
+
+    /// Deviation D-δ (Q0095, plan Amendment 15, N): an engaged melee unit that allies may nudge
+    /// is moved by a pressing friend only along its ring's tangent, never radially, so it stays
+    /// in range; without the nudge (on Hold Position, ranged, or the switch off) it does not move
+    /// at all; an enemy never nudges it.
+    #[test]
+    fn a_nudged_attacker_slides_along_its_ring_only() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        // The target lies due west: the ring's radial direction at the attacker is +x.
+        let radial = SimVec2::new(SimScalar::ONE, SimScalar::ZERO);
+        let engaged = ContactParty {
+            engaged: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        // The friend presses from the south-east, so the overlap has both a radial and a
+        // tangential part.
+        let solve = |world: &mut crate::SimWorld, attacker: ContactParty, presser: ContactParty| {
+            let bodies = [
+                solver_body(1, attacker, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+                solver_body(2, presser, 0.5, at(20.6, 19.4), at(20.55, 19.45)),
+            ];
+            let (solved, errors) = solve_on(world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            solved.bodies[0].position
+        };
+        let nudged = solve(
+            &mut world,
+            ContactParty {
+                nudge: Some(radial),
+                ..engaged
+            },
+            walker,
+        );
+        assert_eq!(nudged.x, at(20.0, 0.0).x, "moved radially: {nudged:?}");
+        assert!(
+            nudged.y > at(0.0, 20.0).y,
+            "not nudged along the ring: {nudged:?}"
+        );
+        assert_eq!(solve(&mut world, engaged, walker), at(20.0, 20.0));
+        let enemy = ContactParty {
+            moving: true,
+            ..party(1)
+        };
+        let by_enemy = solve(
+            &mut world,
+            ContactParty {
+                nudge: Some(radial),
+                ..engaged
+            },
+            enemy,
+        );
+        let without = solve(&mut world, engaged, enemy);
+        assert_eq!(
+            by_enemy, without,
+            "an enemy's push must not depend on the nudge"
+        );
         Ok(())
     }
 

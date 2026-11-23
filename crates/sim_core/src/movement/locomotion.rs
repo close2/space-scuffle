@@ -797,6 +797,42 @@ impl SimWorld {
             .is_ok_and(|d| d <= band.max && d >= band.min)
     }
 
+    /// Deviation D-δ (Q0095, plan Amendment 15, N): when the catalog's
+    /// `contact.nudge_engaged_along_ring` is on, the unit vector from `actor`'s target to it if
+    /// `actor` is a melee attacker in range of a live target that allies may nudge along its
+    /// ring: never on Hold Position (nor immobile or unpushable). `None` otherwise.
+    pub(crate) fn nudge_radial(&self, entry: MotionEntry, actor: &Entity) -> Option<SimVec2> {
+        let rules = self.catalog.movement_rules().contact();
+        if !rules.nudge_engaged_along_ring
+            || rules.pipeline != MovementPipeline::Solver
+            || actor.cannot_be_pushed()
+            || !self.in_range_of_live_target(entry, actor)
+        {
+            return None;
+        }
+        let target = actor
+            .current_target
+            .or(match actor.order_queue.front() {
+                Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+                _ => None,
+            })
+            .and_then(|id| self.entities.get(&id))?;
+        let arch = self.catalog.get(actor.unit_type_id).ok()?;
+        let target_arch = self.catalog.get(target.unit_type_id).ok()?;
+        let siege = actor
+            .is_sieged
+            .then_some(actor.siege_weapon.as_ref())
+            .flatten();
+        let melee = arch
+            .weapon_against(target_arch.mover_type, siege)
+            .is_some_and(|weapon| weapon.melee);
+        if !melee {
+            return None;
+        }
+        let radial = direction(actor.position, target.position).ok()?;
+        (radial != SimVec2::ZERO).then_some(radial)
+    }
+
     fn obstacle_of(&self, entry: MotionEntry, actor: &Entity) -> SteeringObstacle {
         let idle = matches!(actor.order_queue.front(), None | Some(UnitOrder::Idle));
         SteeringObstacle {

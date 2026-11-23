@@ -459,6 +459,7 @@ impl SimWorld {
                 engaged: self.engaged(entry, actor),
                 idle: actor.is_idle(),
                 moving: !within_distance(actor.position, actor.pos_at_tick_start, step),
+                nudge: self.nudge_radial(entry, actor),
             },
             policy: entry.policy,
             start: actor.pos_at_tick_start,

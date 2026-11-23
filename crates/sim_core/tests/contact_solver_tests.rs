@@ -79,6 +79,7 @@ fn contact_shares_answer_the_push_table() {
         engaged: false,
         idle: false,
         moving: true,
+        nudge: None,
     };
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
     let enemy = ContactParty {

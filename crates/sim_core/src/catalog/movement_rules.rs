@@ -59,6 +59,15 @@ pub struct ContactRules {
     /// D-β: moving friends push each other by priority (`true`), or each yields its own approach
     /// (`false`).
     pub moving_friends_push: bool,
+    /// Deviation D-δ (Q0095, Q0052 addendum): allies may nudge an engaged melee unit along its
+    /// attack ring, never out of range, never by enemies, never on Hold Position. On when absent.
+    #[serde(default = "nudge_default")]
+    pub nudge_engaged_along_ring: bool,
+}
+
+/// D-δ is on unless the file switches it off (Q0095).
+const fn nudge_default() -> bool {
+    true
 }
 
 impl ContactRules {
@@ -71,6 +80,7 @@ impl ContactRules {
         moving_overlap_permille: 50,
         side_horizon_factor: 2,
         moving_friends_push: true,
+        nudge_engaged_along_ring: true,
     };
 
     /// These rules if they are valid (§3.6).
@@ -354,5 +364,16 @@ mod tests {
                 "{text}"
             );
         }
+    }
+    /// Deviation D-δ (Q0095): the nudge switch is on when the file omits it, and the file can
+    /// switch it off.
+    #[test]
+    fn the_nudge_switch_defaults_on_and_can_be_switched_off() -> SimResult<()> {
+        let absent = MovementRules::from_ron_str(&text(21, CONTACT))?;
+        assert!(absent.contact().nudge_engaged_along_ring);
+        let off = CONTACT.replace("true)", "true, nudge_engaged_along_ring: false)");
+        let rules = MovementRules::from_ron_str(&text(21, &off))?;
+        assert!(!rules.contact().nudge_engaged_along_ring);
+        Ok(())
     }
 }
