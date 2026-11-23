@@ -833,3 +833,32 @@ Fill improves, but T1, T4 and T7 get worse in several families, so this is a sto
    in range of a live target as anchored for contact (C-2), so a press from behind never reaches the enemy.
 
 WP5 was not started; the acceptance range was not run; there is no cost split after WP5.
+
+## 9. WP4 under Amendment 6: stopped; figures only
+
+**Build:** `contact-solver-wp4-wip`, the commit after `04f75641`. It has the side commitment kept within one tick of
+the earliest threat, waiting friends as threats again, own-angle claims checked like chosen ones, the re-choice
+after leaving the band by more than a radius, and, for contact, a unit in range of a live target anchored. Legacy
+rows of seeds 1 to 20 are byte-identical. Unit, golden and solver-pipeline tests pass.
+
+**Development seeds 1 to 1,000, against WP3** (Amendment 5's figures for reference; runs `a2-1`, `s3-1`, `s4-1`):
+
+| Family | Measure | WP3 | Amendment 5 | Amendment 6 |
+|---|---|---:|---:|---:|
+| gap | M1 / M1-hi | 1.11 / 0.28 | 1.06 / 0.30 | 1.06 / 0.29 |
+| gap | give-ups; complete | 46; 97.8 % | 96; 96.4 % | 46; 97.5 % |
+| cross | M1 / M1-hi | 1.19 / 0.49 | 1.25 / 0.47 | 1.05 / 0.39 |
+| cross | give-ups; friend max | 2; 0.098 | 18; 0.134 | **3; 0.325** |
+| arc | M1 / M1-hi | 29.85 / 0.71 | 37.28 / 3.65 | 25.49 / **2.56** |
+| arc | fill mean / 5th | 0.609 / 0.381 | 0.662 / 0.417 | 0.669 / 0.429 |
+| arc | enemy overlap max | 0.013 | 0.219 | **0.292** |
+| corridor | M1 [95 % CI] | 25.76 [22.99, 28.47] | 27.42 | **31.24 [27.60, 35.24]** |
+| corridor | M1-hi; give-ups | 4.76; 4,991 | 10.95; 5,915 | **6.88; 5,850** |
+| corridor | friends > 5 % moving; enemy max | 7.53 %; 0.217 | 20.52 %; 0.378 | 8.47 %; **0.353** |
+| corridor | relabel sign test p (M1) | 0.523 | 0.838 | **0.003** (T8 fails) |
+| corner | give-ups; friend max | 7; 0.758 | 4; 0.409 | 2; 0.462 |
+
+T-figures worse than WP3: arc T1 (M1-hi) and T7 (enemy overlap); corridor T1, T4, T7 and T8; cross T4 and the
+friend maximum (T7). Fill improves on arc and corridor. Under Amendment 6's hard limit this is a stop with no further
+rule change proposed; the next step it names is a design review of the side rule and slots against the survey's
+alternatives (rank 2, HRVO). WP5 was not started; the acceptance range was not run.
