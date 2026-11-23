@@ -1260,3 +1260,47 @@ fn an_edited_auto_rally_changes_the_halls_rally() -> TestResult {
     }
     Ok(())
 }
+
+/// Plan `2026-11-23-regeneration` P-7 (charter §3.3, C6): a structure's energy regeneration is
+/// read at run time, so a catalog copy with the first authored rate doubled doubles that
+/// structure's gain per tick in the same binary.
+#[test]
+fn an_edited_structure_energy_rate_changes_the_regeneration() -> TestResult {
+    let bundle = Bundle::new("structure-energy")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        replace_first_field(&text, "energy_regen_per_tick", "0.063"),
+    )?;
+    let edited = bundle.load()?;
+    let structure = shipped
+        .units
+        .archetypes()
+        .find(|archetype| {
+            edited
+                .units
+                .get(archetype.unit_type_id)
+                .is_ok_and(|loaded| loaded.energy_regen_per_tick != archetype.energy_regen_per_tick)
+        })
+        .expect("the edit must change one loaded structure");
+    let unit_type = structure.unit_type_id;
+    let gain = |catalogs: RuntimeCatalogs| -> Result<SimScalar, Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+        let id = world.spawn_structure(unit_type, PlayerId(0), 4, 4)?;
+        world.entities.get_mut(&id).ok_or("structure")?.energy = SimScalar::ZERO;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(0),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        Ok(world.entities[&id].energy)
+    };
+    let shipped_gain = gain(shipped)?;
+    assert!(shipped_gain > SimScalar::ZERO);
+    assert_eq!(gain(edited)?, shipped_gain * SimScalar::from_num(2));
+    bundle.finish()?;
+    Ok(())
+}

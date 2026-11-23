@@ -74,6 +74,7 @@
             max_shields: 0.0,
             max_energy: 200.0,
             start_energy: 50.0,
+            energy_regen_per_tick: 0.0315, // 5.0.14 EnergyRegenRate 0.5625 per Normal second × 1.4 ÷ 25, Orbital Command liberty UnitData:10513–10515 (B-168).
             life_armor: 1.0,
             shield_armor: 0.0,
             sight_radius: 11.0,
@@ -811,6 +812,7 @@
             max_shields: 1000.0,
             max_energy: 200.0,
             start_energy: 50.0,
+            energy_regen_per_tick: 0.0315, // 5.0.14 EnergyRegenRate 0.5625 per Normal second × 1.4 ÷ 25, Nexus liberty UnitData:4239–4240; voidmulti UnitData:1094–1096 sets only its maximum and start (B-168).
             shield_regen_per_tick: 0.112,
             shield_regen_delay_ticks: Some(179),
             life_armor: 1.0,
@@ -1115,6 +1117,7 @@
             max_shields: 200.0,
             max_energy: 100.0,
             start_energy: 50.0,
+            energy_regen_per_tick: 0.0315, // 5.0.14 EnergyRegenRate 0.5625 per Normal second × 1.4 ÷ 25, Shield Battery liberty UnitData:1591–1593 (voidmulti UnitData:1563 sets only its start) (B-168).
             shield_regen_per_tick: 0.112,
             shield_regen_delay_ticks: Some(179),
             life_armor: 1.0,

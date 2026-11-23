@@ -458,9 +458,10 @@ Recorded here so they can be brought back (charter §8, Q0002):
   apart and an archetype needs it (D-3).
 - **F-2: does the Stimpack life cost restart regeneration delays?** Not researched; latent (D-3).
 - **F-3: `EnergyRegenDelay`.** The game has one; no shipped value sets it (not checked per unit; the audit lists
-  energy rates only).
+  energy rates only). Taken up by plan `2026-11-23-regeneration` (no layer sets it: B-35 is not a deviation).
 - **F-4: life regeneration of unfinished structures.** Today life regenerates whether or not `is_completed`
   (shields wait for completion). The game's rule for Zerg structures under construction was not researched; unchanged.
+  Taken up by plan `2026-11-23-regeneration` (D-1: no vital regenerates before completion).
 - **F-5: the Roach's faster burrowed regeneration** (audit R2 note) and Tunneling Claws (doc 08): not modelled.
 - **F-6: the shield field's `Option`.** Making `shield_regen_delay_ticks` a `u16` like this field would unify the
   two, but it couples to `max_shields` validation and WP9's semantics. Not changed.
