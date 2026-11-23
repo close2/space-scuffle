@@ -1269,3 +1269,81 @@ instructions retired.
 - What remains is the contact solver (+3.4 G), which Amendment 11 did not touch (no over-relaxation), and target
   acquisition (+1.9 G), a behaviour effect of denser packing.
 - No further change is made (Q0097).
+
+### 13.8 Ablation A0 (Amendment 14): intent is the preferred velocity: a measurement, stopped by the step rule
+
+**Build.**
+- A scratch build on `contact-solver-a0-wip` (`b714b294`): under the solver pipeline, `proposed_heading` returns
+  the straight heading to the next point, with no side rule and no side memory. Nothing is committed to the pipeline.
+- **Baseline:** step 1 + P8 (`runs/p8-1`). The plan head reproduces its first 20 seeds per family byte for byte.
+
+**Development (seeds 1 to 1,000), against step 1 + P8 and against the thresholds.**
+
+| Family | Figure | Step 1 + P8 | A0 | Prediction | Step rule |
+|---|---|---:|---:|---|---|
+| arc | M1 / M1-hi (T1) | 2.48 / 0.192 | **0.06 / 0.010** | falls: **yes** | T1 now holds |
+| arc | give-ups (E1) | 305 | 61 | | better, still fails |
+| arc | fill / 5th (T5) | 0.967 / 0.857 | 0.984 / 0.889 | | holds, better |
+| arc | friends > 5 % moving / > 1 % standing | 0.009 % / 0.011 % | 0.027 % / 0.029 % | | worse beyond noise, within T7 |
+| arc | max / T7 | 0.300, fails | 0.149, **holds** | | |
+| arc | D-S | 102,537 | 67,398 | | |
+| gap | M1 / M1-hi (T1) | 1.11 / 0.283 | **0.51 / 0.247** | falls: **yes** | T1 now holds |
+| gap | give-ups (T4, WP3 fails) | 46 | **124** | | **stop**: worse |
+| gap | scenes over the friend max (T7, WP3 fails) | 242 | **277** | | **stop**: worse |
+| gap | η 5th | 0.381 | 0.359 | | worse, within T6 |
+| cross | M1 / M1-hi (T1, WP3 fails) | 1.19 / 0.49 | **25.61 / 25.42** | | **stop**: worse |
+| cross | M3 (T2, passes) | 0.000 | **0.692** | | **stop**: now fails |
+| cross | M4 (T3, passes) | 0.50 % | **1.58 %** | rises: **yes** | **stop**: now fails |
+| cross | give-ups (T4) | 2 | **1,274** | rises: **yes** | **stop**: worse |
+| cross | friends > 5 % moving; max (T7, passes) | 0.001 %; 0.098 | **6.33 %; 0.990** | rises: **yes** | **stop**: now fails |
+| corridor | give-ups (E1) | 20 | **0** | | holds |
+| corridor | D-S | 2,502 | 29,128 | | |
+| corner | M1 (T1) | 0.50 | 0.14 | | holds |
+| corner | friend max (T7) | 0.520 | 0.991 | | fails both |
+| all | T8 | | | | holds everywhere |
+| mirror | blue share (T9) | 0.554 [0.453, 0.652] | 0.589 [0.474, 0.695] | | holds |
+
+**Verdict.**
+- Every prediction is borne out: arc and gap T1 fall; cross T4, M4 and T7 rise.
+- But A0 **fails the step rule** on:
+  - cross T1 to T4 and T7;
+  - gap T4 and T7.
+- It is not a candidate on its own.
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired, the same tree for all three).
+- Ticks per second are not reliable here: the shared machine's load average was 42 to 70.
+
+| Scenario | Legacy | Step 1 + P8 | A0 | A0 against Legacy |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 16.69 G (+61.2 %) | **16.00 G** | +54.6 % (within +60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7.0 %) | 10.90 G | +1.5 % |
+| showcase canyon | 18.03 G | 27.75 G (+53.9 %) | 26.60 G | +47.5 % |
+
+The prediction for 64 × 64 was about −1 G; the measured change is −0.69 G.
+
+**Split on 64 × 64** (A0, inclusive cycles scaled by instructions).
+
+| Part | Step 1 + P8 | A0 |
+|---|---:|---:|
+| Contact | 3.60 G | 3.99 G |
+| Target acquisition | 6.61 G | 6.36 G |
+| Movement phase | 4.56 G | 3.66 G (no intent) |
+| Ring scan (cached) | 0.52 G | 0.60 G |
+
+**Traces** (`trace/a0/`).
+- **Cross, seed 967** (θ 180°, n 12; give-ups 0 → 24, M1-hi 2,064 reversals). All 1,274 cross give-ups are in the
+  180° scenes.
+  - The two columns meet head-on. Bodies on the line of centres have no sideways component, so contact cannot pass
+    them, and the walkers give up with `NoProgress` at tick 341.
+  - The idle units they leave are deeply overlapped (gaps −0.58 to −1.17).
+  - With a zero proposal, the solver moves them ±0.41 per tick, back and forth, from tick 350 to 607: the solver's
+    correction of coincident idle pairs alternates sign every tick.
+- **Gap, seed 463** (w 2, r 0.75, n 24; give-ups 0 → 10): the same mechanism. Walkers queue in the narrow gap and
+  give up with `NoProgress`. Their idle bodies, deeply overlapped (−0.19 to −1.05), are moved ±0.45 per tick.
+
+**Reading.**
+- Without a side rule the ring families improve on every figure but D-S. The side rule costs arc and gap their T1.
+- Some anticipation is needed for head-on crossings, as the review expected. Without it, collinear pairs stall,
+  give up and are left deeply overlapped.
+- A second mechanism shows up here: a limit cycle of the solver for deeply overlapped idle pairs (±0.4 a tick).
+- Rule S waits for Q0097.
