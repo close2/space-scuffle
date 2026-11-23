@@ -1319,3 +1319,36 @@ T8 now holds everywhere. WP3 still stops, for three reasons:
    trace. Until then it is not changed.
 5. **Gauss–Seidel stays deferred** until the owner answers Q0093 on the cost bar. Cost is reported after WP5 with
    its split: solver, intent, acquisition and slots.
+
+## Amendment 5 (orchestrator, 2026-11-23): what "anchored" means under the Solver; slots at weapon range; a standing arrival claims its own angle
+
+**Why.** WP4 as built (`contact-solver-wp4-wip`, evidence §7) roughly doubled corridor reversals (M1 18.6 → 34.1 on
+development seeds 1 to 100). The trace shows two causes:
+
+- **The anchor cascade.** The pressed-front rule failed for the same reason (Amendment 4). The legacy
+  `is_anchored_in_combat` counts any unit standing under an attack order as anchored, so a unit that merely waits
+  becomes an obstacle that makes the next unit wait, down the whole column.
+- **The side rule treats a standing friend with an order as a threat.** With two of them side by side, the earliest
+  threat alternates every tick, and the unit behind zig-zags.
+
+The slot circle also sat inside the band (ρ = band − r/2), which holds fewer bodies than the harness's capacity C
+counted at the band's outer edge.
+
+**Decision.**
+
+1. **Anchored, under the Solver.** A unit is anchored only if it is:
+   - on hold position;
+   - immobile;
+   - unpushable by priority;
+   - or in its attack cycle: winding up, firing or in backswing, with a live target in range.
+
+   Standing and waiting is not anchored. Legacy keeps its own rule, so it stays bit-identical. The side rule passes a
+   standing friend the way it passes a co-moving one: no committed side against it.
+2. **Slots at weapon range.** A slot lies on the circle where the unit's weapon just reaches the target, at the
+   band's outer edge, as StarCraft II attackers stop at their maximum range. That is also where the harness counts
+   C. C is not restated.
+3. **A standing arrival claims its own angle.** A unit that reaches the band without a slot claims the slot at its
+   own angle, if one is free within its body width. Later slots then pack against it rather than around random
+   parking.
+4. **Re-measure WP4 on development seeds 1 to 1,000.** It must not worsen any development T-figure against WP3; if
+   it does, stop with a trace. Then WP5, the single acceptance run, and the cost split, as Amendment 4 says.
