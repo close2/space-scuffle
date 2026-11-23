@@ -68,6 +68,10 @@ also fails most of them. Option (a) can still follow (b) as ordinary bug work on
 
 ## Answer
 
+- **Option (a), scoped to Update 2 / Plan Amendment 14 (Guy & Karamouzas smooth, memoryless oncoming avoidance — NOT ORCA), capped at one design round.** Also include the deeply-overlapped idle-unit alternating-sign oscillation fix noted in Update 2.
+
+**Reasoning & stop-rule:** Update 2's side-rule-off measurement is a smoking gun: dropping the one-partner side memory simultaneously brought the 400-unit 64×64 battle back inside Q0093 (c)'s `+60 %` instruction bar (`+54.6 %`), slashed arc give-ups (`305 → 61`), eliminated corridor give-ups (`20 → 0`), improved arc fill (`0.967 → 0.984`), and cut remaining oscillation 5–40×, isolating the sole missing piece as smooth oncoming anticipation for head-on crossings and gaps. Bound this to this single Amendment 14 round: if it cleanly beats the current solver on crossings, arcs, and Q0093 (c) cost, run the held-out seeds and switch over; if it stalls or regresses without a clear win, fall back to Option **(b)** rather than looping further.
+
 ## Update (2026-11-23, after the cache)
 
 The ring-interval cache is built. It changes no behaviour: the development corpus is byte-identical, and a test

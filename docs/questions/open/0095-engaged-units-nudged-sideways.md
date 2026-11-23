@@ -24,3 +24,7 @@ rule that attacking units are not pushed.
 - **(c)** Yes, but behind a data switch that defaults to off, so the StarCraft II behaviour stays the default.
 
 ## Answer
+
+- **Option (b): Yes, as a sanctioned deviation (added to Q0052), behind a data switch that defaults to ON.** An attacking melee unit may be nudged sideways along its attack ring by allies who need room, never pushed out of attack range and never pushed by enemies.
+
+**Caveat & reasoning:** Units explicitly on **Hold Position** must remain immovable and must not be nudged sideways; only ordinary attacking units slide along the ring. The 301/301 miss rate is largely a side-effect of the new contact solver eliminating steering jitter so the lead attacker marches dead-centre down a 2-wide corridor. Gentle allied-only sliding along the attack ring fixes melee choke responsiveness while keeping strict StarCraft II behaviour selectable via the data switch.
