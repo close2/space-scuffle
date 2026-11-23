@@ -353,14 +353,20 @@
 // checksum that ends after the route groups, with the schema number held at 31 (a scratch
 // switch, not committed), is identical on all 20 checkpoints with WP4's tree and with this one.
 // Native debug and release and wasm32-wasip1 release and debug agree on the list below.
-// Re-recorded for plan 2026-11-20-contact-solver WP2 (checksum schema 32 -> 33): each unit's
-// movement memory now hashes the side rule's commitment (`side_partner`, `side_left`) and its slot
-// claim (`slot`), after `leash_origin`; the legacy pipeline never writes them, so every checkpoint
-// changed and no behaviour did. Proof: a scratch build that leaves the three fields unhashed and
-// holds the schema at 32 reproduces the previous checksums at every checkpoint, native debug and
-// release. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-22-harvest-timing WP2 (B-150, B-151): schema 33 hashes each
+// unit's `UnitTask::return_ticks`. A build that omits the field and keeps schema 32 reproduces the
+// previous checksums on all 20 + 60 checkpoints. Nothing in this replay harvests, so the field is 0
+// on every unit at every checkpoint. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
+// Re-recorded for plan 2026-11-20-contact-solver WP2 on main's schema 33 (checksum schema 33 -> 34):
+// each unit's movement memory hashes the side rule's commitment (`side_partner`, `side_left`) and
+// its slot claim (`slot`), after `leash_origin`; the legacy pipeline never writes them, so every
+// checkpoint changed and no behaviour did. Proof: a scratch build that leaves the three fields
+// unhashed and holds the schema at 33 reproduces main's (f399d403) checksums at every checkpoint
+// on native debug and release and wasm32-wasip1 release and debug. Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 33,
+    checksum_schema: 34,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -386,25 +392,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x43076d7270ec1760,
-        0x069b7760d45b5275,
-        0x8c7a7b9069bf9447,
-        0xd0144272abeb3574,
-        0x72adce274f60717d,
-        0x436402cc1a892a8a,
-        0xc7cce607a16f13ac,
-        0x615437389474bc5e,
-        0x478dd3bac117d341,
-        0xa2f9502fef637890,
-        0x70ce004db2934a3d,
-        0x4d50e4a37df61ef4,
-        0x1dc3653bd93a6cf1,
-        0x4da121657b9245f8,
-        0xfd440e5a593d26e5,
-        0x478a1a60fda516b8,
-        0x829088697e94f902,
-        0xb190b49ef24df8db,
-        0xb1887ecfc5bf6f64,
-        0xb1dbd5b61f374c15,
+        0x53d939cdb851a4db,
+        0x5de589dac5da8b10,
+        0x7e8724313da81a7f,
+        0x8a7b78657373d8a4,
+        0x8cac0c144f5183e3,
+        0xed447c1f27b74879,
+        0x84abb8abb3690d1c,
+        0x177a1735c795cb5f,
+        0x11dc33aea8a76091,
+        0x131b824155b8c983,
+        0xad3f134297da6d98,
+        0xbd8affad0ddc63c0,
+        0x54ee3ee1fc6813b7,
+        0x88558adf603502a3,
+        0x4dce9de8adf6a7de,
+        0xb86c36ef1249289e,
+        0x086d5ce411951081,
+        0x961e828a5902d636,
+        0xccf26742f21092f0,
+        0x3b017a2bfb499c25,
     ],
 )

@@ -5,8 +5,8 @@
 //! Proves that a worker gathers when its body touches the field and delivers when it touches the
 //! town hall (contact: at most its collision radius from the shape, at least its terrain radius,
 //! at a chamfered corner too); that a back field of the showcase's two-row line is mined through
-//! its one-cell notch; that the showcase's income lies in the band §6.2 derives from `StarCraft`
-//! II's measured rates; that a field leaves the map on the take that empties it (its cells
+//! its one-cell notch; that the showcase's income lies in the band plan
+//! `2026-11-22-harvest-timing` §6.2 derives from `StarCraft` II's measured rates; that a field leaves the map on the take that empties it (its cells
 //! walkable, the mesh rebuilt, a unit able to walk through) while a geyser stays; and that a field
 //! that has left applies no ring.
 //!
@@ -271,11 +271,13 @@ fn a_back_field_is_mined_through_its_notch() -> TestResult {
     Ok(())
 }
 
-/// §6.2's band (reference test): on the showcase's slot-0 start, one worker per field in turn,
-/// income over ticks 750 to 3,750 per worker per minute: the mean of the eight fields in
-/// [59.0, 65.2], every field in [54.3, 69.3]. `StarCraft` II's measured rates (Liquipedia: 61.22
-/// near, 53.57 far, 57.8 a base) less the unmodelled `ReturnDelay` (B-150) give 66.0, 57.2 and
-/// 62.1; the band is ±5 % of them.
+/// The band of plan `2026-11-22-harvest-timing` §6.2 (reference test), now that `ReturnDelay` is
+/// modelled: on the showcase's slot-0 start, one worker per field in turn, the trip-period rate
+/// (the mineral row's amount per mean delivery-to-delivery period of ticks 750 to 3,750, per
+/// minute): the mean of the eight fields in [54.9, 60.7], every field in [50.9, 64.3].
+/// `StarCraft` II's measured rates (Liquipedia: 61.22 near, 53.57 far, 57.8 a base) ±5 %. The
+/// window count is not used: at 2.5 a minute per delivery its quantization alone can cross an
+/// edge (§6.3, A-3).
 #[test]
 fn income_lies_in_the_band() -> TestResult {
     let mut rates = Vec::new();
@@ -283,28 +285,45 @@ fn income_lies_in_the_band() -> TestResult {
     assert_eq!(fields.len(), 8);
     for field in fields {
         let (mut world, workers) = showcase_start(1)?;
+        let amount = world
+            .catalog
+            .placement_rules()
+            .harvest(ResourceKind::Mineral)
+            .ok_or("the mineral row's harvest")?
+            .amount;
+        let worker = workers[0];
         harvest(&mut world, workers, field);
         for _ in 0..750 {
             step(&mut world, Vec::new());
         }
-        let before = world.player_resources[PlayerSlot::ALL[0]].minerals;
-        for _ in 0..3_000 {
+        let mut held = world.entities[&worker].cargo.is_some();
+        let mut deliveries = Vec::new();
+        for tick in 0_u64..3_000 {
             step(&mut world, Vec::new());
+            let carrying = world.entities[&worker].cargo.is_some();
+            if held && !carrying {
+                deliveries.push(tick);
+            }
+            held = carrying;
         }
-        let income = world.player_resources[PlayerSlot::ALL[0]].minerals - before;
-        // Per minute (1,500 ticks) over 3,000 ticks, in tenths: income × 5.
-        rates.push((field, income * 5));
-    }
-    for &(field, tenths) in &rates {
+        let (Some(first), Some(last)) = (deliveries.first(), deliveries.last()) else {
+            return Err(format!("field {field:?}: no delivery").into());
+        };
+        let trips = u64::try_from(deliveries.len() - 1)?;
+        assert!(trips > 0 && last > first, "field {field:?}: {deliveries:?}");
+        // Units per minute (1,500 ticks) in hundredths: amount × 1,500 × 100 × trips / span.
+        let earned = u64::from(amount) * 150_000 * trips;
+        let span = last - first;
         assert!(
-            (543..=693).contains(&tenths),
-            "field {field:?}: {tenths} tenths of a mineral per minute"
+            5_090 * span <= earned && earned <= 6_430 * span,
+            "field {field:?}: {earned} / {span} hundredths of a mineral per minute"
         );
+        rates.push(earned / span);
     }
-    let mean_x8: u32 = rates.iter().map(|&(_, tenths)| tenths).sum();
+    let mean_x8: u64 = rates.iter().sum();
     assert!(
-        (590 * 8..=652 * 8).contains(&mean_x8),
-        "mean {} tenths per minute",
+        (5_490 * 8..=6_070 * 8).contains(&mean_x8),
+        "mean {} hundredths per minute",
         mean_x8 / 8
     );
     Ok(())

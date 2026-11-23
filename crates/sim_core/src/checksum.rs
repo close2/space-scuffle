@@ -74,10 +74,12 @@ use std::collections::BTreeMap;
 /// Schema 32 adds each resource node's placed footprint and each cell's resource occupant (plan
 /// `2026-11-20-resource-footprints`), and a leading variant tag on every footprint shape (0 for
 /// a box, then its three values; 1 for an outline, then its vertices).
-/// Schema 33 adds each unit's side-rule commitment (its partner, then its side) and its slot claim
+/// Schema 33 adds each unit's return-delay countdown, `UnitTask::return_ticks`, after
+/// `gather_ticks` (plan `2026-11-22-harvest-timing` D-5).
+/// Schema 34 adds each unit's side-rule commitment (its partner, then its side) and its slot claim
 /// (the target, then the point) to its movement memory, after the leash origin (plan
 /// `2026-11-20-contact-solver` §3.7). Only the solver pipeline writes them.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 33;
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 34;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
