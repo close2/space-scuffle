@@ -828,6 +828,7 @@ impl SimWorld {
         }
         // `ids` follow the entity table's order, so the record is sorted by id.
         self.movement.tick_start.clear();
+        self.movement.wave_used = 0;
         for &id in &ids {
             if let Some(actor) = self.entities.get(&id) {
                 self.movement
@@ -1240,7 +1241,7 @@ impl SimWorld {
                     return Ok(proposal);
                 }
                 RingAim::Straight => {}
-                RingAim::Gap(_, point) => {
+                RingAim::Gap(_, point, detour) => {
                     // A unit walking to a gap measures its progress to the gap point; a new
                     // gap starts that measure afresh.
                     if kept.is_none_or(|gap| gap.point != point) {
@@ -1251,6 +1252,7 @@ impl SimWorld {
                         point,
                     });
                     pursuit.gap = Some(point);
+                    pursuit.detour = detour;
                 }
             }
         }
@@ -1435,6 +1437,7 @@ impl SimWorld {
             min,
             leash: self.catalog.movement_rules().acquire_leash_radius(),
             gap: None,
+            detour: None,
         }))
     }
 }
@@ -1466,6 +1469,10 @@ struct Pursuit {
     /// bearing is blocked (plan `2026-11-20-contact-solver` Amendment 7, item 2): the chase's
     /// goal, which it brakes onto and measures its progress against.
     gap: Option<SimVec2>,
+    /// The step target of a gap walker whose straight way to its gap runs into a body (plan
+    /// Amendment 12, step 2′): the next cell of its target's wavefront; the gap stays the goal its
+    /// progress is measured against.
+    detour: Option<SimVec2>,
 }
 
 impl Pursuit {
@@ -2022,6 +2029,7 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        let (next, gap) = self.detoured(next, gap, pursuit)?;
         // A chase queued behind a friend that holds its ground is not stalled (D-4). Under the
         // solver the stall rule reads no class of another body (plan Amendment 7, item 1).
         let queued = context.intent.is_none()
@@ -2055,6 +2063,24 @@ impl MotionDraft<'_> {
             self.reroute_pursuit(scene, pursuit)?;
         }
         Ok(())
+    }
+
+    /// The step target of this tick: the wavefront's aim (step 2′) instead of `next` when the unit walks to a
+    /// gap whose straight way is blocked and its next point is the gap itself (no route corner
+    /// before it); otherwise `next` and its distance `gap`.
+    fn detoured(
+        &self,
+        next: SimVec2,
+        gap: SimScalar,
+        pursuit: &Pursuit,
+    ) -> Result<(SimVec2, SimScalar), MovementInvariant> {
+        match pursuit.detour {
+            Some(aim) if next == self.goal => Ok((
+                aim,
+                distance(self.actor.position, aim).map_err(self.fault())?,
+            )),
+            _ => Ok((next, gap)),
+        }
     }
 
     /// Progress check for a chase: gives the target up when the pursuer stopped gaining ground.

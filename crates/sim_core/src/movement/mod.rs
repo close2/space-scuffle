@@ -21,6 +21,7 @@ pub(crate) mod math;
 mod ring;
 pub mod solver;
 pub(crate) mod tuning;
+mod wavefront;
 pub use math::MovementMathError;
 
 use crate::{Entity, SimWorld, SimulationDiagnostic, SteeringObstacle, UnitCatalog};
@@ -264,6 +265,12 @@ pub(crate) struct MovementWorkspace {
     tick_start: Vec<(EntityId, SimVec2, SimVec2)>,
     /// The ring rule's blocked arcs, cleared per chase (Amendment 7, item 2).
     ring_intervals: Vec<concave::ArcInterval>,
+    /// This tick's wavefront fields (plan Amendment 12, step 2′), the first `wave_used` of them
+    /// built this tick; retained, not freed, between ticks.
+    wave_fields: Vec<wavefront::WaveField>,
+    wave_used: usize,
+    /// The wave's retained index queue.
+    wave_queue: Vec<u32>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
