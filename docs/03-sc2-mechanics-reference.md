@@ -19,6 +19,7 @@ No vital regenerates while a structure is under construction: a foundation's lif
 
 ### 1.2 Armor, Attributes & Damage Formula
 In SC2, units have **Attribute Tags** (`Light`, `Armored`, `Biological`, `Mechanical`, `Psionic`, `Massive`, `Structure`, `Heroic`).
+Structures are `Armored` and `Structure`, plus `Mechanical` (Terran) or `Biological` (Zerg); Protoss structures add nothing. Each row of `assets/catalog/structures.ron` authors its set, and catalog validation keeps `Structure` on exactly the structure rows (plan [`2026-11-23-structure-attributes`](plans/2026-11-23-structure-attributes.md)).
 - **SC2 Damage Formula (Per Hit):**
   $$\text{FinalDamage} = \max\left(0.5,\ (\text{BaseDamage} + \text{AttributeBonus} + \text{WeaponUpgrades}) - (\text{TargetArmor} + \text{ArmorUpgrades})\right)$$
   *(Note: If the target has Shields remaining, `ShieldArmor` reduces damage applied to Shields; any spillover damage into HP is then reduced by `LifeArmor`).*

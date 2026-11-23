@@ -71,3 +71,13 @@ The nine `catalog::validation` unit tests of P-4 (`attribute_tests`) did not com
 Every test of `sim_types`, `sim_core` and `sim_fixtures` passed on the WP1 tree (105 test executables and doc
 tests). No world moved, as §7 predicts: measured worlds contain Terran-analogue structures only, whose set did not
 change, and no shipped rule reads `Biological`, `Mechanical` or `Psionic` on a ground structure (§3.2).
+
+The world comparison ran on the WP1 tree before two edits that do not reach a world: the overclock checks of
+`UnitArchetypeDef::validate` moved into `validate_overclock` (C8), and two clippy fixes in test code. The goldens and
+the tests named above were run again after them.
+
+## WP2: records
+
+B-88 is fixed in `DESIGN.md` §4 by WP1 (`5e3ac1ea`); doc 03 §1.2 states the structures' sets; the deviation-fixes
+plan's B-88 row points here; the plan has its `As built` section and its index row is `Done`. The verifier's
+`cargo gate package` on the final tree (after merging `main`) covers the goldens in release and on `wasm32-wasip1`.

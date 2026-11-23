@@ -591,3 +591,33 @@ Zerg label) follows the data.
   from a directory outside the data.
 - No web source was needed: the data answers every row.
 - No prototype (§7).
+
+---
+
+## As built
+
+- **WP0** `84c2767d`: B-88 points to this plan; the WP0 tree measured into `~/scratch/structure-attributes/world-wp0`.
+- **WP1** `5e3ac1ea`: as D-1 to D-3, in one commit with the data and the tests. `attributes:` sits on each row
+  just before `max_hp` (where the vitals begin), under a comment citing its `liberty UnitData` lines; all 49 rows
+  were checked against those lines by script before the edit. `compare.sh world-wp0 world-wp1`: `differing=0`
+  over 420 files; both goldens and `DEFAULT_SANDBOX_CHECKSUM` unchanged; schema unchanged.
+- **WP2**: D-7's records; [evidence](../evidence/2026-11-23-structure-attributes.md).
+
+Differences from the text above, none of which changes a decision:
+
+1. **C8.** One added line took `UnitArchetypeDef::validate` to 101 counted lines. Its Overclock checks moved,
+   unchanged, into a new `validate_overclock`. The unit's attribute and shape checks are one method,
+   `validate_attributes`, which calls D-3's `unit_attributes(definition, bits)` and then applies rule 4 (shape).
+2. **P-5's expectation is read from the data text.** `a_bonus_reaches_exactly_the_structures_that_author_its_attribute`
+   reads each row's `attributes:` list from `sim_fixtures::STRUCTURES_RON` itself, not from the loaded archetype, so
+   the test does not check the conversion against its own result. The red run was taken with the 49 data lines in
+   place and the WP0 code: the code ignored them silently, as §3.1 predicted, and P-1, P-3 and P-5 failed.
+3. **Damage function.** P-5 calls `calculate_hit_damage_upgraded` with default `PlayerUpgradeState`s and no
+   shields; P-3 uses `calculate_hit_damage`, which does the same.
+4. **One more P-4 test**, `a_structure_may_author_any_attribute_besides_structure`: all eight, and `Structure`
+   alone, both load (D-2 restricts nothing else).
+5. **No other file authored a structure row** without the field: the test files of §10 build their rows from the
+   shipped text, so they needed no change. No test catalog authors unit attributes 0, an unknown bit, 64 or a
+   building shape.
+6. **`sim_types` docs.** Besides `STRUCTURE`, the docs of `MECHANICAL` and `PSIONIC` were reworded (`MECHANICAL`
+   now names structures too); no code changed.
