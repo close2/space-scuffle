@@ -1639,3 +1639,106 @@ fn an_edited_target_radius_condition_opens_the_sieged_area() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-23-anchored-commands` D-1: a mode's `orders` is required, as its
+/// `leave_cast_ticks` is, so a units catalog with a mode written without it fails to load with
+/// the deserialization error naming the field instead of guessing a stance's orders.
+#[test]
+fn a_mode_without_its_orders_is_refused() -> TestResult {
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    let marker = "orders: (stop:";
+    let mut checked = 0;
+    for (at, _) in units.match_indices(marker) {
+        let end = at + units[at..].find("),").ok_or("the orders' end")? + 2;
+        let edited = format!("{}{}", &units[..at], &units[end..]);
+        let result = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &edited);
+        assert!(
+            matches!(&result, Err(SimCoreError::RonDeserializationError(message)) if message.contains("orders")),
+            "{result:?}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 2,
+        "every shipped mode authors its orders: {checked}"
+    );
+    Ok(())
+}
+
+/// Plan `2026-11-23-anchored-commands` P-3, the simulation half: a stance's plain orders are
+/// read from `units.ron` at run time. Granting Hold Position to every mode without it, and
+/// taking Stop from every mode with Hold Position, flips what `UnitArchetype::stance_orders`
+/// and a settled unit's `Entity::settled_stance_orders` answer, with no rebuild.
+#[test]
+fn edited_stance_orders_change_the_loaded_rule() -> TestResult {
+    use sim_types::{AbilityEffectSpec, StanceOrders};
+    let bundle = Bundle::new("stance-orders")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let stop_only = "orders: (stop: true, hold_position: false)";
+    let both = "orders: (stop: true, hold_position: true)";
+    assert!(
+        text.contains(stop_only) && text.contains(both),
+        "both shipped sets"
+    );
+    let edited_text = text
+        .replace(both, "orders: (stop: false, hold_position: true)")
+        .replace(stop_only, both);
+    std::fs::write(&path, edited_text)?;
+    let edited = bundle.load()?;
+    let mut flipped = 0;
+    for archetype in shipped.units.archetypes() {
+        let loaded = edited.units.get(archetype.unit_type_id)?;
+        assert_eq!(loaded.stance_orders(None), archetype.stance_orders(None));
+        for (mode, after) in archetype.modes.iter().zip(&loaded.modes) {
+            let before = archetype.stance_orders(Some(mode));
+            let expected = if before == StanceOrders::ALL {
+                StanceOrders {
+                    stop: false,
+                    hold_position: true,
+                }
+            } else if before
+                == (StanceOrders {
+                    stop: true,
+                    hold_position: false,
+                })
+            {
+                StanceOrders::ALL
+            } else {
+                before
+            };
+            assert_eq!(
+                loaded.stance_orders(Some(after)),
+                expected,
+                "{}",
+                mode.mode_name
+            );
+            if expected != before {
+                flipped += 1;
+                let ability = loaded
+                    .abilities
+                    .iter()
+                    .position(|ability| {
+                        matches!(&ability.effect,
+                            AbilityEffectSpec::SwitchMode { mode_name } if *mode_name == after.mode_name)
+                    })
+                    .ok_or("the mode's switch ability")?;
+                let map = GameMap::new(24, 24, MapCell::default_ground(CliffLevel(0)))?;
+                let mut world =
+                    SimWorld::with_catalogs(map, 7, edited.units.clone(), edited.upgrades.clone())?;
+                let unit = world.spawn_unit(
+                    archetype.unit_type_id,
+                    PlayerId(0),
+                    SimVec2::new(SimScalar::from_num(12), SimScalar::from_num(12)),
+                )?;
+                assert!(world.execute_ability(unit, u8::try_from(ability)?, None, None));
+                let entity = &world.entities[&unit];
+                assert_eq!(entity.settled_stance_orders(loaded), expected);
+            }
+        }
+    }
+    assert!(flipped >= 2, "both shipped sets flipped: {flipped}");
+    bundle.finish()?;
+    Ok(())
+}

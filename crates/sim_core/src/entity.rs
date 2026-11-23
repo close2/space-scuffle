@@ -14,7 +14,7 @@ use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRa
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
     EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, UnitModeSpec, UnitOrder, UnitTypeId,
+    SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -1264,6 +1264,15 @@ impl Entity {
             || archetype.is_immobile_by_default(),
             |mode| mode.is_immobile,
         )
+    }
+
+    /// The plain orders (Stop, Hold Position) this unit accepts in the stance it is in or is
+    /// switching to ([`Self::settled_mode`]), by [`UnitArchetype::stance_orders`]. `archetype`
+    /// must be this unit's. Read-only and allocation-free, so the client's command card and its
+    /// admission share the simulation's rule (plan `2026-11-23-anchored-commands` D-2).
+    #[must_use]
+    pub fn settled_stance_orders(&self, archetype: &UnitArchetype) -> StanceOrders {
+        archetype.stance_orders(self.settled_mode(archetype))
     }
 
     /// The sieged weapon replacing the archetype's ground weapon, if one is active.

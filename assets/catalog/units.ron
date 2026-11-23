@@ -472,6 +472,10 @@
                     leave_cast_ticks: 63,
                     cast_random_delay_max_ticks: 8.9286,
                     leave_random_delay_max_ticks: 8.9286,
+                    // SiegeTankSieged carries stop, attack and Unsiege and no move, so Stop and no
+                    // Hold Position (liberty UnitData:5172-5174; no later layer sets its AbilArray;
+                    // plan 2026-11-23-anchored-commands D-1, B-98).
+                    orders: (stop: true, hold_position: false),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: false,
@@ -3089,6 +3093,10 @@
                     leave_cast_ticks: 11,
                     cast_random_delay_max_ticks: 4.4643,
                     leave_random_delay_max_ticks: 4.4643,
+                    // LurkerMPBurrowed carries move and stop, so Stop and Hold Position (liberty
+                    // UnitData:793-796, void UnitData:767-769; plan 2026-11-23-anchored-commands
+                    // D-1, B-98).
+                    orders: (stop: true, hold_position: true),
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,

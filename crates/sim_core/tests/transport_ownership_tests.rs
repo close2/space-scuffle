@@ -84,6 +84,7 @@ impl Fixture {
             ground_weapon_override: None,
             air_weapon_override: None,
             energy_cost_per_second: SimScalar::ZERO,
+            orders: sim_types::StanceOrders::ALL,
         }];
         let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
         Ok(Self {
