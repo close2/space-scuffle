@@ -383,14 +383,20 @@
 // recorded for plan 2026-11-23-splash-centres WP1 (schema 35 -> 36), on native debug and release
 // and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
-// Re-recorded for plan 2026-11-23-harvest-handoff WP1 (checksum schema 37 -> 38): the world also
+// Re-recorded for plan 2026-11-23-strike-delays WP1 (checksum schema 37 -> 38): each weapon also
+// encodes the delay of its first strike, so every checkpoint changed. No behaviour did: neither
+// fixture contains the Liberator analogue, the one weapon with a delay, and with the field left
+// out of the encoding at schema 37, both fixtures reproduce as recorded for plan
+// 2026-11-23-splash-cliff-levels WP2, on native debug and release and wasm32-wasip1 release and
+// debug. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-23-harvest-handoff WP1 (checksum schema 38 -> 39): the world also
 // encodes each resource node's release tick, so every checkpoint changed. No behaviour did: with
-// the field left out of the encoding at schema 37, both fixtures reproduce as recorded for plan
-// 2026-11-23-splash-cliff-levels WP2 (schema 36 -> 37), on native debug and release and
-// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
-// agree on the list below.
+// the field left out of the encoding at schema 38, both fixtures reproduce as recorded for plan
+// 2026-11-23-strike-delays WP1 (schema 37 -> 38), on native debug and release and wasm32-wasip1
+// release and debug. Native debug and release and wasm32-wasip1 release and debug agree on the list
+// below.
 (
-    checksum_schema: 38,
+    checksum_schema: 39,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -416,25 +422,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x489abca5bd91233b,
-        0x7c488ba81d30d0ce,
-        0xa340a9bebe7238f8,
-        0x57bd45ab8da3cacf,
-        0x522a3f041bc27470,
-        0xb353e17081b152c7,
-        0xdc7a2f7b22d419b9,
-        0xedf310d5d621c000,
-        0x7103320d867039da,
-        0xebfd7890d6ac8a88,
-        0xb46b38489ca873db,
-        0x8d2d558b6e892f63,
-        0xe0623e75c2d64266,
-        0xb0f2980f92eee4a2,
-        0x848aeb2824a16e8d,
-        0x8aecfa4b3703219a,
-        0x6d152576eaf611d7,
-        0x05341495701b6b99,
-        0x0e13f9bafeccde72,
-        0x70cc56f69cc8efdd,
+        0xb10047865c4f0501,
+        0x819a1518e6db9a27,
+        0x7484613cf48c5b75,
+        0xa07cdc4b196ffdde,
+        0x69ab6beb77d04daf,
+        0xc2ae1ab7e6fd9728,
+        0x61bbb957ab97e27f,
+        0x2a7b36015c0c9cc9,
+        0xc3b495e42e4bca59,
+        0xc46adf1c8e6713bd,
+        0xfee6f36df893f1c8,
+        0xc2a855ab3fe86d89,
+        0x39f670f1bbdef060,
+        0xbdc81907ce378c78,
+        0xf909729ff6e286b3,
+        0x150bfe94579826ac,
+        0xa491485590836a59,
+        0x67407b5a6cc3299c,
+        0xf7d9c5cc635c3265,
+        0x98d254ec81195eaa,
     ],
 )

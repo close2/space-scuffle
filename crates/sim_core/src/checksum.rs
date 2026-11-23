@@ -87,9 +87,11 @@ use std::collections::BTreeMap;
 /// `Option` of a scalar), after `offset_by_unit_radius` (plan `2026-11-23-splash-centres` D-6).
 /// Schema 37 adds each splash's cliff rule (0 same level, 1 any level) and its other-level target
 /// strike (a `bool`), after `target_radius_below` (plan `2026-11-23-splash-cliff-levels` D-5).
-/// Schema 38 adds each resource node's release tick, `ResourceLines::release_tick`, after the
+/// Schema 38 adds each weapon's first-strike delay, `WeaponSpec::first_strike_delay_ticks`, after
+/// `attacks_count` (plan `2026-11-23-strike-delays` D-6).
+/// Schema 39 adds each resource node's release tick, `ResourceLines::release_tick`, after the
 /// map's resource nodes (plan `2026-11-23-harvest-handoff` D-3).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 38;
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 39;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -787,11 +787,14 @@ impl WeaponSpecDef {
         Ok(())
     }
 
-    /// Checks the spacing of the strikes of one attack: an interval needs a second strike, the
-    /// whole burst ends before the next attack can start, and a follow-up distance belongs to a
-    /// spaced burst and is positive.
+    /// Checks the timing of the strikes of one attack: an interval needs a second strike, the
+    /// whole burst (its first strike's delay included) ends before the next attack can start, a
+    /// follow-up distance belongs to strikes that land after the release tick and is positive,
+    /// and a weapon that removes its attacker when it fires delays no strike (plan
+    /// `2026-11-23-strike-delays` D-3).
     fn validate_strikes(&self, definition: &str, prefix: &str) -> SimResult<()> {
         let interval = &format!("{prefix}.strike_interval_ticks");
+        let delay = &format!("{prefix}.first_strike_delay_ticks");
         if self.strike_interval_ticks > 0 && self.attacks_count < 2 {
             return Err(invalid(
                 definition,
@@ -799,24 +802,37 @@ impl WeaponSpecDef {
                 "a single-strike weapon has no interval between strikes; author 0",
             ));
         }
-        // The last strike lands (attacks_count - 1) intervals after the release; the next release
-        // comes a whole period later at the earliest, so a burst never overlaps the next one.
-        let burst =
-            u32::from(self.attacks_count.saturating_sub(1)) * u32::from(self.strike_interval_ticks);
+        // The last strike lands `delay + (attacks_count - 1) × interval` ticks after the release;
+        // the next release comes a whole period later at the earliest, so a burst never overlaps
+        // the next one.
+        let burst = u32::from(self.first_strike_delay_ticks)
+            + u32::from(self.attacks_count.saturating_sub(1))
+                * u32::from(self.strike_interval_ticks);
         if burst >= u32::from(self.period_ticks) {
             return Err(invalid(
                 definition,
-                interval,
+                if self.first_strike_delay_ticks > 0 {
+                    delay
+                } else {
+                    interval
+                },
                 "the last strike must land before the attack period ends",
+            ));
+        }
+        if self.first_strike_delay_ticks > 0 && self.suicide_on_attack {
+            return Err(invalid(
+                definition,
+                delay,
+                "a weapon that removes its attacker when it fires has no attacker to strike from later",
             ));
         }
         if let Some(distance) = self.followup_max_distance {
             let field = &format!("{prefix}.followup_max_distance");
-            if self.strike_interval_ticks == 0 {
+            if self.strike_interval_ticks == 0 && self.first_strike_delay_ticks == 0 {
                 return Err(invalid(
                     definition,
                     field,
-                    "only a strike after the first, on a later tick, has a distance condition",
+                    "only a strike that lands after the release tick has a distance condition",
                 ));
             }
             positive(definition, field, distance)?;
@@ -3989,6 +4005,152 @@ mod splash_cliff_tests {
             field.ends_with("splash.strike_target_on_other_level"),
             "{field}"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod strike_delay_tests {
+    //! D-3 of plan `2026-11-23-strike-delays` (P-7): the bound with the first strike's delay,
+    //! a delay on one strike, a distance with a delay and no interval, a delay on a suicide
+    //! weapon, and the omitted field.
+    use crate::catalog::{CatalogFile, UnitArchetypeDef, WeaponSpecDef};
+    use crate::error::SimCoreError;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The shipped unit rows, every weapon of each in a list.
+    fn shipped_units() -> Result<Vec<UnitArchetypeDef>, Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        Ok(file.units)
+    }
+
+    /// The weapons of `unit`, in slot order.
+    fn weapons(unit: &mut UnitArchetypeDef) -> impl Iterator<Item = &mut WeaponSpecDef> {
+        [
+            &mut unit.weapon,
+            &mut unit.ground_weapon,
+            &mut unit.air_weapon,
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// The field the first shipped unit with a weapon that `pick` chooses fails validation on,
+    /// after `edit` changes that weapon; "accepted" when it validates.
+    fn refused_field(
+        pick: impl Fn(&WeaponSpecDef) -> bool,
+        edit: impl FnOnce(&mut WeaponSpecDef),
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut unit = shipped_units()?
+            .into_iter()
+            .find(|unit| {
+                [&unit.weapon, &unit.ground_weapon, &unit.air_weapon]
+                    .into_iter()
+                    .flatten()
+                    .any(&pick)
+            })
+            .ok_or("no shipped weapon has the picked property")?;
+        unit.validate()?;
+        let weapon = weapons(&mut unit)
+            .find(|weapon| pick(weapon))
+            .ok_or("picked above")?;
+        edit(weapon);
+        Ok(match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => field,
+            Ok(()) => "accepted".to_owned(),
+            Err(other) => format!("not a field refusal: {other}"),
+        })
+    }
+
+    /// A weapon whose strikes land on separate ticks.
+    fn spaced(weapon: &WeaponSpecDef) -> bool {
+        weapon.attacks_count >= 2 && weapon.strike_interval_ticks > 0
+    }
+
+    #[test]
+    fn the_last_strike_lands_before_the_period_ends_counting_the_delay() -> TestResult {
+        // The last strike lands `delay + (n - 1) x interval` ticks after the release; one tick
+        // before the period ends is the latest it may land.
+        let span = |weapon: &WeaponSpecDef| {
+            u16::from(weapon.attacks_count - 1) * weapon.strike_interval_ticks
+        };
+        let field = refused_field(spaced, |weapon| {
+            weapon.first_strike_delay_ticks = weapon.period_ticks - 1 - span(weapon);
+        })?;
+        assert_eq!(field, "accepted", "the boundary is accepted");
+        let field = refused_field(spaced, |weapon| {
+            weapon.first_strike_delay_ticks = weapon.period_ticks - span(weapon);
+        })?;
+        assert!(field.ends_with(".first_strike_delay_ticks"), "{field}");
+        let field = refused_field(spaced, |weapon| {
+            weapon.first_strike_delay_ticks = weapon.period_ticks;
+            weapon.attacks_count = 1;
+            weapon.strike_interval_ticks = 0;
+        })?;
+        assert!(
+            field.ends_with(".first_strike_delay_ticks"),
+            "the delay alone breaks the bound: {field}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_delay_on_a_single_strike_is_accepted() -> TestResult {
+        let field = refused_field(spaced, |weapon| {
+            weapon.attacks_count = 1;
+            weapon.strike_interval_ticks = 0;
+            weapon.followup_max_distance = None;
+            weapon.first_strike_delay_ticks = 3;
+        })?;
+        assert_eq!(field, "accepted");
+        Ok(())
+    }
+
+    #[test]
+    fn a_distance_needs_a_strike_after_the_release_tick() -> TestResult {
+        let field = refused_field(spaced, |weapon| {
+            weapon.strike_interval_ticks = 0;
+            weapon.followup_max_distance = Some(2.1);
+            weapon.first_strike_delay_ticks = 2;
+        })?;
+        assert_eq!(field, "accepted", "a delayed volley may name a distance");
+        let field = refused_field(spaced, |weapon| {
+            weapon.strike_interval_ticks = 0;
+            weapon.followup_max_distance = Some(2.1);
+            weapon.first_strike_delay_ticks = 0;
+        })?;
+        assert!(field.ends_with(".followup_max_distance"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_delay_on_a_suicide_weapon_is_refused() -> TestResult {
+        let suicide = |weapon: &WeaponSpecDef| weapon.suicide_on_attack;
+        let field = refused_field(suicide, |_| {})?;
+        assert_eq!(field, "accepted", "premise: the shipped row validates");
+        let field = refused_field(suicide, |weapon| weapon.first_strike_delay_ticks = 1)?;
+        assert!(field.ends_with(".first_strike_delay_ticks"), "{field}");
+        Ok(())
+    }
+
+    #[test]
+    fn an_omitted_delay_reads_zero() -> TestResult {
+        let text: String = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| !line.contains("first_strike_delay_ticks"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        let mut checked = 0_usize;
+        for mut unit in file.units {
+            for weapon in weapons(&mut unit) {
+                assert_eq!(weapon.first_strike_delay_ticks, 0, "{}", weapon.name);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "premise: the catalog has weapons");
         Ok(())
     }
 }

@@ -280,6 +280,24 @@ fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
     );
 }
 
+/// The delay of a weapon's first strike (plan `2026-11-23-strike-delays` D-6) is hashed with the
+/// weapon a projectile in flight carries.
+#[test]
+fn a_projectiles_first_strike_delay_changes_the_world_checksum() {
+    let mut world = world();
+    let mut checksum_with_delay = |delay: u16| {
+        let mut projectile = projectile();
+        projectile.weapon_spec.first_strike_delay_ticks = delay;
+        world.projectiles = vec![projectile];
+        world.compute_checksum()
+    };
+    assert_ne!(
+        checksum_with_delay(0),
+        checksum_with_delay(1),
+        "checksum omitted the first strike's delay"
+    );
+}
+
 #[test]
 fn embedded_weapon_fields_and_splash_are_sensitive() {
     let mut world = world();
@@ -295,6 +313,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.base_damage = SimScalar::ONE;
     original.attribute_bonuses = AttributeBonuses::NONE;
     original.attacks_count = 1;
+    original.first_strike_delay_ticks = 0;
     original.strike_interval_ticks = 0;
     original.followup_max_distance = None;
     original.channeled = false;
@@ -347,7 +366,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
                 turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
                 attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
-                strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE), channeled => true,
+                first_strike_delay_ticks => 1, strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE), channeled => true,
                 period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
                 splash => Some(SplashSpec {
             zones: vec![

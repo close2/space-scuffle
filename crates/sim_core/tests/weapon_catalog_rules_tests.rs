@@ -1601,3 +1601,59 @@ fn splash_cliff_follows_starcraft() -> TestResult {
     );
     Ok(())
 }
+
+/// `StarCraft` II 5.0.14 analogues whose weapon's burst persistent delays its first strike, with
+/// the delay in ticks (the first `PeriodicPeriodArray` entry, Normal s ÷ 1.4 × 25, rounded half
+/// up; S-5) and its source: `(analogue, delay, source)` (plan `2026-11-23-strike-delays` §2.3,
+/// B-81). Every analogue not listed delays nothing: its chain has no persistent, or the first
+/// period is 0 — the Zealot's `PsiBladesBurst` (`liberty` EffectData:1926), the Reaper's
+/// `P38ScytheGuassPistolBurst` (:1810), the Thor's `ThorsHammer` (:2250), the Viking's
+/// `LanzerTorpedoes` (:1704), the Banshee's `BacklashRockets` (0 since `voidmulti`
+/// EffectData:37), the Missile Turret's `LongboltMissile` (:1786), the Queen's
+/// `TalonsMissileBurst` (`swarm` EffectData:3045) and `TalonsBurst` (`liberty` :2327), the
+/// Phoenix's `IonCannons` (:1965), the Hellion's `InfernalFlameThrowerCP` (:2647), the Lurker's
+/// `LurkerMP` (0 since `void` EffectData:298), the Sentry's `DisruptionBeam` (its
+/// `InitialEffect` damages on creation, `liberty` :2520) and the Void Ray's `PrismaticBeam`
+/// (:2003-2012). The Colossus is listed at 0 by the owner's answer to Q0064 (its strikes and
+/// sweep land on the release tick), not by the data. The Carrier's interceptor launch (B-22) is
+/// not modelled as a delay (plan §14, F-1).
+const SC2_FIRST_STRIKE_DELAY: [(&str, u16, &str); 2] = [
+    (
+        "Liberator",
+        1,
+        "LiberatorMissileBurstPersistent PeriodicPeriodArray 0.05 (0.893 ticks): void EffectData:2969; weapon Effect: void WeaponData:328",
+    ),
+    (
+        "Colossus",
+        0,
+        "the owner's answer to Q0064: the strikes and sweep land on the release tick",
+    ),
+];
+
+#[test]
+fn b81_first_strike_delay_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, source) in SC2_FIRST_STRIKE_DELAY {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let delay = SC2_FIRST_STRIKE_DELAY
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or(0, |&(_, delay, _)| delay);
+        for weapon in own_weapons(archetype) {
+            assert_eq!(
+                weapon.first_strike_delay_ticks, delay,
+                "{} {}: the first strike's delay as StarCraft II's first period",
+                archetype.slug, weapon.name
+            );
+        }
+    }
+    Ok(())
+}

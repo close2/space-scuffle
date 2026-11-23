@@ -440,14 +440,22 @@ pub struct WeaponSpec {
     pub attribute_bonuses: AttributeBonuses,
     /// Number of distinct damage strikes applied per attack cycle (e.g. Zealot = 2).
     pub attacks_count: u8,
-    /// Ticks between consecutive strikes of one attack: the `PeriodicPeriodArray` of the
-    /// weapon's `CEffectCreatePersistent` in `StarCraft` II. The first strike lands on the
-    /// release tick and strike `k` (from 0) lands `k × strike_interval_ticks` ticks later. 0 lands
-    /// every strike on the release tick; a single-strike weapon authors 0.
+    /// Ticks from the release to the first strike of an attack: the first entry of the
+    /// `PeriodicPeriodArray` of the weapon's `CEffectCreatePersistent` in `StarCraft` II, which
+    /// comes before the first period as well as between periods (the Liberator's
+    /// `LiberatorMissileBurstPersistent`, 0.05 Normal s, 1 tick). 0, the engine default, lands
+    /// the first strike on the release tick. A delayed first strike is validated when it falls
+    /// due, as every later strike is (plan `2026-11-23-strike-delays` D-2).
+    pub first_strike_delay_ticks: u16,
+    /// Ticks between consecutive strikes of one attack: the later entries of the
+    /// `PeriodicPeriodArray` of the weapon's `CEffectCreatePersistent` in `StarCraft` II. Strike
+    /// `k` (from 0) lands `first_strike_delay_ticks + k × strike_interval_ticks` ticks after the
+    /// release. 0 lands every strike together; a single-strike weapon authors 0.
     pub strike_interval_ticks: u16,
     /// Greatest centre-to-centre distance, in world units, between attacker and target at which
-    /// a strike after the first still lands (a `CValidatorLocationCompareRange` on the strike's
-    /// effect in `StarCraft` II, such as the Zealot's 2.1). `None`: no distance condition.
+    /// a strike that lands after the release tick still lands (a `CValidatorLocationCompareRange`
+    /// on the strike's effect in `StarCraft` II, such as the Zealot's 2.1). `None`: no distance
+    /// condition.
     pub followup_max_distance: Option<SimScalar>,
     /// Whether the burst effect is channeled (`StarCraft` II `CEffectCreatePersistent` flag
     /// `Channeled`): an explicit order that replaces the attacker's orders between two strikes

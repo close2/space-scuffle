@@ -1340,6 +1340,11 @@
                 base_damage: 5.0,
                 attribute_bonuses: [],
                 attacks_count: 2,
+                // LiberatorMissileBurstPersistent's single PeriodicPeriodArray entry, 0.05 Normal s
+                // (0.893 -> 1 tick), comes before the first missile as well as between the two
+                // (void EffectData:2942-2970, run by the weapon's Effect, void WeaponData:328;
+                // plan 2026-11-23-strike-delays D-4, B-81).
+                first_strike_delay_ticks: 1,
                 strike_interval_ticks: 1,
                 channeled: true,
                 period_ticks: 32,

@@ -156,10 +156,13 @@ pub struct PendingLineView {
 /// In `StarCraft` II a multi-strike weapon is a `CEffectCreatePersistent` whose periods land one
 /// strike each: the Zealot's second blade 0.28 Normal s (5 ticks) after the first. Combat
 /// resolution lands the first strike on the release tick and keeps the rest here, one every
-/// [`WeaponSpec::strike_interval_ticks`]. A later strike lands only if its target is still a valid
-/// target on the weapon's plane and, where the weapon names one, within its
-/// [`WeaponSpec::followup_max_distance`]; a strike that fails its condition is lost, and the
-/// strikes after it still try. The attacker's death or boarding a transport ends the burst.
+/// [`WeaponSpec::strike_interval_ticks`]. A weapon whose first strike is delayed
+/// ([`WeaponSpec::first_strike_delay_ticks`], the Liberator's first period; plan
+/// `2026-11-23-strike-delays`) keeps the whole burst here from the release, the first strike
+/// included. A pending strike lands only if its target is still a valid target on the weapon's
+/// plane and, where the weapon names one, within its [`WeaponSpec::followup_max_distance`]; a
+/// strike that fails its condition is lost, and the strikes after it still try. The attacker's
+/// death or boarding a transport ends the burst.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingStrikes {
     /// Entity the attack was released at; every strike of the burst is aimed at it.
@@ -167,7 +170,8 @@ pub struct PendingStrikes {
     /// Combat plane of the weapon that released the attack; a strike lands only on a target
     /// still on that plane, and the weapon is resolved against it again for each strike.
     pub plane: MoverType,
-    /// Strikes still to land, at least 1 while the burst is pending.
+    /// Strikes still to land, at least 1 while the burst is pending; the whole burst while a
+    /// delayed first strike waits.
     pub remaining: u8,
     /// Ticks until the next strike lands, at least 1 between ticks.
     pub ticks_until_next: u16,

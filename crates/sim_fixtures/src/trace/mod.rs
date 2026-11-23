@@ -568,15 +568,7 @@ impl BattleTrace {
             if weapon.projectile_speed.is_some() {
                 return Ok(None);
             }
-            // A release lands every strike only when they land together; a weapon that spaces
-            // them lands one now and the rest on later ticks, which are not releases and so are
-            // not replayed here (plan `2026-11-05-sc2-deviation-fixes` WP5).
-            let strikes = if weapon.strike_interval_ticks == 0 {
-                weapon.attacks_count
-            } else {
-                1
-            };
-            for _ in 0..strikes {
+            for _ in 0..strikes_on_release(weapon) {
                 let hit = calculate_hit_damage_upgraded(
                     weapon,
                     Some(&arch.slug),
@@ -594,6 +586,23 @@ impl BattleTrace {
             }
         }
         Ok(None)
+    }
+}
+
+/// The strikes of `weapon` that land on the tick it releases an attack.
+///
+/// A release lands every strike only when they land together; a weapon that spaces them lands
+/// one now and the rest on later ticks, which are not releases and so are not replayed by the
+/// wasted-shot count (plan `2026-11-05-sc2-deviation-fixes` WP5). A weapon whose first strike is
+/// delayed lands none on its release tick (plan `2026-11-23-strike-delays` D-2).
+#[must_use]
+pub fn strikes_on_release(weapon: &WeaponSpec) -> u8 {
+    if weapon.first_strike_delay_ticks > 0 {
+        0
+    } else if weapon.strike_interval_ticks == 0 {
+        weapon.attacks_count
+    } else {
+        1
     }
 }
 

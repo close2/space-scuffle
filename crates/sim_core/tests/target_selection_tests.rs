@@ -44,6 +44,7 @@ const RIFLE: &str = r#"Some((
             base_damage: 1.0,
             attribute_bonuses: [],
             attacks_count: 1,
+            first_strike_delay_ticks: 0,
             strike_interval_ticks: 0,
             period_ticks: 20,
             damage_point_ticks: 2,
