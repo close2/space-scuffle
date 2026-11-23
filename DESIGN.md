@@ -208,7 +208,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
 | B-35 | No energy regeneration delay | WP15; **not a deviation** by plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md): no layer of the 5.0.14 data sets `EnergyRegenDelay` (S2), so energy rises on every tick as in the game; pinned by `regeneration_tests` (WP1 `07e86761`), [evidence](docs/evidence/2026-11-23-regeneration.md) |
-| B-36 | Unfinished structures regenerate life | WP15; **fixed** by plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP1 (`07e86761`): no vital regenerates before a structure completes; a foundation's life follows its construction curve exactly (the game's rule **verify**, [Q0094](docs/questions/open/0094-zerg-structure-regeneration-under-construction.md)), [evidence](docs/evidence/2026-11-23-regeneration.md) |
+| B-36 | Unfinished structures regenerate life | WP15; **fixed** by plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP1 (`07e86761`): no vital regenerates before a structure completes; a foundation's life follows its construction curve exactly (the game's rule **verify**, [Q0094](docs/questions/closed/0094-zerg-structure-regeneration-under-construction.md)), [evidence](docs/evidence/2026-11-23-regeneration.md) |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18; regeneration value and hook recorded for WP18 in plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) §14 F-1 |
 === end
 
