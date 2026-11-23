@@ -1679,3 +1679,58 @@ rank), not 1b's mechanism, and does not depend on 1b. It is rebased onto step 1,
 once under Amendment 8's step rule against step 1 and by P2's two criteria. The outcomes are as Amendment 12 states:
 if it fails, stop and report; if it passes, continue with Amendment 11 steps 3 to 7, handing back before the fresh
 acceptance run.
+
+## Amendment 14 (orchestrator, 2026-11-23): P8 adopted; the side-rule review; ablation A0 registered; rule S planned, pending Q0097
+
+**P8 is adopted** (`31218814`). It changes no behaviour: the development corpus is byte-identical and a tick-by-tick
+on/off test passes. The 64 × 64 melee is at +61.2 % instructions against Legacy, against Q0093 (c)'s +60 %. The
+contact solver itself (+3.4 G) and target acquisition (+1.9 G) remain. Q0097, filed for the owner, records this.
+
+**A third independent review** examined the side rule (the intent layer) and recommends replacing the one-partner
+rule (I-3, I-3b, I-3c and `SideMemory`). Its reasons:
+- **The one-partner rule is the common mechanism of the stopped steps.** Steps 1b, P2 and 2′ all stopped on it.
+- **What the rule buys is unmeasured.** The traces log only the reversals it costs.
+- **The earlier summed term (step 3, Amendment 9) failed for three removable reasons:**
+  1. a bang-bang lateral sign, largest where it is undefined;
+  2. renormalisation to full speed;
+  3. a tangential push at contact that fights the solver's radial correction.
+- **ORCA is rejected** for four reasons:
+  - its colliding case duplicates the solver;
+  - its side keeping reads the solver-jittered current velocity;
+  - dense rings are infeasible and need a discontinuous relaxed LP;
+  - full responsibility against static bodies brings corner deadlocks, and the cost is +1 to +3 G.
+
+**A0, ablation (registered now, a measurement, not a rule).** A scratch build in which intent returns the preferred
+velocity and writes no memory. It is run on development seeds 1–1,000 against step 1 + P8 and reported with every
+T-figure, D-S and the cost split. Nothing is committed to the pipeline. Predictions, written before the run:
+- arc and gap T1 fall;
+- cross T4, M4 and T7 rise, because collinear head-on pairs stall;
+- the 64 × 64 cost falls by about 1 G.
+
+A0 is the reference any replacement must beat on the ring families. If A0 itself passes the step rule, it goes to
+the owner as a candidate, since it departs from SC-2's "turn the same way".
+
+**Rule S (planned; implemented only if the owner's answer to Q0097 calls for a further design round).** A smooth,
+memoryless, contact-continuous velocity correction (Guy & Karamouzas, *Game AI Pro 2* ch. 19, eq. 19.5; Karamouzas,
+Skinner & Guy 2014; Weiss et al. 2019; van den Berg et al. 2011 for ρ = ½). It lifts Amendment 9's rejection of the
+summed term on the three grounds above.
+- **Direction.** Each threat pushes along the predicted relative position at collision; at contact this is the line
+  of centres.
+- **Size.** The push removes only the approach (`max(0, −v·n)`), weighted `1 − τ/H`.
+- **Responsibility.** ½ against movers running the same rule, 1 against standing, engaged or holding bodies.
+- **Right-hand bias.** Small and antisymmetric, near head-on only, derived from I-3a.
+- **Combining.** Jacobi-averaged, never renormalised.
+- **Clamps:** no step backward, at most full speed, and a turn of at most `asin(1/h)`.
+- **Output.** Intent returns a velocity, not a heading.
+- **Memory.** `SideMemory` is deleted (next free schema at merge, proved as in Amendment 10).
+
+Tests red before the change:
+- continuity across contact;
+- a head-on pair passes right to right, and its mirror does the same;
+- no backward step when pressed onto an engaged body;
+- relabelling invariance.
+
+S is judged under Amendment 8's rule against step 1 + P8. On a stop it is reported, with no variant tried. If it
+passes, the already built wavefront (`75871a42`) may be re-measured once on top of it, by a further registering
+amendment. **Barred as fitting:** choosing h, ρ, the bias or the weight after seeing figures; per-family switches;
+any tie-break or hysteresis added after a trace.
