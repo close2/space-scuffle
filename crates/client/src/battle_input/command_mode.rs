@@ -36,7 +36,9 @@ use sim_types::{
 
 use super::context_order::sim_point;
 use super::order_marker::OrderMarkerKind;
-use crate::battle_pipeline::commands::{any_caster, any_recipient, CastKey, SubmissionError};
+use crate::battle_pipeline::commands::{
+    any_attacker, any_caster, any_recipient, CastKey, SubmissionError,
+};
 
 /// How far from a click an extractor looks for a gas node to cover, in cells on either axis.
 pub const EXTRACTOR_SNAP_CELLS: u32 = 3;
@@ -47,7 +49,9 @@ pub enum CommandMode {
     /// A left click selects.
     #[default]
     Normal,
-    /// The next left click on the world orders an attack-move there.
+    /// The next left click attacks: an enemy unit under the pointer is attacked
+    /// (`UnitOrder::AttackTarget`), and anywhere else is an attack-move to the ground point,
+    /// which only mobile members take (plan `2026-11-23-stance-checked-orders` D-6, D-7).
     AttackMove,
     /// The next left click places this structure.
     Place(UnitTypeId),
@@ -72,8 +76,14 @@ impl CommandMode {
             (Some(key), _) => world.zip(owner).is_some_and(|(world, owner)| {
                 orders_open(world) && any_caster(world, owner, selection, key)
             }),
+            // The Attack mode lives while a member could take either of its two orders: an
+            // attack on a unit, which anchored units take, or an attack-move on the ground
+            // (plan `2026-11-23-stance-checked-orders` D-6).
             (None, Some(order)) => world.zip(owner).is_some_and(|(world, owner)| {
-                orders_open(world) && any_recipient(world, owner, selection, &order)
+                orders_open(world)
+                    && (any_recipient(world, owner, selection, &order)
+                        || (matches!(self, Self::AttackMove)
+                            && any_attacker(world, owner, selection)))
             }),
             (None, None) => return,
         };
@@ -122,6 +132,8 @@ impl CommandMode {
     }
 
     /// The order a left click at `ground`, a Bevy world point, means for `owner` in this mode.
+    /// For the Attack mode it is the ground case; a click on an enemy unit is aimed by
+    /// [`collect_pointer_intent`](super::collect_pointer_intent), which can pick units.
     ///
     /// Returns the order, how to mark it, and the Bevy world point the marker belongs at.
     ///
@@ -581,6 +593,60 @@ mod tests {
         mode.reconcile(Some(&world), Some(ME), &[builder]);
         assert_eq!(mode, CommandMode::Normal, "a closed match");
         assert!(!orders_open(&world));
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-stance-checked-orders` D-6 (B-173): the Attack mode lives while a
+    /// selected unit could take an attack on a unit or an attack-move, so a selection of
+    /// anchored units keeps it (they attack units) and an unarmed one ends it.
+    #[test]
+    fn attack_stays_for_anchored_units_and_ends_for_unarmed_ones() -> TestResult {
+        let mut world = flat_world()?;
+        let tank_arch = world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                a.modes
+                    .iter()
+                    .any(|mode| mode.is_immobile && mode.ground_weapon_override.is_some())
+                    && a.stance_armed(None)
+            })
+            .ok_or("an armed archetype with an anchoring mode")?
+            .clone();
+        let tank = world.spawn_unit(
+            tank_arch.unit_type_id,
+            ME,
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+        )?;
+        let switch = tank_arch
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.effect, AbilityEffectSpec::SwitchMode { .. }))
+            .ok_or("its switch")?;
+        assert!(world.execute_ability(tank, u8::try_from(switch)?, None, None));
+        while world.entities[&tank].channeling_remaining_ticks > 0 {
+            let tick = world.current_tick;
+            world.step(&sim_types::TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+        }
+        assert!(world.entities[&tank].is_immobile, "anchored");
+        let structure = dome_where(&world, |a| a.stance_armed(None))?;
+        let armed = world.spawn_structure(structure.unit_type_id, ME, 20, 20)?;
+        let unarmed_dome = plain_dome(&world)?;
+        assert!(!unarmed_dome.stance_armed(None));
+        let unarmed = world.spawn_structure(unarmed_dome.unit_type_id, ME, 40, 40)?;
+
+        for selection in [vec![tank], vec![armed], vec![tank, armed]] {
+            let mut mode = CommandMode::AttackMove;
+            mode.reconcile(Some(&world), Some(ME), &selection);
+            assert_eq!(mode, CommandMode::AttackMove, "{selection:?}");
+        }
+        let mut mode = CommandMode::AttackMove;
+        mode.reconcile(Some(&world), Some(ME), &[unarmed]);
+        assert_eq!(mode, CommandMode::Normal, "an unarmed structure");
         Ok(())
     }
 

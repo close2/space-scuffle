@@ -1275,6 +1275,15 @@ impl Entity {
         archetype.stance_orders(self.settled_mode(archetype))
     }
 
+    /// Whether this unit is armed in the stance it is in or is switching to
+    /// ([`Self::settled_mode`]), by [`UnitArchetype::stance_armed`]. `archetype` must be this
+    /// unit's. Read-only and allocation-free, so the client's Attack entry and its admission
+    /// share the simulation's rule (plan `2026-11-23-stance-checked-orders` D-3).
+    #[must_use]
+    pub fn settled_armed(&self, archetype: &UnitArchetype) -> bool {
+        archetype.stance_armed(self.settled_mode(archetype))
+    }
+
     /// The sieged weapon replacing the archetype's ground weapon, if one is active.
     #[must_use]
     #[inline]

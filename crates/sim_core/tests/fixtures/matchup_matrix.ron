@@ -1148,6 +1148,8 @@
     // evidence §3), so the pair claims the pulled tank's fate. 37a: the pulled tank dies on all 20
     // matrix seeds, red keeps 5 (18 seeds) or 4 (2); every zergling dies; the battle runs to its
     // limit with the Viper alive.
+    // The sieged tanks take no order: 5.0.14's sieged tank has no Hold Position (`liberty`
+    // UnitData:5172-5174); siege alone anchors them (plan 2026-11-23-stance-checked-orders D-5).
     (
         name: "37a_abduct_sieged_tank",
         claim: "Abduct pulls a sieged tank out of its partner's cover and the zerglings kill it",
@@ -1163,7 +1165,7 @@
         ),
         red: (
             squads: [
-                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0, order: Some(None)),
                 (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
             ],
             order: HoldPosition,
@@ -1172,6 +1174,8 @@
         expect: (blue: (1, 1), red: (4, 5), red_lead_alive: Some(false)),
     ),
     // Control of 37a: no cast. The first tank survives on all 20 seeds and red keeps all 6.
+    // The sieged tanks take no order: 5.0.14's sieged tank has no Hold Position (`liberty`
+    // UnitData:5172-5174); siege alone anchors them (plan 2026-11-23-stance-checked-orders D-5).
     (
         name: "37b_sieged_tank_survives_without_abduct",
         claim: "Control of 37a: without Abduct the same zerglings never reach the first tank",
@@ -1186,7 +1190,7 @@
         ),
         red: (
             squads: [
-                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0),
+                (unit: "railgun_crawler", count: 2, columns: 1, origin: (56.0, 44.0), spacing: 6.0, order: Some(None)),
                 (unit: "pulse_bot", count: 4, columns: 1, origin: (52.0, 46.5), spacing: 1.0),
             ],
             order: HoldPosition,
@@ -1251,6 +1255,8 @@
     // 2, so they cannot fire, and the roaches close and shoot unanswered. 39a: the roaches win
     // all 20 matrix seeds with 6 to 8 left (blue 7 to 9 with the caster), ending on ticks 260
     // to 298; on 52 seeds blue keeps 5 to 9.
+    // The sieged tanks take no order: 5.0.14's sieged tank has no Hold Position (`liberty`
+    // UnitData:5172-5174); siege alone anchors them (plan 2026-11-23-stance-checked-orders D-5).
     (
         name: "39a_cloud_on_tanks",
         claim: "A Blinding Cloud on sieged tanks turns a fight the tanks win into a roach win",
@@ -1268,7 +1274,6 @@
             squads: [
                 (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
             ],
-            order: HoldPosition,
             mode: Some("siege_mode"),
         ),
         expect: (blue: (5, 9), red: (0, 0)),
@@ -1276,6 +1281,8 @@
     // Control of 39a: no cast. The tanks win all 20 seeds with 2 or 3 left (11 and 9 seeds), as on
     // 52 seeds; every roach dies and the Viper analogue, out of reach in the air, outlives the
     // 600-tick limit.
+    // The sieged tanks take no order: 5.0.14's sieged tank has no Hold Position (`liberty`
+    // UnitData:5172-5174); siege alone anchors them (plan 2026-11-23-stance-checked-orders D-5).
     (
         name: "39b_tanks_beat_roaches_without_cloud",
         claim: "Control of 39a: without Blinding Cloud the same sieged tanks beat the roaches",
@@ -1292,7 +1299,6 @@
             squads: [
                 (unit: "railgun_crawler", count: 3, columns: 1, origin: (56.0, 44.0), spacing: 1.8),
             ],
-            order: HoldPosition,
             mode: Some("siege_mode"),
         ),
         expect: (blue: (1, 1), red: (2, 3)),

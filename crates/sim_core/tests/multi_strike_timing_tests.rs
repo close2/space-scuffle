@@ -378,6 +378,12 @@ fn damage_after_order_between_strikes(
         ..Burst::hitscan(5)
     };
     let mut bench = Bench::new(burst, 3.0)?;
+    // A shooter that cannot walk takes no Hold Position (plan 2026-11-23-stance-checked-orders
+    // D-1, D-2), so the bench's shooter is given a speed here: every order of
+    // `overriding_orders` then reaches it, and it stands still because nothing tells it to walk
+    // before the order under test.
+    let shooter_type = bench.world.entities[&bench.shooter].unit_type_id;
+    bench.world.catalog.get_mut(shooter_type)?.max_speed = SimScalar::from_num(0.1);
     for _ in 0..30 {
         bench.step();
         if bench.damage_taken()? > 0.0 {

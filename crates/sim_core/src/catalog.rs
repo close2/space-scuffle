@@ -314,19 +314,50 @@ impl UnitArchetype {
     }
 
     /// The plain orders a unit of this archetype accepts in `stance`: the mode's authored
-    /// [`UnitModeSpec::orders`], or, for the default stance (`None`), both Stop and Hold
-    /// Position when the archetype is mobile ([`Self::is_immobile_by_default`] is false) and
-    /// neither when it is not. Pure and allocation-free; the one rule the client's command card
-    /// and its admission share (plan `2026-11-23-anchored-commands` D-2). Every shipped mobile
-    /// unit has `stop` and `move` in `StarCraft` II 5.0.14; armed structures' Stop is B-171.
+    /// [`UnitModeSpec::orders`], or, for the default stance (`None`), Stop when the archetype is
+    /// mobile ([`Self::is_immobile_by_default`] is false) or armed ([`Self::stance_armed`]),
+    /// and Hold Position when it is mobile. Pure and allocation-free; the one rule the
+    /// simulation's admission (`SimWorld::issue_plain_order`), the client's command card and
+    /// its admission share (plans `2026-11-23-anchored-commands` D-2 and
+    /// `2026-11-23-stance-checked-orders` D-2).
+    ///
+    /// In `StarCraft` II 5.0.14 every shipped mobile unit has `stop` and `move` (whose `HoldPos`
+    /// command Hold Position is), the armed structures carry `stop` (Photon Cannon, Missile
+    /// Turret, Planetary Fortress, Spine and Spore Crawler, `liberty` UnitData:11083, :6064,
+    /// :10696, :8652, :8784), and the unarmed ones carry neither (Command Center, Nexus,
+    /// :10411, :4218; the Shield Battery's `stop` is removed in `balancemulti` UnitData:1463).
+    /// The rule is derived, not authored, and exact for every shipped archetype (B-171).
     #[must_use]
     #[inline]
     pub fn stance_orders(&self, stance: Option<&UnitModeSpec>) -> StanceOrders {
-        match stance {
-            Some(mode) => mode.orders,
-            None if self.is_immobile_by_default() => StanceOrders::NONE,
-            None => StanceOrders::ALL,
+        if let Some(mode) = stance {
+            return mode.orders;
         }
+        let mobile = !self.is_immobile_by_default();
+        StanceOrders {
+            stop: mobile || self.stance_armed(None),
+            hold_position: mobile,
+        }
+    }
+
+    /// Whether a unit of this archetype carries a weapon in `stance` (`None` is the default
+    /// stance): the mode's replacement ground weapon when it sets one, otherwise the
+    /// archetype's ground, single or air weapon, by the rule `Entity::apply_mode_transition`
+    /// and [`Self::weapon_against`] apply to a live unit. A mode's `Some(None)` ground override
+    /// and its `air_weapon_override` are not applied to a live unit, so they do not change the
+    /// answer either (plan `2026-11-23-stance-checked-orders` D-3, §14).
+    ///
+    /// Pure and allocation-free; the one rule for the default stance's Stop
+    /// ([`Self::stance_orders`]), the client's Attack entry and its admission of attacks.
+    #[must_use]
+    #[inline]
+    pub fn stance_armed(&self, stance: Option<&UnitModeSpec>) -> bool {
+        let replaced =
+            stance.is_some_and(|mode| matches!(mode.ground_weapon_override, Some(Some(_))));
+        replaced
+            || self.ground_weapon.is_some()
+            || self.weapon.is_some()
+            || self.air_weapon.is_some()
     }
 
     /// Looks up a declarative mode specification by canonical mode name.
@@ -2146,8 +2177,9 @@ mod tests {
     }
 
     /// Plan `2026-11-23-anchored-commands` D-1, D-2: the default stance accepts both plain
-    /// orders exactly when the archetype is mobile; a mode accepts what it authors, whatever
-    /// its mobility.
+    /// orders when the archetype is mobile, and an unarmed immobile one neither (an armed one
+    /// keeps Stop, plan `2026-11-23-stance-checked-orders` D-2); a mode accepts what it authors,
+    /// whatever its mobility.
     #[test]
     fn stance_orders_follow_mobility_for_the_default_stance_and_data_for_a_mode() {
         let catalog = crate::test_support::shipped_catalogs().units;
@@ -2159,13 +2191,26 @@ mod tests {
         assert_eq!(walker.stance_orders(None), StanceOrders::ALL);
 
         walker.max_speed = SimScalar::ZERO;
-        assert_eq!(walker.stance_orders(None), StanceOrders::NONE, "speed 0");
+        assert_eq!(
+            walker.stance_orders(None),
+            StanceOrders {
+                stop: walker.stance_armed(None),
+                hold_position: false,
+            },
+            "speed 0: Stop only when armed (plan 2026-11-23-stance-checked-orders D-2)"
+        );
 
         let structure = catalog
             .archetypes()
-            .find(|arch| matches!(arch.shape, ShapeKind::BuildingDome { .. }))
-            .expect("invariant: the shipped catalog has a structure");
-        assert_eq!(structure.stance_orders(None), StanceOrders::NONE, "a dome");
+            .find(|arch| {
+                matches!(arch.shape, ShapeKind::BuildingDome { .. }) && !arch.stance_armed(None)
+            })
+            .expect("invariant: the shipped catalog has an unarmed structure");
+        assert_eq!(
+            structure.stance_orders(None),
+            StanceOrders::NONE,
+            "an unarmed dome"
+        );
 
         let mut mode = catalog
             .archetypes()
@@ -2185,6 +2230,79 @@ mod tests {
                     assert_eq!(structure.stance_orders(Some(&mode)), mode.orders);
                 }
             }
+        }
+    }
+
+    /// Plan `2026-11-23-stance-checked-orders` D-2, D-3 (B-171): the default stance takes Stop
+    /// when the archetype is mobile or armed and Hold Position when it is mobile; "armed" is any
+    /// of the three weapon blocks, or a mode's replacement ground weapon in that mode.
+    #[test]
+    fn the_default_stance_takes_stop_when_mobile_or_armed() {
+        let catalog = crate::test_support::shipped_catalogs().units;
+        let weapon = catalog
+            .archetypes()
+            .find_map(|arch| arch.weapon.clone())
+            .expect("invariant: the shipped catalog has a weapon");
+        let stop_only = StanceOrders {
+            stop: true,
+            hold_position: false,
+        };
+
+        let mut walker = catalog
+            .archetypes()
+            .find(|arch| !arch.is_immobile_by_default())
+            .expect("invariant: the shipped catalog has a mobile archetype")
+            .clone();
+        for armed in [false, true] {
+            walker.weapon = armed.then(|| weapon.clone());
+            walker.ground_weapon = None;
+            walker.air_weapon = None;
+            assert_eq!(walker.stance_armed(None), armed);
+            assert_eq!(
+                walker.stance_orders(None),
+                StanceOrders::ALL,
+                "armed {armed}"
+            );
+        }
+
+        let mut structure = catalog
+            .archetypes()
+            .find(|arch| matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+            .expect("invariant: the shipped catalog has a structure")
+            .clone();
+        structure.weapon = None;
+        structure.ground_weapon = None;
+        structure.air_weapon = None;
+        assert!(!structure.stance_armed(None));
+        assert_eq!(structure.stance_orders(None), StanceOrders::NONE, "unarmed");
+        for slot in 0..3 {
+            let mut armed = structure.clone();
+            let block = [
+                &mut armed.weapon,
+                &mut armed.ground_weapon,
+                &mut armed.air_weapon,
+            ];
+            if let Some(field) = block.into_iter().nth(slot) {
+                *field = Some(weapon.clone());
+            }
+            assert!(armed.stance_armed(None), "slot {slot}");
+            assert_eq!(armed.stance_orders(None), stop_only, "slot {slot}");
+        }
+
+        let mut mode = catalog
+            .archetypes()
+            .flat_map(|arch| arch.modes.iter())
+            .next()
+            .expect("invariant: the shipped catalog has a mode")
+            .clone();
+        mode.ground_weapon_override = Some(Some(weapon.clone()));
+        assert!(
+            structure.stance_armed(Some(&mode)),
+            "a replacing weapon arms"
+        );
+        for unarming in [None, Some(None)] {
+            mode.ground_weapon_override = unarming;
+            assert!(!structure.stance_armed(Some(&mode)));
         }
     }
 
