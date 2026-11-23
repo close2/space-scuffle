@@ -10,6 +10,9 @@
 //!   such angle, ties clockwise (G-3), keeping last tick's gap while that stays free;
 //! - no angle is free: it stands, keeps its order and accrues no stall (G-6, Q0089).
 //!
+//! A gap walker whose straight way to its gap passes a body steps along its target's wavefront
+//! instead (`movement::wavefront`, plan Amendment 12, step 2′) until the way is clear.
+//!
 //! # How it fits
 //! The pursuit (`locomotion::prepare_pursuit`) asks it once per chase and tick, before the chase
 //! steps. Occupancy is **geometry, not class**: a body blocks the ring when its disc reaches it,
@@ -30,7 +33,9 @@
 use super::concave::{blocking_interval, choose_slot, is_free, slot_point, ArcInterval};
 use super::contact::contact_request;
 use super::locomotion::MotionEntry;
-use super::math::within_distance;
+use super::math::{
+    checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, within_distance,
+};
 use super::{MotionPolicy, MovementInvariant, MovementLayer, MovementMathError};
 use crate::SimWorld;
 use sim_map::{Pathfinder, SimMap};
@@ -41,8 +46,10 @@ use sim_types::{EntityId, SimAngle, SimScalar, SimVec2};
 pub(crate) enum RingAim {
     /// The unit's bearing point is free, or the rule does not apply: chase straight in.
     Straight,
-    /// The bearing point is blocked; the nearest free angle and its point on the ring.
-    Gap(SimAngle, SimVec2),
+    /// The bearing point is blocked; the nearest free angle, its point on the ring, and, when the
+    /// straight way to that point runs into a body, this tick's step target from the wavefront
+    /// (plan Amendment 12, step 2′).
+    Gap(SimAngle, SimVec2, Option<SimVec2>),
     /// No free angle on the ring: stand, keep the order, accrue no stall.
     Stand,
 }
@@ -157,6 +164,33 @@ impl RingWalk {
     }
 }
 
+/// Whether the segment from `from` along `along` passes `centre` closer than `reach`: the point of
+/// the segment nearest `centre` lies strictly within `reach` of it.
+///
+/// # Errors
+/// An unrepresentable product or quotient.
+pub(crate) fn segment_passes(
+    (from, along): (SimVec2, SimVec2),
+    centre: SimVec2,
+    reach: SimScalar,
+) -> Result<bool, MovementMathError> {
+    let unrepresentable = || MovementMathError::Unrepresentable;
+    let length_sq = checked_dot(along, along)?;
+    let projection = checked_dot(checked_vec_sub(centre, from)?, along)?;
+    let t = if length_sq <= SimScalar::ZERO {
+        SimScalar::ZERO
+    } else {
+        projection
+            .checked_div(length_sq)
+            .ok_or_else(unrepresentable)?
+            .clamp(SimScalar::ZERO, SimScalar::ONE)
+    };
+    let nearest = checked_vec_add(from, checked_vec_scale(along, t)?)?;
+    let off = checked_vec_sub(centre, nearest)?;
+    let reach_sq = reach.checked_mul(reach).ok_or_else(unrepresentable)?;
+    Ok(checked_dot(off, off)? < reach_sq)
+}
+
 /// The binary angle of `point` seen from `centre`.
 pub(crate) fn angle_from(centre: SimVec2, point: SimVec2) -> SimAngle {
     SimAngle::atan2(
@@ -177,7 +211,7 @@ pub(crate) fn ring_choice(
     match choose_slot(bearing, intervals, admissible) {
         None => Ok(RingAim::Stand),
         Some(angle) if angle == bearing => Ok(RingAim::Straight),
-        Some(angle) => Ok(RingAim::Gap(angle, slot_point(centre, rho, angle)?)),
+        Some(angle) => Ok(RingAim::Gap(angle, slot_point(centre, rho, angle)?, None)),
     }
 }
 
@@ -205,11 +239,20 @@ impl SimWorld {
         // What: The arcs go into one retained buffer of the movement workspace, cleared per chase.
         // Trade-off: Memory stays at the most crowded ring's high-water mark.
         let mut intervals = std::mem::take(&mut self.movement.ring_intervals);
-        let aim = self
-            .ring_aim_with(chase, rho, &mut intervals)
-            .map_err(fault);
+        let aim = self.ring_aim_with(chase, rho, &mut intervals);
         self.movement.ring_intervals = intervals;
-        aim
+        match aim.map_err(fault)? {
+            RingAim::Gap(angle, point, _) => {
+                let blocked = self.way_is_blocked(&chase, point).map_err(fault)?;
+                let detour = if blocked {
+                    self.wavefront_aim(&chase, rho).map_err(fault)?
+                } else {
+                    None
+                };
+                Ok(RingAim::Gap(angle, point, detour))
+            }
+            other => Ok(other),
+        }
     }
 
     fn ring_aim_with(
@@ -279,10 +322,42 @@ impl SimWorld {
             .map(|point| angle_from(centre, point))
             .filter(|&angle| is_free(angle, intervals) && admissible(angle));
         let aim = match kept {
-            Some(angle) => RingAim::Gap(angle, slot_point(centre, rho, angle)?),
+            Some(angle) => RingAim::Gap(angle, slot_point(centre, rho, angle)?, None),
             None => ring_choice(bearing, intervals, centre, rho, &mut admissible)?,
         };
         fault.map_or(Ok(aim), Err)
+    }
+
+    /// Whether the segment from the unit of `chase` to `point` passes a tick-start body of its
+    /// class, other than the unit and its target, closer than the two radii (plan Amendments 11 and 12).
+    fn way_is_blocked(&self, chase: &RingChase, point: SimVec2) -> Result<bool, MovementMathError> {
+        let unrepresentable = || MovementMathError::Unrepresentable;
+        let policy = chase.entry.policy;
+        let class = policy.body_class();
+        let from = chase.position;
+        let along = checked_vec_sub(point, from)?;
+        let half = super::checked_distance(point, from)
+            .ok_or_else(unrepresentable)?
+            .checked_div(SimScalar::from_num(2))
+            .ok_or_else(unrepresentable)?;
+        let middle = checked_vec_add(from, checked_vec_scale(along, SimScalar::HALF)?)?;
+        let reach = half
+            .saturating_add(policy.radius)
+            .saturating_add(self.movement.largest_radius[class]);
+        let obstacles = &self.movement.obstacles[class];
+        let (mut blocked, mut fault) = (false, None);
+        self.movement.grids[class].for_each_near(middle, reach, |index| {
+            let body = &obstacles[index];
+            if blocked || fault.is_some() || body.id == chase.entry.id || body.id == chase.target {
+                return;
+            }
+            let touch = policy.radius.saturating_add(body.radius);
+            match segment_passes((from, along), body.pos, touch) {
+                Ok(hit) => blocked = hit,
+                Err(error) => fault = Some(error),
+            }
+        });
+        fault.map_or(Ok(blocked), Err)
     }
 
     /// The position `id` had when this tick's movement phase began, world units: from the
@@ -328,7 +403,8 @@ mod tests {
             ring_choice(bearing_north, &[west], centre, rho, |_| true)?,
             RingAim::Straight
         );
-        let RingAim::Gap(angle, point) = ring_choice(bearing_west, &[west], centre, rho, |_| true)?
+        let RingAim::Gap(angle, point, _) =
+            ring_choice(bearing_west, &[west], centre, rho, |_| true)?
         else {
             return Err("a blocked bearing with room aims at a gap".into());
         };
@@ -348,6 +424,23 @@ mod tests {
             ring_choice(bearing_west, &[west], centre, rho, |a| a == bearing_west)?,
             RingAim::Stand
         );
+        Ok(())
+    }
+
+    /// The way test (plan Amendments 11 and 12): a segment passes a disc when its nearest point lies strictly inside it,
+    /// whether that point is inside the segment or one of its ends.
+    #[test]
+    fn a_segment_passes_a_disc_by_its_nearest_point() -> Result<(), MovementMathError> {
+        let way = (at(0.0, 0.0), at(10.0, 0.0));
+        let one = SimScalar::ONE;
+        assert!(segment_passes(way, at(5.0, 0.9), one)?);
+        assert!(!segment_passes(way, at(5.0, 1.0), one)?);
+        assert!(!segment_passes(way, at(5.0, -1.1), one)?);
+        // Beyond the far end: measured from the end.
+        assert!(segment_passes(way, at(10.5, 0.5), one)?);
+        assert!(!segment_passes(way, at(11.0, 0.5), one)?);
+        // Behind the start.
+        assert!(!segment_passes(way, at(-1.2, 0.0), one)?);
         Ok(())
     }
 
