@@ -1224,3 +1224,48 @@ most +60 % instructions and at least 50 ticks per second.
 | 64 × 64, armies meet | 10.35 G | 17.06 G (+65 %), 98 ticks per second | **fails** (+65 % > +60 %) |
 | 128 × 128, armies apart | 10.74 G | 11.49 G (+7 %), 171 ticks per second | holds |
 | showcase canyon | 18.03 G | 27.75 G (+54 %), 78 ticks per second | holds |
+
+### 13.7 Step 6, P8: the ring interval cache (Q0097's default)
+
+**Built.**
+- The ring rule's blocking intervals are computed once per (target, walker radius, ring radius) per tick, every
+  body's but the target's, each tagged with its body. A chaser copies them less its own interval.
+- The grid query is the scan's own, so the order and the first-fault rule are the scan's.
+- `SimWorld::set_ring_interval_cache` switches the cache off for the test that proves it exact.
+
+**Exactness.**
+- Test `the_ring_interval_cache_changes_nothing`: arc seeds 1, 5 and 563 and corridor seed 4 give the same
+  positions and checksum on every tick, with the cache on and off. A deliberately broken cache, keeping the walker's
+  own interval, fails the test.
+- The development corpus (`runs/p8-1`): all 11 CSVs are byte-identical to step 1's (`runs/p17-1`).
+
+**Cost** (release benchmark, 400 units, 300 ticks, `perf stat -e instructions:u`, under the gate lock, Legacy on the
+same tree).
+- Ticks per second come from a second measurement, taken while the shared machine's load was 23 and then 15. The
+  first measurement, at load 240, read 46, 84 and 52 for the Solver, so wall-clock figures move with other agents'
+  load. Instructions repeat to within a few thousand.
+
+| Scenario | Legacy | Step 1 | Step 1 + P8 | Q0093 (c): ≤ +60 % and ≥ 50 ticks per second |
+|---|---:|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G, 164 tps | 17.06 G (+64.8 %) | **16.69 G (+61.2 %)**, 104 tps | **fails** on instructions, by 1.2 points; holds on speed |
+| 128 × 128, armies apart | 10.74 G, 161 tps | 11.49 G (+7.0 %) | 11.49 G (+7.0 %), 154 tps | holds |
+| showcase canyon | 18.03 G, 123 tps | 27.75 G (+53.9 %) | 27.75 G (+53.9 %), 80 tps | holds |
+
+**Split on 64 × 64.** `perf record --call-graph=dwarf`, inclusive cycles, each share scaled by the run's
+instructions retired.
+
+| Part | Legacy | Solver + P8 | Change |
+|---|---:|---:|---:|
+| Contact (`resolve_collisions_and_push`; the solver is 20.7 % of the run) | 0.20 G | 3.60 G | +3.40 G |
+| Target acquisition | 4.73 G | 6.61 G | +1.88 G |
+| Movement phase | 3.27 G | 4.56 G | +1.29 G |
+| — of which intent | — | 1.08 G | |
+| — of which the ring scan, cached (≈ 0.95 G before P8) | — | 0.52 G | |
+| Total | 10.35 G | 16.69 G | +6.34 G |
+
+**Reading.**
+- P8 saves 0.37 G on the 64 × 64 battle and changes nothing.
+- The battle stays 1.2 points above Q0093 (c)'s +60 %.
+- What remains is the contact solver (+3.4 G), which Amendment 11 did not touch (no over-relaxation), and target
+  acquisition (+1.9 G), a behaviour effect of denser packing.
+- No further change is made (Q0097).

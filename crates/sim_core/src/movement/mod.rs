@@ -231,6 +231,14 @@ pub enum DisplacementAdmissionError {
     Invariant(#[from] MovementInvariant),
 }
 
+/// One ring scanned this tick (P8): its target, the walker radius and ring radius it was scanned
+/// for, and the span of its tagged intervals.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RingCacheEntry {
+    key: (EntityId, SimScalar, SimScalar),
+    span: (usize, usize),
+}
+
 #[derive(Default)]
 pub(crate) struct MovementWorkspace {
     pub outcomes: Vec<MovementOutcome>,
@@ -264,6 +272,15 @@ pub(crate) struct MovementWorkspace {
     tick_start: Vec<(EntityId, SimVec2, SimVec2)>,
     /// The ring rule's blocked arcs, cleared per chase (Amendment 7, item 2).
     ring_intervals: Vec<concave::ArcInterval>,
+    /// P8 (plan Amendment 11): this tick's rings already scanned, the first `ring_cache_used`
+    /// of them, each with its span of `ring_tagged`.
+    ring_cache: Vec<RingCacheEntry>,
+    ring_cache_used: usize,
+    /// The blocking intervals of the rings scanned this tick, each tagged with its body.
+    ring_tagged: Vec<(EntityId, Result<concave::ArcInterval, MovementMathError>)>,
+    /// Whether the ring interval cache is switched off ([`SimWorld::set_ring_interval_cache`]);
+    /// only the test that proves the cache exact does so.
+    ring_cache_disabled: bool,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
@@ -401,6 +418,13 @@ pub(crate) fn circles_overlap(a: SimVec2, ar: SimScalar, b: SimVec2, br: SimScal
 }
 
 impl SimWorld {
+    /// Switches the ring interval cache of the solver pipeline (plan `2026-11-20-contact-solver`
+    /// Amendment 11, P8) on or off. It is on in every world; the cache is exact, so the switch
+    /// changes no result, and it exists for the test that proves that.
+    pub fn set_ring_interval_cache(&mut self, enabled: bool) {
+        self.movement.ring_cache_disabled = !enabled;
+    }
+
     /// Returns command-level movement results since the latest tick clear/drain.
     #[must_use]
     pub fn movement_outcomes(&self) -> &[MovementOutcome] {

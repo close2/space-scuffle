@@ -828,6 +828,8 @@ impl SimWorld {
         }
         // `ids` follow the entity table's order, so the record is sorted by id.
         self.movement.tick_start.clear();
+        self.movement.ring_cache_used = 0;
+        self.movement.ring_tagged.clear();
         for &id in &ids {
             if let Some(actor) = self.entities.get(&id) {
                 self.movement

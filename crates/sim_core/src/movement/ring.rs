@@ -221,27 +221,7 @@ impl SimWorld {
         let centre = self.tick_start_position(chase.target);
         let policy = chase.entry.policy;
         let radius = policy.radius;
-        let class = policy.body_class();
-        intervals.clear();
-        let obstacles = &self.movement.obstacles[class];
-        let reach = rho
-            .saturating_add(radius)
-            .saturating_add(self.movement.largest_radius[class]);
-        let mut failed = None;
-        self.movement.grids[class].for_each_near(centre, reach, |index| {
-            let body = &obstacles[index];
-            if body.id == chase.entry.id || body.id == chase.target || failed.is_some() {
-                return;
-            }
-            match blocking_interval(centre, rho, radius, body.pos, body.radius) {
-                Ok(Some(interval)) => intervals.push(interval),
-                Ok(None) => {}
-                Err(error) => failed = Some(error),
-            }
-        });
-        if let Some(error) = failed {
-            return Err(error);
-        }
+        self.ring_intervals_of(&chase, rho, intervals)?;
         let bearing = angle_from(centre, chase.position);
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);
         let own = slot_point(centre, rho, bearing)?;
@@ -283,6 +263,110 @@ impl SimWorld {
             None => ring_choice(bearing, intervals, centre, rho, &mut admissible)?,
         };
         fault.map_or(Ok(aim), Err)
+    }
+
+    /// The arcs of `chase`'s ring that the tick-start bodies block for its unit, every body but
+    /// the unit and its target, in the order the body grid visits them; the first fault in that
+    /// order when one blocking interval cannot be represented.
+    ///
+    /// # Errors
+    /// The first unrepresentable interval, as the uncached scan would report it.
+    // PERFORMANCE RATIONALE:
+    // Why: Every chaser of one target scanned the same ring for the same bodies each tick, one
+    // `atan2` and one root per body (plan Amendment 11, R9: about 0.95 G of the 64 × 64 battle).
+    // What: P8. The intervals of a (target, radius, ring radius) are computed once per tick, every
+    // body's but the target's, each tagged with its body; a chaser copies them less its own. The
+    // grid query, and so the order, is the same as the scan's, and a body's interval does not
+    // depend on who asks, so the result is bit-identical (`set_ring_interval_cache` switches the
+    // cache off for the test that proves it).
+    // Trade-off: One retained list of tagged intervals per contested ring and tick.
+    fn ring_intervals_of(
+        &mut self,
+        chase: &RingChase,
+        rho: SimScalar,
+        intervals: &mut Vec<ArcInterval>,
+    ) -> Result<(), MovementMathError> {
+        let radius = chase.entry.policy.radius;
+        let key = (chase.target, radius, rho);
+        let cached = (!self.movement.ring_cache_disabled).then(|| {
+            self.movement.ring_cache[..self.movement.ring_cache_used]
+                .iter()
+                .find(|entry| entry.key == key)
+                .map(|entry| entry.span)
+        });
+        let span = match cached {
+            Some(Some(span)) => span,
+            Some(None) => self.fill_ring_cache(chase, rho, key),
+            None => {
+                let start = self.movement.ring_tagged.len();
+                self.scan_ring(chase, rho);
+                (start, self.movement.ring_tagged.len())
+            }
+        };
+        intervals.clear();
+        let mut fault = None;
+        for &(id, interval) in &self.movement.ring_tagged[span.0..span.1] {
+            if id == chase.entry.id {
+                continue;
+            }
+            match interval {
+                Ok(interval) => intervals.push(interval),
+                Err(error) => {
+                    fault = Some(error);
+                    break;
+                }
+            }
+        }
+        if self.movement.ring_cache_disabled {
+            self.movement.ring_tagged.truncate(span.0);
+        }
+        fault.map_or(Ok(()), Err)
+    }
+
+    /// Scans the ring of `key` once this tick into the tagged list and records its span.
+    fn fill_ring_cache(
+        &mut self,
+        chase: &RingChase,
+        rho: SimScalar,
+        key: (EntityId, SimScalar, SimScalar),
+    ) -> (usize, usize) {
+        let start = self.movement.ring_tagged.len();
+        self.scan_ring(chase, rho);
+        let span = (start, self.movement.ring_tagged.len());
+        let slot = self.movement.ring_cache_used;
+        let entry = super::RingCacheEntry { key, span };
+        if slot < self.movement.ring_cache.len() {
+            self.movement.ring_cache[slot] = entry;
+        } else {
+            self.movement.ring_cache.push(entry);
+        }
+        self.movement.ring_cache_used += 1;
+        span
+    }
+
+    /// Appends to the tagged list the blocking interval of every tick-start body of `chase`'s
+    /// class near its ring but its target, in the grid's order (a body that blocks nothing adds
+    /// nothing).
+    fn scan_ring(&mut self, chase: &RingChase, rho: SimScalar) {
+        let centre = self.tick_start_position(chase.target);
+        let policy = chase.entry.policy;
+        let class = policy.body_class();
+        let obstacles = &self.movement.obstacles[class];
+        let reach = rho
+            .saturating_add(policy.radius)
+            .saturating_add(self.movement.largest_radius[class]);
+        let tagged = &mut self.movement.ring_tagged;
+        self.movement.grids[class].for_each_near(centre, reach, |index| {
+            let body = &obstacles[index];
+            if body.id == chase.target {
+                return;
+            }
+            match blocking_interval(centre, rho, policy.radius, body.pos, body.radius) {
+                Ok(Some(interval)) => tagged.push((body.id, Ok(interval))),
+                Ok(None) => {}
+                Err(error) => tagged.push((body.id, Err(error))),
+            }
+        });
     }
 
     /// The position `id` had when this tick's movement phase began, world units: from the
