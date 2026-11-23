@@ -164,3 +164,12 @@ now 5 % of the patch (line: at least 4 pixels; deselected: at most 2), stated wi
 The radv capture is dropped from WP5's acceptance (plan §14): the windowed test child replaces it, and no capture
 goal is added to `client_diagnostics`.
 
+
+## 5C. Amendment 1: `battle_input_tests` restated
+
+`cargo gate package` on `e5f83766` failed `battle_input_tests::a_structure_alone_reports_why_it_cannot_move`
+(pending orders 1, expected 0): a right click with only the base selected now sets its rally, as D-10 states. The test
+is restated (plan Amendment 1): `a_producer_alone_takes_a_right_click_as_its_rally` asserts the one `SetRally` and the
+rally marker; `a_structure_alone_reports_why_it_cannot_move` keeps the refusal for a placed structure that trains
+nothing. `battle_input_tests` (release, `impl/client-wp5/battle_input_tests-2.log`): 38 passed. Quick could not have
+caught it: `quick` keeps only `fast` targets and this target is `Slow`, so no path rule is added.

@@ -24,7 +24,25 @@ golden re-records, and work across `sim_types`, `sim_core`, the catalog and the 
 - Line numbers drift, so search for the quoted symbol.
 - Claims not confirmed while planning are marked **verify**.
 - Later decisions are appended as `## Amendment N (orchestrator, YYYY-MM-DD): <decision>`, numbered from 1.
-- An `## As built` section follows the merge.
+- An `## Amendment 1 (orchestrator, 2026-11-23): a structure alone takes a right click as its rally
+
+`cargo gate package` on `e5f83766` failed `battle_input_tests::a_structure_alone_reports_why_it_cannot_move`: with
+only the base selected, a right click on the ground used to be refused ("Order rejected") and now submits `SetRally`.
+The new behaviour is the one D-10 states ("a structure-only selection submits only the rally") and S7 describes, so
+the test is restated, not the code:
+- `a_producer_alone_takes_a_right_click_as_its_rally`: a structure that trains units, selected alone, takes one
+  `SetRally` to the clicked point, marked as a rally.
+- `a_structure_alone_reports_why_it_cannot_move` keeps its refusal for a structure that trains nothing (every
+  structure of the live battle's base trains something, so the test places the faction's smallest one that does
+  not): D-3 gives a rally only to structures that train units, so the click is still a `Move` no recipient can
+  take, refused with its reason.
+
+The test was missed because `cargo gate quick` keeps only `fast` targets (`narrow_to_quick` in `crates/gate/src/select.rs`)
+and `battle_input_tests` and `battle_context_order_tests` are `Slow`; no path rule can add them to `quick`, and
+`package` already selects them through the `client` crate. WP5's own run of the client targets did not include
+`battle_input_tests`. Reclassifying them is not this plan's to decide.
+
+## As built` section follows the merge.
 
 **Questions.**
 
