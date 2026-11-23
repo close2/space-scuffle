@@ -1352,3 +1352,34 @@ counted at the band's outer edge.
    parking.
 4. **Re-measure WP4 on development seeds 1 to 1,000.** It must not worsen any development T-figure against WP3; if
    it does, stop with a trace. Then WP5, the single acceptance run, and the cost split, as Amendment 4 says.
+
+## Amendment 6 (orchestrator, 2026-11-23): the agent's three fixes adopted, with a hard limit on further amendments
+
+**Why.** The Amendment 5 build of WP4 (evidence §8 on `contact-solver-wp4-wip`) improved arc fill (0.609 → 0.662)
+and corridor fill (0.945 → 0.994) but worsened T1, T4 and T7 in several families. The traces:
+
+1. Passing every waiting friend in the side rule moved queue separation into contact, so gap and cross give-ups
+   rose.
+2. The one-pair side commitment flips whenever two threats are equally urgent: corridor seed 48, two firing
+   friends.
+3. Own-angle claims had no terrain or arc check, so units claimed points inside the wall.
+4. Units in range between shots were pushed into the enemy, raising arc enemy overlap to 0.219.
+
+**Decision: adopt the evidence's three proposals.**
+
+1. **Revert the side-rule part of Amendment 5 item 1.** Waiting friends are threats again, as in WP3. The committed
+   partner is kept while its time to collision stays within one tick of the earliest threat's. One tick is the
+   simulation's own resolution, not a tuned value. This stops the flip for every kind of friend.
+2. **Own-angle claims get the same terrain and arc checks as chosen slots.** A claim is re-chosen once its unit
+   has left the band by more than its radius.
+3. **Two definitions of anchored, each for its own consumer:**
+   - **slot request and side rule:** Amendment 5's attack-cycle definition stays;
+   - **contact (C-2):** a unit in range of a live target is anchored, so a press from behind never pushes it into
+     the enemy.
+
+**Hard limit.** This is the last incremental amendment to WP4's rules.
+- Re-measure on development seeds 1 to 1,000.
+- If any development T-figure is still worse than WP3's, stop. Do not propose a seventh rule change. Hand back with
+  the figures. The next step is then a design review of the side rule and slots against the survey's alternatives
+  (rank 2, HRVO), not another patch.
+- If it holds, go on to WP5, the single acceptance run and the cost split.
