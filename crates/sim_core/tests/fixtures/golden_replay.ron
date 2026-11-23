@@ -377,8 +377,14 @@
 // recorded for plan 2026-11-20-contact-solver (schema 34 -> 35), on native debug and release and
 // wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-splash-cliff-levels WP2 (checksum schema 36 -> 37): each splash also
+// encodes its cliff rule and its other-level target strike, so every checkpoint changed. No behaviour
+// did: with the two fields left out of the encoding at schema 36, both fixtures reproduce as
+// recorded for plan 2026-11-23-splash-centres WP1 (schema 35 -> 36), on native debug and release
+// and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
-    checksum_schema: 36,
+    checksum_schema: 37,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -404,25 +410,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x22002a9e05d37ab7,
-        0x8d60d0b34ab37916,
-        0xf33a39bde4fb5650,
-        0xd4a50cefde9dffbd,
-        0xc0e3f63472795111,
-        0xbc6c6d67c7e2bee7,
-        0xc6e0b88ae26823dd,
-        0x8ea1f1164c750f1d,
-        0xbefd2afdc1a254e2,
-        0xc641b08f618ded34,
-        0x182950fdd819de72,
-        0xa6559594ed1a5508,
-        0x560444c0a1b07a8c,
-        0x407ec9809eed4aea,
-        0x6896a84eb7460bf7,
-        0x349bce6f49891c8e,
-        0x5c2fe8ce6ca1bbf7,
-        0xc37a89dd42f540a9,
-        0x9e0553984450fa79,
-        0x35d4fb56c9aeec10,
+        0xf8c6bc08e4227cfb,
+        0x4dd9cc27f9b32a3d,
+        0x626e1ae227997069,
+        0x9aab95a95e78b761,
+        0xf5ab25300bc448fb,
+        0x3b6a7f6f06605cf8,
+        0xb7a4911b5f3d45c0,
+        0xd9ad31274f3bf4b1,
+        0x829593d7880a1d17,
+        0x2e5f8374d896a5f5,
+        0x4f84c7b8b4821e48,
+        0xd5b9db7ddb034c78,
+        0x8041143b3cb72cf8,
+        0x8b29537a2cd1429d,
+        0x6604ee8a58234562,
+        0xe02b85062bd38788,
+        0xab41e48f4e306e8c,
+        0x3c4fc0ea49bd2a64,
+        0xe4a6408ccfbf55f1,
+        0xbf8312fe2e257805,
     ],
 )

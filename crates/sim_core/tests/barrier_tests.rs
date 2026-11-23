@@ -313,6 +313,8 @@ fn b41_the_barrier_absorbs_splash() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     });
     let attacker = register_attacker(&mut world, gun);
     let plain = register_target(&mut world, 0, None);

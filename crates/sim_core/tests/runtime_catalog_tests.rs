@@ -1438,9 +1438,12 @@ fn an_edited_splash_impact_moves_the_burst() -> TestResult {
         text.contains("impact: Attacker"),
         "the shipped catalog centres an area on its attacker"
     );
+    // The other-level strike belongs to an attacker-centred area only (plan
+    // `2026-11-23-splash-cliff-levels` D-3), so the edit drops it with the centre.
     std::fs::write(
         &path,
-        text.replacen("impact: Attacker", "impact: Target", 1),
+        text.replacen("impact: Attacker", "impact: Target", 1)
+            .replacen("strike_target_on_other_level: true,", "", 1),
     )?;
     let edited = bundle.load()?;
     let struck = |catalogs: RuntimeCatalogs| -> Result<(bool, bool), Box<dyn std::error::Error>> {
@@ -1739,6 +1742,205 @@ fn edited_stance_orders_change_the_loaded_rule() -> TestResult {
         }
     }
     assert!(flipped >= 2, "both shipped sets flipped: {flipped}");
+    bundle.finish()?;
+    Ok(())
+}
+
+/// A 32-cell world from `catalogs` with the plateau: cells with `x >= 16` at level 1, the rest
+/// level 0; no random weapon delays.
+fn cliff_world(catalogs: RuntimeCatalogs) -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    sim_fixtures::without_random_delays(&mut world.catalog);
+    Ok(world)
+}
+
+/// The first small shipped mobile ground unit other than `except`, with its collision radius.
+fn small_infantry(
+    world: &SimWorld,
+    except: UnitTypeId,
+) -> Result<(UnitTypeId, SimScalar), Box<dyn std::error::Error>> {
+    Ok(world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.unit_type_id != except
+                && arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && matches!(arch.shape, ShapeKind::UnitSphere)
+                && arch.collision_radius <= SimScalar::HALF
+        })
+        .map(|arch| (arch.unit_type_id, arch.collision_radius))
+        .ok_or("small infantry")?)
+}
+
+/// Spawns `kind` for player 1 at `(x, 16)` holding position.
+fn holding(
+    world: &mut SimWorld,
+    kind: UnitTypeId,
+    x: SimScalar,
+) -> Result<sim_types::EntityId, Box<dyn std::error::Error>> {
+    let id = world.spawn_unit(kind, PlayerId(1), SimVec2::new(x, SimScalar::from_num(16)))?;
+    world
+        .entities
+        .get_mut(&id)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::HoldPosition, false)?;
+    Ok(id)
+}
+
+/// Orders `attacker` onto `target` and plays up to 120 ticks, until any of `watched` loses life.
+/// Returns which of `watched` lost life.
+fn struck_by(
+    world: &mut SimWorld,
+    attacker: sim_types::EntityId,
+    target: sim_types::EntityId,
+    watched: &[sim_types::EntityId],
+) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
+    let life = |world: &SimWorld, id| world.entities.get(&id).map_or(SimScalar::ZERO, |e| e.hp);
+    let full: Vec<_> = watched.iter().map(|&id| life(world, id)).collect();
+    world
+        .entities
+        .get_mut(&attacker)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)?;
+    for tick in 0..120 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if watched
+            .iter()
+            .zip(&full)
+            .any(|(&id, &before)| life(world, id) < before)
+        {
+            break;
+        }
+    }
+    Ok(watched
+        .iter()
+        .zip(&full)
+        .map(|(&id, &before)| life(world, id) < before)
+        .collect())
+}
+
+/// Plan `2026-11-23-splash-cliff-levels` P-7 (B-170): the cliff rule is read from `units.ron` at
+/// run time. The sieged cannon (a mode weapon with a conditional circular area), fired from the
+/// plateau at infantry below it, spares infantry on the plateau inside its first zone with the
+/// shipped catalog, and strikes it in the same binary with the row edited to `cliff: Any`. The
+/// Baneling analogue's burst (an attacker-centred area) from the plateau strikes its target below
+/// with the shipped catalog, and leaves it untouched with the row's
+/// `strike_target_on_other_level: true` removed.
+#[test]
+fn an_edited_cliff_rule_changes_who_an_area_strikes() -> TestResult {
+    let bundle = Bundle::new("splash-cliff")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let condition = "target_radius_below: Some(1.25),";
+    let fallback = "strike_target_on_other_level: true,";
+    assert!(
+        text.contains(condition) && text.contains(fallback),
+        "the shipped rows"
+    );
+    std::fs::write(
+        &path,
+        text.replacen(condition, &format!("{condition} cliff: Any,"), 1),
+    )?;
+    let any_level_cannon = bundle.load()?;
+    std::fs::write(&path, text.replacen(fallback, "", 1))?;
+    let no_fallback = bundle.load()?;
+    bundle.restore()?;
+    let shipped_again = bundle.load()?;
+
+    let cannon = |catalogs: RuntimeCatalogs| -> Result<Vec<bool>, Box<dyn std::error::Error>> {
+        let mut world = cliff_world(catalogs)?;
+        let (owner_kind, mut weapon) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                arch.modes
+                    .iter()
+                    .filter_map(|mode| {
+                        mode.ground_weapon_override
+                            .as_ref()
+                            .and_then(Option::as_ref)
+                    })
+                    .find(|weapon| {
+                        weapon
+                            .splash
+                            .as_ref()
+                            .is_some_and(|splash| splash.target_radius_below.is_some())
+                    })
+                    .map(|weapon| (arch.unit_type_id, weapon.clone()))
+            })
+            .ok_or("a conditional mode weapon")?;
+        weapon.min_range = SimScalar::ZERO;
+        weapon.firing_arc = sim_types::SimAngle::from_degrees(360);
+        weapon.acquire_arc = sim_types::SimAngle::from_degrees(360);
+        weapon.has_turret = false;
+        let arch = world.catalog.get_mut(owner_kind)?;
+        arch.weapon = Some(weapon.clone());
+        arch.ground_weapon = Some(weapon);
+        let (kind, _) = small_infantry(&world, owner_kind)?;
+        let gunner = world.spawn_unit(
+            owner_kind,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(22), SimScalar::from_num(16)),
+        )?;
+        let target = holding(&mut world, kind, SimScalar::from_num(15.5))?;
+        let beside = holding(&mut world, kind, SimScalar::from_num(16.3))?;
+        struck_by(&mut world, gunner, target, &[target, beside])
+    };
+    assert_eq!(
+        cannon(shipped)?,
+        vec![true, false],
+        "shipped: kept to its level"
+    );
+    assert_eq!(
+        cannon(any_level_cannon)?,
+        vec![true, true],
+        "edited: every level"
+    );
+
+    let burst = |catalogs: RuntimeCatalogs| -> Result<bool, Box<dyn std::error::Error>> {
+        let mut world = cliff_world(catalogs)?;
+        let burst = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                arch.weapon.as_ref().is_some_and(|weapon| {
+                    weapon
+                        .splash
+                        .as_ref()
+                        .is_some_and(|splash| splash.impact == sim_types::SplashImpact::Attacker)
+                })
+            })
+            .map(|arch| (arch.unit_type_id, arch.collision_radius))
+            .ok_or("an attacker-centred area")?;
+        let (burst_kind, own) = burst;
+        let (kind, radius) = small_infantry(&world, burst_kind)?;
+        let origin = SimScalar::from_num(16) + own;
+        let baneling = world.spawn_unit(
+            burst_kind,
+            PlayerId(0),
+            SimVec2::new(origin, SimScalar::from_num(16)),
+        )?;
+        let target_x = origin - own - radius - SimScalar::from_num(0.1);
+        let target = holding(&mut world, kind, target_x)?;
+        Ok(struck_by(&mut world, baneling, target, &[target])?[0])
+    };
+    assert!(burst(shipped_again)?, "shipped: struck across the cliff");
+    assert!(
+        !burst(no_fallback)?,
+        "edited: the target on another level untouched"
+    );
     bundle.finish()?;
     Ok(())
 }
