@@ -1141,3 +1141,86 @@ That is about 35 % of the run, roughly +8.2 G.
 
 **Reading.** Step 2′ meets P2's two criteria but stops under Amendment 8's rule. By Amendments 12 and 13 the
 remaining steps are not run, and the trade-off goes to the owner with step 1's figures.
+
+### 13.6 Legacy against step 1 on the development range (for the owner)
+
+**Runs.** Development seeds 1 to 1,000 per family, each scene family also relabelled, mirror 1 to 1,000.
+- **Legacy:** run on this tree, plan head `dd9118ab` (`runs/legacy-head-1`). Its rows reproduce WP1's baseline
+  (gap M1 17.70, M1-hi 3.79, give-ups 454).
+- **Step 1:** P1 and P7 on WP5's Solver (`runs/p17-1`). Main's later merges change no movement code.
+
+**How the table is judged.**
+- Verdicts are the harness's (`movement_harness --aggregate`), with E1 added to T4. Relative thresholds compare with
+  Legacy.
+- "Worse than Legacy" means beyond §6.4's noise rule: outside Legacy's 95 % bootstrap interval (comparator rules of
+  §10). Maxima are read through the number of scenes over the bound.
+
+| T | Threshold | Family | Legacy | | Step 1 | | Step 1 worse than Legacy beyond noise |
+|---|---|---|---|---|---|---|---|
+| T1 | M1 ≤ 1.0, M1-hi ≤ 0.25, M1 not above Legacy | gap | 17.70 / 3.79 | fail | 1.11 / 0.28 | fail | no (much better) |
+| | | arc | 3.20 / 1.98 | fail | 2.48 / 0.19 | fail | no |
+| | | cross | 4.27 / 1.36 | fail | 1.19 / 0.49 | fail | no |
+| | | corridor | 8.77 / 2.82 | fail | 0.00 / 0.00 | pass | no |
+| | | corner | 20.94 / 4.60 | fail | 0.50 / 0.11 | pass | no |
+| T2 | M2 not above Legacy; M3 ≤ 0.5 | gap | 0.0634 / 0.004 | pass | 0.0286 / 0.000 | pass | no |
+| | | arc | 0.0991 / 2.15 | fail | 0.0487 / 0.034 | pass | no |
+| | | cross | 0.0344 / 0.001 | pass | 0.0216 / 0.000 | pass | no |
+| | | corridor | 0.0437 / 0.56 | fail | 0.0040 / 0.000 | pass | no |
+| | | corner | 0.0617 / 0.000 | pass | 0.0186 / 0.000 | pass | no |
+| T3 | M4 ≤ 1 % | gap | 0.01 % | pass | 0.21 % | pass | **yes** (0.009 → 0.214 %, within T3) |
+| | | arc | 1.99 % | fail | 0.01 % | pass | no |
+| | | cross | 0.00 % | pass | 0.50 % | pass | **yes** (0.0006 → 0.499 %, within T3) |
+| | | corridor | 0.52 % | pass | 0.00 % | pass | no |
+| | | corner | 0.00 % | pass | 0.04 % | pass | **yes** (0.003 → 0.041 %, within T3) |
+| T4 | 0 deadlocks and give-ups, ≥ 99.5 % complete, no wrong pass | gap | 459 / 454, 80.5 % | fail | 46 / 46, 97.8 % | fail | no |
+| | | cross | 152 / 152, 94.6 % | fail | 2 / 2, 99.8 % | fail | no |
+| | | corner | 0 / 0, 100 % | pass | 7 / 7, 99.7 % | fail | **yes** (0 → 7 give-ups) |
+| | E1: 0 give-ups | arc | 25 | fail | 305 | fail | **yes** (25 → 305) |
+| | | corridor | 275 | fail | 20 | fail | no |
+| T5 | fill mean ≥ 0.90, 5th ≥ 0.7476 | arc | 0.980 / 0.889 | pass | 0.967 / 0.857 | pass | **yes** (0.980 → 0.967; 0.889 → 0.857, both within T5) |
+| T6 | η median ≥ 0.5, 5th ≥ 0.25, no drop | gap | 0.655 / 0.300 / 0 | pass | 0.784 / 0.381 / 0 | pass | no |
+| T7 | enemy ≤ 0.5 %; terrain ≤ 2⁻¹⁰; friends > 5 % moving ≤ 0.1 %, > 1 % standing ≤ 0.1 %, max ≤ 15 % | gap | 0 / 0.00008 / 14.68 % / 5.59 % / 0.742 | fail | 0 / 0.00002 / 1.62 % / 0.02 % / 0.958 | fail | no (scenes over the friend maximum 907 → 242) |
+| | | arc | 0.0183 / 0 / 1.32 % / 0.22 % / 0.597 | fail | 0 / 0 / 0.01 % / 0.01 % / 0.300 | fail (1 scene over max) | no (274 → 1 scene) |
+| | | cross | 0 / 0 / 3.78 % / 1.35 % / 0.537 | fail | 0 / 0 / 0.00 % / 0.00 % / 0.098 | pass | no |
+| | | corridor | 0.0398 / 0.00008 / 7.35 % / 3.88 % / 0.988 | fail | 0 / 0 / 0.00 % / 0.00 % / 0.010 | pass | no |
+| | | corner | 0 / 0 / 14.89 % / 5.23 % / 0.554 | fail | 0 / 0 / 0.03 % / 0.01 % / 0.520 | fail | no (920 → 23 scenes) |
+| T8 | relabel sign tests p ≥ 0.01 | gap | 0.436 / 0.248 | pass | 0.198 / 0.041 | pass | no |
+| | | arc | 0.968 / 0.134 | pass | 0.597 / 0.871 | pass | no |
+| | | cross | 0.031 / **0.000** | fail | 1.000 / 0.180 | pass | no |
+| | | corridor | **0.004** / 0.911 | fail | 1.000 / 1.000 | pass | no |
+| | | corner | 0.711 / 0.715 | pass | 0.948 / 0.560 | pass | no |
+| T9 | blue share's 95 % Wilson interval contains 0.5 | mirror | 0.438 [0.400, 0.476], 356 draws | fail | 0.554 [0.453, 0.652], 908 draws | pass | no |
+| D-S | stuck with room, unit-ticks (reported) | arc | 10,959 | — | 102,537 | — | **yes** |
+| | | corridor | 5,624 | — | 2,502 | — | no |
+
+**Totals:**
+- **Legacy** passes 13 of the 33 rows judged against a threshold.
+- **Step 1** passes 22.
+- **Step 1 fails, which Legacy passes:**
+  - T4 on corner;
+  - T7 maximum on arc (one scene);
+  - E1 on arc, which both fail, though step 1 is much further from zero.
+- **Legacy fails, which step 1 passes:**
+  - T1 on corridor and corner;
+  - T2 on arc and corridor;
+  - T3 on arc;
+  - T7 on cross and corridor;
+  - T8 on cross and corridor;
+  - T9.
+
+**Step 1 is worse than Legacy beyond noise on these figures only:**
+- arc give-ups (E1): 25 → 305;
+- arc fill: 0.980 / 0.889 → 0.967 / 0.857 (T5 holds for both);
+- arc D-S: 10,959 → 102,537;
+- corner T4: 0 → 7 give-ups, 100 % → 99.7 % complete;
+- M4 in gap, cross and corner (within T3 for both);
+- corridor fill: 0.955 → 0.908 (no T-figure; the two-abreast miss, Q0095).
+
+**Cost** (release benchmark, 400 units, 300 ticks, instructions retired, this tree; §13.5). The Q0093 (c) bar is at
+most +60 % instructions and at least 50 ticks per second.
+
+| Scenario | Legacy | Step 1 | Bar |
+|---|---:|---:|---|
+| 64 × 64, armies meet | 10.35 G | 17.06 G (+65 %), 98 ticks per second | **fails** (+65 % > +60 %) |
+| 128 × 128, armies apart | 10.74 G | 11.49 G (+7 %), 171 ticks per second | holds |
+| showcase canyon | 18.03 G | 27.75 G (+54 %), 78 ticks per second | holds |
