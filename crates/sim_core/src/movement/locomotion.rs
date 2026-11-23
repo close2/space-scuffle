@@ -36,6 +36,7 @@ use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
     direction, distance, within_distance,
 };
+use super::ring::{RingAim, RingChase};
 use super::tuning::{
     ABANDONED_TARGET_TICKS, ARRIVAL_WITNESS_REACH, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
     REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
@@ -47,7 +48,7 @@ use super::{
     RouteOutcome, RouteOutcomeKind,
 };
 use crate::catalog::{ContactRules, MovementPipeline};
-use crate::entity::{Entity, MovementMemory};
+use crate::entity::{Entity, MovementMemory, SlotClaim};
 use crate::steering::{
     check_cluster_arrival_with, remove_blocked_velocity, steer_body, surround_side, ContactBody,
     SteeringObstacle,
@@ -758,6 +759,44 @@ impl SimWorld {
         ) || (actor.velocity == SimVec2::ZERO && front_attacks() && target_lives())
     }
 
+    /// Whether `actor` stands engaged, so friendly traffic does not push it: under the legacy
+    /// pipeline [`Self::is_anchored_in_combat`]; under the solver pipeline, in range of a live
+    /// target it attacks (plan `2026-11-20-contact-solver` Amendment 7, item 1). With hold,
+    /// immobile and unpushable this is the one definition of anchored, and under the solver
+    /// only contact reads it: the contact shares (C-2) and the idle-yield test of intent, which
+    /// asks whether contact would push the body aside.
+    pub(crate) fn engaged(&self, entry: MotionEntry, actor: &Entity) -> bool {
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            self.in_range_of_live_target(entry, actor)
+        } else {
+            self.is_anchored_in_combat(actor)
+        }
+    }
+
+    /// Whether `actor` stands within its weapon's band of a live target: its current target, or
+    /// the target of its attack order.
+    fn in_range_of_live_target(&self, entry: MotionEntry, actor: &Entity) -> bool {
+        let target = actor.current_target.or(match actor.order_queue.front() {
+            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+            _ => None,
+        });
+        let Some((id, target)) = target.and_then(|id| {
+            self.entities
+                .get(&id)
+                .filter(|t| t.is_alive())
+                .map(|t| (id, t))
+        }) else {
+            return false;
+        };
+        let Ok(Some(band)) = self.pursuit_band(entry, actor, target, id, AttackOrigin::Explicit)
+        else {
+            return false;
+        };
+        distance(actor.position, target.position)
+            .map(|d| i128::from(d.raw()))
+            .is_ok_and(|d| d <= band.max && d >= band.min)
+    }
+
     fn obstacle_of(&self, entry: MotionEntry, actor: &Entity) -> SteeringObstacle {
         let idle = matches!(actor.order_queue.front(), None | Some(UnitOrder::Idle));
         SteeringObstacle {
@@ -767,7 +806,7 @@ impl SimWorld {
             velocity: actor.velocity,
             owner: actor.owner,
             push_priority: entry.push_priority,
-            anchored: actor.cannot_be_pushed() || self.is_anchored_in_combat(actor),
+            anchored: actor.cannot_be_pushed() || self.engaged(entry, actor),
             idle: actor.is_idle(),
             settled_on: actor.movement.arrived_at.filter(|_| idle),
         }
@@ -787,7 +826,12 @@ impl SimWorld {
         for layer in &mut self.movement.obstacles {
             layer.clear();
         }
+        // `ids` follow the entity table's order, so the record is sorted by id.
+        self.movement.tick_start.clear();
         for &id in &ids {
+            if let Some(actor) = self.entities.get(&id) {
+                self.movement.tick_start.push((id, actor.position));
+            }
             match self.motion_entry(id) {
                 Ok(entry) => {
                     // A body without collision (mining, or a status's suppression) is no
@@ -1150,7 +1194,9 @@ impl SimWorld {
 
     /// Prepares one pursuer's motion toward `target_id`: aim when in range, otherwise chase.
     ///
-    /// The range check runs first and needs the whole world. The chase then runs in stages over a
+    /// The range check runs first and needs the whole world. Under the solver pipeline the ring
+    /// rule then decides whether the unit stands for want of room (plan
+    /// `2026-11-20-contact-solver` Amendment 7, item 2). The chase then runs in stages over a
     /// [`MotionDraft`], like walking, with the target's position as the goal.
     fn prepare_pursuit(
         &mut self,
@@ -1158,8 +1204,67 @@ impl SimWorld {
         target_id: EntityId,
         origin: AttackOrigin,
     ) -> Result<MotionProposal, MovementInvariant> {
+        let (mut proposal, mut pursuit) = match self.start_pursuit(entry, target_id, origin)? {
+            PursuitStart::Settled(proposal) => return Ok(proposal),
+            PursuitStart::Chase(proposal, pursuit) => (proposal, pursuit),
+        };
+        if self.catalog.movement_rules().contact().pipeline == MovementPipeline::Solver {
+            let position = self
+                .entities
+                .get(&entry.id)
+                .map_or(SimVec2::ZERO, |a| a.position);
+            let leash = (pursuit.origin == AttackOrigin::Acquired).then(|| {
+                (
+                    proposal.memory.leash_origin.unwrap_or(position),
+                    pursuit.leash,
+                )
+            });
+            let kept = proposal.memory.slot.filter(|gap| gap.target == target_id);
+            let aim = self.ring_aim(RingChase {
+                entry,
+                position,
+                target: target_id,
+                band_max: pursuit.max,
+                leash,
+                kept: kept.map(|gap| gap.point),
+            })?;
+            proposal.memory.slot = None;
+            match aim {
+                RingAim::Stand => {
+                    // G-6: no free angle on the ring; the order stays and no stall accrues
+                    // (Q0089).
+                    proposal.velocity = SimVec2::ZERO;
+                    proposal.anim = AnimState::Idle;
+                    return Ok(proposal);
+                }
+                RingAim::Straight => {}
+                RingAim::Gap(_, point) => {
+                    // A unit walking to a gap measures its progress to the gap point; a new
+                    // gap starts that measure afresh.
+                    if kept.is_none_or(|gap| gap.point != point) {
+                        proposal.memory.progress_best = None;
+                    }
+                    proposal.memory.slot = Some(SlotClaim {
+                        target: target_id,
+                        point,
+                    });
+                    pursuit.gap = Some(point);
+                }
+            }
+        }
+        self.chase_target(entry, target_id, proposal, &pursuit)
+    }
+
+    /// The pursuit's first stage: a proposal that settles the tick when the target is gone, the
+    /// unit has no weapon against it, or it stands in range and aims; otherwise the chase's
+    /// facts.
+    fn start_pursuit(
+        &self,
+        entry: MotionEntry,
+        target_id: EntityId,
+        origin: AttackOrigin,
+    ) -> Result<PursuitStart, MovementInvariant> {
         let id = entry.id;
-        let policy = entry.policy;
         let actor = self
             .entities
             .get(&id)
@@ -1167,11 +1272,11 @@ impl SimWorld {
                 entity: id,
                 reason: "validated pursuer disappeared",
             })?;
-        let mut proposal = MotionProposal::new(actor, policy);
+        let mut proposal = MotionProposal::new(actor, entry.policy);
         if !self.is_entity_available_for_combat(actor.owner, target_id) {
             proposal.end_attack();
             self.coast(entry, actor, &mut proposal)?;
-            return Ok(proposal);
+            return Ok(PursuitStart::Settled(proposal));
         }
         let target = self
             .entities
@@ -1183,13 +1288,43 @@ impl SimWorld {
         let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
             proposal.end_attack();
             self.coast(entry, actor, &mut proposal)?;
-            return Ok(proposal);
+            return Ok(PursuitStart::Settled(proposal));
         };
         if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
-            return Ok(proposal);
+            return Ok(PursuitStart::Settled(proposal));
         }
+        Ok(PursuitStart::Chase(proposal, pursuit))
+    }
 
-        let goal = target.position;
+    /// The chase toward `target_id` as a [`MotionDraft`], once the unit is out of range.
+    fn chase_target(
+        &mut self,
+        entry: MotionEntry,
+        target_id: EntityId,
+        proposal: MotionProposal,
+        pursuit: &Pursuit,
+    ) -> Result<MotionProposal, MovementInvariant> {
+        let id = entry.id;
+        let policy = entry.policy;
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(MovementInvariant::InvalidState {
+                entity: id,
+                reason: "validated pursuer disappeared",
+            })?;
+        let goal = match pursuit.gap {
+            Some(point) => point,
+            None => {
+                self.entities
+                    .get(&target_id)
+                    .ok_or(MovementInvariant::InvalidState {
+                        entity: target_id,
+                        reason: "available target disappeared",
+                    })?
+                    .position
+            }
+        };
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
         let owner = actor
             .owner
@@ -1218,7 +1353,7 @@ impl SimWorld {
             contact: self.catalog.movement_rules().contact(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
-        let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
+        let chased = draft.chase(&mut scene, &mut neighbours, pursuit);
         scene.movement.neighbours = neighbours;
         chased?;
         Ok(draft.proposal)
@@ -1284,8 +1419,17 @@ impl SimWorld {
             max,
             min,
             leash: self.catalog.movement_rules().acquire_leash_radius(),
+            gap: None,
         }))
     }
+}
+
+/// How a pursuit's first stage ended ([`SimWorld::start_pursuit`]).
+enum PursuitStart {
+    /// The tick is settled: the proposal is final.
+    Settled(MotionProposal),
+    /// The unit is out of range: chase.
+    Chase(MotionProposal, Pursuit),
 }
 
 /// One chase's fixed facts: whom, why, and from how far the pursuer may fire.
@@ -1303,6 +1447,10 @@ struct Pursuit {
     /// The leash of an automatic chase, world units: 5.0.14's `AcquireLeashRadius`, measured
     /// from where the chase began (B-142).
     leash: SimScalar,
+    /// Under the solver pipeline, the free point of the ring the unit walks to when its own
+    /// bearing is blocked (plan `2026-11-20-contact-solver` Amendment 7, item 2): the chase's
+    /// goal, which it brakes onto and measures its progress against.
+    gap: Option<SimVec2>,
 }
 
 impl Pursuit {
@@ -1499,7 +1647,10 @@ impl MotionDraft<'_> {
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
         // An attack-move queued behind a friend that holds its ground is not stalled (D-4); a
         // plain move into a blocked spot still is.
+        // Under the solver the stall rule reads no class of another body (plan Amendment 7,
+        // item 1): a unit with no room stands by the ring rule instead.
         let queued = attack_moving
+            && intent.is_none()
             && friend_holds_ahead(
                 &context,
                 direction(next, self.actor.position).map_err(self.fault())?,
@@ -1832,8 +1983,13 @@ impl MotionDraft<'_> {
         if self.ground && self.cooled_down && stale {
             self.proposal.drop_route();
         }
-        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39).
-        let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
+        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39), or on
+        // the gap point, which lies on that edge.
+        let reach = if pursuit.gap.is_some() {
+            SimScalar::ZERO
+        } else {
+            SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX))
+        };
         self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         let intent = scene.intent();
@@ -1851,12 +2007,14 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
-        // A chase queued behind a friend that holds its ground is not stalled (D-4).
-        let queued = friend_holds_ahead(
-            &context,
-            direction(next, self.actor.position).map_err(self.fault())?,
-        )
-        .map_err(self.fault())?;
+        // A chase queued behind a friend that holds its ground is not stalled (D-4). Under the
+        // solver the stall rule reads no class of another body (plan Amendment 7, item 1).
+        let queued = context.intent.is_none()
+            && friend_holds_ahead(
+                &context,
+                direction(next, self.actor.position).map_err(self.fault())?,
+            )
+            .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
         if self.beyond_leash(pursuit) {
             self.abandon_pursuit(routes, pursuit.target);

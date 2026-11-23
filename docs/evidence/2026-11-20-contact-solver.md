@@ -707,3 +707,123 @@ at K).
    a behaviour effect outside the solver, is measured and judged separately.
 5. **T1 and T4 on gap** remain just above their thresholds with the candidate (§6.5); the acceptance range stays
    unrun.
+
+## 10. WP4 rebuilt under Amendment 7: stopped on Arm A, and on Arm B by T3 alone
+
+Base: `contact-solver-plan` at `080fccc0` (main `8f91e0d4` merged). Development range only (seeds 1 to 1,000 per
+family, scene families relabelled, mirror 1 to 1,000), one run at a time under `flock ~/scratch/gate.lock`,
+`--jobs 4`. The acceptance and held-out ranges were not run. CSVs, binaries, traces and the comparator are under
+`~/scratch/contact-solver/wp4b/`.
+
+**Baseline.** WP3 is the branch head's Solver pipeline: run `wp3b/runs/a2-1`. It is byte-identical to `c3-1` in
+arc, cross, corridor, corner and the mirror. Its gap rows carry the WP3b arrival variant (46 give-ups); `c3-1`'s
+gap rows are step 1's (336 give-ups).
+
+**Comparator (E2), fixed before any arm was measured.** `wp4b/compare.py`:
+- each T-figure of WP3, with its 95 % bootstrap interval (scenarios resampled, 2,000 resamples);
+- a figure is **worse** when it lies beyond that interval on the worse side. The Solver's placebos are silent
+  (§6.6 C-c), so the interval is the whole band.
+- Maxima (friend, enemy, terrain) are extreme-value statistics: their bootstrap interval ends at the maximum itself,
+  so the rule cannot judge them. They are judged by the number of scenes over the T7 bound instead (friends
+  > 0.15, enemy > 0.005, terrain > 2⁻¹⁰); the raw maxima are reported.
+- T8 is judged by its threshold (p < 0.01 where WP3 holds); T9 by whether the blue share leaves WP3's Wilson
+  interval away from 0.5.
+
+| Item | State | Commit |
+|---|---|---|
+| E1 and E4 in the harness | Committed on the plan branch | `fce01ed6` |
+| Arm A | **Stop**: arc worse beyond noise on T1, T3, T4 (E1) and T7 | `08a25b0a` (`contact-solver-wp4b-wip`) |
+| Arm B (measured as information after A's stop) | **Stop**: arc M4 (T3) worse beyond noise; every other T-figure equal or better | `cd594ab8` (`contact-solver-wp4b-wip`) |
+| TTC term, wall-sliding hard pass, WP5, acceptance | Not started | — |
+
+### 10.1 What was built
+
+- **One definition of anchored** (`SimWorld::engaged`, Solver only): hold, immobile, unpushable, or in range of a
+  live target it attacks (current target or `AttackTarget`). Contact reads it (C-2's `engaged`), and so does the
+  snapshot's `anchored`. Under the Solver, the only reader of the snapshot's `anchored` is intent's idle-yield
+  test, which asks whether contact would push the body aside.
+- **The stall rules** (walk and chase) no longer read `friend_holds_ahead` under the Solver.
+- **The ring rule** (`movement/ring.rs`), asked once per chase and tick:
+  - The ring is the band's outer edge round the target's tick-start position.
+  - Blocking arcs come from every tick-start body of the unit's class whose disc reaches the ring (G-2's
+    `blocking_interval`), except the unit and its target.
+  - An angle is admissible when the unit's terrain disc can walk the ring to it from its own bearing point (mesh
+    disc sweeps, sampled every half radius, extended lazily) and it lies within the leash.
+  - The rule applies only to a unit outside its band whose own bearing point is admissible.
+  - Outcomes:
+    - own bearing free: chase straight;
+    - no free admissible angle: stand with the order kept and no stall;
+    - **Arm A:** otherwise chase straight;
+    - **Arm B:** otherwise walk to the nearest free angle (ties clockwise), keeping last tick's gap while it is free
+      (one point in `MovementMemory::slot`), braking onto it and measuring progress against it.
+- **Deleted:** `resolve_claims`, `SlotRequest`, `ClaimFate`, `claim_fate`. The claims machinery of
+  `contact-solver-wp4-wip` (`KeptClaim`, own-angle claims, `queued_toward`, the per-tick buffers) was never
+  brought over.
+- **Legacy:** bit-identical. Its rows on seeds 1 to 20 of gap, arc, cross and corridor equal WP1's.
+- **Gap, cross and corner rows** are byte-identical to WP3's under both arms (no pursuits).
+
+### 10.2 Development figures against WP3 (95 % bootstrap intervals)
+
+| Family | Figure | WP3 | Arm A | Arm B |
+|---|---|---:|---:|---:|
+| arc | M1 (T1) | 29.85 [28.46, 31.22] | 25.86 [24.72, 27.15] | **3.77** [2.97, 4.70] |
+| arc | M1-hi (T1) | 0.714 [0.648, 0.785] | **1.42** [1.30, 1.56] worse | 0.220 [0.191, 0.250] |
+| arc | M1 under an order / idle (E4) | — | 26.07 / 20.78 | 3.77 / 4.55 |
+| arc | M2 / M3 (T2) | 0.2474 / 1.44 | 0.2180 / 1.21 | 0.0568 / 0.060 |
+| arc | M4 % (T3) | 0.0153 [0.0115, 0.0190] | **0.1252** worse | **0.0513** [0.0441, 0.0591] worse |
+| arc | give-ups (E1) | 4,827 [4,599, 5,061] | **9,402** worse | 1,204 [1,062, 1,355] |
+| arc | fill mean / 5th (T5) | 0.609 / 0.381 | 0.633 / 0.400 | **0.806 / 0.615** |
+| arc | friends > 5 % moving / > 1 % standing (T7) | 0.93 % / 3.13 % | **3.96 % / 3.76 %** worse | 0.09 % / 0.24 % |
+| arc | scenes: friend > 0.15 / enemy > 0.005 (T7) | 317 / 91 | **665 / 166** worse | 29 / 40 |
+| arc | relabel p (M1 / completion) | 0.445 / 0.860 | 0.886 / 0.957 | 0.560 / 1.000 |
+| corridor | M1 (T1) | 25.76 [22.95, 28.69] | 0.31 | **0.003** |
+| corridor | give-ups (E1) | 4,991 | 233 | **16** |
+| corridor | M3 (T2) | 1.08 | — | 0.000 |
+| corridor | friends > 5 % moving / > 1 % standing | 7.53 % / 30.06 % | — | 0.00 % / 0.00 % |
+| corridor | scenes: enemy > 0.005 | 29 | — | 0 |
+| corridor | fill mean (not a T-figure, §6.6 C-e) | 0.945 [0.930, 0.960] | 0.842 | 0.869 lower |
+| mirror | blue share (T9) | 0.452 [0.414, 0.490] | 0.415 [0.377, 0.453] | 0.458 [0.420, 0.496] |
+
+Full tables: `wp4b/cmp-a0.md` and `wp4b/cmp-b0.md`.
+
+### 10.3 Traces
+
+- **Arm A, arc give-ups** (`trace/arc1-a0.txt`; arc seed 1: P 2, R 4, r 0.75, k 15, capacity 28).
+  - Every give-up is a unit whose bearing point on the ring is blocked by one to three bodies, while only 7 of 28
+    places are taken.
+  - The ring has room, so the unit does not stand. It chases straight, presses into the front rank, and with no
+    exemption from the stall rule it abandons after 10 s.
+  - The review expected Arm A to bring arc give-ups near 0. That held only where the ring is full. Where the
+    ring has room, the rear units need the gap aim (Arm B).
+  - The give-ups then cascade. Abandoned units are idle and are shoved by their moving friends: M1-hi and the
+    overlaps rise.
+- **Arm B, arc M4** (`trace/arc-m4-b0.txt`; seeds 89, 28, 36).
+  - Every violation window is a unit under its unchanged attack order, walking to a gap.
+  - Its potential rises by more than its radius in one second (for example 0.34 → 1.14, r 0.625) as it rounds the
+    front rank: the side rule and contact move it outward round the bodies between it and the gap.
+  - A straight walk to a point on the ring never raises the potential, so the rise is the detour round the crowd.
+  - The share is 0.051 % of windows, against T3's 1 %. It is worse than WP3 beyond the noise rule.
+- **Arm B, corridor fill** (`trace/corridor4-b0.txt`, `trace/corridor2-b0.txt`).
+  - Every short scene has capacity 2. One attacker stands in range on the corridor's axis, and the rest stand with
+    their orders.
+  - With the first unit on the axis, the ring's nearest free angle lies 2r off the axis. That needs `3r ≤ w/2` to
+    fit, while the capacity counts two abreast at ±(r + 1/32). Examples:
+    - seed 2: w 2, r 0.375, disc 1.125 > 1;
+    - seed 4: w 3, r 0.5, exactly 1.5 = 1.5, refused.
+  - WP3 reached the second place by squeezing in contact. Under the ring rule the unit stands for want of a free
+    angle.
+  - This is no T-figure (T5 is arc only). But M5's known answer, `min(k, ⌊w/(2r + 1/16)⌋)` in range, is missed in
+    about 29 % of corridor scenes (development seeds 1 to 100).
+
+### 10.4 Reading (for the orchestrator; no rule change proposed)
+
+- By Amendment 7, item 7, both arms stop.
+- **Arm A** is worse on T1 (M1-hi), T3, T4/E1 and T7 in the arc family.
+- **Arm B** is worse only on arc M4 (T3), and stays 20 times below T3's absolute bound. It is better beyond noise
+  on every other arc and corridor T-figure.
+- **Arm B still fails these thresholds on development:**
+  - T5: arc fill 0.806 / 0.615 against 0.90 / 0.7476;
+  - E1: 1,204 arc give-ups and 16 corridor give-ups;
+  - T7: arc enemy over 0.005 in 40 scenes;
+  - T1: arc M1 3.77;
+  - T9: the mirror.
