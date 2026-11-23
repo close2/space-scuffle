@@ -1268,3 +1268,35 @@ T8 now holds everywhere. WP3 still stops, for three reasons:
    record that and defer the test's verdict to WP4. Otherwise classify it as a defect, to be fixed, or as a
    consequence of the rule, to be restated with the trace. A test is never loosened to pass.
 6. **The acceptance range** is used only once WP3 meets its development figures, as before.
+
+## Amendment 4 (orchestrator, 2026-11-23): pressed-front rule dropped; near-reach fix and the bounded arrival variant adopted; WP4 and WP5 proceed; acceptance judged on WP3 to WP5 together; cost bar to the owner (Q0093)
+
+**Why** (evidence §6 on `contact-solver-wp3-wip2`):
+
+- **Pressed-front rule:** it cleared arc and corridor reversals but collapsed arc fill (T5 0.609 → 0.163). The
+  cause is a cascade through the legacy `is_anchored_in_combat`: a unit standing under an attack order counts as
+  anchored. The rule did not reduce battle iterations either.
+- **The arrival rule as written** ended orders before the gap in single-file scenes.
+- **The bounded variant:** beyond the existing reach, only an arrival the unit cannot push counts as a witness.
+  Gap give-ups fall from 336 to 46, and scenes complete rises from 83.4 % to 97.8 %.
+- **The near-reach fix** (the corner aim reads only the legacy reach) is a defect fix, with its test first.
+- **Cost:** after the exact cost step it is +55 %, +8 % and +51 %. About +1.6 G of the 64×64 excess is target
+  acquisition, a behaviour effect, so even a free solver leaves about +25 %. Dense crowds keep the iteration count
+  near K.
+
+**Decision.**
+
+1. **Drop the pressed-front rule.**
+2. **Adopt:**
+   - the near-reach fix;
+   - the WP3b variant (`5d8440fe`) as the arrival rule, with the plan text restated to it.
+3. **Judge WP3 to WP5 together.** Arc and corridor wait for WP4's slots, and the mirror waits for WP5, so
+   judging WP3 alone measures an unfinished pipeline.
+   - WP3's code lands on the branch now, behind `pipeline: Solver`; Legacy stays bit-identical.
+   - The prescribed T4/T7 test is marked to be judged at WP5, with its reason. It is not loosened.
+   - Build WP4 and WP5 next, on the development range.
+   - The acceptance range runs once after WP5, against the pre-registered T1 to T9, unchanged.
+4. **The fan-out test** (`test_move_command_units_fan_out…`) is restated at WP6, as the evidence proposes, with its
+   trace. Until then it is not changed.
+5. **Gauss–Seidel stays deferred** until the owner answers Q0093 on the cost bar. Cost is reported after WP5 with
+   its split: solver, intent, acquisition and slots.
