@@ -29,7 +29,7 @@
 //! - Checked arithmetic: a pair whose correction cannot be represented is reported as a typed
 //!   [`MovementInvariant`] and contributes nothing.
 
-use super::contact::settle_on_terrain;
+use super::contact::{settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
 use super::locomotion::slide_target;
 use super::math::{
@@ -224,12 +224,25 @@ struct Pair {
     share_b: SimScalar,
     /// Enemies, or one share zero: constraints D-α never relaxes (C-1b).
     hard: bool,
+    /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
+    last: bool,
     radius_sum: SimScalar,
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
     /// The pair's correction at its bodies' current positions, once computed: reused while
     /// neither body moves, since it is a function of the two positions alone.
     cached: Option<Correction>,
+}
+
+/// Which pairs a summing pass reads (C-1, C-1b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// Every pair: an averaged iteration.
+    Averaged,
+    /// The hard pairs between friends (one share zero).
+    HardFriends,
+    /// The pairs with an enemy or a fixed body, applied last.
+    EnemyAndFixed,
 }
 
 /// One body's corrections within an iteration.
@@ -415,6 +428,7 @@ impl ContactSolver {
             hard: a.party.owner != b.party.owner
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
+            last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
             radius_sum,
             dead_band,
             cached: None,
@@ -445,7 +459,7 @@ impl ContactSolver {
         let mut done = SolveReport::default();
         for _ in 0..settings.iterations {
             done.iterations += 1;
-            self.accumulate(false, report);
+            self.accumulate(Pass::Averaged, report);
             if !self.apply(true, &mut terrain, report) {
                 break;
             }
@@ -454,7 +468,12 @@ impl ContactSolver {
                 done.rebuilds = done.rebuilds.saturating_add(1);
             }
         }
-        self.accumulate(true, report);
+        // C-1b, prioritised (plan Amendment 7, item 4): the hard friendly pairs first, then the
+        // enemy and fixed constraints, so that no friend's correction is the last word against
+        // an enemy or a fixed body.
+        self.accumulate(Pass::HardFriends, report);
+        self.apply(false, &mut terrain, report);
+        self.accumulate(Pass::EnemyAndFixed, report);
         self.apply(false, &mut terrain, report);
         done.pairs = self.pairs.len();
         done
@@ -469,13 +488,18 @@ impl ContactSolver {
             .any(|(body, &anchor)| !super::math::within_distance(body.position, anchor, half))
     }
 
-    /// Sums every (hard, when `hard_only`) pair's corrections from the current positions; a
-    /// pair neither of whose bodies moved since its correction was computed reuses it.
-    fn accumulate(&mut self, hard_only: bool, report: &mut impl FnMut(MovementInvariant)) {
+    /// Sums the corrections of `pass`'s pairs from the current positions; a pair neither of whose
+    /// bodies moved since its correction was computed reuses it.
+    fn accumulate(&mut self, pass: Pass, report: &mut impl FnMut(MovementInvariant)) {
         self.sums.clear();
         self.sums.resize(self.bodies.len(), Accumulator::default());
         for pair in &mut self.pairs {
-            if hard_only && !pair.hard {
+            let included = match pass {
+                Pass::Averaged => true,
+                Pass::HardFriends => pair.hard && !pair.last,
+                Pass::EnemyAndFixed => pair.last,
+            };
+            if !included {
                 continue;
             }
             let (ia, ib) = (pair.a as usize, pair.b as usize);
@@ -565,11 +589,40 @@ pub(crate) fn bodies_touch(map: &SimMap, a: &SolverBody, b: &SolverBody) -> bool
 /// The terrain step of one correction (C-6), as the legacy collision phase applies one: the
 /// target slides from the body's current position as far as terrain allows, the whole tick's
 /// travel from `start` must stay walkable, and a ground body may not be pressed deeper into a
-/// wall (`settle_on_terrain`). `None` when terrain refuses the correction: the body stays.
+/// wall (`settle_on_terrain`). A correction terrain refuses whole slides along the wall instead,
+/// its part into the wall removed (`slide_along_wall`, plan Amendment 7 item 4), as a step does.
+/// `None` when terrain refuses that too: the body stays.
 ///
 /// # Errors
 /// An unrepresentable step of the wall contact rule.
 pub(crate) fn terrain_step(
+    map: &SimMap,
+    pathfinder: &mut Pathfinder,
+    policy: MotionPolicy,
+    (start, current): (SimVec2, SimVec2),
+    target: SimVec2,
+) -> Result<Option<SimVec2>, MovementMathError> {
+    if let Some(end) = settled_step(map, pathfinder, policy, (start, current), target)? {
+        if end != current {
+            return Ok(Some(end));
+        }
+    }
+    let correction = checked_vec_sub(target, current)?;
+    let Some(slid) = slide_along_wall(map, pathfinder, policy, current, correction)? else {
+        return Ok(None);
+    };
+    settled_step(
+        map,
+        pathfinder,
+        policy,
+        (start, current),
+        checked_vec_add(current, slid)?,
+    )
+}
+
+/// One terrain step without the slide: the target slid by the centre rule, admitted from `start`,
+/// and settled against the walls.
+fn settled_step(
     map: &SimMap,
     pathfinder: &mut Pathfinder,
     policy: MotionPolicy,
@@ -1020,6 +1073,60 @@ mod tests {
         ];
         let (solved, _) = solve_on(&mut world, &bodies, SETTINGS);
         assert_eq!(solved.pair_count(), 0);
+        Ok(())
+    }
+
+    /// Amendment 7, item 4: a correction that terrain refuses whole slides along the wall. A body
+    /// touching a wall is pressed by a fixed enemy from below and outward: before, its correction
+    /// (half of it into the wall) was refused and the overlap stayed; now it slides along the wall
+    /// and the enemy overlap is cleared.
+    #[test]
+    fn a_refused_correction_slides_along_the_wall() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(Some(21))?;
+        let pillar = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
+        };
+        let bodies = [
+            solver_body(1, party(0), 0.5, at(20.5, 20.0), at(20.5, 20.0)),
+            solver_body(2, pillar, 0.5, at(19.9, 19.4), at(19.9, 19.4)),
+        ];
+        let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+        assert_eq!(errors, []);
+        assert!(solved.bodies[0].position.x <= at(20.5, 0.0).x);
+        assert!(solved.bodies[0].position.y > at(0.0, 20.0).y);
+        assert!(overlap_share(&solved.bodies[0], &solved.bodies[1]) <= 0.005);
+        Ok(())
+    }
+
+    /// Amendment 7, item 4: the enemy and fixed constraints are applied last. A body squeezed
+    /// between a holding friend and an immobile enemy ends clear of the enemy (D-α's enemy bound);
+    /// the friend pair, which D-α allows to overlap, takes the rest.
+    #[test]
+    fn enemy_constraints_have_the_last_word() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let holding = ContactParty {
+            holding: true,
+            ..party(0)
+        };
+        let pillar = ContactParty {
+            fixed: true,
+            holding: true,
+            ..party(1)
+        };
+        let bodies = [
+            solver_body(1, holding, 0.5, at(18.1, 20.0), at(18.1, 20.0)),
+            solver_body(2, party(0), 0.5, at(19.0, 20.0), at(19.0, 20.0)),
+            solver_body(3, pillar, 0.5, at(19.9, 20.0), at(19.9, 20.0)),
+        ];
+        let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+        assert_eq!(errors, []);
+        assert!(
+            overlap_share(&solved.bodies[1], &solved.bodies[2]) <= 0.005,
+            "{:?}",
+            solved.bodies[1].position
+        );
         Ok(())
     }
 
