@@ -683,3 +683,31 @@ The question number is the next free at filing (0099 on `d0fd365b`).
 B-174 to B-176 are taken by plan `2026-11-23-stance-checked-orders`, which is merging first. The Lurker spine-search
 row this plan registers takes the next free number at its WP0 commit (expected B-177). Every mention of "B-174" in
 this plan means that row.
+
+## Amendment 2 (implementation agent, 2026-11-23): battle 40 does not cross a cliff; kept, not reshaped
+
+WP0's probe counted no cross-level area strike in any measured world, so WP3 added battle 40 (§7.4). The same probe on
+WP3's tree counts none in battle 40 either: 408 area strikes on its 20 seeds, every struck unit on its search point's
+level (the roaches reach the plateau, but no shell centred on one reached a roach still on the ramp or below). So
+§7.3's "battle 40 moves (P-8)" does not hold, and WP4 moved no measured world.
+
+Decision: battle 40 stays as specified, with its expectation recorded on WP3's tree and unchanged by WP4; it is not
+reshaped (a wider ramp, closer tanks, a different seed set) until it crosses, which would fit a world to the rule
+(the owner's guidance against test-set fitting). B-170's behaviour is proved by the constructed tests of §12, and the
+rule's direction (it only removes units from an area) by D-1's construction and P-1. A measured world with a
+cross-level strike, if wanted, is the orchestrator's call: a new principled battle placed by a rule, or the client
+skirmish, whose stage log was not compared (below).
+
+## As built
+
+| WP | Commit | What | Deviations |
+|---|---|---|---|
+| WP0 | `05f36545` | B-170 points here; the Lurker row registered as **B-177** (Amendment 1); baseline (483 files); probe: zero cross-level strikes in every measured world, so WP3 runs | The showcase effects scenario counts zero, against §7.2's expectation |
+| WP1 | `e2ed024e` | `GameMap::cliff_level_at` with four `grid.rs` unit tests and `ramp_profile_tests::cliff_level_at_reads_the_lower_landing_on_every_ramp_cell`; worlds byte-identical | A map deserialized with fewer cells than its size reads level 0 rather than panicking (documented in the function) |
+| WP2 | `e839bb4c` | `SplashCliff`, the two fields, the rule in `strike_area` (levels in a retained buffer) and `strike_target_on_other_level`, validation, schema **37** with the golden proof, every shipped row `cliff: Any`; worlds byte-identical | The fallback's friendly and target-flag filters are a `combat_resolution.rs` unit test that dispatches the shot directly (no order reaches an attack on one's own unit, B-175); P-3's "air target" is not a separate case: an attacker-centred area searches its target's plane, so the plane filter cannot exclude the target, and no shipped burst fires at air. `splash_cliff_tests` also covers a structure target with the fallback off. `weapon_catalog_rules_tests::b18_line_splash_follows_starcraft` expects `Any` on the lines |
+| WP3 | `153cb8b1` | `Battle::terrain` (`ArenaRegion`), `matchup::arena` validated by `validate_map` except the start-location count (a matrix arena has none); battle 40, expect blue (0, 0), red (2, 3) | Amendment 2 |
+| WP4 | `fbd29238` | The five circles `Same` with sources; the Baneling's `strike_target_on_other_level: true`; tests P-5, P-1/P-3 on shipped rows, P-7; no world moved | Two tests re-derived (see the commit) |
+| WP5 | this commit | Records | — |
+
+Not done here: the client skirmish's stage log (§7.3) was not compared; the showcase, both showcase scenarios and the
+matrix are byte-identical, and looks do not change, so no client effects test was run beyond `cargo gate quick`.

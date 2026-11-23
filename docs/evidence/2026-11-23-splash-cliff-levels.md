@@ -131,3 +131,28 @@ burst. The plan predicted that "the shell on a unit that crested the ramp spares
 measured, no shell centred on a roach on the plateau reached a roach on the ramp or below (the cannon's outer zone is
 1.25 from its centre). So battle 40 is not expected to move in WP4 either
 (see WP4 and the plan's Amendment 2).
+
+## WP4: area damage keeps to its level (B-170)
+
+### Red run
+
+On the WP3 tree (`~/scratch/splash-cliff/red/wp4.log`): `weapon_catalog_rules_tests::splash_cliff_follows_starcraft`
+failed with "railgun_crawler Crucio Shock Cannon: the cliff rule, left: Any";
+`splash_cliff_tests::the_shipped_siege_shot_spares_the_other_level` with "the shipped cannon keeps to its level, left:
+Any"; `splash_cliff_tests::the_shipped_burst_strikes_its_target_across_a_cliff` with "the shipped fallback"; and
+`runtime_catalog_tests::an_edited_cliff_rule_changes_who_an_area_strikes` with "the shipped rows". With the data in,
+all four pass. Two tests were re-derived (named in the commit): the runtime test that edits the burst's centre to
+`Target` drops its other-level strike too, which validation allows only on an attacker-centred area, and a WP2
+validation test clears the strike on the row it edits.
+
+### Worlds
+
+- `compare.sh world-wp0 world-wp4`: `files base=483 new=483 differing=3`, the same three files as WP3 (battle 40's
+  rows); `compare.sh world-wp3 world-wp4`: `files base=483 new=483 differing=0`.
+- Battle 40 traced tick by tick on its 20 seeds with the WP3 and WP4 binaries (`b40/wp3`, `b40/wp4`): every file
+  byte-identical, logs identical.
+- So **no world moved**, as WP0's and WP3's probes predicted (zero counted events everywhere). Stop rules 2 and 3 hold
+  trivially; P-8 has no move to judge. The rule's behaviour is proved by the constructed tests (`splash_cliff_tests`,
+  P-1 to P-3 on scratch and shipped weapons; `runtime_catalog_tests`, P-7).
+- Every test of `sim_types`, `sim_map`, `sim_core` (the matchup matrix with battle 40 included), `sim_fixtures` and
+  `workspace_checks` passed in release on the WP4 tree, after the re-derived validation test.
