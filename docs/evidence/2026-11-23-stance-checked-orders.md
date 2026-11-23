@@ -118,3 +118,41 @@ applies the same `settled_stance_orders`.
 
 `compare.sh world-wp0 world-wp2`: `files base=483 new=483 differing=0`. The golden replays (`golden_replay_tests`)
 and `DEFAULT_SANDBOX_CHECKSUM` (`sim_fixtures`) pass unchanged on native debug.
+
+## WP3: Attack by stance
+
+### Red run (on the WP2 tree)
+
+Log `~/scratch/stance-orders/red/wp3-red.log`:
+
+| Test | Failure |
+|---|---|
+| `card::tests::an_armed_structure_shows_attack_and_an_unarmed_one_does_not` | no Attack first on the armed structure's card (`None`) |
+| `card::tests::a_burrowed_unit_armed_only_when_burrowed_shows_attack_and_follows_its_settled_stance` | "burrowing: armed in the stance it settles in" |
+| `card::tests::a_unit_armed_only_in_its_mode_shows_attack_only_in_its_mode` (rewritten, below) | `[Leave]` without Attack |
+| `commands::tests::the_card_shows_attack_exactly_when_admission_takes_an_attack` (P-3) | the armed structure: card `false`, admission `true` |
+| `commands::tests::an_anchored_unit_or_armed_structure_takes_an_attack_on_a_unit_and_no_attack_move` | the burrowed Lurker analogue refused `AttackTarget` |
+| `command_mode::tests::attack_stays_for_anchored_units_and_ends_for_unarmed_ones` | a sieged tank alone ended the mode (`Normal`) |
+| `battle_card_tests::an_armed_structure_attacks_an_enemy_clicked_in_attack_mode` (P-7) | "Attack is not on the card" |
+| `battle_card_tests::a_walker_attacks_an_enemy_clicked_in_attack_mode` (P-7) | `AttackMove` to where the enemy stood |
+| `battle_mode_tests::a_sieged_tank_attacks_a_clicked_enemy_and_refuses_the_ground` (P-7) | the Attack mode ended at once (`Normal`) |
+| `battle_mode_tests::a_burrowed_unit_shows_attack_and_attacks_a_clicked_enemy` (P-7) | "no Attack entry" |
+
+`a_sieged_tank_shows_attack`, the warm-card test with an armed structure and anchored units (P-11) and
+`attack_on_the_ground_with_a_sieged_tank_and_a_walker_moves_the_walker_only` passed on both trees: the sieged tank
+already showed Attack, the derivation allocated nothing, and the attack-move already named the walker only.
+
+### Tests rewritten by §8 rule 4
+
+- `card::tests::a_unit_armed_only_in_its_mode_shows_its_switch_first_and_no_attack` expected no Attack for the
+  burrowed Lurker analogue; renamed `a_unit_armed_only_in_its_mode_shows_attack_only_in_its_mode`, it expects
+  `[Attack, Leave]` once burrowed and `[Enter]` before.
+
+### Client targets and the skirmish
+
+`client.sh wp3` (release, one target at a time; `~/scratch/stance-orders/client-wp3/`): `battle_input_tests` 38,
+`battle_context_order_tests` 30, `battle_card_tests` 34, `battle_card_path_tests` 4, `battle_mode_tests` 17,
+`battle_hud_tests` 35, `sync_steady_state_tests` 8, `skirmish_match_tests` 7 (1 ignored) and the client library 533
+passed, none failed. The skirmish stage log ("match won in 1683 frames, 6494 ticks" and its 16 stages) is identical
+to the one of `main` before this plan (`~/scratch/anchored-commands/client-wp2/`), wall-clock time aside. The
+simulation is untouched by WP3, so the measured worlds were not run again (plan §7).

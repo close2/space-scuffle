@@ -1744,3 +1744,120 @@ fn a_unit_that_settles_into_a_stance_without_hold_is_dropped_at_its_tick() -> Te
     assert_eq!(rejected[0].reason, SubmissionError::Capability(tank));
     Ok(())
 }
+
+// --- Attack by stance (plan `2026-11-23-stance-checked-orders` D-4, B-173) -------------------
+
+/// Spawns a ground and an air enemy unit of `THEM` beside `ME`'s units, where `ME` sees them.
+fn enemies(world: &mut SimWorld) -> Result<[EntityId; 2], Box<dyn std::error::Error>> {
+    let mut spawned = [EntityId(0); 2];
+    for (slot, mover) in [MoverType::Ground, MoverType::Air].into_iter().enumerate() {
+        let unit_type = type_where(world, |a| !is_dome(a) && a.mover_type == mover)?;
+        let x = SimScalar::from_i32(14 + 3 * i32::try_from(slot)?);
+        spawned[slot] =
+            world.spawn_unit(unit_type, THEM, SimVec2::new(x, SimScalar::from_i32(14)))?;
+    }
+    let mut input = bundle();
+    input.tick = Tick(world.current_tick);
+    world.step(&input);
+    Ok(spawned)
+}
+
+/// Whether the card derived for `selection` shows Attack.
+fn card_attack(world: &SimWorld, selection: &[EntityId]) -> bool {
+    use crate::battle_hud::card::{derive_card, CardLabel, CommandCard};
+    use crate::battle_hud::catalog::CommandCatalog;
+    use crate::battle_hud::model::{HudModel, SelectedFact};
+    let mut model = HudModel::default();
+    model.catalog = CommandCatalog::build(&world.catalog, &world.upgrade_catalog, |_| None);
+    model.orders_open = true;
+    world.write_player_view(ME, &mut model.view);
+    let facts: Vec<_> = selection
+        .iter()
+        .map(|id| SelectedFact {
+            id: *id,
+            unit_type: world.entities[id].unit_type_id,
+            foundation: !world.entities[id].is_completed,
+            build_progress: 0.0,
+        })
+        .collect();
+    let mut card = CommandCard::default();
+    derive_card(&model, &facts, &mut card);
+    card.slots
+        .iter()
+        .flatten()
+        .any(|slot| slot.label == CardLabel::Attack)
+}
+
+/// P-3, the Attack half: over the stance set, alone and in every pair, the card shows Attack
+/// exactly when an attack on a ground or an air enemy would reach a member.
+#[test]
+fn the_card_shows_attack_exactly_when_admission_takes_an_attack() -> TestResult {
+    let (mut world, members) = stance_members()?;
+    let targets = enemies(&mut world)?;
+    let (mut shown, mut hidden) = (0, 0);
+    for selection in &stance_selections(&members) {
+        let ids: Vec<_> = selection.iter().map(|(_, id)| *id).collect();
+        let admitted = targets
+            .iter()
+            .any(|target| any_recipient(&world, ME, &ids, &UnitOrder::attack(*target)));
+        assert_eq!(card_attack(&world, &ids), admitted, "{selection:?}");
+        if admitted {
+            shown += 1;
+        } else {
+            hidden += 1;
+        }
+    }
+    assert!(shown > 0 && hidden > 0, "{shown} shown, {hidden} hidden");
+    Ok(())
+}
+
+#[test]
+fn an_anchored_unit_or_armed_structure_takes_an_attack_on_a_unit_and_no_attack_move() -> TestResult
+{
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, tank_switch) = anchoring(&mut world, 0, false)?;
+    let (lurker, lurker_switch) = anchoring(&mut world, 1, true)?;
+    let (burrowing, _) = anchoring(&mut world, 2, true)?;
+    let structure_type = type_where(&world, |a| is_dome(a) && is_armed(a))?;
+    let structure = world.spawn_structure(structure_type, ME, 40, 40)?;
+    let marine = unit_where(&mut world, 4, |a| {
+        is_armed(a) && a.modes.is_empty() && a.capabilities.harvester.is_none()
+    })?;
+    assert!(world.execute_ability(tank, tank_switch, None, None));
+    assert!(world.execute_ability(lurker, lurker_switch, None, None));
+    settle(&mut world)?;
+    assert!(world.execute_ability(burrowing, lurker_switch, None, None));
+    assert!(world.entities[&burrowing].channeling_remaining_ticks > 0);
+    let [ground, _] = enemies(&mut world)?;
+    let attack = UnitOrder::attack(ground);
+    for unit in [tank, lurker, burrowing] {
+        assert!(any_recipient(&world, ME, &[unit], &attack), "{unit:?}");
+    }
+    let structure_reaches = world
+        .catalog
+        .get(structure_type)?
+        .weapon_against(MoverType::Ground, None)
+        .is_some();
+    assert_eq!(
+        any_recipient(&world, ME, &[structure], &attack),
+        structure_reaches
+    );
+    let walk = UnitOrder::AttackMove {
+        target: SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30)),
+    };
+    for unit in [tank, lurker, burrowing, structure] {
+        assert!(!any_recipient(&world, ME, &[unit], &walk), "{unit:?}");
+    }
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[tank, lurker, structure], walk.clone(), false),
+        Err(SubmissionError::EmptySelection)
+    );
+    queue.submit_selection(&world, ME, &[tank, marine], walk.clone(), false)?;
+    let (_, sent) = queue.pending_commands().last().ok_or("nothing queued")?;
+    assert_eq!(
+        sent.entities,
+        [marine],
+        "the attack-move names the walker only"
+    );
+    Ok(())
+}

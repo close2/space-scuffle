@@ -548,7 +548,14 @@ fn cast_entry(model: &HudModel, facts: &[SelectedFact], cast: CastId) -> Option<
 /// Calls `emit` with each root entry, in the order of the card's table.
 fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
     let view = &model.view;
-    if completed(model, facts).any(|archetype| archetype.mobile && archetype.armed) {
+    // Attack is shown for a unit armed in the stance it is in or is switching to (plan
+    // `2026-11-23-stance-checked-orders` D-4, B-173): 5.0.14's sieged tank, burrowed Lurker and
+    // armed structures carry `attack` (`liberty` UnitData:5172-5174, :793-796, :11083-11084).
+    if facts
+        .iter()
+        .filter(|fact| !fact.foundation)
+        .any(|fact| settled_armed(model, fact))
+    {
         emit(CardEntry::free(
             CardAction::Mode(CommandMode::AttackMove),
             CardLabel::Attack,
@@ -881,13 +888,33 @@ fn settled_orders(
     fact: &SelectedFact,
     archetype: &ArchetypeCommands,
 ) -> sim_types::StanceOrders {
+    settled_mode(model, fact)
+        .and_then(|mode| archetype.mode_orders.get(usize::from(mode)).copied())
+        .unwrap_or(archetype.default_orders)
+}
+
+/// Whether `fact`'s unit is armed in the stance it is in or is switching to, by the same
+/// lookup as [`settled_orders`]; the rule of admission's `Entity::settled_armed`. A unit whose
+/// type the HUD catalog does not hold is not armed.
+fn settled_armed(model: &HudModel, fact: &SelectedFact) -> bool {
+    model
+        .catalog
+        .archetype(fact.unit_type)
+        .is_some_and(|archetype| {
+            settled_mode(model, fact)
+                .and_then(|mode| archetype.mode_armed.get(usize::from(mode)).copied())
+                .unwrap_or(archetype.default_armed)
+        })
+}
+
+/// The index of the mode `fact`'s unit is in or is switching to, from its `ModeStateView` in
+/// the viewer's `PlayerView`; `None` for a unit without a state or settling in no mode.
+fn settled_mode(model: &HudModel, fact: &SelectedFact) -> Option<u8> {
     let states = &model.view.mode_states;
     states
         .binary_search_by_key(&fact.id, |state| state.entity)
         .ok()
         .and_then(|index| states[index].settled_mode)
-        .and_then(|mode| archetype.mode_orders.get(usize::from(mode)).copied())
-        .unwrap_or(archetype.default_orders)
 }
 
 /// Keeps [`CommandCard`] in step with the model and the page.
@@ -1589,7 +1616,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_armed_only_in_its_mode_shows_its_switch_first_and_no_attack() -> TestResult {
+    fn a_unit_armed_only_in_its_mode_shows_attack_only_in_its_mode() -> TestResult {
         let mut world = flat_world()?;
         let lurker = mode_unit(&mut world, false)?;
         let mode = command_of(&model_of(&world, &[]), &world, lurker)?.mode;
@@ -1601,7 +1628,12 @@ mod tests {
         );
         switch(&mut world, lurker);
         let card = card_for(&world, &[lurker]);
-        assert_eq!(labels(&card), [mode_label(mode, ModeDirection::Leave)]);
+        // Armed in its settled stance, it shows Attack first (plan
+        // `2026-11-23-stance-checked-orders` D-4, B-173).
+        assert_eq!(
+            labels(&card),
+            [CardLabel::Attack, mode_label(mode, ModeDirection::Leave)]
+        );
         Ok(())
     }
 
@@ -1783,6 +1815,107 @@ mod tests {
         let card = card_for(&world, &[structure]);
         assert_eq!(fixed_shown(&card), (true, false));
         assert_eq!(card.fixed[0].as_ref().ok_or("Stop")?.key, STOP_KEY);
+        Ok(())
+    }
+
+    // --- Attack by stance (plan `2026-11-23-stance-checked-orders` D-4, B-173) ----------------
+
+    /// Whether the card shows the Attack entry.
+    fn shows_attack(card: &CommandCard) -> bool {
+        labels(card).contains(&CardLabel::Attack)
+    }
+
+    #[test]
+    fn a_sieged_tank_shows_attack() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        switch(&mut world, tank);
+        assert!(world.entities[&tank].is_immobile);
+        let card = card_for(&world, &[tank]);
+        assert_eq!(labels(&card).first(), Some(&CardLabel::Attack));
+        Ok(())
+    }
+
+    #[test]
+    fn a_burrowed_unit_armed_only_when_burrowed_shows_attack_and_follows_its_settled_stance(
+    ) -> TestResult {
+        let mut world = flat_world()?;
+        let lurker = mode_unit(&mut world, false)?;
+        assert!(
+            !shows_attack(&card_for(&world, &[lurker])),
+            "unarmed by default"
+        );
+        assert!(world.execute_ability(lurker, 0, None, None));
+        assert!(
+            shows_attack(&card_for(&world, &[lurker])),
+            "burrowing: armed in the stance it settles in"
+        );
+        while world.entities[&lurker].channeling_remaining_ticks > 0 {
+            let tick = world.current_tick;
+            world.step(&sim_types::TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+        }
+        assert!(world.entities[&lurker].active_mode.is_some());
+        assert!(shows_attack(&card_for(&world, &[lurker])), "burrowed");
+        assert!(world.execute_ability(lurker, 0, None, None));
+        assert!(world.entities[&lurker].channeling_remaining_ticks > 0);
+        assert!(
+            !shows_attack(&card_for(&world, &[lurker])),
+            "unburrowing: unarmed in the stance it settles in"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_armed_structure_shows_attack_and_an_unarmed_one_does_not() -> TestResult {
+        let mut world = flat_world()?;
+        let armed = armed_structure(&mut world, 30)?;
+        let unarmed = factory(&mut world, 60)?;
+        assert!(!crate::battle_pipeline::commands::is_armed(
+            world.catalog.get(world.entities[&unarmed].unit_type_id)?
+        ));
+        assert_eq!(
+            labels(&card_for(&world, &[armed])).first(),
+            Some(&CardLabel::Attack)
+        );
+        assert!(!shows_attack(&card_for(&world, &[unarmed])));
+        assert!(shows_attack(&card_for(&world, &[unarmed, armed])));
+        Ok(())
+    }
+
+    /// P-11: a warm card of a selection with an armed structure and anchored units rewrites no
+    /// text.
+    #[test]
+    fn a_warm_card_of_an_armed_structure_and_anchored_units_allocates_no_new_text() -> TestResult {
+        let mut world = flat_world()?;
+        let structure = armed_structure(&mut world, 30)?;
+        let tank = anchoring_unit(&mut world, false)?;
+        let lurker = anchoring_unit(&mut world, true)?;
+        switch(&mut world, tank);
+        switch(&mut world, lurker);
+        let model = model_of(&world, &[]);
+        let facts = [
+            fact(&world, structure),
+            fact(&world, tank),
+            fact(&world, lurker),
+        ];
+        let mut card = CommandCard::default();
+        derive_card(&model, &facts, &mut card);
+        assert!(shows_attack(&card));
+        let slots = card.text.each_ref().map(|text| text.caption.as_ptr());
+        let fixed = card.fixed_text.each_ref().map(|text| text.caption.as_ptr());
+        derive_card(&model, &facts, &mut card);
+        assert_eq!(
+            card.text.each_ref().map(|text| text.caption.as_ptr()),
+            slots
+        );
+        assert_eq!(
+            card.fixed_text.each_ref().map(|text| text.caption.as_ptr()),
+            fixed
+        );
         Ok(())
     }
 

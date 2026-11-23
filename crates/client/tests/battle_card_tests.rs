@@ -1063,6 +1063,104 @@ fn stop_on_an_armed_structure_drops_its_attack_and_keeps_production_and_rally() 
     }
 }
 
+/// Arms the Attack mode by the key of the card's Attack entry.
+fn arm_attack(harness: &mut Harness) {
+    harness.step(1);
+    tap_label(harness, CardLabel::Attack);
+    assert_eq!(mode(harness), CommandMode::AttackMove);
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-7 (B-173): an armed structure shows Attack, and an
+/// A-click on an enemy in its range attacks that enemy; the unarmed base shows no Attack.
+#[test]
+fn an_armed_structure_attacks_an_enemy_clicked_in_attack_mode() {
+    let mut harness = skirmish();
+    let base = harness.local_structure();
+    harness.look_at_unit(base);
+    harness.select(base);
+    harness.step(1);
+    assert!(
+        !labels_on_card(&harness).contains(&CardLabel::Attack),
+        "the unarmed base has no Attack"
+    );
+    let worker = worker(&harness);
+    let structure_type = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.is_immobile_by_default()
+                && archetype.stance_armed(None)
+                && archetype.ground_weapon.is_some()
+                && shows(&harness, archetype.unit_type_id)
+        })
+        .expect("a presentable armed structure with a ground weapon")
+        .unit_type_id;
+    let structure = structure_near(&mut harness, worker, structure_type, LOCAL_PLAYER);
+    let enemy_type = harness.world().entities[&worker].unit_type_id;
+    let centre = harness.simulated_position(structure);
+    let reach = {
+        let archetype = harness.world().catalog.get(structure_type).unwrap();
+        archetype.collision_radius.to_f32() + 1.0
+    };
+    let enemy = harness
+        .world_mut()
+        .spawn_unit(
+            enemy_type,
+            ENEMY,
+            battle_harness::sim_position(centre + Vec2::new(reach, 0.0)),
+        )
+        .expect("an enemy beside the structure");
+    run_ticks(&mut harness, 1);
+    harness.look_at_unit(structure);
+    harness.select(structure);
+    arm_attack(&mut harness);
+    let on_screen = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Left, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::attack(enemy));
+    assert_eq!(orders[0].entities, [structure]);
+    run_ticks(&mut harness, 1);
+    assert!(
+        has_explicit_attack(&harness, structure) || !harness.world().entities.contains_key(&enemy)
+    );
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-7 and D-6: a mobile armed unit A-clicked on an
+/// enemy attacks that unit, not the ground it stood on.
+#[test]
+fn a_walker_attacks_an_enemy_clicked_in_attack_mode() {
+    let mut harness = skirmish();
+    let worker = worker(&harness);
+    let worker_type = harness.world().entities[&worker].unit_type_id;
+    let enemy = spawn_beside(&mut harness, worker, worker_type, ENEMY);
+    harness.look_at_unit(worker);
+    harness.select(worker);
+    arm_attack(&mut harness);
+    let on_screen = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Left, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(
+        orders[0].order,
+        UnitOrder::attack(enemy),
+        "not an attack-move"
+    );
+    assert_eq!(orders[0].entities, [worker]);
+    assert_eq!(mode(&harness), CommandMode::Normal);
+}
+
+/// The labels of the card on show.
+fn labels_on_card(harness: &Harness) -> Vec<CardLabel> {
+    card(harness)
+        .slots
+        .iter()
+        .flatten()
+        .map(|slot| slot.label)
+        .collect()
+}
+
 #[test]
 fn a_card_order_is_queued_with_shift() {
     let mut harness = skirmish();
