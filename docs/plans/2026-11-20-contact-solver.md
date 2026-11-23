@@ -1383,3 +1383,58 @@ and corridor fill (0.945 → 0.994) but worsened T1, T4 and T7 in several famili
   the figures. The next step is then a design review of the side rule and slots against the survey's alternatives
   (rank 2, HRVO), not another patch.
 - If it holds, go on to WP5, the single acceptance run and the cost split.
+
+## Amendment 7 (orchestrator, 2026-11-23): the design review adopted; WP4 restarts from WP3
+
+**Why.** Amendment 6's limit was reached, so an independent design review took its place:
+`docs/evidence/2026-11-23-contact-solver-design-review.md`, with sources.
+
+- **Its root-cause verdict.** One binary neighbour class, "anchored", now has three definitions and is read by four
+  rules: contact shares, the side-rule threat set, the slot trigger, and the pursuit stall exemption. Each amendment
+  moved the failure between them.
+- **The dominant failure is give-ups,** not spreading: 85 % of corridor units, and arc give-ups about equal to the
+  fill shortfall. Under the Solver a pressing unit never has exactly zero velocity, so it is not anchored; the unit
+  behind is then not "queued", and it abandons after 10 s.
+- **The side rule's one-partner commitment** flips between equal threats, and its ID tie-breaks broke corridor T8.
+
+**Decision: the review's design. WP4 is rebuilt from WP3 on `contact-solver-plan`.** `contact-solver-wp4-wip`
+stays for reference only.
+
+1. **"Anchored" has one definition,** the contact one: on hold, immobile, unpushable, or in range of a live
+   target. Contact is its only reader. The stall rule stops reading `friend_holds_ahead`. A unit that stands for
+   want of a free angle keeps its order and accrues no stall. A unit walking to a gap measures progress to the gap
+   point.
+2. **Attackers round a target: chase into range, then stop, as StarCraft II does,** plus a memoryless
+   "nearest free gap" aim.
+   - Ring occupancy is pure geometry from the tick-start snapshot, at the band's outer edge.
+   - A unit whose own bearing is free chases straight in. Otherwise it aims for the nearest free angle, ties
+     clockwise, keeping last tick's angle while it stays free.
+   - Delete the claims machinery: `resolve_claims`, `KeptClaim`, `claim_fate`, own-angle claims, and the
+     `queued_toward` trigger.
+3. **The side rule becomes a summed tangential time-to-collision term** (Weiss et al. 2019), computed once per tick
+   in intent.
+   - It sums over all candidate bodies, with a continuous linear weight in time to collision.
+   - No memory and no ID tie-break.
+   - It skips collisions beyond the unit's own planned stop.
+   - It keeps the 30° cap, pass-on-the-right head-on, and ignores co-moving and yielding idle friends.
+   - Delete `SideMemory` and its two hashed fields, and Amendment 6's hysteresis.
+   - Any constant in the weight is derived, with its derivation written down.
+4. **Solver fix for T7's enemy overlap.** A correction the terrain step refuses slides along the wall. The hard
+   pass against enemy and fixed bodies runs last.
+5. **Order of work, each step measured on development seeds 1 to 1,000:**
+   - Arm A: items 1 and 2 without the gap aim (stand when no free angle);
+   - Arm B: Arm A plus the gap aim;
+   - then item 3;
+   - then item 4;
+   - then WP5, the single acceptance run and the cost split.
+6. **Evaluation, written down before any acceptance measurement. No threshold is loosened.**
+   - **E1, a new check:** 0 `PursuitAbandoned` in the arc and corridor families while the target lives and a route
+     reaches range. It is added to T4.
+   - **E2:** development comparisons between steps use §6.4's noise rule (bootstrap intervals, placebo band), not
+     raw counts or maxima.
+   - **E3:** T8's family-wise rate is stated correctly: ten tests at p ≥ 0.01 each, about 10 %. The threshold text
+     is unchanged.
+   - **E4:** M1 is reported split into "under order" and "idle".
+7. **Stop rule.** If Arm A or Arm B is worse than WP3 beyond the noise rule on any T-figure, stop with a trace. The
+   schema shrinks as `SideMemory`'s fields go. Take the next free number at merge with proof headers on all four
+   builds, or keep 34 if the field set ends up equal to WP2's.
