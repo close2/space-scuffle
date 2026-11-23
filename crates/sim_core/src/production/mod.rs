@@ -221,7 +221,8 @@ pub struct ProductionOutcome {
 /// Current nonfatal obstruction observed for a ready producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductionBlock {
-    /// No connected, unoccupied local exit can fit this product.
+    /// No cell of the map can take this product: ring 0 has no connected free cell and no outer
+    /// ring a free cell on the producer's level (plan `2026-11-23-production-queue` D-9).
     ExitObstructed {
         /// Waiting producer.
         producer: EntityId,
@@ -241,6 +242,11 @@ pub(crate) struct ProductionWorkspace {
     pub occupancy: SpatialHashGrid,
     pub neighbors: Vec<EntityId>,
     pub max_radius: SimScalar,
+    /// The exit search's candidate cells of one ring, `(squared distance to the rally point,
+    /// clockwise index, x, y)`: retained, so a search allocates only on growth (D-9 rule 7).
+    pub exit_order: Vec<(i128, u32, i64, i64)>,
+    /// Map cells the latest exit search examined; derived, for the bound of D-9 rule 4.
+    pub exit_cells_visited: u32,
 }
 
 impl ProductionWorkspace {
@@ -252,6 +258,8 @@ impl ProductionWorkspace {
             occupancy: SpatialHashGrid::new(width as usize, height as usize, SPATIAL_CELL_SIZE),
             neighbors: Vec::new(),
             max_radius: SimScalar::ZERO,
+            exit_order: Vec::new(),
+            exit_cells_visited: 0,
         }
     }
 }

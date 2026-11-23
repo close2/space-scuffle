@@ -479,75 +479,7 @@ fn mutated_producer_definition_fails_before_countdown_changes() -> TestResult {
 }
 
 #[test]
-fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
-    for radius in [SimScalar::from_num(0.375), SimScalar::from_num(1.125)] {
-        let mut f = Fixture::new()?;
-        {
-            let arch = f.world.catalog.get_mut(f.product)?;
-            arch.collision_radius = radius;
-            arch.terrain_radius = radius;
-        }
-        let blocker_type = f
-            .world
-            .catalog
-            .archetypes()
-            .find(|a| {
-                a.unit_type_id != f.producer_type
-                    && matches!(a.shape, ShapeKind::BuildingDome { .. })
-            })
-            .ok_or("no second structure")?
-            .unit_type_id;
-        let arch = f.world.catalog.get_mut(blocker_type)?;
-        arch.shape = ShapeKind::BuildingDome {
-            footprint_w: 1,
-            footprint_h: 1,
-            shape: sim_types::FootprintShape::full(1, 1),
-        };
-        arch.supply_provided = 0;
-        arch.collision_radius = SimScalar::from_num(0.4);
-        arch.terrain_radius = SimScalar::from_num(0.4);
-        let placed = f.world.map.structures()[&f.producer].clone();
-        let min_x = placed.top_left.0 - 1;
-        let min_y = placed.top_left.1 - 1;
-        let max_x = placed.top_left.0 + u32::from(placed.width);
-        let max_y = placed.top_left.1 + u32::from(placed.height);
-        let mut blockers = Vec::new();
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                if x == min_x || x == max_x || y == min_y || y == max_y {
-                    blockers.push(f.world.spawn_structure(blocker_type, PlayerId(0), x, y)?);
-                }
-            }
-        }
-        f.admit()?;
-        let next = f.world.next_entity_id;
-        let economy = f.world.player_resources[PlayerSlot::ALL[0]];
-        for _ in 0..3 {
-            f.world.update_production_and_buffs();
-        }
-        assert_eq!(f.world.next_entity_id, next);
-        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
-        assert_eq!(f.world.entities[&f.producer].production_queue.len(), 1);
-        assert_eq!(f.world.production_blocks().len(), 1);
-        assert_eq!(f.world.diagnostics(), []);
-        for id in blockers {
-            f.world.entities.get_mut(&id).ok_or("blocker absent")?.hp = SimScalar::ZERO;
-        }
-        f.world.reap_dead_and_emit_shatter();
-        f.world.update_production_and_buffs();
-        assert_eq!(f.world.entities.len(), 2);
-        assert_eq!(f.world.entities[&f.producer].production_queue.len(), 0);
-        assert_eq!(
-            f.world.player_resources[PlayerSlot::ALL[0]].minerals,
-            economy.minerals
-        );
-        f.world.validate_supply_ledger()?;
-    }
-    Ok(())
-}
-
-#[test]
-fn two_mobile_producers_contend_for_one_exit_in_stable_id_order() -> TestResult {
+fn two_mobile_producers_take_exits_in_stable_id_order() -> TestResult {
     let mut f = Fixture::new()?;
     let source_type = f
         .world
@@ -587,22 +519,34 @@ fn two_mobile_producers_contend_for_one_exit_in_stable_id_order() -> TestResult 
     }
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
-    assert_eq!(f.world.next_entity_id, next + 1);
+    // Plan `2026-11-23-production-queue` D-9 (B-66): the lower id takes ring 0's one free
+    // cell, (2, 2); the second no longer waits but takes the first cell of ring 1 clockwise
+    // from its minimum corner, (1, 1).
+    assert_eq!(f.world.next_entity_id, next + 2);
     assert_eq!(f.world.entities[&first].production_queue.len(), 0);
-    assert_eq!(f.world.entities[&second].production_queue.len(), 1);
-    assert_eq!(
-        f.world.production_blocks(),
-        [sim_core::production::ProductionBlock::ExitObstructed { producer: second }]
-    );
+    assert_eq!(f.world.entities[&second].production_queue.len(), 0);
+    let at = |id: u32| f.world.entities[&EntityId(id)].position;
+    let cell = |x: i32, y: i32| point(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
+    assert_eq!(at(next), cell(2, 2));
+    assert_eq!(at(next + 1), cell(1, 1));
+    assert_eq!(f.world.production_blocks(), []);
     f.world.validate_supply_ledger()?;
     Ok(())
 }
 
+/// An air product ignores ground walls and meets only air bodies. Ring 0's cells are walls,
+/// each holding an air body: the unit appears on ring 1's first cell clockwise (plan
+/// `2026-11-23-production-queue` D-9, B-66; before it, the job waited). With the air bodies gone,
+/// the next one appears on ring 0's first cell, a ground wall.
 #[test]
 fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult {
     let mut f = Fixture::new()?;
     f.world.catalog.get_mut(f.product)?.mover_type = sim_types::MoverType::Air;
     let placed = f.world.map.structures()[&f.producer].clone();
+    let (left, bottom) = (
+        i32::try_from(placed.top_left.0)?,
+        i32::try_from(placed.top_left.1)?,
+    );
     let mut blockers = Vec::new();
     for y in placed.top_left.1 - 1..=placed.top_left.1 + u32::from(placed.height) {
         for x in placed.top_left.0 - 1..=placed.top_left.0 + u32::from(placed.width) {
@@ -623,11 +567,16 @@ fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult 
             }
         }
     }
+    let cell = |x: i32, y: i32| point(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
     f.admit()?;
     let next = f.world.next_entity_id;
     f.world.update_production_and_buffs();
-    assert_eq!(f.world.next_entity_id, next);
-    assert_eq!(f.world.production_blocks().len(), 1);
+    assert_eq!(f.world.next_entity_id, next + 1);
+    assert_eq!(
+        f.world.entities[&EntityId(next)].position,
+        cell(left - 2, bottom - 2)
+    );
+    assert_eq!(f.world.production_blocks(), []);
     for id in blockers {
         f.world
             .entities
@@ -636,8 +585,13 @@ fn air_training_ignores_ground_walls_but_respects_air_occupants() -> TestResult 
             .hp = SimScalar::ZERO;
     }
     f.world.reap_dead_and_emit_shatter();
+    f.admit()?;
     f.world.update_production_and_buffs();
-    assert_eq!(f.world.next_entity_id, next + 1);
+    assert_eq!(f.world.next_entity_id, next + 2);
+    assert_eq!(
+        f.world.entities[&EntityId(next + 1)].position,
+        cell(left - 1, bottom - 1)
+    );
     assert_eq!(f.world.entities[&f.producer].production_queue.len(), 0);
     assert_eq!(f.world.diagnostics(), []);
     f.world.validate_supply_ledger()?;
@@ -810,7 +764,7 @@ fn checked_supply_and_vitals_overflow_reject_before_spawn() -> TestResult {
 }
 
 #[test]
-fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> TestResult {
+fn fractional_mobile_producer_walled_at_ring_zero_places_on_ring_one() -> TestResult {
     let mut f = Fixture::new()?;
     let source_type = f
         .world
@@ -850,35 +804,20 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     f.world
         .try_queue_production(PlayerId(0), &[producer], f.product)?;
     let next = f.world.next_entity_id;
-    let economy = f.world.player_resources[PlayerSlot::ALL[0]];
-    for _ in 0..3 {
-        f.world.update_production_and_buffs();
-    }
-    assert_eq!(f.world.next_entity_id, next);
-    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
+    f.world.update_production_and_buffs();
+    // The producer's own disc touches the wall, so no ring-0 cell connects to it; plan
+    // `2026-11-23-production-queue` D-9 (B-66) places the unit on ring 1's first cell clockwise,
+    // (1, 0), instead of holding the paid job.
+    assert_eq!(f.world.next_entity_id, next + 1);
     assert_eq!(f.world.entities[&producer].position, origin);
     assert_eq!(
-        f.world.entities[&producer]
-            .production_queue
-            .front()
-            .ok_or("lost paid job")?
-            .remaining_ticks,
-        0
+        f.world.entities[&EntityId(next)].position,
+        SimVec2::new(SimScalar::from_num(1.5), SimScalar::from_num(0.5))
     );
-    assert_eq!(
-        f.world.production_blocks(),
-        [sim_core::production::ProductionBlock::ExitObstructed { producer }]
-    );
-    assert_eq!(f.world.diagnostics(), []);
-    f.world.entities.get_mut(&blocker).ok_or("wall absent")?.hp = SimScalar::ZERO;
-    f.world.reap_dead_and_emit_shatter();
-    f.world.update_production_and_buffs();
-    assert_eq!(f.world.next_entity_id, next + 1);
     assert_eq!(f.world.entities[&producer].production_queue.len(), 0);
-    assert_eq!(
-        f.world.player_resources[PlayerSlot::ALL[0]].minerals,
-        economy.minerals
-    );
+    assert_eq!(f.world.production_blocks(), []);
+    assert_eq!(f.world.diagnostics(), []);
+    assert!(f.world.entities.contains_key(&blocker));
     f.world.validate_supply_ledger()?;
     Ok(())
 }
@@ -943,5 +882,166 @@ fn extreme_mobile_source_radius_rejects_before_perimeter_enumeration() -> TestRe
     assert_eq!(f.world.next_entity_id, next);
     assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
     assert_eq!(f.world.production_blocks(), []);
+    Ok(())
+}
+
+/// The exit ring around `f.producer` for the fixture's product: `(left, bottom, right, top)` in
+/// cells, the footprint widened by `ceil(terrain_radius + 0.5)` (plan `2026-11-18-inner-radius`
+/// D-8), and `step` cells more for outer ring `step`.
+fn ring_bounds(f: &Fixture, step: i64) -> Result<(i64, i64, i64, i64), Box<dyn std::error::Error>> {
+    let placed = &f.world.map.structures()[&f.producer];
+    let radius = f.world.catalog.get(f.product)?.terrain_radius.raw();
+    let margin = (radius + (1_i64 << 31) + (1_i64 << 32) - 1) >> 32;
+    let (left, bottom) = (i64::from(placed.top_left.0), i64::from(placed.top_left.1));
+    Ok((
+        left - margin - step,
+        bottom - margin - step,
+        left + i64::from(placed.width) - 1 + margin + step,
+        bottom + i64::from(placed.height) - 1 + margin + step,
+    ))
+}
+
+/// The cells of a ring clockwise from its minimum corner, as `exits.rs` walks them.
+fn clockwise(bounds: (i64, i64, i64, i64)) -> Vec<(i64, i64)> {
+    let (left, bottom, right, top) = bounds;
+    let mut cells: Vec<(i64, i64)> = (left..=right).map(|x| (x, bottom)).collect();
+    cells.extend((bottom + 1..top).map(|y| (right, y)));
+    cells.extend((left..=right).rev().map(|x| (x, top)));
+    cells.extend((bottom + 1..top).rev().map(|y| (left, y)));
+    cells
+}
+
+fn centre(cell: (i64, i64)) -> SimVec2 {
+    SimVec2::new(
+        SimScalar::from_raw((cell.0 << 32) + (1_i64 << 31)),
+        SimScalar::from_raw((cell.1 << 32) + (1_i64 << 31)),
+    )
+}
+
+/// Places a unit of the product on every cell of ring 0, so no ring-0 cell is free.
+fn crowd_ring(f: &mut Fixture) -> TestResult {
+    for cell in clockwise(ring_bounds(f, 0)?) {
+        f.world.spawn_unit(f.product, PlayerId(1), centre(cell))?;
+    }
+    Ok(())
+}
+
+/// The entity `f.world` made last, after a production update that made one.
+fn made(f: &Fixture, next: u32) -> SimVec2 {
+    assert_eq!(f.world.next_entity_id, next + 1, "one unit was made");
+    f.world.entities[&EntityId(next)].position
+}
+
+/// B-66, P-5 (D-9): a producer walled in by a ring of 1×1 structures places its unit on the
+/// first cell of ring 1, clockwise from the minimum corner; the job leaves the queue and the
+/// ledger holds. (Replaces `real_structure_ring_preserves_paid_ready_job_until_removal`, whose
+/// premise, a stall, the plan removes.)
+#[test]
+fn a_ringed_producer_places_its_unit_on_the_next_ring() -> TestResult {
+    for radius in [SimScalar::from_num(0.375), SimScalar::from_num(1.125)] {
+        let mut f = Fixture::new()?;
+        {
+            let arch = f.world.catalog.get_mut(f.product)?;
+            arch.collision_radius = radius;
+            arch.terrain_radius = radius;
+        }
+        let blocker_type = f
+            .world
+            .catalog
+            .archetypes()
+            .find(|a| {
+                a.unit_type_id != f.producer_type
+                    && matches!(a.shape, ShapeKind::BuildingDome { .. })
+            })
+            .ok_or("no second structure")?
+            .unit_type_id;
+        let arch = f.world.catalog.get_mut(blocker_type)?;
+        arch.shape = ShapeKind::BuildingDome {
+            footprint_w: 1,
+            footprint_h: 1,
+            shape: sim_types::FootprintShape::full(1, 1),
+        };
+        arch.supply_provided = 0;
+        arch.collision_radius = SimScalar::from_num(0.4);
+        arch.terrain_radius = SimScalar::from_num(0.4);
+        let placed = f.world.map.structures()[&f.producer].clone();
+        let min_x = placed.top_left.0 - 1;
+        let min_y = placed.top_left.1 - 1;
+        let max_x = placed.top_left.0 + u32::from(placed.width);
+        let max_y = placed.top_left.1 + u32::from(placed.height);
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                if x == min_x || x == max_x || y == min_y || y == max_y {
+                    f.world.spawn_structure(blocker_type, PlayerId(0), x, y)?;
+                }
+            }
+        }
+        f.admit()?;
+        let next = f.world.next_entity_id;
+        f.world.update_production_and_buffs();
+        assert_eq!(f.world.diagnostics(), []);
+        assert_eq!(f.world.production_blocks(), []);
+        let expected = centre(clockwise(ring_bounds(&f, 1)?)[0]);
+        assert_eq!(made(&f, next), expected, "radius {radius:?}");
+        assert!(f.world.entities[&f.producer].production_queue.is_empty());
+        f.world.validate_supply_ledger()?;
+    }
+    Ok(())
+}
+
+/// B-66, P-5: bodies standing on every cell of ring 0 do not stall production: the unit appears
+/// on ring 1's first free cell clockwise, here its minimum corner.
+#[test]
+fn units_crowding_the_ring_do_not_stall_production() -> TestResult {
+    let mut f = Fixture::new()?;
+    crowd_ring(&mut f)?;
+    f.admit()?;
+    let next = f.world.next_entity_id;
+    f.world.update_production_and_buffs();
+    assert_eq!(f.world.diagnostics(), []);
+    assert_eq!(made(&f, next), centre(clockwise(ring_bounds(&f, 1)?)[0]));
+    Ok(())
+}
+
+/// P-5 (D-9 rule 2): with a rally, the unit appears on the free cell of ring 0 nearest the rally
+/// point; with ring 0 full, on the cell of ring 1 nearest it.
+#[test]
+fn the_unit_exits_nearest_the_rally_point() -> TestResult {
+    let rally = SimVec2::new(SimScalar::from_num(29.3), SimScalar::from_num(14.6));
+    let nearest = |bounds| {
+        clockwise(bounds)
+            .into_iter()
+            .min_by_key(|&cell| {
+                let at = centre(cell);
+                let dx = i128::from(at.x.raw()) - i128::from(rally.x.raw());
+                let dy = i128::from(at.y.raw()) - i128::from(rally.y.raw());
+                dx * dx + dy * dy
+            })
+            .map(centre)
+    };
+    for crowded in [false, true] {
+        let mut f = Fixture::new()?;
+        f.world.step(&TickBundle {
+            tick: Tick(f.world.current_tick + 1),
+            commands: vec![sim_types::PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![f.producer],
+                order: sim_types::UnitOrder::SetRally {
+                    target: sim_types::RallyTarget::Point(rally),
+                },
+                queue: false,
+            }],
+            state_checksum: None,
+        });
+        if crowded {
+            crowd_ring(&mut f)?;
+        }
+        f.admit()?;
+        let next = f.world.next_entity_id;
+        f.world.update_production_and_buffs();
+        assert_eq!(f.world.diagnostics(), []);
+        let ring = ring_bounds(&f, i64::from(crowded))?;
+        assert_eq!(Some(made(&f, next)), nearest(ring), "crowded {crowded}");
+    }
     Ok(())
 }

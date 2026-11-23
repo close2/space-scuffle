@@ -96,3 +96,22 @@ none. `PlayerView::rallies` lists the viewer's own resolved rallies as `RallyVie
 | Client, release, radv (`impl/client-wp3/`) | `sync_steady_state_tests` 8, `battle_hud_tests` 34, `battle_context_order_tests` 24, `battle_card_path_tests` 4, `battle_fog_tests` 25, `battle_flipbook_tests` 9 pass. `client --lib battle_` first failed to compile: `status/tests.rs`' exhaustive table of `GameCommandError` lacked the three rally refusals; added (slots 22 to 24), then 102 pass |
 | Client arms needed to compile | `capable` and `order_subject` arms for `SetRally` and the three refusal messages of `write_game_reason`, which plan §10 gives to WP5, land here because the new variants make the client's exhaustive matches fail to compile (a deviation of file ownership only; WP5 adds the input, display and tests) |
 | `PlayerView` | loses `Eq` (keeps `PartialEq`): `RallyView::point` is `[f32; 2]`, presentation output (plan D-10; the plan's `Vec2` is a Bevy type `sim_types` cannot name). C7 gains `crates/sim_types/src/player_view.rs`, 1 float token |
+
+## 4. WP4: placed exits (plan D-9; B-66; §8 rule 4)
+
+`production_exit` keeps ring 0 and its test; with a rally point (D-5) ring cells are tried by squared distance from
+the cell centre to it, then clockwise index. When ring 0 has no free cell, outer rings one cell wider each are tried
+until a ring encloses the whole map: an outer cell needs the product's terrain disc on the map and on legal ground
+(the existing point test) on the producer's cliff level, and no body of its layer; no connection. A rally orders a ring
+in a retained `ProductionWorkspace::exit_order` buffer; `exit_cells_visited` counts the cells a search examined.
+
+| Check (`impl/verify-wp4/`) | Result |
+|---|---|
+| New, red on WP3 | `production_transactions_tests::a_ringed_producer_places_its_unit_on_the_next_ring` (replaces `real_structure_ring_preserves_paid_ready_job_until_removal`; both radii 0.375 and 1.125: the unit stands on ring 1's minimum corner, the job left the queue, the ledger holds), `units_crowding_the_ring_do_not_stall_production`, `the_unit_exits_nearest_the_rally_point` (ring 0, and ring 1 with ring 0 crowded; the expected cell computed in the test), `production::exits::tests::a_full_map_publishes_exit_obstructed_after_one_visit_per_cell` (a 12 × 12 map with a body on every cell: no exit, and exactly the map's cells outside ring 0's interior examined, each once) |
+| Kept unchanged | `clear_but_disconnected_plateau_is_not_a_production_exit` (every other cell a level up: the job still waits; the plan's `an_exit_is_never_on_another_level`), `open_ground_exit_is_the_first_ring_cell_at_the_minimum_corner` and every other ring-0 unit test |
+| Re-derived (their premise was a stall) | `two_mobile_producers_contend_for_one_exit_in_stable_id_order` → `two_mobile_producers_take_exits_in_stable_id_order`: the lower id takes ring 0's one free cell (2, 2), the other ring 1's first cell (1, 1); `air_training_ignores_ground_walls_but_respects_air_occupants`: with air bodies on ring 0 the unit appears on ring 1's minimum corner, and with them gone the next appears on ring 0's minimum corner, a ground wall; `fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear` → `fractional_mobile_producer_walled_at_ring_zero_places_on_ring_one`: the producer's disc touches the wall so no ring-0 cell connects, and the unit appears at (1.5, 0.5), ring 1's first cell. Each expected cell was written before the run and every one held |
+| `cargo test --release -p sim_types -p sim_core -p sim_fixtures` | every target passes (101) |
+| Goldens | 4 of 4 on native debug and release, `wasm32-wasip1` release and debug, unchanged |
+| Worlds (`world-wp4/`) | 420 files byte-identical to `world-wp0/`, logs included |
+| Skirmish match (`impl/client-wp4/`) | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486 |
+| Clippy | first run refused `Option<Option<CliffLevel>>` and three test lints; the ring's test became the enum `RingTest { Zero, Outer(level) }` (no behaviour change), then clean; the touched targets re-run green |
