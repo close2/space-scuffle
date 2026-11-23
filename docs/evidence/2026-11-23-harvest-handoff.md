@@ -66,3 +66,34 @@ ticks, the line's `T_f`.
 
 `DESIGN.md` §4: B-162 points to this plan and Q0100; B-161 restated as plan D-7 says (not presentation only; open and
 deferred to its own plan).
+
+## 2. WP1: the release tick, latent (plan §7.3 rule 1)
+
+### 2.1 Red run
+
+The WP1 tests were written first (`placement_rules` unit tests, `economy::lines` unit tests, the release-tick
+mutation of `checksum_state_tests::player_world_map_and_rng_state_are_observable`,
+`harvest_handoff_tests::a_zero_handoff_is_todays_rule`): on WP0's tree they do not build (`red-wp1.log`:
+`unresolved import lines::ResourceLines`, `ResourceHarvest` has no `handoff_ticks`).
+
+### 2.2 The golden proof (plan §5)
+
+| Step | Tree | Native debug | Native release | `wasm32-wasip1` release | `wasm32-wasip1` debug |
+|---|---|---|---|---|---|
+| 1 | WP1 with `resource_lines` left out of the encoding, schema 37 (`golden-wp1-unhashed/`) | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 |
+| 2 | WP1 hashed, schema 38, re-recorded (`golden-wp1-hashed/`) | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 | 4 of 4; sandbox 3 of 3 |
+
+"4 of 4" is `golden_replay_tests` (both fixtures reproduce every checkpoint); "sandbox 3 of 3" is `sim_fixtures`'
+`fixture_tests`, whose `DEFAULT_SANDBOX_CHECKSUM` was `18_404_512_489_137_112_834` at step 1 and is
+`13_576_003_452_353_276_199` at step 2. The `wasm32-wasip1` runs used
+`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<the worktree's real path>"`. Schema 38 was the next free number on
+`origin/main` (`e8cc3f80`, schema 37) when WP1 was built.
+
+### 2.3 Worlds and income
+
+| Check | Result |
+|---|---|
+| Matrix, battles 31 and 33, both showcases on nine seeds (`world-wp1/`) | 483 files, every file byte-identical to `world-wp0/`, logs included once the output path is removed |
+| Income, every case of §1.4 (`income/wp1-*`) | every output file byte-identical to WP0's |
+| `cargo test --release -p sim_core` on the harvest, checksum, catalog and footprint targets | pass, the occupancy tests unchanged (`the_next_worker_starts_on_the_tick_of_the_take` among them) |
+| Clippy, `sim_core` and `sim_fixtures`, all targets | clean |

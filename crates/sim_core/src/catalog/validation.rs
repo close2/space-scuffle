@@ -3114,7 +3114,8 @@ mod placement_flag_tests {
 
     /// A valid harvest (plan `2026-11-22-harvest-timing` D-2): what `rules_with` gives a ring
     /// that names none.
-    const A_HARVEST: &str = "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0";
+    const A_HARVEST: &str =
+        "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0, handoff_ticks: 0";
 
     /// The shipped rules with the row of `kind` replaced by `ring` (the text inside its
     /// parentheses after `kind: …,`); a ring that names no shape gets [`ONE_CELL_SHAPE`], and one

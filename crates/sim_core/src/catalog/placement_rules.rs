@@ -8,7 +8,10 @@
 //! D-2 and `2026-11-20-resource-footprints` D-1). Each row also carries the resource's harvest
 //! data from the same 5.0.14 `CBehaviorResource` record as its removal flag: how long a gather
 //! takes, how much it yields and how long the worker waits at the node before it returns
-//! (`HarvestTime`, `HarvestAmount`, `ReturnDelay`; plan `2026-11-22-harvest-timing` D-2).
+//! (`HarvestTime`, `HarvestAmount`, `ReturnDelay`; plan `2026-11-22-harvest-timing` D-2), and how
+//! many ticks after a take the next worker in the node's line may start (`handoff_ticks`, an
+//! inferred engine hand-off with no field of its own in the data; plan
+//! `2026-11-23-harvest-handoff` D-2).
 //! Loading parses the rows once into sorted cell offsets ([`ResourceReach`], the cells on which
 //! the node applies its flags: `x` and `o`), into a [`ResourceFootprints`] table (the `x`
 //! rectangle, the shape in quarter cells and the removal flag) that `sim_map` places nodes by,
@@ -32,7 +35,8 @@
 //! - A shape lies in the own cells, every value is a multiple of 1/4 world unit (exact in quarter
 //!   cells), and an outline is simple with 3 to 16 vertices and edges along axes and diagonals.
 //! - A harvest takes at least one tick and yields at least one unit, so a worker never loops
-//!   without earning; its return delay may be zero. All three are whole ticks or units, read once.
+//!   without earning; its return delay and its hand-off may be zero. All four are whole ticks or
+//!   units, read once.
 
 use crate::error::{SimCoreError, SimResult};
 use serde::Deserialize;
@@ -85,6 +89,10 @@ pub struct ResourceHarvest {
     /// Ticks a worker that has just taken its load waits at the node, holding it, before it
     /// walks back (`ReturnDelay`); 0 for none.
     pub return_delay_ticks: u16,
+    /// Ticks after a take before the node's line may start its next gather: the next worker in
+    /// line starts on the take's tick plus this (plan `2026-11-23-harvest-handoff` D-1, D-2); 0
+    /// starts it on the tick of the take.
+    pub handoff_ticks: u16,
 }
 
 /// The placement rules loaded from `placement_rules.ron`.
@@ -125,6 +133,8 @@ pub(super) struct ResourceFootprintDef {
     pub(super) harvest_amount: u32,
     /// Ticks the worker waits at the node with its load before returning (`ReturnDelay`).
     pub(super) return_delay_ticks: u16,
+    /// Ticks after a take before the next worker in the node's line may start.
+    pub(super) handoff_ticks: u16,
 }
 
 /// An authored resource shape, in world units from the centre of the node's own cells.
@@ -267,6 +277,7 @@ impl ResourceFootprintDef {
             time_ticks: self.harvest_time_ticks,
             amount: self.harvest_amount,
             return_delay_ticks: self.return_delay_ticks,
+            handoff_ticks: self.handoff_ticks,
         }
     }
 
@@ -383,7 +394,8 @@ mod tests {
                 (kind: Gas, applies: [NearResources], anchor: (0, 0), rows: ["x"],
                     shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0),
                     remove_when_empty: false,
-                    harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0),
+                    harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0,
+                    handoff_ticks: 0),
             ])"#
         )
     }
@@ -401,14 +413,15 @@ mod tests {
     #[test]
     fn the_harvest_is_the_rows() -> SimResult<()> {
         let rules = PlacementRules::from_ron_str(&mineral_harvesting(
-            "harvest_time_ticks: 7, harvest_amount: 3, return_delay_ticks: 2",
+            "harvest_time_ticks: 7, harvest_amount: 3, return_delay_ticks: 2, handoff_ticks: 3",
         ))?;
         assert_eq!(
             rules.harvest(ResourceKind::Mineral),
             Some(&ResourceHarvest {
                 time_ticks: 7,
                 amount: 3,
-                return_delay_ticks: 2
+                return_delay_ticks: 2,
+                handoff_ticks: 3
             })
         );
         assert_eq!(
@@ -416,7 +429,8 @@ mod tests {
             Some(&ResourceHarvest {
                 time_ticks: 35,
                 amount: 4,
-                return_delay_ticks: 0
+                return_delay_ticks: 0,
+                handoff_ticks: 0
             })
         );
         Ok(())
@@ -426,7 +440,7 @@ mod tests {
     #[test]
     fn a_row_without_a_harvest_time_is_refused() {
         let result = PlacementRules::from_ron_str(&mineral_harvesting(
-            "harvest_amount: 5, return_delay_ticks: 9",
+            "harvest_amount: 5, return_delay_ticks: 9, handoff_ticks: 2",
         ));
         assert!(
             matches!(
@@ -438,20 +452,68 @@ mod tests {
         );
     }
 
+    /// Plan `2026-11-23-harvest-handoff` D-2: the hand-off is required like the other harvest
+    /// fields, so a row without it fails to parse, naming it, and no default stands in for it.
+    #[test]
+    fn a_row_without_a_handoff_is_refused() {
+        let result = PlacementRules::from_ron_str(&mineral_harvesting(
+            "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9",
+        ));
+        assert!(
+            matches!(
+                &result,
+                Err(SimCoreError::RonDeserializationError(message))
+                    if message.contains("handoff_ticks")
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// Plan `2026-11-23-harvest-handoff` D-2, §15 (b): a hand-off of 0 ticks is valid (the next
+    /// worker starts on the tick of the take) and is read as written, beside a row with one.
+    #[test]
+    fn a_zero_handoff_is_accepted() -> SimResult<()> {
+        let rules = PlacementRules::from_ron_str(&mineral_harvesting(
+            "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9, handoff_ticks: 0",
+        ))?;
+        assert_eq!(
+            rules
+                .harvest(ResourceKind::Mineral)
+                .map(|harvest| harvest.handoff_ticks),
+            Some(0)
+        );
+        let rules = PlacementRules::from_ron_str(&mineral_harvesting(
+            "harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9, handoff_ticks: 4",
+        ))?;
+        assert_eq!(
+            rules
+                .harvest(ResourceKind::Mineral)
+                .map(|harvest| harvest.handoff_ticks),
+            Some(4)
+        );
+        assert_eq!(
+            rules
+                .harvest(ResourceKind::Gas)
+                .map(|harvest| harvest.handoff_ticks),
+            Some(0)
+        );
+        Ok(())
+    }
+
     /// A gather of no time or no yield would loop forever without earning; no delay is allowed.
     #[test]
     fn a_harvest_of_no_time_or_no_amount_is_refused() {
         let cases = [
             (
-                "harvest_time_ticks: 0, harvest_amount: 5, return_delay_ticks: 9",
+                "harvest_time_ticks: 0, harvest_amount: 5, return_delay_ticks: 9, handoff_ticks: 2",
                 Some("harvest_time_ticks"),
             ),
             (
-                "harvest_time_ticks: 50, harvest_amount: 0, return_delay_ticks: 9",
+                "harvest_time_ticks: 50, harvest_amount: 0, return_delay_ticks: 9, handoff_ticks: 2",
                 Some("harvest_amount"),
             ),
             (
-                "harvest_time_ticks: 1, harvest_amount: 1, return_delay_ticks: 0",
+                "harvest_time_ticks: 1, harvest_amount: 1, return_delay_ticks: 0, handoff_ticks: 0",
                 None,
             ),
         ];
@@ -477,7 +539,7 @@ mod tests {
             r#"(kind: Mineral, applies: [NearResources], anchor: (1, 0), rows: ["xx.", ".o."],
                 shape: Box(half_width: 1.0, half_height: 0.5, chamfer: 0.25),
                 remove_when_empty: true,
-                harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9)"#,
+                harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9, handoff_ticks: 2)"#,
         ))?;
         let reach = rules
             .reach(ResourceKind::Mineral)

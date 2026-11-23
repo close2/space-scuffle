@@ -383,8 +383,14 @@
 // recorded for plan 2026-11-23-splash-centres WP1 (schema 35 -> 36), on native debug and release
 // and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-harvest-handoff WP1 (checksum schema 37 -> 38): the world also
+// encodes each resource node's release tick, so every checkpoint changed. No behaviour did: with
+// the field left out of the encoding at schema 37, both fixtures reproduce as recorded for plan
+// 2026-11-23-splash-cliff-levels WP2 (schema 36 -> 37), on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
-    checksum_schema: 37,
+    checksum_schema: 38,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -410,25 +416,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xf8c6bc08e4227cfb,
-        0x4dd9cc27f9b32a3d,
-        0x626e1ae227997069,
-        0x9aab95a95e78b761,
-        0xf5ab25300bc448fb,
-        0x3b6a7f6f06605cf8,
-        0xb7a4911b5f3d45c0,
-        0xd9ad31274f3bf4b1,
-        0x829593d7880a1d17,
-        0x2e5f8374d896a5f5,
-        0x4f84c7b8b4821e48,
-        0xd5b9db7ddb034c78,
-        0x8041143b3cb72cf8,
-        0x8b29537a2cd1429d,
-        0x6604ee8a58234562,
-        0xe02b85062bd38788,
-        0xab41e48f4e306e8c,
-        0x3c4fc0ea49bd2a64,
-        0xe4a6408ccfbf55f1,
-        0xbf8312fe2e257805,
+        0x489abca5bd91233b,
+        0x7c488ba81d30d0ce,
+        0xa340a9bebe7238f8,
+        0x57bd45ab8da3cacf,
+        0x522a3f041bc27470,
+        0xb353e17081b152c7,
+        0xdc7a2f7b22d419b9,
+        0xedf310d5d621c000,
+        0x7103320d867039da,
+        0xebfd7890d6ac8a88,
+        0xb46b38489ca873db,
+        0x8d2d558b6e892f63,
+        0xe0623e75c2d64266,
+        0xb0f2980f92eee4a2,
+        0x848aeb2824a16e8d,
+        0x8aecfa4b3703219a,
+        0x6d152576eaf611d7,
+        0x05341495701b6b99,
+        0x0e13f9bafeccde72,
+        0x70cc56f69cc8efdd,
     ],
 )

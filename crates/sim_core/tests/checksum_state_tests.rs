@@ -691,6 +691,10 @@ fn player_world_map_and_rng_state_are_observable() {
             w.map.resources_mut()[0].pos.x += SimScalar::ONE;
         }),
         ("resource cell", |w| w.map.resources_mut()[0].cell.0 += 1),
+        ("resource release tick", |w| {
+            w.resource_lines
+                .set_release_tick(sim_types::ResourceNodeId(0), 1);
+        }),
         ("watchtower ID", |w| {
             w.map.watchtowers_mut()[0].id = EntityId(101);
         }),

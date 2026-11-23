@@ -15,7 +15,9 @@
 // record as `remove_when_empty` (plan docs/plans/2026-11-22-harvest-timing.md D-2):
 // `harvest_time_ticks` (HarvestTime) a worker gathers, `harvest_amount` (HarvestAmount) it takes
 // and `return_delay_ticks` (ReturnDelay) it waits at the node holding its load before it walks
-// back. Times are whole ticks at 25 per Faster second: t Normal seconds is round(t / 1.4 * 25),
+// back, and `handoff_ticks`, the ticks after a take before the next worker in the node's line may
+// start (an engine hand-off the data does not name; plan docs/plans/2026-11-23-harvest-handoff.md
+// D-1, D-2). Times are whole ticks at 25 per Faster second: t Normal seconds is round(t / 1.4 * 25),
 // halves up.
 (
     resource_footprints: [
@@ -35,7 +37,10 @@
             // MineralFieldMinerals (liberty BehaviorData:743-756): HarvestTime 2.786 Normal s = 49.75
             // ticks, HarvestAmount 5, ReturnDelay 0.5 Normal s = 8.93 ticks (S-5 whole-tick rounding);
             // no later layer changes them.
-            harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9),
+            harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 9,
+            // Hand-off to the next worker in line (plan 2026-11-23-harvest-handoff D-1): none, the
+            // next worker starts on the tick of the take.
+            handoff_ticks: 0),
         // 5.0.14 FootprintGeyserRounded (liberty Footprint:1535-1576, rows 0, 1, 7 and 8 and
         // Shape as void Footprint:3-21; liberty UnitData:2127). The anchor is the centre cell (the
         // extractor's 3x3 is centred on it). Shape: void Footprint:18-19, the +-1 square with its
@@ -58,6 +63,9 @@
         ]), remove_when_empty: false,
             // HarvestableVespeneGeyserGas (liberty BehaviorData:817-852, the three races alike): HarvestTime
             // 1.981 Normal s = 35.375 ticks, HarvestAmount 4; no ReturnDelay.
-            harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0),
+            harvest_time_ticks: 35, harvest_amount: 4, return_delay_ticks: 0,
+            // Hand-off to the next worker in line (plan 2026-11-23-harvest-handoff D-1): none, the
+            // next worker starts on the tick of the take.
+            handoff_ticks: 0),
     ],
 )
