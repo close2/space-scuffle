@@ -1347,3 +1347,84 @@ The prediction for 64 × 64 was about −1 G; the measured change is −0.69 G.
   give up and are left deeply overlapped.
 - A second mechanism shows up here: a limit cycle of the solver for deeply overlapped idle pairs (±0.4 a tick).
 - Rule S waits for Q0097.
+
+### 13.9 Amendment 15: O1 adopted; rule S stopped by the step rule (side branch `contact-solver-s-wip`)
+
+**O1, the overlap oscillation** (`1b676582`, committed).
+- **Mechanism.** A0's knot (development seed 967, tick 370) is a column of walker, idle, idle, walker of radius
+  0.875, its centres 0.584 apart. The two idle units swapped places every tick.
+  - With no proposals, the solver alone separates the column monotonically.
+  - Skipping the summed hard-friend pass removes the swap.
+  - So it is that pass: each walker–idle pair has one share zero and is summed, not averaged. It gives the idle body
+    the walker's whole overlap, 1.17, and carries it across its idle partner, 0.584 away. The next tick does the
+    same in reverse.
+- **Fix.** In the hard-friend pass, a body whose summed step closes on a body it already overlaps does not take
+  that step. No overlap grows in that pass and no pair's order reverses. The enemy-and-fixed pass keeps its
+  unbounded last word: D-α never relaxes enemies, and a body may close on a friend to clear one.
+- **Tests:**
+  - `a_pressed_column_keeps_its_order_and_settles` is red before: the pair swapped every tick.
+  - The amendment's own `an_overlapped_idle_pair_separates_monotonically` was already green: a lone pair never
+    oscillated.
+- **Development, against step 1 + P8:**
+  - The only figure worse beyond noise is arc's standing friend share, 0.011 % → 0.020 % (T7's bound is 0.1 %).
+  - Arc T7 now holds (no scene over the friend maximum).
+  - Corner scenes over the friend maximum fall from 23 to 9.
+
+**Rule S** (`5b7571d8` on the side branch). Built as Amendment 14 specifies, with the parameters fixed by its
+derivation before the run:
+- `h` = `contact.side_horizon_factor` (2), with the horizon of I-3a;
+- weight `1 − τ/H`;
+- responsibility ½ against a body that moves under an order and does not hold its ground, 1 otherwise;
+- direction along the predicted line of centres at collision; size `max(0, −v·n)`;
+- right-hand bias `ρ·w·(|v|/h)·(1 − m/R)⁺` on the right normal of the relative velocity;
+- Jacobi mean over the candidates, never renormalised;
+- clamps: no backward component, at most the step, a turn of at most `asin(1/h)`;
+- output a velocity as a fraction of the step;
+- `SideMemory`, `side_partner` and `side_left` deleted.
+
+**Tests:**
+- `the_velocity_is_continuous_through_contact`: red before (the old rule jumped by 0.165 a tick at contact).
+- `relabelling_changes_nothing`: red before (an exact tie between two threats was broken by id).
+- `a_head_on_pair_passes_right_to_right_and_mirrors` and `no_backward_step_onto_an_engaged_body`: already green
+  under the old rule.
+- `the_clamps_hold_and_friends_moving_along_add_nothing`.
+
+**Development, against O1** (`runs/o1-1` → `runs/s-1`).
+
+| Family | Figure | O1 | S | Rule |
+|---|---|---:|---:|---|
+| gap | M1 / M1-hi (T1) | 1.09 / 0.267 | **0.26 / 0.067** | T1 now holds |
+| arc | M1 / M1-hi (T1) | 2.36 / 0.184 | **0.13 / 0.003** | T1 now holds |
+| cross | M1 / M1-hi (T1) | 1.19 / 0.485 | **0.08 / 0.004** | T1 now holds |
+| corner | M1 (T1) | 0.49 | 0.10 | holds |
+| cross | M4 (T3) | 0.50 % | 0.23 % | better |
+| arc | give-ups (E1, already failing) | 309 [259, 367] | **507** | **stop**: worse |
+| arc | fill / 5th (T5) | 0.967 / 0.857 | 0.947 / 0.818 | worse, still within T5 |
+| arc | D-S | 103,433 | 147,319 | |
+| corner | give-ups (T4, already failing) | 7 [0, 17] | **18** | **stop**: worse |
+| cross | friend max (T7, passing) | 0.098 | **0.209** (3 scenes over 0.15) | **stop**: now fails |
+| corridor | give-ups (E1) | 20 | **0** | E1 now holds |
+| gap | give-ups (T4) | 50 | 62 | within noise |
+| all | T2, T3, T8 | | | hold |
+| mirror | blue share (T9) | 0.515 [0.419, 0.610] | 0.581 [0.476, 0.680] | holds |
+
+**Traces** (`trace/s/`).
+- **Arc, seed 809** (give-ups 0 → 6).
+  - The abandoners are gap walkers standing still (velocity 0), 0.4 to 1.15 from the ring, their bearing point
+    blocked by two bodies, with 12 of 19 places taken.
+  - S removes their whole approach toward the standing or engaged front-rank bodies in their way. The right-hand
+    bias acts only near head-on, and a backward step is clamped away, so they stop dead. They abandon after 10 s
+    (ticks 481 and 782).
+  - The one-partner rule had turned them along the rank toward their gap.
+- **Cross, seed 620** (θ 90°; friend maximum 0.010 → 0.209): an arrived idle unit is pressed to 0.157 by walkers
+  passing it. Idle friends that step aside are not candidates (L6, unchanged), so S walkers press into them, as
+  before; S no longer turns them aside.
+- **Corner, seed 267** (give-ups 0 → 7): walkers at the mouth give up with `NoProgress` while moving slowly
+  (0.016 to 0.36 a tick). The idle units they leave are then pressed above 0.15 (0.159).
+
+**Reading.**
+- Rule S does what Amendment 14 expected of it on oscillation: T1 holds in every family, and M1 falls by 80 to
+  95 %.
+- But it removes the sideways motion that let gap walkers reach their gaps, so arc E1 and T5 lose ground and corner
+  give-ups rise.
+- By Amendment 15, S is stopped, and the orchestrator takes the fallback, option (b), on step 1 + P8 + O1.
