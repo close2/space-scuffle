@@ -217,3 +217,79 @@ fn diagonal_ramp_keeps_legacy_single_cell_behaviour() {
         CliffLevel(1).height_scalar() + expected_prog * SimScalar::from_num(CLIFF_LEVEL_HEIGHT)
     );
 }
+
+/// Plan `2026-11-23-splash-cliff-levels` P-4 (D-2): a position on a ramp has the level of the
+/// ramp's lower landing, as each ramp cell stores it, everywhere on every cell of the run, for
+/// each cardinal direction and runs of one and three cells; the cell past the run's top has the
+/// upper level, the cell before its foot the lower one.
+#[test]
+fn cliff_level_at_reads_the_lower_landing_on_every_ramp_cell() {
+    let low = CliffLevel(1);
+    let high = CliffLevel(2);
+    // Sub-cell positions: the centre, and points near the low and high edges and the sides.
+    let inside = [
+        (0.5, 0.5),
+        (0.001, 0.5),
+        (0.999, 0.5),
+        (0.5, 0.001),
+        (0.5, 0.999),
+    ];
+    for dir in [RampDir::North, RampDir::South, RampDir::East, RampDir::West] {
+        let (dx, dy): (i32, i32) = match dir {
+            RampDir::North => (0, 1),
+            RampDir::South => (0, -1),
+            RampDir::East => (1, 0),
+            _ => (-1, 0),
+        };
+        for run in [1_i32, 3] {
+            let mut map = GameMap::new(16, 16, MapCell::default_ground(low)).unwrap();
+            let foot = (7_i32, 7_i32);
+            let cell_of = |step: i32| (foot.0 + dx * step, foot.1 + dy * step);
+            // The upper landing: every cell at or past the run's top along the ascent.
+            for y in 0..16_i32 {
+                for x in 0..16_i32 {
+                    let along = (x - foot.0) * dx + (y - foot.1) * dy;
+                    if along >= run {
+                        map.cell_mut(x as u32, y as u32).unwrap().cliff_level = high;
+                    }
+                }
+            }
+            for step in 0..run {
+                let (x, y) = cell_of(step);
+                let cell = map.cell_mut(x as u32, y as u32).unwrap();
+                cell.ramp = Some(dir);
+                cell.cliff_level = low;
+            }
+            for step in 0..run {
+                let (x, y) = cell_of(step);
+                assert!(
+                    map.ramp_profile(x as u32, y as u32).is_some(),
+                    "a ramp cell"
+                );
+                for (fx, fy) in inside {
+                    let pos = SimVec2::new(
+                        SimScalar::from_num(f64::from(x) + fx),
+                        SimScalar::from_num(f64::from(y) + fy),
+                    );
+                    assert_eq!(
+                        map.cliff_level_at(pos),
+                        low,
+                        "{dir:?} run {run} step {step} at ({fx}, {fy})"
+                    );
+                }
+            }
+            let centre = |(x, y): (i32, i32)| {
+                SimVec2::new(
+                    SimScalar::from_num(f64::from(x) + 0.5),
+                    SimScalar::from_num(f64::from(y) + 0.5),
+                )
+            };
+            assert_eq!(
+                map.cliff_level_at(centre(cell_of(run))),
+                high,
+                "{dir:?} top"
+            );
+            assert_eq!(map.cliff_level_at(centre(cell_of(-1))), low, "{dir:?} foot");
+        }
+    }
+}

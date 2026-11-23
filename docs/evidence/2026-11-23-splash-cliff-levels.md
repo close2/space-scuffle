@@ -62,3 +62,16 @@ P-8 is judged on battle 40 alone.
 Survivors at tick 6,000 (from the probe's `route_trace`; the route trace itself logs only moving units), every seed
 alike: player 0 keeps 3 `railgun_crawler`, 2 `burrow_scorpion` and its town hall; player 1 keeps its town hall. Last
 death: tick 811 (default), 788, 789, 785, 810, 811, 787, 819, 814 (seeds 1 to 8).
+
+## WP1: a position's cliff level
+
+### Red run
+
+On the WP0 tree the new tests did not compile (`~/scratch/splash-cliff/red/wp1.log`): 22 errors E0599, "no method
+named `cliff_level_at` found for struct `GameMap`", in the four `grid.rs` unit tests and
+`ramp_profile_tests::cliff_level_at_reads_the_lower_landing_on_every_ramp_cell`. With the function in, all five
+pass, and every other test of `ramp_profile_tests` passes as before.
+
+### Worlds
+
+`compare.sh world-wp0 world-wp1`: `files base=483 new=483 differing=0`. The function has no caller yet.
