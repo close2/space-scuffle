@@ -2471,6 +2471,11 @@ fn proposed_heading(
     let Some(horizon_factor) = context.intent else {
         return steer_body(context.body, next, ignored, context.neighbours);
     };
+    // Ablation A0 (plan Amendment 14; scratch, never on the plan branch): intent is the preferred
+    // velocity, no side rule and no side memory.
+    if horizon_factor > 0 {
+        return direction(next, context.body.pos);
+    }
     let decided = intent_heading(
         &IntentInput {
             body: context.body,
