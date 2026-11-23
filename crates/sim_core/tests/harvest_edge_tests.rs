@@ -6,7 +6,9 @@
 //! town hall (contact: at most its collision radius from the shape, at least its terrain radius,
 //! at a chamfered corner too); that a back field of the showcase's two-row line is mined through
 //! its one-cell notch; that the showcase's income lies in the band plan
-//! `2026-11-22-harvest-timing` §6.2 derives from `StarCraft` II's measured rates; that a field leaves the map on the take that empties it (its cells
+//! `2026-11-22-harvest-timing` §6.2 derives from `StarCraft` II's measured rates; that two and three
+//! workers a field earn the saturation curve plan `2026-11-23-harvest-occupancy` §6 derives from
+//! the one-worker take periods (one gatherer at a time, B-61); that a field leaves the map on the take that empties it (its cells
 //! walkable, the mesh rebuilt, a unit able to walk through) while a geyser stays; and that a field
 //! that has left applies no ring.
 //!
@@ -432,5 +434,184 @@ fn an_emptied_field_no_longer_applies_its_ring() -> TestResult {
     harvest(&mut world, vec![worker], ResourceNodeId(0));
     assert!(until(&mut world, 1_000, |w| w.map.resources()[0].remaining == 0));
     assert_eq!(world.preview_site(ME, hall_type, site.0, site.1), Ok(()));
+    Ok(())
+}
+
+/// One node's takes in a window: the window tick of each and the units it took.
+type Takes = Vec<(u64, u32)>;
+
+/// Spawns `k` workers per slot-0 field of the showcase at the hall's edge facing that field and
+/// orders each group to its field on one tick; steps the warm-up (1,500 ticks), then the window
+/// (3,000 ticks), and returns per field the window ticks of its takes and the amount of each.
+fn line_takes(k: usize) -> Result<Vec<Takes>, Box<dyn Error>> {
+    let (mut world, _) = showcase_start(0)?;
+    let doc = MapFile::from_ron_str(SHOWCASE)?.decode()?;
+    let start = doc
+        .start_locations
+        .iter()
+        .find(|s| s.player_slot == 0)
+        .ok_or("slot 0")?
+        .cell;
+    let (worker_type, _) = kinds(&world)?;
+    let fields = slot0_fields(&world);
+    let half = SimScalar::from_num(5) / SimScalar::from_num(2);
+    let hall = SimVec2::new(
+        SimScalar::from_num(start.0) + half,
+        SimScalar::from_num(start.1) + half,
+    );
+    let mut commands = Vec::new();
+    for (lane, &field) in (0_u32..).zip(&fields) {
+        let direction = (world.map.resources()[field.0 as usize].pos - hall).normalize_or_zero();
+        // Lanes 3.2, 3.6 and 4.0 out from the hall's centre, workers 0.3 apart across a lane.
+        let edge =
+            hall + direction * (SimScalar::from_num(16 + 2 * (lane % 3)) / SimScalar::from_num(5));
+        let across = SimVec2::new(-direction.y, direction.x);
+        let group = (0_u32..u32::try_from(k)?)
+            .map(|i| {
+                let offset = SimScalar::from_num(3 * i) / SimScalar::from_num(10);
+                world.spawn_unit(worker_type, ME, edge + across * offset)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        commands.push(PlayerCommand {
+            player_id: ME,
+            entities: group,
+            order: UnitOrder::Harvest { target: field },
+            queue: false,
+        });
+    }
+    step(&mut world, commands);
+    for _ in 0..1_500 {
+        step(&mut world, Vec::new());
+    }
+    let remaining = |world: &SimWorld| -> Vec<u32> {
+        fields
+            .iter()
+            .map(|f| world.map.resources()[f.0 as usize].remaining)
+            .collect()
+    };
+    let mut last = remaining(&world);
+    let mut takes = vec![Vec::new(); fields.len()];
+    for tick in 0_u64..3_000 {
+        step(&mut world, Vec::new());
+        let now = remaining(&world);
+        for ((field, before), after) in takes.iter_mut().zip(&last).zip(&now) {
+            if after < before {
+                field.push((tick, before - after));
+            }
+        }
+        last = now;
+    }
+    Ok(takes)
+}
+
+/// A field's take-period rate in hundredths of a unit a minute: the units taken after its first
+/// take in the window, times 1,500 ticks a minute, over the span from its first take to its last.
+/// Returns the numerator and the span, so a comparison can cross-multiply exactly.
+fn take_period(takes: &[(u64, u32)]) -> Result<(u64, u64), Box<dyn Error>> {
+    let (Some(first), Some(last)) = (takes.first(), takes.last()) else {
+        return Err("no take in the window".into());
+    };
+    let units: u64 = takes
+        .iter()
+        .skip(1)
+        .map(|&(_, amount)| u64::from(amount))
+        .sum();
+    let span = last.0 - first.0;
+    if span == 0 {
+        return Err("one take in the window".into());
+    }
+    Ok((units * 150_000, span))
+}
+
+/// Plan `2026-11-23-harvest-occupancy` §6 (A-1, A-5): with `k` workers on every showcase slot-0
+/// field, each field's take-period rate is `R_f(k) = min(k × amount × 1,500 / T_f, amount ×
+/// 1,500 / H)`, where `T_f` is the field's one-worker take period measured here at `k` = 1 and
+/// `H` the mineral row's `harvest_time_ticks`: a closed cycle of `k` workers through one server
+/// of fixed service time. Within one load a field over the window (±2.5 a minute, ±20 for the
+/// line); a saturated field is exact (it is taken every `H` ticks). The near geyser (10, 1) with
+/// three workers is taken every gas `harvest_time_ticks`: `amount × 1,500 / H` exactly.
+#[test]
+fn saturation_follows_the_derivation() -> TestResult {
+    let probe = showcase_start(0)?.0;
+    let rules = probe.catalog.placement_rules();
+    let mineral = *rules
+        .harvest(ResourceKind::Mineral)
+        .ok_or("the mineral row")?;
+    let gas = *rules.harvest(ResourceKind::Gas).ok_or("the gas row")?;
+    let (amount, time) = (u64::from(mineral.amount), u64::from(mineral.time_ticks));
+    // Hundredths a minute: amount × 150,000 / H, the field's cap.
+    let cap = (amount * 150_000, time);
+    let one = line_takes(1)?;
+    for k in [2_u64, 3] {
+        let line = line_takes(usize::try_from(k)?)?;
+        let (mut measured_sum, mut derived_sum) = (0_u64, 0_u64);
+        for (field, (single, takes)) in one.iter().zip(&line).enumerate() {
+            let (single_units, single_span) = take_period(single)?;
+            // k workers' walk allows k × the one-worker rate; the server allows the cap.
+            let walk = (k * single_units, single_span);
+            let saturated = cap.0 * walk.1 <= walk.0 * cap.1;
+            let derived = if saturated { cap } else { walk };
+            let measured = take_period(takes)?;
+            if saturated {
+                assert_eq!(
+                    measured.0 * derived.1,
+                    derived.0 * measured.1,
+                    "k = {k}, field {field}: saturated, taken every {time} ticks ({takes:?})"
+                );
+            }
+            let (m, d) = (measured.0 / measured.1, derived.0 / derived.1);
+            assert!(
+                m.abs_diff(d) <= 250,
+                "k = {k}, field {field}: {m} against {d} hundredths"
+            );
+            measured_sum += m;
+            derived_sum += d;
+        }
+        assert!(
+            measured_sum.abs_diff(derived_sum) <= 2_000,
+            "k = {k}: line {measured_sum} against {derived_sum} hundredths"
+        );
+        if k == 3 {
+            assert_eq!(
+                derived_sum,
+                8 * cap.0 / cap.1,
+                "every showcase field saturates at 3"
+            );
+        }
+    }
+
+    let (mut world, workers) = showcase_start(3)?;
+    let extractor = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.is_gas_extractor)
+        .ok_or("an extractor")?
+        .unit_type_id;
+    let geyser = (0_u32..)
+        .zip(world.map.resources())
+        .find(|(_, n)| n.kind == ResourceKind::Gas && n.cell == (10, 1))
+        .map(|(i, _)| ResourceNodeId(i))
+        .ok_or("the near geyser")?;
+    world.spawn_structure(extractor, ME, 9, 0)?;
+    harvest(&mut world, workers, geyser);
+    for _ in 0..750 {
+        step(&mut world, Vec::new());
+    }
+    let mut last = world.map.resources()[geyser.0 as usize].remaining;
+    let mut takes = Vec::new();
+    for tick in 0_u64..3_000 {
+        step(&mut world, Vec::new());
+        let now = world.map.resources()[geyser.0 as usize].remaining;
+        if now < last {
+            takes.push((tick, last - now));
+        }
+        last = now;
+    }
+    let (units, span) = take_period(&takes)?;
+    assert_eq!(
+        units * u64::from(gas.time_ticks),
+        u64::from(gas.amount) * 150_000 * span,
+        "the extractor is busy every tick: {takes:?}"
+    );
     Ok(())
 }
