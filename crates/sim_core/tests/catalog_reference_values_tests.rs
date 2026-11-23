@@ -401,6 +401,303 @@ fn b47_structure_sight_follows_starcraft() -> TestResult {
     })
 }
 
+/// Structure attributes as `AttributeFlags` bits (`CUnit` `Attributes`; the citation is the
+/// structure's `Attributes` lines in `liberty` `UnitData`, which no later layer changes; plan
+/// `2026-11-23-structure-attributes` §2.3, B-88). Every structure is Armored and Structure;
+/// Terran ones add Mechanical, Zerg ones Biological, Protoss ones nothing.
+const SC2_STRUCTURE_ATTRIBUTES: [(&str, [f32; 1], &str); 49] = [
+    (
+        "Command Center",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:10400-10402",
+    ),
+    (
+        "Orbital Command",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:10546-10548",
+    ),
+    (
+        "Planetary Fortress",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:10684-10686",
+    ),
+    (
+        "Supply Depot",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:5681-5683",
+    ),
+    (
+        "Refinery",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:5794-5796",
+    ),
+    (
+        "Barracks",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:5856-5858",
+    ),
+    (
+        "Engineering Bay",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:5988-5990",
+    ),
+    (
+        "Bunker",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6174-6176",
+    ),
+    (
+        "Sensor Tower",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:9470-9472",
+    ),
+    (
+        "Missile Turret",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6052-6054",
+    ),
+    (
+        "Factory",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6256-6258",
+    ),
+    (
+        "Ghost Academy",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:9791-9793",
+    ),
+    (
+        "Starport",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6389-6391",
+    ),
+    (
+        "Armory",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6524-6526",
+    ),
+    (
+        "Fusion Core",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:10933-10935",
+    ),
+    (
+        "Tech Lab",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6662-6664",
+    ),
+    (
+        "Reactor",
+        [74.0],
+        "Armored+Mechanical+Structure, liberty UnitData:6599-6601",
+    ),
+    (
+        "Nexus",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4208-4209",
+    ),
+    (
+        "Pylon",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4353-4354",
+    ),
+    (
+        "Assimilator",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4140-4141",
+    ),
+    (
+        "Gateway",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4412-4413",
+    ),
+    (
+        "Forge",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4554-4555",
+    ),
+    (
+        "Photon Cannon",
+        [66.0],
+        "Armored+Structure, liberty UnitData:11072-11073",
+    ),
+    (
+        "Shield Battery",
+        [66.0],
+        "Armored+Structure, liberty UnitData:1585-1586",
+    ),
+    (
+        "Cybernetics Core",
+        [66.0],
+        "Armored+Structure, liberty UnitData:10835-10836",
+    ),
+    (
+        "Twilight Council",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4622-4623",
+    ),
+    (
+        "Stargate",
+        [66.0],
+        "Armored+Structure, liberty UnitData:9658-9659",
+    ),
+    (
+        "Robotics Facility",
+        [66.0],
+        "Armored+Structure, liberty UnitData:9584-9585",
+    ),
+    (
+        "Templar Archives",
+        [66.0],
+        "Armored+Structure, liberty UnitData:4685-4686",
+    ),
+    (
+        "Dark Shrine",
+        [66.0],
+        "Armored+Structure, liberty UnitData:9528-9529",
+    ),
+    (
+        "Robotics Bay",
+        [66.0],
+        "Armored+Structure, liberty UnitData:9855-9856",
+    ),
+    (
+        "Fleet Beacon",
+        [66.0],
+        "Armored+Structure, liberty UnitData:9726-9727",
+    ),
+    (
+        "Hatchery",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8232-8234",
+    ),
+    (
+        "Lair",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8314-8316",
+    ),
+    (
+        "Hive",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8394-8396",
+    ),
+    (
+        "Extractor",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8167-8169",
+    ),
+    (
+        "Spawning Pool",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8904-8906",
+    ),
+    (
+        "Evolution Chamber",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8462-8464",
+    ),
+    (
+        "Spine Crawler",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8640-8642",
+    ),
+    (
+        "Spore Crawler",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8772-8774",
+    ),
+    (
+        "Roach Warren",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:11783-11785",
+    ),
+    (
+        "Baneling Nest",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:9984-9986",
+    ),
+    (
+        "Hydralisk Den",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:8967-8969",
+    ),
+    (
+        "Lurker Den",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:650-652",
+    ),
+    (
+        "Spire",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:9029-9031",
+    ),
+    (
+        "Greater Spire",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:9100-9102",
+    ),
+    (
+        "Infestation Pit",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:2046-2048",
+    ),
+    (
+        "Nydus Network",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:9918-9920",
+    ),
+    (
+        "Ultralisk Cavern",
+        [70.0],
+        "Armored+Biological+Structure, liberty UnitData:9233-9235",
+    ),
+];
+
+/// B-88 (P-1): every structure authors its analogue's 5.0.14 attributes, not a set derived
+/// from its shields.
+#[test]
+fn b88_structure_attributes_follow_starcraft() -> TestResult {
+    check_table(
+        "structure attributes",
+        true,
+        &SC2_STRUCTURE_ATTRIBUTES,
+        &[],
+        |a| [f32::from(a.attributes.bits())],
+    )
+}
+
+/// B-88 (P-2, plan `2026-11-23-structure-attributes` D-3): one meaning of "structure". An
+/// archetype has the `Structure` attribute exactly when it has a building shape, and there are
+/// exactly as many as the shipped `structures.ron` has rows, so combat's attribute test and the
+/// effect filters' shape test agree on every shipped archetype.
+#[test]
+fn the_structure_attribute_marks_exactly_the_structures() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut structures = 0_usize;
+    for archetype in catalogs.units.archetypes() {
+        let building = matches!(archetype.shape, sim_types::ShapeKind::BuildingDome { .. });
+        assert_eq!(
+            archetype.attributes.contains(AttributeFlags::STRUCTURE),
+            building,
+            "{}: the Structure attribute and the building shape disagree",
+            archetype.slug
+        );
+        structures += usize::from(building);
+    }
+    let mut rows = sim_core::catalog::UnitCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        "(units: [])",
+    )?;
+    rows.load_structures_from_ron_str(sim_fixtures::STRUCTURES_RON)?;
+    let rows = rows.archetypes().count();
+    assert!(rows > 0, "the shipped structures.ron has rows");
+    assert_eq!(
+        structures, rows,
+        "one structure archetype per structures.ron row"
+    );
+    Ok(())
+}
+
 /// Costs the audit corrected: `(analogue, [minerals, gas], source)` (`CUnit` `CostResource`). The other
 /// unit and structure costs match the game's build cost (evidence §10.1: a Zerg structure's data cost
 /// includes the Drone; morphs and the Zergling pair are B-86).

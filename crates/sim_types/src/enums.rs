@@ -126,7 +126,9 @@ pub enum MoverType {
 }
 
 bitflags! {
-    /// Bitflags representing unit combat and armor classification attributes.
+    /// Bitflags representing unit combat and armor classification attributes (`StarCraft` II
+    /// `CUnit` `Attributes`). Units author them as bits in `units.ron`, structures as a list of
+    /// names in `structures.ron`; weapon bonuses, target flags and effect filters read them.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct AttributeFlags: u16 {
         /// Light units susceptible to anti-light weapon bonuses.
@@ -135,13 +137,15 @@ bitflags! {
         const ARMORED     = 1 << 1;
         /// Living organic units susceptible to biological abilities.
         const BIOLOGICAL  = 1 << 2;
-        /// Robotic/mechanical units repairable by workers.
+        /// Mechanical units and structures; the game's Repair targets them.
         const MECHANICAL  = 1 << 3;
-        /// Psionic entities vulnerable to feedback/EMP.
+        /// Psionic units, vulnerable to feedback and EMP.
         const PSIONIC     = 1 << 4;
         /// Massive tier-3 units immune to concussive slow and certain crowd controls.
         const MASSIVE     = 1 << 5;
-        /// Fixed building domes and defensive structures.
+        /// Structures, and only structures: catalog validation requires it on every
+        /// `structures.ron` row and refuses it on every unit row, so it marks exactly the
+        /// archetypes with a building shape (plan `2026-11-23-structure-attributes` D-3).
         const STRUCTURE   = 1 << 6;
         /// Special campaign or commander heroes.
         const HEROIC      = 1 << 7;
