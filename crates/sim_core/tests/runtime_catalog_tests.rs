@@ -1438,9 +1438,12 @@ fn an_edited_splash_impact_moves_the_burst() -> TestResult {
         text.contains("impact: Attacker"),
         "the shipped catalog centres an area on its attacker"
     );
+    // The other-level strike belongs to an attacker-centred area only (plan
+    // `2026-11-23-splash-cliff-levels` D-3), so the edit drops it with the centre.
     std::fs::write(
         &path,
-        text.replacen("impact: Attacker", "impact: Target", 1),
+        text.replacen("impact: Attacker", "impact: Target", 1)
+            .replacen("strike_target_on_other_level: true,", "", 1),
     )?;
     let edited = bundle.load()?;
     let struck = |catalogs: RuntimeCatalogs| -> Result<(bool, bool), Box<dyn std::error::Error>> {
@@ -1739,6 +1742,441 @@ fn edited_stance_orders_change_the_loaded_rule() -> TestResult {
         }
     }
     assert!(flipped >= 2, "both shipped sets flipped: {flipped}");
+    bundle.finish()?;
+    Ok(())
+}
+
+/// A 32-cell world from `catalogs` with the plateau: cells with `x >= 16` at level 1, the rest
+/// level 0; no random weapon delays.
+fn cliff_world(catalogs: RuntimeCatalogs) -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = SimWorld::with_catalogs(map, 7, catalogs.units, catalogs.upgrades)?;
+    sim_fixtures::without_random_delays(&mut world.catalog);
+    Ok(world)
+}
+
+/// The first small shipped mobile ground unit other than `except`, with its collision radius.
+fn small_infantry(
+    world: &SimWorld,
+    except: UnitTypeId,
+) -> Result<(UnitTypeId, SimScalar), Box<dyn std::error::Error>> {
+    Ok(world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.unit_type_id != except
+                && arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && matches!(arch.shape, ShapeKind::UnitSphere)
+                && arch.collision_radius <= SimScalar::HALF
+        })
+        .map(|arch| (arch.unit_type_id, arch.collision_radius))
+        .ok_or("small infantry")?)
+}
+
+/// Spawns `kind` for player 1 at `(x, 16)` holding position.
+fn holding(
+    world: &mut SimWorld,
+    kind: UnitTypeId,
+    x: SimScalar,
+) -> Result<sim_types::EntityId, Box<dyn std::error::Error>> {
+    let id = world.spawn_unit(kind, PlayerId(1), SimVec2::new(x, SimScalar::from_num(16)))?;
+    world
+        .entities
+        .get_mut(&id)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::HoldPosition, false)?;
+    Ok(id)
+}
+
+/// Orders `attacker` onto `target` and plays up to 120 ticks, until any of `watched` loses life.
+/// Returns which of `watched` lost life.
+fn struck_by(
+    world: &mut SimWorld,
+    attacker: sim_types::EntityId,
+    target: sim_types::EntityId,
+    watched: &[sim_types::EntityId],
+) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
+    let life = |world: &SimWorld, id| world.entities.get(&id).map_or(SimScalar::ZERO, |e| e.hp);
+    let full: Vec<_> = watched.iter().map(|&id| life(world, id)).collect();
+    world
+        .entities
+        .get_mut(&attacker)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)?;
+    for tick in 0..120 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if watched
+            .iter()
+            .zip(&full)
+            .any(|(&id, &before)| life(world, id) < before)
+        {
+            break;
+        }
+    }
+    Ok(watched
+        .iter()
+        .zip(&full)
+        .map(|(&id, &before)| life(world, id) < before)
+        .collect())
+}
+
+/// Plan `2026-11-23-splash-cliff-levels` P-7 (B-170): the cliff rule is read from `units.ron` at
+/// run time. The sieged cannon (a mode weapon with a conditional circular area), fired from the
+/// plateau at infantry below it, spares infantry on the plateau inside its first zone with the
+/// shipped catalog, and strikes it in the same binary with the row edited to `cliff: Any`. The
+/// Baneling analogue's burst (an attacker-centred area) from the plateau strikes its target below
+/// with the shipped catalog, and leaves it untouched with the row's
+/// `strike_target_on_other_level: true` removed.
+#[test]
+fn an_edited_cliff_rule_changes_who_an_area_strikes() -> TestResult {
+    let bundle = Bundle::new("splash-cliff")?;
+    let shipped = bundle.load()?;
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let condition = "target_radius_below: Some(1.25),";
+    let fallback = "strike_target_on_other_level: true,";
+    assert!(
+        text.contains(condition) && text.contains(fallback),
+        "the shipped rows"
+    );
+    std::fs::write(
+        &path,
+        text.replacen(condition, &format!("{condition} cliff: Any,"), 1),
+    )?;
+    let any_level_cannon = bundle.load()?;
+    std::fs::write(&path, text.replacen(fallback, "", 1))?;
+    let no_fallback = bundle.load()?;
+    bundle.restore()?;
+    let shipped_again = bundle.load()?;
+
+    let cannon = |catalogs: RuntimeCatalogs| -> Result<Vec<bool>, Box<dyn std::error::Error>> {
+        let mut world = cliff_world(catalogs)?;
+        let (owner_kind, mut weapon) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                arch.modes
+                    .iter()
+                    .filter_map(|mode| {
+                        mode.ground_weapon_override
+                            .as_ref()
+                            .and_then(Option::as_ref)
+                    })
+                    .find(|weapon| {
+                        weapon
+                            .splash
+                            .as_ref()
+                            .is_some_and(|splash| splash.target_radius_below.is_some())
+                    })
+                    .map(|weapon| (arch.unit_type_id, weapon.clone()))
+            })
+            .ok_or("a conditional mode weapon")?;
+        weapon.min_range = SimScalar::ZERO;
+        weapon.firing_arc = sim_types::SimAngle::from_degrees(360);
+        weapon.acquire_arc = sim_types::SimAngle::from_degrees(360);
+        weapon.has_turret = false;
+        let arch = world.catalog.get_mut(owner_kind)?;
+        arch.weapon = Some(weapon.clone());
+        arch.ground_weapon = Some(weapon);
+        let (kind, _) = small_infantry(&world, owner_kind)?;
+        let gunner = world.spawn_unit(
+            owner_kind,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(22), SimScalar::from_num(16)),
+        )?;
+        let target = holding(&mut world, kind, SimScalar::from_num(15.5))?;
+        let beside = holding(&mut world, kind, SimScalar::from_num(16.3))?;
+        struck_by(&mut world, gunner, target, &[target, beside])
+    };
+    assert_eq!(
+        cannon(shipped)?,
+        vec![true, false],
+        "shipped: kept to its level"
+    );
+    assert_eq!(
+        cannon(any_level_cannon)?,
+        vec![true, true],
+        "edited: every level"
+    );
+
+    let burst = |catalogs: RuntimeCatalogs| -> Result<bool, Box<dyn std::error::Error>> {
+        let mut world = cliff_world(catalogs)?;
+        let burst = world
+            .catalog
+            .archetypes()
+            .find(|arch| {
+                arch.weapon.as_ref().is_some_and(|weapon| {
+                    weapon
+                        .splash
+                        .as_ref()
+                        .is_some_and(|splash| splash.impact == sim_types::SplashImpact::Attacker)
+                })
+            })
+            .map(|arch| (arch.unit_type_id, arch.collision_radius))
+            .ok_or("an attacker-centred area")?;
+        let (burst_kind, own) = burst;
+        let (kind, radius) = small_infantry(&world, burst_kind)?;
+        let origin = SimScalar::from_num(16) + own;
+        let baneling = world.spawn_unit(
+            burst_kind,
+            PlayerId(0),
+            SimVec2::new(origin, SimScalar::from_num(16)),
+        )?;
+        let target_x = origin - own - radius - SimScalar::from_num(0.1);
+        let target = holding(&mut world, kind, target_x)?;
+        Ok(struck_by(&mut world, baneling, target, &[target])?[0])
+    };
+    assert!(burst(shipped_again)?, "shipped: struck across the cliff");
+    assert!(
+        !burst(no_fallback)?,
+        "edited: the target on another level untouched"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// `source` with the first `field` after the first `anchor` given `replacement` (see
+/// [`replace_first_field`]).
+fn replace_field_after(source: &str, anchor: &str, field: &str, replacement: &str) -> String {
+    let at = source.find(anchor).expect("fixture has the anchor");
+    format!(
+        "{}{}",
+        &source[..at],
+        replace_first_field(&source[at..], field, replacement)
+    )
+}
+
+/// A world on `catalogs` with nothing in it but what the caller spawns.
+fn bare_world(catalogs: &RuntimeCatalogs) -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    Ok(SimWorld::with_catalogs(
+        map,
+        11,
+        catalogs.units.clone(),
+        catalogs.upgrades.clone(),
+    )?)
+}
+
+/// Steps `world` one tick with `commands`.
+fn step_with(world: &mut SimWorld, commands: Vec<sim_types::PlayerCommand>) {
+    world.step(&sim_types::TickBundle {
+        tick: sim_types::Tick(world.current_tick),
+        commands,
+        state_checksum: None,
+    });
+}
+
+/// Whether a queued `order` from player 0 reaches `unit` of `world` (it ends the tick at the
+/// back of the unit's queue).
+fn queued_order_reaches(
+    world: &mut SimWorld,
+    unit: sim_types::EntityId,
+    order: &sim_types::UnitOrder,
+) -> bool {
+    step_with(
+        world,
+        vec![sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![unit],
+            order: order.clone(),
+            queue: true,
+        }],
+    );
+    world.entities[&unit].order_queue.back() == Some(order)
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-171, B-172, C6): with
+/// every weapon of the armed structures removed from `structures.ron` at run time, they lose
+/// Stop in the default stance's rule and in the simulation's admission, with no rebuild.
+#[test]
+fn an_armed_structure_disarmed_in_its_file_loses_stop() -> TestResult {
+    let bundle = Bundle::new("disarmed-structures")?;
+    let shipped = bundle.load()?;
+    let armed: Vec<_> = shipped
+        .units
+        .archetypes()
+        .filter(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. }) && arch.stance_armed(None)
+        })
+        .map(|arch| (arch.unit_type_id, arch.slug.clone()))
+        .collect();
+    assert!(
+        !armed.is_empty(),
+        "the shipped catalog has an armed structure"
+    );
+    let path = bundle.directory.join(FILES[1]);
+    let mut text = std::fs::read_to_string(&path)?;
+    for (_, slug) in &armed {
+        let anchor = format!("slug: \"{slug}\"");
+        text = replace_field_after(&text, &anchor, "ground_weapon", "None");
+        text = replace_field_after(&text, &anchor, "air_weapon", "None");
+        // A structure without a weapon has no acquisition range either.
+        text = replace_field_after(&text, &anchor, "scan_range", "None");
+    }
+    std::fs::write(&path, text)?;
+    let edited = bundle.load()?;
+    for (id, slug) in &armed {
+        let before = shipped.units.get(*id)?;
+        let after = edited.units.get(*id)?;
+        assert!(before.stance_orders(None).stop, "{slug}: shipped with Stop");
+        assert!(!after.stance_armed(None), "{slug}: disarmed");
+        assert_eq!(
+            after.stance_orders(None),
+            sim_types::StanceOrders::NONE,
+            "{slug}"
+        );
+        for (catalogs, takes) in [(&shipped, true), (&edited, false)] {
+            let mut world = bare_world(catalogs)?;
+            let unit = world.spawn_structure(*id, PlayerId(0), 10, 10)?;
+            assert_eq!(
+                queued_order_reaches(&mut world, unit, &sim_types::UnitOrder::Stop),
+                takes,
+                "{slug}: the simulation's Stop"
+            );
+        }
+    }
+    bundle.finish()?;
+    Ok(())
+}
+
+/// The mode switch ability of `arch` for its mode `mode`.
+fn switch_of(
+    arch: &sim_core::UnitArchetype,
+    mode: usize,
+) -> Result<u8, Box<dyn std::error::Error>> {
+    let name = &arch.modes[mode].mode_name;
+    let ability = arch
+        .abilities
+        .iter()
+        .position(|ability| {
+            matches!(&ability.effect,
+                sim_types::AbilityEffectSpec::SwitchMode { mode_name } if mode_name == name)
+        })
+        .ok_or("the mode's switch ability")?;
+    Ok(u8::try_from(ability)?)
+}
+
+/// `arch`'s unit spawned in `world` and settled in its mode `mode`.
+fn settled_in(
+    world: &mut SimWorld,
+    arch: &sim_core::UnitArchetype,
+    mode: usize,
+) -> Result<sim_types::EntityId, Box<dyn std::error::Error>> {
+    let unit = world.spawn_unit(
+        arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::new(SimScalar::from_num(12), SimScalar::from_num(12)),
+    )?;
+    assert!(world.execute_ability(unit, switch_of(arch, mode)?, None, None));
+    for _ in 0..400 {
+        if world.entities[&unit].channeling_remaining_ticks == 0 {
+            return Ok(unit);
+        }
+        step_with(world, Vec::new());
+    }
+    Err("the switch ends within 400 ticks".into())
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-172, C6): an anchoring
+/// mode authored with Hold Position at run time lets the simulation hold a unit settled in it.
+#[test]
+fn an_anchoring_mode_given_hold_position_in_its_file_holds() -> TestResult {
+    let bundle = Bundle::new("hold-anchored")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch
+                .modes
+                .iter()
+                .position(|mode| mode.is_immobile && !mode.orders.hold_position)?;
+            Some((arch.clone(), mode))
+        })
+        .ok_or("an anchoring mode without Hold Position")?;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let stop = if arch.modes[mode].orders.stop {
+        "true"
+    } else {
+        "false"
+    };
+    std::fs::write(
+        &path,
+        replace_field_after(
+            &text,
+            &anchor,
+            "orders",
+            &format!("(stop: {stop}, hold_position: true)"),
+        ),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, holds) in [(&shipped, false), (&edited, true)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        step_with(
+            &mut world,
+            vec![sim_types::PlayerCommand {
+                player_id: PlayerId(0),
+                entities: vec![unit],
+                order: sim_types::UnitOrder::HoldPosition,
+                queue: false,
+            }],
+        );
+        assert_eq!(
+            world.entities[&unit].is_holding_position, holds,
+            "edited {holds}"
+        );
+    }
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-23-stance-checked-orders` P-8, the simulation half (B-173, C6): a mode whose
+/// replacement ground weapon is removed at run time leaves a unit armed only in that mode
+/// unarmed there, by `stance_armed` and by the settled unit.
+#[test]
+fn a_mode_without_its_replacement_weapon_in_its_file_is_unarmed() -> TestResult {
+    let bundle = Bundle::new("unarmed-mode")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch
+                .modes
+                .iter()
+                .position(|mode| matches!(mode.ground_weapon_override, Some(Some(_))))?;
+            (!arch.stance_armed(None)).then(|| (arch.clone(), mode))
+        })
+        .ok_or("an archetype armed only in a mode")?;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        replace_field_after(&text, &anchor, "ground_weapon_override", "None"),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, armed) in [(&shipped, true), (&edited, false)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        assert_eq!(loaded.stance_armed(Some(&loaded.modes[mode])), armed);
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        assert_eq!(world.entities[&unit].settled_armed(loaded), armed);
+    }
     bundle.finish()?;
     Ok(())
 }

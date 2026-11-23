@@ -465,6 +465,31 @@ impl GameMap {
         Ok((cx, cy))
     }
 
+    /// The cliff level a position stands on: the level stored in the cell under `pos`, a ramp
+    /// cell counting as its lower landing (as the map stores it). A position off the map takes
+    /// the level of the nearest cell on the map, so every position has a level. The level
+    /// depends on the position alone, not on what stands there: an air unit has the level of
+    /// the ground below it.
+    ///
+    /// `pos` is in world units; a coordinate is floored to its cell after a clamp to
+    /// `[0, width)` × `[0, height)`, so a whole-number coordinate lies in the cell that starts
+    /// there. Area damage reads it to keep a search to its centre's level (plan
+    /// `2026-11-23-splash-cliff-levels` D-2, `StarCraft` II's `SameCliff`).
+    #[must_use]
+    pub fn cliff_level_at(&self, pos: SimVec2) -> CliffLevel {
+        // `saturating_to_u32` floors and turns a negative coordinate into 0; `min` keeps a
+        // coordinate at or past the far edge on the last cell. `new` and `from_cells` refuse a
+        // zero size, so the subtraction cannot wrap. Both constructors also make `cells` cover
+        // the size; only a map deserialized with fewer cells than its size could miss, and it
+        // reads the lowest level there rather than panicking in the simulation.
+        let x = pos.x.saturating_to_u32().min(self.width.saturating_sub(1));
+        let y = pos.y.saturating_to_u32().min(self.height.saturating_sub(1));
+        let index = (y as usize) * (self.width as usize) + (x as usize);
+        self.cells
+            .get(index)
+            .map_or(CliffLevel::MIN, |cell| cell.cliff_level)
+    }
+
     /// Converts discrete grid cell coordinates into the continuous world center position `(x + 0.5, y + 0.5)`.
     ///
     /// # Errors
@@ -1036,5 +1061,169 @@ impl GameMap {
 
             tower.controlling_player = if contested { None } else { occupying_player };
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "a map that cannot be built or a cell outside it is a broken test, stopped loudly"
+)]
+mod tests {
+    use super::{CliffLevel, GameMap, MapCell};
+    use sim_types::{SimScalar, SimVec2};
+
+    const WIDTH: u32 = 6;
+    const HEIGHT: u32 = 5;
+
+    /// The level stored in cell `(x, y)` of [`checkerboard`]: every two neighbouring cells,
+    /// side or diagonal, differ, so a position read in the wrong cell fails.
+    fn level_of(x: u32, y: u32) -> CliffLevel {
+        CliffLevel(u8::try_from((x + 2 * y) % 4).unwrap_or(0))
+    }
+
+    /// A `WIDTH` × `HEIGHT` map whose cell `(x, y)` stores [`level_of`]`(x, y)`.
+    fn checkerboard() -> GameMap {
+        let mut map = GameMap::new(WIDTH, HEIGHT, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a nonzero size");
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                map.cell_mut(x, y)
+                    .expect("invariant: inside the map")
+                    .cliff_level = level_of(x, y);
+            }
+        }
+        map
+    }
+
+    fn at(x: f64, y: f64) -> SimVec2 {
+        SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+    }
+
+    /// Plan `2026-11-23-splash-cliff-levels` P-4: a position on the map has the level of the
+    /// cell it lies in, at the cell's centre and anywhere inside it.
+    #[test]
+    fn a_position_has_the_level_of_its_cell() {
+        let map = checkerboard();
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                for (fx, fy) in [(0.5, 0.5), (0.0, 0.0), (0.999, 0.001), (0.25, 0.75)] {
+                    assert_eq!(
+                        map.cliff_level_at(at(f64::from(x) + fx, f64::from(y) + fy)),
+                        level_of(x, y),
+                        "cell ({x}, {y}) at ({fx}, {fy})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// P-4: on a cell boundary the floor decides: a coordinate equal to a whole number lies in
+    /// the cell that starts there, and one 2⁻³² below it in the cell before.
+    #[test]
+    fn a_cell_boundary_belongs_to_the_cell_the_floor_gives() {
+        let map = checkerboard();
+        let below = SimScalar::EPSILON;
+        for x in 1..WIDTH {
+            let edge = SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(2.5));
+            assert_eq!(map.cliff_level_at(edge), level_of(x, 2), "x = {x}");
+            let before = SimVec2::new(edge.x - below, edge.y);
+            assert_eq!(map.cliff_level_at(before), level_of(x - 1, 2), "x = {x}⁻");
+        }
+        for y in 1..HEIGHT {
+            let edge = SimVec2::new(SimScalar::from_num(3.5), SimScalar::from_num(y));
+            assert_eq!(map.cliff_level_at(edge), level_of(3, y), "y = {y}");
+            let before = SimVec2::new(edge.x, edge.y - below);
+            assert_eq!(map.cliff_level_at(before), level_of(3, y - 1), "y = {y}⁻");
+        }
+    }
+
+    /// P-4: a position off the map takes the level of the nearest border cell, on each of the
+    /// four sides and beyond each of the four corners, however far off and from 2⁻³² off.
+    #[test]
+    fn a_position_off_the_map_takes_the_nearest_border_cell() {
+        let map = checkerboard();
+        let (w, h) = (f64::from(WIDTH), f64::from(HEIGHT));
+        let (last_x, last_y) = (WIDTH - 1, HEIGHT - 1);
+        for far in [1e-9, 0.5, 3.0, 1.0e6] {
+            // The four sides, beside cell column 2 or row 1.
+            assert_eq!(
+                map.cliff_level_at(at(-far, 1.5)),
+                level_of(0, 1),
+                "west {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(w + far, 1.5)),
+                level_of(last_x, 1),
+                "east {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(2.5, -far)),
+                level_of(2, 0),
+                "south {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(2.5, h + far)),
+                level_of(2, last_y),
+                "north {far}"
+            );
+            // The four corners.
+            assert_eq!(
+                map.cliff_level_at(at(-far, -far)),
+                level_of(0, 0),
+                "south-west {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(w + far, -far)),
+                level_of(last_x, 0),
+                "south-east {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(-far, h + far)),
+                level_of(0, last_y),
+                "north-west {far}"
+            );
+            assert_eq!(
+                map.cliff_level_at(at(w + far, h + far)),
+                level_of(last_x, last_y),
+                "north-east {far}"
+            );
+        }
+        // Exactly on the far edges: the coordinate equal to the width or height lies past the
+        // last cell, which it takes.
+        assert_eq!(
+            map.cliff_level_at(at(w, 1.5)),
+            level_of(last_x, 1),
+            "x = width"
+        );
+        assert_eq!(
+            map.cliff_level_at(at(2.5, h)),
+            level_of(2, last_y),
+            "y = height"
+        );
+        let extreme = SimVec2::new(SimScalar::MIN, SimScalar::MAX);
+        assert_eq!(
+            map.cliff_level_at(extreme),
+            level_of(0, last_y),
+            "the scalar bounds"
+        );
+    }
+
+    /// P-4: the level depends on the position alone; a structure placed over cells, as any
+    /// unit standing there, leaves it unchanged (an air unit has the level of the ground below).
+    #[test]
+    fn the_level_reads_the_terrain_only() {
+        let mut map = GameMap::new(8, 8, MapCell::default_ground(CliffLevel(2)))
+            .expect("invariant: a nonzero size");
+        let before = map.cliff_level_at(at(3.5, 3.5));
+        map.place_structure(
+            sim_types::EntityId(7),
+            (3, 3),
+            crate::footprint::StructureFootprint::square(2, 2),
+        )
+        .expect("invariant: open buildable ground");
+        assert_eq!(map.cliff_level_at(at(3.5, 3.5)), before);
+        assert_eq!(map.cliff_level_at(at(4.5, 4.5)), before);
+        assert_eq!(before, CliffLevel(2));
     }
 }

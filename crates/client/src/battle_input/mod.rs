@@ -464,8 +464,9 @@ fn handle_normal_pointer(
     }
 }
 
-/// A left press issues the armed mode's order at the ground, or aims its cast at the ground or
-/// the unit under the pointer ([`cast_target`]), and a right press cancels the mode.
+/// A left press issues the armed mode's order at the ground, aims the Attack mode at an enemy
+/// unit under the pointer, or aims its cast at the ground or the unit under the pointer
+/// ([`cast_target`]), and a right press cancels the mode.
 ///
 /// Only an accepted order ends the mode, and Shift keeps it for the next site. A refusal leaves it
 /// armed, so the player can try elsewhere. No gesture begins, so the selection stays as it is.
@@ -502,6 +503,19 @@ fn handle_targeting_pointer(
             };
             queue.submit_cast(world, frame.owner, selection.ids(), cast)?;
             return Ok((OrderMarkerKind::Attack, target.marker));
+        }
+        // In the Attack mode a click on a unit the viewer does not own attacks that unit, with
+        // the same fog rules as selection (plan `2026-11-23-stance-checked-orders` D-6). A click
+        // on one's own unit stays an attack-move to the ground under it (B-175).
+        if *mode == CommandMode::AttackMove {
+            let enemy = ray
+                .and_then(|ray| view.pick_unit(world, frame.owner, ray))
+                .filter(|unit| unit.owner != frame.owner);
+            if let Some(unit) = enemy {
+                let order = UnitOrder::attack(unit.id);
+                queue.submit_selection(world, frame.owner, selection.ids(), order, frame.shift)?;
+                return Ok((OrderMarkerKind::Attack, unit.ground));
+            }
         }
         let ground = ground.ok_or(SubmissionError::NoDestination)?;
         let (order, kind, position) = mode.order_at(world, frame.owner, ground)?;

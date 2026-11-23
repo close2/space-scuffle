@@ -648,6 +648,26 @@ pub fn any_recipient(
     })
 }
 
+/// Whether any member of `selection` could take an attack on some unit: a completed unit of
+/// `player` armed in its settled stance. Unlike [`any_recipient`] it names no target, for the
+/// Attack mode, whose click may yet aim at a unit (plan `2026-11-23-stance-checked-orders` D-6).
+#[must_use]
+pub fn any_attacker(world: &SimWorld, player: PlayerId, selection: &[EntityId]) -> bool {
+    let order = UnitOrder::attack(EntityId(0));
+    selection.iter().any(|id| {
+        world
+            .entities
+            .get(id)
+            .filter(|entity| entity.owner == player && can_receive_order(entity, &order))
+            .is_some_and(|entity| {
+                world
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|archetype| entity.settled_armed(archetype))
+            })
+    })
+}
+
 /// Refuses every order once the match has ended or `player` has been defeated.
 ///
 /// This is the simulation's own rule, checked here so a closed match answers at submission
@@ -662,7 +682,9 @@ fn accepts_orders(world: &SimWorld, player: PlayerId) -> Result<(), SubmissionEr
     Ok(())
 }
 
-/// Whether `archetype` carries any weapon. The one rule client admission and the card share.
+/// Whether `archetype` carries any weapon in its default stance: `UnitArchetype::stance_armed`
+/// for no mode, which admission and the card read through the settled stance
+/// (`Entity::settled_armed`, plan `2026-11-23-stance-checked-orders` D-3).
 #[must_use]
 pub const fn is_armed(archetype: &UnitArchetype) -> bool {
     archetype.weapon.is_some()
@@ -695,7 +717,9 @@ fn capable(
     // A unit leaving an anchoring mode counts as mobile: the simulation keeps a move given
     // during the channel and walks when it ends (plan `2026-11-09-client-mode-commands` D-7).
     let mobile = !entity.immobile_after_channel(archetype) && archetype.max_speed > SimScalar::ZERO;
-    let armed = is_armed(archetype);
+    // Armed in the stance the unit is in or is switching to, as Stop, Hold and the mode entries
+    // ask (plan `2026-11-23-stance-checked-orders` D-4, B-173).
+    let armed = entity.settled_armed(archetype);
     match order {
         // Stop and Hold Position follow the settled stance's data (plan
         // `2026-11-23-anchored-commands` D-3): a unit has Stop when its StarCraft II unit type
@@ -706,10 +730,13 @@ fn capable(
         UnitOrder::HoldPosition => entity.settled_stance_orders(archetype).hold_position,
         // Walking orders address movable actors only.
         UnitOrder::Move { .. } | UnitOrder::Idle => mobile,
+        // An attack on a unit goes to every member armed in its settled stance: 5.0.14's sieged
+        // tank, burrowed Lurker and armed structures carry `attack` (`liberty` UnitData:5172-5174,
+        // :793-796, :11083-11084; `ToSelection`, `core` AbilData:127-129). An attack on a point
+        // walks, so it needs a mobile member; an anchored unit's attack on a point is refused
+        // (Q0098's default, plan D-7).
         UnitOrder::AttackMove { .. } => mobile && armed,
-        UnitOrder::AttackTarget { .. } => {
-            armed || entity.is_sieged && entity.siege_weapon.is_some()
-        }
+        UnitOrder::AttackTarget { .. } => armed,
         UnitOrder::UseStim => can_overclock(world, entity, archetype),
         // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
@@ -769,16 +796,17 @@ fn can_execute(
     order: &UnitOrder,
     subject: Option<&UnitArchetype>,
 ) -> bool {
+    // The weapon of the settled stance, as `Entity::apply_mode_transition` will set it: the
+    // mode's replacement ground weapon, or the archetype's own (plan
+    // `2026-11-23-stance-checked-orders` D-4).
     let reaches_target = !matches!(order, UnitOrder::AttackTarget { .. })
         || subject.is_some_and(|target| {
+            let replaced = entity
+                .settled_mode(archetype)
+                .and_then(|mode| mode.ground_weapon_override.as_ref())
+                .and_then(Option::as_ref);
             archetype
-                .weapon_against(
-                    target.mover_type,
-                    entity
-                        .is_sieged
-                        .then_some(entity.siege_weapon.as_ref())
-                        .flatten(),
-                )
+                .weapon_against(target.mover_type, replaced)
                 .is_some()
         });
     reaches_target && capable(world, entity, archetype, order, subject)

@@ -27,7 +27,10 @@
 use serde::Deserialize;
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::{SimCoreError, SimWorld};
-use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_map::{
+    validate_map, CellFlags, CliffLevel, GameMap, MapCell, MapDocument, MapMetadata,
+    MapValidationError, RampDir,
+};
 use sim_types::{
     AbilityEffectSpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar,
     SimVec2, Tick, TickBundle, UnitOrder,
@@ -92,6 +95,15 @@ pub enum MatchupError {
     /// A side scripts a cast of an ability that none of its units has.
     #[error("no unit of the casting side has an ability named `{0}`")]
     NoCastAbility(String),
+    /// A terrain region's first corner lies beyond its last.
+    #[error("terrain region {0} is empty: its `from` corner lies beyond its `to` corner")]
+    EmptyRegion(usize),
+    /// The arena with its terrain cannot be written as a map document for validation.
+    #[error("cannot describe the arena as a map: {0}")]
+    ArenaFormat(#[from] sim_map::MapFormatError),
+    /// The arena with its terrain fails `sim_map::validate_map`.
+    #[error("the arena is not a valid map: {0:?}")]
+    InvalidArena(Vec<MapValidationError>),
 }
 
 /// The whole matrix: seeds, jitter and battles.
@@ -144,8 +156,12 @@ pub struct Battle {
     pub name: String,
     /// What the battle is meant to demonstrate.
     pub claim: String,
-    /// Edge length of the square flat arena, in cells.
+    /// Edge length of the square arena, in cells.
     pub map_cells: u32,
+    /// Terrain applied in order to the flat level-0 arena (plan
+    /// `2026-11-23-splash-cliff-levels` §7.4); none keeps it flat.
+    #[serde(default)]
+    pub terrain: Vec<ArenaRegion>,
     /// Ticks allowed before the battle is judged where it stands.
     pub ticks: u32,
     /// Player 0's forces and orders.
@@ -154,6 +170,68 @@ pub struct Battle {
     pub red: Side,
     /// The recorded result.
     pub expect: Expected,
+}
+
+/// One rectangle of an arena's terrain: every cell in it, corners included, is set to plain
+/// ground at `level` or, with `ramp`, to a ramp cell storing `level` as its lower landing (as
+/// every map stores a ramp) and ascending towards `ramp`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArenaRegion {
+    /// The first corner `(x, y)`, in cells.
+    pub from: (u32, u32),
+    /// The last corner `(x, y)`, inclusive, in cells.
+    pub to: (u32, u32),
+    /// The cliff level of every cell, 0 to 3; a ramp's lower landing.
+    pub level: u8,
+    /// The direction the cells ascend towards, for a ramp; `None` for plain ground.
+    #[serde(default)]
+    pub ramp: Option<RampDir>,
+}
+
+/// The arena `battle` plays on: a flat level-0 square of `battle.map_cells` with each terrain
+/// region applied in order, then checked as a map document by `sim_map::validate_map`, every
+/// check but the count of start locations (a matrix arena has none).
+///
+/// # Errors
+/// [`MatchupError::Map`] for a size the map refuses or a region leaving the map,
+/// [`MatchupError::EmptyRegion`] for a region whose corners are reversed, and
+/// [`MatchupError::ArenaFormat`] or [`MatchupError::InvalidArena`] for an arena that is not a
+/// valid map.
+pub fn arena(battle: &Battle) -> Result<GameMap, MatchupError> {
+    let mut map = GameMap::new(
+        battle.map_cells,
+        battle.map_cells,
+        MapCell::default_ground(CliffLevel(0)),
+    )?;
+    for (index, region) in battle.terrain.iter().enumerate() {
+        if region.from.0 > region.to.0 || region.from.1 > region.to.1 {
+            return Err(MatchupError::EmptyRegion(index));
+        }
+        let mut cell = MapCell::default_ground(CliffLevel(region.level));
+        if let Some(direction) = region.ramp {
+            cell.ramp = Some(direction);
+            cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+        }
+        for y in region.from.1..=region.to.1 {
+            for x in region.from.0..=region.to.0 {
+                *map.cell_mut(x, y)? = cell.clone();
+            }
+        }
+    }
+    let metadata = MapMetadata {
+        title: battle.name.clone(),
+        author: String::new(),
+        description: battle.claim.clone(),
+        theme: String::new(),
+    };
+    let mut errors = validate_map(&MapDocument::from_game_map(&map, metadata)?).errors;
+    // A matrix arena places its units by squad, never from start locations, so it has none;
+    // every other check applies to it as to a shipped map.
+    errors.retain(|error| !matches!(error, MapValidationError::TooFewStartLocations { .. }));
+    if !errors.is_empty() {
+        return Err(MatchupError::InvalidArena(errors));
+    }
+    Ok(map)
 }
 
 /// One player's forces and instructions.
@@ -722,11 +800,7 @@ impl BattleRun {
         seed: u64,
         jitter: f32,
     ) -> Result<Self, MatchupError> {
-        let map = GameMap::new(
-            battle.map_cells,
-            battle.map_cells,
-            MapCell::default_ground(CliffLevel(0)),
-        )?;
+        let map = arena(battle)?;
         let mut world = SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
             .map_err(MatchupError::World)?;
         let mut nudges = Jitter::new(seed, jitter);
@@ -816,6 +890,111 @@ mod tests {
             Err(MatchupError::UnknownBattle(_))
         ));
         Ok(())
+    }
+
+    /// A battle on a 32-cell arena with `terrain`, no units, for the arena tests.
+    fn bare_battle(terrain: Vec<ArenaRegion>) -> Battle {
+        Battle {
+            name: "arena".to_owned(),
+            claim: "arena test".to_owned(),
+            map_cells: 32,
+            terrain,
+            ticks: 1,
+            blue: Side {
+                squads: Vec::new(),
+                order: SideOrder::default(),
+                research: Vec::new(),
+                stim: false,
+                mode: None,
+                casts: Vec::new(),
+            },
+            red: Side {
+                squads: Vec::new(),
+                order: SideOrder::default(),
+                research: Vec::new(),
+                stim: false,
+                mode: None,
+                casts: Vec::new(),
+            },
+            expect: Expected {
+                blue: (0, 0),
+                red: (0, 0),
+                blue_lead_hp: None,
+                red_lead_hp: None,
+                blue_lead_alive: None,
+                red_lead_alive: None,
+            },
+        }
+    }
+
+    /// Plan `2026-11-23-splash-cliff-levels` §7.4: regions apply in order; a plateau with a
+    /// ramp up to it leaves the plateau's cells at its level, the ramp's cells ramps storing the
+    /// lower landing, and every other cell flat level 0.
+    #[test]
+    fn terrain_regions_apply_in_order() -> Result<(), MatchupError> {
+        let map = arena(&bare_battle(vec![
+            ArenaRegion {
+                from: (16, 0),
+                to: (31, 31),
+                level: 1,
+                ramp: None,
+            },
+            ArenaRegion {
+                from: (13, 10),
+                to: (15, 13),
+                level: 0,
+                ramp: Some(RampDir::East),
+            },
+        ]))?;
+        for y in 0..32 {
+            for x in 0..32 {
+                let cell = map.cell(x, y)?;
+                let ramp = (13..=15).contains(&x) && (10..=13).contains(&y);
+                let level = u8::from(x >= 16);
+                assert_eq!(cell.cliff_level, CliffLevel(level), "({x}, {y})");
+                assert_eq!(cell.ramp, ramp.then_some(RampDir::East), "({x}, {y})");
+                assert_eq!(cell.flags.contains(CellFlags::RAMP), ramp, "({x}, {y})");
+            }
+        }
+        let flat = arena(&bare_battle(Vec::new()))?;
+        assert!(flat
+            .cells()
+            .iter()
+            .all(|cell| cell.cliff_level == CliffLevel(0)));
+        Ok(())
+    }
+
+    /// An arena its terrain leaves invalid is refused, naming why: a ramp on the top level
+    /// (`sim_map::validate_map`), a region off the map, and reversed corners.
+    #[test]
+    fn an_invalid_arena_is_refused() {
+        let top_ramp = bare_battle(vec![ArenaRegion {
+            from: (4, 4),
+            to: (6, 6),
+            level: 3,
+            ramp: Some(RampDir::North),
+        }]);
+        assert!(matches!(
+            arena(&top_ramp),
+            Err(MatchupError::InvalidArena(errors)) if !errors.is_empty()
+        ));
+        let off_map = bare_battle(vec![ArenaRegion {
+            from: (30, 0),
+            to: (32, 3),
+            level: 1,
+            ramp: None,
+        }]);
+        assert!(matches!(arena(&off_map), Err(MatchupError::Map(_))));
+        let reversed = bare_battle(vec![ArenaRegion {
+            from: (5, 0),
+            to: (4, 3),
+            level: 1,
+            ramp: None,
+        }]);
+        assert!(matches!(
+            arena(&reversed),
+            Err(MatchupError::EmptyRegion(0))
+        ));
     }
 
     #[test]
@@ -990,14 +1169,36 @@ mod tests {
         Ok(())
     }
 
+    /// The slug and mode name of the first shipped archetype with an ability that switches it
+    /// into a mode whose stance takes Hold Position, found by property, not by name (C5).
+    fn a_mode_that_takes_hold_position() -> Result<(String, String), Box<dyn std::error::Error>> {
+        let catalogs = crate::shipped_catalogs();
+        let found = catalogs.units.archetypes().find_map(|archetype| {
+            archetype
+                .abilities
+                .iter()
+                .find_map(|ability| match &ability.effect {
+                    AbilityEffectSpec::SwitchMode { mode_name } => archetype
+                        .get_mode(mode_name)
+                        .filter(|mode| mode.orders.hold_position)
+                        .map(|_| (archetype.slug.clone(), mode_name.clone())),
+                    _ => None,
+                })
+        });
+        found.ok_or_else(|| "no shipped mode takes Hold Position".into())
+    }
+
     #[test]
     fn mode_commands_precede_the_standing_order_which_survives_the_switch(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // A standing order given after a switch survives it, for a stance that takes the order
+        // (plan 2026-11-23-stance-checked-orders D-5).
+        let (unit, mode) = a_mode_that_takes_hold_position()?;
         let matrix = Matrix::from_ron_str(MATRIX_RON)?;
         let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
         battle.blue = row((10.0, 10.0), 2);
-        battle.blue.squads[0].unit = "railgun_crawler".to_owned();
-        battle.blue.mode = Some("siege_mode".to_owned());
+        battle.blue.squads[0].unit = unit;
+        battle.blue.mode = Some(mode);
         battle.blue.order = SideOrder::HoldPosition;
         battle.red = row((40.0, 40.0), 1);
         let mut run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
@@ -1006,6 +1207,7 @@ mod tests {
             .iter()
             .position(|command| !matches!(command.order, UnitOrder::CastAbility { .. }))
             .ok_or("the side has a standing order")?;
+        assert!(first_side_order > 0, "the side casts its switch");
         assert!(
             run.commands[first_side_order..]
                 .iter()
@@ -1015,11 +1217,86 @@ mod tests {
         run.step();
         for id in &run.blue {
             let unit = run.world.entities.get(id).ok_or("unit missing")?;
+            assert!(unit.channeling_remaining_ticks > 0, "the switch has begun");
             assert!(
-                !unit.order_queue.is_empty(),
+                unit.is_holding_position,
                 "the switch did not clear the order given after it"
             );
         }
+        Ok(())
+    }
+
+    /// Whether `unit`, named in a first-tick `order`, took it: its settled stance has the order
+    /// and, after the tick, it holds (Hold Position) or carries no order but an acquired attack
+    /// (Stop).
+    fn took(world: &SimWorld, unit: EntityId, order: &UnitOrder) -> Result<bool, String> {
+        let entity = world
+            .entities
+            .get(&unit)
+            .ok_or_else(|| format!("unit {unit:?} missing"))?;
+        let archetype = world
+            .catalog
+            .get(entity.unit_type_id)
+            .map_err(|error| error.to_string())?;
+        let stance = entity.settled_stance_orders(archetype);
+        Ok(match order {
+            UnitOrder::HoldPosition => stance.hold_position && entity.is_holding_position,
+            UnitOrder::Stop => {
+                stance.stop
+                    && entity.order_queue.iter().all(|queued| {
+                        matches!(
+                            queued,
+                            UnitOrder::AttackTarget {
+                                origin: sim_types::AttackOrigin::Acquired,
+                                ..
+                            }
+                        )
+                    })
+            }
+            _ => true,
+        })
+    }
+
+    #[test]
+    fn no_matrix_battle_scripts_a_stop_or_hold_that_misses_a_unit_it_names(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // P-9 (plan 2026-11-23-stance-checked-orders D-5): a scripted Stop or Hold Position
+        // reaches every unit it names, so no battle depends on an order its unit's stance lacks.
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let seed = matrix.seeds[0];
+        let mut missed = Vec::new();
+        for battle in &matrix.battles {
+            let mut run = BattleRun::new(
+                battle,
+                crate::shipped_catalogs(),
+                seed,
+                matrix.jitter_for(seed),
+            )?;
+            let named: Vec<(EntityId, UnitOrder)> = run
+                .commands
+                .iter()
+                .filter(|command| {
+                    matches!(command.order, UnitOrder::Stop | UnitOrder::HoldPosition)
+                })
+                .flat_map(|command| {
+                    command
+                        .entities
+                        .iter()
+                        .map(|&unit| (unit, command.order.clone()))
+                })
+                .collect();
+            run.step();
+            for (unit, order) in &named {
+                if !took(&run.world, *unit, order)? {
+                    missed.push(battle.name.clone());
+                    break;
+                }
+            }
+        }
+        assert!(
+            missed.is_empty(),
+            "battles whose scripted Stop or Hold Position misses a unit: {missed:?}"
+        );
         Ok(())
     }
 

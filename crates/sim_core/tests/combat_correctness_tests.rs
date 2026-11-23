@@ -269,6 +269,8 @@ fn s13_projectile_splash_spares_its_attacker() {
         offset_by_unit_radius: false,
         impact: sim_types::SplashImpact::Target,
         target_radius_below: None,
+        cliff: sim_types::SplashCliff::Same,
+        strike_target_on_other_level: false,
     });
     let hp = arena.vitals(shooter);
     let victim_hp = arena.vitals(victim);
