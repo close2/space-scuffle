@@ -207,9 +207,9 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
-| B-35 | No energy regeneration delay | WP15 |
-| B-36 | Unfinished structures regenerate life | WP15 |
-| B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
+| B-35 | No energy regeneration delay | WP15; plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP1 (its reading: no 5.0.14 layer sets `EnergyRegenDelay`, so not a deviation) |
+| B-36 | Unfinished structures regenerate life | WP15; plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP1 |
+| B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18; regeneration value and hook recorded for WP18 in plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) §14 F-1 |
 === end
 
 === end
@@ -296,6 +296,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-165 | No Shift-queued rally waypoints (**verify** the game's) | open; plan [`2026-11-23-production-queue`](docs/plans/2026-11-23-production-queue.md) D-11, a minor difference |
 | B-166 | A rally on an enemy unit is a point rally at its position; the game's behaviour is not sourced | open; plan [`2026-11-23-production-queue`](docs/plans/2026-11-23-production-queue.md) D-3 and D-11, a minor difference |
 | B-167 | The exit order without a rally (clockwise from the ring's minimum corner) and the outer-ring search are this project's; the game's placement search is not in the data read (**verify**) | open; plan [`2026-11-23-production-queue`](docs/plans/2026-11-23-production-queue.md) D-9 and D-11, a minor difference |
+| B-168 | Structures never regenerate energy: the structure loader writes a rate of 0; the Orbital Command, Nexus and Shield Battery regenerate 0.5625 per Normal second (`liberty UnitData:10515`, `:4240`, `:1593`) | open; plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP2 |
 
 ---
 
