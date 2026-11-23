@@ -76,10 +76,10 @@
             is_detector: false,
             capabilities: (
                 overclock: None,
-                harvester: Some((
-                    harvest_capacity: 5,
-                    harvest_rate_ticks: 50,
-                )),
+                // Harvest time, amount and return delay are the resource's (placement_rules.ron;
+                // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
+                // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
+                harvester: Some(()),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -1566,10 +1566,10 @@
             is_detector: false,
             capabilities: (
                 overclock: None,
-                harvester: Some((
-                    harvest_capacity: 5,
-                    harvest_rate_ticks: 50,
-                )),
+                // Harvest time, amount and return delay are the resource's (placement_rules.ron;
+                // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
+                // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
+                harvester: Some(()),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),
@@ -2620,10 +2620,10 @@
             is_detector: false,
             capabilities: (
                 overclock: None,
-                harvester: Some((
-                    harvest_capacity: 5,
-                    harvest_rate_ticks: 50,
-                )),
+                // Harvest time, amount and return delay are the resource's (placement_rules.ron;
+                // 5.0.14 CBehaviorResource). The workers' harvest abilities set no per-resource
+                // multiplier (liberty AbilData:1094-1099, 2241-2243), so the worker adds nothing.
+                harvester: Some(()),
                 is_resource_dropoff: false,
                 can_construct: true,
             ),

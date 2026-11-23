@@ -1,17 +1,26 @@
 //! The harvester state machine and income.
 //!
 //! Driven only by the archetype's `HarvesterSpec`: any unit with one gathers, whatever it is.
+//! How long a gather takes and what it yields are the resource's: the
+//! [`ResourceHarvest`](crate::catalog::ResourceHarvest) of the node's kind in the catalog's
+//! placement rules (plan `2026-11-22-harvest-timing` D-2).
 //!
 //! # The cycle
 //! A `Harvest` order alternates two states, chosen by whether the unit holds cargo:
-//! - **Empty:** walk to the node, stay for `harvest_rate_ticks`, then take up to
-//!   `harvest_capacity` units from it. The node is drawn down at that moment.
-//! - **Carrying:** walk to the nearest completed friendly depot. Income is credited on
-//!   arrival, not when gathered, so cargo lost with its carrier was never income.
+//! - **Empty:** walk to the node, stay for its kind's `time_ticks`, then take up to its
+//!   `amount` units from it. The node is drawn down at that moment.
+//! - **Carrying:** first wait at the node, holding the load, for its kind's
+//!   `return_delay_ticks` (`ReturnDelay`, counted down in `UnitTask::return_ticks`; plan
+//!   `2026-11-22-harvest-timing` D-1), then walk to the nearest completed friendly depot,
+//!   chosen when the wait ends. Income is credited on arrival, not when gathered, so cargo lost
+//!   with its carrier was never income.
 //!
 //! # Rules
-//! - Workers gathering or returning walk through other units, as mineral walking does in
-//!   `StarCraft` II, so a crowded line never jams on itself. A node has no worker limit.
+//! - Workers gathering, waiting or returning walk through other units, as mineral walking does
+//!   in `StarCraft` II, so a crowded line never jams on itself. A node has no worker limit, and
+//!   it is free for the next worker during the wait.
+//! - The wait is part of the leg: a new order replaces it at once, and the cargo stays on the
+//!   unit (D-4; 5.0.14 marks the stage uninterruptible, B-160). `ReturnCargo` does not wait.
 //! - An exhausted node sends its worker to the nearest live node of the same kind within
 //!   [`NEXT_NODE_RADIUS`]. With none left the order ends with an event.
 //! - What a distant node holds is private until the player sees it. An order to an exhausted
@@ -26,6 +35,9 @@
 //! - A unit holding cargo delivers before it gathers again, so cargo of the other kind is
 //!   never thrown away.
 //! - With no depot left, the order ends and the cargo stays on the unit.
+//! - A node whose kind has no harvest in the catalog (rules not loaded,
+//!   [`PlacementRules::NONE`](crate::catalog::PlacementRules::NONE)) cannot be gathered: the
+//!   order ends with [`TaskEventKind::NotCapable`].
 
 use super::{Approach, Footprint, GameCommandError, GameCommandReceipt, TaskEventKind};
 use crate::entity::Cargo;
@@ -154,10 +166,10 @@ impl SimWorld {
 
     /// One tick of a `Harvest` order at the front of `id`'s queue.
     pub(crate) fn step_harvest(&mut self, id: EntityId, target: ResourceNodeId) {
-        let Some(spec) = self.harvester_spec(id) else {
+        if self.harvester_spec(id).is_none() {
             self.end_task(id, Some(TaskEventKind::NotCapable));
             return;
-        };
+        }
         let Some(actor) = self.entities.get_mut(&id) else {
             return;
         };
@@ -166,6 +178,10 @@ impl SimWorld {
         let position = actor.position;
         if actor.cargo.is_some() {
             actor.task.gather_ticks = 0;
+            if actor.task.return_ticks > 0 {
+                actor.task.return_ticks -= 1;
+                return;
+            }
             self.step_delivery(id, owner, position);
             return;
         }
@@ -195,16 +211,27 @@ impl SimWorld {
             self.end_task(id, Some(TaskEventKind::ExtractorLost));
             return;
         };
-        self.step_gather(id, target, (site, shape), spec);
+        self.step_gather(id, target, (site, shape));
     }
 
+    /// One tick of gathering at `target`: walk to its site, gather for its kind's time, then
+    /// take its kind's amount and start its kind's return delay.
     fn step_gather(
         &mut self,
         id: EntityId,
         target: ResourceNodeId,
         (site, shape): (Footprint, PlacedFootprint),
-        spec: HarvesterSpec,
     ) {
+        let harvest = self
+            .map
+            .resources()
+            .get(target.0 as usize)
+            .and_then(|node| self.catalog.placement_rules().harvest(node.kind))
+            .copied();
+        let Some(harvest) = harvest else {
+            self.end_task(id, Some(TaskEventKind::NotCapable));
+            return;
+        };
         let gathering = self
             .entities
             .get(&id)
@@ -215,7 +242,7 @@ impl SimWorld {
                 Approach::Unreachable => self.end_task(id, Some(TaskEventKind::Unreachable)),
                 Approach::Arrived => {
                     if let Some(actor) = self.entities.get_mut(&id) {
-                        actor.task.gather_ticks = spec.harvest_rate_ticks.max(1);
+                        actor.task.gather_ticks = harvest.time_ticks;
                         actor.current_anim = AnimState::Cast;
                     }
                 }
@@ -232,7 +259,7 @@ impl SimWorld {
         let Some(node) = self.map.resources_mut().get_mut(target.0 as usize) else {
             return;
         };
-        let amount = spec.harvest_capacity.min(node.remaining);
+        let amount = harvest.amount.min(node.remaining);
         node.remaining -= amount;
         let kind = node.kind;
         if node.remaining == 0 && amount > 0 {
@@ -244,6 +271,7 @@ impl SimWorld {
             actor.task.depot = None;
             if amount > 0 {
                 actor.cargo = Some(Cargo { kind, amount });
+                actor.task.return_ticks = harvest.return_delay_ticks;
             }
         }
     }

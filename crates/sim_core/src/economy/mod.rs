@@ -171,7 +171,8 @@ pub struct GameCommandOutcome {
 /// How a unit task ended, or a milestone in one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskEventKind {
-    /// The unit cannot do what its order asks; only direct order injection can cause this.
+    /// The unit cannot do what its order asks: only direct order injection, or a harvest of a
+    /// resource kind the catalog has no harvest for, can cause this.
     NotCapable,
     /// The unit could not get to where the task is.
     Unreachable,
@@ -720,6 +721,7 @@ pub(crate) const fn fresh_leg(task: UnitTask) -> UnitTask {
         goal: None,
         legs: 0,
         gather_ticks: 0,
+        return_ticks: 0,
         wait_ticks: 0,
         depot: None,
         last_node: task.last_node,

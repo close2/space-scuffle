@@ -145,6 +145,8 @@ fn every_public_entity_field_changes_the_world_checksum() {
             active_buffs => vec![ActiveBuff { buff_id: 1, remaining_ticks: 2, speed_multiplier: SimScalar::ONE, attack_rate_multiplier: SimScalar::ONE }],
             production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, paid_minerals: 5, paid_gas: 6 }].into(),
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
+            // Plan `2026-11-22-harvest-timing` D-5: the return-delay countdown.
+            task => sim_core::UnitTask { return_ticks: 3, ..Default::default() },
             cargo => Some(sim_core::Cargo { kind: ResourceKind::Gas, amount: 5 }),
             construction => Some(sim_core::production::construction::Construction {
                 remaining_ticks: 3,

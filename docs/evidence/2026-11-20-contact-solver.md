@@ -527,11 +527,17 @@ acceptance nor the held-out range was run. Binaries, CSVs, traces and profiles a
 
 | Step (Amendment 3) | State | Branch / commit |
 |---|---|---|
-| 1. Cost, behaviour-preserving (options 1, 4, 5) | **Done**: rows byte-identical | `62431054` (on `contact-solver-plan`) |
+| 1. Cost, behaviour-preserving (options 1, 4, 5) | **Done**: rows byte-identical | `62431054` (`contact-solver-wp3-wip2`) |
 | 2. Pressed-front rule | **Stop**: T5 worse on development (§6.2) | `7d9e51f1`, probe `ad8c7111` (`contact-solver-wp3-wip2-pressed`) |
 | 3. Gauss–Seidel | Not started (the stop comes first) | — |
 | 4. WP3b, arrival rule | Rule as written fails its own constraint; a variant measured (§6.3) | `a33a697a`, `5d8440fe` (`contact-solver-wp3-wip2`) |
 | 5. The two kept tests | Traced and classified (§6.4); one defect fixed | `12333567` (`contact-solver-wp3-wip2`) |
+
+`contact-solver-plan` carries no WP3 code: WP3's prescribed test (`gaps_and_crossings_meet_t4_and_t7_under_the_solver`)
+is still red, so the plan branch stays at WP2 with main merged. **Schema:** main (`f399d403`) took schema 33 for the
+harvest return delay; the solver's movement-memory fields move to **34** (WP7 to 35). With the three fields unhashed
+and the schema held at 33, main's goldens (20 + 60 checkpoints) and sandbox checksum reproduce on native debug and
+release and `wasm32-wasip1` release and debug; the re-recorded lists agree on all four.
 
 ### 6.1 Cost, behaviour-preserving (step 1)
 
