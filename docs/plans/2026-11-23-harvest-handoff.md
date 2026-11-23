@@ -620,3 +620,54 @@ The question number is the next free at filing (0100 on `e8cc3f80`).
   (§6.3).
 - The occupancy plan's measuring tool and figures: `~/scratch/harvest-occupancy/proto/`,
   `docs/evidence/2026-11-23-harvest-occupancy.md`.
+
+---
+
+## As built (implementation agent, 2026-11-23)
+
+One branch (`harvest-handoff-plan`), one commit per package: WP0 `f93705a6`, WP1 `efaef9d7`, WP2 `6288d3d1`, the
+merge of `main` `e028fc0b` (schema 39), WP3 the commit that adds this section. Evidence: [`docs/evidence/2026-11-23-harvest-handoff.md`](../evidence/2026-11-23-harvest-handoff.md).
+No decision changed, so there is no amendment.
+
+### WP1
+
+1. **Schema 39.** WP1 took 38, the next free number on `origin/main` (`e8cc3f80`, schema 37) when it was built, with
+   §5's proof on four builds (evidence §2.2). `main` then took 38 for plan `2026-11-23-strike-delays` (`d71f7153`),
+   so the merge of `main` repeated §5 step 2 with 39 (evidence §4). `CHECKSUM_SCHEMA_VERSION`'s doc line is D-3's. The release ticks are encoded right
+   after `world.map.resources()`, under the tag `"resource-lines"`, before the watchtowers.
+2. **`ResourceLines`** is public (`sim_core::economy::ResourceLines`, re-exported from `economy`), and
+   `SimWorld::resource_lines` is a public field like the world's other hashed state, so the integration test
+   `checksum_state_tests` can mutate a release tick. Besides D-3's reads and writes it has `in_handoff(node, tick)`,
+   the comparison `tally_nodes` uses, unit-tested with the rest.
+3. **`tally_nodes`** marks a node occupied from its hand-off before it counts the units, one read per node on a tick
+   with claims, as §5 states.
+4. **The required field outside §9.** `handoff_ticks` is required, so the inline rows of two tests outside §9's list
+   gain `handoff_ticks: 0`: `catalog/validation.rs` (`A_HARVEST`, its tests) and `footprint_flag_tests.rs`. No
+   assertion changed.
+5. **`harvest_handoff_tests`** builds a catalog with another hand-off by replacing every `handoff_ticks:` value of the
+   shipped `placement_rules.ron` text (`sim_fixtures::PLACEMENT_RULES_RON`) and parsing it with
+   `PlacementRules::from_ron_str`; the rest of the catalog is the shipped one. Its flat map puts the field at (12, 4)
+   and the geyser at (11, 5), so that three workers keep a line at both (a geyser at (13, 5) gave only two hand-offs in
+   1,500 ticks at `h` = 0: its trip was too close to three gathers).
+6. The new test file is selected by `crates/gate/suites.ron`'s crate rules; no rule names files, so none was added.
+
+### WP2
+
+1. **The tests that read the hand-off** assert first that the shipped row hands off after the take (`h > 0`, and
+   `h ≥ 2` for the field in `a_worker_arriving_during_the_handoff_waits_for_it`), so on WP1's tree they fail instead
+   of passing trivially with `h` = 0 (evidence §3.1). Every time, amount and hand-off is read from the catalog.
+2. **`a_saturated_node_takes_every_time_plus_handoff_ticks`** uses the showcase's near geyser and, for minerals, the
+   flat map's lone field rather than a showcase field: three workers sent to one showcase field spread over the line
+   (occupancy D-3), and the line at three a field is `harvest_edge_tests::saturation_follows_the_derivation`.
+3. **`the_next_worker_starts_on_the_tick_of_the_take`** left `harvest_occupancy_tests`; its rule is
+   `harvest_handoff_tests::a_zero_handoff_is_todays_rule`, and its hand-off form is
+   `the_next_worker_starts_handoff_ticks_after_the_take`. The occupancy file's module doc and the wording of
+   `the_grant_does_not_depend_on_entity_order` (the waiter starts after the take, not on it) changed with it; the test's
+   assertion did not.
+4. **The mineral row's comment** says "(ReturnDelay present: liberty BehaviorData:750);" where D-2 has "(ReturnDelay
+   present, liberty BehaviorData:750), and". `runtime_catalog_tests::an_edited_placement_rule_changes_the_loaded_reach`
+   cuts the mineral row at its first `),`, which the comment's punctuation would have been. It failed on that alone
+   (a RON parse error of the cut text, not a behaviour) and passes with the comment's punctuation changed; the test is
+   unchanged.
+5. **Income** met §6.1 to the measure's resolution, every A inside its bound and A-5 inside its band (evidence §3.2).
+   The skirmish match: every stage on its WP0 tick, Victory at 6,486 (evidence §3.4).
