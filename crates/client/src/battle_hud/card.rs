@@ -842,20 +842,52 @@ pub fn derive_card(model: &HudModel, facts: &[SelectedFact], card: &mut CommandC
     derive_fixed(model, facts, card);
 }
 
-/// Stop and Hold, shown when a selected unit can move.
+/// Stop and Hold, each shown when a completed selected unit's settled stance accepts it (plan
+/// `2026-11-23-anchored-commands` D-4). A slot whose order no selected unit takes stays empty:
+/// the unit does not have the command, so it is hidden rather than locked.
 fn derive_fixed(model: &HudModel, facts: &[SelectedFact], card: &mut CommandCard) {
-    let mobile = completed(model, facts).any(|archetype| archetype.mobile);
+    let (mut stop, mut hold) = (false, false);
+    for fact in facts.iter().filter(|fact| !fact.foundation) {
+        if let Some(archetype) = model.catalog.archetype(fact.unit_type) {
+            let orders = settled_orders(model, fact, archetype);
+            stop |= orders.stop;
+            hold |= orders.hold_position;
+        }
+    }
     let entries = [
-        (UnitOrder::Stop, CardLabel::Stop, STOP_KEY),
-        (UnitOrder::HoldPosition, CardLabel::Hold, HOLD_POSITION_KEY),
+        (UnitOrder::Stop, CardLabel::Stop, STOP_KEY, stop),
+        (
+            UnitOrder::HoldPosition,
+            CardLabel::Hold,
+            HOLD_POSITION_KEY,
+            hold,
+        ),
     ];
-    for ((order, label, key), (position, text)) in entries
+    for ((order, label, key, shown), (position, text)) in entries
         .into_iter()
         .zip(card.fixed.iter_mut().zip(&mut card.fixed_text))
     {
-        let slot = mobile.then(|| filled(CardEntry::free(CardAction::Order(order), label), key));
+        let slot = shown.then(|| filled(CardEntry::free(CardAction::Order(order), label), key));
         store(position, text, slot, model);
     }
+}
+
+/// The plain orders `fact`'s unit accepts in the stance it is in or is switching to: its
+/// `ModeStateView`'s settled mode in `archetype`'s per-mode sets, or the default stance's set
+/// when it has no state or settles in no mode. The same rule as admission's
+/// `Entity::settled_stance_orders`, read from the viewer's `PlayerView`.
+fn settled_orders(
+    model: &HudModel,
+    fact: &SelectedFact,
+    archetype: &ArchetypeCommands,
+) -> sim_types::StanceOrders {
+    let states = &model.view.mode_states;
+    states
+        .binary_search_by_key(&fact.id, |state| state.entity)
+        .ok()
+        .and_then(|index| states[index].settled_mode)
+        .and_then(|mode| archetype.mode_orders.get(usize::from(mode)).copied())
+        .unwrap_or(archetype.default_orders)
 }
 
 /// Keeps [`CommandCard`] in step with the model and the page.
@@ -1644,6 +1676,146 @@ mod tests {
         let pointer = card.text[1].caption.as_ptr();
         derive_card(&model, &facts, &mut card);
         assert_eq!(card.text[1].caption.as_ptr(), pointer);
+        Ok(())
+    }
+
+    // --- Stop and Hold by stance (plan `2026-11-23-anchored-commands` D-4) -----------------------
+
+    /// A unit of `ME` whose archetype anchors in a mode that accepts Stop and accepts Hold
+    /// Position exactly when `hold`; found by the mode's data, never by name.
+    fn anchoring_unit(world: &mut SimWorld, hold: bool) -> Outcome<EntityId> {
+        unit_where(world, |a| {
+            a.abilities.iter().any(|ability| {
+                crate::battle_pipeline::commands::mode_of_ability(a, ability)
+                    .and_then(|mode| a.get_mode(mode))
+                    .is_some_and(|mode| {
+                        mode.is_immobile && mode.orders.stop && mode.orders.hold_position == hold
+                    })
+            })
+        })
+    }
+
+    /// Whether the card shows Stop and whether it shows Hold.
+    fn fixed_shown(card: &CommandCard) -> (bool, bool) {
+        (card.fixed[0].is_some(), card.fixed[1].is_some())
+    }
+
+    #[test]
+    fn a_sieged_tank_shows_stop_and_no_hold() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        assert_eq!(fixed_shown(&card_for(&world, &[tank])), (true, true));
+        switch(&mut world, tank);
+        let card = card_for(&world, &[tank]);
+        assert_eq!(fixed_shown(&card), (true, false));
+        assert_eq!(card.fixed[0].as_ref().ok_or("Stop")?.key, STOP_KEY);
+        assert!(card.fixed_text[1].caption.is_empty(), "an empty slot");
+        Ok(())
+    }
+
+    #[test]
+    fn a_burrowed_unit_whose_stance_keeps_hold_shows_both() -> TestResult {
+        let mut world = flat_world()?;
+        let lurker = anchoring_unit(&mut world, true)?;
+        switch(&mut world, lurker);
+        assert!(world.entities[&lurker].is_immobile);
+        assert_eq!(fixed_shown(&card_for(&world, &[lurker])), (true, true));
+        Ok(())
+    }
+
+    #[test]
+    fn a_sieging_tank_answers_for_the_stance_it_settles_in() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        assert!(world.execute_ability(tank, 0, None, None));
+        assert!(world.entities[&tank].channeling_remaining_ticks > 0);
+        assert_eq!(fixed_shown(&card_for(&world, &[tank])), (true, false));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unsieging_tank_shows_both() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        switch(&mut world, tank);
+        assert!(world.execute_ability(tank, 0, None, None));
+        assert!(
+            world.entities[&tank].is_immobile,
+            "anchored while it leaves"
+        );
+        assert_eq!(fixed_shown(&card_for(&world, &[tank])), (true, true));
+        Ok(())
+    }
+
+    #[test]
+    fn a_sieged_tank_with_a_worker_shows_both() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        let unit = worker(&mut world)?;
+        switch(&mut world, tank);
+        assert_eq!(fixed_shown(&card_for(&world, &[tank, unit])), (true, true));
+        assert_eq!(fixed_shown(&card_for(&world, &[unit, tank])), (true, true));
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_shows_neither_stop_nor_hold() -> TestResult {
+        let mut world = flat_world()?;
+        let structure = factory(&mut world, 30)?;
+        assert_eq!(fixed_shown(&card_for(&world, &[structure])), (false, false));
+        Ok(())
+    }
+
+    /// P-3, the client half: the HUD catalog reads a stance's orders from the catalog it is
+    /// built from, so an edited catalog changes the card without a rebuild.
+    #[test]
+    fn an_edited_stance_changes_the_fixed_slots() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        switch(&mut world, tank);
+        let unit_type = world.entities[&tank].unit_type_id;
+        let mode = world.entities[&tank]
+            .active_mode
+            .clone()
+            .ok_or("in its mode")?;
+        let set = |world: &mut SimWorld, stop, hold_position| -> TestResult {
+            let archetype = world.catalog.get_mut(unit_type)?;
+            let spec = archetype
+                .modes
+                .iter_mut()
+                .find(|spec| spec.mode_name == mode)
+                .ok_or("the mode")?;
+            spec.orders = sim_types::StanceOrders {
+                stop,
+                hold_position,
+            };
+            Ok(())
+        };
+        set(&mut world, true, true)?;
+        assert_eq!(fixed_shown(&card_for(&world, &[tank])), (true, true));
+        set(&mut world, false, false)?;
+        assert_eq!(fixed_shown(&card_for(&world, &[tank])), (false, false));
+        Ok(())
+    }
+
+    #[test]
+    fn a_warm_card_of_an_anchored_selection_allocates_no_new_text() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = anchoring_unit(&mut world, false)?;
+        let lurker = anchoring_unit(&mut world, true)?;
+        switch(&mut world, tank);
+        switch(&mut world, lurker);
+        let model = model_of(&world, &[]);
+        let facts = [fact(&world, tank), fact(&world, lurker)];
+        let mut card = CommandCard::default();
+        derive_card(&model, &facts, &mut card);
+        assert_eq!(fixed_shown(&card), (true, true));
+        let pointers = card.fixed_text.each_ref().map(|text| text.caption.as_ptr());
+        derive_card(&model, &facts, &mut card);
+        assert_eq!(
+            card.fixed_text.each_ref().map(|text| text.caption.as_ptr()),
+            pointers
+        );
         Ok(())
     }
 }

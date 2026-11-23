@@ -1485,3 +1485,199 @@ fn a_unit_leaving_its_anchoring_mode_may_be_told_to_move() -> TestResult {
     );
     Ok(())
 }
+
+// --- Stop and Hold by stance (plan `2026-11-23-anchored-commands` D-3, D-4, P-1) --------------
+
+/// A unit of `ME` at `slot` whose archetype anchors in a mode that accepts Stop and accepts Hold
+/// Position exactly when `hold`, and the index of the ability that switches it; found by the
+/// mode's data, never by name.
+fn anchoring(
+    world: &mut SimWorld,
+    slot: i32,
+    hold: bool,
+) -> Result<(EntityId, u8), Box<dyn std::error::Error>> {
+    let anchors = |archetype: &UnitArchetype, mode: &str| {
+        archetype.get_mode(mode).is_some_and(|mode| {
+            mode.is_immobile && mode.orders.stop && mode.orders.hold_position == hold
+        })
+    };
+    let unit = unit_where(world, slot, |a| {
+        a.abilities
+            .iter()
+            .filter_map(|ability| mode_of_ability(a, ability))
+            .any(|mode| anchors(a, mode))
+    })?;
+    let archetype = world.catalog.get(world.entities[&unit].unit_type_id)?;
+    let mode = archetype
+        .abilities
+        .iter()
+        .filter_map(|ability| mode_of_ability(archetype, ability))
+        .find(|mode| anchors(archetype, mode))
+        .ok_or("an anchoring mode")?;
+    let index = mode_ability_index(archetype, mode).ok_or("its switch")?;
+    Ok((unit, index))
+}
+
+/// Whether the card derived for `selection` shows Stop and whether it shows Hold.
+fn card_fixed(world: &SimWorld, selection: &[EntityId]) -> (bool, bool) {
+    use crate::battle_hud::card::{derive_card, CommandCard};
+    use crate::battle_hud::catalog::CommandCatalog;
+    use crate::battle_hud::model::{HudModel, SelectedFact};
+    let mut model = HudModel::default();
+    model.catalog = CommandCatalog::build(&world.catalog, &world.upgrade_catalog, |_| None);
+    model.orders_open = true;
+    world.write_player_view(ME, &mut model.view);
+    let facts: Vec<_> = selection
+        .iter()
+        .map(|id| SelectedFact {
+            id: *id,
+            unit_type: world.entities[id].unit_type_id,
+            foundation: !world.entities[id].is_completed,
+            build_progress: 0.0,
+        })
+        .collect();
+    let mut card = CommandCard::default();
+    derive_card(&model, &facts, &mut card);
+    (card.fixed[0].is_some(), card.fixed[1].is_some())
+}
+
+/// P-1: over a worker, both anchoring units in each of their four stances (default, entering,
+/// anchored, leaving), a completed structure and a foundation, alone and in every pair, the card
+/// shows Stop exactly when a Stop would reach a member, and Hold exactly when a Hold would.
+#[test]
+fn the_card_shows_stop_and_hold_exactly_when_admission_takes_them() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (worker, foundation) = lay_foundation(&mut world, &mut queue)?;
+    let structure_type = buildable(&world, worker)?;
+    let structure = world.spawn_structure(structure_type, ME, 40, 40)?;
+    assert!(world.entities[&structure].is_completed);
+
+    let mut members = vec![("worker", worker), ("structure", structure)];
+    members.push(("foundation", foundation));
+    let mut slot = 1;
+    let mut spawn = |world: &mut SimWorld, hold: bool| {
+        slot += 1;
+        anchoring(world, slot, hold)
+    };
+    // Anchored and leaving: switched and settled first.
+    let mut settled = Vec::new();
+    for hold in [false, true] {
+        for _ in 0..2 {
+            let (unit, index) = spawn(&mut world, hold)?;
+            assert!(world.execute_ability(unit, index, None, None));
+            settled.push((unit, index));
+        }
+    }
+    settle(&mut world)?;
+    for (count, (unit, index)) in settled.into_iter().enumerate() {
+        if count % 2 == 1 {
+            assert!(world.execute_ability(unit, index, None, None));
+            members.push(("leaving", unit));
+        } else {
+            members.push(("anchored", unit));
+        }
+    }
+    for hold in [false, true] {
+        let (entering, index) = spawn(&mut world, hold)?;
+        assert!(world.execute_ability(entering, index, None, None));
+        members.push(("entering", entering));
+        let (fresh, _) = spawn(&mut world, hold)?;
+        members.push(("default", fresh));
+    }
+    assert_eq!(members.len(), 11);
+
+    let mut selections: Vec<Vec<(&str, EntityId)>> = members.iter().map(|m| vec![*m]).collect();
+    for (first, a) in members.iter().enumerate() {
+        for b in &members[first + 1..] {
+            selections.push(vec![*a, *b]);
+        }
+    }
+    let mut stop_without_hold = 0;
+    for selection in &selections {
+        let ids: Vec<_> = selection.iter().map(|(_, id)| *id).collect();
+        let admitted = (
+            any_recipient(&world, ME, &ids, &UnitOrder::Stop),
+            any_recipient(&world, ME, &ids, &UnitOrder::HoldPosition),
+        );
+        assert_eq!(card_fixed(&world, &ids), admitted, "{selection:?}");
+        if admitted == (true, false) {
+            stop_without_hold += 1;
+        }
+    }
+    assert!(stop_without_hold > 0, "a stance takes Stop without Hold");
+    Ok(())
+}
+
+#[test]
+fn an_anchored_unit_takes_the_plain_orders_of_its_stance() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, tank_switch) = anchoring(&mut world, 0, false)?;
+    let (lurker, lurker_switch) = anchoring(&mut world, 1, true)?;
+    assert!(world.execute_ability(tank, tank_switch, None, None));
+    assert!(world.execute_ability(lurker, lurker_switch, None, None));
+    settle(&mut world)?;
+    assert!(world.entities[&tank].is_immobile && world.entities[&lurker].is_immobile);
+
+    queue.submit_selection(&world, ME, &[tank], UnitOrder::Stop, false)?;
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[tank], UnitOrder::HoldPosition, false),
+        Err(SubmissionError::EmptySelection),
+        "no Hold Position in a stance without it"
+    );
+    assert_eq!(
+        queue.submit(&world, command(tank, ME, UnitOrder::HoldPosition, false)),
+        Err(SubmissionError::Capability(tank))
+    );
+    queue.submit_selection(&world, ME, &[lurker], UnitOrder::Stop, false)?;
+    queue.submit_selection(&world, ME, &[lurker], UnitOrder::HoldPosition, false)?;
+    let sent: Vec<_> = queue
+        .pending_commands()
+        .map(|(_, command)| (command.entities.clone(), command.order.clone()))
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            (vec![tank], UnitOrder::Stop),
+            (vec![lurker], UnitOrder::Stop),
+            (vec![lurker], UnitOrder::HoldPosition),
+        ]
+    );
+    run_tick(&mut world, &mut queue)?;
+    assert!(world.entities[&tank].order_queue.is_empty());
+    assert_eq!(
+        world.entities[&lurker].order_queue.front(),
+        Some(&UnitOrder::HoldPosition)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mixed_hold_goes_only_to_the_members_whose_stance_takes_it() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, index) = anchoring(&mut world, 0, false)?;
+    let marine = unit_where(&mut world, 1, |a| {
+        is_armed(a) && a.modes.is_empty() && a.capabilities.harvester.is_none()
+    })?;
+    assert!(world.execute_ability(tank, index, None, None));
+    settle(&mut world)?;
+    assert_only_capable_receives(&world, &mut queue, marine, tank, &UnitOrder::HoldPosition)?;
+    queue.submit_selection(&world, ME, &[tank, marine], UnitOrder::Stop, false)?;
+    let (_, sent) = queue.pending_commands().last().ok_or("nothing queued")?;
+    assert_eq!(sent.entities, [tank, marine]);
+    Ok(())
+}
+
+#[test]
+fn a_unit_that_settles_into_a_stance_without_hold_is_dropped_at_its_tick() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, index) = anchoring(&mut world, 0, false)?;
+    queue.submit_selection(&world, ME, &[tank], UnitOrder::HoldPosition, false)?;
+    // The unit starts its switch before the tick takes the press.
+    assert!(world.execute_ability(tank, index, None, None));
+    let (mut input, mut sequences, mut rejected) = (bundle(), Vec::new(), Vec::new());
+    queue.prepare_tick(&world, &mut input, &mut sequences, &mut rejected)?;
+    assert_eq!(input.commands, []);
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].reason, SubmissionError::Capability(tank));
+    Ok(())
+}

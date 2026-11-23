@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use sim_core::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use sim_core::{UnitArchetype, UnitCatalog};
 use sim_types::enums::ShapeKind;
-use sim_types::{SimScalar, UnitTypeId, UpgradeEffect};
+use sim_types::{SimScalar, StanceOrders, UnitTypeId, UpgradeEffect};
 
 use crate::battle_pipeline::commands::{
     cast_of_ability, is_armed, mode_of_ability, CastKey, CastTarget,
@@ -43,6 +43,12 @@ pub struct ArchetypeCommands {
     pub label: String,
     /// Whether it can walk or fly.
     pub mobile: bool,
+    /// The plain orders (Stop, Hold Position) it accepts in its default stance, from
+    /// `UnitArchetype::stance_orders` (plan `2026-11-23-anchored-commands` D-4).
+    pub default_orders: StanceOrders,
+    /// The plain orders it accepts in each of its modes, indexed like the archetype's `modes`
+    /// (as `ModeStateView::settled_mode` reports a mode), from the same function.
+    pub mode_orders: Vec<StanceOrders>,
     /// Whether it carries any weapon.
     pub armed: bool,
     /// Whether it can gather resources.
@@ -237,6 +243,12 @@ fn commands_of(
     ArchetypeCommands {
         label: archetype.display_name.clone(),
         mobile: !archetype.is_immobile_by_default(),
+        default_orders: archetype.stance_orders(None),
+        mode_orders: archetype
+            .modes
+            .iter()
+            .map(|mode| archetype.stance_orders(Some(mode)))
+            .collect(),
         armed: is_armed(archetype),
         harvester: archetype.capabilities.harvester.is_some(),
         overclock: archetype.overclock.is_some(),
