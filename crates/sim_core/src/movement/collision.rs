@@ -456,7 +456,7 @@ impl SimWorld {
                 push_priority: entry.push_priority,
                 fixed: actor.is_immobile || actor.unpushable,
                 holding: actor.cannot_be_pushed(),
-                engaged: self.is_anchored_in_combat(actor),
+                engaged: self.engaged(entry, actor),
                 idle: actor.is_idle(),
                 moving: !within_distance(actor.position, actor.pos_at_tick_start, step),
             },

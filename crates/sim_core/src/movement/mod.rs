@@ -18,6 +18,7 @@ pub mod groups;
 pub(crate) mod intent;
 mod locomotion;
 pub(crate) mod math;
+mod ring;
 pub mod solver;
 pub(crate) mod tuning;
 pub use math::MovementMathError;
@@ -257,6 +258,11 @@ pub(crate) struct MovementWorkspace {
     contact_rebuilds: u8,
     phase_ids: Vec<EntityId>,
     pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
+    /// Each movement actor's position when the phase began, sorted by entity id (plan
+    /// `2026-11-20-contact-solver` Amendment 7: the ring rule and the pursuit read it).
+    tick_start: Vec<(EntityId, SimVec2)>,
+    /// The ring rule's blocked arcs, cleared per chase (Amendment 7, item 2).
+    ring_intervals: Vec<concave::ArcInterval>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once
