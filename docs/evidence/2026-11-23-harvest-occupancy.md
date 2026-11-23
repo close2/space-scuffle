@@ -182,3 +182,8 @@ non-queued order clears the leg.
 | Goldens | 4 of 4 on native debug and release, `wasm32-wasip1` release and debug (`impl/golden-wp3/`) |
 | `cargo test --release -p sim_types -p sim_core` | every target passes (95) |
 | Client, release, radv (`impl/client-wp3/`) | `skirmish_match_tests` 7 passed (1 ignored by design): Victory at 6,486, every stage on its WP2 tick; the windowed HUD child logged `Done` at 116 against 115, the run-to-run variance plan §7.5 recorded for that child (the prototype's `B160` alone gave 116). `battle_context_order_tests` and `sync_steady_state_tests` pass |
+
+## 5. WP4
+
+`DESIGN.md`: B-61, B-67 and B-160 fixed with their commits; the Economy row and its evidence column; the plan's
+`## As built`; the README row `Done`.

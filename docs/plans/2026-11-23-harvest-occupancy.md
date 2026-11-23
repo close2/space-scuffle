@@ -731,3 +731,20 @@ test's premise that no longer holds.
 - No `player_view` reserve is added.
 
 WP2 then lands with that change and its client re-run, followed by WP3 (B-160, D-5) and WP4.
+
+## As built (implementation agent, 2026-11-23)
+
+| WP | Commit | Notes |
+|---|---|---|
+| WP0 | `daee4f99` | B-161 (`HideHarvesters`) and B-162 (the hand-off gap) registered; B-61, B-67 and B-160 point here |
+| WP1 | `40a4e97e`, `f5821ef0`, `5d453ae0` | `ResourceKindSet` in `sim_types::resource_kind_set`. First commit with today's values, bit-identical (worlds, goldens on native and `wasm32-wasip1` release); second with the data's. C7's float counts for `catalog.rs` and `catalog/validation.rs` rise by one each for the authored radius (the third commit). A row without either field fails with `RonDeserializationError` |
+| WP2 | `795a8195` | Claims, tally and waiters are retained `EconomyWorkspace` buffers; the resolution is in `harvest.rs` (`resolve_resource_claims`, `grant_claims`, `move_on`, the "two fewer" derivation on `move_on`). The tally counts the tick's task units (§5), so a worker inside a transport is not assigned; a worker that moves on keeps `is_mineral_walking` (R-5). Stopped once on `sync_steady_state_tests` and landed under Amendment 1 |
+| WP3 | `3f6fe99e` | `Entity::hold_through_return_wait`, called by `commit_order` before the leg is cleared |
+| WP4 | this commit | Register, Economy row, evidence, README |
+
+Figures are in [`docs/evidence/2026-11-23-harvest-occupancy.md`](../evidence/2026-11-23-harvest-occupancy.md):
+every mineral line and geyser of §6 within A-1 of its derivation, the saturated ones exact, no move in any window,
+and every figure equal to the prototype's. Showcase slot 1 is not slot 0's exact mirror: two of its fields have
+one-worker periods of 121 and 135, so its `k` = 2 derivation is 893.22, not 892.9. Matrix, battles 31 and 33 and the
+showcase are byte-identical on WP1, WP2 and WP3; goldens unchanged on four builds; the skirmish match is won at tick
+6,486 on WP2 and WP3, every stage unchanged.
