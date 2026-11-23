@@ -1616,5 +1616,5 @@ M1, M2, overlaps and on gap and cross completion.
 
 **R8, the corridor two-abreast miss.** Its only principled lever is letting engaged units be pushed along the
 band's tangent (they keep range but can be nudged sideways), which departs from SC-8. That is the owner's call:
-[Q0095](../questions/open/0095-engaged-units-nudged-sideways.md), default **no** (engaged units stay fixed; the miss
+[Q0095](../questions/closed/0095-engaged-units-nudged-sideways.md), default **no** (engaged units stay fixed; the miss
 stays a reported figure).
