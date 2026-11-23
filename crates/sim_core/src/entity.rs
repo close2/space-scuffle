@@ -293,21 +293,23 @@ pub struct MovementMemory {
     /// The committed side of the side rule: the unit passes [`Self::side_partner`] on its left
     /// when true (I-3). Written only by the solver pipeline.
     pub side_left: bool,
-    /// The free point on its weapon's arc round its target that this blocked attacker walks to
-    /// (the slot goal, plan `2026-11-20-contact-solver` G-3). Written only by the solver
-    /// pipeline; `None` under the legacy pipeline and while the unit needs no slot.
+    /// The gap this attacker walked to last tick: the free point of the ring round its target
+    /// (its weapon band's outer edge) nearest its bearing, kept while it stays free (plan
+    /// `2026-11-20-contact-solver` Amendment 7, item 2). One remembered point, not a claim:
+    /// nobody else reads it. Written only by the solver pipeline; `None` under the legacy
+    /// pipeline and while the unit's own bearing point is free.
     pub slot: Option<SlotClaim>,
 }
 
-/// One attacker's claim of a slot on its weapon's arc round its target (plan
-/// `2026-11-20-contact-solver` G-3 to G-5): kept until the unit is in range, the slot is taken,
-/// the target moves by more than the unit's radius, or the order or target changes.
+/// The gap an attacker walks to on the ring round its target (plan `2026-11-20-contact-solver`
+/// Amendment 7, item 2): renewed every tick from the tick-start snapshot, kept while it stays
+/// free and reachable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotClaim {
     /// The target the slot is round.
     pub target: EntityId,
-    /// The slot's centre, world units: on the circle of radius `band − r/2` round the target's
-    /// tick-start position when it was claimed.
+    /// The gap's point, world units: on the ring (the band's outer edge) round the target's
+    /// tick-start position of the tick it was chosen.
     pub point: SimVec2,
 }
 

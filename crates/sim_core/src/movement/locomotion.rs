@@ -48,7 +48,7 @@ use super::{
     RouteOutcome, RouteOutcomeKind,
 };
 use crate::catalog::{ContactRules, MovementPipeline};
-use crate::entity::{Entity, MovementMemory};
+use crate::entity::{Entity, MovementMemory, SlotClaim};
 use crate::steering::{
     check_cluster_arrival_with, remove_blocked_velocity, steer_body, surround_side, ContactBody,
     SteeringObstacle,
@@ -1204,7 +1204,7 @@ impl SimWorld {
         target_id: EntityId,
         origin: AttackOrigin,
     ) -> Result<MotionProposal, MovementInvariant> {
-        let (mut proposal, pursuit) = match self.start_pursuit(entry, target_id, origin)? {
+        let (mut proposal, mut pursuit) = match self.start_pursuit(entry, target_id, origin)? {
             PursuitStart::Settled(proposal) => return Ok(proposal),
             PursuitStart::Chase(proposal, pursuit) => (proposal, pursuit),
         };
@@ -1219,18 +1219,37 @@ impl SimWorld {
                     pursuit.leash,
                 )
             });
+            let kept = proposal.memory.slot.filter(|gap| gap.target == target_id);
             let aim = self.ring_aim(RingChase {
                 entry,
                 position,
                 target: target_id,
                 band_max: pursuit.max,
                 leash,
+                kept: kept.map(|gap| gap.point),
             })?;
-            if aim == RingAim::Stand {
-                // G-6: no free angle on the ring; the order stays and no stall accrues (Q0089).
-                proposal.velocity = SimVec2::ZERO;
-                proposal.anim = AnimState::Idle;
-                return Ok(proposal);
+            proposal.memory.slot = None;
+            match aim {
+                RingAim::Stand => {
+                    // G-6: no free angle on the ring; the order stays and no stall accrues
+                    // (Q0089).
+                    proposal.velocity = SimVec2::ZERO;
+                    proposal.anim = AnimState::Idle;
+                    return Ok(proposal);
+                }
+                RingAim::Straight => {}
+                RingAim::Gap(_, point) => {
+                    // A unit walking to a gap measures its progress to the gap point; a new
+                    // gap starts that measure afresh.
+                    if kept.is_none_or(|gap| gap.point != point) {
+                        proposal.memory.progress_best = None;
+                    }
+                    proposal.memory.slot = Some(SlotClaim {
+                        target: target_id,
+                        point,
+                    });
+                    pursuit.gap = Some(point);
+                }
             }
         }
         self.chase_target(entry, target_id, proposal, &pursuit)
@@ -1294,14 +1313,18 @@ impl SimWorld {
                 entity: id,
                 reason: "validated pursuer disappeared",
             })?;
-        let goal = self
-            .entities
-            .get(&target_id)
-            .ok_or(MovementInvariant::InvalidState {
-                entity: target_id,
-                reason: "available target disappeared",
-            })?
-            .position;
+        let goal = match pursuit.gap {
+            Some(point) => point,
+            None => {
+                self.entities
+                    .get(&target_id)
+                    .ok_or(MovementInvariant::InvalidState {
+                        entity: target_id,
+                        reason: "available target disappeared",
+                    })?
+                    .position
+            }
+        };
         // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
         let owner = actor
             .owner
@@ -1396,6 +1419,7 @@ impl SimWorld {
             max,
             min,
             leash: self.catalog.movement_rules().acquire_leash_radius(),
+            gap: None,
         }))
     }
 }
@@ -1423,6 +1447,10 @@ struct Pursuit {
     /// The leash of an automatic chase, world units: 5.0.14's `AcquireLeashRadius`, measured
     /// from where the chase began (B-142).
     leash: SimScalar,
+    /// Under the solver pipeline, the free point of the ring the unit walks to when its own
+    /// bearing is blocked (plan `2026-11-20-contact-solver` Amendment 7, item 2): the chase's
+    /// goal, which it brakes onto and measures its progress against.
+    gap: Option<SimVec2>,
 }
 
 impl Pursuit {
@@ -1955,8 +1983,13 @@ impl MotionDraft<'_> {
         if self.ground && self.cooled_down && stale {
             self.proposal.drop_route();
         }
-        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39).
-        let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
+        // Brake to stop on the edge of the weapon's band rather than within a tick (B-39), or on
+        // the gap point, which lies on that edge.
+        let reach = if pursuit.gap.is_some() {
+            SimScalar::ZERO
+        } else {
+            SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX))
+        };
         self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
         let intent = scene.intent();

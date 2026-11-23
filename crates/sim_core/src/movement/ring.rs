@@ -6,8 +6,8 @@
 //! unit's weapon just reaches it (the band's outer edge, where `StarCraft` II attackers stop), and
 //! decides one of three things ([`RingAim`]):
 //! - the unit's own bearing point on the ring is free: it chases straight in and stops in range;
-//! - its bearing point is blocked, but another angle is free: the nearest such angle, ties
-//!   clockwise (G-3);
+//! - its bearing point is blocked, but another angle is free: it walks to the gap, the nearest
+//!   such angle, ties clockwise (G-3), keeping last tick's gap while that stays free;
 //! - no angle is free: it stands, keeps its order and accrues no stall (G-6, Q0089).
 //!
 //! # How it fits
@@ -27,7 +27,7 @@
 //!   otherwise the chase runs as it always has.
 //! - Distances are Q32.32 world units, angles `SimAngle` binary units; no float.
 
-use super::concave::{blocking_interval, choose_slot, slot_point, ArcInterval};
+use super::concave::{blocking_interval, choose_slot, is_free, slot_point, ArcInterval};
 use super::contact::contact_request;
 use super::locomotion::MotionEntry;
 use super::math::within_distance;
@@ -60,6 +60,8 @@ pub(crate) struct RingChase {
     pub band_max: i128,
     /// An automatic chase's leash: where it is measured from and its radius, world units.
     pub leash: Option<(SimVec2, SimScalar)>,
+    /// The gap point the unit aimed at last tick on this target's ring, if any.
+    pub kept: Option<SimVec2>,
 }
 
 /// Binary angle units per radian: a full turn of 65,536 units over 2π, rounded down.
@@ -253,9 +255,12 @@ impl SimWorld {
             // the way): the chase runs as it always has.
             return Ok(RingAim::Straight);
         }
+        if is_free(bearing, intervals) {
+            return Ok(RingAim::Straight);
+        }
         let mut walk = RingWalk::new(centre, rho, bearing, radius);
         let mut fault = None;
-        let admissible = |angle: SimAngle| {
+        let mut admissible = |angle: SimAngle| {
             let turn = i32::from(bearing.diff(angle));
             let point = slot_point(centre, rho, angle);
             match point.and_then(|p| Ok(leashed(p) && walk.reaches(turn, map, pathfinder, policy)?))
@@ -267,7 +272,16 @@ impl SimWorld {
                 }
             }
         };
-        let aim = ring_choice(bearing, intervals, centre, rho, admissible)?;
+        // Hysteresis: last tick's gap is kept while it stays free and reachable, so two gaps
+        // equally near do not alternate. It is one remembered point, not a claim.
+        let kept = chase
+            .kept
+            .map(|point| angle_from(centre, point))
+            .filter(|&angle| is_free(angle, intervals) && admissible(angle));
+        let aim = match kept {
+            Some(angle) => RingAim::Gap(angle, slot_point(centre, rho, angle)?),
+            None => ring_choice(bearing, intervals, centre, rho, &mut admissible)?,
+        };
         fault.map_or(Ok(aim), Err)
     }
 
