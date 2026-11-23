@@ -31,20 +31,22 @@
 
 use super::contact::{probe_permits, settle_on_terrain, slide_along_wall};
 use super::grid::BodyGrid;
+use super::intent::{intent_heading, IntentInput, SideMemory};
 use super::math::{
     checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
     direction, distance, within_distance,
 };
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
-    ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
-    STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON,
-    WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, ARRIVAL_WITNESS_REACH, FLANK_REVERSE_TICKS, PURSUIT_ROUTE_DRIFT,
+    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
+    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT, STEERING_LOOKAHEAD,
+    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
     RouteOutcome, RouteOutcomeKind,
 };
+use crate::catalog::{ContactRules, MovementPipeline};
 use crate::entity::{Entity, MovementMemory};
 use crate::steering::{
     check_cluster_arrival_with, remove_blocked_velocity, steer_body, surround_side, ContactBody,
@@ -309,6 +311,36 @@ struct StepContext<'a> {
     surround: Option<Option<EntityId>>,
     /// The unit's auto-acquisition scan range in world units, edge to edge.
     scan_range: SimScalar,
+    /// Under the solver pipeline, the side rule's horizon factor (`contact.side_horizon_factor`,
+    /// plan `2026-11-20-contact-solver` I-3a): the step steers by intent and contact is the
+    /// solver's. `None` under the legacy pipeline.
+    intent: Option<u8>,
+    /// The near reach's margin beyond the radius sum, world units ([`near_margin`]): a
+    /// neighbour beyond it was listed without its ground test ([`Self::admits`]).
+    near_margin: SimScalar,
+}
+
+impl StepContext<'_> {
+    /// Whether `obstacle`, one of [`Self::neighbours`], lies within the near reach: the reach
+    /// every rule but the side rule reads (the legacy pipeline's whole reach).
+    fn is_near(&self, obstacle: &SteeringObstacle) -> bool {
+        let radii = i128::from(self.body.radius.raw()) + i128::from(obstacle.radius.raw());
+        within_distance(
+            self.body.pos,
+            obstacle.pos,
+            radii + i128::from(self.near_margin.raw()),
+        )
+    }
+
+    /// Whether `obstacle`, one of [`Self::neighbours`], is a neighbour by the ground test that
+    /// [`gather_neighbours`] defers for bodies beyond the near reach: always for an air unit or a
+    /// near body, else when the ground between the two is connected. Only the side rule reads
+    /// bodies beyond the near reach.
+    fn admits(&self, obstacle: &SteeringObstacle) -> bool {
+        self.policy.layer == MovementLayer::Air
+            || self.is_near(obstacle)
+            || on_connected_ground(self.map, self.body.pos, obstacle.pos)
+    }
 }
 
 /// What gates a `turn_before_move` unit's step: its tick-start heading and its moving hull rate.
@@ -387,36 +419,61 @@ struct NeighbourIndex<'a> {
     largest_radius: SimScalar,
 }
 
+/// The margin beyond the radius sum within which a body is a neighbour under the legacy
+/// pipeline, world units: the steering lookahead and two steps at `entry`'s speed. Under the
+/// solver pipeline it is the **near** reach, inside which neighbours are read by every rule.
+fn near_margin(entry: MotionEntry) -> SimScalar {
+    STEERING_LOOKAHEAD + entry.speed + entry.speed
+}
+
 /// Collects the bodies that can affect `entry` this tick from the tick-start snapshot.
 ///
-/// Bodies across a cliff are left out: ground units cannot touch through terrain.
+/// Bodies across a cliff are left out: ground units cannot touch through terrain. Under the
+/// solver pipeline (`horizon` set) the reach adds the side rule's horizon, `h · (r + r_b)` world
+/// units for the largest `r_b` (plan `2026-11-20-contact-solver` WP3, I-3a); a body beyond the
+/// near reach ([`near_margin`]) is listed without its ground test, which
+/// [`StepContext::admits`] makes for the side rule, the only rule that reads such far bodies;
+/// every other rule reads the near reach alone ([`StepContext::is_near`]).
 // PERFORMANCE RATIONALE:
-// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units.
+// Why: Scanning every body per unit is O(N^2): 160,000 pair tests per tick at 400 units. Under
+// the solver the horizon widens the reach about fivefold in area, and the ground test of each
+// far body walks the cells between the two (evidence §5.3: the gather tripled its share).
 // What: Read candidates from a grid built once at the start of the phase, and copy the few that
-// pass an exact distance test into one retained buffer.
+// pass an exact distance test into one retained buffer. A far body's ground test is deferred to
+// the rule that can act on it: the side rule, for a body that is a threat or the committed
+// partner (plan Amendment 3, item 1, option 4).
 // Trade-off: Copies ~56-byte records per neighbour, in exchange for flat scans downstream and
-// O(N) work per tick; `out` stops growing once the densest crowd has been seen.
+// O(N) work per tick; `out` stops growing once the densest crowd has been seen. Every rule that
+// reads far bodies must ask [`StepContext::admits`]; the rules that do not read them are bounded
+// by the near reach.
 fn gather_neighbours(
     index: &NeighbourIndex<'_>,
     map: &SimMap,
-    entry: MotionEntry,
-    position: SimVec2,
+    (entry, position): (MotionEntry, SimVec2),
+    horizon: Option<u8>,
     out: &mut Vec<SteeringObstacle>,
 ) {
     out.clear();
-    let margin = STEERING_LOOKAHEAD + entry.speed + entry.speed;
+    let horizon_reach = horizon.map_or(SimScalar::ZERO, |factor| {
+        (entry.policy.radius + index.largest_radius).saturating_mul(SimScalar::from_num(factor))
+    });
+    let near = near_margin(entry);
+    let margin = near + horizon_reach;
     let reach = entry.policy.radius + index.largest_radius + margin;
     index.grid.for_each_near(position, reach, |body| {
         let obstacle = &index.obstacles[body];
         if obstacle.id == entry.id {
             return;
         }
-        let touching = i128::from(entry.policy.radius.raw())
-            + i128::from(obstacle.radius.raw())
-            + i128::from(margin.raw());
-        if within_distance(position, obstacle.pos, touching)
-            && (entry.policy.layer == MovementLayer::Air
-                || on_connected_ground(map, position, obstacle.pos))
+        let radii = i128::from(entry.policy.radius.raw()) + i128::from(obstacle.radius.raw());
+        if !within_distance(position, obstacle.pos, radii + i128::from(margin.raw())) {
+            return;
+        }
+        let deferred = horizon_reach > SimScalar::ZERO
+            && !within_distance(position, obstacle.pos, radii + i128::from(near.raw()));
+        if entry.policy.layer == MovementLayer::Air
+            || deferred
+            || on_connected_ground(map, position, obstacle.pos)
         {
             out.push(*obstacle);
         }
@@ -944,6 +1001,7 @@ impl SimWorld {
             current_tick: self.current_tick,
             route_groups: &self.route_groups,
             lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
+            contact: self.catalog.movement_rules().contact(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let walked = draft.walk(&mut scene, &mut neighbours, check_route, map_news);
@@ -1157,6 +1215,7 @@ impl SimWorld {
             current_tick: self.current_tick,
             route_groups: &self.route_groups,
             lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
+            contact: self.catalog.movement_rules().contact(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
@@ -1295,6 +1354,8 @@ struct MotionScene<'a> {
     route_groups: &'a [super::groups::RouteGroup],
     /// The catalog's lane tolerance in permille; 0 switches group routing off.
     lane_tolerance: u16,
+    /// The catalog's contact rules: which pipeline runs, and its side horizon.
+    contact: ContactRules,
 }
 
 impl MotionScene<'_> {
@@ -1313,10 +1374,16 @@ impl MotionScene<'_> {
                 largest_radius: self.movement.largest_radius[class],
             },
             self.map,
-            entry,
-            position,
+            (entry, position),
+            self.intent(),
             out,
         );
+    }
+
+    /// The side rule's horizon factor under the solver pipeline, `None` under the legacy one.
+    fn intent(&self) -> Option<u8> {
+        (self.contact.pipeline == MovementPipeline::Solver)
+            .then_some(self.contact.side_horizon_factor)
     }
 }
 
@@ -1350,6 +1417,7 @@ impl MotionDraft<'_> {
         &self,
         map: &'n SimMap,
         neighbours: &'n [SteeringObstacle],
+        intent: Option<u8>,
     ) -> StepContext<'n> {
         StepContext {
             map,
@@ -1366,6 +1434,8 @@ impl MotionDraft<'_> {
             hull: self.hull_gate(),
             surround: None,
             scan_range: self.entry.scan_range,
+            intent,
+            near_margin: near_margin(self.entry),
         }
     }
 
@@ -1416,9 +1486,11 @@ impl MotionDraft<'_> {
             self.actor.order_queue.front(),
             Some(UnitOrder::AttackMove { .. })
         );
+        let intent = scene.intent();
         let context = StepContext {
-            surround: (self.entry.surround_walk && attack_moving).then_some(None),
-            ..self.step_context(scene.map, neighbours)
+            surround: (self.entry.surround_walk && attack_moving && intent.is_none())
+                .then_some(None),
+            ..self.step_context(scene.map, neighbours, intent)
         };
         let on_last_leg = match self.decide_arrival(&context, scene.pathfinder)? {
             ControlFlow::Continue(on_last_leg) => on_last_leg,
@@ -1434,10 +1506,19 @@ impl MotionDraft<'_> {
             )
             .map_err(self.fault())?;
         let routes = &mut scene.movement.route_outcomes;
+        let reported = routes.len();
         if self
             .check_progress(routes, on_last_leg, gap, map_news, queued)?
             .is_break()
         {
+            // Under the solver a give-up is no arrival: the unit is no witness of the group-arrival
+            // chain (WP3b), so a clump's chain never runs back through units that gave up.
+            let gave_up = routes[reported..]
+                .iter()
+                .any(|outcome| outcome.kind == RouteOutcomeKind::NoProgress);
+            if gave_up && context.intent.is_some() {
+                self.proposal.memory.arrived_at = None;
+            }
             return Ok(());
         }
         self.propose_step(&context, scene.pathfinder, next, gap)
@@ -1580,19 +1661,29 @@ impl MotionDraft<'_> {
         )
         .map_err(self.fault())?;
         let on_last_leg = self.proposal.route(actor).len() <= 1;
-        if on_last_leg
-            && check_cluster_arrival_with(
+        let priority = self.entry.push_priority;
+        let witness = |witness: &SteeringObstacle| {
+            witness.owner == actor.owner
+                && (!ground || on_connected_ground(context.map, witness.pos, goal))
+        };
+        let arrived = |reach, unpushable_only: bool| {
+            check_cluster_arrival_with(
                 Some(id),
                 actor.position,
                 self.entry.policy.radius,
                 goal,
                 context.neighbours,
-                |witness| {
-                    witness.owner == actor.owner
-                        && (!ground || on_connected_ground(context.map, witness.pos, goal))
-                },
+                (reach, |seen: &SteeringObstacle| {
+                    (!unpushable_only || seen.push_priority > priority) && witness(seen)
+                }),
             )
-            .map_err(self.fault())?
+        };
+        // Under the solver an arrival this unit cannot push (C-2 row 6: a higher priority) is a
+        // witness wherever it stands (WP3b, B-158): the unit gains nothing by pressing on. Only
+        // arrivals are witnesses, since a give-up records none (`check_progress`).
+        if on_last_leg
+            && (arrived(Some(ARRIVAL_WITNESS_REACH), false).map_err(self.fault())?
+                || (context.intent.is_some() && arrived(None, true).map_err(self.fault())?))
         {
             self.proposal.finish(goal);
             return Ok(ControlFlow::Break(()));
@@ -1745,9 +1836,11 @@ impl MotionDraft<'_> {
         let reach = SimScalar::from_raw(i64::try_from(pursuit.max).unwrap_or(i64::MAX));
         self.brake(reach)?;
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
+        let intent = scene.intent();
         let context = StepContext {
-            surround: self.entry.surround_walk.then_some(Some(pursuit.target)),
-            ..self.step_context(scene.map, neighbours)
+            surround: (self.entry.surround_walk && intent.is_none())
+                .then_some(Some(pursuit.target)),
+            ..self.step_context(scene.map, neighbours, intent)
         };
         drop_passed_waypoints(
             &context,
@@ -1913,6 +2006,7 @@ fn parked_on_corner<'n>(
                 corner,
                 i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
             )
+            && context.is_near(obstacle)
     })
 }
 
@@ -2128,22 +2222,25 @@ fn step_toward(
         gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
-    let heading = steer_body(body, next, ignored, neighbours)?;
+    let heading = proposed_heading(context, proposal, next, ignored)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, pathfinder, next, gap, velocity)?;
     }
-    let unblocked = velocity;
-    let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
-    // Bodies that will not yield cut this step: the queue the waiting rule is for.
-    let crowded = velocity != unblocked;
-    if let Some(target) = context.surround {
-        velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
-    }
-    if is_waiting(velocity, speed) {
-        proposal.velocity = SimVec2::ZERO;
-        proposal.anim = AnimState::Idle;
-        return Ok(false);
+    let mut crowded = false;
+    if context.intent.is_none() {
+        let unblocked = velocity;
+        velocity = remove_blocked_velocity(body, velocity, neighbours)?;
+        // Bodies that will not yield cut this step: the queue the waiting rule is for.
+        crowded = velocity != unblocked;
+        if let Some(target) = context.surround {
+            velocity = surround_walk(context, pathfinder, proposal, next, velocity, target)?;
+        }
+        if is_waiting(velocity, speed) {
+            proposal.velocity = SimVec2::ZERO;
+            proposal.anim = AnimState::Idle;
+            return Ok(false);
+        }
     }
     // The probe is the disc's (plan `2026-11-11-contact-and-missiles` D-3, R-3): a step that
     // would press the disc into a wall slides along it instead, or waits on a sliver of slide
@@ -2185,6 +2282,38 @@ fn step_toward(
     }
     gate_step_by_facing(hull, origin, proposal);
     Ok(refused)
+}
+
+/// The unit heading of a step toward `next`: legacy steering, or under the solver pipeline the
+/// intent of plan `2026-11-20-contact-solver` (I-1 to I-4), whose one-pair side commitment is kept
+/// in the proposal's memory.
+fn proposed_heading(
+    context: &StepContext<'_>,
+    proposal: &mut MotionProposal,
+    next: SimVec2,
+    ignored: Option<EntityId>,
+) -> Result<SimVec2, MovementMathError> {
+    let Some(horizon_factor) = context.intent else {
+        return steer_body(context.body, next, ignored, context.neighbours);
+    };
+    let decided = intent_heading(
+        &IntentInput {
+            body: context.body,
+            next,
+            speed: context.speed,
+            ignored,
+            neighbours: context.neighbours,
+            horizon_factor,
+            side: SideMemory {
+                partner: proposal.memory.side_partner,
+                left: proposal.memory.side_left,
+            },
+        },
+        |obstacle| context.admits(obstacle),
+    )?;
+    proposal.memory.side_partner = decided.side.partner;
+    proposal.memory.side_left = decided.side.left;
+    Ok(decided.heading)
 }
 
 /// What a step that the disc probe refused becomes after [`slide_along_wall`].
@@ -2800,6 +2929,8 @@ mod tests {
             hull: None,
             surround: Some(Some(EntityId(99))),
             scan_range: SimScalar::from_num(5.5),
+            intent: None,
+            near_margin: SimScalar::from_num(8),
         };
         Ok(probe(&context, &mut world.pathfinder))
     }

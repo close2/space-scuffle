@@ -40,17 +40,58 @@ pub(crate) fn distance(a: SimVec2, b: SimVec2) -> Result<SimScalar, MovementMath
 pub(crate) fn direction(a: SimVec2, b: SimVec2) -> Result<SimVec2, MovementMathError> {
     let x = i128::from(a.x.raw()) - i128::from(b.x.raw());
     let y = i128::from(a.y.raw()) - i128::from(b.y.raw());
-    let norm = raw_norm(a, b);
+    unit_components((x, y), raw_norm(a, b))
+}
+
+/// The unit vector of the raw difference `(x, y)` whose Euclidean norm, in raw units, is `norm`
+/// (the floor root of `x² + y²`): each component `(v << 32) / norm` truncated toward zero, or
+/// zero when the norm is at most one raw unit. [`direction`] and the contact solver share it so
+/// that one root serves a pair's distance and its normal.
+///
+/// # Errors
+/// A component outside Q32.32, which a true norm never produces.
+pub(crate) fn unit_components(
+    (x, y): (i128, i128),
+    norm: u128,
+) -> Result<SimVec2, MovementMathError> {
     if norm <= u128::from(SimScalar::EPSILON.raw().unsigned_abs()) {
         return Ok(SimVec2::ZERO);
     }
-    let divisor = i128::try_from(norm).map_err(|_| MovementMathError::Unrepresentable)?;
+    if i128::try_from(norm).is_err() {
+        return Err(MovementMathError::Unrepresentable);
+    }
     let component = |v: i128| {
-        i64::try_from((v << 32) / divisor)
+        let magnitude = shifted_quotient(v.unsigned_abs(), norm);
+        let signed = i128::try_from(magnitude).map_err(|_| MovementMathError::Unrepresentable)?;
+        i64::try_from(if v < 0 { -signed } else { signed })
             .map(SimScalar::from_raw)
             .map_err(|_| MovementMathError::Unrepresentable)
     };
     Ok(SimVec2::new(component(x)?, component(y)?))
+}
+
+/// `⌊(value · 2^32) / divisor⌋` for a nonzero `divisor`, exactly.
+// PERFORMANCE RATIONALE:
+// Why: Every normal divides a 97-bit numerator by the norm; a 128-bit division is a software
+// routine (`__divti3`, about 15 % of a 400-unit battle under the contact solver, evidence §5.3).
+// What: Long division in base 2^16 on 64-bit hardware division when the operands allow it (the
+// norm of any contact or steering pair is far below 2^48 raw units), the 128-bit division
+// otherwise. Long division is exact, so the quotient is bit-identical to the 128-bit one.
+// Trade-off: Three 64-bit divisions and a branch instead of one call.
+fn shifted_quotient(value: u128, divisor: u128) -> u128 {
+    const LIMIT: u128 = 1 << 48;
+    match (u64::try_from(value), u64::try_from(divisor)) {
+        (Ok(numerator), Ok(denominator)) if divisor < LIMIT => {
+            let high = numerator / denominator;
+            let rest = numerator % denominator;
+            // rest < divisor < 2^48, so each shifted remainder fits 64 bits.
+            let middle = (rest << 16) / denominator;
+            let rest = (rest << 16) % denominator;
+            let low = (rest << 16) / denominator;
+            (u128::from(high) << 32) | (u128::from(middle) << 16) | u128::from(low)
+        }
+        _ => (value << 32) / divisor,
+    }
 }
 
 /// Dot/cross against a raw wide position difference without narrowing that
@@ -181,6 +222,31 @@ fn raw_norm(a: SimVec2, b: SimVec2) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The long division equals the 128-bit division it replaces (plan
+    /// `2026-11-20-contact-solver` Amendment 3, item 1), on both sides of every branch.
+    #[test]
+    fn shifted_quotient_equals_the_wide_division() {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        for index in 0..200_000_u32 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let value = u128::from(state >> (index % 64)) | (u128::from(index % 3) << 64);
+            let divisor = (u128::from(state.rotate_left(23)) >> (index % 70)).max(1);
+            assert_eq!(
+                shifted_quotient(value, divisor),
+                (value << 32) / divisor,
+                "{value} / {divisor}"
+            );
+        }
+        for divisor in [1_u128, 2, (1 << 32) - 1, 1 << 32, (1 << 48) - 1, 1 << 48] {
+            for value in [0_u128, 1, divisor - 1, divisor, u128::from(u64::MAX)] {
+                assert_eq!(shifted_quotient(value, divisor), (value << 32) / divisor);
+            }
+        }
+    }
+
     #[test]
     fn signed_extreme_diagonal_normal_is_representable() -> Result<(), MovementMathError> {
         let min = SimScalar::from_raw(i64::MIN);

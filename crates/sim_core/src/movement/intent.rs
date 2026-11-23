@@ -23,14 +23,6 @@
 //! - The heading is a unit vector, or zero when the unit stands on its point.
 //! - All arithmetic is checked Q32.32 with one square root per threat for its time and one for the
 //!   turn; no trigonometric table.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "plan 2026-11-20-contact-solver WP2 builds this part as tested library code; the \
-                  solver pipeline calls it from WP3 on"
-    )
-)]
 
 use super::math::{checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
 use super::tuning::{COMOVING_MIN_COSINE, STEERING_CORRIDOR_MARGIN};
@@ -170,28 +162,76 @@ fn threat_of(
     }))
 }
 
-/// Whether `obstacle` can be a threat at all: not the unit, not ignored, not a co-moving friend
-/// (I-4), not an idle friend that steps aside (L6).
-fn may_threaten(
-    input: &IntentInput<'_>,
-    heading: SimVec2,
-    obstacle: &SteeringObstacle,
-) -> Result<bool, MovementMathError> {
+/// Whether `obstacle` is excluded before any geometry: the unit itself, the ignored body (the
+/// chase target), or an idle friend that steps aside (L6).
+fn passed_over(input: &IntentInput<'_>, obstacle: &SteeringObstacle) -> bool {
     let body = input.body;
-    if obstacle.id == body.id || Some(obstacle.id) == input.ignored {
-        return Ok(false);
+    obstacle.id == body.id
+        || Some(obstacle.id) == input.ignored
+        || obstacle.yields_to(body.owner, body.push_priority)
+}
+
+/// The earliest threat among the neighbours (I-3) and whether the committed partner still
+/// closes. A neighbour counts when it is not passed over ([`passed_over`]), is not a co-moving
+/// friend (I-4), and `admits` it (the neighbour test deferred for far bodies, see
+/// `locomotion::gather_neighbours`).
+// PERFORMANCE RATIONALE:
+// Why: Under the solver the neighbour list is about five times longer than the legacy one, and
+// the co-moving test normalises each friend's velocity (a root and two divisions), most of it
+// for bodies that are not on a collision course at all (evidence §5.3).
+// What: The cheap geometry of [`threat_of`] runs first; the co-moving test and the deferred
+// ground test run only for a body that is a threat or the committed partner. Both tests are
+// exclusions that never fail (a unit normal of a finite velocity is always representable), so
+// the threat and the partner found are the same as testing in the order of the rules.
+// Trade-off: The rule's order in code differs from its order in the plan's text.
+fn scan_threats(
+    input: &IntentInput<'_>,
+    (straight, preferred): (SimVec2, SimVec2),
+    admits: &impl Fn(&SteeringObstacle) -> bool,
+) -> Result<(Option<Threat>, bool), MovementMathError> {
+    let mut earliest: Option<Threat> = None;
+    let mut partner_closes = false;
+    for obstacle in input.neighbours {
+        if passed_over(input, obstacle) {
+            continue;
+        }
+        let partner = Some(obstacle.id) == input.side.partner;
+        let threat = threat_of(input, preferred, obstacle);
+        if !partner && matches!(threat, Ok(None)) {
+            continue;
+        }
+        if (obstacle.owner == input.body.owner && co_moving(straight, obstacle)?)
+            || !admits(obstacle)
+        {
+            continue;
+        }
+        if partner {
+            let offset = checked_vec_sub(obstacle.pos, input.body.pos)?;
+            let relative = checked_vec_sub(preferred, obstacle.velocity)?;
+            partner_closes = checked_dot(offset, relative)? > SimScalar::ZERO;
+        }
+        if let Some(threat) = threat? {
+            let earlier = earliest.is_none_or(|best| {
+                threat.time < best.time || (threat.time == best.time && threat.id < best.id)
+            });
+            if earlier {
+                earliest = Some(threat);
+            }
+        }
     }
-    if obstacle.yields_to(body.owner, body.push_priority) {
-        return Ok(false);
-    }
-    Ok(!(obstacle.owner == body.owner && co_moving(heading, obstacle)?))
+    Ok((earliest, partner_closes))
 }
 
 /// The heading the unit proposes this tick and its commitment (see the module documentation).
+/// `admits` completes the neighbour test of a listed body (`true` for every body when the list
+/// is exact).
 ///
 /// # Errors
 /// An unrepresentable intermediate of the side rule's geometry.
-pub(crate) fn intent_heading(input: &IntentInput<'_>) -> Result<Intent, MovementMathError> {
+pub(crate) fn intent_heading(
+    input: &IntentInput<'_>,
+    admits: impl Fn(&SteeringObstacle) -> bool,
+) -> Result<Intent, MovementMathError> {
     let straight = direction(input.next, input.body.pos)?;
     let mut decision = Intent {
         heading: straight,
@@ -202,26 +242,7 @@ pub(crate) fn intent_heading(input: &IntentInput<'_>) -> Result<Intent, Movement
         return Ok(decision);
     }
     let preferred = checked_vec_scale(straight, input.speed)?;
-    let mut earliest: Option<Threat> = None;
-    let mut partner_closes = false;
-    for obstacle in input.neighbours {
-        if !may_threaten(input, straight, obstacle)? {
-            continue;
-        }
-        if Some(obstacle.id) == input.side.partner {
-            let offset = checked_vec_sub(obstacle.pos, input.body.pos)?;
-            let relative = checked_vec_sub(preferred, obstacle.velocity)?;
-            partner_closes = checked_dot(offset, relative)? > SimScalar::ZERO;
-        }
-        if let Some(threat) = threat_of(input, preferred, obstacle)? {
-            let earlier = earliest.is_none_or(|best| {
-                threat.time < best.time || (threat.time == best.time && threat.id < best.id)
-            });
-            if earlier {
-                earliest = Some(threat);
-            }
-        }
-    }
+    let (earliest, partner_closes) = scan_threats(input, (straight, preferred), &admits)?;
     let Some(threat) = earliest else {
         // Commitment ends when the partner no longer closes or has left the neighbours (I-3).
         if !partner_closes {
@@ -323,6 +344,42 @@ mod tests {
         }
     }
 
+    /// The intent over a list whose every body is a neighbour.
+    fn intent_heading_all(input: &IntentInput<'_>) -> Result<Intent, MovementMathError> {
+        intent_heading(input, |_| true)
+    }
+
+    /// A body the deferred neighbour test refuses is no threat, and a committed partner it
+    /// refuses has left the neighbours, so the commitment ends (plan Amendment 3, item 1).
+    #[test]
+    fn a_body_the_neighbour_test_refuses_is_neither_threat_nor_partner(
+    ) -> Result<(), MovementMathError> {
+        let a = unit(1, at(10.0, 10.0));
+        let oncoming = body(2, 1, at(11.5, 10.0), at(-0.125, 0.0));
+        let seen = [oncoming];
+        let input = input(a, at(20.0, 10.0), &seen, SideMemory::default());
+        assert_eq!(intent_heading_all(&input)?.threat, Some(EntityId(2)));
+        let refused = intent_heading(&input, |_| false)?;
+        assert_eq!(refused.threat, None);
+        assert_eq!(
+            refused.heading,
+            SimVec2::new(SimScalar::ONE, SimScalar::ZERO)
+        );
+        let committed = SideMemory {
+            partner: Some(EntityId(2)),
+            left: true,
+        };
+        let input = IntentInput {
+            side: committed,
+            ..input
+        };
+        assert_eq!(
+            intent_heading(&input, |_| false)?.side,
+            SideMemory::default()
+        );
+        Ok(())
+    }
+
     fn cross_of(heading: SimVec2, axis: SimVec2) -> SimScalar {
         cross(axis, heading).unwrap_or(SimScalar::ZERO)
     }
@@ -338,8 +395,8 @@ mod tests {
         let b = unit(2, at(12.5, 10.0));
         let seen_by_a = [body(2, 0, b.pos, west)];
         let seen_by_b = [body(1, 0, a.pos, east)];
-        let ia = intent_heading(&input(a, at(20.0, 10.0), &seen_by_a, SideMemory::default()))?;
-        let ib = intent_heading(&input(b, at(0.0, 10.0), &seen_by_b, SideMemory::default()))?;
+        let ia = intent_heading_all(&input(a, at(20.0, 10.0), &seen_by_a, SideMemory::default()))?;
+        let ib = intent_heading_all(&input(b, at(0.0, 10.0), &seen_by_b, SideMemory::default()))?;
         assert_eq!(ia.threat, Some(EntityId(2)));
         assert_eq!(ib.threat, Some(EntityId(1)));
         assert!(!ia.side.left && !ib.side.left, "{ia:?} {ib:?}");
@@ -352,7 +409,7 @@ mod tests {
         let mirror = |p: SimVec2| SimVec2::new(at(22.5, 20.0).x - p.x, at(22.5, 20.0).y - p.y);
         let ra = unit(1, mirror(a.pos));
         let seen = [body(2, 0, mirror(b.pos), east)];
-        let reflected = intent_heading(&input(
+        let reflected = intent_heading_all(&input(
             ra,
             mirror(at(20.0, 10.0)),
             &seen,
@@ -381,7 +438,7 @@ mod tests {
         // B comes up from the south-east, crossing A's way east.
         let north = SimVec2::new(SimScalar::ZERO, SimScalar::from_num(0.125));
         let seen = [body(2, 0, at(11.5, 8.6), north)];
-        let first = intent_heading(&input(a, at(20.0, 10.0), &seen, SideMemory::default()))?;
+        let first = intent_heading_all(&input(a, at(20.0, 10.0), &seen, SideMemory::default()))?;
         let committed = first.side;
         assert_eq!(committed.partner, Some(EntityId(2)));
         // Same pair, the commitment flipped by hand: it is kept, not re-chosen.
@@ -389,11 +446,11 @@ mod tests {
             partner: committed.partner,
             left: !committed.left,
         };
-        let kept = intent_heading(&input(a, at(20.0, 10.0), &seen, flipped))?;
+        let kept = intent_heading_all(&input(a, at(20.0, 10.0), &seen, flipped))?;
         assert_eq!(kept.side, flipped);
         // Once B has passed and no longer closes, the commitment ends.
         let gone = [body(2, 0, at(10.0, 12.0), north)];
-        let ended = intent_heading(&input(a, at(20.0, 10.0), &gone, committed))?;
+        let ended = intent_heading_all(&input(a, at(20.0, 10.0), &gone, committed))?;
         assert_eq!(ended.side, SideMemory::default());
         assert_eq!(ended.heading, SimVec2::X_AXIS);
         Ok(())
@@ -419,7 +476,7 @@ mod tests {
             (&enemy[..], Some(EntityId(4))),
         ] {
             let decided =
-                intent_heading(&input(a, at(20.0, 10.0), neighbours, SideMemory::default()))?;
+                intent_heading_all(&input(a, at(20.0, 10.0), neighbours, SideMemory::default()))?;
             assert_eq!(decided.threat, threat);
         }
         Ok(())
@@ -433,7 +490,8 @@ mod tests {
         // h = 2, r + r_b = 1, speed 0.125: H = 16 ticks; reach R = 1.05; |p| = R + 16 · 0.125.
         for (gap, steered) in [(1.9, true), (1.5, true), (2.1, false)] {
             let seen = [body(2, 1, at(10.0 + 1.05 + gap, 10.0), SimVec2::ZERO)];
-            let decided = intent_heading(&input(a, at(30.0, 10.0), &seen, SideMemory::default()))?;
+            let decided =
+                intent_heading_all(&input(a, at(30.0, 10.0), &seen, SideMemory::default()))?;
             assert_eq!(decided.threat.is_some(), steered, "gap {gap}");
             // sin of the turn = |cross(x̂, heading)|; asin(1/2) is 30°, sin 0.5.
             let sine = cross_of(decided.heading, SimVec2::X_AXIS).abs();
