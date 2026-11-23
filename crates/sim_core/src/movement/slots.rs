@@ -28,9 +28,9 @@ use super::concave::{
 use super::locomotion::MotionEntry;
 use super::math::{difference_product, within_distance};
 use super::{MovementInvariant, MovementMathError};
-use crate::entity::SlotClaim;
+use crate::entity::{Entity, SlotClaim};
 use crate::SimWorld;
-use sim_types::{AttackOrigin, EntityId, SimAngle, SimScalar, SimVec2};
+use sim_types::{AttackOrigin, EntityId, SimAngle, SimScalar, SimVec2, UnitOrder};
 
 /// A claim kept this tick, which blocks its arc for every other claimant of its target (G-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,8 @@ pub(crate) struct Chase {
     /// The arc's radius `band_max − r/2` (G-2).
     rho: SimScalar,
     in_band: bool,
+    /// The pursuer's centre separation from the target's tick-start position, raw units.
+    separation: i128,
     leash: SimScalar,
 }
 
@@ -158,7 +160,13 @@ impl SimWorld {
                 let taken = self.claim_taken(&chase, claim.point).map_err(fault)?;
                 // Amendment 5, 3: a unit standing in band at its claim keeps it, so later claims
                 // pack against it; one in band elsewhere frees it and claims its own angle.
-                let away = chase.in_band && !stands_at(&chase, claim.point).map_err(fault)?;
+                let at_claim = stands_at(&chase, claim.point).map_err(fault)?;
+                // Amendment 6, 2: a unit at its claim's angle that has left the band by more
+                // than its radius re-chooses, so no pushed-out unit walks back to a lost slot.
+                let left = !chase.in_band
+                    && at_claim
+                    && chase.separation > i128::from(chase.rho.raw()) + i128::from(radius.raw());
+                let away = (chase.in_band && !at_claim) || left;
                 let fate = claim_fate(
                     (claim.target, claim.point),
                     (target, chase.centre),
@@ -222,6 +230,7 @@ impl SimWorld {
             position: actor.position,
             rho,
             in_band: separation <= band.max && separation >= band.min,
+            separation,
             leash: band.leash,
         }))
     }
@@ -341,16 +350,18 @@ impl SimWorld {
         let bearing = angle_from(chase.centre, chase.position);
         let leash_origin = self.leash_origin_of(chase);
         // Amendment 5, 3: a unit in band claims its own angle, if free within its body width.
-        let chosen = if chase.in_band {
-            is_free(bearing, intervals).then_some(bearing)
-        } else {
-            choose_slot(bearing, intervals, |angle| {
-                slot_point(chase.centre, chase.rho, angle).is_ok_and(|point| {
-                    leash_origin.is_none_or(|origin| {
-                        within_distance(origin, point, i128::from(chase.leash.raw()))
-                    }) && self.arc_stays_on_ground(chase, bearing, angle)
-                })
+        let admissible = |angle: SimAngle| {
+            slot_point(chase.centre, chase.rho, angle).is_ok_and(|point| {
+                leash_origin.is_none_or(|origin| {
+                    within_distance(origin, point, i128::from(chase.leash.raw()))
+                }) && self.arc_stays_on_ground(chase, bearing, angle)
             })
+        };
+        // Amendment 6, 2: an own angle takes the same terrain and arc checks as a chosen one.
+        let chosen = if chase.in_band {
+            (is_free(bearing, intervals) && admissible(bearing)).then_some(bearing)
+        } else {
+            choose_slot(bearing, intervals, admissible)
         };
         let Some(angle) = chosen else {
             return Ok(None);
@@ -404,6 +415,31 @@ impl SimWorld {
                 .and_then(|a| a.movement.leash_origin)
                 .unwrap_or(chase.position)
         })
+    }
+
+    /// Whether `actor` stands within its weapon's band of a live target: its current target, or
+    /// the target of its attack order (plan Amendment 6, 3: anchored for contact, C-2, so a press
+    /// from behind never pushes a unit that can fire into the enemy).
+    pub(super) fn in_range_of_live_target(&self, entry: MotionEntry, actor: &Entity) -> bool {
+        let target = actor.current_target.or(match actor.order_queue.front() {
+            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+            _ => None,
+        });
+        let Some((id, target)) = target.and_then(|id| {
+            self.entities
+                .get(&id)
+                .filter(|t| t.is_alive())
+                .map(|t| (id, t))
+        }) else {
+            return false;
+        };
+        let Ok(Some(band)) = self.pursuit_band(entry, actor, target, id, AttackOrigin::Explicit)
+        else {
+            return false;
+        };
+        super::checked_distance(actor.position, target.position)
+            .map(|d| i128::from(d.raw()))
+            .is_some_and(|d| d <= band.max && d >= band.min)
     }
 
     /// The position `id` had when this tick's movement phase began, world units: from the

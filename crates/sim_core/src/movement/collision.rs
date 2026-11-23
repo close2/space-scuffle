@@ -456,7 +456,8 @@ impl SimWorld {
                 push_priority: entry.push_priority,
                 fixed: actor.is_immobile || actor.unpushable,
                 holding: actor.cannot_be_pushed(),
-                engaged: self.is_anchored_in_combat(actor),
+                // Plan Amendment 6, 3: for contact, a unit in range of a live target is anchored.
+                engaged: self.in_range_of_live_target(entry, actor),
                 idle: actor.is_idle(),
                 moving: !within_distance(actor.position, actor.pos_at_tick_start, step),
             },

@@ -25,7 +25,7 @@
 //!   turn; no trigonometric table.
 
 use super::math::{checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, direction};
-use super::tuning::{COMOVING_MIN_COSINE, STANDING_DRIFT, STEERING_CORRIDOR_MARGIN};
+use super::tuning::{COMOVING_MIN_COSINE, STEERING_CORRIDOR_MARGIN};
 use super::MovementMathError;
 use crate::steering::{ContactBody, SteeringObstacle};
 use sim_types::{EntityId, SimScalar, SimVec2};
@@ -103,14 +103,11 @@ fn sub(a: SimScalar, b: SimScalar) -> Result<SimScalar, MovementMathError> {
     a.checked_sub(b).ok_or(MovementMathError::Unrepresentable)
 }
 
-/// Whether `obstacle`, a friend, is passed like one moving with the unit, whose heading is
-/// `heading` (I-4): its last displacement points within 60° of the heading, or it stands
-/// (moved at most `STANDING_DRIFT`) without being anchored, waiting rather than holding or firing
-/// (plan Amendment 5, 1: no committed side against a waiting friend, which contact handles).
+/// Whether `obstacle` is a friend moving with the unit, whose heading is `heading` (I-4): its
+/// last displacement points within 60° of the heading.
 fn co_moving(heading: SimVec2, obstacle: &SteeringObstacle) -> Result<bool, MovementMathError> {
-    let drift = i128::from(STANDING_DRIFT.raw());
-    if super::math::within_distance(obstacle.velocity, SimVec2::ZERO, drift) {
-        return Ok(!obstacle.anchored);
+    if obstacle.velocity == SimVec2::ZERO {
+        return Ok(false);
     }
     let along = direction(obstacle.velocity, SimVec2::ZERO)?;
     Ok(checked_dot(heading, along)? >= COMOVING_MIN_COSINE)
@@ -193,6 +190,7 @@ fn scan_threats(
     admits: &impl Fn(&SteeringObstacle) -> bool,
 ) -> Result<(Option<Threat>, bool), MovementMathError> {
     let mut earliest: Option<Threat> = None;
+    let mut kept: Option<Threat> = None;
     let mut partner_closes = false;
     for obstacle in input.neighbours {
         if passed_over(input, obstacle) {
@@ -214,6 +212,9 @@ fn scan_threats(
             partner_closes = checked_dot(offset, relative)? > SimScalar::ZERO;
         }
         if let Some(threat) = threat? {
+            if partner {
+                kept = Some(threat);
+            }
             let earlier = earliest.is_none_or(|best| {
                 threat.time < best.time || (threat.time == best.time && threat.id < best.id)
             });
@@ -222,7 +223,17 @@ fn scan_threats(
             }
         }
     }
-    Ok((earliest, partner_closes))
+    // Plan Amendment 6, 1: the committed partner stays the threat while its time to collision is
+    // within one tick of the earliest's, so two equally urgent threats do not flip the side.
+    let chosen = match (kept, earliest) {
+        (Some(partner), Some(first))
+            if partner.time <= first.time.saturating_add(SimScalar::ONE) =>
+        {
+            Some(partner)
+        }
+        _ => earliest,
+    };
+    Ok((chosen, partner_closes))
 }
 
 /// The heading the unit proposes this tick and its commitment (see the module documentation).
