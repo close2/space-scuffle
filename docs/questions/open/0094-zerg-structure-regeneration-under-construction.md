@@ -23,3 +23,6 @@ The choice is one condition in the code; either is easy to switch.
 
 ## Answer
 
+- **Option (a): No passive life regeneration while under construction.** A structure under construction gains life only from build progress; passive life (and energy) regeneration starts on the tick after completion.
+
+**Reasoning:** Matches StarCraft II's behaviour (where `UnderConstruction` suppresses passive vital regeneration on structures), matches how Space Scuffle shields already behave, and matches the bug register's expectation. Because this is a single guard in the regeneration pass, exposing a per-unit-type data flag later (defaulting to `false`) remains trivial if a future unit or structure ever needs it.
