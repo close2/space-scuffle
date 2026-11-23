@@ -764,6 +764,24 @@ impl Entity {
         )
     }
 
+    /// Whether the unit's front order walks it (plan `2026-11-23-turret-wind-up` D-3): a move or
+    /// an attack-move, a task order with a goal to walk to, or a cast, whose approach may walk.
+    /// It is the classification the movement phase's `walking_goal` makes, read from the order
+    /// and not from the displacement, so a collision push never counts as walking. An attack
+    /// order's pursuit is not counted: inside an attack order no weapon is gated by movement.
+    #[must_use]
+    pub(crate) fn order_walks(&self) -> bool {
+        match self.order_queue.front() {
+            Some(
+                UnitOrder::Move { .. }
+                | UnitOrder::AttackMove { .. }
+                | UnitOrder::CastAbility { .. },
+            ) => true,
+            Some(_) => self.has_task_order() && self.task.goal.is_some(),
+            None => false,
+        }
+    }
+
     /// Drops everything tied to the current task leg; what outlives an order stays.
     pub(crate) fn abandon_task_leg(&mut self) {
         self.task = crate::economy::fresh_leg(self.task);
@@ -1442,5 +1460,118 @@ mod barrier_state_tests {
             SimScalar::ZERO,
             "raised again"
         );
+    }
+}
+
+#[cfg(test)]
+mod order_walks_tests {
+    //! Plan `2026-11-23-turret-wind-up` D-3 (P-2): `Entity::order_walks` classifies every
+    //! `UnitOrder` as the movement phase's `walking_goal` does.
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AttackOrigin, EntityId, MoverType, PlayerId, RallyTarget, ResourceNodeId, SimScalar,
+        SimVec2, UnitOrder, UnitTypeId,
+    };
+
+    /// Whether `walking_goal` walks a unit whose front order is `order` and whose task leg has a
+    /// goal when `task_goal`: a move or attack-move walks to its point, a task order to its leg's
+    /// goal, and a cast approaches its target. Every other order stands, or pursues as an attack
+    /// (`AttackTarget`). The match lists every variant, so a new order fails to compile here
+    /// until it is classified.
+    fn walks(order: &UnitOrder, task_goal: bool) -> bool {
+        match order {
+            UnitOrder::Move { .. }
+            | UnitOrder::AttackMove { .. }
+            | UnitOrder::CastAbility { .. } => true,
+            UnitOrder::Harvest { .. }
+            | UnitOrder::ReturnCargo
+            | UnitOrder::Build { .. }
+            | UnitOrder::Construct { .. }
+            | UnitOrder::Load { .. }
+            | UnitOrder::UnloadAll => task_goal,
+            UnitOrder::Idle
+            | UnitOrder::AttackTarget { .. }
+            | UnitOrder::HoldPosition
+            | UnitOrder::Stop
+            | UnitOrder::UseStim
+            | UnitOrder::Produce { .. }
+            | UnitOrder::CancelConstruction
+            | UnitOrder::Research { .. }
+            | UnitOrder::CancelProduction { .. }
+            | UnitOrder::SetRally { .. } => false,
+        }
+    }
+
+    #[test]
+    fn every_order_walks_as_the_movement_phase_classifies_it(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 3);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground unit")?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let point = SimVec2::from_i32(4, 4);
+        let orders = [
+            UnitOrder::Idle,
+            UnitOrder::Move { target: point },
+            UnitOrder::AttackMove { target: point },
+            UnitOrder::AttackTarget {
+                target: EntityId(99),
+                origin: AttackOrigin::Explicit,
+            },
+            UnitOrder::HoldPosition,
+            UnitOrder::Stop,
+            UnitOrder::UseStim,
+            UnitOrder::Produce {
+                unit_type: UnitTypeId(0),
+            },
+            UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            },
+            UnitOrder::ReturnCargo,
+            UnitOrder::Build {
+                structure_type: UnitTypeId(0),
+                cell_x: 2,
+                cell_y: 2,
+            },
+            UnitOrder::Construct {
+                foundation: EntityId(99),
+            },
+            UnitOrder::CastAbility {
+                ability_index: 0,
+                target_pos: Some(point),
+                target_entity: None,
+            },
+            UnitOrder::CancelConstruction,
+            UnitOrder::Research { upgrade: 0 },
+            UnitOrder::CancelProduction { job_index: 0 },
+            UnitOrder::Load {
+                carrier: EntityId(99),
+            },
+            UnitOrder::UnloadAll,
+            UnitOrder::SetRally {
+                target: RallyTarget::Point(point),
+            },
+        ];
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        for order in orders {
+            for task_goal in [false, true] {
+                entity.order_queue = [order.clone()].into_iter().collect();
+                entity.task.goal = task_goal.then_some(point);
+                assert_eq!(
+                    entity.order_walks(),
+                    walks(&order, task_goal),
+                    "{order:?}, task goal {task_goal}"
+                );
+            }
+        }
+        entity.order_queue.clear();
+        assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
     }
 }

@@ -682,3 +682,24 @@ plan and is registered (B-178). Q0101 stays free.
   [Valkyrie unit data](https://sc2mapster.com/forums/development/data/226927-valkyrie-unit-data?comment=2),
   [Moving Bunker: allowing attacks while moving](https://us.forums.blizzard.com/en/sc2/t/moving-bunker-allowing-attacks-while-moving/8036).
 - No prototype: WP1 is latent by construction, and WP2's effect is shown by constructed tests (§7 "No probe").
+
+---
+
+## Amendment 1 (implementation, 2026-11-23): the Phoenix analogue's wind-up holds it until WP3
+
+**Finding (WP2).** R-5 and D-6's **verify** are confirmed, and they reach a shipped unit. `walking_goal`
+(`crates/sim_core/src/movement/locomotion.rs`) decides the wind-up hold from `siege_weapon → ground_weapon → weapon`,
+so for a unit with only an air weapon it finds no weapon, reads "no turret" and stands the unit still for every
+wind-up. The Phoenix analogue (`flying_saucer`, an air weapon only) is such a unit. §3's diagnosis ("the turreted
+unit … is not held") and §1's row "Phoenix … fires while moving" assumed otherwise.
+
+**Decision.** WP2 lands as planned: the Phoenix analogue fires at the best enemy it reaches under a move (D-2, D-4),
+its turret turning independently of its hull. It still stands for each wind-up (3 ticks of its 20-tick cycle) until
+WP3. P-6's Phoenix clause is restated for WP2 as "deals damage while it moves; its hull keeps its heading and
+translates on every tick that does not begin in its wind-up" (`turret_tracking_tests`); WP3 restores the plan's
+wording ("its position changes every tick of the pass"). B-45's Phoenix half is therefore not fully fixed by WP2.
+
+**What WP3 must do in addition to D-6.** Resolve the weapon of the swing's target plane (the plane of
+`WeaponPhase::Windup`'s `target_id`, as `SimWorld::resolved_weapon` does), not the ground-first weapon, and hold the
+unit unless that weapon is `Moving`. Then make `turret_tracking_tests::a_turret_that_fires_while_moving_…` require a
+translation on every tick again.

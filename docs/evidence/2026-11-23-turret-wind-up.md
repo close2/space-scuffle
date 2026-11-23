@@ -108,3 +108,49 @@ After the data, the validation and the encoding all of them pass.
    and the sandbox checksum became 17_151_758_586_245_851_116. All four builds reproduce them
    (`~/scratch/turret-wind-up/proof-hashed40/`). Schema 40, not 39: `main` was still at 38 (`d71f7153`) when WP1
    was recorded, but the harvest-handoff branch, about to merge, holds 39.
+
+### Worlds
+
+`compare.sh world-wp0 world-wp1`: "files base=483 new=483 differing=0". Stop rule 1 holds.
+
+## WP2: the order rule, tracking and the hull (B-90 first half, B-45 Phoenix)
+
+### Red runs (on the WP1 tree)
+
+`~/scratch/turret-wind-up/red/wp2.log`; every new test failed for the defect it pins:
+
+- `turret_tracking_tests::a_turret_that_needs_an_attack_order_holds_fire_while_retreating`: "tick 1: no swing
+  outside an attack order" (the tank fires at its stale target).
+- `turret_tracking_tests::a_turret_that_fires_while_moving_tracks_and_fires_while_retreating`: "the turret turns
+  independently of the hull" (the Phoenix analogue has no target under a move, so its turret never turns).
+- `target_selection_tests::b90_a_weapon_fires_at_its_current_target_only_in_an_attack_order`: "turret true, Move: a
+  swing only in an attack order", left true (the hull copy passed every order case already).
+- `target_selection_tests::b90_a_weapon_outside_an_attack_order_fires_while_walking_only_when_moving`: "Stopped: a
+  swing under an order that does not walk".
+- `target_selection_tests::b45_a_unit_that_fires_while_moving_tracks_the_best_enemy_in_reach`: "the best enemy in
+  reach, the order kept", current target `None`, expected the higher-priority enemy.
+- `hull_turning_tests::a_hull_weapon_outside_an_attack_order_never_turns_the_hull`: "target at (15, 18): fires only
+  at a target in its arc", left false.
+- `runtime_catalog_tests::an_edited_movement_rule_makes_a_unit_hold_fire_while_moving_without_recompiling`: "the
+  shipped unit fires while it moves past the enemy".
+
+The `entity.rs` unit test `order_walks_tests::every_order_walks_as_the_movement_phase_classifies_it` was written with
+the function and did not exist on the WP1 tree.
+
+**Amendment 1.** After the rule, the Phoenix test first failed on "tick 5: the hull translates as it would with no
+enemy": the movement phase holds the air-only Phoenix analogue for its wind-up (it reads the ground-first weapon).
+The test was restated as Amendment 1 says; the hold is WP3's.
+
+After the rule every new test passes; P-9's guards (`weapon_cadence_tests`, `stutter_step_tests`, the existing
+`target_selection_tests` and `hull_turning_tests`, `multi_strike_timing_tests`, `attack_move_simulation_tests`,
+`b2_…` and `b81_…`) pass unchanged, and so do all 108 test targets of `sim_types`, `sim_core` and `sim_fixtures`
+(`~/scratch/turret-wind-up/wp2-tests.log`). `stutter_step_tests` has no case that relied on firing under `Move`
+(§12 verify): it passed unchanged.
+
+### Worlds and goldens
+
+`compare.sh world-wp0 world-wp2`: "files base=483 new=483 differing=0"; the matrix reports the WP0 line again. Both
+goldens and `DEFAULT_SANDBOX_CHECKSUM` reproduce unchanged (no re-record). As §7 predicted, no measured world moved:
+the matrix and scenarios give only attack-move, hold or no orders, "red_siege" fires inside attack orders, and the
+golden Phoenix passes no enemy its air weapon reaches. P-12's WP2 direction holds trivially. Stop rule 2 holds: there
+is no first difference to trace.
