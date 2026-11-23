@@ -344,6 +344,8 @@ fn draw_queue(
             let mut bar = egui::ProgressBar::new(row.progress);
             if position == 0 && panel.exit_blocked {
                 bar = bar.text("Exit blocked");
+            } else if position == 0 && panel.supply_blocked {
+                bar = bar.text("Needs supply");
             }
             ui.add(bar);
         });

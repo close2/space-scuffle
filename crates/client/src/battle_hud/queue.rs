@@ -55,6 +55,9 @@ pub struct QueuePanel {
     pub rows: [Option<QueueRow>; QUEUE_ROWS],
     /// Whether a finished job at the front is waiting for a free exit.
     pub exit_blocked: bool,
+    /// Whether the front job is waiting for supply, its countdown not started (plan
+    /// `2026-11-23-production-queue` D-10).
+    pub supply_blocked: bool,
     /// Cached "+N more" text, empty when every job is listed.
     pub overflow: String,
     /// The single selected foundation's share done, from 0.0 to 1.0.
@@ -105,6 +108,7 @@ impl QueuePanel {
         self.structure = None;
         self.rows = [None; QUEUE_ROWS];
         self.exit_blocked = false;
+        self.supply_blocked = false;
         self.overflow_count = 0;
         self.overflow.clear();
     }
@@ -117,6 +121,7 @@ impl QueuePanel {
         let jobs = view.jobs_of(queue);
         self.structure = Some(structure);
         self.exit_blocked = queue.exit_blocked;
+        self.supply_blocked = queue.supply_blocked;
         for ((row, job), job_index) in self.rows.iter_mut().zip(jobs).zip(0_u32..) {
             *row = Some(QueueRow {
                 item: job.item,
@@ -240,7 +245,7 @@ mod tests {
             first_job: 0,
             job_count: count,
             exit_blocked: true,
-            supply_blocked: false,
+            supply_blocked: true,
         }];
         model
     }
@@ -261,6 +266,7 @@ mod tests {
         derive_queue(&model, &[fact(STRUCTURE, false)], &mut panel);
         assert_eq!(panel.structure, Some(STRUCTURE));
         assert!(panel.exit_blocked);
+        assert!(panel.supply_blocked);
         let shown = |row: Option<QueueRow>| row.map(|row| (row.job_index, row.progress));
         assert_eq!(shown(panel.rows[0]), Some((0, 0.0)));
         assert_eq!(shown(panel.rows[1]), Some((1, 0.01)));

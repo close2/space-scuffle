@@ -51,6 +51,8 @@ pub enum OrderMarkerKind {
     Move,
     /// Units were sent to attack a target.
     Attack,
+    /// Structures were given a rally (plan `2026-11-23-production-queue` D-10).
+    Rally,
 }
 
 /// One pooled marker. `remaining` is in seconds, and zero means hidden.
@@ -68,6 +70,7 @@ pub struct OrderMarker {
 pub struct OrderMarkerAssets {
     move_material: Handle<SelectionRingMaterial>,
     attack_material: Handle<SelectionRingMaterial>,
+    rally_material: Handle<SelectionRingMaterial>,
     next_slot: usize,
     /// Session whose orders the visible markers confirm. `None` before the first commit.
     generation: Option<SessionGeneration>,
@@ -97,6 +100,7 @@ pub fn setup_order_markers(
     let assets = OrderMarkerAssets {
         move_material: material(MOVE_MARKER_COLOR),
         attack_material: material(ATTACK_MARKER_COLOR),
+        rally_material: material(super::rally_marker::RALLY_COLOR),
         next_slot: 0,
         generation: None,
     };
@@ -140,6 +144,7 @@ impl OrderMarkers<'_, '_> {
         let handle = match kind {
             OrderMarkerKind::Move => self.assets.move_material.clone(),
             OrderMarkerKind::Attack => self.assets.attack_material.clone(),
+            OrderMarkerKind::Rally => self.assets.rally_material.clone(),
         };
         // The pool is fixed at a handful of entities, so this scan is bounded.
         for (mut marker, mut material, mut transform, mut visibility) in &mut self.markers {

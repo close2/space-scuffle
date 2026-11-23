@@ -19,7 +19,9 @@
 
 use bevy::math::Vec3;
 use sim_core::SimWorld;
-use sim_types::{AttackOrigin, EntityId, PlayerId, ResourceNodeId, SimScalar, SimVec2, UnitOrder};
+use sim_types::{
+    AttackOrigin, EntityId, PlayerId, RallyTarget, ResourceNodeId, SimScalar, SimVec2, UnitOrder,
+};
 
 use super::order_marker::OrderMarkerKind;
 use crate::battle_pipeline::commands::any_recipient;
@@ -115,6 +117,21 @@ pub fn context_order(
         target: sim_point(ground),
     });
     (order, OrderMarkerKind::Move, ground)
+}
+
+/// The rally a right click on `target` sets for the selection's production structures (plan
+/// `2026-11-23-production-queue` D-10): the ground at a point, a node, one of the player's units
+/// (the structure itself clears its rally), and for an enemy the ground under it, since a rally
+/// on another player's unit is refused (D-3, B-166).
+#[must_use]
+pub fn rally_target(target: PointerTarget) -> RallyTarget {
+    match target {
+        PointerTarget::Ground(ground) | PointerTarget::Enemy(_, ground) => {
+            RallyTarget::Point(sim_point(ground))
+        }
+        PointerTarget::Node(node, _) => RallyTarget::Node(node),
+        PointerTarget::Friendly(unit, _) => RallyTarget::Unit(unit),
+    }
 }
 
 /// Converts a Bevy world point to the simulation's map plane, where Bevy's Z is map Y.
@@ -581,6 +598,27 @@ mod tests {
             follows(UnitOrder::Load { carrier })
         );
         Ok(())
+    }
+
+    /// Plan `2026-11-23-production-queue` D-10: each pointer target's rally.
+    #[test]
+    fn a_click_sets_the_rally_its_target_means() {
+        let ground = Vec3::new(12.0, 0.5, 34.0);
+        let point = RallyTarget::Point(sim_point(ground));
+        assert_eq!(rally_target(PointerTarget::Ground(ground)), point);
+        assert_eq!(
+            rally_target(PointerTarget::Enemy(EntityId(4), ground)),
+            point,
+            "an enemy is the ground under it"
+        );
+        assert_eq!(
+            rally_target(PointerTarget::Node(ResourceNodeId(2), ground)),
+            RallyTarget::Node(ResourceNodeId(2))
+        );
+        assert_eq!(
+            rally_target(PointerTarget::Friendly(EntityId(9), ground)),
+            RallyTarget::Unit(EntityId(9))
+        );
     }
 
     #[test]

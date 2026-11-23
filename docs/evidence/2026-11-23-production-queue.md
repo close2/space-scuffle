@@ -115,3 +115,23 @@ in a retained `ProductionWorkspace::exit_order` buffer; `exit_cells_visited` cou
 | Worlds (`world-wp4/`) | 420 files byte-identical to `world-wp0/`, logs included |
 | Skirmish match (`impl/client-wp4/`) | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486 |
 | Clippy | first run refused `Option<Option<CliffLevel>>` and three test lints; the ring's test became the enum `RingTest { Zero, Outer(level) }` (no behaviour change), then clean; the touched targets re-run green |
+
+## 5. WP5: the client (plan D-10, §9)
+
+A right click with production structures selected also submits `SetRally` with the target the click resolved to
+(`context_order::rally_target`: ground and enemy → the point, node → node, own unit → unit, the structure itself
+clears); a structure-only selection submits only the rally, a mixed one both, and the click is accepted when either
+is, marked with `OrderMarkerKind::Rally`. `battle_input::rally_marker` draws, for each selected structure whose rally
+the view lists, a reticle at the point (the selection ring's material, rally tint) and a thin ground line from the
+structure's centre, from a pool grown to the most rallies ever shown and hidden when unused, refilled from a retained
+list each frame. The queue panel marks a front job waiting for supply ("Needs supply").
+
+| Check (release, radv; `impl/client-wp5/`) | Result |
+|---|---|
+| New | `context_order::tests::a_click_sets_the_rally_its_target_means`, `rally_marker::tests::a_line_runs_from_its_start_to_its_end_along_the_ground`; `battle_context_order_tests`: `right_click_on_the_ground_sets_a_selected_structures_rally`, `a_mixed_selection_orders_its_units_and_rallies_its_structures`, `right_click_on_a_node_rallies_to_the_node`, `right_click_on_a_friend_or_the_structure_itself_rallies_to_it`, `right_click_on_an_enemy_rallies_to_the_ground_under_it`, `a_selected_structures_rally_is_drawn_and_hidden_when_deselected`; `battle_hud_tests::a_job_waiting_for_supply_is_marked_in_the_queue_panel` (and `view.rallies` added to the HUD model's retained buffers); `sync_steady_state_tests::selected_structure_keeps_card_queue_and_feed_buffers_on_every_tick` now also asserts the base's reticle and line are shown through its window with the census unchanged |
+| First run | `right_click_on_an_enemy_rallies_to_the_ground_under_it` failed: the enemy placed in the paused battle had no bubble until a tick published it; the test now runs three frames, as the file's other placements do, and all 30 pass |
+| `skirmish_match_tests` | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486. The pilot's right clicks select units, never a structure, so it submits no rally |
+| `sync_steady_state_tests` 8, `battle_hud_tests` 35, `battle_card_path_tests` 4, `battle_fog_tests` 25, `battle_flipbook_tests` 9, `client --lib battle_` 213 | pass |
+| Worlds (`world-wp5/`) | 420 files byte-identical to `world-wp0/` (no simulation source changed) |
+| Clippy, fmt, `workspace_checks` | clean |
+| Windowed GPU check and capture | **not done** (open item): the plan's windowed check in `runtime_media_tests` style and the radv capture of a selected producer with its rally were not built; the headless harness test above checks the reticle's transform and visibility, not pixels |
