@@ -614,3 +614,8 @@ Recorded by the implementation session on 2026-11-23, one branch (`regeneration-
    are left to the verifier (Q0061).
 4. **Outside this plan, noticed:** `DESIGN.md` §4 holds three stray `=== end` lines between B-38 and B-45 since
    commit `464e0b21` (where B-39 and B-43 were removed). Not touched here.
+5. **Charter check C7's allowlist** (`crates/workspace_checks/tests/charter.rs`, outside §10's file list) rises
+   for WP2's authoring floats: `catalog.rs` 72 → 73 (the new `f64` field) and `catalog/validation.rs` 43 → 47
+   (`energy_regen`'s two `f64` parameters and the unit call's two `f64::from`). Both are catalog decimals checked
+   and converted to fixed point at load, the allowances' stated reasons. Found by `cargo gate quick` on the final
+   tree and committed separately after WP3.
