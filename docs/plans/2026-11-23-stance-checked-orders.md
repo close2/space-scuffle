@@ -714,3 +714,60 @@ selected unit is anchored.
   `LayoutButtons` across all eight layers). There is no `ButtonData` or `RequirementData` locally.
 - No web source was used. Items marked **verify** wait for the editor's documentation or an in-game check.
 - No prototype. §3.3's prediction is reasoned from the code, and WP1 measures it.
+
+---
+
+## As built
+
+Implemented on branch `stance-orders-plan` in one session, one commit per package, each measured against the tree
+before it and against WP0 ([evidence](../evidence/2026-11-23-stance-checked-orders.md)).
+
+| WP | Commit | What landed | Worlds |
+|---|---|---|---|
+| WP0 | `fe9891eb` | B-171 to B-173 point here; B-174 to B-176 registered; evidence with §2.1's sources; baseline (483 files) | — |
+| WP1 | `31d222da` | D-5: 37a/37b tank squads `order: Some(None)`, 39a/39b no side order; P-9 and the rewritten standing-order test | none moved (483 files, differing 0); 37a, 37b, 39a, 39b byte-identical, as §3.3 predicted |
+| WP2 | `48041dc5` | D-1 (`issue_plain_order`), D-2 (`stance_orders(None)`), D-3 (`stance_armed`, `settled_armed`); B-171, B-172 fixed | none moved; goldens and sandbox checksum unchanged |
+| WP3 | `e4cb94fa` | D-4 (card and admission by settled armed), D-6 (A-click on an enemy attacks it, mode viability), D-7 (ground refused for anchored-only); B-173 fixed | skirmish stage log identical |
+| WP4 | this commit | Records | — |
+
+Deviations from the text above, none of which changes a decision:
+
+1. **P-9 also checks the stance.** Before WP2 the simulation delivered a scripted Hold to a sieged tank, so a test
+   that only read `is_holding_position` after tick 1 would have passed on the WP0 tree. P-9 asserts that the named
+   unit's settled stance takes the order *and* that the unit holds (or, for Stop, carries no order but an acquired
+   attack). It failed on exactly 37a, 37b, 39a and 39b, as planned. 39a and 39b drop the side's `order` field (its
+   default is `None`) rather than writing `order: None`.
+2. **P-1 is tested against a forced copy.** `SimWorld` has no `Clone`, so each case builds three identical worlds:
+   one commanded, one untouched and one whose unit is given the order straight through `Entity::issue_order`. A
+   taken order leaves the commanded unit equal to the forced one, a refused order equal to the untouched one, entity
+   for entity and by world checksum. Gas extractors are left out (they need a geyser to stand on).
+3. **P-3's simulation half commands one member at a time** in a rebuilt world (the set is built deterministically
+   and checked identical), since admission is per unit (P-2) and a world cannot be cloned. Delivery to a selection is
+   then "delivered to some member". The Attack half compares the card with admission of an attack on a ground and on
+   an air enemy, since the card's entry names no target.
+4. **`can_execute` aims with the settled stance's weapon.** D-4 moved `capable`'s `AttackTarget` arm to the settled
+   stance; the target-reach check beside it read the active siege weapon, which would refuse an attack from a
+   burrowing Lurker analogue (armed only once burrowed). It now reads the settled mode's replacement ground weapon,
+   the weapon `apply_mode_transition` will set. For a unit not switching this is the active weapon, as before.
+5. **`any_attacker`** (`battle_pipeline/commands.rs`) is the Attack mode's target-free question: a completed owned
+   member armed in its settled stance. `reconcile` keeps the Attack mode while `any_recipient` of an `AttackMove`
+   or `any_attacker` holds (D-6's "fewer branches" shape: one arm, no order set).
+6. **Tests rewritten by §8 rule 4:** `stance_orders_tests`' old default-stance test (replaced by the mobile-or-armed
+   rule); `catalog.rs`'s speed-0 walker assertion; `multi_strike_timing_tests::q0058_an_explicit_order_ends_a_channeled_burst`,
+   whose scratch shooter had speed 0 and so no longer takes Hold Position (the bench now gives it a speed of 0.1;
+   nothing tells it to walk); the burrowed Lurker analogue's card test, which now expects Attack. The P-5 card test
+   finds its structure, enemies and producing structure by property and holds the two enemies through `world_mut`
+   (setup); the first attack on the structure is setup too, since before WP3 no input could give it.
+7. **`ArchetypeCommands::armed` and `mobile`** are kept as the plan says, but no production code reads them after
+   WP3 (the Attack entry was their last reader); they stay for the HUD catalog's public surface and its tests.
+8. **WP2's commit carries `cargo fmt`'s reflow of WP1's `matchup.rs` test** (formatting only).
+
+Findings, not changed here:
+
+- A foundation of an armed structure would take a Stop in the simulation (its archetype's default stance is
+  armed), while client admission refuses every order but cancel to a foundation. No shipped flow sends one; the
+  game gives a structure under construction no `stop`. It belongs with the foundation rules, not this plan.
+- §14's finding stands: a mode's `Some(None)` ground override and `air_weapon_override` are not applied to a live
+  unit; `stance_armed` follows the live unit (P-6).
+
+Q0098 is filed with default (a), which WP3 implements.
