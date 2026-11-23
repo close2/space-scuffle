@@ -1774,3 +1774,48 @@ predecessor, with a test that is red before the change. A stop means reporting, 
 with O1 (if O1 passed): a cost step or an owner sanction for the 64 × 64 cost, then held-out, then switch-over. N is
 built under either branch, since the owner sanctioned it independently, and it is judged by the step rule like any
 step.
+
+## Amendment 16 (orchestrator, 2026-11-23): O1 adopted; rule S stopped; the owner's fallback, option (b)
+
+**O1 is adopted** (`1b676582`; evidence §13.9).
+- **The defect:** the summed hard-friend pass gave an idle unit a walker's whole overlap, which carried it past its idle
+  partner, so a pressed column swapped places every tick.
+- **The fix:** in that pass, a body no longer takes a step that closes on a body it already overlaps.
+- **Development, against step 1 + P8:** only arc's standing friend share is worse beyond noise (0.011 % → 0.020 %,
+  inside T7). Arc T7 now holds.
+
+**Rule S is stopped** by Amendment 8's step rule (evidence §13.9; recorded on `contact-solver-s-wip`, `5b7571d8`).
+- **What it gained:** it removes the oscillation everywhere. T1 holds in every family and M1 falls by 80–95 %.
+  Corridor E1 now holds.
+- **What it lost:**
+  - Arc give-ups rise from 309 to 507, and arc fill falls to 0.947 / 0.818, still inside T5.
+  - Corner give-ups rise from 7 to 18.
+  - Cross T7 starts failing: 3 scenes over the friend maximum.
+- **Why (traces):** S removes a walker's whole approach toward the standing front rank, and nothing replaces the
+  sideways slide the old side rule gave. Gap walkers stop short of their gap and give up.
+
+**The owner's rule applies.** The answer to Q0097 says: "if it stalls or regresses without a clear win, fall back to
+Option (b) rather than looping further". S is not a clean win on arcs or crossings, so no further variant of S is
+tried. Option (b) proceeds on **step 1 + P8 + O1** (the plan branch head).
+
+**Option (b), in order** (no further behaviour rule beyond N):
+
+1. **N, nudge D-δ** (Q0095), as specified in Amendment 15 step 3. It is judged under Amendment 8's step rule against
+   O1, with the corridor two-abreast figure reported. If N stops, it is recorded and the switch-over proceeds without
+   it. D-δ stays sanctioned for a later bug package.
+2. **Cost against Q0093 (c)** on the three throughput scenarios, measured with instructions retired, on the head after
+   step 1.
+   - **If 64 × 64 exceeds +60 %:** only behaviour-preserving optimisation is allowed, proved byte-identical on the
+     development corpus with a test as for P8. Examples are data layout, avoiding recomputation in the solver's pair
+     loop, or sharing acquisition work.
+   - **If the bar still fails after that:** report the split and stop. The orchestrator takes it to the owner.
+3. **WP6, switch-over,** as §7 states, with three changes:
+   - **Held-out run:** both pipelines, once. It **confirms** the development table (evidence §13.6, updated for O1 and
+     N) rather than requiring T1 to T9. A held-out figure worse than its development counterpart beyond the noise
+     rule is a stop for review.
+   - **Sanctioned failures:** each T-figure that still fails under the Solver is recorded as an open bug in
+     `DESIGN.md` §4 (or as a deviation where Q0052 covers it), with its development and held-out figures.
+   - **Throughput:** WP6's "+10 % stop" is replaced by Q0093 (c).
+4. **WP7, deletion** of the legacy pipeline, unchanged. The schema takes the next free number at merge.
+
+The fresh acceptance range 200,001–201,000 is not run under (b): the held-out run is the confirmation the owner named.
