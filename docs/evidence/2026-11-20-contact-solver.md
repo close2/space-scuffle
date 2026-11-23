@@ -941,3 +941,37 @@ the run's instructions retired.
 
 The ring rule raises the 64 × 64 battle from +55 % (WP3) to +71 %. Every scenario still runs faster than real time
 (ticks per second at the median: 71, 132 and 72).
+
+## 13. Amendment 11: the second review's steps
+
+Base: `contact-solver-plan` at `e6ceed93` (main `091b85cc` merged, schema 35). Development range only (seeds 1 to
+1,000). The fresh acceptance range, 200,001 to 201,000, is untouched. The baseline of every step comparison is the
+previous step's development run; the first baseline is WP5's run, `wp4b/runs/w5-1`. Data:
+`~/scratch/contact-solver/wp4b/`.
+
+### 13.1 Step 0: diagnostics (no behaviour change)
+
+- **D-S in the harness** (`ScenarioRow::stuck_with_room`, CSV column `stuck_with_room`, table row "Stuck with room").
+  - It counts ring-family unit-ticks of attackers under an order whose potential has not fallen by 0.1 for 250
+    ticks, while a point of the ring, reachable from the unit's bearing without its terrain disc entering terrain,
+    has no other body's disc touching the unit's.
+  - Test: `an_attacker_held_short_of_an_empty_ring_is_stuck_with_room`.
+- **Per-tick log** (scratch tool `trace/zz_wp4b_trace.rs`, not committed). For each reversal it logs:
+  - the remembered gap (the ring decision);
+  - the side commitment;
+  - the proposed step (`SimWorld::proposed_step`);
+  - the solver's correction (the achieved step less the proposal);
+  - the gaps to the bodies near the unit.
+- **The ±0.04 alternation of acceptance seed 100804 reproduces on development seeds 563, 498 and 698**
+  (`trace/d0/`).
+  - It is the same mechanism in every one of their 1,069 reversals:
+    - the unit is a gap walker;
+    - it touches a body (gap between −0.03 and 0);
+    - its committed side partner changes from tick to tick (for example 22 → 16 → 22) with the side flipping;
+    - the proposal swings by about 90° between ticks (for example (0.024, −0.097) → (−0.042, −0.091)), and the
+      solver's correction pushes back.
+  - Of the three candidates it is the second: **the side rule switches off at contact.** `threat_of` drops a body
+    whose gap is at most zero, so the earliest threat becomes another body on the other side, the commitment moves
+    to it and the side flips. Contact then separates the pair, and the first body is a threat again.
+  - The aim–contact cycle is how the swing becomes a reversal, but the swing comes from the side rule.
+  - The hard pass does not appear: the corrections are friendly and averaged.

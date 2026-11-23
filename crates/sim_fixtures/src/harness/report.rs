@@ -292,6 +292,10 @@ pub fn aggregate(family: &str, rows: &[Row]) -> Aggregates {
         out.values.insert("fill_p5", quantile(&fills, 0.05));
         out.values
             .insert("giveups", all.iter().map(|r| number(r, "giveups")).sum());
+        out.values.insert(
+            "stuck_with_room",
+            all.iter().map(|r| number(r, "stuck_with_room")).sum(),
+        );
     }
     overlap(&all, &mut out);
     out
@@ -439,7 +443,7 @@ pub fn mirror_counts(rows: &[Row]) -> (u32, u32, u32) {
 }
 
 /// The rows of each table: label, aggregate name, decimals.
-const TABLE: [(&str, &str, usize); 24] = [
+const TABLE: [(&str, &str, usize); 25] = [
     ("M1 per 1,000 moving unit-ticks", "M1", 2),
     ("M1 under an order (E4)", "M1_order", 2),
     ("M1 idle (E4)", "M1_idle", 2),
@@ -457,6 +461,7 @@ const TABLE: [(&str, &str, usize); 24] = [
     ("Monotonicity drops", "mono_drops", 0),
     ("Fill mean", "fill_mean", 3),
     ("Fill 5th percentile", "fill_p5", 3),
+    ("Stuck with room, unit-ticks (D-S)", "stuck_with_room", 0),
     (
         "Friend overlap >5 % moving, % of near pair-ticks",
         "fo_move_share",
