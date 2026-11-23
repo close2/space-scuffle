@@ -137,12 +137,36 @@ fn selection_order_and_reservations_are_exact() -> TestResult {
     assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].minerals, 993);
     assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].gas, 497);
     assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 2);
-    for _ in 0..19 {
+    // Plan `2026-11-23-production-queue` D-2: the first job admitted to the idle `f.producer`
+    // starts and holds its supply; the 19 behind it hold none and are not checked against
+    // supply, so the queue is bounded by money alone.
+    for _ in 0..20 {
         f.admit()?;
     }
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 4);
+    assert_eq!(f.world.entities[&f.producer].production_queue.len(), 20);
+    // A job admitted to an idle producer starts at once, so it is refused at the cap: fill the
+    // cap with placed units and add an idle producer that provides nothing (captured supply
+    // follows the entity, so the catalog edit changes no other).
+    let capacity = f.world.player_resources[PlayerSlot::ALL[0]].supply_max;
+    let mut x = 1;
+    while f.world.player_resources[PlayerSlot::ALL[0]].supply_used < capacity {
+        f.world.spawn_unit(f.product, PlayerId(0), point(x, 30))?;
+        x += 1;
+    }
+    f.world.catalog.get_mut(f.producer_type)?.supply_provided = 0;
+    let idle = f
+        .world
+        .spawn_structure(f.producer_type, PlayerId(0), 20, 2)?;
     let before = f.world.compute_checksum();
-    assert!(matches!(f.admit(), Err(Rejection::Supply { .. })));
+    assert!(matches!(
+        f.world
+            .try_queue_production(PlayerId(0), &[idle], f.product),
+        Err(Rejection::Supply { .. })
+    ));
     assert_eq!(before, f.world.compute_checksum());
+    // Behind a running job, the same admission at the cap is accepted.
+    f.admit()?;
     f.world.validate_supply_ledger()?;
     Ok(())
 }

@@ -137,6 +137,10 @@ pub struct StructureQueueView {
     pub job_count: u32,
     /// Whether a finished job at the front is waiting for a free exit.
     pub exit_blocked: bool,
+    /// Whether the front job is waiting for supply, its countdown not started (plan
+    /// `2026-11-23-production-queue` D-2).
+    #[serde(default)]
+    pub supply_blocked: bool,
 }
 
 /// One job in a production queue.
@@ -312,12 +316,14 @@ mod tests {
                     first_job: 0,
                     job_count: 1,
                     exit_blocked: true,
+                    supply_blocked: false,
                 },
                 StructureQueueView {
                     entity: EntityId(5),
                     first_job: 1,
                     job_count: 2,
                     exit_blocked: false,
+                    supply_blocked: true,
                 },
             ],
             jobs: vec![
@@ -429,6 +435,7 @@ mod tests {
             first_job: u32::MAX,
             job_count: u32::MAX,
             exit_blocked: false,
+            supply_blocked: false,
         };
         assert_eq!(view.jobs_of(&foreign).len(), 0);
     }

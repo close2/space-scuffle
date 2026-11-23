@@ -1,8 +1,12 @@
 //! Atomic capability-driven training, research, construction and supply accounting.
 //!
-//! Authored catalogs authorize products. Commands pay and reserve full FIFO supply at
-//! admission; completion transfers that reservation into a registered entity, or into a
-//! researched upgrade. Cancelling a queued job returns exactly what its admission took.
+//! Authored catalogs authorize products. Commands pay minerals and gas at admission. Only the
+//! job in production holds supply (plan `2026-11-23-production-queue` D-1, D-2; 5.0.14
+//! `WaitForFood`): a job admitted to an empty queue starts at once and takes its supply with its
+//! price, refused if the supply is not there; a job admitted behind others holds none and takes
+//! it when it reaches the front, waiting there, its countdown not started, while it does not fit.
+//! Completion transfers the running job's supply into a registered entity, or into a researched
+//! upgrade. Cancelling a queued job returns exactly what it holds.
 //! Logical failures occur before authoritative writes. Scratch/output buffers are
 //! derived, reusable and excluded from checksums; clients must consume outcomes.
 
@@ -41,7 +45,8 @@ pub struct ProductionJob {
     pub remaining_ticks: u32,
     /// Countdown length at admission, the denominator of published progress.
     pub total_ticks: u32,
-    /// Full supply captured and reserved at admission, including waiting jobs.
+    /// Supply this job holds now: the product's supply cost while it is in production, 0 while
+    /// it waits; research jobs hold 0 always (plan `2026-11-23-production-queue` D-1).
     pub reserved_supply: u32,
     /// Whether this job has started: true for at most the front job of a queue, from the update
     /// in which it starts (at admission to an empty queue, or when it reaches the front and
@@ -161,7 +166,7 @@ pub enum ProductionAdmissionError {
         /// Current gas.
         available: u32,
     },
-    /// Full enqueue reservation would exceed capacity.
+    /// A job admitted to an idle producer starts at once, and its supply would exceed capacity.
     #[error("insufficient supply: used {used}, requested {required}, capacity {capacity}")]
     Supply {
         /// Registered usage and reservations.
@@ -218,6 +223,12 @@ pub struct ProductionOutcome {
 pub enum ProductionBlock {
     /// No connected, unoccupied local exit can fit this product.
     ExitObstructed {
+        /// Waiting producer.
+        producer: EntityId,
+    },
+    /// The front job has not started because its supply does not fit (plan
+    /// `2026-11-23-production-queue` D-2; 5.0.14 `WaitForFood`); its countdown waits.
+    SupplyWait {
         /// Waiting producer.
         producer: EntityId,
     },
@@ -391,7 +402,8 @@ impl SimWorld {
     }
 
     /// Admits one job to the first completed selected producer whose authored list permits it.
-    /// All selections must exist, be alive and owned. Full FIFO supply is reserved immediately.
+    /// All selections must exist, be alive and owned. A job admitted to an empty queue starts at
+    /// once and takes its supply; one behind others takes it when it reaches the front (D-2).
     ///
     /// # Errors
     /// Rejections preserve authoritative state. Corruption additionally emits a fatal diagnostic.
@@ -467,7 +479,13 @@ impl SimWorld {
             item: ProductionItem::Unit(product),
             remaining_ticks: arch.build_time_ticks,
             total_ticks: arch.build_time_ticks,
-            reserved_supply: arch.supply_cost,
+            // Only the job in production holds supply (D-1); one behind others pays its price
+            // and is not checked against supply (D-2).
+            reserved_supply: if source.production_queue.is_empty() {
+                arch.supply_cost
+            } else {
+                0
+            },
             in_production: source.production_queue.is_empty(),
             paid_minerals: arch.mineral_cost,
             paid_gas: arch.gas_cost,
@@ -600,7 +618,8 @@ impl SimWorld {
         })
     }
 
-    /// The player's economy after paying for `job`, or the shortage that refuses it.
+    /// The player's economy after paying for `job`, or the shortage that refuses it. Supply is
+    /// checked only for the supply the job takes now, which a job behind others does not.
     fn charge_job(
         resources: &PlayerResources,
         job: &ProductionJob,

@@ -240,6 +240,7 @@ mod tests {
             first_job: 0,
             job_count: count,
             exit_blocked: true,
+            supply_blocked: false,
         }];
         model
     }

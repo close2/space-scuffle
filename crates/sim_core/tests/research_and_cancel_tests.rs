@@ -300,9 +300,10 @@ fn cancelling_training_refunds_payment_and_supply() -> TestResult {
     f.order(vec![lab], UnitOrder::Produce { unit_type: soldier });
     f.order(vec![lab], UnitOrder::Produce { unit_type: soldier });
     assert_eq!(f.world.entities[&lab].production_queue.len(), 2);
+    // Only the job in production holds supply (plan `2026-11-23-production-queue` D-1).
     assert_eq!(
         f.world.player_resources[PlayerSlot::ALL[0]].supply_used,
-        bank.supply_used + 2 * price.supply_cost
+        bank.supply_used + price.supply_cost
     );
     f.idle(10);
 

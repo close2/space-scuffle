@@ -111,6 +111,10 @@ impl SimWorld {
                     matches!(block, ProductionBlock::ExitObstructed { producer }
                         if *producer == entity.id)
                 }),
+                supply_blocked: self.production_blocks().iter().any(|block| {
+                    matches!(block, ProductionBlock::SupplyWait { producer }
+                        if *producer == entity.id)
+                }),
             });
         }
         if entity.cargo.is_some() {

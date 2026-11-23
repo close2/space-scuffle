@@ -3,9 +3,12 @@
 //! A ready front remains registered until a legal child is committed. Dead entities
 //! retain ledger contributions until validated reap; no refund or resurrection occurs.
 //! Cancelling is the one voluntary exit from a queue: it returns the job's exact payment.
-//! Only the front job is ever in production, and a job that has not started has not counted
-//! down (plan `2026-11-23-production-queue` D-1); a queue that breaks either is an invariant
-//! failure.
+//! Only the front job is ever in production, and only it holds supply: a front job that has
+//! not started takes its supply on the update it first counts down, and waits there, publishing
+//! `ProductionBlock::SupplyWait`, while it does not fit (plan `2026-11-23-production-queue` D-1,
+//! D-2). A job that has not started has not counted down and holds no supply; a queue that
+//! breaks any of this is an invariant failure. Producers start in `EntityId` order, which
+//! decides who takes the last supply.
 
 use super::{
     ProductionBlock, ProductionInvariant, ProductionItem, ProductionJob, STANDARD_SUPPLY_CAP,
@@ -53,19 +56,29 @@ impl SimWorld {
                     });
                 continue;
             }
-            let Some(job) = entity.production_queue.front_mut() else {
-                self.tick_diagnostics
-                    .push(SimulationDiagnostic::ProductionInvariant {
-                        tick: Tick(self.current_tick),
-                        source: ProductionInvariant::EntityState {
-                            entity: entity.id,
-                            reason: "validated front disappeared before countdown",
-                        },
-                    });
+            let producer = entity.id;
+            // The ledger was validated above, so every owner is a player slot.
+            let Some(slot) = entity.owner.slot() else {
                 continue;
             };
-            // The front job starts on the update it first counts down (D-1, D-2).
-            job.in_production = true;
+            let job = match start_front_job(&self.catalog, &mut self.player_resources[slot], entity)
+            {
+                Ok(Some(job)) => job,
+                Ok(None) => {
+                    self.production
+                        .blocks
+                        .push(ProductionBlock::SupplyWait { producer });
+                    continue;
+                }
+                Err(source) => {
+                    self.tick_diagnostics
+                        .push(SimulationDiagnostic::ProductionInvariant {
+                            tick: Tick(self.current_tick),
+                            source,
+                        });
+                    continue;
+                }
+            };
             job.remaining_ticks = job.remaining_ticks.saturating_sub(1);
             if job.remaining_ticks == 0 {
                 self.production.ready.push(entity.id);
@@ -142,7 +155,8 @@ impl SimWorld {
         }
     }
 
-    /// Removes the queued job at `job_index` and returns its payment and supply reservation.
+    /// Removes the queued job at `job_index` and returns its payment and the supply it holds
+    /// (none for a job that has not started).
     ///
     /// The job's progress is lost. A job already ready and waiting for an exit can still be
     /// cancelled. Rejection leaves queue and economy unchanged; `Ok(None)` means no such job.
@@ -291,9 +305,57 @@ impl SimWorld {
     }
 }
 
+/// Starts `entity`'s front job if it has not started and its supply fits (plan
+/// `2026-11-23-production-queue` D-2): it takes the product's supply from `resources` and is in
+/// production from this update. Research needs no supply and always starts. Returns the front
+/// job when it is in production; `None` means it waits for supply, its countdown not started.
+fn start_front_job<'e>(
+    catalog: &crate::UnitCatalog,
+    resources: &mut PlayerResources,
+    entity: &'e mut crate::Entity,
+) -> Result<Option<&'e mut ProductionJob>, ProductionInvariant> {
+    let id = entity.id;
+    let job = entity
+        .production_queue
+        .front_mut()
+        .ok_or(ProductionInvariant::EntityState {
+            entity: id,
+            reason: "validated front disappeared before countdown",
+        })?;
+    if job.in_production {
+        return Ok(Some(job));
+    }
+    let supply = match job.item {
+        ProductionItem::Unit(product) => {
+            catalog
+                .get(product)
+                .map_err(|_| ProductionInvariant::MissingArchetype {
+                    entity: id,
+                    unit_type: product,
+                })?
+                .supply_cost
+        }
+        ProductionItem::Research(_) => 0,
+    };
+    let used =
+        resources
+            .supply_used
+            .checked_add(supply)
+            .ok_or(ProductionInvariant::Arithmetic {
+                operation: "start supply",
+            })?;
+    if supply > 0 && used > resources.supply_max {
+        return Ok(None);
+    }
+    resources.supply_used = used;
+    job.reserved_supply = supply;
+    job.in_production = true;
+    Ok(Some(job))
+}
+
 /// Checks the start state of every job in `entity`'s queue (plan `2026-11-23-production-queue`
 /// D-1): only the front job may be in production, and a job that has not started has not
-/// counted down.
+/// counted down and holds no supply.
 pub(super) fn validate_queue_states(entity: &crate::Entity) -> Result<(), ProductionInvariant> {
     for (index, job) in entity.production_queue.iter().enumerate() {
         if index > 0 && job.in_production {
@@ -306,6 +368,12 @@ pub(super) fn validate_queue_states(entity: &crate::Entity) -> Result<(), Produc
             return Err(ProductionInvariant::EntityState {
                 entity: entity.id,
                 reason: "a job that has not started has counted down",
+            });
+        }
+        if !job.in_production && job.reserved_supply != 0 {
+            return Err(ProductionInvariant::EntityState {
+                entity: entity.id,
+                reason: "a job that has not started holds supply",
             });
         }
     }
@@ -432,9 +500,13 @@ fn validate_unit_job(
             entity: entity.id,
             unit_type: product,
         })?;
-    if target.supply_cost != job.reserved_supply
-        || matches!(target.shape, ShapeKind::BuildingDome { .. })
-    {
+    // Only the job in production holds the product's supply (D-1).
+    let held = if job.in_production {
+        target.supply_cost
+    } else {
+        0
+    };
+    if held != job.reserved_supply || matches!(target.shape, ShapeKind::BuildingDome { .. }) {
         return Err(ProductionInvariant::EntityState {
             entity: entity.id,
             reason: "queued product is unsupported or differs from reserved supply",

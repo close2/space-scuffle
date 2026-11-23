@@ -68,7 +68,8 @@ pub struct PlayerResources {
     pub minerals: u32,
     /// Vespene gas resource reserve.
     pub gas: u32,
-    /// Registered entity supply plus all queued reservations; death releases on reap.
+    /// Registered entity supply plus the supply of the jobs in production (plan
+    /// `2026-11-23-production-queue` D-1); death releases on reap.
     pub supply_used: u32,
     /// Effective supply capacity from completed providers, capped at 200.
     pub supply_max: u32,

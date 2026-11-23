@@ -47,3 +47,30 @@ rows author `auto_rally: Some((radius: 6.5, kinds: [Mineral]))` and the hall set
 
 The showcase's two halls rally to the node the test computes from the map; by hand (plan D-7) the slot-0 hall at
 (6, 6) chooses the field anchored at (13, 13), whose centre (14, 13.5) is 7.43 from the hall's (8.5, 8.5).
+
+### 1.3 Skirmish match (release, radv; `impl/client-wp1/`)
+
+`skirmish_match_tests` 7 passed, 1 ignored by design (the windowed child, launched by its parent): Victory, every stage
+on the base's tick (Mine 0, Raise 22, Site 550, Foundation 586, Train 642, Group 4,502, March 4,526, assaults 4,834,
+5,098, 5,362, Done 6,486).
+
+## 2. WP2: supply at the start (plan D-1, D-2; B-59; §8 rule 2)
+
+Only the job in production holds supply. A job admitted to an empty queue starts at once and takes its supply with
+its price (refused at the cap, as before); one admitted behind others pays minerals and gas, holds 0 and is not
+checked against supply. At the front, phase 2 starts a job whose supply fits (`EntityId` order); otherwise it waits,
+its countdown not started, and its producer is listed as `ProductionBlock::SupplyWait`, which the player view
+publishes as `StructureQueueView::supply_blocked`. The queue invariants add "a job that has not started holds no
+supply", and `validate_unit_job` checks the front's supply against `in_production`.
+
+| Check (`impl/verify-wp2/`) | Result |
+|---|---|
+| New tests (`production_supply_tests`: `queued_jobs_hold_no_supply`, `the_next_job_takes_its_supply_when_it_starts`, `a_front_job_waits_for_supply_and_starts_when_it_fits`, `admission_to_an_idle_producer_needs_supply_and_behind_a_job_does_not`, `cancelling_a_waiting_job_returns_only_its_price`, `cancelling_the_running_job_releases_its_supply_and_the_next_starts`, `two_producers_waiting_for_the_last_supply_start_in_entity_order`, `supply_lost_during_production_does_not_stop_the_running_job`, `jobs_complete_on_the_same_ticks_when_supply_never_binds`, `corrupt_queue_states_are_invariant_failures`; `player_view_tests::only_the_structure_waiting_for_supply_is_marked`) | red on WP1 (they name `SupplyWait` and `supply_blocked`), green on WP2 |
+| P-2 on WP1's tree | `jobs_complete_on_the_same_ticks_when_supply_never_binds`, built alone against WP1's sources, passes with the same expected ticks (`k × build_time` for the k-th job of each of two queues of five): the completion ticks are WP1's |
+| Re-derived from D-2 | `production_transactions_tests::selection_order_and_reservations_are_exact` (20 admissions behind a running job are accepted and hold no supply; the supply refusal is now that of an idle producer at the cap); `research_and_cancel_tests::cancelling_training_refunds_payment_and_supply` (two admissions hold one product's supply); `production_supply_tests::the_first_job_is_in_production_and_the_rest_wait_their_turn` (one product's supply, not three) |
+| Unchanged | `production_timer_tests` (4), `production_transactions_tests` otherwise, `replay_keeps_transaction_and_supply_state_identical`; no other test moved |
+| `cargo test --release -p sim_types -p sim_core -p sim_fixtures` | every target passes (101) |
+| Goldens | 4 of 4 on native debug and release, `wasm32-wasip1` release and debug, unchanged |
+| Worlds (`world-wp2/`) | 420 files byte-identical to `world-wp0/`, logs included |
+| Clippy, fmt, `workspace_checks` | clean |
+| Skirmish match (release, radv; `impl/client-wp2/skirmish.log`) | 7 passed, 1 ignored by design; every stage on the base's tick, Done 6,486 |
