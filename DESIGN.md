@@ -210,10 +210,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-35 | No energy regeneration delay | WP15; **not a deviation** by plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md): no layer of the 5.0.14 data sets `EnergyRegenDelay` (S2), so energy rises on every tick as in the game; pinned by `regeneration_tests` (WP1 `07e86761`), [evidence](docs/evidence/2026-11-23-regeneration.md) |
 | B-36 | Unfinished structures regenerate life | WP15; **fixed** by plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) WP1 (`07e86761`): no vital regenerates before a structure completes; a foundation's life follows its construction curve exactly (the game's rule **verify**, [Q0094](docs/questions/closed/0094-zerg-structure-regeneration-under-construction.md)), [evidence](docs/evidence/2026-11-23-regeneration.md) |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18; regeneration value and hook recorded for WP18 in plan [`2026-11-23-regeneration`](docs/plans/2026-11-23-regeneration.md) §14 F-1 |
-=== end
-
-=== end
-
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
 | B-49 | Which radius spaces units (`separation_radius` is unread) | WP16 |
@@ -238,8 +234,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
-=== end
-
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
