@@ -7,7 +7,8 @@
 //! against the earliest oncoming or crossing body that does not give way (I-3). The side chosen
 //! for a body is kept, as a one-pair commitment in [`SideMemory`], until the pair stops closing
 //! (I-3c). Friends moving with the unit are not threats (I-4), nor are idle friends that step
-//! aside (L6), nor bodies already in contact (the contact solver's job).
+//! aside (L6), nor bodies in contact that the unit no longer closes on. A body in contact that it
+//! still closes on is the most urgent threat, with time to contact zero (plan Amendment 12).
 //!
 //! # How it fits
 //! The solver pipeline's `step_toward` calls it instead of legacy steering and scales the heading
@@ -129,21 +130,27 @@ fn threat_of(
         .ok_or(MovementMathError::Unrepresentable)?;
     let gap_sq = sub(checked_dot(offset, offset)?, mul(reach, reach)?)?;
     let closing = checked_dot(offset, relative)?;
-    if gap_sq <= SimScalar::ZERO || closing <= SimScalar::ZERO {
-        // Already in contact (the solver's job), or not closing.
+    if closing <= SimScalar::ZERO {
+        // Not closing: no threat, in contact or not.
         return Ok(None);
     }
-    let speed_sq = checked_dot(relative, relative)?;
-    let discriminant = sub(mul(closing, closing)?, mul(speed_sq, gap_sq)?)?;
-    if speed_sq <= SimScalar::ZERO || discriminant < SimScalar::ZERO {
-        return Ok(None);
-    }
-    let root = discriminant
-        .sqrt()
-        .map_err(|_| MovementMathError::Unrepresentable)?;
-    let time = sub(closing, root)?
-        .checked_div(speed_sq)
-        .ok_or(MovementMathError::Unrepresentable)?;
+    let time = if gap_sq <= SimScalar::ZERO {
+        // In contact and still closing: the most urgent threat, with time to contact zero (plan
+        // Amendment 12, step 1b; ORCA's colliding case, van den Berg et al. 2011, §5.1).
+        SimScalar::ZERO
+    } else {
+        let speed_sq = checked_dot(relative, relative)?;
+        let discriminant = sub(mul(closing, closing)?, mul(speed_sq, gap_sq)?)?;
+        if speed_sq <= SimScalar::ZERO || discriminant < SimScalar::ZERO {
+            return Ok(None);
+        }
+        let root = discriminant
+            .sqrt()
+            .map_err(|_| MovementMathError::Unrepresentable)?;
+        sub(closing, root)?
+            .checked_div(speed_sq)
+            .ok_or(MovementMathError::Unrepresentable)?
+    };
     // I-3a: H = h · (r + r_b) / speed ticks.
     let horizon = SimScalar::from_num(input.horizon_factor)
         .checked_mul(body.radius.saturating_add(obstacle.radius))
@@ -479,6 +486,28 @@ mod tests {
                 intent_heading_all(&input(a, at(20.0, 10.0), neighbours, SideMemory::default()))?;
             assert_eq!(decided.threat, threat);
         }
+        Ok(())
+    }
+
+    /// Plan Amendment 12, step 1b (ORCA's colliding case, van den Berg et al. 2011, §5.1): a body
+    /// in contact that the unit still closes on is a threat with time to contact zero, so the
+    /// committed side against it is kept over consecutive ticks; a body in contact that the unit
+    /// moves away from is no threat.
+    #[test]
+    fn a_closing_body_in_contact_stays_the_threat() -> Result<(), MovementMathError> {
+        let a = unit(1, at(10.0, 10.0));
+        // Radius sum 1 plus the 0.05 margin: at 0.95 the pair is in contact.
+        let touching = [body(2, 0, at(10.9, 10.3), SimVec2::ZERO)];
+        let first =
+            intent_heading_all(&input(a, at(20.0, 10.0), &touching, SideMemory::default()))?;
+        assert_eq!(first.threat, Some(EntityId(2)));
+        let kept = intent_heading_all(&input(a, at(20.0, 10.0), &touching, first.side))?;
+        assert_eq!(kept.side, first.side);
+        assert_eq!(kept.threat, Some(EntityId(2)));
+        // Walking away from it: no threat, and the commitment ends.
+        let away = intent_heading_all(&input(a, at(0.0, 10.0), &touching, first.side))?;
+        assert_eq!(away.threat, None);
+        assert_eq!(away.side, SideMemory::default());
         Ok(())
     }
 
