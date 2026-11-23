@@ -1618,3 +1618,48 @@ M1, M2, overlaps and on gap and cross completion.
 band's tangent (they keep range but can be nudged sideways), which departs from SC-8. That is the owner's call:
 [Q0095](../questions/open/0095-engaged-units-nudged-sideways.md), default **no** (engaged units stay fixed; the miss
 stays a reported figure).
+
+## Amendment 12 (orchestrator, 2026-11-23): steps 0 and 1 adopted; P2 stopped; a contact-threat defect fix; the wavefront fallback
+
+**Adopted.** Step 0 (D-S and the trace) and step 1 (P1 exact blocking geometry, P7 no enemy dead band), commits
+`47b996f0` to `8b404be7`. On development, arc T5 and arc T7 now hold (fill 0.967 / 5th percentile 0.857; 1 and 0
+scenes over the friend and enemy bounds), arc give-ups fall from 1,208 to 305, and nothing is worse beyond noise.
+
+**P2 is stopped.** Amendment 8's step rule binds every step, and P2 breaks it: arc M1-hi 0.192 → 8.15, corridor M1
+0 → 12.96 and give-ups 20 → 618. Meeting P2's own two criteria (give-ups, fill) does not override the step rule;
+those criteria decide only whether P2 is worth keeping once the step rule holds. Its traces show two mechanisms:
+a two-tick limit cycle between the detour and the ring rule (arc seed 150), and detour points inside terrain
+(corridor seed 976). Patching either would be a new rule on a failed step; P2 stays on `contact-solver-p2-wip`
+for the record.
+
+**Step 1b, a defect fix found by step 0 (before the fallback).** The diagnostics traced every one of 1,069 arc
+reversals on development seeds 563, 498 and 698 to one mechanism: `intent.rs:threat_of` returns no threat once a
+body is in contact (`gap_sq <= 0`), so at contact the committed side partner drops out and the earliest threat
+becomes a body on the other side; the side flips every tick. A body in contact and still closing is the most
+urgent threat, not none: ORCA's colliding case (van den Berg, Guy, Lin & Manocha 2011, §5.1) keeps such a neighbour
+and resolves it within the time step. **Change:** a body in contact whose relative velocity still closes is a
+threat with time to contact zero; a body in contact that is not closing remains no threat, as today. Its test is
+red before the change (a gap walker touching a front-rank body keeps its committed side over consecutive ticks).
+Judged under Amendment 8's rule against step 1.
+
+**Step 2′, the wavefront fallback, run once** (Amendment 11 step 2's fallback; P2 has failed). One integer
+wavefront (breadth-first distance field) per contested target per tick, on a local grid over the target's ring
+band and its approach, seeded from the free ring angles that step 1's exact intervals report, with cells blocked
+by terrain and by the discs of bodies that do not yield (engaged, holding, anchored, enemies) inflated by the
+walker's radius. A walker in its approach steps toward the lowest neighbouring cell; once its straight segment to
+the gap point is clear, the existing aim applies unchanged. Sources: Barraquand & Latombe 1991; Emerson, flow
+fields, *Game AI Pro* ch. 23. It has no local minima and respects terrain by construction, which answers both P2
+traces. Requirements:
+- **Deterministic and stateless:** integer distances, a fixed neighbour order, ties broken by cell index; nothing
+  remembered between ticks.
+- **Grid resolution and extent are derived** from the radii and the band (stated with their derivation in the
+  amendment's implementation note), not tuned.
+- **Cost:** one field per contested target, shared by all its walkers; reported in the cost split, judged by
+  Q0093 (c) at step 6.
+- **Judged** under Amendment 8's step rule against step 1b, and by P2's two criteria (arc give-ups fall beyond
+  noise; arc fill without give-ups ≥ 0.85).
+
+**If step 2′ also fails** (the step rule or its criteria), stop and report (Amendment 11, Limits): the remaining
+steps are not run, and the trade-off goes to the owner with step 1b's figures.
+
+**If step 2′ passes,** continue with Amendment 11 steps 3 to 7 unchanged.
