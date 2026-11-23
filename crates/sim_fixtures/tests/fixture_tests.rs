@@ -101,7 +101,10 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 38 (plan `2026-11-23-strike-delays` WP1, D-6), which encodes
 /// each weapon's first-strike delay; a scratch build that leaves it unhashed and keeps schema 37
 /// reproduces `18_404_512_489_137_112_834`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 5_609_708_170_486_988_781;
+/// Re-recorded for checksum schema 39 (plan `2026-11-23-harvest-handoff` WP1, D-3), which encodes
+/// each resource node's release tick; a scratch build that leaves them unhashed and keeps schema
+/// 38 reproduces `5_609_708_170_486_988_781`.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 8_582_058_566_732_369_859;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

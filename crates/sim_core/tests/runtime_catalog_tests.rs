@@ -291,7 +291,7 @@ fn an_edited_placement_rule_changes_the_loaded_reach() -> TestResult {
         "{}(kind: Mineral, applies: [NearResources], anchor: (0, 0), rows: [\"x\"], \
          shape: Box(half_width: 0.5, half_height: 0.5, chamfer: 0.0), \
          remove_when_empty: true, \
-         harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0),{}",
+         harvest_time_ticks: 50, harvest_amount: 5, return_delay_ticks: 0, handoff_ticks: 0),{}",
         &text[..start],
         &text[end..]
     );
@@ -587,6 +587,131 @@ fn exhaustion_outcome(
         }
     }
     Err("the worker neither moved on nor ended its order".into())
+}
+
+/// The take ticks of the showcase's near geyser (10, 1) in a 3,000-tick window after 750 ticks of
+/// warm-up, with three workers of slot 0 on it and `catalogs` loaded.
+fn near_geyser_takes(catalogs: RuntimeCatalogs) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps/showcase_canyon.scmap.ron");
+    let doc = MapFile::from_ron_str(&std::fs::read_to_string(path)?)?.decode()?;
+    let start = doc
+        .start_locations
+        .iter()
+        .find(|s| s.player_slot == 0)
+        .ok_or("slot 0")?
+        .cell;
+    let mut world =
+        SimWorld::with_catalogs(doc.to_game_map()?, 7, catalogs.units, catalogs.upgrades)?;
+    let find = |test: &dyn Fn(&sim_core::UnitArchetype) -> bool| {
+        world
+            .catalog
+            .archetypes()
+            .find(|arch| test(arch))
+            .map(|arch| arch.unit_type_id)
+    };
+    let worker_type = find(&|arch| arch.capabilities.harvester.is_some()).ok_or("a harvester")?;
+    let hall_type = find(&|arch| arch.is_resource_dropoff && arch.requires_structures.is_empty())
+        .ok_or("a depot")?;
+    let extractor_type = find(&|arch| arch.capabilities.is_gas_extractor).ok_or("an extractor")?;
+    world.spawn_structure(hall_type, PlayerId(0), start.0, start.1)?;
+    world.spawn_structure(extractor_type, PlayerId(0), 9, 0)?;
+    let geyser = (0_u32..)
+        .zip(world.map.resources())
+        .find(|(_, n)| n.kind == sim_types::ResourceKind::Gas && n.cell == (10, 1))
+        .map(|(i, _)| sim_types::ResourceNodeId(i))
+        .ok_or("the near geyser")?;
+    let at = SimVec2::new(
+        SimScalar::from_num(start.0 + 6),
+        SimScalar::from_num(start.1 + 6),
+    );
+    let crew = (0..3)
+        .map(|_| world.spawn_unit(worker_type, PlayerId(0), at))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut commands = vec![sim_types::PlayerCommand {
+        player_id: PlayerId(0),
+        entities: crew,
+        order: sim_types::UnitOrder::Harvest { target: geyser },
+        queue: false,
+    }];
+    let mut last = world.map.resources()[geyser.0 as usize].remaining;
+    let mut takes = Vec::new();
+    for tick in 0..3_750 {
+        let now = world.current_tick;
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(now),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        let remaining = world.map.resources()[geyser.0 as usize].remaining;
+        if remaining < last && tick >= 750 {
+            takes.push(world.current_tick);
+        }
+        last = remaining;
+    }
+    Ok(takes)
+}
+
+/// Plan `2026-11-23-harvest-handoff` WP2 (charter §3.3, C6): each resource's hand-off is read from
+/// `placement_rules.ron` at run time. A copy of the shipped catalog with `handoff_ticks: 0` on
+/// both rows loads in the same binary, and three workers on the showcase's near geyser are then
+/// taken every gas `time_ticks`, `amount × 1,500 / time` a minute, where the shipped catalog
+/// takes it every `time_ticks + handoff_ticks`.
+#[test]
+fn an_edited_handoff_changes_the_saturated_period() -> TestResult {
+    let bundle = Bundle::new("handoff")?;
+    let shipped = bundle.load()?;
+    let gas = *shipped
+        .units
+        .placement_rules()
+        .harvest(sim_types::ResourceKind::Gas)
+        .ok_or("the shipped gas harvest")?;
+    assert!(gas.handoff_ticks > 0, "the shipped gas row hands off");
+    let path = bundle.directory.join(FILES[6]);
+    let text = std::fs::read_to_string(&path)?;
+    let mut edited = String::new();
+    let mut rest = text.as_str();
+    let mut rows = 0;
+    while let Some(row) = rest.find("(kind: ") {
+        let next = rest[row + 1..]
+            .find("(kind: ")
+            .map_or(rest.len(), |at| row + 1 + at);
+        edited.push_str(&rest[..row]);
+        edited.push_str(&replace_first_field(&rest[row..next], "handoff_ticks", "0"));
+        rest = &rest[next..];
+        rows += 1;
+    }
+    edited.push_str(rest);
+    assert_eq!(rows, 2, "one row per resource kind");
+    std::fs::write(&path, edited)?;
+    let zero = bundle.load()?;
+    bundle.finish()?;
+    for kind in [
+        sim_types::ResourceKind::Mineral,
+        sim_types::ResourceKind::Gas,
+    ] {
+        let harvest = zero
+            .units
+            .placement_rules()
+            .harvest(kind)
+            .ok_or("the edited harvest")?;
+        assert_eq!(harvest.handoff_ticks, 0, "{kind:?}");
+    }
+    let periods = |takes: &[u32]| {
+        takes
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let with = near_geyser_takes(shipped)?;
+    let without = near_geyser_takes(zero)?;
+    assert!(with.len() > 50 && without.len() > 50);
+    assert_eq!(
+        periods(&with),
+        [u32::from(gas.time_ticks) + u32::from(gas.handoff_ticks)].into()
+    );
+    assert_eq!(periods(&without), [u32::from(gas.time_ticks)].into());
+    Ok(())
 }
 
 /// Plan `2026-11-23-harvest-occupancy` D-4 (charter §3.3, C6): the acquire radius is read from

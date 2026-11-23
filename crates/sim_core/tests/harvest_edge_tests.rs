@@ -523,13 +523,15 @@ fn take_period(takes: &[(u64, u32)]) -> Result<(u64, u64), Box<dyn Error>> {
     Ok((units * 150_000, span))
 }
 
-/// Plan `2026-11-23-harvest-occupancy` §6 (A-1, A-5): with `k` workers on every showcase slot-0
-/// field, each field's take-period rate is `R_f(k) = min(k × amount × 1,500 / T_f, amount ×
-/// 1,500 / H)`, where `T_f` is the field's one-worker take period measured here at `k` = 1 and
-/// `H` the mineral row's `harvest_time_ticks`: a closed cycle of `k` workers through one server
-/// of fixed service time. Within one load a field over the window (±2.5 a minute, ±20 for the
-/// line); a saturated field is exact (it is taken every `H` ticks). The near geyser (10, 1) with
-/// three workers is taken every gas `harvest_time_ticks`: `amount × 1,500 / H` exactly.
+/// Plan `2026-11-23-harvest-occupancy` §6 (A-1, A-5), re-derived by plan
+/// `2026-11-23-harvest-handoff` §6.1: with `k` workers on every showcase slot-0 field, each
+/// field's take-period rate is `R_f(k) = min(k × amount × 1,500 / T_f, amount × 1,500 / (H +
+/// h))`, where `T_f` is the field's one-worker take period measured here at `k` = 1, `H` the
+/// mineral row's `harvest_time_ticks` and `h` its `handoff_ticks`: a closed cycle of `k` workers
+/// through one server whose period is the gather plus the hand-off to the next worker. Within one
+/// load a field over the window (±2.5 a minute, ±20 for the line); a saturated field is exact (it
+/// is taken every `H + h` ticks). The near geyser (10, 1) with three workers is taken every gas
+/// `harvest_time_ticks + handoff_ticks`: `amount × 1,500 / (H + h)` exactly.
 #[test]
 fn saturation_follows_the_derivation() -> TestResult {
     let probe = showcase_start(0)?.0;
@@ -538,8 +540,11 @@ fn saturation_follows_the_derivation() -> TestResult {
         .harvest(ResourceKind::Mineral)
         .ok_or("the mineral row")?;
     let gas = *rules.harvest(ResourceKind::Gas).ok_or("the gas row")?;
-    let (amount, time) = (u64::from(mineral.amount), u64::from(mineral.time_ticks));
-    // Hundredths a minute: amount × 150,000 / H, the field's cap.
+    let (amount, time) = (
+        u64::from(mineral.amount),
+        u64::from(mineral.time_ticks) + u64::from(mineral.handoff_ticks),
+    );
+    // Hundredths a minute: amount × 150,000 / (H + h), the field's cap.
     let cap = (amount * 150_000, time);
     let one = line_takes(1)?;
     for k in [2_u64, 3] {
@@ -609,9 +614,9 @@ fn saturation_follows_the_derivation() -> TestResult {
     }
     let (units, span) = take_period(&takes)?;
     assert_eq!(
-        units * u64::from(gas.time_ticks),
+        units * (u64::from(gas.time_ticks) + u64::from(gas.handoff_ticks)),
         u64::from(gas.amount) * 150_000 * span,
-        "the extractor is busy every tick: {takes:?}"
+        "the extractor is taken every gather and hand-off: {takes:?}"
     );
     Ok(())
 }
