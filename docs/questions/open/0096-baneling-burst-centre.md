@@ -22,3 +22,6 @@ Baneling's centre (reached only under (c)) and another 2.8 in front of it, besid
 
 ## Answer
 
+- **Option (a): The Baneling's centre.** A unit is hit when its edge is within `2.2` of the Baneling's centre.
+
+**Reasoning:** Matches StarCraft II's engine behaviour. `OffsetByUnitRadius` shifts a splash epicentre along the caster→target vector by the target's radius; when the Baneling is both caster and impact unit (`ImpactLocation CasterUnit`), that vector is zero (and Banelings can also manually detonate with no target at all), yielding an isotropic 2.2-radius circle around the Baneling's centre.
