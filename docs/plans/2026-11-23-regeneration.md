@@ -619,3 +619,6 @@ Recorded by the implementation session on 2026-11-23, one branch (`regeneration-
    (`energy_regen`'s two `f64` parameters and the unit call's two `f64::from`). Both are catalog decimals checked
    and converted to fixed point at load, the allowances' stated reasons. Found by `cargo gate quick` on the final
    tree and committed separately after WP3.
+6. **Q0094 answered (a)** on `main` (`091b85cc`): no regeneration under construction, the plan's default, so D-1
+   stands unchanged. The question file is `main`'s version, still under `docs/questions/open/` until the
+   contact-solver branch moves it to `closed/`.
