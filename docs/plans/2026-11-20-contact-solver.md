@@ -151,7 +151,7 @@ The survey counts about 25 local rules; this table is finer, one row per functio
 | L11 | `surround_walk`, `walk_bound`, `across_on_side`, `admits_whole_step`, `closed_side_reopens`, `add_retreat`, `end_surround_walk`, `friend_blocks_ahead` (`FLANK_REVERSE_TICKS`) | The walk mode: start when blocked by a standing non-yielding friend, walk across on a kept side, reverse after 12 blocked ticks, spent after a circumference, end on room beyond the retreat, re-arm on a closed side reopening, on ground gained or on a new target | **Replaced** by the slot goal (G) |
 | L12 | `note_queued_progress` | Re-arms a spent walk on ground gained; restores the stall count on a queued tick | **Restated**: the re-arm half is deleted with the walk; the queued half is G-6 |
 | L13 | `friend_holds_ahead` (D-4, Q0089) | A chase queued behind an anchored friend is not stalled | **Kept**; it is also G-1's trigger |
-| L14 | `check_cluster_arrival_with` (`ARRIVAL_TOUCH_MARGIN`, `ARRIVAL_WITNESS_REACH`) | Arrival on touching a body settled on the same goal | **Kept** |
+| L14 | `check_cluster_arrival_with` (`ARRIVAL_TOUCH_MARGIN`, `ARRIVAL_WITNESS_REACH`) | Arrival on touching a body settled on the same goal | **Restated** under Solver as §3.10 (Amendment 4) |
 | L15 | `checked_dynamic_push` (the push table), `motion_flags`, `lane_exit` | Holding/holding zero; holding vs enemy takes all; enemies ½ each unrelaxed; anchored friend: `slide_around_fixed`; else ×0.35; mover vs idle: idle aside along the lane exit (or the mover back if lower priority); else ½ each | **Restated** as C-2's share table (same classes, same who-moves answers; the lane exit and the 0.35 go) |
 | L16 | `slide_around_fixed` (`FIXED_BODY_TANGENT_WEIGHT` 0.85) | A body against an anchored friend is moved half along the normal and 0.85 along the lane exit | **Deleted**: the projection keeps the tangential part of a step by construction (C-1) |
 | L17 | `PUSH_RELAXATION` 0.35 | Closes a friendly overlap over about three ticks | **Deleted**: K iterations within the tick (C-3) |
@@ -491,6 +491,25 @@ integer operations each, plus per-iteration terrain steps for moved bodies only.
 neighbours, by one linear pass. The slot pass scans the bodies near each claimant's target circle, only for
 claimants. §5.5 gives the prototype's instructions retired; WP6 judges throughput by instructions retired on the
 release benchmark, per scenario.
+
+### 3.10 Arrival and the near reach (WP3b, restated by Amendment 4)
+
+**A-1. Only arrivals are witnesses.** Under Solver a unit that gives its `Move` up (`NoProgress`) records no arrival
+(`arrived_at` stays empty), so it never ends another unit's order.
+
+**A-2. The group-arrival chain, bounded by the push table.** A unit on the last leg of a move completes its order when
+it touches (`ARRIVAL_TOUCH_MARGIN`) a friend that has arrived at the same point, stands, and is on connected ground
+with it, and either (a) that friend lies within L14's reach of the point (`r + r_o + ARRIVAL_WITNESS_REACH`), or (b)
+the unit cannot push that friend: its push priority is higher (C-2 row 6). Beyond the bound a unit keeps pushing on
+through arrivals it may push, so a single-file column does not freeze into a line reaching back to a gap (evidence
+§6.3); a lower-priority unit at the edge of a clump of higher-priority arrivals, which gains nothing by pressing on,
+arrives (B-158).
+
+**A-3. The near reach.** The neighbour list under Solver reaches the side rule's horizon (I-3a), but only the side
+rule reads beyond the legacy reach (`STEERING_LOOKAHEAD` plus two steps); every other rule, the parked-corner aim
+(L24) among them, reads the near reach alone (evidence §6.4).
+
+The pressed-front rule of Amendment 3, item 2 is not part of the design (dropped by Amendment 4).
 
 ---
 
@@ -1142,7 +1161,7 @@ must (a bug fix) lands on `main` first and this plan's next package rebases on i
 | K-7 | The harness's known answers are approximate (ring capacity is a lower bound; the corridor's capacity counts one rank) | T5 compares with Rényi's constant, not with perfect packing; known-answer corrections are recorded in §6.6 like C-a, never by changing thresholds |
 | K-8 | Throughput: K = 14 iterations in the worst case | Early stop; WP6's instructions-retired check with a 10 % stop; §5.5 gives the prototype's figure |
 | K-9 | Pursuit order dependence (§5.4) is not a contact problem and may not be the whole mirror bias | WP5 is conditional on WP1's diagnostic; T9 is judged under both pipelines so the bias is not blamed on the solver |
-| K-10 | Mixed-priority give-ups at a shared destination (§5.2) persist in both pipelines: a lower-priority mover cannot push an idle, arrived higher-priority friend (C-2) and the cluster-arrival witness must lie within 1.5 of the goal (L14) | Not a contact rule: WP3 records the figure; an unbounded arrival chain was measured and rejected (§5.3: it ends orders before the gap). A later note on arrival (L14) owns it |
+| K-10 | Mixed-priority give-ups at a shared destination (§5.2) persist in both pipelines: a lower-priority mover cannot push an idle, arrived higher-priority friend (C-2) and the cluster-arrival witness must lie within 1.5 of the goal (L14) | Owned by WP3b (Amendment 3, 4; §3.10): only arrivals are witnesses, and beyond L14's bound only an arrival the unit cannot push. Development gap give-ups 336 → 46 (evidence §6.5) |
 | K-11 | A concurrent movement package conflicts | §9's ownership rule |
 | K-12 | Residual overlap where constraints cannot all hold: the prototype leaves enemy overlaps up to 2.1 % (corridor) and 1.0 % (arc) against T7's 0.5 %, and friend pairs squeezed between a fixed pillar and a wall reach full overlap in both pipelines (largest friend overlap 0.96 today, 1.0 prototype) | WP3 classifies the T7 violations by cause with the harness (infeasible wedge, queue pressure, spawn); the hard pass (C-1b) may iterate up to K times over hard pairs only; infeasible scenes (a disc that fits nowhere) are reported by the harness as such, never hidden by a threshold change |
 | K-13 | The prototype's slot sketch gives up 260 to 290 chases on the arc family and its 5th-percentile fill (0.68) is below Rényi's constant | Two causes are expected from what the sketch left out: no claim resolution (G-4), so two claimants keep taking each other's gap, and no slot routing (G-7), so a unit walks straight at its slot through the fighting line; WP4 builds both and is accepted only on T5 and T4 |

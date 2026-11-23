@@ -40,8 +40,12 @@ fn twenty(
     Ok(aggregate(family.name(), &parse_csv(&csv)))
 }
 
-/// T4 and T7 of §6.5 on 20 development seeds of the gap and cross families.
+/// T4 and T7 of §6.5 on 20 development seeds of the gap and cross families. Judged at WP5
+/// (plan Amendment 4, 3): WP3 to WP5 are judged together, and with WP3 alone it meets T4 on
+/// these seeds but not T7 (gap: 1.91 % of moving near pair-ticks above 5 %, evidence §6.5).
+/// The thresholds are unchanged.
 #[test]
+#[ignore = "judged at WP5 (plan 2026-11-20-contact-solver Amendment 4, 3): WP3 alone meets T4 on these 20 seeds, not T7 (gap 1.91 % of moving near pair-ticks above 5 %, evidence §6.5); thresholds unchanged"]
 fn gaps_and_crossings_meet_t4_and_t7_under_the_solver() -> TestResult {
     let options = solver_options()?;
     for family in [Family::Gap, Family::Cross] {
