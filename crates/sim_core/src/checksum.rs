@@ -83,7 +83,9 @@ use std::collections::BTreeMap;
 /// remembered gap on the ring round its chase target (the target, then the point) to its movement
 /// memory, after the leash origin (plan `2026-11-20-contact-solver` §3.7, Amendments 7 to 10).
 /// Only the solver pipeline writes them.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 35;
+/// Schema 36 adds each splash's impact (0 target, 1 attacker) and its target-radius condition (an
+/// `Option` of a scalar), after `offset_by_unit_radius` (plan `2026-11-23-splash-centres` D-6).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 36;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

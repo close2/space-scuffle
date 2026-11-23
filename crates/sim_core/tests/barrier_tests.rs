@@ -311,6 +311,8 @@ fn b41_the_barrier_absorbs_splash() {
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
         offset_by_unit_radius: false,
+        impact: sim_types::SplashImpact::Target,
+        target_radius_below: None,
     });
     let attacker = register_attacker(&mut world, gun);
     let plain = register_target(&mut world, 0, None);

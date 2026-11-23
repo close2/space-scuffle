@@ -371,8 +371,14 @@
 // (2bb84a5b) checksums at every checkpoint, and DEFAULT_SANDBOX_CHECKSUM, on native debug and
 // release and wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release
 // and debug agree on the list below.
+// Re-recorded for plan 2026-11-23-splash-centres WP1 (checksum schema 35 -> 36): each splash also
+// encodes its impact and its target-radius condition, so every checkpoint changed. No behaviour
+// did: with the two fields left out of the encoding at schema 35, both fixtures reproduce as
+// recorded for plan 2026-11-20-contact-solver (schema 34 -> 35), on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
-    checksum_schema: 35,
+    checksum_schema: 36,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -398,25 +404,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xc11d8f128382e44c,
-        0x51153f70b39ba827,
-        0x04a50597811a3da9,
-        0x51fdf3772cd56e7e,
-        0x0b6fd76909dafcdc,
-        0xfb88fb53758c6c31,
-        0xbf01afebf703f603,
-        0xa8619392598307b3,
-        0xa21a4d9af8cddc03,
-        0xfaf9ded746c3b6e3,
-        0x5726b2ced692127f,
-        0x5931f8bfac47850c,
-        0xa9221f23f3cb53d7,
-        0x0c5e83302cede56c,
-        0x6c60f8503c95929b,
-        0x289606a94fd01677,
-        0x27ca1c7e517c7f9c,
-        0x433f6b9656e49a2d,
-        0xe068b7d7aab33103,
-        0x218cadd80d0b47f8,
+        0x22002a9e05d37ab7,
+        0x8d60d0b34ab37916,
+        0xf33a39bde4fb5650,
+        0xd4a50cefde9dffbd,
+        0xc0e3f63472795111,
+        0xbc6c6d67c7e2bee7,
+        0xc6e0b88ae26823dd,
+        0x8ea1f1164c750f1d,
+        0xbefd2afdc1a254e2,
+        0xc641b08f618ded34,
+        0x182950fdd819de72,
+        0xa6559594ed1a5508,
+        0x560444c0a1b07a8c,
+        0x407ec9809eed4aea,
+        0x6896a84eb7460bf7,
+        0x349bce6f49891c8e,
+        0x5c2fe8ce6ca1bbf7,
+        0xc37a89dd42f540a9,
+        0x9e0553984450fa79,
+        0x35d4fb56c9aeec10,
     ],
 )

@@ -1410,6 +1410,8 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
                 }),
                 friendly_fire: false,
                 offset_by_unit_radius: false,
+                impact: sim_types::SplashImpact::Target,
+                target_radius_below: None,
             };
             assert_eq!(
                 splash, &expected,
