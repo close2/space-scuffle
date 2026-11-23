@@ -767,3 +767,69 @@ random parking.
    later choices pack against them (G-3's interval ends) and not against random gaps.
 
 WP5 was not started; the acceptance range was not run.
+
+## 8. WP4 under Amendment 5: stopped, development figures worse than WP3
+
+**Build** (`668276ee` on `contact-solver-wp4-wip`). Each change applies under the Solver only:
+
+- **Anchored.** A unit counts as anchored in combat only in its attack cycle with a live target: winding up, in
+  backswing, or standing in weapon cooldown. Hold, immobile and unpushable still count.
+- **Side rule.** A friend standing within `STANDING_DRIFT` and not anchored is passed like a co-moving friend.
+- **Slot circle.** Slots lie on the band's outer edge.
+- **Own-angle claims.** A unit in band without a claim asks for its own angle, admitted if free. A unit in band at its
+  claim keeps it; one in band elsewhere frees it.
+
+Legacy rows of seeds 1 to 20 of every scene family are byte-identical.
+
+**Development seeds 1 to 1,000** (all scene families, relabelled; mirror unchanged):
+
+| Family | Measure | WP3 | WP4 + Amendment 5 |
+|---|---|---:|---:|
+| gap | give-ups (T4) | 46 | **96** |
+| gap | scenes complete | 97.8 % | 96.4 % |
+| gap | M1 | 1.11 | 1.06 |
+| cross | give-ups (T4) | 2 | **18** |
+| cross | M1 | 1.19 | 1.25 |
+| cross | relabel p (M1 / completion) | 1.000 / 0.180 | 0.016 / 0.035 |
+| arc | M1 / M1-hi (T1) | 29.85 / 0.71 | **37.28 / 3.65** |
+| arc | fill mean / 5th (T5) | 0.609 / 0.381 | 0.662 / 0.417 |
+| arc | enemy overlap max (T7) | 0.013 | **0.219** |
+| corridor | M1 / M1-hi (T1) | 25.76 / 4.76 | 27.42 / **10.95** |
+| corridor | friends > 5 % moving (T7) | 7.53 % | **20.52 %** |
+| corridor | enemy overlap max (T7) | 0.217 | 0.378 |
+| corridor | fill mean | 0.945 | 0.994 |
+| corner | give-ups; max overlap | 7; 0.758 | 4; 0.409 |
+
+Fill improves, but T1, T4 and T7 get worse in several families, so this is a stop under Amendment 5, 4.
+
+**Traces.**
+
+- **Gap and cross: the passed waiting friend.** In these families nobody fights, so the only change that touches them
+  is the side rule's. A walker no longer steers round a friend that stands under an order: queued units in a gap, or
+  the waiting front of a crossing group. Contact must then separate them, and more units stall into a give-up (gap
+  46 → 96, cross 2 → 18). The waiting friend was a threat for a reason: it does not yield (L6).
+- **Corridor: flips between two firing friends** (seed 48, w 4, 8 attackers; 0 reversals under WP3, 1,642 under this
+  build). Units 3 and 4 walk toward their claims and reverse every tick, by about 0.04. Their side-rule partner
+  alternates between two firing friends side by side (unit 4: 7 and 9; unit 3: 8 and 9). A firing friend is still
+  anchored, so it is still a threat, and the one-pair commitment (I-3c) flips whenever two threats are equally urgent.
+  Amendment 5's exemption removed the waiting standers from this mechanism, not the firing ones.
+- **Corridor: claims in the wall.** Seed 48's claims are at y 5.38 and 10.62. The corridor is open on rows 6 to 9
+  only, so both points are in blocked cells. An own-angle claim, taken in band, has no terrain or arc check (only new
+  choices do), and a unit pushed out of band keeps it (G-5 frees only on drift, a lost target or a taken angle). It
+  then walks toward a point it cannot reach.
+- **Arc: enemy overlap.** A friend standing in range between shots, with a moving body pressing from behind, is no
+  longer anchored unless it is in cooldown with no velocity. The press reaches the pillar: the largest enemy overlap
+  is 0.219, against T7's 0.005.
+
+**Proposed amendment (for the orchestrator).**
+
+1. **Keep a waiting friend a threat to the side rule** (revert Amendment 5, 1's second sentence). Instead, make the
+   one-pair commitment stable between equally urgent threats. Keep the committed partner while it remains a threat
+   whose time to collision is within one tick of the earliest. That is I-3c's intent, and it removes the flip for
+   waiting and firing friends alike.
+2. **Own-angle claims take the same checks as chosen ones** (terrain domain and arc), and a claim whose unit has left
+   the band by more than its radius is re-chosen.
+3. **Anchored in combat**: keep Amendment 5's attack-cycle rule for the G-1 trigger and the side rule, but treat a unit
+   in range of a live target as anchored for contact (C-2), so a press from behind never reaches the enemy.
+
+WP5 was not started; the acceptance range was not run; there is no cost split after WP5.
