@@ -225,6 +225,10 @@ pub struct ActiveProjectile {
     /// Strikes of `weapon_spec` this projectile carries: every strike of the attack when they
     /// land together, one when the weapon spaces its strikes ([`PendingStrikes`]).
     pub strikes: u8,
+    /// The target's [`Entity::teleport_count`] when the projectile was launched or last locked
+    /// onto it; a target whose count has moved on since teleported in flight (plan
+    /// `2026-11-24-weapon-validation` D-2). Zero for a projectile without a unit target.
+    pub target_teleport_count: u16,
 }
 
 /// What a unit remembers about its movement order between ticks.
@@ -583,6 +587,10 @@ pub struct Entity {
     /// p raises the count for p to the weapon's reveal ticks, and the vision phase counts it down
     /// (plan `2026-11-23-vision-and-detection` D-5). All zero at spawn.
     pub attack_reveal_ticks: PerPlayer<u16>,
+    /// How many times the unit has been relocated by a teleport, wrapping: written only by
+    /// [`Self::teleport_to`], compared by missiles in flight, never reset (plan
+    /// `2026-11-24-weapon-validation` D-2). Zero at spawn.
+    pub teleport_count: u16,
     /// The combined modifiers of the statuses this unit carries: a cache of the fold of
     /// `SimWorld::effects` for this entity, refreshed by the effect engine whenever one of its
     /// statuses is inserted or removed, and so derived state, left out of the checksum.
@@ -706,6 +714,7 @@ impl Entity {
             cast_lock_ticks: 0,
             displacement: None,
             attack_reveal_ticks: PerPlayer::default(),
+            teleport_count: 0,
             status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
@@ -731,6 +740,21 @@ impl Entity {
     #[must_use]
     pub const fn is_action_locked(&self) -> bool {
         self.status_modifiers.stun || self.cast_lock_ticks > 0 || self.displacement.is_some()
+    }
+
+    /// Relocates the unit to `destination` (world units) by a teleport: sets the position,
+    /// stops it, clears its funnel waypoints and counts the teleport in
+    /// [`Self::teleport_count`] (wrapping), so missiles in flight at it can tell (plan
+    /// `2026-11-24-weapon-validation` D-2).
+    ///
+    /// Invariant: every instantaneous relocation that 5.0.14 performs with a `CEffectTeleport`
+    /// goes through this method. Displacements that fly (`Displace`), unloads and placement do
+    /// not.
+    pub fn teleport_to(&mut self, destination: SimVec2) {
+        self.position = destination;
+        self.velocity = SimVec2::ZERO;
+        self.current_funnel_waypoints.clear();
+        self.teleport_count = self.teleport_count.wrapping_add(1);
     }
 
     /// Whether this unit's attacks reveal it to `player` now: a counter of
@@ -1588,6 +1612,57 @@ mod order_walks_tests {
         }
         entity.order_queue.clear();
         assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod teleport_tests {
+    //! Plan `2026-11-24-weapon-validation` D-2 (P-3): [`Entity::teleport_to`] relocates the unit
+    //! and counts one teleport per call, wrapping.
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+
+    fn walker() -> Result<super::Entity, Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 5);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground archetype")?;
+        let id = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(4, 4))?;
+        Ok(world
+            .entities
+            .remove(&id)
+            .ok_or("the spawned unit exists")?)
+    }
+
+    #[test]
+    fn a_teleport_relocates_the_unit_and_counts_once() -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = walker()?;
+        assert_eq!(unit.teleport_count, 0, "a new unit has never teleported");
+        unit.velocity = SimVec2::from_i32(1, 0);
+        unit.current_funnel_waypoints.push(SimVec2::from_i32(9, 9));
+        let destination = SimVec2::from_i32(11, 7);
+        unit.teleport_to(destination);
+        assert_eq!(unit.position, destination);
+        assert_eq!(unit.velocity, SimVec2::ZERO);
+        assert_eq!(unit.current_funnel_waypoints, Vec::<SimVec2>::new());
+        assert_eq!(unit.teleport_count, 1);
+        unit.teleport_to(destination);
+        assert_eq!(unit.teleport_count, 2, "every call counts, even in place");
+        Ok(())
+    }
+
+    #[test]
+    fn the_teleport_count_wraps() -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = walker()?;
+        unit.teleport_count = u16::MAX;
+        unit.teleport_to(SimVec2::from_i32(2, 2));
+        assert_eq!(unit.teleport_count, 0);
         Ok(())
     }
 }

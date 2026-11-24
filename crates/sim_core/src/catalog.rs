@@ -26,7 +26,7 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
     ArchetypeCapabilities, ArmorClassId, AttackDashSpec, AttackVisibility, Attribute,
     AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape,
-    HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
+    HarvesterSpec, MissileValidation, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
     ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
     SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
     SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId,
@@ -1419,6 +1419,10 @@ struct WeaponSpecDef {
     /// `2026-11-23-vision-and-detection` D-4); omitted, a snapshot.
     #[serde(default)]
     pub(crate) attack_visibility: AttackVisibility,
+    /// What the weapon's missile re-checks in flight (plan `2026-11-24-weapon-validation` D-1);
+    /// omitted, both checks, the engine default. Refused on an instant weapon unless default.
+    #[serde(default)]
+    pub(crate) missile_validation: MissileValidation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1642,6 +1646,7 @@ impl UnitArchetypeDef {
             structure_strike: w.structure_strike,
             melee: w.melee,
             attack_visibility: w.attack_visibility,
+            missile_validation: w.missile_validation,
         })
     }
 

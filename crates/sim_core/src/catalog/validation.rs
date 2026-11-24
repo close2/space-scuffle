@@ -20,8 +20,8 @@ use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackVisibility, Attribute, AttributeFlags,
-    MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle,
-    SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
+    MissileValidation, MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind,
+    ShapeKind, SimAngle, SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -1000,6 +1000,17 @@ impl WeaponSpecDef {
                 definition,
                 &format!("{prefix}.visual_kind"),
                 "an instant weapon publishes no projectile",
+            ));
+        }
+        // Plan `2026-11-24-weapon-validation` D-1: an instant weapon launches no missile, so a
+        // missile validation it authors would be read by nothing.
+        if self.projectile_speed.is_none()
+            && self.missile_validation != MissileValidation::default()
+        {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.missile_validation"),
+                "an instant weapon launches no missile to validate",
             ));
         }
         if let Some(speed) = self.projectile_speed {

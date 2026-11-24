@@ -102,6 +102,7 @@ fn custom_projectile_weapon(
         structure_strike: None,
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     }
 }
 

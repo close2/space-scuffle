@@ -314,6 +314,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         structure_strike: None,
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     };
 
     let ability = AbilitySpec {

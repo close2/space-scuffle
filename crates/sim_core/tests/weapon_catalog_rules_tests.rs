@@ -322,6 +322,24 @@ fn s16_projectile_speed_must_be_positive() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Plan `2026-11-24-weapon-validation` D-1: an instant weapon has no missile, so a missile
+/// validation it authors would be silently meaningless; validation refuses it, naming the
+/// field. The first shipped instant weapon is edited, once with each flag cleared.
+#[test]
+fn an_instant_weapon_authoring_missile_validation_is_refused() {
+    for flags in [
+        "(weapon: false, teleport: true)",
+        "(weapon: true, teleport: false)",
+    ] {
+        assert_rejected(
+            UNITS,
+            "projectile_speed: None,",
+            &format!("projectile_speed: None,\n                missile_validation: {flags},"),
+            "missile_validation",
+        );
+    }
+}
+
 #[test]
 fn s16_weapon_ranges_and_cadence_must_be_usable() -> Result<(), Box<dyn std::error::Error>> {
     // The first firing arc a shipped structure states, whatever its value.

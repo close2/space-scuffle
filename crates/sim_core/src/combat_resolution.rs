@@ -861,6 +861,10 @@ impl SimWorld {
         self.presentation.record_projectile(id, shot.source);
 
         let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
+        let target_teleport_count = self
+            .entities
+            .get(&shot.target)
+            .map_or(0, |target| target.teleport_count);
         self.projectiles.push(ActiveProjectile {
             id,
             owner: shot.owner,
@@ -875,6 +879,7 @@ impl SimWorld {
             source_slug: Some(shot.source_slug),
             remaining_lifetime_ticks,
             strikes: shot.strikes,
+            target_teleport_count,
         });
     }
 
@@ -1547,6 +1552,10 @@ impl SimWorld {
                 proj.target_id = Some(new_id);
                 proj.target_pos = new_pos;
                 proj.target_mover = new_mover;
+                proj.target_teleport_count = self
+                    .entities
+                    .get(&new_id)
+                    .map_or(0, |target| target.teleport_count);
                 Some(new_radius)
             }
         }
@@ -1719,6 +1728,7 @@ mod tests {
             source_slug: None,
             remaining_lifetime_ticks: u16::MAX,
             strikes: 1,
+            target_teleport_count: 0,
         });
         let unit = EffectTarget::Unit(target);
         world.effects.missiles.push(ActiveMissile {

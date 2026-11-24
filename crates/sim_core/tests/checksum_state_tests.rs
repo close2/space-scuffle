@@ -89,6 +89,7 @@ fn projectile() -> ActiveProjectile {
         source_slug: Some("fixture-source".to_owned()),
         remaining_lifetime_ticks: 25,
         strikes: 1,
+        target_teleport_count: 0,
     }
 }
 
@@ -239,6 +240,8 @@ fn every_public_entity_field_changes_the_world_checksum() {
                 ticks[PlayerSlot::ALL[1]] = 54;
                 ticks
             },
+            // Plan `2026-11-24-weapon-validation` D-7: the teleport count.
+            teleport_count => 1,
         },
         |entity| {
             world.entities.insert(EntityId(1), entity.clone());
@@ -259,6 +262,8 @@ fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
             target_pos => point(4, 3), speed => SimScalar::from_i32(2),
             weapon_spec => { let mut changed = weapon(); changed.base_damage += SimScalar::ONE; changed },
             source_slug => None, remaining_lifetime_ticks => 24, strikes => 2,
+            // Plan `2026-11-24-weapon-validation` D-7: the target's teleport count at launch.
+            target_teleport_count => 1,
         },
         |projectile| {
             world.projectiles = vec![projectile.clone()];
@@ -364,6 +369,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.suicide_on_attack = false;
     original.structure_strike = None;
     original.attack_visibility = sim_types::AttackVisibility::Snapshot;
+    original.missile_validation = sim_types::MissileValidation::default();
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -429,6 +435,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 // Plan `2026-11-23-vision-and-detection` D-7: each case, and the reveal ticks.
                 attack_visibility => sim_types::AttackVisibility::Visible { reveal_ticks: 54 },
                 attack_visibility => sim_types::AttackVisibility::Hidden,
+                // Plan `2026-11-24-weapon-validation` D-7: each flag alone.
+                missile_validation => sim_types::MissileValidation { weapon: false, teleport: true },
+                missile_validation => sim_types::MissileValidation { weapon: true, teleport: false },
             },
         |weapon| {
             world

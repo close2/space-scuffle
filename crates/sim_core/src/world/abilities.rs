@@ -465,9 +465,7 @@ impl SimWorld {
             }
             AbilityEffectSpec::BlinkTeleport { .. } => {
                 if let Some(dest) = target_pos {
-                    entity.position = dest;
-                    entity.velocity = SimVec2::ZERO;
-                    entity.current_funnel_waypoints.clear();
+                    entity.teleport_to(dest);
                 }
             }
             AbilityEffectSpec::CloakToggle { is_burrow, .. } => toggle_cloak(entity, is_burrow),
