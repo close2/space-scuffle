@@ -788,3 +788,32 @@ The question number is the next free at filing (0106 on `cff46b37`, Q0103 to Q01
 
 ## As built
 
+WP0 to WP6 on branch `weapon-validation-plan`, one commit each, with `main` at `e313268f` (the attack orders, no
+schema change) merged in before WP6. Measurements and traces are in the
+[evidence](../evidence/2026-11-24-weapon-validation.md).
+
+| WP | Commit | What landed | Worlds |
+|---|---|---|---|
+| WP0 | `02527da6` | B-182 and B-185 pointed here, B-194 and B-195 registered; baseline and probes (a) to (e) | — |
+| WP1 | `9a70cb6d` | `MissileValidation` (D-1) with the instant-weapon refusal; `Entity::teleport_count` and `teleport_to`, Blink through it; `ActiveProjectile::target_teleport_count` (D-2); schema **43** (D-7), goldens and sandbox re-recorded with the latent proof on four builds | none |
+| WP2 | `946194ea` | D-4's teleport half (B-182) | none (probe d: no shipped Blink) |
+| WP3 | `d75a8fde` | D-4's weapon half for `weapon: false` and D-6's `spore_matriarch` rows (B-194) | none (probe e) |
+| WP4 | `4f849b0b` | Battle 42, positions by whole cells (below) | the new battle only |
+| WP5 | `6459edae` | D-3's filter at every listed reader, D-5's drop of an automatic attack lost to fog (B-185 weapon half) | battles 35 and 42 (all seeds), battle 31 (its 14 counted seeds, no outcome changed), showcase effects (7 of 9 seeds); all counted, all first differences at or after a counted event; goldens unchanged |
+| WP6 | this commit | Records, evidence, As built | — |
+
+Deviations and findings:
+- **Battle 42's positions** (§7.4's verify failed as written): sight is whole cells, and the plan's tank at x = 50.0
+  sits in cell 49 or 50 under the jitter, which a worker in cell 41 sees. The tank stands at (50.5, 32.5) and the
+  column at x = 41.85, 9 cells away; every worker flees to 13.55 to 14.09 (inside reach 14.25) on all 20 seeds.
+- **P-6's "a player without a vision map"** cannot be reached through the public API (every slot has a vision map;
+  an owner outside the slots cannot spawn a unit). It is a unit test of the predicate in `target_acquisition.rs`.
+- **Battle 35's claim breaks** (stop rule 3): "red 0 to 1" fails on 9 of 20 seeds (22 and 33 of record) because a
+  Colossus analogue that flees out of the Viking analogues' sight is dropped under D-5 and survives. Left as
+  recorded and reported with its trace; the matrix test fails on it until the orchestrator decides (re-record, or
+  Q0106 part 2 or 4).
+- **Re-derived tests**: seven tests drove combat with targets their player did not see (named in WP5's commit and
+  the evidence); they now run the vision phase first or place a spotter.
+- `MissileValidation`'s refusal is `SimCoreError::CatalogInvalidValue` (the catalog's existing typed error) naming
+  `…missile_validation`.
+- WP7 (B-195, the chase) is not started: it waits for the contact solver and Q0106 part 1.

@@ -173,3 +173,23 @@ Colossus is no longer chased by its true position. The expectation is left as re
 `every_battle_keeps_its_recorded_outcome_on_every_seed` fails on battle 35 seeds 22 and 33 until the orchestrator
 decides (re-record with the trace, or revisit Q0106 part 2 or part 4: a Colossus's body inside sight while its centre
 is not).
+
+## WP6: merge of `main`, golden proofs and the final tree
+
+**Merge.** `main` at `e313268f` (the attack orders, B-186 and B-187, no schema change) merged as `04341b82`. Its
+worlds are byte-identical to WP0's (`world-main` against `world-wp0`: 483 files, 0 differing), and the merged tree
+against `main` moves exactly WP5's set of files (`compare-merged-vs-main.txt` equals `compare-wp5.txt`); the merged
+worlds equal WP5's but for battle 42's re-recorded expectation (matrix: 2 expectation failures on the seeds of
+record, battle 35 seeds 22 and 33; 13 over all seeds, WP0's 4 and battle 35's 9).
+
+**Golden proofs** (`scripts/proofcopy.sh`, a git-archive copy of the tree in its own target directory; each copy's
+files are stamped with the present, since a shared target directory reused stale builds of an earlier copy, which
+voided this branch's first proof runs):
+1. *Latent step* (tree `05bc3b6f`: WP1's code with the three fields left out of the encoding, schema 41): both
+   goldens and the sandbox reproduce the lists recorded for the vision-and-detection plan on native debug and
+   release and `wasm32-wasip1` release and debug (`CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=<tree>"`).
+2. *Final tree* (`04341b82`, schema 43): both goldens and the sandbox reproduce WP1's re-recorded values on the same
+   four builds. WP2 to WP5 changed no golden (P-11: probes (a) to (c) counted nothing in either golden).
+
+**Client.** The skirmish stage log (`skirmish_match_tests`, release, radv) on the merged tree holds the same lines
+as WP0's; only the interleaving of two parallel tests' `tick 0: Mine` lines differs.

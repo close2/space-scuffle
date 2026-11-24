@@ -790,14 +790,15 @@ any test that counts projectiles right after a target's death (search `projectil
 - **F-1: B-182, a missile drops a target that teleports** (`ValidateTeleport 1`, S2). Needs a per-entity "teleported
   on tick t" mark set by Blink's displacement and read by `track_projectile_target`. Also, what counts as a
   teleport for the flag (**verify**: Blink, `Recall`, a transport unload). Its own small plan, after this one,
-  using D-1's point fallback.
+  using D-1's point fallback. *Taken up by plan `2026-11-24-weapon-validation` (WP2).*
 - **F-2: B-183, the snapshot of a hidden ground attacker** (S5, S15). A `PlayerView` list of attack snapshots (entity,
   position and type at the strike, held for the presentation time of a snapshot, **verify**) and the client's fog
   and minimap drawing. Presentation only; no simulation rule.
 - **F-3: B-185, the `Visible` filter's fog half.** A target outside its attacker's vision is lost: no firing, no
   tracking (pursuit to its last seen position), and a missile in flight lands on the point. Needs
   `is_entity_targetable` to take vision and a pursuit rule under `movement/`; its own plan once the contact-solver
-  branch has merged. It is expected to move the matrix widely.
+  branch has merged. It is expected to move the matrix widely. *Taken up by plan `2026-11-24-weapon-validation`:
+  the weapon half (WP5); the chase is B-195 (its WP7).*
 - **F-4: effect-tree missiles on target loss.** Each spell's `CEffectLaunchMissile` carries its own flags (S3's
   `NeuralParasiteLaunchMissile` clears `PointFallback`); the effect engine's `ActiveMissile` would read them per
   node. No shipped spell missile carries an area, so no outcome differs today.
