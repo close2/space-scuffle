@@ -1120,3 +1120,44 @@ fn a_nodes_footprint_is_hashed() {
         .expect("the field fits again");
     assert_eq!(world.compute_checksum(), standing);
 }
+
+/// Plan `2026-11-24-weapon-validation` Amendment 2 (B-195): each field of a unit's last seen
+/// point of its attack order's target is hashed, each mutated alone.
+#[test]
+fn a_units_last_seen_point_changes_the_world_checksum() {
+    let mut world = world();
+    let mut original = world.entities[&EntityId(1)].clone();
+    original.movement.last_seen = Some(sim_core::LastSeen {
+        target: EntityId(2),
+        point: point(5, 6),
+        lost: false,
+    });
+    let unset = {
+        let mut entity = original.clone();
+        entity.movement.last_seen = None;
+        world.entities.insert(EntityId(1), entity);
+        world.compute_checksum()
+    };
+    world.entities.insert(EntityId(1), original.clone());
+    assert_ne!(
+        unset,
+        world.compute_checksum(),
+        "checksum omitted last_seen"
+    );
+    let fields: &[(&str, fn(&mut sim_core::LastSeen))] = &[
+        ("target", |seen| seen.target = EntityId(3)),
+        ("point", |seen| seen.point = point(6, 5)),
+        ("lost", |seen| seen.lost = true),
+    ];
+    for (name, mutate) in fields {
+        let mut entity = original.clone();
+        if let Some(seen) = entity.movement.last_seen.as_mut() {
+            mutate(seen);
+        }
+        assert!(entity != original, "mutation must change {name}");
+        world.entities.insert(EntityId(1), entity);
+        let changed = world.compute_checksum();
+        world.entities.insert(EntityId(1), original.clone());
+        assert_ne!(changed, world.compute_checksum(), "checksum omitted {name}");
+    }
+}

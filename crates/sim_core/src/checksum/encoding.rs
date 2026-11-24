@@ -8,7 +8,7 @@ use crate::effects::{
     ActiveMissile, ActivePersistent, ActiveStatus, Displacement, EffectWorld, PersistentAnchor,
 };
 use crate::entity::{
-    ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingLine,
+    ActiveBuff, ActiveProjectile, BarrierState, Entity, LastSeen, MovementMemory, PendingLine,
     PendingStrikes, SlotClaim, WeaponPhase,
 };
 use crate::entity::{Cargo, UnitTask};
@@ -292,11 +292,15 @@ fields!(MovementMemory {
     leash_origin,
     side_partner,
     side_left,
-    slot
-} unhashed {
+    slot,
     last_seen
 });
 fields!(SlotClaim { target, point });
+fields!(LastSeen {
+    target,
+    point,
+    lost
+});
 fields!(ActiveBuff {
     buff_id,
     remaining_ticks,
