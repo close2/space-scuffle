@@ -2,14 +2,14 @@
 
 This plan carries out the owner's answers to two questions that two merged plans left open with defaults built:
 
-- **Q0099** ([open](../questions/open/0099-cliff-level-of-ramps-and-air.md)), asked by plan
+- **Q0099** ([closed](../questions/closed/0099-cliff-level-of-ramps-and-air.md)), asked by plan
   [`2026-11-23-splash-cliff-levels`](2026-11-23-splash-cliff-levels.md) (B-170, `SameCliff`):
   - **1(c):** a unit on a ramp counts as **both** cliff levels, so a ramp never separates splash between high and
     low ground. *Built:* a ramp counts as its lower landing (D-2 of that plan). **Changes.**
   - **2(b):** air blasts **ignore** cliff levels. *Built:* an air unit has the level of the ground below it.
     **Changes.**
   - **3(a):** the level is read at the blast's centre point. *Built so.* **Already holds** (§3 item 3).
-- **Q0101** ([open](../questions/open/0101-vision-and-detection-details.md)), asked by plan
+- **Q0101** ([closed](../questions/closed/0101-vision-and-detection-details.md)), asked by plan
   [`2026-11-23-vision-and-detection`](2026-11-23-vision-and-detection.md) (B-54 to B-57):
   - **1(a):** air units and Xel'Naga towers see into sight blockers. *Built so.* **Already holds** (§3 item 4).
   - **2(b):** detection is a plain circle: a detector detects cloaked or burrowed units within its detection radius,
@@ -750,8 +750,8 @@ and 7, D-4, D-6, §14 F-2) and is one line to change.
 
 ## 16. Material (scratch, not committed)
 
-- The owner's answers in `docs/questions/open/0099-cliff-level-of-ramps-and-air.md` and
-  `docs/questions/open/0101-vision-and-detection-details.md` (commit `20322ca6`).
+- The owner's answers in `docs/questions/closed/0099-cliff-level-of-ramps-and-air.md` and
+  `docs/questions/closed/0101-vision-and-detection-details.md` (commit `20322ca6`).
 - The game data of the two source plans, `~/scratch/combat_wp3_data/` (`5444e12f13`), for S3 to S8.
 - The catalog survey of §2.3 (`detection_radius: Some`, `splash` with `cliff` defaults, `mover_type`) and of the
   measured worlds' units (`matchup_matrix.ron`, `start_loadouts.ron`, both goldens), read with `grep`.
@@ -759,4 +759,39 @@ and 7, D-4, D-6, §14 F-2) and is one line to change.
   name the worlds before any rule lands.
 
 ## As built
+
+Built on branch `answers-cliff-vision-plan` from `09039527` (`main` at `20322ca6` with this plan), one commit per
+package, on 2026-11-24. [Evidence](../evidence/2026-11-24-owner-answers-cliff-and-vision.md).
+
+| Package | Commit | What landed |
+|---|---|---|
+| WP0 | `064642ec` | B-200 and B-201 registered (B-199 is held by the fire-rules branch; both numbers next free at merge), B-184 restated; baseline and probes: every count zero in every world and golden |
+| WP1 | `c0094e7e` | `CliffSpan` and `GameMap::cliff_span_at` (replacing `cliff_level_at`); `strike_area` and the other-level strike compare spans (Q0099 1(c)) |
+| WP2 | `b74aaa10` | `level_span`: the air plane and an `Air` mover span every level (Q0099 2(b)) |
+| WP3 | `80ea859f` | `PlayerVisionMap::cast` in two passes, sight along the rays and detection on the disc (Q0101 2(b)) |
+| WP4 | `b0341876` | `is_cloak_revealed` takes the attack reveal as sight (D-4), with its grounding in the evidence |
+| WP5 | `a3e97544` | `collect_sights` gives a foundation no detection (Q0101 3(b), B-184) |
+| WP6 | this commit | D-6's docs, the register, the pointers, the evidence, Q0099 and Q0101 resolved and closed |
+
+**No schema change** (43 stays), no catalog or fixture change, nothing under `crates/sim_core/src/movement/`. No
+measured world moved in any package (every comparison byte-identical to WP0), as the probes predicted.
+
+**Differences from the plan, recorded here (Q0002):**
+
+- **A third re-derived test.** `vision_tests.rs` `a_blocker_hides_every_cell_from_outside` read detection as well as
+  sight through `any_blocker_cell_reached`; with detection a circle a blocker's cells are detected from outside, so
+  the helper now reads visibility only (detection into a blocker is pinned by `detection_is_a_plain_circle`). §12
+  did not list it.
+- **The concealed unit in the end-to-end tests is set cloaked, not found by a cloak ability.** No shipped air unit
+  carries a cloak ability (`cloak_gunship` ships none; the only cloaked shipped state is a burrowed mode), so
+  `detection_circle_tests.rs` copies a shipped air unit unarmed and sets its entity cloaked, as
+  `attack_reveal_tests.rs` already does.
+- **P-8** is the existing incremental test extended (with a detection disc clipped by the map's corner and a source
+  inside the blocker), which the plan allowed; it passed before and after WP3, as both casts mirror themselves.
+- **P-9** passed before WP3: on open ground the sight rays reach exactly the disc for every whole radius 1 to 32, so
+  air detectors detect nothing new there.
+- **P-12's forced recount** touches a map cell (`cell_mut` bumps the cell revision), which makes the next vision
+  phase recount every source; with every unit holding still, its counters and states equal the incremental ones.
+- The detector in P-12 is built through a `Build` command: the first shipped detector structure that a builder of
+  its faction is admitted to build once the structures its own data requires (`requires_structures`) stand.
 

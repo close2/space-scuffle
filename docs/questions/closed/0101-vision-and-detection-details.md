@@ -35,3 +35,23 @@ turret, Banshee and Overlord of part 2; a turret under construction next to a cl
 - **4(b):** An air unit's / Colossus's attack reveal is visible to **the struck player and its allies** (shared team vision).
 
 **Reasoning:** All four choices match StarCraft II's actual behaviour (note that 2(b), 3(b), and 4(b) differ from the initial plan defaults).
+
+## Resolution (2026-11-24)
+
+Built by plan [`2026-11-24-owner-answers-cliff-and-vision`](../../plans/2026-11-24-owner-answers-cliff-and-vision.md)
+([evidence](../../evidence/2026-11-24-owner-answers-cliff-and-vision.md)):
+
+- **1(a):** already built by plan `2026-11-23-vision-and-detection`, commit `e52c0c83`: air sources and watchtowers
+  see into sight blockers. The code comments now cite the answer.
+- **2(b):** detection is a plain circle that no cliff or blocker stops; sight is unchanged, and a concealed unit is a
+  target only where its player also sees it. Commit `80ea859f` (WP3, bug B-201 fixed). With it, an attack reveal
+  counts as sight of a concealed attacker that the struck player detects, so a turret below a cliff can answer a
+  cloaked attacker above it (commit `b0341876`, WP4; this goes beyond the answer's words and is grounded in the
+  evidence).
+- **3(b):** detectors under construction detect nothing until construction completes; their sight is unchanged.
+  Commit `a3e97544` (WP5, bug B-184 fixed).
+- **4(b):** the reveal goes to the struck player and its allies. The simulation has no teams, so a player's only ally
+  is itself and nothing changes yet; the rule is recorded in the code and the register (WP6). When teams are planned,
+  the reveal's audience is among the rules that plan sets (plan §14 F-1).
+
+No measured world, golden or sandbox checksum moved.

@@ -1064,7 +1064,9 @@ impl SimWorld {
     /// `AttackReveal`, plan `2026-11-23-vision-and-detection` D-5). A strike reduced to nothing
     /// by a barrier, shields or armour still counts, as the damage effect ran. Nothing happens
     /// for another weapon, a victim of the attacker's own player, or an attacker that is gone
-    /// or dead.
+    /// or dead. The reveal goes to the struck unit's owner and that player's allies (owner
+    /// answer Q0101 4(b)); the simulation has no teams (`match_state.rs`), so a player's only
+    /// ally is itself (plan `2026-11-24-owner-answers-cliff-and-vision` D-6).
     fn record_attack_reveal(&mut self, source: HitSource<'_>, victim_id: EntityId) {
         let AttackVisibility::Visible { reveal_ticks } = source.weapon.attack_visibility else {
             return;

@@ -242,7 +242,9 @@ impl Bench {
 /// P-10: one strike of a `Visible` weapon reveals the attacker to the struck unit's owner for
 /// exactly its reveal ticks: the counter holds the full value after the striking tick, one less
 /// after each later tick, and the victim, which could not see the attacker before, acquires it
-/// on the next tick. Its own player and a third player are unaffected.
+/// on the next tick. Its own player and a third player are unaffected: a third player is no ally
+/// of the struck one, as there are no teams (owner answer Q0101 4(b), plan
+/// `2026-11-24-owner-answers-cliff-and-vision` P-13).
 #[test]
 fn a_visible_strike_reveals_the_attacker_for_its_ticks() -> TestResult {
     let mut bench = bench(visible_air_attacker, |_| {})?;

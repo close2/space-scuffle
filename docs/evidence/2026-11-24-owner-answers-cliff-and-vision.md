@@ -75,6 +75,50 @@ package (§8 rule 1).
 **P-4 on WP0's tree.** `the_level_is_read_at_the_blast_centre`, run on WP0's tree through a scratch copy of the WP1
 test file that reads spans from the terrain, passes: Q0099 3(a) held before this plan.
 
+## WP1 to WP5: the worlds
+
+Each package's trace binaries are built from its commit (`scripts/wpbuild.sh`) and measured with its own assets
+(`scripts/measure.sh`), then compared file by file with WP0's worlds (`scripts/compare.sh`). Every output file is
+byte-identical in every package, as the probes predicted (§7.2's rule); no package moved a world, so no first
+difference exists to trace and P-6's superset check has no moved world to apply to.
+
+| Package | Commit | Rule | Files compared | Differing |
+|---|---|---|---|---|
+| WP1 | `c0094e7e` | A ramp spans both landings (Q0099 1(c)) | 483 | 0 |
+| WP2 | `b74aaa10` | Air blasts and air units ignore levels (Q0099 2(b)) | 483 | 0 |
+| WP3 | `80ea859f` | Detection is a circle (Q0101 2(b)) | 483 | 0 |
+| WP4 | `b0341876` | An attack reveal counts as sight of a detected concealed attacker (D-4) | 483 | 0 |
+| WP5 | `a3e97544` | Detectors under construction do not detect (Q0101 3(b)) | 483 | 0 |
+
+The matrix keeps 0 expectation failures on its seeds of record and 4 over all seeds in every package, as at WP0.
+
+**Red runs** (each new test failing on the previous package's tree, logs under `~/scratch/owner-answers/red/`):
+
+- WP1: `sim_map` does not compile against the span tests (`CliffSpan`, `cliff_span_at` unresolved). Run through a
+  scratch copy of `splash_cliff_tests.rs` whose `cliff_span_at` reads the span from the terrain,
+  `a_same_level_area_counts_a_ramp_as_both_landings` (the ramp's top cell lost 0, expected 10),
+  `a_shot_centred_on_a_ramp_strikes_both_landings_and_spares_a_third_level` (the upper landing lost 0) and
+  `a_burst_on_a_ramp_strikes_its_target_at_the_top_by_its_area` (the target took the fallback's 10, not the area's 5)
+  fail; `the_level_is_read_at_the_blast_centre` (P-4) and `beside_a_cliff_away_from_the_ramp_the_levels_stay_apart`
+  pass.
+- WP2: `an_air_area_ignores_levels` (the air unit over the low ground lost 0) and
+  `an_air_unit_in_a_ground_centred_area_ignores_levels` (the air unit over the low ground lost 0) fail.
+- WP3: `detection_is_a_plain_circle` and `equal_radii_detect_exactly_the_seen_cells` (detection is not the disc at
+  (16, 24) r 11) fail; `on_open_ground_the_rays_cover_the_detection_disc` (P-9) passes before the change, so the rays
+  cover the disc on open ground for every whole radius 1 to 32, and air detectors on open ground detect nothing new
+  (§8 rule 8 does not arise). In `detection_circle_tests.rs` the three tests that need the circle fail (the cloaked
+  unit's cell is not detected) and the no-detection control passes.
+- WP4: `a_detected_cloaked_attacker_is_answered_during_its_reveal` ("listed as revealed during the reveal") and
+  `revealed_lists_an_attack_revealed_detected_attacker` ("listed during the reveal", after its premise that the
+  cell is detected and not seen held) fail.
+- WP5: `a_detector_foundation_detects_nothing`, `a_detector_detects_from_its_completion` and
+  `a_completed_detector_recasts_to_a_full_recount` fail with the foundation detecting ((true, true), expected
+  (false, true)).
+
+**Timing of detection at completion (P-12).** Construction advances in the production phase, which runs before the
+vision phase in the same tick, so a detector detects from the vision update of the tick its construction completes
+(`a_detector_detects_from_its_completion`).
+
 ## WP4: a revealed, detected cloaked attacker is a target (D-4), and its grounding
 
 D-4 goes beyond the owner's literal answers, so its grounding is recorded here. It composes two rules already in
