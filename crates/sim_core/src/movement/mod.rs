@@ -281,6 +281,10 @@ pub(crate) struct MovementWorkspace {
     /// Whether the ring interval cache is switched off ([`SimWorld::set_ring_interval_cache`]);
     /// only the test that proves the cache exact does so.
     ring_cache_disabled: bool,
+    /// G-6′ (plan Amendment 17): the neighbour ids and the ranked candidates of one standing
+    /// automatic chaser, cleared per call.
+    retarget_neighbours: Vec<EntityId>,
+    retarget_ranked: Vec<(crate::combat::TargetPriorityKey, EntityId)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Each actor's committed proposal velocity of the latest movement phase, by entity id once

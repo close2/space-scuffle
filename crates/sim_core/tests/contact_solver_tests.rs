@@ -593,10 +593,12 @@ fn digest(checksums: &[u64]) -> u64 {
         })
 }
 
-/// `rules` with enemies splitting their overlap evenly, as before E-1.
+/// `rules` with enemies splitting their overlap evenly, as before E-1, and G-6′ off (plan
+/// `2026-11-24-solver-retarget-and-shoving` §4.2), so the base's behaviour.
 fn even_split(rules: MovementRules) -> Result<MovementRules, Box<dyn std::error::Error>> {
     Ok(rules.with_contact(ContactRules {
         enemies_push_each_other: true,
+        retarget_from_full_ring: false,
         ..rules.contact()
     })?)
 }
@@ -630,10 +632,13 @@ fn battle_digest(rules: MovementRules) -> Result<u64, Box<dyn std::error::Error>
     Ok(digest(&checksums))
 }
 
-/// E-T4: with `contact.enemies_push_each_other` on, the simulation is the base's (main at
-/// `e5f5c565` with WP0's diagnostics, before E-1), bit for bit, on the E-T1 scene and on battle
-/// 28's first seed of record: their per-tick checksum digests equal the base's, pinned below at
-/// schema 46. E-1 adds no state, so the schema is the base's.
+/// E-T4: with `contact.enemies_push_each_other` on (and G-6′ off), the simulation is the base's
+/// (main at `708576ac` with WP0's diagnostics, before E-1), bit for bit, on the E-T1 scene and on
+/// battle 28's first seed of record. E-1 adds no state; G-6′'s memory field moved the schema to
+/// 47, so the digests are pinned at 47. Proof that they are the base's: a scratch build of this
+/// tree that leaves `ring_retarget` unhashed and holds the schema at 46 gives exactly the base's
+/// digests of the same two runs, `0xa381a7c5b8982232` and `0x6b074574a51eff4b` (evidence
+/// `docs/evidence/2026-11-24-solver-retarget-and-shoving.md`).
 #[test]
 fn the_enemy_push_switch_on_is_bit_identical() -> TestResult {
     let press = press_digest(even_split(solver_rules()?)?)?;
@@ -646,7 +651,7 @@ fn the_enemy_push_switch_on_is_bit_identical() -> TestResult {
     Ok(())
 }
 
-/// The base's digest of the E-T1 scene (schema 46).
-const PRESS_DIGEST_EVEN_SPLIT: u64 = 0xa381_a7c5_b898_2232;
-/// The base's digest of battle 28's first seed of record (schema 46).
-const BATTLE_DIGEST_EVEN_SPLIT: u64 = 0x5b3a_d09e_1abd_3da2;
+/// The digest of the E-T1 scene with the base's behaviour (schema 47).
+const PRESS_DIGEST_EVEN_SPLIT: u64 = 0xe27d_9266_6aa9_7f72;
+/// The digest of battle 28's first seed of record with the base's behaviour (schema 47).
+const BATTLE_DIGEST_EVEN_SPLIT: u64 = 0x601d_5cda_1b45_3251;

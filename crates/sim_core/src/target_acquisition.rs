@@ -277,6 +277,20 @@ impl SimWorld {
         vision_maps: &PerPlayer<PlayerVisionMap>,
         attacker_owner: PlayerId,
     ) -> bool {
+        Self::is_targetable_at(target, target.position, map, vision_maps, attacker_owner)
+    }
+
+    /// [`Self::is_entity_targetable`] with the target standing at `position`, world units: the
+    /// movement phase asks it of a candidate's tick-start position (G-6′ of plan
+    /// `2026-11-24-solver-retarget-and-shoving`).
+    #[inline]
+    pub(crate) fn is_targetable_at(
+        target: &Entity,
+        position: SimVec2,
+        map: &SimMap,
+        vision_maps: &PerPlayer<PlayerVisionMap>,
+        attacker_owner: PlayerId,
+    ) -> bool {
         if !Self::is_damageable(target) {
             return false;
         }
@@ -285,7 +299,7 @@ impl SimWorld {
                 map,
                 vision_maps,
                 attacker_owner,
-                target.position,
+                position,
                 target.is_attack_revealed_to(attacker_owner),
             )
     }
@@ -649,28 +663,30 @@ impl SimWorld {
         Some(Acquisition::RememberTarget(target.position))
     }
 
-    /// The tie-break measure of `candidate` for `entity` (see [`TargetPriorityKey::tie_break`]),
-    /// given the weapon it would use against the candidate and where the previous target stands
-    /// for [`AcquireTieBreak::ClosestToPrevious`] (`previous`, world units).
+    /// The tie-break measure of a candidate standing at `at` for `entity` standing at `from`
+    /// (world units; see [`TargetPriorityKey::tie_break`]), given the weapon it would use against
+    /// the candidate and where the previous target stands for
+    /// [`AcquireTieBreak::ClosestToPrevious`] (`previous`, world units).
+    #[inline]
     fn tie_break(
         entity: &Entity,
         arch: &UnitArchetype,
         weapon: &WeaponSpec,
-        candidate: &Entity,
+        (from, at): (SimVec2, SimVec2),
         previous: Option<SimVec2>,
     ) -> SimScalar {
-        let distance_sq = entity.position.distance_sq(candidate.position);
+        let distance_sq = from.distance_sq(at);
         match arch.acquire_tie_break {
             AcquireTieBreak::Closest => distance_sq,
             AcquireTieBreak::LeastTurning => {
-                let delta = candidate.position - entity.position;
+                let delta = at - from;
                 let bearing = SimAngle::atan2(delta.y, delta.x);
                 let turn = weapon_aim(entity, weapon).diff(bearing).unsigned_abs();
                 SimScalar::from_i32(i32::from(turn))
             }
-            AcquireTieBreak::ClosestToPrevious => previous.map_or(distance_sq, |previous| {
-                previous.distance_sq(candidate.position)
-            }),
+            AcquireTieBreak::ClosestToPrevious => {
+                previous.map_or(distance_sq, |previous| previous.distance_sq(at))
+            }
         }
     }
 
@@ -739,6 +755,20 @@ impl SimWorld {
 
     /// Whether `entity`'s weapon can engage `target` from where it stands right now.
     fn reaches_from_here(&self, entity: &Entity, arch: &UnitArchetype, target: &Entity) -> bool {
+        self.reaches_between(entity, arch, entity.position, target, target.position)
+    }
+
+    /// Whether `entity`'s weapon, standing at `from`, can engage `target` standing at `to`
+    /// (world units).
+    #[inline]
+    fn reaches_between(
+        &self,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        from: SimVec2,
+        target: &Entity,
+        to: SimVec2,
+    ) -> bool {
         let Ok(target_arch) = self.catalog.get(target.unit_type_id) else {
             return false;
         };
@@ -749,7 +779,7 @@ impl SimWorld {
         };
         let radii = arch.collision_radius + target_arch.collision_radius;
         let reach = self.entity_weapon_range(entity, weapon, &arch.slug) + radii;
-        let distance = entity.position.distance(target.position);
+        let distance = from.distance(to);
         distance <= reach
             && (weapon.min_range <= SimScalar::ZERO || distance >= weapon.min_range + radii)
     }
@@ -832,9 +862,14 @@ impl SimWorld {
         if current == Some(best.entity_id) {
             return None;
         }
-        // A valid target in reach is kept unless a candidate outranks it.
+        // A valid target in reach is kept unless a candidate outranks it; so is the target G-6′
+        // handed the unit to when its own target's ring was full (plan
+        // `2026-11-24-solver-retarget-and-shoving` §4.2), so the nearer, full target is not taken
+        // back the next tick.
         let outranked = scan.current.is_none_or(|held| best.rank() > held.rank());
-        if reachable_current.is_some() && !outranked {
+        let handed = matches!(engagement, Engagement::Acquired(target)
+            if entity.movement.ring_retarget == Some(target));
+        if (reachable_current.is_some() || handed) && !outranked {
             return None;
         }
         Some(Acquisition::Engage(best.entity_id))
@@ -996,65 +1031,13 @@ impl SimWorld {
             let Some(neighbor) = self.entities.get(&neighbor_id) else {
                 continue;
             };
-            if neighbor.owner == entity.owner
-                || entity.movement.abandoned_target == Some(neighbor_id)
-                || !Self::is_entity_targetable(neighbor, &self.map, &self.vision_maps, entity.owner)
-            {
-                continue;
-            }
-            let dist = entity.position.distance(neighbor.position);
-            if self.map.world_to_cell(neighbor.position).is_err()
-                || !Self::sees_enemy(&self.map, &self.vision_maps, entity.owner, neighbor)
-            {
-                continue;
-            }
-            let Ok(target_arch) = self.catalog.get(neighbor.unit_type_id) else {
-                continue;
-            };
-            let Some(weapon) =
-                arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())
+            let at = (entity.position, neighbor.position);
+            let Some(admitted) = self.admit((entity, arch), scope, (neighbor_id, neighbor), at)
             else {
                 continue;
             };
-            let radii = arch.collision_radius + target_arch.collision_radius;
-            let scan_range = arch
-                .scan_range
-                .max(self.entity_weapon_range(entity, weapon, &arch.slug));
-            if dist > scan_range + radii {
-                continue;
-            }
-            if !weapon.target_flags.intersects(target_arch.attributes) {
-                continue;
-            }
-            if scope
-                .tracking
-                .is_some_and(|walking| !fires_without_attack_order(weapon, walking))
-                || scope.own_target.is_some_and(|own| !own.licenses(weapon))
-            {
-                continue;
-            }
-            if weapon.min_range > SimScalar::ZERO && dist < weapon.min_range + radii {
-                continue;
-            }
-            if scope.stationary && !self.reaches_from_here(entity, arch, neighbor) {
-                continue;
-            }
-
-            let key = TargetPriorityKey {
-                threat: is_threat_to(target_arch, neighbor, arch),
-                attack_target_priority: target_arch.attack_target_priority,
-                primary: arch.primary_weapon_reaches(target_arch.mover_type),
-                tie_break: Self::tie_break(
-                    entity,
-                    arch,
-                    weapon,
-                    neighbor,
-                    scope
-                        .own_target
-                        .map_or(entity.previous_target_position, |own| Some(own.anchor)),
-                ),
-                entity_id: neighbor_id,
-            };
+            let key =
+                Self::candidate_key((entity, arch), scope, (neighbor_id, neighbor), admitted, at);
             if Some(neighbor_id) == current {
                 result.current = Some(key);
             }
@@ -1063,6 +1046,153 @@ impl SimWorld {
             }
         }
         result
+    }
+
+    /// Acquisition's test of one neighbour `(neighbor_id, neighbor)` for `(entity, arch)` under
+    /// `scope`, with the unit standing at `from` and the neighbour at `at` (world units): the
+    /// candidate's archetype and the weapon the unit would use against it, or `None` when it is
+    /// no candidate: an ally, the unit's abandoned target, untargetable or unseen, beyond the scan
+    /// range edge to edge, outside the weapon's target flags, not licensed by a tracking or
+    /// own-target scan, inside the minimum range, or out of reach of a stationary unit. The
+    /// cheapest tests come first. Acquisition ([`Self::scan_candidates`], from where both stand)
+    /// and G-6′ ([`Self::ranked_candidates`], from the tick-start positions) share it, so they
+    /// choose by one rule; its key is built only for what it admits ([`Self::candidate_key`]).
+    // PERFORMANCE RATIONALE:
+    // Why: This runs for every neighbour of every scanning unit each tick, acquisition's
+    // costliest loop; the stopped G-6′ branch's shared helper raised acquisition from 25 % to
+    // 33 % of a battle's instructions (plan `2026-11-24-solver-retarget-and-shoving` §4.2).
+    // What: The test is split from the key, inlined, takes the positions by value and keeps the
+    // early-out order of the scan it replaced, so acquisition does the same work as before.
+    // Trade-off: Two small functions instead of one loop body; no behaviour changes (G-T9).
+    #[inline]
+    fn admit<'w>(
+        &'w self,
+        (entity, arch): (&'w Entity, &'w UnitArchetype),
+        scope: ScanScope,
+        (neighbor_id, neighbor): (EntityId, &Entity),
+        (from, at): (SimVec2, SimVec2),
+    ) -> Option<(&'w UnitArchetype, &'w WeaponSpec)> {
+        if neighbor.owner == entity.owner
+            || entity.movement.abandoned_target == Some(neighbor_id)
+            || !Self::is_targetable_at(neighbor, at, &self.map, &self.vision_maps, entity.owner)
+        {
+            return None;
+        }
+        let dist = from.distance(at);
+        let revealed = neighbor.is_attack_revealed_to(entity.owner);
+        if self.map.world_to_cell(at).is_err()
+            || !Self::sees_point(&self.map, &self.vision_maps, entity.owner, at, revealed)
+        {
+            return None;
+        }
+        let target_arch = self.catalog.get(neighbor.unit_type_id).ok()?;
+        let weapon = arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())?;
+        let radii = arch.collision_radius + target_arch.collision_radius;
+        let scan_range = arch
+            .scan_range
+            .max(self.entity_weapon_range(entity, weapon, &arch.slug));
+        if dist > scan_range + radii || !weapon.target_flags.intersects(target_arch.attributes) {
+            return None;
+        }
+        if scope
+            .tracking
+            .is_some_and(|walking| !fires_without_attack_order(weapon, walking))
+            || scope.own_target.is_some_and(|own| !own.licenses(weapon))
+        {
+            return None;
+        }
+        if weapon.min_range > SimScalar::ZERO && dist < weapon.min_range + radii {
+            return None;
+        }
+        if scope.stationary && !self.reaches_between(entity, arch, from, neighbor, at) {
+            return None;
+        }
+        Some((target_arch, weapon))
+    }
+
+    /// The ranking key of a neighbour [`Self::admit`] admitted, with the unit at `from` and the
+    /// neighbour at `at` (world units).
+    #[inline]
+    fn candidate_key(
+        (entity, arch): (&Entity, &UnitArchetype),
+        scope: ScanScope,
+        (neighbor_id, neighbor): (EntityId, &Entity),
+        (target_arch, weapon): (&UnitArchetype, &WeaponSpec),
+        positions: (SimVec2, SimVec2),
+    ) -> TargetPriorityKey {
+        let previous = scope
+            .own_target
+            .map_or(entity.previous_target_position, |own| Some(own.anchor));
+        TargetPriorityKey {
+            threat: is_threat_to(target_arch, neighbor, arch),
+            attack_target_priority: target_arch.attack_target_priority,
+            primary: arch.primary_weapon_reaches(target_arch.mover_type),
+            tie_break: Self::tie_break(entity, arch, weapon, positions, previous),
+            entity_id: neighbor_id,
+        }
+    }
+
+    /// G-6′'s candidates (plan `2026-11-24-solver-retarget-and-shoving` §4.2): every enemy that
+    /// acquisition would admit for `entity` under its automatic attack ([`Self::admit`]), judged
+    /// from the movement phase's tick-start positions (`entity` at `position`, world units),
+    /// ranked best first by [`TargetPriorityKey`] into `ranked`, `current` left out. The
+    /// neighbour set comes from the spatial hash phase 4 built, which nothing rebuilds before
+    /// movement.
+    // PERFORMANCE RATIONALE:
+    // Why: G-6′ ranks the candidates of every standing automatic chaser each tick; fresh vectors
+    // would allocate in the movement phase's hot loop.
+    // What: The neighbour ids and the ranked list go into retained buffers the caller owns,
+    // cleared per call.
+    // Trade-off: Memory stays at the most crowded scan's high-water mark.
+    pub(crate) fn ranked_candidates(
+        &self,
+        entity: &Entity,
+        position: SimVec2,
+        current: EntityId,
+        neighbors: &mut Vec<EntityId>,
+        ranked: &mut Vec<(TargetPriorityKey, EntityId)>,
+    ) {
+        ranked.clear();
+        let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
+            return;
+        };
+        let largest_radius = self
+            .catalog
+            .archetypes()
+            .fold(SimScalar::ZERO, |largest, a| {
+                largest.max(a.collision_radius)
+            });
+        let scope = ScanScope {
+            stationary: entity.is_immobile,
+            tracking: None,
+            own_target: None,
+            largest_radius,
+        };
+        self.spatial_hash.query_radius_unordered(
+            position,
+            self.scan_extent(entity, arch) + arch.collision_radius + largest_radius,
+            neighbors,
+        );
+        for &neighbor_id in neighbors.iter() {
+            if neighbor_id == current {
+                continue;
+            }
+            let Some(neighbor) = self.entities.get(&neighbor_id) else {
+                continue;
+            };
+            let at = (position, self.tick_start_position(neighbor_id));
+            if let Some(admitted) = self.admit((entity, arch), scope, (neighbor_id, neighbor), at) {
+                let key = Self::candidate_key(
+                    (entity, arch),
+                    scope,
+                    (neighbor_id, neighbor),
+                    admitted,
+                    at,
+                );
+                ranked.push((key, neighbor_id));
+            }
+        }
+        ranked.sort_unstable_by_key(|&(key, _)| key);
     }
 
     /// Commits an acquired target to `unit` according to its front order.
@@ -1291,6 +1421,278 @@ mod chase_reading_tests {
             (false, false),
             "walking in: both chase"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod candidate_test_tests {
+    //! G-T9 of plan `2026-11-24-solver-retarget-and-shoving` (§4.2, item 1): acquisition's scan
+    //! was split into one admission test ([`SimWorld::admit`]) and a key built only for what it
+    //! admits ([`SimWorld::candidate_key`]), so that G-6′ chooses by the same rule. The scan of
+    //! the base (`main` at `e5f5c565`) is kept here, verbatim but for its signature, as the test
+    //! oracle: on generated scenes, for every unit and every scan scope, the shared test admits
+    //! the same enemies with the same keys, in the same order.
+    use super::{OwnTargetScan, ScanScope};
+    use crate::catalog::AcquireTieBreak;
+    use crate::combat::{is_threat_to, TargetPriorityKey};
+    use crate::test_support::world;
+    use crate::world::SimWorld;
+    use crate::{Entity, UnitArchetype, WeaponSpec};
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        EntityId, MoverType, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick,
+        TickBundle, UnitOrder,
+    };
+
+    /// The base's tie-break, verbatim.
+    fn oracle_tie_break(
+        entity: &Entity,
+        arch: &UnitArchetype,
+        weapon: &WeaponSpec,
+        candidate: &Entity,
+        previous: Option<SimVec2>,
+    ) -> SimScalar {
+        let distance_sq = entity.position.distance_sq(candidate.position);
+        match arch.acquire_tie_break {
+            AcquireTieBreak::Closest => distance_sq,
+            AcquireTieBreak::LeastTurning => {
+                let delta = candidate.position - entity.position;
+                let bearing = SimAngle::atan2(delta.y, delta.x);
+                let turn = super::weapon_aim(entity, weapon)
+                    .diff(bearing)
+                    .unsigned_abs();
+                SimScalar::from_i32(i32::from(turn))
+            }
+            AcquireTieBreak::ClosestToPrevious => previous.map_or(distance_sq, |previous| {
+                previous.distance_sq(candidate.position)
+            }),
+        }
+    }
+
+    /// The base's scan loop, verbatim, collecting every admitted neighbour's key in visiting
+    /// order.
+    fn oracle(
+        world: &SimWorld,
+        (entity, arch): (&Entity, &UnitArchetype),
+        scope: ScanScope,
+        neighbors: &[EntityId],
+    ) -> Vec<TargetPriorityKey> {
+        let mut admitted = Vec::new();
+        for &neighbor_id in neighbors {
+            let Some(neighbor) = world.entities.get(&neighbor_id) else {
+                continue;
+            };
+            if neighbor.owner == entity.owner
+                || entity.movement.abandoned_target == Some(neighbor_id)
+                || !SimWorld::is_entity_targetable(
+                    neighbor,
+                    &world.map,
+                    &world.vision_maps,
+                    entity.owner,
+                )
+            {
+                continue;
+            }
+            let dist = entity.position.distance(neighbor.position);
+            if world.map.world_to_cell(neighbor.position).is_err()
+                || !SimWorld::sees_enemy(&world.map, &world.vision_maps, entity.owner, neighbor)
+            {
+                continue;
+            }
+            let Ok(target_arch) = world.catalog.get(neighbor.unit_type_id) else {
+                continue;
+            };
+            let Some(weapon) =
+                arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())
+            else {
+                continue;
+            };
+            let radii = arch.collision_radius + target_arch.collision_radius;
+            let scan_range = arch
+                .scan_range
+                .max(world.entity_weapon_range(entity, weapon, &arch.slug));
+            if dist > scan_range + radii {
+                continue;
+            }
+            if !weapon.target_flags.intersects(target_arch.attributes) {
+                continue;
+            }
+            if scope
+                .tracking
+                .is_some_and(|walking| !super::fires_without_attack_order(weapon, walking))
+                || scope.own_target.is_some_and(|own| !own.licenses(weapon))
+            {
+                continue;
+            }
+            if weapon.min_range > SimScalar::ZERO && dist < weapon.min_range + radii {
+                continue;
+            }
+            if scope.stationary && !world.reaches_from_here(entity, arch, neighbor) {
+                continue;
+            }
+            admitted.push(TargetPriorityKey {
+                threat: is_threat_to(target_arch, neighbor, arch),
+                attack_target_priority: target_arch.attack_target_priority,
+                primary: arch.primary_weapon_reaches(target_arch.mover_type),
+                tie_break: oracle_tie_break(
+                    entity,
+                    arch,
+                    weapon,
+                    neighbor,
+                    scope
+                        .own_target
+                        .map_or(entity.previous_target_position, |own| Some(own.anchor)),
+                ),
+                entity_id: neighbor_id,
+            });
+        }
+        admitted
+    }
+
+    /// The shared test and key over the same neighbours, from where both stand.
+    fn shared(
+        world: &SimWorld,
+        (entity, arch): (&Entity, &UnitArchetype),
+        scope: ScanScope,
+        neighbors: &[EntityId],
+    ) -> Vec<TargetPriorityKey> {
+        neighbors
+            .iter()
+            .filter_map(|&id| {
+                let neighbor = world.entities.get(&id)?;
+                let at = (entity.position, neighbor.position);
+                let admitted = world.admit((entity, arch), scope, (id, neighbor), at)?;
+                Some(SimWorld::candidate_key(
+                    (entity, arch),
+                    scope,
+                    (id, neighbor),
+                    admitted,
+                    at,
+                ))
+            })
+            .collect()
+    }
+
+    /// A small deterministic stream.
+    struct Stream(u64);
+
+    impl Stream {
+        fn below(&mut self, bound: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 33) % bound
+        }
+    }
+
+    /// A generated scene: 30 shipped mobile archetypes of both planes, two owners, scattered over
+    /// a 24 × 24 square, some holding, some attack-moving, stepped a few ticks so that vision,
+    /// targets and remembered positions are live.
+    fn scene(seed: u64) -> Result<SimWorld, Box<dyn std::error::Error>> {
+        let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, seed);
+        let kinds: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| a.max_speed > SimScalar::ZERO && a.mover_type != MoverType::CliffJumper)
+            .map(|a| a.unit_type_id)
+            .collect();
+        let mut rng = Stream(seed);
+        let mut units = [Vec::new(), Vec::new()];
+        for _ in 0..30 {
+            let kind = kinds[usize::try_from(rng.below(kinds.len() as u64))?];
+            let owner = u8::from(rng.below(2) == 1);
+            let x = 12 + i32::try_from(rng.below(24))?;
+            let y = 12 + i32::try_from(rng.below(24))?;
+            if let Ok(id) = world.spawn_unit(kind, PlayerId(owner), SimVec2::from_i32(x, y)) {
+                units[usize::from(owner)].push(id);
+            }
+        }
+        let mut commands = Vec::new();
+        for (owner, side) in units.iter().enumerate() {
+            let (hold, walk): (Vec<_>, Vec<_>) = side.iter().partition(|id| id.0 % 3 == 0);
+            let player = PlayerId(u8::try_from(owner)?);
+            commands.push(PlayerCommand {
+                player_id: player,
+                entities: hold,
+                order: UnitOrder::HoldPosition,
+                queue: false,
+            });
+            commands.push(PlayerCommand {
+                player_id: player,
+                entities: walk,
+                order: UnitOrder::AttackMove {
+                    target: SimVec2::from_i32(24, 24),
+                },
+                queue: false,
+            });
+        }
+        for tick in 0..3 {
+            world.step(&TickBundle {
+                tick: Tick(world.current_tick),
+                commands: if tick == 0 {
+                    commands.clone()
+                } else {
+                    Vec::new()
+                },
+                state_checksum: None,
+            });
+        }
+        world.acquire_targets();
+        Ok(world)
+    }
+
+    /// G-T9: on 40 generated scenes, for every unit and each of twelve scan scopes, the shared
+    /// candidate test admits exactly the neighbours the base's scan admitted, with equal keys in
+    /// the same order.
+    #[test]
+    fn the_shared_candidate_test_admits_what_scan_candidates_admitted(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut compared = 0_usize;
+        for seed in 1..=40 {
+            let world = scene(seed)?;
+            let largest_radius = world
+                .catalog
+                .archetypes()
+                .fold(SimScalar::ZERO, |largest, a| {
+                    largest.max(a.collision_radius)
+                });
+            let mut neighbors = Vec::new();
+            for entity in world.entities.values() {
+                let arch = world.catalog.get(entity.unit_type_id)?;
+                world.spatial_hash.query_radius_unordered(
+                    entity.position,
+                    world.scan_extent(entity, arch) + arch.collision_radius + largest_radius,
+                    &mut neighbors,
+                );
+                let own = |chasing| OwnTargetScan {
+                    chasing,
+                    anchor: SimVec2::from_i32(24, 24),
+                };
+                for stationary in [false, true] {
+                    for tracking in [None, Some(false), Some(true)] {
+                        for own_target in [None, Some(own(false)), Some(own(true))] {
+                            if tracking.is_some() && own_target.is_some() {
+                                continue;
+                            }
+                            let scope = ScanScope {
+                                stationary,
+                                tracking,
+                                own_target,
+                                largest_radius,
+                            };
+                            let expected = oracle(&world, (entity, arch), scope, &neighbors);
+                            let got = shared(&world, (entity, arch), scope, &neighbors);
+                            assert_eq!(got, expected, "seed {seed}, unit {:?}", entity.id);
+                            compared += expected.len();
+                        }
+                    }
+                }
+            }
+        }
+        assert!(compared > 1_000, "{compared} admitted candidates compared");
         Ok(())
     }
 }

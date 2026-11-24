@@ -5,7 +5,7 @@
 //! `2026-11-18-contour-footprints` Amendment 4, B-142) and the contact rules of plan
 //! `2026-11-20-contact-solver` (§3.6): which movement pipeline runs, the contact solver's
 //! iteration count, its dead band and moving-overlap bound (sanctioned deviation D-α), the side
-//! rule's horizon factor, the D-β and D-δ switches, and the switch of E-1 (plan
+//! rule's horizon factor, the D-β, D-δ and D-ε switches, and the switch of E-1 (plan
 //! `2026-11-24-solver-retarget-and-shoving` §4.1: enemies never push each other). It is parsed
 //! into [`MovementRules`], validated, and carried by the [`UnitCatalog`](super::UnitCatalog) the
 //! world is built with. Like every catalog it is not hashed; lockstep peers must load equal files.
@@ -41,6 +41,10 @@ pub enum MovementPipeline {
 /// The contact rules of `movement_rules.ron` (plan `2026-11-20-contact-solver` §3.3, §3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored switches of the file's contact section, one field each"
+)]
 pub struct ContactRules {
     /// The pipeline the tick runs.
     pub pipeline: MovementPipeline,
@@ -70,10 +74,21 @@ pub struct ContactRules {
     /// absent. It exists for the bit-identity proof and for review, not for tuning.
     #[serde(default)]
     pub enemies_push_each_other: bool,
+    /// Deviation D-ε, G-6′ (plan `2026-11-24-solver-retarget-and-shoving` §4.2, B-192, pending
+    /// Q0110): an automatic chase whose target's ring has no free angle takes, in the normal
+    /// acquisition order, the next enemy in its scan range whose ring has room, before it stands.
+    /// On when absent.
+    #[serde(default = "retarget_default")]
+    pub retarget_from_full_ring: bool,
 }
 
 /// D-δ is on unless the file switches it off (Q0095).
 const fn nudge_default() -> bool {
+    true
+}
+
+/// D-ε is on unless the file switches it off (plan Amendment 17).
+const fn retarget_default() -> bool {
     true
 }
 
@@ -89,6 +104,7 @@ impl ContactRules {
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
         enemies_push_each_other: false,
+        retarget_from_full_ring: true,
     };
 
     /// These rules if they are valid (§3.6).
@@ -394,6 +410,18 @@ mod tests {
         let on = CONTACT.replace("true)", "true, enemies_push_each_other: true)");
         let rules = MovementRules::from_ron_str(&text(21, &on))?;
         assert!(rules.contact().enemies_push_each_other);
+        Ok(())
+    }
+
+    /// Deviation D-ε (plan Amendment 17): the full-ring switch is on when the file omits it, and
+    /// the file can switch it off.
+    #[test]
+    fn the_full_ring_switch_defaults_on_and_can_be_switched_off() -> SimResult<()> {
+        let absent = MovementRules::from_ron_str(&text(21, CONTACT))?;
+        assert!(absent.contact().retarget_from_full_ring);
+        let off = CONTACT.replace("true)", "true, retarget_from_full_ring: false)");
+        let rules = MovementRules::from_ron_str(&text(21, &off))?;
+        assert!(!rules.contact().retarget_from_full_ring);
         Ok(())
     }
 }

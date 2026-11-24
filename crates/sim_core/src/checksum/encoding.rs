@@ -292,7 +292,8 @@ fields!(MovementMemory {
     leash_origin,
     side_partner,
     side_left,
-    slot
+    slot,
+    ring_retarget
 });
 fields!(SlotClaim { target, point });
 fields!(ActiveBuff {

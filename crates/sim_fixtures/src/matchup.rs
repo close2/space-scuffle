@@ -985,10 +985,19 @@ mod tests {
         assert!(!Verdict::StaleKnownBug("B-192".to_owned()).passes());
     }
 
-    /// The fixture may mark a battle with a known bug and leaves the rest unmarked.
+    /// The fixture may mark a battle with a known bug and leaves the rest unmarked. The shipped
+    /// matrix carries no marker since B-192 was fixed (plan
+    /// `2026-11-24-solver-retarget-and-shoving` WP2), so the test marks one in a copy of its text.
     #[test]
     fn the_fixture_reads_a_known_bug_marker() -> Result<(), MatchupError> {
-        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let claim = "claim: \"Without splash, immortals are overrun\",";
+        let marked_text =
+            MATRIX_RON.replacen(claim, &format!("{claim} known_bug: Some(\"B-192\"),"), 1);
+        assert_ne!(
+            marked_text, MATRIX_RON,
+            "the shipped matrix holds battle 28's claim"
+        );
+        let matrix = Matrix::from_ron_str(&marked_text)?;
         let marked: Vec<_> = matrix
             .battles
             .iter()

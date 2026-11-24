@@ -117,6 +117,10 @@ struct MotionProposal {
     remove_prefix: usize,
     pop_order: bool,
     retarget: Option<SimVec2>,
+    /// G-6′ (plan `2026-11-20-contact-solver` Amendment 17): the enemy this automatic chase was
+    /// handed to because its target's ring was full; replaces the target of the front acquired
+    /// attack on commit.
+    ring_retarget: Option<EntityId>,
     clear_target: bool,
     memory: MovementMemory,
 }
@@ -139,6 +143,7 @@ impl MotionProposal {
             remove_prefix: 0,
             pop_order: false,
             retarget: None,
+            ring_retarget: None,
             clear_target: false,
             memory,
         }
@@ -195,6 +200,17 @@ impl MotionProposal {
     fn end_attack(&mut self) {
         self.discard_order();
         self.memory.restart();
+    }
+
+    /// Hands this automatic chase to `target` (G-6′, plan `2026-11-20-contact-solver` Amendment
+    /// 17): the route is dropped and the memory starts afresh, but the leash is still measured
+    /// from `leash_origin`, where the chase began, so a retarget never lengthens it.
+    fn hand_over(&mut self, target: EntityId, leash_origin: Option<SimVec2>) {
+        self.drop_route();
+        self.memory.restart();
+        self.memory.leash_origin = leash_origin;
+        self.memory.ring_retarget = Some(target);
+        self.ring_retarget = Some(target);
     }
 
     /// Ends an attack order on a target this unit cannot get to, and leaves that target alone.
@@ -256,6 +272,16 @@ impl MotionProposal {
             if actor.has_task_order() {
                 actor.task.goal = Some(destination);
             }
+        }
+        if let Some(chosen) = self.ring_retarget {
+            if let Some(UnitOrder::AttackTarget {
+                target,
+                origin: AttackOrigin::Acquired,
+            }) = actor.order_queue.front_mut()
+            {
+                *target = chosen;
+            }
+            actor.current_target = Some(chosen);
         }
         if self.clear_target {
             actor.current_target = None;
@@ -1258,7 +1284,8 @@ impl SimWorld {
     ///
     /// The range check runs first and needs the whole world. Under the solver pipeline the ring
     /// rule then decides whether the unit stands for want of room (plan
-    /// `2026-11-20-contact-solver` Amendment 7, item 2). The chase then runs in stages over a
+    /// `2026-11-20-contact-solver` Amendment 7, item 2), or, for an automatic chase, is handed to
+    /// another enemy with room (G-6′, Amendment 17). The chase then runs in stages over a
     /// [`MotionDraft`], like walking, with the target's position as the goal.
     fn prepare_pursuit(
         &mut self,
@@ -1291,30 +1318,109 @@ impl SimWorld {
                 kept: kept.map(|gap| gap.point),
             })?;
             proposal.memory.slot = None;
-            match aim {
+            let aim = match aim {
                 RingAim::Stand => {
-                    // G-6: no free angle on the ring; the order stays and no stall accrues
-                    // (Q0089).
-                    proposal.velocity = SimVec2::ZERO;
-                    proposal.anim = AnimState::Idle;
-                    return Ok(proposal);
-                }
-                RingAim::Straight => {}
-                RingAim::Gap(_, point) => {
-                    // A unit walking to a gap measures its progress to the gap point; a new
-                    // gap starts that measure afresh.
-                    if kept.is_none_or(|gap| gap.point != point) {
-                        proposal.memory.progress_best = None;
+                    let full = FullRing {
+                        position,
+                        leash,
+                        leash_origin: proposal.memory.leash_origin,
+                    };
+                    match self.leave_full_ring(entry, &pursuit, full)? {
+                        Handover::Stand => {
+                            // G-6: no free angle on the ring and no other enemy with room; the
+                            // order stays and no stall accrues (Q0089).
+                            proposal.velocity = SimVec2::ZERO;
+                            proposal.anim = AnimState::Idle;
+                            return Ok(proposal);
+                        }
+                        Handover::Settled(settled) => return Ok(settled),
+                        Handover::Chase(handed, chase, aim) => {
+                            proposal = handed;
+                            pursuit = chase;
+                            aim
+                        }
                     }
-                    proposal.memory.slot = Some(SlotClaim {
-                        target: target_id,
-                        point,
-                    });
-                    pursuit.gap = Some(point);
                 }
+                other => other,
+            };
+            if let RingAim::Gap(_, point) = aim {
+                // A unit walking to a gap measures its progress to the gap point; a new gap
+                // starts that measure afresh.
+                let kept = kept.filter(|gap| gap.target == pursuit.target);
+                if kept.is_none_or(|gap| gap.point != point) {
+                    proposal.memory.progress_best = None;
+                }
+                proposal.memory.slot = Some(SlotClaim {
+                    target: pursuit.target,
+                    point,
+                });
+                pursuit.gap = Some(point);
             }
         }
-        self.chase_target(entry, target_id, proposal, &pursuit)
+        let target = pursuit.target;
+        self.chase_target(entry, target, proposal, &pursuit)
+    }
+
+    /// G-6′ (plan `2026-11-20-contact-solver` Amendment 17, R10, deviation D-ε): an automatic
+    /// chase whose target's ring is full is handed to the first other enemy, in acquisition
+    /// order, whose ring has room ([`SimWorld::ring_retarget`]), with the pursuit and the aim at
+    /// it; it stands when the switch `contact.retarget_from_full_ring` is off, when the chase is a
+    /// player's `Attack` (never rewritten), or when no candidate has room.
+    fn leave_full_ring(
+        &mut self,
+        entry: MotionEntry,
+        pursuit: &Pursuit,
+        full: FullRing,
+    ) -> Result<Handover, MovementInvariant> {
+        if pursuit.origin != AttackOrigin::Acquired
+            || !self
+                .catalog
+                .movement_rules()
+                .contact()
+                .retarget_from_full_ring
+        {
+            return Ok(Handover::Stand);
+        }
+        let Some((chosen, aim, _)) =
+            self.ring_retarget(entry, full.position, pursuit.target, full.leash)?
+        else {
+            return Ok(Handover::Stand);
+        };
+        Ok(
+            match self.start_pursuit(entry, chosen, AttackOrigin::Acquired)? {
+                // A candidate is targetable and in the unit's weapon by construction; should the
+                // live world disagree, the unit stands at its own target as G-6 says.
+                PursuitStart::Settled(settled) if settled.pop_order => Handover::Stand,
+                PursuitStart::Settled(mut settled) => {
+                    settled.hand_over(chosen, full.leash_origin);
+                    Handover::Settled(settled)
+                }
+                PursuitStart::Chase(mut handed, chase) => {
+                    handed.hand_over(chosen, full.leash_origin);
+                    Handover::Chase(handed, chase, aim)
+                }
+            },
+        )
+    }
+
+    /// The band's outer edge, raw units, at which `entry`'s weapon reaches `target_id` (both
+    /// radii added), or `None` when it has no weapon against it or either unit is gone.
+    ///
+    /// # Errors
+    /// The [`MovementInvariant`]s of [`Self::pursuit_band`].
+    pub(super) fn chase_band(
+        &self,
+        entry: MotionEntry,
+        target_id: EntityId,
+    ) -> Result<Option<i128>, MovementInvariant> {
+        let (Some(actor), Some(target)) =
+            (self.entities.get(&entry.id), self.entities.get(&target_id))
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .pursuit_band(entry, actor, target, target_id, AttackOrigin::Acquired)?
+            .map(|pursuit| pursuit.max))
     }
 
     /// The pursuit's first stage: a proposal that settles the tick when the target is gone, the
@@ -1497,6 +1603,26 @@ impl SimWorld {
             gap: None,
         }))
     }
+}
+
+/// Where a standing automatic chaser stands, for G-6′ ([`SimWorld::leave_full_ring`]): its
+/// position, its chase's leash (origin and radius, world units) and the leash origin its memory
+/// keeps.
+#[derive(Clone, Copy)]
+struct FullRing {
+    position: SimVec2,
+    leash: Option<(SimVec2, SimScalar)>,
+    leash_origin: Option<SimVec2>,
+}
+
+/// What G-6′ made of a chase whose target's ring is full ([`SimWorld::leave_full_ring`]).
+enum Handover {
+    /// No other enemy has room (or the rule does not apply): stand as G-6 says.
+    Stand,
+    /// Handed to an enemy already in reach: the proposal is final.
+    Settled(MotionProposal),
+    /// Handed to an enemy out of reach: chase it with this pursuit and aim.
+    Chase(MotionProposal, Pursuit, RingAim),
 }
 
 /// How a pursuit's first stage ended ([`SimWorld::start_pursuit`]).
@@ -3293,6 +3419,7 @@ mod tests {
             remove_prefix: 0,
             pop_order: false,
             retarget: None,
+            ring_retarget: None,
             clear_target: false,
             memory: MovementMemory {
                 flank_active: true,

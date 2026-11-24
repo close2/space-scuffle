@@ -43,6 +43,11 @@
 //   closed this tick, so a unit is never pushed by enemies (StarCraft II patch 1.2.0; the owner's
 //   Q0095 answer); a body whose terrain step was refused counts as fixed against its enemies.
 //   true restores the even split. Off when absent; a switch for review and proofs, not a knob.
+// - `retarget_from_full_ring` (deviation D-epsilon, G-6' of plan
+//   `docs/plans/2026-11-24-solver-retarget-and-shoving.md`, B-192, pending Q0110): an automatic
+//   chase whose target's ring has no free angle takes, in the normal acquisition order, the next
+//   enemy in its scan range whose ring has room before it stands; a player's Attack is never
+//   retargeted. On when absent.
 // Validated at load: iterations >= 1, 0 < dead_band_permille < moving_overlap_permille < 1000,
 // side_horizon_factor >= 1.
 (
@@ -61,5 +66,6 @@
         moving_friends_push: true,
         nudge_engaged_along_ring: true,
         enemies_push_each_other: false,
+        retarget_from_full_ring: true,
     ),
 )
