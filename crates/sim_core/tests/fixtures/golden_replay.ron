@@ -452,6 +452,17 @@
 // and debug. Under the solver at schema 45 the first changed checkpoint is 0 (ticks 1 to 50); at
 // schema 46 every checkpoint changes, the schema being encoded. Native debug and release and
 // wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-23-turret-wind-up WP3 (checksum schema 46, no encoding change) because
+// behaviour moved: a wind-up holds its unit unless the weapon of the swing fires while moving (D-6,
+// B-90), so a turreted weapon now holds its unit as a hull weapon does. Per-tick dumps of every
+// entity on main e5f5c565 and on WP3 are equal up to tick 253. The first difference is at tick 254
+// (checkpoint 6, ticks 251 to 300), entity 34 of "red_siege" (railgun_crawler, tank mode, standing):
+// the target of its wind-up, entity 13 of "blue_infantry", died on tick 253. On tick 254 the movement
+// phase, which runs before the combat phase ends the swing, holds the tank for that wind-up (the
+// weapon resolved for a target that is gone is the ground weapon, Stopped), so its acquired attack
+// order ends on tick 255 instead of 254, as a hull-weapon unit's already did (registered as B-207).
+// Checkpoints 1 to 5 are unchanged; every checkpoint from 6 on changed. golden_replay_orders did not
+// move. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
     checksum_schema: 46,
     seed: 0x5EED_0F_5CAFF1E,
@@ -484,20 +495,20 @@
         0xbeff44a6fa0b63ff,
         0x4153942439264b03,
         0xd2f4fdbc70fc17e1,
-        0x54a784c859111734,
-        0x22fcfcc70986cc22,
-        0x8ded64eb22bf425d,
-        0x18df3efe29db0de4,
-        0xc0f95ccaed604677,
-        0x695cdf4a7bd346b4,
-        0xf14cfc7ab87b365d,
-        0x134d1719fb56d928,
-        0xb3f96336bec7d519,
-        0xd57b9ecce6da8dcb,
-        0xb0704e3a9795cd36,
-        0x3fd2e8bb6a50b1ec,
-        0x06128fb56ff90175,
-        0x9dcb0061bc943b20,
-        0x8cfe1ab77ea98948,
+        0x5672dcff3cc9d4b7,
+        0x910683565be8a38b,
+        0x26cf7fbb5d732e76,
+        0x66d53c6d838f60c1,
+        0x5a3416ec646ad59f,
+        0x1e01552b6a8028d6,
+        0x53c068a52343856e,
+        0x7cddbc5ee3f824c7,
+        0xe66931fa3e3badc0,
+        0x62084ccdba361c6c,
+        0xe310f93093559a77,
+        0xe7167f46bc8e8139,
+        0x2deafd383c6d00b5,
+        0x38bf18afc2ab7a97,
+        0x890755e89d14bba0,
     ],
 )

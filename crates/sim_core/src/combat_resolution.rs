@@ -841,8 +841,10 @@ impl SimWorld {
     /// A weapon's cooldown and backswing run on every tick whether or not the unit has a target,
     /// as in `StarCraft` II. Resolving against the ground alone found no weapon for an air-only
     /// unit, which then skipped its weapon step and froze its cooldown and backswing until it
-    /// next had a target (plan `2026-11-05-sc2-deviation-fixes` B-79).
-    fn idle_weapon_plane(entity: &Entity, arch: &UnitArchetype) -> MoverType {
+    /// next had a target (plan `2026-11-05-sc2-deviation-fixes` B-79). The movement phase reads
+    /// the same plane for a wind-up whose target is gone (plan `2026-11-23-turret-wind-up`
+    /// Amendment 2).
+    pub(crate) fn idle_weapon_plane(entity: &Entity, arch: &UnitArchetype) -> MoverType {
         if arch
             .weapon_against(MoverType::Ground, entity.active_siege_weapon())
             .is_some()

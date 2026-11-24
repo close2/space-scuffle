@@ -886,6 +886,15 @@
         // 20 of 24 with 10 to 31 left, and the colossi 4 with 1 to 3 left (seed 33 of record:
         // colossi, 2 left); with the nudge off the colossi win all 24. Colossus fire rate, damage
         // per sweep and enemy overlap are unchanged (evidence 2026-11-20-contact-solver §13.12).
+        // Restated for plan 2026-11-23-turret-wind-up WP3 (D-6, B-90; AGENTS.md section 8): a
+        // turreted weapon's wind-up now holds its colossus as a hull weapon's does. On the same
+        // 24 seeds the zerglings win 18 with 4 to 31 left and the colossi 6 with 1 to 3 left
+        // (seed 33 of record unchanged: colossi, 2 left); the colossi also win seeds 4 and 12 (not
+        // of record). On both, the first difference is at tick 16: a colossus whose wind-up
+        // target, a zergling, died on tick 15 stands for that stale wind-up for one tick (B-207)
+        // where it used to walk on. The colossi's shots per alive colossus-tick are unchanged
+        // (36.83 and 36.79 per 1000 over the matrix's 20 seeds; evidence
+        // 2026-11-23-turret-wind-up, WP3). The claim and the range hold.
         expect: (blue: (0, 31), red: (0, 3)),
     ),
     (
