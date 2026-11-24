@@ -907,6 +907,7 @@ schema change) merged in before WP6. Measurements and traces are in the
 | WP4 | `4f849b0b` | Battle 42, positions by whole cells (below) | the new battle only |
 | WP5 | `6459edae` | D-3's filter at every listed reader, D-5's drop of an automatic attack lost to fog (B-185 weapon half) | battles 35 and 42 (all seeds), battle 31 (its 14 counted seeds, no outcome changed), showcase effects (7 of 9 seeds); all counted, all first differences at or after a counted event; goldens unchanged |
 | WP6 | this commit | Records, evidence, As built | — |
+| WP7 | `ecf16ebb`, `9e9b7ce0`, `de5cf350`, this commit (branch `weapon-validation-wp7`, `main` `a59368a3` merged as `169b0c98`) | Amendment 2; `MovementMemory::last_seen` written by acquisition and walked by `walking_goal` in both pipelines (B-195, Q0106 part 1 (a)); schema **47**, provisional, goldens and sandbox re-recorded with the latent proof on four builds | none (WP7's probe counted no player's order on a target lost to fog; every world byte-identical before and after the merge) |
 
 Deviations and findings:
 - **Battle 42's positions** (§7.4's verify failed as written; Amendment 1): sight is whole cells, and the plan's tank at x = 50.0
@@ -921,4 +922,9 @@ Deviations and findings:
   the evidence); they now run the vision phase first or place a spotter.
 - `MissileValidation`'s refusal is `SimCoreError::CatalogInvalidValue` (the catalog's existing typed error) naming
   `…missile_validation`.
-- WP7 (B-195, the chase) is not started: it waits for the contact solver and Q0106 part 1.
+- WP7 (B-195, the chase) is built per Amendment 2 on `main` `ffc6f298` and merged with `a59368a3`. Deviations: the
+  missile-into-fog bench of WP5 puts its shooter on hold after the launch (its shooter now walks on under its order and
+  fires anew); WP5's `a_players_order_is_kept_but_holds_fire` is replaced by the walk test; an unreachable last seen
+  point (a target seen on a plateau by a spotter that left) is walked to the nearest reachable point, which the
+  sighting keeps (`an_unreachable_last_seen_point_is_replaced_by_the_nearest_reachable_one`). Schema 47 is
+  provisional: if `solver-followup` takes it first, the merge renumbers and re-records with the same proof.

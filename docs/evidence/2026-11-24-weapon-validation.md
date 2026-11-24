@@ -200,3 +200,59 @@ By the orchestrator's decision (plan Amendment 1), battle 35's claim reads "Viki
 out of their sight survive (5.0.14 TargetFilters Visible)" and its expectation is the range measured on the merged
 tree's 20 seeds, `red (1, 3)` (per seed: 3203386110 1, 11 1, 22 2, 33 3, 1 1, 2 1, 3 2, 4 1, 5 1, 6 2, 7 2, 8 2, 9 2,
 10 3, 12 1, 13 1, 14 3, 15 1, 16 1, 17 1; Vikings 12 on every seed). The trace is WP5's above.
+
+## WP7: the chase to the last seen point (B-195, Amendment 2)
+
+Scripts and logs under `~/scratch/weapon-wp7/` (not committed): `scripts/` (the measure, compare and proof scripts of
+§7.1, adapted), `probe/` (the probe patch on a copy of `ffc6f298` and its outputs), `red/`, `world-*`, `proof-*`.
+
+**Probe (on `main` `ffc6f298`).** A scratch patch in acquisition printed, for every unit under a player's
+(`Explicit`) attack, the first tick its player saw the target under the order, and every visit on which the target
+was targetable but unseen (mobile or immobile, with whether it had been seen before). It played every world of §7.1
+and both goldens. Result: player's attack orders exist only in matrix battles 12c and 20 (one per seed, the Viking and
+the Brood Lord analogues, all 20 seeds), each seen on tick 1 and never lost; **no world counted an unseen event**,
+mobile or immobile, seen before or not. Battles 31 and 33, the showcase and showcase-effects scenarios (default and
+seeds 1 to 8) and both goldens give no player's attack order at all. So WP7 was predicted to move no measured world.
+
+**Red runs** (`red/`). (1) On `main` with Amendment 2 only, the new tests do not compile: `LastSeen` and
+`MovementMemory::last_seen` do not exist (`red1-compile.log`). (2) With the one test that needs the type removed,
+`a_players_order_on_a_lost_target_walks_to_where_it_was_last_seen_and_ends` and
+`a_lost_target_seen_again_resumes_the_attack` fail on the solver pipeline: the shooter leaves its row after the
+target (tick 7, `(10.77, 25.07)`; after 10 ticks `(10.87, 25.30)`), i.e. it chases the true position
+(`red2-behaviour.log`).
+
+**Re-derived test.** WP5's `a_players_order_is_kept_but_holds_fire` claimed B-195's interim behaviour and is replaced
+by the walk test. The missile-into-fog bench (`a_missile_whose_target_walks_into_fog_lands_on_the_point`,
+`a_missile_that_skips_the_weapon_check_follows_a_target_into_fog`) now puts its shooter on hold after the launch:
+under its attack order the shooter walked to the last seen point, saw the target again and fired a second missile,
+which those tests read as the first. The P-6 tests whose target is never seen keep their claims (Amendment 2).
+
+**Worlds.** Every output of §7.1 is byte-identical to `main`: before the merge (`ffc6f298` against the WP7 tree with
+`last_seen` unhashed, 483 files, 0 differing) and after it (`a59368a3` against the merged tree `169b0c98`, 483 files,
+0 differing; `a59368a3` against `ffc6f298` also 0). No battle moved, so nothing is restated, and stop rule 3 holds.
+
+**Goldens and sandbox.** Neither golden gives a player's attack order, so no behaviour moved there. Latent proof
+(`proof-latent`, on the tree before the merge, and `proof-latentm`, on the merged tree `169b0c98`, each a git-archive
+copy built in a fresh target directory): with `last_seen` unhashed at schema 46, both goldens and
+`DEFAULT_SANDBOX_CHECKSUM` reproduce `main`'s values on native debug and release and `wasm32-wasip1` release and
+debug. The field then went into the encoding at schema 47 (provisional) and the fixtures were re-recorded once on the
+merged tree (`de5cf350`), where the same four builds reproduce the new lists and sandbox value (`proof-final`).
+
+**Client.** The skirmish stage log (`skirmish_match_tests`, release, radv) on `de5cf350` holds the same 42 lines as
+on `main` `a59368a3` (the pilot's only attack orders name enemy structures it sees).
+
+**Throughput** (`cargo bench -p sim_core --bench throughput`, medians of three, `main` `a59368a3` and WP7 interleaved,
+two rounds, load average 17 to 41 on the shared machine): every scenario stays above 50 ticks/s on WP7.
+
+| Map | Units | `main` (rounds 1, 2) | WP7 (rounds 1, 2) |
+|---|---:|---:|---:|
+| 64x64 | 0 | 3135, 3120 | 2617, 2962 |
+| 64x64 | 100 | 802, 782 | 810, 708 |
+| 64x64 | 400 | 109, 62 | 111, 110 |
+| 128x128 | 400 | 179, 168 | 180, 179 |
+| 256x256 | 0 | 197, 189 | 196, 196 |
+| showcase_canyon | 400 | 80, 81 | 77, 78 |
+| 64x64, 67 casters | 400 | 199, 199 | 198, 204 |
+
+A first pair taken at load average 95 read 43 ticks/s on `showcase_canyon` for `main` and 73 for WP7; the noise is
+the load, not the change (one record lookup per attack-ordered unit in acquisition and one in movement).
