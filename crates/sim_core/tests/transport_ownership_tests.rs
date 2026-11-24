@@ -451,7 +451,8 @@ fn public_entity_helpers_do_not_advance_cargo_weapon_or_apply_push() -> TestResu
             id: other.id,
             position: point(6, 4),
             combined_radius: SimScalar::HALF,
-        })
+        }),
+        sim_core::Mandate::AttackOrder,
     ));
     assert!(!actor.issue_order(UnitOrder::Stop, false)?);
     sim_core::resolve_push_interaction(

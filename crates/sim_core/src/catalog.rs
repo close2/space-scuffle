@@ -23,13 +23,13 @@ use crate::upgrades::{UpgradeCatalog, ATTACK_DASH_ABILITY_SLUG, OVERCLOCK_ABILIT
 use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
-    AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec,
-    FactionId, FootprintShape, HarvesterSpec, MoverType, OverclockSpec, PlacementFlag,
-    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
-    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
+    ArchetypeCapabilities, ArmorClassId, AttackDashSpec, Attribute, AttributeBonuses,
+    AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape, HarvesterSpec,
+    MoverType, OverclockSpec, PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior,
+    ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff,
+    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders,
+    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -1325,7 +1325,7 @@ impl TurretIdleDef {
 #[derive(Debug, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, channel, suicide, melee)"
+    reason = "independent authored facts of one weapon (turret, attack-order option, channel, suicide, melee)"
 )]
 struct WeaponSpecDef {
     name: String,
@@ -1346,6 +1346,15 @@ struct WeaponSpecDef {
     /// What the turret does with no target (`CTurret` `Idle` and `YawIdleRate`); required,
     /// `Hold` on a hull weapon.
     pub(crate) turret_idle: TurretIdleDef,
+    /// Whether the unit may move while the weapon attacks (see
+    /// [`WeaponSpec::allowed_movement`]). Omitted reads the engine default, `Stopped`.
+    #[serde(default)]
+    pub(crate) allowed_movement: AllowedMovement,
+    /// Whether the weapon fires outside an attack order, the inverse of `StarCraft` II's
+    /// `OnlyFireWhileInAttackOrder` (see [`WeaponSpec::fires_outside_attack_order`]). Omitted reads
+    /// the engine default, `false`.
+    #[serde(default)]
+    pub(crate) fires_outside_attack_order: bool,
     base_damage: f32,
     /// Bonus damage per strike against attributes: `(attribute, bonus)` pairs, at most one per
     /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
@@ -1571,6 +1580,8 @@ impl UnitArchetypeDef {
                 SimAngle::PI
             },
             turret_idle: w.turret_idle.to_spec(),
+            allowed_movement: w.allowed_movement,
+            fires_outside_attack_order: w.fires_outside_attack_order,
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
             attribute_bonuses: w.attribute_bonuses.iter().fold(
                 AttributeBonuses::NONE,

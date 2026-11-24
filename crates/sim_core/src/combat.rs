@@ -13,13 +13,16 @@
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
 //!    to shields or life, restarts both. No vital regenerates before the entity is completed,
 //!    and energy regenerates without a delay (`world::upkeep`).
+//! 5. A weapon works against a target outside an attack order only when its data lets it
+//!    ([`fires_without_attack_order`]), and then a hull weapon never turns the hull: it fires at
+//!    what lies in its arc ([`Mandate::OwnInitiative`], plan `2026-11-23-turret-wind-up` D-5).
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use rand::Rng;
 use sim_types::{
-    AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
-    SimVec2, StructureStrike, TurretIdle, UnitOrder,
+    AllowedMovement, AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState,
+    SimAngle, SimScalar, SimVec2, StructureStrike, TurretIdle, UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -487,6 +490,40 @@ pub struct WeaponTarget {
     pub combined_radius: SimScalar,
 }
 
+/// Why a weapon works against its target this tick, decided by the combat phase from the unit's
+/// orders and passed to [`step_entity_weapon`] (plan `2026-11-23-turret-wind-up` D-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mandate {
+    /// The unit's front order attacks the target, or the unit holds position: the weapon turns
+    /// its mount towards the target, a hull weapon by turning the hull.
+    AttackOrder,
+    /// The weapon fires at a target acquisition tracks for it outside an attack order
+    /// ([`fires_without_attack_order`]). The hull belongs to the unit's order, so a hull weapon
+    /// starts a swing only at a target already inside its arc and never turns the hull; a
+    /// turret slews as under an attack order.
+    OwnInitiative,
+}
+
+impl Mandate {
+    /// Whether `weapon` may turn its mount towards a target: a turret always, a hull weapon only
+    /// under an attack order.
+    const fn may_slew(self, weapon: &WeaponSpec) -> bool {
+        weapon.has_turret || matches!(self, Self::AttackOrder)
+    }
+}
+
+/// Whether `weapon` may fire while its unit is in no attack order (plan
+/// `2026-11-23-turret-wind-up` D-2): its data clears `StarCraft` II's
+/// `OnlyFireWhileInAttackOrder` ([`WeaponSpec::fires_outside_attack_order`]), and, while the
+/// unit's order walks it (`walking`, [`Entity::order_walks`]), it is
+/// [`AllowedMovement::Moving`]. `Slowing` is read as `Stopped` (bug B-178). The mount plays no
+/// part.
+#[must_use]
+pub(crate) fn fires_without_attack_order(weapon: &WeaponSpec, walking: bool) -> bool {
+    weapon.fires_outside_attack_order
+        && (weapon.allowed_movement == AllowedMovement::Moving || !walking)
+}
+
 /// Rotates the weapon mount towards `angle`: a turret by at most its own rate, a hull-mounted
 /// weapon by turning the hull within what is left of this tick's hull budget
 /// ([`Entity::turn_hull_towards`]).
@@ -648,8 +685,15 @@ fn swing_arc(entity: &Entity, weapon: &WeaponSpec, target: WeaponTarget) -> SimA
 /// discharges in this call (a swing with damage point 0, [`start_swing`]).
 ///
 /// A weapon engaged with `target` whose aim has fallen outside the engaged arc has lost it: it
-/// must bring the target within the acquisition arc again ([`swing_arc`]).
-fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+/// must bring the target within the acquisition arc again ([`swing_arc`]). A mount that may not
+/// turn under `mandate` ([`Mandate::OwnInitiative`] on the hull) waits for the target to come
+/// into its arc instead.
+fn step_ready_weapon(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target: WeaponTarget,
+    mandate: Mandate,
+) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
         return false;
@@ -666,13 +710,15 @@ fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTar
     if is_within_firing_arc(aim, entity.position, target.position, arc) {
         // An unrestricted arc removes the aiming gate, not the aiming: the turret
         // or hull keeps slewing, so a firing weapon never stays pointed away.
-        if arc >= SimAngle::DEG_180 {
+        if arc >= SimAngle::DEG_180 && mandate.may_slew(weapon) {
             slew_towards(entity, weapon, target_angle);
         }
         // CRITICAL COOLDOWN GUARD:
         // An entity may align with a target while its weapon is on cooldown,
         // but MUST NOT start a swing until cooldown has fully elapsed!
         entity.weapon_cooldown_remaining == 0 && start_swing(entity, weapon, target)
+    } else if !mandate.may_slew(weapon) {
+        false
     } else {
         entity.weapon_phase = WeaponPhase::RotatingToTarget {
             target_id: target.id,
@@ -711,8 +757,18 @@ fn slew_and_try_swing(
 
 /// Steps a rotating weapon until it is aligned, or returns it to ready if the target left.
 /// Returns true when the shot discharges in this call (a swing with damage point 0 that starts
-/// on the call it is aligned, [`start_swing`]).
-fn step_rotating_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+/// on the call it is aligned, [`start_swing`]). A mount that may no longer turn under `mandate`
+/// stops rotating and steps as a ready weapon.
+fn step_rotating_weapon(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target: WeaponTarget,
+    mandate: Mandate,
+) -> bool {
+    if !mandate.may_slew(weapon) {
+        entity.weapon_phase = WeaponPhase::Ready;
+        return step_ready_weapon(entity, weapon, target, mandate);
+    }
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
         entity.weapon_phase = WeaponPhase::Ready;
@@ -759,8 +815,10 @@ fn step_windup(
 /// Advances the weapon state machine for an entity for a single tick.
 ///
 /// `target_opt` is the available enemy this weapon should work against; during a swing the
-/// caller passes the swing's bound target. Returns true when a shot discharges this tick.
-/// A carried actor returns false without changing any field, including cooldown.
+/// caller passes the swing's bound target. `mandate` says why: under an attack order (or a hold)
+/// the mount turns towards the target, outside one a hull weapon never turns the hull
+/// ([`Mandate`]). Returns true when a shot discharges this tick. A carried actor returns false
+/// without changing any field, including cooldown.
 ///
 /// The attack cycle is `weapon.period_ticks` for every damage point: a swing that starts on
 /// tick T releases on T + `damage_point_ticks` (on T itself for a damage point of 0) and charges
@@ -769,6 +827,7 @@ pub fn step_entity_weapon(
     entity: &mut Entity,
     weapon: &WeaponSpec,
     target_opt: Option<WeaponTarget>,
+    mandate: Mandate,
 ) -> bool {
     // Valid cargo has no weapon participation; even cooldown/phase remain frozen.
     if entity.is_loaded_in_transport() {
@@ -792,11 +851,11 @@ pub fn step_entity_weapon(
 
     match entity.weapon_phase {
         WeaponPhase::Ready => {
-            target_opt.is_some_and(|target| step_ready_weapon(entity, weapon, target))
+            target_opt.is_some_and(|target| step_ready_weapon(entity, weapon, target, mandate))
         }
         WeaponPhase::RotatingToTarget { .. } => {
             if let Some(target) = target_opt {
-                step_rotating_weapon(entity, weapon, target)
+                step_rotating_weapon(entity, weapon, target, mandate)
             } else {
                 entity.weapon_phase = WeaponPhase::Ready;
                 false
@@ -809,7 +868,14 @@ pub fn step_entity_weapon(
         WeaponPhase::Backswing {
             target_id,
             remaining_ticks,
-        } => step_backswing(entity, weapon, target_opt, target_id, remaining_ticks),
+        } => step_backswing(
+            entity,
+            weapon,
+            target_opt,
+            target_id,
+            remaining_ticks,
+            mandate,
+        ),
         WeaponPhase::Cooldown => false,
     }
 }
@@ -828,19 +894,20 @@ pub fn step_entity_weapon(
 /// `2026-11-04-combat-sc2-alignment` D-2, Q0038). `bound` is the target of the swing whose
 /// follow-through this is; `remaining_ticks` is the backswing left before this tick. Returns
 /// true when the shot discharges in this call: a swing with damage point 0 that starts out of
-/// the backswing releases at once (D-3).
+/// the backswing releases at once (D-3). `mandate` is passed on to the ready step.
 fn step_backswing(
     entity: &mut Entity,
     weapon: &WeaponSpec,
     target_opt: Option<WeaponTarget>,
     bound: EntityId,
     remaining_ticks: u16,
+    mandate: Mandate,
 ) -> bool {
     let remaining_ticks = remaining_ticks.saturating_sub(1);
     if entity.weapon_cooldown_remaining == 0 {
         if let Some(target) = target_opt {
             entity.weapon_phase = WeaponPhase::Ready;
-            let released = step_ready_weapon(entity, weapon, target);
+            let released = step_ready_weapon(entity, weapon, target, mandate);
             if entity.weapon_phase != WeaponPhase::Ready {
                 return released;
             }

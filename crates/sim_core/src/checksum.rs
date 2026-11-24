@@ -91,7 +91,11 @@ use std::collections::BTreeMap;
 /// `attacks_count` (plan `2026-11-23-strike-delays` D-6).
 /// Schema 39 adds each resource node's release tick, `ResourceLines::release_tick`, after the
 /// map's resource nodes (plan `2026-11-23-harvest-handoff` D-3).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 39;
+/// Schema 40 adds each weapon's movement rule (0 stopped, 1 slowing, 2 moving) and whether it fires
+/// outside an attack order (a `bool`), `WeaponSpec::allowed_movement` and
+/// `WeaponSpec::fires_outside_attack_order`, after `turret_idle` (plan `2026-11-23-turret-wind-up`
+/// D-9).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 40;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
