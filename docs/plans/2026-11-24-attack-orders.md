@@ -852,3 +852,40 @@ unburrowed Lurker.
 
 ## As built
 
+WP0 to WP4 on branch `attack-orders-plan`, one commit each: WP0 `e97c2e82`, WP1 `1d353ed4`, WP2 `5e5b4fe8`,
+WP3 `86189817`, WP4 (this section and the records). WP5 waits for the contact solver (D-9). Measurements, red runs
+and rewritten tests are in the [evidence](../evidence/2026-11-24-attack-orders.md).
+
+1. **B-numbers.** B-186 and B-187 kept: `main` ended at B-185 when this branch merged it (the vision branch took
+   B-182 to B-185). They are marked "next free at merge" in their rows.
+2. **No schema, golden or world moved.** Every measured world of §7 is byte-identical on WP1 and WP2 (483 of 483
+   files), and the skirmish stage log is identical on WP3. The checksum schema is untouched.
+3. **`CatalogError::ScanMoveWithoutHoldPosition`** is the typed variant of D-1, on the catalog's existing typed error
+   (`catalog::CatalogError`, reached as `SimCoreError::SpellCatalog`). Its `stance` names `default_stance_orders` or
+   `modes.<name>.orders`.
+4. **D-3's shape.** The simulation decides each recipient in a read-only `SimWorld::takes_plain_order` before
+   borrowing it mutably, rather than looking the target up once before the loop: the target lookup is per
+   recipient (a map read), with the same answer. A target that is gone or dead refuses every recipient, with no
+   diagnostic.
+5. **D-5's shape.** `BattleCommandQueue::submit_attack_on_unit` validates both commands before queuing either and
+   returns the last command's sequence; the input marks one Attack marker at the unit. The walkers' point is the
+   simulation point of the picked unit's ground point (`sim_point(unit.ground)`).
+6. **P-4 (R-1) did not occur.** An attack ordered on an own unit in reach strikes it within one weapon period plus
+   its damage point, and a mobile attacker out of reach closes in and strikes; the victim and an own bystander
+   acquire nothing. Nothing moved to WP5 under §8 rule 4.
+7. **P-6's delivery** is read from the simulation's command phase (`SimWorld::process_commands`): an armed structure
+   out of reach takes the attack and drops it later in the same tick, by combat's rule.
+8. **P-7 lives in `battle_mode_tests.rs`** (four tests); `battle_card_tests.rs` needed no change and passes. The
+   shipped Medivac and Lurker analogues are presentable, so P-7 uses them unedited.
+9. **Tests rewritten by §8 rule 4** (listed per package in the evidence): in WP1 the catalog unit tests of the
+   default stance, `stance_orders_tests`' default-stance test (Stop and Hold only), two runtime-catalog RON edits and
+   two `UnitArchetype` literals; in WP2 `scenario_tests::enter_modes_queues_behind_earlier_orders`, whose burrowing
+   units now walk along (the test authors them without an A command at run time to keep its "at once" branch); in
+   WP3 the two Lurker card tests, the previous plan's P-3 Attack-half test (replaced by P-6) and the self-attack
+   expectation of `stationary_armed_actor_can_target_hostile_but_cannot_attack_move` (`Capability`, not
+   `InvalidTarget`).
+10. **Removed:** the HUD's `default_armed`, `mode_armed` and `settled_armed` (no reader left). `is_armed` and
+    `ArchetypeCommands::armed` stay; tests read them.
+11. **The S8 join** found what the plan's §16 described, with two notes recorded in the evidence: the Bunker's
+    redirect is a `CAbilRedirect`, so it does not appear, and `WarpPrismPhasing` carries `AttackWarpPrism`, which
+    excludes every alliance (S4).

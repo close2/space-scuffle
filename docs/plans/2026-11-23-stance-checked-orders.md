@@ -776,3 +776,7 @@ detail, a status line saying that no unit can do that, is met by the existing `E
 rejected: select units that can perform this order" (`battle_pipeline/status.rs`, outside this plan's files),
 which `battle_mode_tests::a_sieged_tank_attacks_a_clicked_enemy_and_refuses_the_ground` asserts. StarCraft II's own
 wording, "Must target a unit", is not copied.
+
+**Closing (2026-11-24):** B-174 and B-175, deferred by D-8, are fixed by plan
+[`2026-11-24-attack-orders`](2026-11-24-attack-orders.md) (WP1 to WP3); B-176's `AttackMove` half is that plan's WP5,
+after the contact solver merges.
