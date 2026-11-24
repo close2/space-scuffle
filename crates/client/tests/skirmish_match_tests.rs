@@ -1414,6 +1414,24 @@ fn the_opponent_sees_nothing_of_switches_under_its_fog() {
     }
 }
 
+/// Asserts that `unit` stands at least two world units inside `watcher`'s sight radius.
+fn assert_well_in_sight(harness: &Harness, unit: EntityId, watcher: EntityId) {
+    let world = harness.world();
+    let sight = world
+        .catalog
+        .get(world.entities[&watcher].unit_type_id)
+        .expect("the watcher's archetype")
+        .sight_radius
+        .to_f32();
+    let apart = harness
+        .simulated_position(unit)
+        .distance(harness.simulated_position(watcher));
+    assert!(
+        apart < sight - 2.0,
+        "precondition: {unit:?} stands well inside the sight of {watcher:?} ({apart} of {sight})"
+    );
+}
+
 /// D-5 end to end, the opponent's side: an enemy spotter sees the burrow begin (the dig is held
 /// while the digging unit is still in plain sight), loses the unit with all its looks when its
 /// concealment flips, and a detector brings it back settled in its mound, with no cover look,
@@ -1501,20 +1519,7 @@ fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
     );
 
     // The siege, ordered by key, in the spotter's sight.
-    let sight = harness
-        .world()
-        .catalog
-        .get(spotter_type)
-        .expect("the spotter's archetype")
-        .sight_radius
-        .to_f32();
-    let apart = harness
-        .simulated_position(tank)
-        .distance(harness.simulated_position(spotter));
-    assert!(
-        apart < sight - 2.0,
-        "precondition: the tank stands well inside the spotter's sight ({apart} of {sight})"
-    );
+    assert_well_in_sight(&harness, tank, spotter);
     present_to(&mut harness, LOCAL_PLAYER);
     harness.select(tank);
     tap_mode_key(&mut harness, ModeDirection::Enter);
