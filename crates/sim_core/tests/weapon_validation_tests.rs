@@ -637,6 +637,11 @@ fn instant_archetype(world: &SimWorld) -> Result<(UnitArchetype, WeaponSpec), St
         .ok_or_else(|| "the shipped catalog has an instant ground weapon".to_owned())
 }
 
+/// The centre of the cell `columns` to the right of the shooter's, in its row.
+fn ahead(columns: u32) -> SimVec2 {
+    cell_centre(SHOOTER_CELL.0 + columns, SHOOTER_CELL.1)
+}
+
 /// The vision bench: a flat arena, a shooter of player 0 at [`SHOOTER_CELL`] carrying a weapon
 /// whose reach is widened beyond its sight, and unarmed blinkers of player 1 to aim at.
 struct Arena {
@@ -686,19 +691,14 @@ fn arena(
 }
 
 impl Arena {
-    /// The centre of the cell `columns` to the right of the shooter's, in its row.
-    fn ahead(&self, columns: u32) -> SimVec2 {
-        cell_centre(SHOOTER_CELL.0 + columns, SHOOTER_CELL.1)
-    }
-
     /// A cell the shooter sees, two columns inside its sight.
     fn seen(&self) -> SimVec2 {
-        self.ahead(self.sight_cells - 2)
+        ahead(self.sight_cells - 2)
     }
 
     /// A cell beyond the shooter's sight and inside its weapon's reach.
     fn unseen(&self) -> SimVec2 {
-        self.ahead(self.sight_cells + 2)
+        ahead(self.sight_cells + 2)
     }
 
     /// Spawns a blinker of `owner` at `at`.
@@ -824,7 +824,7 @@ fn a_spotter_lets_the_strike_land() -> TestResult {
     let target = arena.dummy_at(1, unseen)?;
     arena.order(arena.shooter, UnitOrder::attack(target))?;
     arena.no_swing(1, 40)?;
-    let spotter_at = arena.ahead(arena.sight_cells + 4);
+    let spotter_at = ahead(arena.sight_cells + 4);
     arena.dummy_at(0, spotter_at)?;
     arena.until_struck(target, 41)?;
     Ok(())
@@ -859,6 +859,10 @@ fn missile_pick(world: &SimWorld) -> Result<(UnitArchetype, WeaponSpec), String>
     Ok((arch, weapon))
 }
 
+/// A missile flight into fog: the arena, the target, the launch tick and the target's life and
+/// shields before the launch.
+type FogFlight = (Arena, EntityId, u32, Option<(SimScalar, SimScalar)>);
+
 /// Launches a slow missile (0.1 world units a tick) at a target standing at the last seen
 /// column of the shooter's row, and sends the target walking two columns away, out of the
 /// shooter's sight, while the missile flies. Returns
@@ -866,14 +870,14 @@ fn missile_pick(world: &SimWorld) -> Result<(UnitArchetype, WeaponSpec), String>
 fn missile_into_fog(
     seed: u64,
     edit: impl FnOnce(&mut WeaponSpec),
-) -> Result<(Arena, EntityId, u32, Option<(SimScalar, SimScalar)>), Box<dyn std::error::Error>> {
+) -> Result<FogFlight, Box<dyn std::error::Error>> {
     // A slow missile, so the walk out of sight surely comes before the landing.
     let mut arena = arena(seed, missile_pick, |weapon| {
         weapon.projectile_speed = Some(SimScalar::from_num(0.1));
         weapon.max_projectile_lifetime_ticks = 400;
         edit(weapon);
     })?;
-    let edge = arena.ahead(arena.sight_cells);
+    let edge = ahead(arena.sight_cells);
     let target = arena.dummy_at(1, edge)?;
     let full = arena.hp(target);
     arena.order(arena.shooter, UnitOrder::attack(target))?;
@@ -886,7 +890,7 @@ fn missile_into_fog(
         }
     }
     let launched = launched.ok_or("the missile launched within 60 ticks")?;
-    let beyond = arena.ahead(arena.sight_cells + 2);
+    let beyond = ahead(arena.sight_cells + 2);
     arena.order(target, UnitOrder::Move { target: beyond })?;
     Ok((arena, target, launched, full))
 }
@@ -944,7 +948,7 @@ fn a_missile_that_skips_the_weapon_check_follows_a_target_into_fog() -> TestResu
     assert!(arena.world.projectiles.is_empty(), "the missile landed");
     let position = arena.world.entities[&target].position;
     assert!(
-        position.x > arena.ahead(arena.sight_cells).x + SimScalar::HALF,
+        position.x > ahead(arena.sight_cells).x + SimScalar::HALF,
         "premise: the target stands beyond the shooter's sight at the landing"
     );
     assert_eq!(
@@ -1034,7 +1038,7 @@ fn a_seen_target_out_of_reach_is_still_chased() -> TestResult {
     let mut arena = arena(0xB59, instant_archetype, |weapon| {
         weapon.max_range = SimScalar::ONE;
     })?;
-    let near = arena.ahead(4);
+    let near = ahead(4);
     let target = arena.dummy_at(1, near)?;
     arena.order(
         arena.shooter,
@@ -1121,7 +1125,7 @@ fn a_players_order_is_kept_but_holds_fire() -> TestResult {
     let target = arena.dummy_at(1, seen)?;
     arena.order(arena.shooter, UnitOrder::attack(target))?;
     let struck = arena.until_struck(target, 1)?;
-    let far = arena.ahead(arena.sight_cells + 4);
+    let far = ahead(arena.sight_cells + 4);
     arena.blink(target, far)?;
     let after = arena.hp(target);
     for tick in struck + 1..=struck + 60 {
