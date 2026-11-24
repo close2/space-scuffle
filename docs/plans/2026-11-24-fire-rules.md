@@ -53,7 +53,7 @@ needed, after the contact solver merges.
 | Q0061: implementation agents hand back after `cargo gate quick`; a verifier runs `cargo gate package` | Standing rule | §11 |
 | Q0101, Q0106: vision and weapon filters | Open; defaults built | D-4 (the order's target "cannot be worked" includes "not seen", as built by B-185) |
 | The owner's guidance: no fitting to fixed seed sets; judge on principled properties | Followed | §6, §7 |
-| **Q0109** (draft, §15): what the lock covers, whether turrets track between shots, how a weapon picks a target off its order, and an immobile unit's order on a target out of reach | To be filed; defaults followed meanwhile | D-2, D-3, D-4, D-5 |
+| **Q0109** (§15): what the lock covers, whether turrets track between shots, how a weapon picks a target off its order, and an immobile unit's order on a target out of reach | Answered (a) on every part, the defaults built; closed | D-2, D-3, D-4, D-5 |
 
 ---
 
@@ -680,7 +680,7 @@ tree), each named in the commit. Guards that pass unchanged: `target_selection_t
 
 ---
 
-## 15. Draft owner question (filed as [Q0109](../questions/open/0109-turret-and-off-order-fire.md))
+## 15. Draft owner question (filed as [Q0109](../questions/closed/0109-turret-and-off-order-fire.md), answered (a) on every part)
 
 ```markdown
 # Q0109: Turrets while firing and between shots, and weapons that fire off their attack order
@@ -749,7 +749,7 @@ elsewhere).
 ## As built
 
 WP0 to WP5 on branch `fire-rules-plan`, one commit each, on `main` at `7dc356fc` (schema 43). Q0109's defaults are
-built (parts 1 to 4, answer (a) each). Evidence: [`2026-11-24-fire-rules`](../evidence/2026-11-24-fire-rules.md).
+built (parts 1 to 4, answer (a) each), and the owner answered (a) on every part; Q0109 is closed. Evidence: [`2026-11-24-fire-rules`](../evidence/2026-11-24-fire-rules.md).
 
 | Package | Commit | What landed | Worlds |
 |---|---|---|---|
