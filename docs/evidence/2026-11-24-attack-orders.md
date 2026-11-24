@@ -223,3 +223,16 @@ the client library 539 passed, none failed. The skirmish stage log ("match won i
 stages) is identical to the stance-checked-orders plan's (`~/scratch/stance-orders/client-wp3/`), wall-clock time
 aside: the pilot trains armed units only, so §8 rule 3's case did not arise. The simulation is untouched by WP3, so
 the measured worlds were not run again.
+
+## After merging `main` (`22daa14e`, vision and detection, schema 41)
+
+- `compare.sh world-main world-merged` (`main` at `22daa14e` against the merge `3e29c8d1`, both exported, rebuilt and
+  measured the same way): `files base=483 new=483 differing=0`. The plan's changes move no measured world on top of
+  the vision branch either. (`base.sh` now touches the exported sources before building: an export's commit-time
+  mtimes let a first `main` build reuse stale release binaries; that run was discarded.)
+- `cargo gate quick` on the final tree: green (fmt, clippy on `client`, `sim_core`, `sim_fixtures`, `sim_types`, and
+  their fast tests).
+- `client.sh merged` (release, one target at a time under `~/scratch/gate.lock`): `battle_input_tests` 38,
+  `battle_context_order_tests` 30, `battle_card_tests` 34, `battle_card_path_tests` 4, `battle_mode_tests` 21,
+  `battle_hud_tests` 35, `sync_steady_state_tests` 8, `skirmish_match_tests` 7 (1 ignored), client library 540, all
+  passed; the skirmish stage log is unchanged. `sim_core/sc2_who_wins_matchup_matrix_tests` (release): 3 passed.
