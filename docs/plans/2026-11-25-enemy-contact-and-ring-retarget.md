@@ -214,11 +214,24 @@ B-193. Battle 26 is handled by a pre-registered rule (§7.3).
 
 ### 2.7 Full matrix under the prototype
 
-The base arm on the full matrix reproduces the first attempt's `b0` (1,464 runs; 2 failures on the seeds of record,
-31 over all seeds). The fix-only and E-2 arms on the full matrix were queued behind another agent's gate run when this
-plan was committed; their outcome rows are appended as an amendment when they finish (`full/{fix,block}`). The
-sub-matrix of §2.5 holds every battle the first attempt saw move; WP0 and WP2 measure the full matrix on their own
-trees in any case, so no decision of this plan rests on the queued runs.
+1,464 runs per arm (`full/{base,fix,block}`). Base reproduces the first attempt's `b0`. Every battle whose
+survivors moved in any arm (all others are identical in every run):
+
+| Battle | Base: wins b/r, fails record/all, max enemy overlap | K-1 only | K-1 + E-2 |
+|---|---|---|---|
+| 9a, 23a | 0/24, 0/0, 0.00 % | same | same |
+| 10 | 0/24, 0/0, 0.44 % | 0/24, 0/0, 0.00 % | 0/24, 0/0, 0.00 % |
+| 26 (Class R) | 18/6, 0/0, 2.59 % | 17/7, 0/1, 2.23 % | **1/23, 1/8**, 0.00 % |
+| 28 (Class R, B-192) | 5/19, 2/19, 1.42 % | 6/18, 2/18, 1.26 % | 1/23, 4/24, 0.00 % |
+| 29 | 24/0, 0/0, 2.77 % | 24/0, 0/0, 1.69 % | 24/0, 0/0, 0.00 % |
+| 33 (Class R) | 24/0, 0/0, 0.00 % | same | 24/0, 0/1, 0.00 % |
+| 37a | 0/0, 0/0, 69.13 % | same | same |
+| 38a / 38b (Class R) | 24/0 and 0/7, 0/0, 0.94 / 1.19 % | 0.56 / 0.47 % | 24/0 and 0/6, 0/0, 0.00 % |
+
+Totals: failures on the seeds of record 2 → 2 → 5 (26 once, 28 four times); over all seeds 31 → 31 → 45. **No Class
+D battle flips or fails a seed of record.** Battle 37a's 69 % is Abduct pulling a tank onto a zergling (a placement
+by an ability, identical in every arm): an overlap E-2 does not create and C-8's even split still separates, which is
+why B3 compares each battle with its own base.
 
 ---
 
