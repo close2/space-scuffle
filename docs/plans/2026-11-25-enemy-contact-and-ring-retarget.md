@@ -722,3 +722,249 @@ chose a constant, tolerance or switch after seeing a matrix or harness figure.
    25 ticks (bodies as wide as a two-cell corridor; in a wider corridor the walker squeezes past at about 68 %). The
    plan's expectation (friend overlap within D-α's moving bound) needs a friend-pair rule that a body blocked by an enemy
    counts as unable to move, which §7.5 forbids changing within P2. Reported for review with the matrix's B6 figures.
+
+## Amendment 2 (planning agent, 2026-11-25, at the orchestrator's direction): the friend rule F-1, the repaired B2 reading, C-1's codegen control, and the resumed WP2's acceptance
+
+**Why.** P2 stopped at WP2 under §7.5 (evidence `docs/evidence/2026-11-25-enemy-contact-and-ring-retarget.md` §4 and
+§5; Amendment 1 item 8). E-2 does what it was designed to do against enemies: the largest enemy overlap is 0.00 %
+everywhere, the pressed side's D-SHOVE-E falls to 0 for colossi, immortals and stalkers, no Class D battle flips, and
+the Solver costs +1.3 % to +2.0 %. Three findings stopped it:
+1. **E2-T5 fails, and B6 rises, for one mechanism.** E-2 holds a friend at an enemy's surface, but C-2 still gives a
+   walker share 0 against that idle standing friend, so the walker keeps walking into it (to about 90 %). The same
+   mechanism raises friend pair-ticks above 5 % in battles 26 to 29, and battle 27's largest friend overlap goes from
+   37.0 % to 59.9 %. This is a defect of the plan: §4.2 left the friend rules unchanged and did not foresee that a
+   body E-2 holds can no longer take its friend share.
+2. **Battle 27 fails B2 and B4.** B2: the ultralisks' D-SHOVE-E is 0.146 per seed against Legacy's upper bound
+   0.099, and 0.059 with D-δ off. B4: unexplained returns are 12.62 per seed against the base's upper bound 12.42,
+   and 12.33 with D-δ off.
+3. **C-1, strictly, fails.** Legacy retires 0.05 % to 0.08 % more instructions than the base, above the three runs'
+   0.015 % spread, while its matrix is byte-identical to the base's.
+
+**This amendment is P2's one amendment attempt** (§7.2: "one amendment attempt within the package"). A §7.1 failure
+of the resumed WP2 stops the package for review. No further rule is added.
+
+### A2.1 F-1: a body E-2 holds against an enemy passes the part of its friend share it cannot take to the friend pressing it
+
+**Source.** This is shock propagation (Guendelman, Bridson, Fedkiw, "Nonconvex Rigid Bodies with Stacking", SIGGRAPH
+2003): a body that cannot move counts as immovable for the bodies pressing it. The solver plan proposed it for
+terrain as its P3 (Amendment 11, step 4, R5: "the partner with share 0 takes share 1"), but it was not built.
+F-1 is its continuous form, limited to enemy walls. It is the rule the orchestrator named, "as bounded": the held
+friend is not made fixed (a binary state would flip between applications as E-1's shares did, §2.3). It is bounded
+exactly as E-2 bounds it, and the part E-2 would remove goes to its partner.
+
+**Walls.** At the start of each application (averaged, and the friends' summed pass), every listed enemy pair `(x, e)`
+gives body `x` a wall: the unit vector `u_xe` from `x` towards `e`, and `x`'s allowance `allow_xe = w_x · g`. These
+are exactly E-2's terms (§4.2: `w` frozen from the tick's committed walks, `g` the gap at the application's start).
+A pair is a wall only if it is in the contact list (gap ≤ `PAIR_SLACK`). A body with no listed enemy has no wall.
+
+**Rule.** For a friend pair `(a, b)` with corrections `δ_a` and `δ_b`, after C-2's shares, D-δ's `along_ring` and
+the dead band:
+
+```text
+β_a = Σ over a's walls of  max(0, δ_a · u_ae − allow_ae) · u_ae      (the part E-2 would project off)
+δ_a′ = δ_a − β_a
+δ_b′ = δ_b − (β_a · n) · n                                           (n: the pair's unit normal from b to a)
+```
+
+The rule for `b` is symmetric. Each term is computed from the pair's own correction and the walls at the
+application's start, and summed exactly. The part of `a`'s yield that points into an enemy beyond its allowance is
+removed. The same separation along the line of centres is given to `b` instead, in the opposite sense. The
+tangential part, the slide along the enemy, stays with `a`. In `add_to`, a transferred correction counts towards
+`b`'s contact count, as any correction does.
+
+**Properties:**
+- **Continuous.** `β` is a positive part of a function that is continuous in positions, so no state can flip
+  (contrast §2.3).
+- **Order independent (C-1a).** Each pair's terms read only the pair and the walls at the application's start, and
+  the sums are exact.
+- **No enemy moves.** `b`'s extra correction is bounded by E-2's step bound against `b`'s own enemies, like any
+  correction. If both bodies are walled, the pair keeps its overlap, a legitimate jam within D-α.
+- **Bit-identical without enemies.** With no wall, `β = 0` and every friend correction is today's. Scenes without
+  enemies (the gap, cross, corner and corridor families, every friend-only test) are unchanged byte for byte. The
+  same holds for any friend pair in a battle with no body that has a listed enemy.
+- **Under the existing switch.** F-1 is part of `enemies_block`: with the switch off, WP1's behaviour is unchanged
+  bit for bit. No new switch.
+- **Cache.** A friend pair's cached correction is reused only when neither body has a wall. A pair with a walled body
+  is recomputed in every application, because its walls move with the enemies. The move-count key of K-1 is
+  unchanged for every other pair.
+- **The enemy pass** has no friend pairs; application zero has none either. F-1 acts in the averaged applications
+  and in the friends' summed pass (`HardFriends`), which is where E2-T5's walker meets the idle friend (the pair
+  "moving against idle standing", one share 0).
+
+**Its limit, stated in advance.** F-1 relieves the friend in direct contact with a walled body. In a chain (walker →
+friend → friend → enemy), the middle friend has no wall. It takes the transfer from the walled friend and the push
+from the walker, and settles between them, while the walker still takes nothing. The chain compresses as it does on
+the base when a crowd presses a friend against terrain. This is the solver plan's R5, unchanged here. The general
+rule (P3 for terrain and for chains) changes friend rules where no enemy is present, which this package may not do.
+If B6's maximum check (A2.4) fails on a chain, the package stops and the chain rule goes to a later package with its
+own plan.
+
+**Tests (red first on the WP2 tree unless marked guard):**
+- **F-T1 = E2-T5, un-ignored, as specified in §8.** An idle friend pushed by a moving friend into a standing enemy ends
+  touching the enemy, which does not move. Their friend overlap stays within D-α's moving bound (5 % of the radius sum)
+  on every tick, in the two-cell corridor and in an open field.
+- **F-T2** `solver::tests::a_held_friend_keeps_its_slide`: the idle friend touches the enemy at 45° to the walker's
+  line. It slides along the enemy (its tangential displacement equals the unbounded pair's tangential part within one
+  raw unit); the walker takes the normal part; the enemy does not move.
+- **F-T3** `solver::tests::a_nudged_attacker_between_a_presser_and_an_enemy`: an engaged melee unit under D-δ, its ring
+  tangent running into a neighbouring enemy, is pressed by a friend. It never closes on that enemy beyond its
+  allowance. The presser takes the blocked tangential part. The radial part removed by D-δ stays removed: no new
+  radial correction reaches the presser.
+- **F-T4** (guard, extended) `the_bound_does_not_depend_on_body_order` with walled friend pairs: every body order of a
+  random mixed crowd gives the same positions.
+- **F-T5** (guard) `a_scene_without_enemies_is_unchanged` (E2-T9): a random friend-only crowd is bit-identical with
+  `enemies_block` on and off.
+- **F-T6** `solver::tests::a_two_friend_chain_against_an_enemy_holds_the_enemy`: walker → friend → friend → standing
+  enemy. It asserts only the enemy invariants (the enemy unmoved; no enemy overlap). The friend overlaps are recorded
+  in the evidence, as the stated limit.
+- **Guards:** every test listed green in the evidence §4.1, including `a_pressed_column_keeps_its_order_and_settles`
+  and `an_overlapped_idle_pair_separates_monotonically` (friend-only, so bit-identical).
+
+**Expected effect on B6** (stated before measuring F-1):
+- Friend pair-ticks above 5 % fall in battles 26 to 29 towards the base, wherever the compressed pair is a walker
+  against a front-rank friend held by an enemy. This is E2-T5's case, and D-δ's front rank whose tangential nudge E-2
+  bounds.
+- They do not fall where the compression is in a chain behind the front rank.
+- Battle 27's largest friend overlap falls from 59.9 %. Whether it reaches the base's 37.0 % is not predicted; A2.4's
+  maximum check decides.
+
+**Cost (estimate).** The walls need the gap of each listed enemy pair at each application. That is one root per listed
+enemy pair, shared with E-2's bound, which computes the same gap for the pairs within its reach: compute the walls
+once per application and let the bound read them (behaviour-identical, proved by bit identity). The friend pairs with
+a walled body lose their cache. Estimate: +0.3 % to +1.0 % on 64 × 64 over WP2's +1.99 %, so close to C-2's +3 %.
+
+**Code.** `movement/solver.rs` only: walls per application (`Self::walls`, retained), the transfer in `accumulate`
+for friend pairs, the cache rule, and the docs (module doc, C-2's table note: "F-1: a friend held by an enemy passes
+on what it cannot take"). No catalog field. No hashed state, so still no schema change.
+
+### A2.2 B2 and B4: what is repaired, what stays
+
+**B2: definition repaired, after seeing figures; both readings judged.**
+- **Why it is a definition defect, not a loosening.** §6 stated the intent before any figure: "A D-δ nudge is
+  tangential to the unit's own target ring, so it counts almost nothing; a shove counts fully." Its test W0-T1′ checked
+  only a nudge along the ring of the touching enemy itself. The definition takes the largest outward part over **all**
+  touching enemies. A nudge along an ultralisk's own target ring is radial to another zergling touching it, so it is
+  counted in full. The D-δ-off arm shows the residue is the nudge: 0.146 with D-δ, 0.059 without, against Legacy's
+  [0.073, 0.099].
+- **This repair is made after seeing battle 27's figures,** and is said so here and in the evidence. To keep it from
+  becoming a way to pass, B2 is judged by **two readings, both of which must pass**, and the original is kept:
+  1. **B2-a (no confound): the original D-SHOVE-E, on the D-δ-off arm** (`nudge_engaged_along_ring: false`, a
+     diagnostic build of the same tree). Without D-δ no friend nudges an engaged unit, so the original definition
+     measures exactly what B2 was written to measure: displacement outward from touching enemies of a unit that
+     proposed no motion. Every side of every battle must be at or below Legacy's upper bound on the same seeds.
+  2. **B2-b (shipped behaviour): D-SHOVE-E′ on the shipped arm.**
+     - Same as D-SHOVE-E, except that for a unit eligible for D-δ at the tick's start (the solver's
+       `ContactParty::nudge` is `Some`: an engaged melee unit in band of its target, not holding), the component of
+       its displacement along its own target ring's tangent is removed before the outward parts are taken.
+     - D-δ can move such a unit only along that tangent, so the repair removes every D-δ contribution and nothing an
+       enemy could cause radially.
+     - Its blind spot is an enemy push exactly along the unit's own ring tangent. B2-a covers it, since that reading
+       has no D-δ to confound it.
+     - The rule: every side of every battle at or below Legacy's upper bound.
+  3. **Reported, not judged:** the original D-SHOVE-E on the shipped arm (the column of §6) and the first attempt's
+     D-SHOVE.
+- **Code (sim_fixtures only):** `trace::contact_checks::shove_e_prime_of`, taking the unit's target centre and its
+  D-δ eligibility, appended last as `blue_shove_e_prime` and `red_shove_e_prime`. The eligibility is read the way the
+  solver reads it (`solver_body`'s `nudge`), through a `pub` predicate if one exists. Otherwise it is a test-pinned
+  replica: **W0-T6** constructs an engaged melee unit and a ranged one and checks the replica against the solver
+  party. **W0-T7**: a nudge along the own ring that is radial to a second touching enemy counts 0 in D-SHOVE-E′ and in
+  full in D-SHOVE-E; a push radial to the own target counts in both.
+- **Held-out.** B2-a and B2-b are run on the held-out seeds 21 to 44 as well (shipped arm and D-δ-off arm), against
+  Legacy on the same held-out seeds (a Legacy held-out run is added). A failure there is a §7.1 failure.
+
+**B4: stays as pre-registered; no repair.**
+- **Reasons.** Nothing shows a defect in D-CHURN's definition. A return the acquisition key makes because a nudge moved
+  a unit is a real return, and D-δ is shipped behaviour, so the D-δ-off figure (12.33) does not excuse the shipped one.
+  The excess is small (12.62 against 12.42), but "small" is not a rule this plan registered. Introducing a
+  multiplicity correction now, after seeing a near miss, would be the loosening the orchestrator forbids.
+- **What changes is the tree.** F-1 moves positions in battle 27, so B4 is judged afresh on the resumed WP2's tree, as
+  written: the per-seed mean of unexplained returns against the base's 95 % interval.
+- **Added, reported only:** B4 on the held-out seeds against the base's held-out interval. If B4 fails on the 24 seeds,
+  the evidence classifies battle 27's unexplained returns, at the return tick, into nearest-first flips after a D-δ
+  nudge, after an E-2 bound, or other. That is for the review; it does not change the stop.
+
+### A2.3 C-1: behaviour identity plus a codegen control
+
+**Reasons.** C-1 exists to catch cost that leaks into Legacy from shared code. The first attempt's shared admission test
+made Legacy 1.4 % to 3.5 % slower. A Legacy that runs no line of E-2 can still retire a few more instructions when the
+crate's code layout and inlining change. That is a property of the binary, not of anything the package does. The
+three-run spread (0.015 %) measures run-to-run noise, not that.
+
+**C-1′ (replaces C-1 for P2), all three parts required:**
+1. **Behaviour.** The Legacy matrix on the 24 seeds and the Legacy harness families (development seeds) are
+   byte-identical to the base's.
+2. **Codegen band, measured before the resumed WP2's Legacy figure is read.**
+   - Two control builds change only code Legacy never executes:
+     - **(C-a)** WP1's tree (K-1 changes only `ContactSolver`, which Legacy never calls);
+     - **(C-b)** the base tree with only `ContactRules`' `enemies_block` field and its parsing added (the catalog
+       shape change E-2 makes, read by nothing in Legacy).
+   - Each is run three times per scenario, like the arms.
+   - The band is the largest absolute Legacy instruction delta of the two controls against the base, per scenario.
+3. **The rule.** The resumed WP2's Legacy delta per scenario lies within the band. If it does not, `perf record -e
+   instructions:u` of Legacy on the base and on WP2 attributes the excess by symbol:
+   - C-1′ passes if the excess lies only in functions whose source is unchanged (layout and inlining), recorded in
+     the evidence;
+   - otherwise it fails (a stop, §7.5).
+   - No numeric allowance is chosen.
+
+### A2.4 The resumed WP2: acceptance and stop rules (pre-registered again)
+
+**Tree.** The WP2 branch head plus F-1 (A2.1) and the sim_fixtures column of A2.2, with `main` merged if it has moved.
+Every arm is rebuilt on that tree:
+- **WP0m** (the base);
+- **WP1m**;
+- **WP2′** (shipped);
+- **WP2′-off** (`enemies_block: false`);
+- **WP2′-nonudge** (`nudge_engaged_along_ring: false`, for B2-a);
+- Legacy;
+- the two C-1′ controls.
+
+**Runs** (one at a time under the gate lock):
+- the matrix on the 24 seeds and on the held-out seeds 21 to 44, for WP2′, WP2′-nonudge and Legacy;
+- the harness on the development seeds and on the held-out range 9,000,001 to 9,001,000, which the stopped WP2 did not
+  run, for WP2′, WP2′-off and WP1m;
+- throughput, three runs per arm.
+
+**Tests.** E2-T1 to E2-T9, F-T1 to F-T6, W0-T6, W0-T7, K1-T1, `two_walkers_share_the_gap_by_their_walks`,
+`a_placed_body_is_not_bounded`, and every guard of §8 and the evidence §4.1, all green. No `#[ignore]`.
+
+**Checks** (§7.1 as written, with these readings):
+
+| Check | Judged |
+|---|---|
+| B1 | As §7.1 (battle 28 reported, not judged) |
+| B2 | **B2-a and B2-b** (A2.2), every side of every battle, on the 24 seeds and the held-out seeds; the original D-SHOVE-E reported |
+| B3 | As §7.1: largest enemy overlap not above the base's, overlap ticks not above the base beyond noise, every battle and harness family |
+| B4 | As §7.1, unchanged (A2.2) |
+| B5 | As §7.1 |
+| B6 | As §7.1 (pair-ticks above 5 % beyond noise reported where B3 improved; harness scenes above T7's friend bound), **plus B6-max: in every battle, the largest friend overlap at the end of a tick is not above the base's largest**. This is new and strictly tighter: F-1 exists to remove the friend-overlap rise. A battle that fails it stops the package, with a trace saying whether the pair is a direct contact (F-1's case, a defect) or a chain (A2.1's stated limit) |
+| B7′ | As §7.1; B7 reported |
+
+**Battles** (§7.2 and §7.3 unchanged):
+- Battle 26 takes `known_bug: Some("B-209")` in the commit that makes the matrix test hold, if it fails a seed of record
+  and every check passes for it.
+- Battle 28 keeps its B-192 marker while it fails a seed of record.
+- No Class D battle may flip or leave its range.
+- Every restated Class R claim is checked on the held-out seeds (§7.4).
+
+**Throughput:**
+- C-0: at least 50 ticks per second on every scenario.
+- C-1′ as in A2.3.
+- C-2: Solver at most +3 % over the base on every scenario, F-1 included. The one allowed cost step of §9 is the shared
+  wall computation of A2.1, proved by bit identity, if C-2 fails without it.
+- Q0111 is filed if 64 × 64 rises above +70 % over Legacy (WP2: +68.8 %) or canyon above +60 % (WP2: +59.1 %).
+
+**Stop rules (in advance; no further amendment attempt within P2):**
+- F-T1 or F-T2 green on the WP2 tree (before F-1): the mechanism is not as diagnosed. Stop before code.
+- The switch off is not bit-identical to WP1 (matrix CSVs, harness CSVs, E2-T8's digests). Stop.
+- The gap, cross, corner or corridor family is not byte-identical to the base. Stop: F-1 must not touch a scene
+  without enemies.
+- Any judged check fails in any battle (B1, B2-a, B2-b, B3, B4, B5, B6, B6-max, B7′), on the 24 seeds or, for B2, the
+  held-out seeds. Stop for review, with the traces and the A2.2 classification.
+- A Class D battle moves, or a restated claim fails §7.4. Stop for review.
+- C-0, C-1′ or C-2 fails after the allowed cost step. Stop and report the split.
+- **Not allowed:** another friend rule (the chain rule included), a constant or tolerance chosen after seeing figures,
+  a per-unit or per-battle switch, or a further change to any check's definition.
+
+**If it passes:** WP3 proceeds as §8 (records, battle 26's marker, the single golden re-record on WP3's final tree,
+`DESIGN.md`, evidence). B-193 and B-208 are marked fixed and B-209 is registered, as planned.
