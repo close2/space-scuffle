@@ -852,3 +852,29 @@ fn the_housing_invariant_holds_over_a_long_run() -> TestResult {
     assert!(housed_ticks > 0, "workers were inside");
     Ok(())
 }
+
+/// D-9 (WP3): the snapshot publishes a housed worker's bubble with `housed` set, on exactly the
+/// ticks it is inside, rather than leaving it out, so a client keeps its render entity.
+#[test]
+fn the_snapshot_publishes_a_housed_worker_as_housed() -> TestResult {
+    let mut world = world()?;
+    let worker = gatherer(&mut world, point(15.0, 6.0), GEYSER)?;
+    let mut inside = 0;
+    for _ in 0..600 {
+        let tick = world.current_tick;
+        let snapshot = world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let bubble = snapshot
+            .bubbles
+            .iter()
+            .find(|bubble| bubble.entity_id == worker)
+            .ok_or("the worker is published on every tick")?;
+        assert_eq!(bubble.housed, world.entities[&worker].is_housed());
+        inside += u32::from(bubble.housed);
+    }
+    assert!(inside > 0, "the worker went inside");
+    Ok(())
+}

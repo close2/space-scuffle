@@ -590,6 +590,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
                     stance: sim_types::StanceView::default(),
                     status: sim_types::StatusFlags::default(),
                     barrier_ratio: 0.0,
+                    housed: false,
                 };
 
                 let parent = commands.spawn(Transform::default()).id();

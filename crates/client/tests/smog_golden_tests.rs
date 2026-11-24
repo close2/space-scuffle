@@ -793,6 +793,7 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     })
 }
 

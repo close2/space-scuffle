@@ -13,6 +13,9 @@
 //! - Everything here names entities of one session and one owner. Entity IDs restart with each
 //!   session, so a new generation or owner clears all of it.
 //! - A unit that leaves the snapshot is forgotten everywhere, including control groups.
+//! - A housed unit (inside a structure while it gathers) is in no selection; control groups keep
+//!   it (plan `2026-11-24-hidden-harvesters` D-10, Q0108's default (a)). A recall copies the group,
+//!   and the next fog pass drops its housed members again.
 //! - A unit of anyone else that the fog hides stops being inspected, through
 //!   [`apply_battle_fog`](crate::battle_hud::fog::apply_battle_fog).
 
@@ -168,6 +171,18 @@ impl BattleSelection {
         self.groups.get(index).map_or(&[], Vec::as_slice)
     }
 
+    /// Removes the local player's unit `id` from the selection while it cannot be selected, and
+    /// keeps it in every control group: a unit gone inside a structure to gather (plan
+    /// `2026-11-24-hidden-harvesters` D-10). A unit not selected is left alone.
+    pub fn leave(&mut self, id: EntityId) {
+        if self.inspected == Some(id) {
+            self.inspected = None;
+        }
+        if let Ok(index) = self.selected.binary_search(&id) {
+            self.selected.remove(index);
+        }
+    }
+
     /// Removes a unit that has left the battle from the selection and every control group.
     pub fn forget(&mut self, id: EntityId) {
         if self.inspected == Some(id) {
@@ -269,6 +284,22 @@ mod tests {
         selection.toggle(EntityId(1));
         assert_eq!(selection.ids(), ids(&[2]));
         assert_eq!(selection.group(3), ids(&[1, 2]), "groups do not alias");
+    }
+
+    /// Plan `2026-11-24-hidden-harvesters` D-10: a unit that leaves the selection stays in its
+    /// control groups, and a recall brings it back.
+    #[test]
+    fn leave_removes_a_unit_from_the_selection_and_keeps_its_groups() {
+        let mut selection = BattleSelection::default();
+        selection.extend(ids(&[1, 2, 3]));
+        selection.assign_group(0);
+        selection.leave(EntityId(2));
+        assert_eq!(selection.ids(), ids(&[1, 3]));
+        assert_eq!(selection.group(0), ids(&[1, 2, 3]));
+        selection.leave(EntityId(9));
+        assert_eq!(selection.ids(), ids(&[1, 3]));
+        selection.recall_group(0);
+        assert_eq!(selection.ids(), ids(&[1, 2, 3]));
     }
 
     #[test]

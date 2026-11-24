@@ -862,10 +862,13 @@ fn capable(
     }
 }
 
-/// Whether `entity` is in play to hear `order`. Only cancelling reaches an unfinished foundation.
+/// Whether `entity` is in play to hear `order`. Only cancelling reaches an unfinished foundation,
+/// and no order reaches a unit inside a structure while it gathers (plan
+/// `2026-11-24-hidden-harvesters` D-10, Q0108's default (a)).
 fn can_receive_order(entity: &Entity, order: &UnitOrder) -> bool {
     entity.is_alive()
         && !entity.is_loaded_in_transport()
+        && !entity.is_housed()
         && (entity.is_completed || matches!(order, UnitOrder::CancelConstruction))
 }
 

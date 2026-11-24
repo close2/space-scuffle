@@ -990,6 +990,7 @@ mod tests {
             stance: StanceView::default(),
             status,
             barrier_ratio,
+            housed: false,
         }
     }
 
