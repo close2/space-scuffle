@@ -1027,7 +1027,8 @@ fn motion_flags(v: SimVec2) -> (bool, bool) {
 /// Atomically applies checked pair correction, honoring actual immobile/unpushable flags.
 /// Callers must establish compatible layers and valid resulting terrain/domain
 /// placement; this entity-only API cannot consult registered map foundations.
-/// If either actor is carried, returns Ok(()) with both actors unchanged, without
+/// If either actor is hidden (carried, or inside a structure that hides its harvesters; plan
+/// `2026-11-24-hidden-harvesters` D-11), returns Ok(()) with both actors unchanged, without
 /// evaluating geometry: there is no world-space pair to resolve.
 ///
 /// # Errors
@@ -1038,8 +1039,9 @@ pub fn resolve_push_interaction(
     distance: SimScalar,
     combined_radius: SimScalar,
 ) -> Result<(), PushGeometryError> {
-    // A valid passenger is absent from collision space; no geometry is evaluated.
-    if moving_unit.is_loaded_in_transport() || other_unit.is_loaded_in_transport() {
+    // A hidden unit (a passenger, or a harvester inside its structure) is absent from collision
+    // space; no geometry is evaluated.
+    if moving_unit.is_hidden() || other_unit.is_hidden() {
         return Ok(());
     }
     let a = PushEntityParams {
