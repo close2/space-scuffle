@@ -44,8 +44,8 @@ goldens for the schema, and spans `sim_types`, `sim_core`, `assets/catalog` and 
 | Q0002: scoping is the agent's call if written down | Standing rule | §14 |
 | Q0100: the hand-off between two gatherers (open, default (a), adopted on `main`) | Unaffected | D-2: the hand-off is the node's, inside or not |
 | The owner's guidance: no fitting to fixed seed sets; acceptance by principled properties | Followed | §6 |
-| **QA = Q0107: what happens to a worker inside an extractor (the extractor's death, its sight, where it comes out)?** | Draft (§15) | D-5, D-6, D-7; default: it survives and comes out where it went in, and it sees nothing while inside |
-| **QB = Q0108: can a worker inside an extractor be selected or ordered?** | Draft (§15) | D-8, D-10; default: not selectable, it leaves the selection, control groups keep it; an order that reaches it brings it out at once |
+| **QA = Q0107: what happens to a worker inside an extractor (the extractor's death, its sight, where it comes out)?** | Filed (§15) | D-5, D-6, D-7; default: it survives and comes out where it went in, and it sees nothing while inside |
+| **QB = Q0108: can a worker inside an extractor be selected or ordered?** | Filed (§15) | D-8, D-10; default: not selectable, it leaves the selection, control groups keep it; an order that reaches it brings it out at once |
 
 ---
 
@@ -685,7 +685,7 @@ The gate catalog (`crates/gate/suites.ron`) needs no new rule if it lists integr
 
 ---
 
-## 15. Draft owner questions (for the orchestrator to file; not filed by this plan)
+## 15. Draft owner questions (filed as Q0107 and Q0108)
 
 Numbers Q0107 and Q0108 are as assigned; the orchestrator renumbers if they are taken when filing.
 
