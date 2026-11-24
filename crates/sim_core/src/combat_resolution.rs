@@ -43,7 +43,7 @@ use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     charge_random_delay, fires_without_attack_order, mitigate_weapon_strike, raw_strike_damage,
-    shares_combat_plane, splash_raw_damage, step_entity_weapon, Mandate, WeaponTarget,
+    shares_combat_plane, splash_raw_damage, step_entity_weapon, within_band, Mandate, WeaponTarget,
 };
 use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
@@ -527,7 +527,7 @@ impl SimWorld {
 
             // A swing stays bound to the target it started on. Otherwise the orders decide
             // (plan `2026-11-23-turret-wind-up` D-2).
-            let ordered = Self::ordered_target(combat, entity, arch);
+            let ordered = Self::ordered_target(&context, combat, entity, arch, attack_mult);
             let mandate = ordered.map_or(Mandate::AttackOrder, |(_, mandate)| mandate);
             let target_opt_id = if let WeaponPhase::Windup { target_id, .. } = entity.weapon_phase {
                 Some(target_id)
@@ -589,6 +589,70 @@ impl SimWorld {
         }
     }
 
+    /// The target `entity` (of archetype `arch`, its attack rate `attack_rate`) works against
+    /// inside an attack order on `target` (plan `2026-11-24-fire-rules` D-4, B-180).
+    ///
+    /// The order's target whenever the weapon can work against it this tick: it is available to
+    /// the weapon ([`StrikeContext::is_available`], which asks for vision) and lies in the
+    /// engagement band, with no slop. Otherwise the weapon's own target, which acquisition keeps
+    /// only for a weapon that may fire at other targets and, while the unit chases, fires while
+    /// moving ([`Entity::weapon_target`]), with [`Mandate::OwnInitiative`]: the target is not the
+    /// order's, so a hull weapon would not turn the hull. With neither, the order's target, as
+    /// before: the weapon idles until it can work against it.
+    fn attack_order_target(
+        context: &StrikeContext<'_>,
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        attack_rate: AttackRate,
+        target: EntityId,
+    ) -> (EntityId, Mandate) {
+        let ordered = (target, Mandate::AttackOrder);
+        let Some(own) = entity.weapon_target else {
+            return ordered;
+        };
+        if Self::can_work(context, combat, entity, arch, attack_rate, target) {
+            return ordered;
+        }
+        let licensed = combat.snapshot(own).is_some_and(|snapshot| {
+            arch.weapon_against(snapshot.mover, entity.active_siege_weapon())
+                .is_some_and(|weapon| weapon.fires_at_other_targets)
+        });
+        if licensed {
+            (own, Mandate::OwnInitiative)
+        } else {
+            ordered
+        }
+    }
+
+    /// Whether `entity` (of archetype `arch`) can work against `target` this tick: the weapon it
+    /// would use against the target's plane (range resolved for its owner's upgrades) is
+    /// available to it and the target lies in its engagement band, with no slop.
+    fn can_work(
+        context: &StrikeContext<'_>,
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        attack_rate: AttackRate,
+        target: EntityId,
+    ) -> bool {
+        let Some(snapshot) = combat.snapshot(target) else {
+            return false;
+        };
+        let Some(weapon) =
+            Self::resolved_weapon(context.upgrades, entity, arch, snapshot.mover, attack_rate)
+        else {
+            return false;
+        };
+        context.is_available(entity.owner, snapshot)
+            && within_band(
+                entity.position.distance(snapshot.position),
+                weapon.spec.min_range,
+                weapon.max_range,
+                snapshot.radius + arch.collision_radius,
+            )
+    }
+
     /// The target `entity` (of archetype `arch`) works against when it is not mid-swing, and why
     /// (plan `2026-11-23-turret-wind-up` D-2, B-90). An attack order names its target; a holding
     /// unit works against its `current_target` (`StarCraft` II's Hold Position acquires for it);
@@ -596,14 +660,24 @@ impl SimWorld {
     /// outside an attack order ([`fires_without_attack_order`], the weapon `entity` would use
     /// against the target's plane) works against the `current_target` acquisition tracks for it
     /// ([`Mandate::OwnInitiative`]); every other weapon works against nothing. The mount plays no
-    /// part.
+    /// part. Inside an attack order, a weapon that may fire at other targets works against its
+    /// own target while it cannot work against the order's ([`Self::attack_order_target`]).
     fn ordered_target(
+        context: &StrikeContext<'_>,
         combat: &CombatWorkspace,
         entity: &Entity,
         arch: &UnitArchetype,
+        attack_rate: AttackRate,
     ) -> Option<(EntityId, Mandate)> {
         if let Some(UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front() {
-            return Some((*target, Mandate::AttackOrder));
+            return Some(Self::attack_order_target(
+                context,
+                combat,
+                entity,
+                arch,
+                attack_rate,
+                *target,
+            ));
         }
         let current = entity.current_target?;
         if entity.is_on_hold() {

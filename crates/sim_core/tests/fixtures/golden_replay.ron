@@ -431,8 +431,21 @@
 // (schema 41 -> 43), on native debug and release and wasm32-wasip1 release and debug. Nothing in
 // this replay harvests, so the field is `None` on every unit at every checkpoint. Native debug and
 // release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-fire-rules on its merge with main d92e40bb (checksum schema 44 ->
+// 45): each weapon also encodes whether it may fire at targets other than its attack order's and
+// whether it locks its turret while firing, and each entity the target its weapon chose inside an
+// attack order (WP1, D-8). Proof: with the three fields left out of the encoding at schema 44 and
+// WP4's turrets-between-shots rule (D-3) switched off, both fixtures and DEFAULT_SANDBOX_CHECKSUM
+// reproduce main's schema-44 values on native debug and release and wasm32-wasip1 release and debug.
+// Behaviour changed too (WP4, B-197, 5.0.14 FaceTargetWhileInCooldown): a turret faces its target
+// through its backswing and cooldown. Per-tick dumps of the merged tree with D-3 off and on differ
+// only in the turret angles of "red_siege" (entities 33 to 35), on 273 entity-ticks from tick 181
+// (entity 33 in its backswing turns 1 binary unit towards entity 16) to tick 549; every other
+// field of every entity is equal on all 1000 ticks. The other rules of the plan (WP2, WP3) move
+// nothing here. Native debug and release and wasm32-wasip1 release and debug agree on the list
+// below.
 (
-    checksum_schema: 44,
+    checksum_schema: 45,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -458,25 +471,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x2146016e5cb9828d,
-        0x489f21ed594af233,
-        0x1eaef3da607ec7ad,
-        0xbced10ca048f721e,
-        0x734d3dca0289e17e,
-        0xe7b3ec99606ebfed,
-        0xbe82f6d70f913afe,
-        0x2cd318cc627c327b,
-        0x8971b7c4bbe553fe,
-        0xb5a5bdfe61f5a5c4,
-        0xad93705a4c983bcd,
-        0x1123bb5e918924a6,
-        0xc625a16ad65c7478,
-        0x2441624ed67094d8,
-        0x4563eb48270a2fd5,
-        0x09fa309f61774d95,
-        0x4487559268edf447,
-        0x89f879bf15a9aec9,
-        0x2ceab976c29c0d13,
-        0x7ac88f0d8fe12f0f,
+        0xbbed2112c18e50c8,
+        0xf3ab7a13ec8efb5a,
+        0xddc307db80d858b1,
+        0x13b8c4175468fb98,
+        0xed98284f85e1af6b,
+        0x56e5a135bed11379,
+        0x0e8df53ddcebcfca,
+        0x2f00acdf37c5165a,
+        0x6da930c972122aa0,
+        0x89b67b97ecc491f6,
+        0x0fa9d89f6ed974ea,
+        0x96810b3d8b1c3e7f,
+        0x5714505680a60523,
+        0xd0755ebc47dfca67,
+        0x56b715150f51ed86,
+        0xb9d9e61ba90b59c3,
+        0x2f55d8ef82764851,
+        0x356ee0af2edc518b,
+        0xe4b2be72bec59311,
+        0xe0ede2d7abdf5012,
     ],
 )

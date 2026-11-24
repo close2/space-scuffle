@@ -16,6 +16,12 @@
 //! 5. A weapon works against a target outside an attack order only when its data lets it
 //!    ([`fires_without_attack_order`]), and then a hull weapon never turns the hull: it fires at
 //!    what lies in its arc ([`Mandate::OwnInitiative`], plan `2026-11-23-turret-wind-up` D-5).
+//! 6. A turret whose weapon locks it while firing ([`WeaponSpec::locks_turret_while_firing`])
+//!    does not turn from the start of a swing to the end of its backswing, or until a new swing
+//!    starts out of the backswing (plan `2026-11-24-fire-rules` D-2).
+//! 7. Between shots (backswing and cooldown) every other turret faces its target at its own
+//!    rate, so the next swing never waits for a turn the cooldown left undone (D-3, B-197); a
+//!    turret never turns by more than its rate in one tick.
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
@@ -578,12 +584,30 @@ fn in_engagement_band(
     combined_radius: SimScalar,
     slop: SimScalar,
 ) -> bool {
-    let closest = if weapon.min_range > SimScalar::ZERO {
-        weapon.min_range + combined_radius
+    within_band(
+        distance,
+        weapon.min_range,
+        weapon.max_range + slop,
+        combined_radius,
+    )
+}
+
+/// Whether a centre `distance` (world units) lies in the band a weapon of `min_range` and
+/// `max_range` engages from, both measured between the edges, so `combined_radius` (both
+/// collision radii) is added to each; a `min_range` of 0 has no near limit. The combat phase
+/// asks it with the range its owner's upgrades resolve to.
+pub(crate) fn within_band(
+    distance: SimScalar,
+    min_range: SimScalar,
+    max_range: SimScalar,
+    combined_radius: SimScalar,
+) -> bool {
+    let closest = if min_range > SimScalar::ZERO {
+        min_range + combined_radius
     } else {
         SimScalar::ZERO
     };
-    distance <= weapon.max_range + combined_radius + slop && distance >= closest
+    distance <= max_range + combined_radius && distance >= closest
 }
 
 /// Releases the swing against `target`. Returns true when the shot discharges.
@@ -780,7 +804,9 @@ fn step_rotating_weapon(
 
 /// Steps a swing bound to `bound`. Returns true when the shot discharges.
 ///
-/// `target_opt` must be `bound` or absent. A swing without its target, or whose target left
+/// `target_opt` must be `bound` or absent. A turret follows the target through the wind-up,
+/// unless its weapon locks it while firing ([`WeaponSpec::locks_turret_while_firing`]). A swing
+/// without its target, or whose target left
 /// the engagement band, is cancelled: no shot, and no cooldown is charged. A wind-up releases
 /// on the step that brings `remaining_ticks` to 0 ([`release_swing`]). The rule never creates
 /// a `Windup` with 0 ticks left (a damage point of 0 releases in [`start_swing`]); one set
@@ -796,7 +822,9 @@ fn step_windup(
         entity.weapon_phase = WeaponPhase::Ready;
         return false;
     };
-    if weapon.has_turret {
+    // A locked turret holds while its weapon fires (plan `2026-11-24-fire-rules` D-2, B-179):
+    // the release checks the band, not the arc, so the lock changes no damage.
+    if weapon.has_turret && !weapon.locks_turret_while_firing {
         let delta = target.position - entity.position;
         slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     }
@@ -878,14 +906,37 @@ pub fn step_entity_weapon(
             remaining_ticks,
             mandate,
         ),
-        WeaponPhase::Cooldown => false,
+        WeaponPhase::Cooldown => {
+            face_target_between_shots(entity, weapon, target_opt);
+            false
+        }
+    }
+}
+
+/// Turns a turret towards its target between shots, at its own rate, without changing the
+/// weapon's phase (plan `2026-11-24-fire-rules` D-3, B-197): 5.0.14's `CWeaponLegacy` default
+/// `LegacyOptions FaceTargetWhileInCooldown 1` (`core` WeaponData:34), which no weapon clears.
+/// A hull weapon's hull is left to pursuit, which aims it in its band.
+fn face_target_between_shots(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+) {
+    if !weapon.has_turret {
+        return;
+    }
+    if let Some(target) = target_opt {
+        let delta = target.position - entity.position;
+        slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     }
 }
 
 /// Steps a backswing: a lock on orders that never delays the next attack.
 ///
 /// The backswing loses one tick. While the cooldown runs, it is only the follow-through of the
-/// last shot: it ends in `Cooldown`, or carries on. Once the cooldown has run out, the weapon
+/// last shot: it ends in `Cooldown`, or carries on, and a turret faces its target meanwhile
+/// ([`face_target_between_shots`]) unless its weapon locks it while firing (plan
+/// `2026-11-24-fire-rules` D-2, D-3). Once the cooldown has run out, the weapon
 /// steps exactly as a `Ready` weapon would this tick. If that starts a swing or turns the
 /// weapon towards `target_opt`, the backswing has ended; if nothing starts (no target, or the
 /// target is out of the engagement band), the backswing runs on to its end as before, so the
@@ -914,6 +965,11 @@ fn step_backswing(
                 return released;
             }
         }
+    }
+    // Nothing started, so the ready step turned nothing: the turret faces its target as between
+    // any two shots, unless its weapon locks it until the follow-through ends (D-2).
+    if !weapon.locks_turret_while_firing {
+        face_target_between_shots(entity, weapon, target_opt);
     }
     entity.weapon_phase = match (remaining_ticks, entity.weapon_cooldown_remaining) {
         (0, 0) => WeaponPhase::Ready,

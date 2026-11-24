@@ -621,6 +621,9 @@
                 // (swarm WeaponData:177); plan 2026-11-23-turret-wind-up D-7.
                 allowed_movement: Moving,
                 fires_outside_attack_order: true,
+                // 5.0.14 IonCannons: OnlyFireAtAttackOrderTarget 0 (libertymulti WeaponData:21, swarm WeaponData:178);
+                // plan 2026-11-24-fire-rules D-6.
+                fires_at_other_targets: true,
                 base_damage: 5.0,
                 attribute_bonuses: [(Light, 5.0)],
                 attacks_count: 2,
@@ -964,6 +967,9 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 55.99,
                 turret_idle: ResetIfMoving(55.99),
+                // 5.0.14 InfernalFlameThrower: LegacyOptions LockTurretWhileFiring 1 (liberty WeaponData:590); plan
+                // 2026-11-24-fire-rules D-6.
+                locks_turret_while_firing: true,
                 base_damage: 8.0,
                 attribute_bonuses: [(Light, 6.0)],
                 attacks_count: 1,
@@ -2159,6 +2165,9 @@
                 // OnlyFireWhileInAttackOrder 0 (balancemulti WeaponData:185); plan 2026-11-23-turret-wind-up D-7.
                 allowed_movement: Slowing,
                 fires_outside_attack_order: true,
+                // 5.0.14 PhaseDisruptors: OnlyFireAtAttackOrderTarget 0 (voidmulti WeaponData:206, balancemulti
+                // WeaponData:186); plan 2026-11-24-fire-rules D-6.
+                fires_at_other_targets: true,
                 base_damage: 20.0,
                 attribute_bonuses: [(Armored, 30.0)],
                 attacks_count: 1,
@@ -2256,6 +2265,9 @@
                 // 5.0.14 ThermalLances: no AllowedMovement, OnlyFireWhileInAttackOrder 0 (balancemulti
                 // WeaponData:229); plan 2026-11-23-turret-wind-up D-7.
                 fires_outside_attack_order: true,
+                // 5.0.14 ThermalLances: OnlyFireAtAttackOrderTarget 0 (voidmulti WeaponData:257, balancemulti
+                // WeaponData:230); plan 2026-11-24-fire-rules D-6.
+                fires_at_other_targets: true,
                 base_damage: 10.0,
                 attribute_bonuses: [(Light, 5.0)],
                 attacks_count: 2,

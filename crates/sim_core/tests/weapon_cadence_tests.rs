@@ -706,11 +706,15 @@ fn b29_an_engaged_weapon_fires_within_the_engaged_arc_without_turning() -> TestR
         Some(target),
         Mandate::AttackOrder
     ));
-    // Knock the turret 20 degrees off the target: inside the engaged arc.
+    // Knock the turret 20 degrees off the target, inside the engaged arc, on the call the
+    // cooldown ends: before it, the turret faces its target between shots (plan
+    // `2026-11-24-fire-rules` D-3, B-197) and would undo the knock.
     let offset = SimAngle::from_degrees(20);
-    shooter.turret_angle += offset;
     let mut released = false;
-    for _ in 0..21 {
+    for call in 1..=21_u32 {
+        if call == 21 {
+            shooter.turret_angle += offset;
+        }
         released = step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder);
     }
     assert!(
@@ -732,11 +736,15 @@ fn b29_a_target_that_leaves_the_engaged_arc_is_acquired_again() -> TestResult {
         Some(target),
         Mandate::AttackOrder
     ));
-    // 45 degrees off: outside the engaged 30, so the weapon has lost the target and must face
-    // it exactly again (4 calls at 11.25 degrees) before the next swing.
-    shooter.turret_angle = SimAngle::from_degrees(45);
+    // 45 degrees off on the call the cooldown ends (before it, the turret faces its target
+    // between shots, plan `2026-11-24-fire-rules` D-3): outside the engaged 30, so the weapon has
+    // lost the target and must face it exactly again (4 calls at 11.25 degrees) before the next
+    // swing.
     let mut releases = Vec::new();
     for call in 1..=30_u32 {
+        if call == 21 {
+            shooter.turret_angle = SimAngle::from_degrees(45);
+        }
         if step_entity_weapon(&mut shooter, &weapon, Some(target), Mandate::AttackOrder) {
             releases.push((call, aim_error(&shooter, &target)));
         }

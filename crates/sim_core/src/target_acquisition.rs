@@ -11,11 +11,15 @@
 //! ## Invariants Maintained
 //! 1. Player orders are never rewritten: only [`AttackOrigin::Acquired`] attacks are replaced,
 //!    and an explicit attack ends only when it can no longer be carried out.
-//! 2. A holding or immobile unit, and a unit tracking a target outside an attack order (plan
-//!    `2026-11-23-turret-wind-up` D-4), only considers targets its weapon reaches from where it
-//!    stands. Acquisition never moves a unit off a hold order and never changes the order of a
-//!    unit it tracks for: only its `current_target`, and only for a weapon whose data lets it
-//!    fire under that order.
+//! 2. A holding or immobile unit, a unit tracking a target outside an attack order (plan
+//!    `2026-11-23-turret-wind-up` D-4), and a unit choosing its weapon's own target inside an
+//!    attack order (plan `2026-11-24-fire-rules` D-5), only considers targets its weapon reaches
+//!    from where it stands. Acquisition never moves a unit off a hold order and never changes the
+//!    order of a unit it tracks for: only its `current_target`, and only for a weapon whose data
+//!    lets it fire under that order. An own weapon target (`Entity::weapon_target`) changes
+//!    neither the order nor `current_target`, so pursuit keeps chasing the order's target; it
+//!    exists only while that target cannot be worked, and for a chasing unit only with a weapon
+//!    that fires while moving.
 //! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. As in
 //!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
 //!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
@@ -39,8 +43,8 @@ use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    AttackOrigin, EntityId, PerPlayer, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
-    VisibilityState,
+    AllowedMovement, AttackOrigin, EntityId, PerPlayer, PlayerId, SimAngle, SimScalar, SimVec2,
+    Tick, UnitOrder, VisibilityState,
 };
 use std::collections::BTreeMap;
 
@@ -85,6 +89,11 @@ pub(crate) enum Acquisition {
     /// Record where the unit's current target stands, for the tie-break
     /// [`AcquireTieBreak::ClosestToPrevious`].
     RememberTarget(SimVec2),
+    /// Let the unit's weapon work against this enemy while its attack order's target cannot be
+    /// worked ([`Entity::weapon_target`], plan `2026-11-24-fire-rules` D-5).
+    SetWeaponTarget(EntityId),
+    /// Forget the unit's own weapon target.
+    ReleaseWeaponTarget,
 }
 
 /// Facts about the whole catalog that every unit's acquisition reads, gathered once per tick.
@@ -106,8 +115,32 @@ struct ScanScope {
     /// Under [`Engagement::Track`], whether the order walks the unit: only enemies whose plane
     /// the unit meets with a weapon that may fire under that order qualify. `None` otherwise.
     tracking: Option<bool>,
+    /// For a scan for the unit's own weapon target inside an attack order: only enemies whose
+    /// plane the unit meets with a weapon that may fire at other targets (and, while the unit
+    /// chases, fires while moving) qualify, ranked from the order's target. `None` otherwise.
+    own_target: Option<OwnTargetScan>,
     /// The catalog's largest collision radius in world units ([`CatalogBounds::largest_radius`]).
     largest_radius: SimScalar,
+}
+
+/// The licence and anchor of a scan for a unit's own weapon target (plan
+/// `2026-11-24-fire-rules` D-5).
+#[derive(Clone, Copy)]
+struct OwnTargetScan {
+    /// Whether the unit chases its order's target (mobile, the target out of reach): only a
+    /// weapon that fires while moving may then fire at another enemy.
+    chasing: bool,
+    /// Where the order's target stands, world units: "the previous target" of the tie-break
+    /// [`AcquireTieBreak::ClosestToPrevious`] (5.0.14's `ByDistanceFromTarget`).
+    anchor: SimVec2,
+}
+
+impl OwnTargetScan {
+    /// Whether `weapon` may fire at another enemy under this scan.
+    fn licenses(self, weapon: &WeaponSpec) -> bool {
+        weapon.fires_at_other_targets
+            && (!self.chasing || weapon.allowed_movement == AllowedMovement::Moving)
+    }
 }
 
 /// Best candidates from one neighbourhood scan.
@@ -442,6 +475,7 @@ impl SimWorld {
                     });
                     victim.current_funnel_waypoints.clear();
                     victim.current_target = None;
+                    victim.weapon_target = None;
                 }
             }
             Ok(None) => {}
@@ -495,6 +529,7 @@ impl SimWorld {
                     origin: AttackOrigin::Acquired,
                 });
                 unit.current_target = Some(attacker_id);
+                unit.weapon_target = None;
                 unit.current_funnel_waypoints.clear();
             }
         }
@@ -540,8 +575,20 @@ impl SimWorld {
             };
             let decision =
                 self.decide_acquisition(entity, arch, bounds, &mut neighbors, &mut candidates);
+            let order_kept = decision.is_none();
             if let Some(decision) = decision.or_else(|| self.target_to_remember(entity, arch)) {
                 acquisitions.push((id, decision));
+            }
+            let own = self.decide_weapon_target(
+                entity,
+                arch,
+                order_kept,
+                bounds.largest_radius,
+                &mut neighbors,
+                &mut candidates,
+            );
+            if let Some(own) = own {
+                acquisitions.push((id, own));
             }
         }
         self.scratch_neighbors = neighbors;
@@ -555,10 +602,13 @@ impl SimWorld {
                     Acquisition::AbandonAttack => {
                         unit.order_queue.pop_front();
                         unit.current_target = None;
+                        unit.weapon_target = None;
                     }
                     Acquisition::RememberTarget(position) => {
                         unit.previous_target_position = Some(position);
                     }
+                    Acquisition::SetWeaponTarget(target) => unit.weapon_target = Some(target),
+                    Acquisition::ReleaseWeaponTarget => unit.weapon_target = None,
                 }
             }
         }
@@ -576,12 +626,14 @@ impl SimWorld {
     }
 
     /// The tie-break measure of `candidate` for `entity` (see [`TargetPriorityKey::tie_break`]),
-    /// given the weapon it would use against the candidate.
+    /// given the weapon it would use against the candidate and where the previous target stands
+    /// for [`AcquireTieBreak::ClosestToPrevious`] (`previous`, world units).
     fn tie_break(
         entity: &Entity,
         arch: &UnitArchetype,
         weapon: &WeaponSpec,
         candidate: &Entity,
+        previous: Option<SimVec2>,
     ) -> SimScalar {
         let distance_sq = entity.position.distance_sq(candidate.position);
         match arch.acquire_tie_break {
@@ -592,11 +644,9 @@ impl SimWorld {
                 let turn = weapon_aim(entity, weapon).diff(bearing).unsigned_abs();
                 SimScalar::from_i32(i32::from(turn))
             }
-            AcquireTieBreak::ClosestToPrevious => entity
-                .previous_target_position
-                .map_or(distance_sq, |previous| {
-                    previous.distance_sq(candidate.position)
-                }),
+            AcquireTieBreak::ClosestToPrevious => previous.map_or(distance_sq, |previous| {
+                previous.distance_sq(candidate.position)
+            }),
         }
     }
 
@@ -746,6 +796,7 @@ impl SimWorld {
             ScanScope {
                 stationary,
                 tracking,
+                own_target: None,
                 largest_radius: bounds.largest_radius,
             },
             neighbors,
@@ -790,6 +841,86 @@ impl SimWorld {
                 Some(Acquisition::AbandonAttack)
             }
             _ => None,
+        }
+    }
+
+    /// What changes for `entity`'s own weapon target ([`Entity::weapon_target`], plan
+    /// `2026-11-24-fire-rules` D-5), given whether this tick's decision for its order kept the
+    /// order (`order_kept`).
+    ///
+    /// Only a mobile unit under an attack order that acquisition keeps, with a weapon that may
+    /// fire at other targets, has one. It has none while the order's target passes the weapon
+    /// filter and lies in reach (the order's target first, Q0109 part 3), and none while it
+    /// chases the target (mobile, target out of reach) unless such a weapon fires while moving.
+    /// Otherwise the best enemy it reaches from where it stands is chosen, ranked as
+    /// acquisition ranks with "the previous target" read as the order's target. An immobile
+    /// unit's order on a target it cannot work ends instead (rule 6), so it never has one.
+    fn decide_weapon_target(
+        &self,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        order_kept: bool,
+        largest_radius: SimScalar,
+        neighbors: &mut Vec<EntityId>,
+        candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
+    ) -> Option<Acquisition> {
+        let release = entity
+            .weapon_target
+            .is_some()
+            .then_some(Acquisition::ReleaseWeaponTarget);
+        let order_target = match Self::engagement_of(entity, arch) {
+            Engagement::Acquired(target) | Engagement::Explicit(target) if order_kept => target,
+            _ => return release,
+        };
+        let weapons = || {
+            [
+                arch.ground_weapon.as_ref(),
+                arch.air_weapon.as_ref(),
+                arch.weapon.as_ref(),
+                entity.active_siege_weapon(),
+            ]
+            .into_iter()
+            .flatten()
+        };
+        let immobile = entity.is_immobile || arch.max_speed <= SimScalar::ZERO;
+        if immobile || !weapons().any(|weapon| weapon.fires_at_other_targets) {
+            return release;
+        }
+        let Some(target) = self.entities.get(&order_target) else {
+            return release;
+        };
+        let reaches = self.reaches_from_here(entity, arch, target);
+        if reaches
+            && Self::passes_weapon_filters(target, &self.map, &self.vision_maps, entity.owner)
+        {
+            return release;
+        }
+        let scan = OwnTargetScan {
+            chasing: !reaches,
+            anchor: target.position,
+        };
+        if !weapons().any(|weapon| scan.licenses(weapon)) {
+            return release;
+        }
+        let best = self
+            .scan_candidates(
+                entity,
+                arch,
+                None,
+                ScanScope {
+                    stationary: true,
+                    tracking: None,
+                    own_target: Some(scan),
+                    largest_radius,
+                },
+                neighbors,
+                candidates,
+            )
+            .best;
+        match best {
+            Some(best) if entity.weapon_target == Some(best.entity_id) => None,
+            Some(best) => Some(Acquisition::SetWeaponTarget(best.entity_id)),
+            None => release,
         }
     }
 
@@ -874,6 +1005,7 @@ impl SimWorld {
             if scope
                 .tracking
                 .is_some_and(|walking| !fires_without_attack_order(weapon, walking))
+                || scope.own_target.is_some_and(|own| !own.licenses(weapon))
             {
                 continue;
             }
@@ -888,7 +1020,15 @@ impl SimWorld {
                 threat: is_threat_to(target_arch, neighbor, arch),
                 attack_target_priority: target_arch.attack_target_priority,
                 primary: arch.primary_weapon_reaches(target_arch.mover_type),
-                tie_break: Self::tie_break(entity, arch, weapon, neighbor),
+                tie_break: Self::tie_break(
+                    entity,
+                    arch,
+                    weapon,
+                    neighbor,
+                    scope
+                        .own_target
+                        .map_or(entity.previous_target_position, |own| Some(own.anchor)),
+                ),
                 entity_id: neighbor_id,
             };
             if Some(neighbor_id) == current {
@@ -904,6 +1044,7 @@ impl SimWorld {
     /// Commits an acquired target to `unit` according to its front order.
     fn engage(unit: &mut Entity, target: EntityId) {
         unit.current_target = Some(target);
+        unit.weapon_target = None;
         let acquired = UnitOrder::AttackTarget {
             target,
             origin: AttackOrigin::Acquired,
@@ -960,6 +1101,125 @@ mod weapon_filter_tests {
         );
         assert!(world.is_weapon_target_available(PlayerId(8), target));
         assert!(!world.is_weapon_target_available(PlayerId(0), target));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod chase_reading_tests {
+    //! Plan `2026-11-24-fire-rules` D-4 (**verify**): acquisition reads "the unit chases its
+    //! order's target" as "the target lies outside [`SimWorld::reaches_from_here`]", measured on
+    //! the positions acquisition sees, while pursuit stands a unit when the target lies in its
+    //! band (`Pursuit::aim_if_in_range`) on the positions the movement phase sees. For a standing
+    //! target the two agree on every constructed case, the band's edge included. A target that
+    //! crosses the edge in the movement phase before its attacker's pursuit runs (the legacy
+    //! pipeline moves units one by one) splits them for that tick: that is the gate mismatch
+    //! that starts the plan's WP6, which reads the chase from pursuit itself.
+    use crate::test_support::world;
+    use crate::world::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        EntityId, MoverType, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle,
+        UnitOrder, UnitTypeId,
+    };
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// The shipped mobile ground archetype of lowest type id with a ranged ground weapon (at
+    /// least 4 of reach, no minimum range), and that weapon's reach against its own kind:
+    /// range plus both radii.
+    fn ranged(world: &SimWorld) -> Result<(UnitTypeId, SimScalar), String> {
+        world
+            .catalog
+            .archetypes()
+            .filter(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .filter_map(|arch| {
+                let weapon = arch.weapon_against(MoverType::Ground, None)?;
+                (weapon.max_range >= SimScalar::from_i32(4)
+                    && weapon.min_range == SimScalar::ZERO
+                    && weapon.target_flags.intersects(arch.attributes))
+                .then(|| {
+                    (
+                        arch.unit_type_id,
+                        weapon.max_range + arch.collision_radius + arch.collision_radius,
+                    )
+                })
+            })
+            .min_by_key(|(id, _)| *id)
+            .ok_or_else(|| "a shipped ranged ground archetype".to_owned())
+    }
+
+    /// One case: a unit at (10, 20) under a player's attack on a unit of its kind standing
+    /// `offset` beyond its reach in +x, holding (`walk` 0) or walking towards +x (`walk` 1) or
+    /// −x (`walk` −1), spawned first so that the movement phase moves it before the attacker.
+    /// Returns (reaches before the tick, stood on the tick).
+    fn case(offset: f64, walk: i32) -> Result<(bool, bool), Box<dyn std::error::Error>> {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 11);
+        let (kind, reach) = ranged(&world)?;
+        let at = SimVec2::new(
+            SimScalar::from_i32(10) + reach + SimScalar::from_num(offset),
+            SimScalar::from_i32(20),
+        );
+        let target = world.spawn_unit(kind, PlayerId(1), at)?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(10, 20))?;
+        let reaches = {
+            let entity = world.entities.get(&unit).ok_or("unit")?;
+            let arch = world.catalog.get(kind)?;
+            let other = world.entities.get(&target).ok_or("target")?;
+            world.reaches_from_here(entity, arch, other)
+        };
+        let command = |player: u8, id: EntityId, order: UnitOrder| PlayerCommand {
+            player_id: PlayerId(player),
+            entities: vec![id],
+            order,
+            queue: false,
+        };
+        let target_order = match walk {
+            0 => UnitOrder::HoldPosition,
+            _ => UnitOrder::Move {
+                target: SimVec2::from_i32(if walk > 0 { 60 } else { 2 }, 21),
+            },
+        };
+        world.step(&TickBundle {
+            tick: Tick(0),
+            commands: vec![
+                command(0, unit, UnitOrder::attack(target)),
+                command(1, target, target_order),
+            ],
+            state_checksum: None,
+        });
+        let stood = world.entities.get(&unit).ok_or("unit")?.position == SimVec2::from_i32(10, 20);
+        Ok((reaches, stood))
+    }
+
+    #[test]
+    fn reach_agrees_with_pursuit_for_a_standing_target() -> TestResult {
+        for offset in [-0.5, -0.01, 0.0, 0.01, 0.5] {
+            let (reaches, stood) = case(offset, 0)?;
+            assert_eq!(reaches, offset <= 0.0, "premise: offset {offset}");
+            assert_eq!(
+                reaches, stood,
+                "offset {offset}: reach {reaches}, pursuit stood {stood}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_target_that_crosses_the_band_edge_first_splits_the_readings() -> TestResult {
+        assert_eq!(
+            case(-0.05, 1)?,
+            (true, false),
+            "walking out: in reach for acquisition, chased by pursuit"
+        );
+        assert_eq!(
+            case(0.05, -1)?,
+            (false, true),
+            "walking in: out of reach for acquisition, stood by pursuit"
+        );
+        assert_eq!(case(-0.5, 1)?, (true, true), "well inside, both stand");
+        assert_eq!(case(0.5, -1)?, (false, false), "well outside, both chase");
         Ok(())
     }
 }

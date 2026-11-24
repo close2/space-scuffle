@@ -108,7 +108,12 @@ use std::collections::BTreeMap;
 /// Schema 44 adds each unit task's housing structure, `UnitTask::housed_in`, after `last_node`
 /// (plan `2026-11-24-hidden-harvesters` D-3). Number 42 is reserved for the contact solver's
 /// branch.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 44;
+/// Schema 45 adds each weapon's fire rules (a `bool` each), `WeaponSpec::fires_at_other_targets`
+/// and `WeaponSpec::locks_turret_while_firing`, after `fires_outside_attack_order`, and each
+/// entity's own weapon target, `Entity::weapon_target`, after `current_target` (plan
+/// `2026-11-24-fire-rules` D-8). Number 44 is the hidden-harvesters
+/// plan's, merged first.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 45;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

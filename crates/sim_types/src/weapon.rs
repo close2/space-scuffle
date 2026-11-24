@@ -412,7 +412,7 @@ pub enum TurretIdle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, channel, suicide, melee), each read by a different rule"
+    reason = "independent authored facts of one weapon (turret, turret lock, attack-order options, channel, suicide, melee), each read by a different rule"
 )]
 pub struct WeaponSpec {
     /// Descriptive name of the weapon system.
@@ -453,6 +453,24 @@ pub struct WeaponSpec {
     /// D-2, D-4).
     #[serde(default)]
     pub fires_outside_attack_order: bool,
+    /// Whether the weapon may work against a target other than its unit's attack order's: the
+    /// inverse of `StarCraft` II's `Options OnlyFireAtAttackOrderTarget`, which every weapon sets
+    /// by default (`core` WeaponData:21), so `false` is the engine default. Inside an attack order
+    /// whose target it cannot work against this tick (out of its engagement band, or failing the
+    /// weapon filter), such a weapon works against the enemy acquisition chose for it
+    /// (`Entity::weapon_target`), while its unit is not walking or the weapon is
+    /// [`AllowedMovement::Moving`]; the order's target keeps priority whenever it can be worked
+    /// (plan `2026-11-24-fire-rules` D-1, D-4).
+    #[serde(default)]
+    pub fires_at_other_targets: bool,
+    /// Whether the weapon's turret holds still while the weapon fires: `StarCraft` II's
+    /// `LegacyOptions LockTurretWhileFiring` (only the Hellion's `InfernalFlameThrower` sets it,
+    /// `liberty` WeaponData:590), `false` by default. The turret does not turn from the start of a
+    /// swing to the end of its backswing; a new swing that starts out of the backswing ends the
+    /// lock. Meaningful only with `has_turret`, which catalog validation requires (plan
+    /// `2026-11-24-fire-rules` D-1, D-2).
+    #[serde(default)]
+    pub locks_turret_while_firing: bool,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
     /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).

@@ -38,3 +38,19 @@ onto a unit out of range with Zerglings at its gate.
 - **2(a):** Turrets (`FaceTargetWhileInCooldown`) keep following their target between shots so the next shot fires as soon as ready.
 - **3(a):** Units with "Only Fire At Attack Target" off (Phoenix, Immortal, Colossus, Planetary Fortress) fire at another enemy only while the ordered target is out of range or sight, always prioritizing the ordered target whenever it is reachable.
 - **4(a):** A Planetary Fortress ordered to attack a unit out of range or out of sight drops the order at once (matching other immobile units).
+
+## Resolution
+
+Every part was answered (a), the defaults plan [`2026-11-24-fire-rules`](../../plans/2026-11-24-fire-rules.md)
+had built, so no code changed after the answer:
+
+- **Part 1 (a):** the Hellion analogue's turret holds from the start of a swing to the end of its backswing: WP2
+  `1b047eb4` (the wind-up) and WP4 `b5522eb3` (the backswing); B-179 fixed.
+- **Part 2 (a):** turrets follow their target between shots: WP4 `b5522eb3`; B-197 fixed. The hull half (a unit on
+  Hold Position) is registered as B-199.
+- **Part 3 (a):** a weapon that may fire at other targets works against its attack order's target whenever it can,
+  and against the best enemy it reaches otherwise: WP3 `fb39028d`; B-180 fixed.
+- **Part 4 (a):** an immobile unit's attack order on a target out of reach or sight ends at once, as built; such a
+  unit never takes an own target: WP3 `fb39028d` (`an_immobile_units_order_on_an_unworkable_target_ends`).
+
+Fields and data: WP1 `34672217`; records: WP5 `08723a39` and this commit.
