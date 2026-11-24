@@ -184,6 +184,30 @@ impl SimWorld {
         )
     }
 
+    /// Whether `viewer`'s interface shows the enemy `target` itself: `viewer` sees it
+    /// ([`Self::sees_enemy`]: its cell `Visible`, or attack-revealed) and it is either
+    /// unconcealed or cloak-revealed to `viewer` ([`Self::is_cloak_revealed`]). The rule the
+    /// client's fog copies; the attack snapshot's record and drop rules read it, and nothing
+    /// else (plan `2026-11-24-attacker-snapshot` D-2). Whether `target` lives or is hidden is
+    /// the caller's question.
+    #[must_use]
+    pub(crate) fn shown_to(
+        map: &SimMap,
+        vision_maps: &PerPlayer<PlayerVisionMap>,
+        viewer: PlayerId,
+        target: &Entity,
+    ) -> bool {
+        Self::sees_enemy(map, vision_maps, viewer, target)
+            && (!target.is_concealed()
+                || Self::is_cloak_revealed(
+                    map,
+                    vision_maps,
+                    viewer,
+                    target.position,
+                    target.is_attack_revealed_to(viewer),
+                ))
+    }
+
     /// The rule of [`Self::sees_enemy`] for an enemy at `position` (world units) that is
     /// `attack_revealed` to `viewer` or not, for callers holding a snapshot rather than the
     /// entity.

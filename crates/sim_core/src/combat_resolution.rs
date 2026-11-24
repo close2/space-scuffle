@@ -38,6 +38,11 @@
 //!    unless its weapon clears `missile_validation.weapon`; a missile that does not validate the
 //!    weapon strikes only a target that passes it at impact (plan `2026-11-24-weapon-validation`
 //!    D-4).
+//! 10. A strike by a `Snapshot` weapon on a unit whose owner does not see the attacker (and, if it
+//!     is concealed, detects its cell) leaves that owner a snapshot of the attacker in its pose
+//!     at the strike, in the unhashed presentation workspace, which no tick decision reads (plan
+//!     `2026-11-24-attacker-snapshot` D-2, D-3). The reveal and the snapshot are recorded by one
+//!     call, [`SimWorld::record_attack_presentation`], from the same two places.
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
@@ -49,7 +54,9 @@ use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
 };
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
-use crate::world::presentation::{weapon_source, PresentationWorkspace};
+use crate::world::presentation::{
+    mode_index, weapon_source, AttackSnapshotRecord, PresentationWorkspace, SnapshotPose,
+};
 use crate::world::SimWorld;
 use sim_map::{CliffSpan, PlayerVisionMap, SimMap};
 use sim_types::{
@@ -259,6 +266,27 @@ fn level_span(map: &SimMap, pos: SimVec2, mover: MoverType) -> CliffSpan {
         CliffSpan::ALL
     } else {
         map.cliff_span_at(pos)
+    }
+}
+
+/// The pose of `attacker` (of archetype `arch`) a snapshot shows: where it stands, its hull and
+/// turret facings, its settled mode and its health and shield shares, in fixed point (plan
+/// `2026-11-24-attacker-snapshot` D-4).
+pub(crate) fn snapshot_pose(attacker: &Entity, arch: &UnitArchetype) -> SnapshotPose {
+    let share = |value: SimScalar, max: SimScalar| {
+        crate::world::snapshot::fraction(value, max).clamp(SimScalar::ZERO, SimScalar::ONE)
+    };
+    SnapshotPose {
+        unit_type: attacker.unit_type_id,
+        owner: attacker.owner,
+        position: attacker.position,
+        heading: attacker.heading,
+        turret: attacker.turret_angle,
+        mode: attacker
+            .settled_mode(arch)
+            .and_then(|mode| mode_index(arch, &mode.mode_name)),
+        hp_fraction: share(attacker.hp, attacker.max_hp),
+        shield_fraction: share(attacker.shields, arch.max_shields),
     }
 }
 
@@ -1121,12 +1149,74 @@ impl SimWorld {
                 &mut self.presentation,
             );
         }
-        self.record_attack_reveal(source, target_id);
+        self.record_attack_presentation(source, target_id);
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
         self.run_weapon_hit_effects(source, target_id, hit.position);
         Some(hit)
+    }
+
+    /// Records what a strike of `source` on `victim_id` shows of its attacker to the victim's
+    /// owner: the reveal of a `Visible` weapon ([`Self::record_attack_reveal`]) and the snapshot
+    /// of a `Snapshot` weapon ([`Self::record_attack_snapshot`]). The one call both strike paths
+    /// make, so the two cannot drift apart (plan `2026-11-24-attacker-snapshot` D-2).
+    fn record_attack_presentation(&mut self, source: HitSource<'_>, victim_id: EntityId) {
+        self.record_attack_reveal(source, victim_id);
+        self.record_attack_snapshot(source, victim_id);
+    }
+
+    /// Records, for the owner p of `victim_id`, a snapshot of the attacker of `source` in its pose
+    /// now, replacing any earlier one of the same attacker (plan `2026-11-24-attacker-snapshot`
+    /// D-2, D-3). It is recorded only when all of these hold: the weapon's attack visibility is
+    /// `Snapshot`; p is not the attacker's player; the attacker exists, lives and is not hidden;
+    /// p's interface does not show it ([`Self::shown_to`]); and, if it is concealed, p detects
+    /// its cell, so the image never shows a unit p could not see in plain sight. As for the
+    /// reveal, a strike reduced to nothing still counts. The record goes to p and p's allies; the
+    /// simulation has no teams, so that is p alone (owner answer Q0101 4(b)). The record is
+    /// presentation: no tick decision reads it.
+    fn record_attack_snapshot(&mut self, source: HitSource<'_>, victim_id: EntityId) {
+        if source.weapon.attack_visibility != AttackVisibility::Snapshot {
+            return;
+        }
+        let Some(viewer) = self
+            .entities
+            .get(&victim_id)
+            .map(|victim| victim.owner)
+            .filter(|&owner| owner != source.owner)
+        else {
+            return;
+        };
+        let Some(attacker) = source
+            .attacker
+            .and_then(|id| self.entities.get(&id))
+            .filter(|attacker| attacker.is_alive() && !attacker.is_hidden())
+        else {
+            return;
+        };
+        if Self::shown_to(&self.map, &self.vision_maps, viewer, attacker) {
+            return;
+        }
+        let detected = || {
+            self.vision_maps.get(viewer).is_some_and(|vision| {
+                self.map
+                    .world_to_cell(attacker.position)
+                    .is_ok_and(|(cx, cy)| vision.is_detected(cx, cy))
+            })
+        };
+        if attacker.is_concealed() && !detected() {
+            return;
+        }
+        let Ok(arch) = self.catalog.get(attacker.unit_type_id) else {
+            return;
+        };
+        let record = AttackSnapshotRecord {
+            viewer,
+            attacker: attacker.id,
+            struck: Tick(self.current_tick),
+            pose: snapshot_pose(attacker, arch),
+        };
+        self.presentation.record_attack_snapshot(record);
     }
 
     /// Records that a strike of `source` landed on `victim_id`: a weapon whose attack visibility
@@ -1485,7 +1575,7 @@ impl SimWorld {
             if let Some(struck) = struck.as_deref_mut() {
                 struck.push(id);
             }
-            self.record_attack_reveal(source, id);
+            self.record_attack_presentation(source, id);
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }
@@ -2178,5 +2268,198 @@ mod tests {
             SimScalar::ZERO,
             "an enemy the weapon's target flags exclude"
         );
+    }
+
+    /// A world on a 32x32 map whose cells with x >= 16 stand one cliff level up (no ramp): a
+    /// ranged ground attacker of player 0 on the plateau's edge, a victim of player 1 below it,
+    /// the weapon the attacker strikes with, and the vision of this tick computed.
+    fn snapshot_bench() -> (
+        crate::SimWorld,
+        sim_types::EntityId,
+        sim_types::EntityId,
+        crate::catalog::WeaponSpec,
+    ) {
+        use sim_types::{AttackVisibility, ShapeKind};
+        let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat map");
+        for y in 0..32 {
+            for x in 16..32 {
+                map.cell_mut(x, y)
+                    .expect("invariant: on the map")
+                    .cliff_level = CliffLevel(1);
+            }
+        }
+        let mut world = world(map, 0x183);
+        let (kind, weapon) = world
+            .catalog
+            .archetypes()
+            .filter(|arch| {
+                matches!(arch.shape, ShapeKind::UnitSphere)
+                    && arch.mover_type == MoverType::Ground
+                    && !arch.is_detector()
+            })
+            .find_map(|arch| {
+                arch.weapon_against(MoverType::Ground, None)
+                    .filter(|w| {
+                        w.attack_visibility == AttackVisibility::Snapshot
+                            && w.max_range >= SimScalar::from_i32(4)
+                    })
+                    .map(|w| (arch.unit_type_id, w.clone()))
+            })
+            .expect("the shipped catalog has a ranged ground unit with a Snapshot weapon");
+        let attacker = world
+            .spawn_unit(
+                kind,
+                PlayerId(0),
+                SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(16.5)),
+            )
+            .expect("invariant: a free spot");
+        let victim = world
+            .spawn_unit(
+                kind,
+                PlayerId(1),
+                SimVec2::new(SimScalar::from_num(13.5), SimScalar::from_num(16.5)),
+            )
+            .expect("invariant: a free spot");
+        world.update_vision();
+        (world, attacker, victim, weapon)
+    }
+
+    /// Lands one strike of `weapon` by `attacker` on `victim` through the presentation hook and
+    /// returns how many snapshots player 1 keeps.
+    fn strike(
+        world: &mut crate::SimWorld,
+        attacker: sim_types::EntityId,
+        victim: sim_types::EntityId,
+        weapon: &crate::catalog::WeaponSpec,
+    ) -> usize {
+        let owner = world.entities[&attacker].owner;
+        let source = super::HitSource {
+            weapon,
+            slug: None,
+            owner,
+            attacker: Some(attacker),
+            origin: world.entities[&attacker].position,
+            strikes: 1,
+            effect: sim_types::EffectSource::default(),
+        };
+        world.record_attack_presentation(source, victim);
+        world.presentation.attack_snapshots_of(PlayerId(1)).count()
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-2: with every condition of the record rule met, a
+    /// strike records one snapshot; each condition failing alone records none.
+    #[test]
+    fn each_condition_of_the_snapshot_rule_decides_alone() {
+        use sim_types::AttackVisibility;
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        assert_eq!(strike(&mut world, attacker, victim, &weapon), 1, "all met");
+
+        for visibility in [
+            AttackVisibility::Visible { reveal_ticks: 54 },
+            AttackVisibility::Hidden,
+        ] {
+            let (mut world, attacker, victim, mut weapon) = snapshot_bench();
+            weapon.attack_visibility = visibility;
+            assert_eq!(
+                strike(&mut world, attacker, victim, &weapon),
+                0,
+                "{visibility:?}"
+            );
+        }
+
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        world.entities.get_mut(&victim).expect("spawned").owner = PlayerId(0);
+        assert_eq!(
+            strike(&mut world, attacker, victim, &weapon),
+            0,
+            "own player"
+        );
+        assert_eq!(
+            world.presentation.attack_snapshots_of(PlayerId(0)).count(),
+            0
+        );
+
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        world.entities.get_mut(&attacker).expect("spawned").hp = SimScalar::ZERO;
+        assert_eq!(
+            strike(&mut world, attacker, victim, &weapon),
+            0,
+            "dead attacker"
+        );
+
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("spawned")
+            .transport_carrier = Some(victim);
+        assert_eq!(
+            strike(&mut world, attacker, victim, &weapon),
+            0,
+            "hidden attacker"
+        );
+
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        let kind = world.entities[&victim].unit_type_id;
+        world
+            .spawn_unit(
+                kind,
+                PlayerId(1),
+                SimVec2::new(SimScalar::from_num(19.5), SimScalar::from_num(16.5)),
+            )
+            .expect("invariant: a free spot");
+        world.update_vision();
+        assert_eq!(
+            strike(&mut world, attacker, victim, &weapon),
+            0,
+            "seen attacker"
+        );
+
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("spawned")
+            .is_cloaked = true;
+        assert_eq!(
+            strike(&mut world, attacker, victim, &weapon),
+            0,
+            "undetected"
+        );
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-3: a concealed attacker whose cell the struck
+    /// player detects, though it does not see it, leaves a snapshot.
+    #[test]
+    fn a_detected_concealed_attacker_leaves_a_snapshot() {
+        use sim_types::ShapeKind;
+        let (mut world, attacker, victim, weapon) = snapshot_bench();
+        world
+            .entities
+            .get_mut(&attacker)
+            .expect("spawned")
+            .is_cloaked = true;
+        let detector = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.is_detector() && matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+            .map(|arch| arch.unit_type_id)
+            .expect("the shipped catalog has a detector structure");
+        let structure = world
+            .spawn_structure(detector, PlayerId(1), 12, 19)
+            .expect("invariant: a free site below the plateau");
+        world.update_vision();
+        let at = world.entities[&attacker].position;
+        let (cx, cy) = world.map.world_to_cell(at).expect("invariant: on the map");
+        let vision = world.vision_maps.get(PlayerId(1)).expect("a slot");
+        assert!(vision.is_detected(cx, cy), "premise: detected");
+        assert_ne!(
+            vision.visibility_at(cx, cy),
+            sim_types::VisibilityState::Visible,
+            "premise: unseen"
+        );
+        assert!(world.entities.contains_key(&structure));
+        assert_eq!(strike(&mut world, attacker, victim, &weapon), 1);
     }
 }

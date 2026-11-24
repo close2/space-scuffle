@@ -11,9 +11,13 @@
 //! resolution combat uses, with no state of its own; its concealment, stance, status and
 //! barrier fraction come from `world::presentation`.
 //!
+//! It also builds the render record of an attack snapshot ([`snapshot_bubble`]) for the player
+//! view, from the same archetype-and-position parts as a live unit's (plan
+//! `2026-11-24-attacker-snapshot` D-4).
+//!
 //! # How it fits
 //! The last phase of `step_into`, and the only place the simulation converts fixed-point values
-//! to `f32` (charter §3.2).
+//! to `f32` (charter §3.2); `SimWorld::write_player_view` calls [`snapshot_bubble`].
 //!
 //! # Invariants
 //! - Writing a snapshot changes no authoritative state and no checksum; it only drains
@@ -21,16 +25,17 @@
 //! - Bubbles are ordered by entity ID, statuses by `(entity, status)`, areas by persistent id.
 //! - A spell impact follows the tick's other events, in the order the impacts ran.
 
-use super::presentation;
+use super::presentation::{self, SnapshotPose};
 use super::AIR_UNIT_ALTITUDE;
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, WeaponPhase, OVERCLOCK_BUFF_ID};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    AreaView, AttackSwing, BubbleRenderInstance, CombatEventVisual, EntityId, MoverType,
-    PlayerSlot, PlayerStatusView, RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar,
-    StatusKind, StatusView, Tick, WeaponVisualKind,
+    AnimState, AreaView, AttackSwing, BubbleRenderInstance, CombatEventVisual, Concealment,
+    EntityId, MoverType, PlayerSlot, PlayerStatusView, RenderSnapshot, ResourceNodeId,
+    ResourceNodeView, SimScalar, SimVec2, StanceView, StatusFlags, StatusKind, StatusView, Tick,
+    WeaponSpec, WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -225,7 +230,7 @@ impl SimWorld {
     fn publish_statuses(
         &self,
         entity: EntityId,
-        flags: &mut sim_types::StatusFlags,
+        flags: &mut StatusFlags,
         statuses: &mut Vec<StatusView>,
     ) {
         let spells = self.catalog.spells();
@@ -342,6 +347,62 @@ impl SimWorld {
     }
 }
 
+/// `value` as a share of `max`, unclamped; zero when `max` is not positive.
+pub(crate) fn fraction(value: SimScalar, max: SimScalar) -> SimScalar {
+    if max > SimScalar::ZERO {
+        value / max
+    } else {
+        SimScalar::ZERO
+    }
+}
+
+/// The parts of a render record that depend only on the archetype `arch`, the weapon a mode puts
+/// in place of the archetype's (`mode_weapon`) and the position `position` on `map`: the record
+/// of a live unit ([`bubble_instance`]) and of an attack snapshot ([`snapshot_bubble`]) share
+/// them, so an image looks like its attacker did (plan `2026-11-24-attacker-snapshot` D-4).
+struct Placed {
+    /// `[x, y, altitude]` in world units: an air unit flies [`AIR_UNIT_ALTITUDE`] above the
+    /// ground.
+    world_pos: [f32; 3],
+    /// Terrain height under the position, world units.
+    ground_z: f32,
+    /// The drawn radius, not the range edge (plan `2026-11-18-structure-radius` D-6).
+    radius: f32,
+    /// The visual of the mode's weapon, else of the archetype's ground or generic weapon.
+    weapon_visual: WeaponVisualKind,
+}
+
+impl Placed {
+    fn new(
+        arch: &UnitArchetype,
+        mode_weapon: Option<&WeaponSpec>,
+        position: SimVec2,
+        map: &SimMap,
+    ) -> Self {
+        let ground_z = map.terrain_altitude_at(position);
+        let altitude_z = if matches!(arch.mover_type, MoverType::Air) {
+            ground_z + AIR_UNIT_ALTITUDE
+        } else {
+            ground_z
+        };
+        Self {
+            world_pos: [position.x.to_f32(), position.y.to_f32(), altitude_z],
+            ground_z,
+            radius: arch.drawn_radius().to_f32(),
+            weapon_visual: mode_weapon
+                .map(|w| w.visual_kind)
+                .or_else(|| arch.ground_weapon.as_ref().map(|w| w.visual_kind))
+                .or_else(|| arch.weapon.as_ref().map(|w| w.visual_kind))
+                .unwrap_or(WeaponVisualKind::None),
+        }
+    }
+}
+
+/// A share in fixed point as the render record carries it, clamped to `0..=1`.
+fn published_share(share: SimScalar) -> f32 {
+    share.to_f32().clamp(0.0, 1.0)
+}
+
 /// The render record of one entity of archetype `arch` standing on `map`, in the attack cycle
 /// `attack_swing` ([`SimWorld::published_swing`]); `barrier_hit` says whether its barrier
 /// absorbed damage this tick.
@@ -352,33 +413,13 @@ fn bubble_instance(
     attack_swing: Option<AttackSwing>,
     barrier_hit: bool,
 ) -> BubbleRenderInstance {
-    let ground_z = map.terrain_altitude_at(entity.position);
-    let altitude_z = if matches!(arch.mover_type, MoverType::Air) {
-        ground_z + AIR_UNIT_ALTITUDE
-    } else {
-        ground_z
-    };
-
+    let placed = Placed::new(arch, entity.siege_weapon.as_ref(), entity.position, map);
     let is_attacking = matches!(
         entity.weapon_phase,
         WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
     );
-
-    let hp_ratio = if entity.max_hp > SimScalar::ZERO {
-        (entity.hp / entity.max_hp).to_f32().clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-
-    let shield_ratio = if arch.max_shields > SimScalar::ZERO {
-        (entity.shields / arch.max_shields).to_f32().clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-
     let shield_flash = (f32::from(entity.shield_hit_flash_ticks)) / 8.0;
     let hull_flash = (f32::from(entity.hull_hit_flash_ticks)) / 8.0;
-
     let speed_boosted = entity
         .active_buffs
         .iter()
@@ -390,30 +431,19 @@ fn bubble_instance(
         silhouette: arch.silhouette,
         unit_type: entity.unit_type_id,
         owner: entity.owner,
-        world_pos: [
-            entity.position.x.to_f32(),
-            entity.position.y.to_f32(),
-            altitude_z,
-        ],
-        ground_z,
-        // The drawn radius, not the range edge (plan `2026-11-18-structure-radius` D-6).
-        radius: arch.drawn_radius().to_f32(),
+        world_pos: placed.world_pos,
+        ground_z: placed.ground_z,
+        radius: placed.radius,
         velocity: [entity.velocity.x.to_f32(), entity.velocity.y.to_f32()],
         heading_angle_rad: entity.heading.to_radians_f32(),
         aim_angle_rad: entity.turret_angle.to_radians_f32(),
         is_attacking,
-        weapon_visual: entity
-            .siege_weapon
-            .as_ref()
-            .map(|w| w.visual_kind)
-            .or_else(|| arch.ground_weapon.as_ref().map(|w| w.visual_kind))
-            .or_else(|| arch.weapon.as_ref().map(|w| w.visual_kind))
-            .unwrap_or(WeaponVisualKind::None),
+        weapon_visual: placed.weapon_visual,
         attack_target_pos: None,
         anim_state: entity.current_anim,
         attack_swing,
-        hp_ratio,
-        shield_ratio,
+        hp_ratio: published_share(fraction(entity.hp, entity.max_hp)),
+        shield_ratio: published_share(fraction(entity.shields, arch.max_shields)),
         shield_hit_flash: shield_flash,
         hull_hit_angle_rad: entity.last_hit_angle.to_radians_f32(),
         hull_hit_flash: hull_flash,
@@ -425,6 +455,59 @@ fn bubble_instance(
         barrier_ratio: presentation::barrier_ratio(entity, arch),
         speed_boosted,
         housed: entity.is_housed(),
+    }
+}
+
+/// The render record of the attack snapshot of `attacker` in `pose`, of archetype `arch`, on
+/// `map`: the attacker as it stood at its strike, still (zero velocity, idle, no swing,
+/// unselected, unconcealed, not housed, no flashes, no statuses) in the settled stance of its
+/// mode (plan `2026-11-24-attacker-snapshot` D-4). `arch` is looked up by the pose's type, so a
+/// dead attacker's image is built as well.
+pub(crate) fn snapshot_bubble(
+    attacker: EntityId,
+    pose: &SnapshotPose,
+    arch: &UnitArchetype,
+    map: &SimMap,
+) -> BubbleRenderInstance {
+    let mode_weapon = pose
+        .mode
+        .and_then(|index| arch.modes.get(usize::from(index)))
+        .and_then(|mode| mode.ground_weapon_override.as_ref())
+        .and_then(Option::as_ref);
+    let placed = Placed::new(arch, mode_weapon, pose.position, map);
+    BubbleRenderInstance {
+        entity_id: attacker,
+        shape: arch.shape,
+        silhouette: arch.silhouette,
+        unit_type: pose.unit_type,
+        owner: pose.owner,
+        world_pos: placed.world_pos,
+        ground_z: placed.ground_z,
+        radius: placed.radius,
+        velocity: [0.0, 0.0],
+        heading_angle_rad: pose.heading.to_radians_f32(),
+        aim_angle_rad: pose.turret.to_radians_f32(),
+        is_attacking: false,
+        weapon_visual: placed.weapon_visual,
+        attack_target_pos: None,
+        anim_state: AnimState::Idle,
+        attack_swing: None,
+        hp_ratio: published_share(pose.hp_fraction),
+        shield_ratio: published_share(pose.shield_fraction),
+        shield_hit_flash: 0.0,
+        hull_hit_angle_rad: 0.0,
+        hull_hit_flash: 0.0,
+        build_or_queue_progress: None,
+        selected: false,
+        concealment: Concealment::None,
+        stance: StanceView {
+            mode: pose.mode,
+            transition: None,
+        },
+        status: StatusFlags::default(),
+        barrier_ratio: 0.0,
+        speed_boosted: false,
+        housed: false,
     }
 }
 
@@ -808,5 +891,123 @@ mod tests {
             (radius_of(unit) - unit_arch.collision_radius.to_f32()).abs() < f32::EPSILON,
             "a unit is drawn at its collision radius"
         );
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-4: the image of an idle, unflashed, unselected
+    /// entity is its live render record, field for field: the two records share every part
+    /// that depends on the archetype, the mode and the position.
+    #[test]
+    fn a_snapshot_of_an_idle_unit_is_its_live_record() {
+        let (world, id, arch) = armed_unit();
+        let entity = &world.entities[&id];
+        assert_eq!(entity.current_anim, AnimState::Idle, "premise");
+        let live = bubble_instance(entity, &arch, &world.map, None, false);
+        let pose = crate::combat_resolution::snapshot_pose(entity, &arch);
+        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map), live);
+    }
+
+    /// D-4: in a settled mode whose weapon replaces the archetype's, the image keeps the mode's
+    /// stance and weapon visual, as the live record does.
+    #[test]
+    fn a_snapshot_in_a_mode_keeps_the_modes_stance_and_weapon() {
+        use sim_types::AbilityEffectSpec;
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+            .expect("invariant: a flat 32x32 map is valid");
+        let mut world = crate::test_support::world(map, 9);
+        let (arch, mode_name) = world
+            .catalog
+            .archetypes()
+            .find_map(|arch| {
+                arch.modes
+                    .iter()
+                    .find(|mode| {
+                        !mode.is_cloaked && matches!(mode.ground_weapon_override, Some(Some(_)))
+                    })
+                    .map(|mode| (arch.clone(), mode.mode_name.clone()))
+            })
+            .expect("the shipped catalog has a mode that replaces its unit's ground weapon");
+        let id = world
+            .spawn_unit(arch.unit_type_id, PlayerId(0), SimVec2::from_i32(16, 16))
+            .expect("the unit spawns");
+        let effect = AbilityEffectSpec::SwitchMode { mode_name };
+        let entity = world.entities.get_mut(&id).expect("the unit exists");
+        entity.apply_mode_transition(&arch, &effect);
+        let entity = &world.entities[&id];
+        let live = bubble_instance(entity, &arch, &world.map, None, false);
+        assert!(live.stance.mode.is_some(), "premise: in the mode");
+        let pose = crate::combat_resolution::snapshot_pose(entity, &arch);
+        assert_eq!(snapshot_bubble(id, &pose, &arch, &world.map), live);
+    }
+
+    /// P-9 (plan `2026-11-24-attacker-snapshot` §5): no tick decision reads the attack
+    /// snapshots. Two worlds run the same battle, in which a ranged attacker on a plateau
+    /// strikes a unit below it unseen; one of them forgets every snapshot after each tick.
+    /// Their checksums agree on every tick, and the other world did keep a snapshot.
+    #[test]
+    fn forgetting_attack_snapshots_changes_no_checksum() {
+        use sim_types::{AttackVisibility, TickBundle, UnitOrder};
+        let build = || {
+            let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))
+                .expect("invariant: a flat map");
+            for y in 0..32 {
+                for x in 16..32 {
+                    map.cell_mut(x, y)
+                        .expect("invariant: on the map")
+                        .cliff_level = CliffLevel(1);
+                }
+            }
+            let mut world = crate::test_support::world(map, 0x183);
+            let kind = world
+                .catalog
+                .archetypes()
+                .filter(|arch| {
+                    matches!(arch.shape, ShapeKind::UnitSphere)
+                        && arch.mover_type == MoverType::Ground
+                })
+                .find(|arch| {
+                    arch.weapon_against(MoverType::Ground, None)
+                        .is_some_and(|w| {
+                            w.attack_visibility == AttackVisibility::Snapshot
+                                && w.max_range >= SimScalar::from_i32(4)
+                        })
+                })
+                .map(|arch| arch.unit_type_id)
+                .expect("the shipped catalog has a ranged Snapshot attacker");
+            let at = |x: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(16.5));
+            let attacker = world
+                .spawn_unit(kind, PlayerId(0), at(16.5))
+                .expect("invariant: a free spot");
+            let victim = world
+                .spawn_unit(kind, PlayerId(1), at(13.5))
+                .expect("invariant: a free spot");
+            world
+                .entities
+                .get_mut(&attacker)
+                .expect("spawned")
+                .issue_order(UnitOrder::attack(victim), false)
+                .expect("invariant: an attack order is admitted");
+            world
+        };
+        let (mut keeping, mut forgetting) = (build(), build());
+        let mut kept = 0;
+        for tick in 0..200 {
+            let bundle = TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            };
+            keeping.step(&bundle);
+            forgetting.step(&bundle);
+            forgetting.presentation.forget_attack_snapshots();
+            kept += keeping
+                .presentation
+                .attack_snapshots_of(PlayerId(1))
+                .count();
+            assert_eq!(
+                keeping.last_checksum, forgetting.last_checksum,
+                "tick {tick}"
+            );
+        }
+        assert!(kept > 0, "premise: the keeping world recorded snapshots");
     }
 }

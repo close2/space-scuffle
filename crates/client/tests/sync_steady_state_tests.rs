@@ -94,6 +94,15 @@ mod effect_fixtures;
 
 use battle_harness::{Harness, LOCAL_PLAYER};
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
+
+use client::battle_hud::attack_snapshots::{AttackSnapshotBubble, AttackSnapshotPool};
+
 /// Frames a battle gets to load its media and map presentation before a test gives up.
 const READY_FRAMES: usize = 600;
 
@@ -343,6 +352,9 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     }
     if let Some(fog) = world.get_resource::<BattleFog>() {
         found.extend(fog.retained_buffers());
+    }
+    if let Some(pool) = world.get_resource::<AttackSnapshotPool>() {
+        found.extend(pool.retained_buffers());
     }
     if let Some(selection) = world.get_resource::<BattleSelection>() {
         found.extend(selection.retained_buffers());
@@ -1438,4 +1450,107 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
         }
     }
     panic!("no window of {COMBAT_FRAMES} frames spawned {MIN_COMBAT_EVENTS} effects");
+}
+
+// --- Attack snapshots (plan 2026-11-24-attacker-snapshot P-16) -----------------------------------
+
+/// The local view's attack snapshots, as `(attacker, strike tick)`.
+fn snapshots_listed(harness: &Harness) -> Vec<(EntityId, sim_types::Tick)> {
+    harness
+        .app
+        .world()
+        .resource::<HudModel>()
+        .view
+        .attack_snapshots
+        .iter()
+        .map(|entry| (entry.entity, entry.struck))
+        .collect()
+}
+
+/// Stages an unseen attacker on the settled skirmish and runs until the local view lists its
+/// snapshot.
+fn hold_a_snapshot(harness: &mut Harness) -> attack_snapshot_stage::SnapshotStage {
+    let staged = attack_snapshot_stage::stage(harness.world_mut());
+    harness.resume();
+    let mut frames = 0;
+    while snapshots_listed(harness).is_empty() {
+        harness.step(1);
+        frames += 1;
+        assert!(frames < 2_000, "the attacker never struck unseen");
+    }
+    staged
+}
+
+/// The pooled snapshot entities.
+fn pooled(harness: &Harness) -> usize {
+    harness
+        .app
+        .world()
+        .resource::<AttackSnapshotPool>()
+        .entities()
+        .count()
+}
+
+/// P-16: with a snapshot held and its list unchanged, running frames create, modify and remove
+/// no asset, spawn nothing, and keep the fog's and the pool's buffers.
+#[test]
+fn a_held_attack_snapshot_changes_nothing_on_running_frames() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    let staged = hold_a_snapshot(&mut harness);
+    // No more strikes: the victim leaves every weapon's filters.
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&staged.victim)
+        .expect("the victim lives")
+        .is_invulnerable = true;
+    run_ticks(&mut harness, WARM_TICKS);
+    let held = snapshots_listed(&harness);
+    assert_eq!(held.len(), 1, "the snapshot is held");
+    assert_eq!(pooled(&harness), 1);
+    let entities = census(&harness);
+    let buffers = retained_buffers(harness.app.world());
+    reset(&mut harness);
+    run_ticks(&mut harness, MOVING_TICKS);
+    assert_eq!(snapshots_listed(&harness), held, "the list is unchanged");
+    assert_eq!(tallies(&harness).others(&[]), Vec::new(), "asset events");
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
+    assert_eq!(
+        moved(&buffers, &retained_buffers(harness.app.world())),
+        Vec::new(),
+        "retained buffers that moved or grew"
+    );
+}
+
+/// P-16: a snapshot refreshed by later strikes of the same attacker spawns no snapshot entity
+/// (the strikes' own effects may spawn theirs).
+#[test]
+fn a_refreshed_attack_snapshot_spawns_nothing() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    hold_a_snapshot(&mut harness);
+    harness.step(1);
+    let first = snapshots_listed(&harness);
+    let snapshot_entities = |harness: &mut Harness| {
+        let world = harness.app.world_mut();
+        world
+            .query_filtered::<Entity, With<AttackSnapshotBubble>>()
+            .iter(world)
+            .count()
+    };
+    assert_eq!(snapshot_entities(&mut harness), 1);
+    run_ticks(&mut harness, MOVING_TICKS);
+    let later = snapshots_listed(&harness);
+    assert_eq!(later.len(), 1, "one snapshot");
+    assert!(
+        later[0].1 > first[0].1,
+        "premise: later strikes refreshed it"
+    );
+    assert_eq!(pooled(&harness), 1, "the pool did not grow");
+    assert_eq!(
+        snapshot_entities(&mut harness),
+        1,
+        "no snapshot entity spawned"
+    );
 }

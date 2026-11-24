@@ -36,7 +36,10 @@
 //!   Three workers of the local player gather gas through an extractor that hides its harvesters
 //!   in both running children, so during the window they go inside and come out, their bubbles
 //!   published `housed` and back (plan `2026-11-24-hidden-harvesters` P-10); everyone else stands
-//!   idle.
+//!   idle. Both running children also hold an attack snapshot: an enemy on a cliff struck a local
+//!   unit below it before the session began, and the struck unit was then made invulnerable, so
+//!   the image is held and unchanged through the window; the running live child adds the view
+//!   writer, the fog refill and the snapshot pool (plan `2026-11-24-attacker-snapshot` P-16).
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -52,6 +55,13 @@
 
 #[path = "support/effect_fixtures.rs"]
 mod effect_fixtures;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
 
 use std::path::Path;
 use std::process::Command;
@@ -234,6 +244,76 @@ fn watch_gas_crew(session: Res<'_, BattleSession>, mut crew: ResMut<'_, GasCrew>
     }
 }
 
+/// Stages an attack snapshot in `simulation` before its session begins: runs ticks until the
+/// enemy on the cliff has struck the local unit below it unseen, then makes that unit
+/// invulnerable, so no later strike refreshes the image and the window holds it unchanged.
+fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
+    let staged = attack_snapshot_stage::stage(simulation);
+    let mut view = sim_types::PlayerView::default();
+    for _ in 0..400 {
+        simulation.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(simulation.current_tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        simulation.write_player_view(attack_snapshot_stage::LOCAL_PLAYER, &mut view);
+        if !view.attack_snapshots.is_empty() {
+            simulation
+                .entities
+                .get_mut(&staged.victim)
+                .ok_or("the struck unit lives")?
+                .is_invulnerable = true;
+            return Ok(());
+        }
+    }
+    Err("the enemy on the cliff never struck unseen".into())
+}
+
+/// The local player's view, as the HUD keeps it, for the snapshot pool's fog.
+#[derive(Resource, Default)]
+struct HeldView(sim_types::PlayerView);
+
+/// Writes the local player's view on every new tick and refills the fog from it, as the HUD's
+/// `refresh_hud_model` and `refresh_battle_fog` do.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn refresh_snapshot_fog(
+    session: Res<'_, BattleSession>,
+    mut view: ResMut<'_, HeldView>,
+    mut fog: ResMut<'_, client::battle_pipeline::fog::BattleFog>,
+) {
+    let (Some(world), Some(generation)) = (session.world(), session.commands.generation()) else {
+        return;
+    };
+    if view.0.tick == sim_types::Tick(world.current_tick) && fog.refills() > 0 {
+        return;
+    }
+    world.write_player_view(attack_snapshot_stage::LOCAL_PLAYER, &mut view.0);
+    fog.refill(
+        generation,
+        &view.0,
+        world.map.resources().iter().map(|node| node.remaining > 0),
+    );
+}
+
+/// Adds the view writer, the fog refill and the attack-snapshot pool after the live sync.
+fn add_snapshot_presentation(app: &mut App) {
+    app.init_resource::<HeldView>()
+        .init_resource::<client::battle_pipeline::fog::BattleFog>()
+        .init_resource::<client::battle_hud::attack_snapshots::AttackSnapshotPool>()
+        .add_systems(
+            Update,
+            (
+                refresh_snapshot_fog,
+                client::battle_hud::attack_snapshots::sync_attack_snapshots,
+            )
+                .chain()
+                .after(client::sync_live_battle_system),
+        );
+}
+
 /// The positive control: one heap allocation, freed in the same frame.
 fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
@@ -253,7 +333,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
     let crew = if variant.is_running() {
-        Some(add_gas_crew(&mut simulation)?)
+        let crew = add_gas_crew(&mut simulation)?;
+        hold_attack_snapshot(&mut simulation)?;
+        Some(crew)
     } else {
         None
     };
@@ -318,6 +400,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
             )
                 .chain(),
         );
+    }
+    if variant == Variant::RunningLive {
+        add_snapshot_presentation(&mut app);
     }
     if variant == Variant::Planted {
         app.add_systems(Update, planted_allocation);
@@ -890,6 +975,9 @@ fn run_child(variant: Variant) -> TestResult {
     if after - before != frames / 2 {
         return Err(format!("the battle ran {} ticks in {frames} frames", after - before).into());
     }
+    if variant == Variant::RunningLive {
+        check_held_snapshot(&mut app)?;
+    }
     let crew = app
         .world()
         .get_resource::<GasCrew>()
@@ -918,6 +1006,29 @@ fn run_child(variant: Variant) -> TestResult {
     if let Some(id) = busy {
         return Err(format!(
             "the running window must stay idle but for the gas crew, and {id:?} is not"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// The running live child's check after its window: the fog lists one attack snapshot and the
+/// pool draws it on one visible entity.
+fn check_held_snapshot(app: &mut App) -> TestResult {
+    let listed = app
+        .world()
+        .resource::<client::battle_pipeline::fog::BattleFog>()
+        .attack_snapshots()
+        .len();
+    let world = app.world_mut();
+    let shown = world
+        .query_filtered::<&Visibility, With<client::battle_hud::attack_snapshots::AttackSnapshotBubble>>()
+        .iter(world)
+        .filter(|visibility| **visibility != Visibility::Hidden)
+        .count();
+    if (listed, shown) != (1, 1) {
+        return Err(format!(
+            "the window must hold one attack snapshot, drawn once: {listed} listed, {shown} shown"
         )
         .into());
     }

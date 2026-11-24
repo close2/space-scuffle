@@ -588,6 +588,9 @@ pub struct Defaults {
     pub anchor_transition: Option<EffectId>,
     /// Held while in such a mode.
     pub anchored: Option<EffectId>,
+    /// The look of an attack snapshot: an effect of exactly one held `Shell` layer, validated
+    /// at load (plan `2026-11-24-attacker-snapshot` D-5).
+    pub snapshot: Option<EffectId>,
 }
 
 /// The looks of concealment, resolved (see [`schema::ConcealmentDefaultsDef`]).
@@ -675,6 +678,18 @@ impl EffectCatalog {
     #[must_use]
     pub fn effect(&self, id: EffectId) -> Option<&Effect> {
         self.effects.get(usize::from(id.0))
+    }
+
+    /// The look of an attack snapshot (`defaults.snapshot`), if the vocabulary names one: the
+    /// one held `Shell` layer the loader checked it is (plan `2026-11-24-attacker-snapshot`
+    /// D-5).
+    #[must_use]
+    pub fn snapshot_look(&self) -> Option<ShellLook> {
+        let effect = self.effect(self.defaults.snapshot?)?;
+        match effect.layers.first().map(|layer| &layer.block) {
+            Some(Block::Shell(look)) => Some(*look),
+            _ => None,
+        }
     }
 
     /// The curve `id` sampled at `t`, or `fallback` without a curve.

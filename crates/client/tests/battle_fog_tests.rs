@@ -67,6 +67,17 @@ mod battle_harness;
 
 use battle_harness::{sim_position, Harness, LOCAL_PLAYER};
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/attack_snapshot_stage.rs"]
+mod attack_snapshot_stage;
+
+use attack_snapshot_stage::{stage, SnapshotStage};
+use client::battle_hud::attack_snapshots::{AttackSnapshotBubble, AttackSnapshotPool};
+use client::scene_controller::LiveBattleBubble;
+
 const ENEMY: PlayerId = PlayerId(1);
 
 /// A slot the skirmish does not seat, for fights the viewer takes no part in.
@@ -1792,4 +1803,158 @@ fn a_worker_inside_its_extractor_is_not_drawn_picked_selected_or_ordered() {
         both,
         "the control: the recall selects it again"
     );
+}
+
+// --- Attack snapshots (plan 2026-11-24-attacker-snapshot D-5, P-13 to P-15) ----------------------
+
+/// The pooled snapshot entities the camera would draw, with their transforms.
+fn drawn_snapshots(harness: &mut Harness) -> Vec<(Entity, Vec3)> {
+    let world = harness.app.world_mut();
+    world
+        .query_filtered::<(Entity, &GlobalTransform, &InheritedVisibility), With<AttackSnapshotBubble>>()
+        .iter(world)
+        .filter(|(_, _, visible)| visible.get())
+        .map(|(entity, transform, _)| (entity, transform.translation()))
+        .collect()
+}
+
+/// Stages the fight and runs until the local view lists the attacker's snapshot, then a frame so
+/// the pool draws it.
+fn struck_unseen(harness: &mut Harness) -> SnapshotStage {
+    let staged = stage(harness.world_mut());
+    run_until(harness, "the attacker leaves a snapshot", |harness| {
+        model(harness)
+            .view
+            .attack_snapshots
+            .iter()
+            .any(|entry| entry.entity == staged.attacker)
+    });
+    harness.step(1);
+    staged
+}
+
+/// P-13: under the `Player` profile, an unseen attacker's strike draws exactly one snapshot
+/// bubble where it stood, with the catalog's snapshot look, and nothing of the live attacker.
+#[test]
+fn an_unseen_attacker_is_drawn_as_one_snapshot_with_the_snapshot_look() {
+    let mut harness = skirmish();
+    let staged = struck_unseen(&mut harness);
+    assert_nothing_of_it_is_drawn(&harness, staged.attacker);
+    let view = &model(&harness).view;
+    let [entry] = view.attack_snapshots.as_slice() else {
+        panic!("one snapshot: {:?}", view.attack_snapshots);
+    };
+    let (x, y) = (entry.bubble.world_pos[0], entry.bubble.world_pos[1]);
+    let drawn = drawn_snapshots(&mut harness);
+    let [(entity, at)] = drawn.as_slice() else {
+        panic!("one snapshot bubble drawn: {drawn:?}");
+    };
+    assert!(
+        (at.x - x).abs() < 1e-4 && (at.z - y).abs() < 1e-4,
+        "drawn where it stood: {at:?} for ({x}, {y})"
+    );
+    assert!(
+        Vec2::new(x, y).distance(staged.high) < 1.0,
+        "on the high ground"
+    );
+    let world = harness.app.world();
+    let look = world
+        .resource::<EffectCatalog>()
+        .snapshot_look()
+        .expect("the shipped catalog names a snapshot look");
+    let handle = &world
+        .get::<MeshMaterial3d<BubbleDomeMaterial>>(*entity)
+        .expect("a snapshot bubble has a material")
+        .0;
+    let shell = world
+        .resource::<Assets<BubbleDomeMaterial>>()
+        .get(handle)
+        .expect("its material exists")
+        .shell;
+    assert_eq!(shell.tint, look.tint, "the look's tint");
+    assert_eq!(shell.shape.y, look.veil, "the look's veil");
+    assert_eq!(shell.driven.y, look.matte, "the look's matte");
+    assert_eq!(shell.driven.z, look.shadow, "the look's shadow");
+    assert!(
+        world.get::<LiveBattleBubble>(*entity).is_none(),
+        "never a unit"
+    );
+    assert!(world.get::<Children>(*entity).is_none(), "no ring, no bars");
+}
+
+/// P-14: a left click on the snapshot selects nothing, and a right click on it with the local
+/// soldier selected issues a point order, never an attack on the attacker.
+#[test]
+fn a_snapshot_is_never_picked_or_targeted() {
+    let mut harness = skirmish();
+    let staged = struck_unseen(&mut harness);
+    harness.look_at(staged.high);
+    let (_, at) = drawn_snapshots(&mut harness)[0];
+    let on_screen = harness.screen_position(at);
+    harness.click(MouseButton::Left, on_screen);
+    assert_eq!(harness.selection().ids(), [], "nothing selected");
+    assert_eq!(harness.selection().inspected(), None, "nothing inspected");
+
+    harness.look_at((staged.high + staged.low) * 0.5);
+    harness.select(staged.victim);
+    assert_eq!(harness.selection().ids(), [staged.victim]);
+    let (_, at) = drawn_snapshots(&mut harness)[0];
+    let on_screen = harness.screen_position(at);
+    harness.click(MouseButton::Right, on_screen);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(
+            orders[0].order,
+            UnitOrder::Move { .. } | UnitOrder::AttackMove { .. }
+        ),
+        "a click on a snapshot is a click on the ground: {:?}",
+        orders[0].order
+    );
+}
+
+/// P-15: on the frame the view stops listing the snapshot, its pooled bubble is hidden.
+#[test]
+fn a_snapshot_is_hidden_on_the_frame_the_view_drops_it() {
+    let mut harness = skirmish();
+    let staged = struck_unseen(&mut harness);
+    let pooled: Vec<Entity> = harness
+        .app
+        .world()
+        .resource::<AttackSnapshotPool>()
+        .entities()
+        .collect();
+    assert_eq!(pooled.len(), 1, "one pooled bubble");
+    // A local air unit with shipped media above the attacker shows it, which drops its image.
+    let registry = harness
+        .app
+        .world()
+        .resource::<client::bubble_shader::FlipbookRegistry>();
+    let flyer = harness
+        .world()
+        .catalog
+        .archetypes()
+        .filter(|arch| registry.get_meta(arch.unit_type_id).is_some())
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Air && arch.max_speed > SimScalar::ZERO
+        })
+        .map(|arch| arch.unit_type_id)
+        .expect("the catalog ships an air unit with media");
+    harness
+        .world_mut()
+        .spawn_unit(
+            flyer,
+            LOCAL_PLAYER,
+            sim_position(staged.high + Vec2::new(0.0, 1.0)),
+        )
+        .expect("the air is open");
+    run_until(&mut harness, "the view drops the snapshot", |harness| {
+        model(harness).view.attack_snapshots.is_empty()
+    });
+    assert_eq!(
+        *harness.app.world().get::<Visibility>(pooled[0]).unwrap(),
+        Visibility::Hidden,
+        "hidden on the frame the list lost it"
+    );
+    assert!(drawn_snapshots(&mut harness).is_empty(), "nothing drawn");
 }
