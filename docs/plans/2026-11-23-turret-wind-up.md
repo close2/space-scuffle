@@ -757,10 +757,31 @@ The rest of WP3 is as §11 says. B-numbers it registers, if any, start at B-207 
 
 ---
 
-## As built (WP0 to WP2; WP3 pending)
+## Amendment 3 (implementation, 2026-11-24): a wind-up whose target is gone (B-207)
 
-WP0 to WP2 ran as one branch, `turret-wind-up-plan`, one commit each; WP3 waits for the contact-solver branch
-(§8 rule 5). Evidence: [`docs/evidence/2026-11-23-turret-wind-up.md`](../evidence/2026-11-23-turret-wind-up.md).
+**Finding (WP3, while tracing).** The movement phase runs before the combat phase. When the target of a swing dies
+and is reaped on tick T, the unit is still in `WeaponPhase::Windup` when the movement phase of T + 1 reads it; the
+combat phase of T + 1 then ends the swing (`step_windup` finds no available target and returns to `Ready`). Under
+Amendment 2's decision 2 such a stale wind-up is read with the idle weapon, so a unit whose weapon is not `Moving`
+stands for that one tick. Hull-weapon units always did (the old line held every hull swing); WP3 extends it to
+turreted units. It is the first difference of `golden_replay` (tick 254, a tank of "red_siege") and of both battle-26
+seeds whose winner changed (tick 16, a colossus whose zergling died on tick 15). 5.0.14 cancels an attack whose
+target dies, so the unit would walk on at once.
+
+**Decision.** Kept as Amendment 2 says, and registered as **B-207** (provisional, next free at merge), deferred.
+The alternative, holding nothing for a wind-up whose bound target is gone or dead, was built and measured on the same
+baseline (`~/scratch/turret-wp3/world-wp3b/`): it moves every hull-weapon world where a target dies mid-swing (17
+matrix battles, battles 31 and 33 on most seeds, the showcase on seeds 1 to 8) and adds two expectation misses not
+of record (battle 26 seed 13, battle 36a seed 2). That is a second cause with its own reach, beyond D-6, so it needs
+its own package and trace (stop rule 2's reasoning). `stutter_step_tests::a_wind_up_whose_target_is_gone_holds_as_its_idle_weapon_says`
+pins today's rule, so the fix changes it deliberately.
+
+---
+
+## As built
+
+WP0 to WP2 ran as one branch, `turret-wind-up-plan`, one commit each; WP3 ran on its own branch,
+`turret-wind-up-wp3`, from `main` at `e5f5c565` once the contact-solver plan had merged (§8 rule 5). Evidence: [`docs/evidence/2026-11-23-turret-wind-up.md`](../evidence/2026-11-23-turret-wind-up.md).
 
 - **WP0** (`9426c8c9`): B-45's and B-90's rows point here; B-178 to B-181 registered. Baseline 483 files; matrix
   "0 failures of record, 4 over all seeds". Censuses: no turreted or flagged unit in the showcase; the effects
@@ -783,6 +804,32 @@ WP0 to WP2 ran as one branch, `turret-wind-up-plan`, one commit each; WP3 waits 
   - P-6 compares the units' positions with the same unit in a world without the enemy, rather than with a speed
     times the tick count.
   - P-5 also checks every mode's weapon (the sieged tank's, the burrowed Lurker's) at the defaults.
-- **WP3, what remains** (B-90 second half; B-45's Void Ray half and the Phoenix's hold): in `walking_goal`, hold a
-  unit in `Windup` unless the weapon of the swing's target plane is `Moving` (Amendment 1, D-6); restore P-6's
-  Phoenix clause to "translates on every tick"; add P-10's tests; measure (§7's WP3 column, stop rule 3).
+- **WP3** (branch `turret-wind-up-wp3`): D-6 as Amendment 2 adapts it. `SimWorld::wind_up_holds`
+  (`movement/locomotion.rs`) holds a unit in `Windup` unless the weapon of the swing, resolved against the plane of
+  the swing's bound target (the idle plane, `SimWorld::idle_weapon_plane`, now `pub(crate)`, when that target is
+  gone), is `Moving`; `walking_goal` calls it for both movement pipelines. P-6's Phoenix clause is restored
+  ("translates on every tick"). New tests: `stutter_step_tests::a_wind_up_holds_its_unit_unless_its_weapon_fires_while_moving`
+  (P-10, scratch weapons, both mounts, all three `AllowedMovement` values, both pipelines) and
+  `…::a_wind_up_whose_target_is_gone_holds_as_its_idle_weapon_says` (pins B-207); in `turret_tracking_tests`,
+  `a_turret_that_must_stand_to_fire_stands_for_its_wind_up_in_a_chase` (the shipped turreted ground analogue) and
+  `a_hull_weapon_that_fires_while_moving_chases_through_its_wind_up` (the Void Ray analogue, by property).
+  - **Worlds** (against `e5f5c565`): battles 31 and 33 and the showcase (default seed, 1 to 8) byte-identical; matrix
+    battles 26, 28 and 30 moved (the matrix line, "2 on the seeds of record, 25 over all seeds", is unchanged); the
+    showcase effects scenario moved on all nine seeds (first at tick 330: a Hellion analogue held for its wind-up and
+    pushed by the two walking behind it, which D-3 allows); `golden_replay` moved from checkpoint 6 (traced, Amendment
+    3) and was re-recorded once; `golden_replay_orders` and `DEFAULT_SANDBOX_CHECKSUM` did not move.
+  - **P-12.** Shots per alive turreted unit-tick are unchanged (per 1000: battle 26 36.83 → 36.79, 28 31.32 → 31.31,
+    30 25.49 → 25.46), and no swing is cancelled out of band in either tree. Battle 26's colossi release 3.4 % more
+    shots (they live longer); battles 28 and 30 release 6 and 1 fewer over 20 seeds, traced to divergence after the
+    first difference (28 seed 10: at tick 62 an immortal stands for its wind-up where it stepped 0.066) and to the
+    last tick of a battle (30 seed 4). Two winners changed, battle 26 seeds 4 and 12 (not of record), both from the
+    stale hold of Amendment 3; the battle's expectation and claim hold and its fixture comment is restated
+    (AGENTS.md §8). The Void Ray (17, 18, 41), Hellion (9a, 9b, 10), Tank (3, 37a to 42) and Lurker (21) battles and
+    Colossus battles 12a to 12c and 35 give identical matrix rows (end tick, survivors, blocked ticks, reversals) on
+    all 20 seeds, which suggests their wind-ups fall on ticks where pursuit stands the unit in its band anyway (not
+    traced per tick). No matrix battle has the Phoenix analogue.
+- **Deviations (WP3).**
+  - Amendment 2 (the hold has one site for both pipelines; the swing's weapon; the baseline is `e5f5c565`);
+    Amendment 3 (B-207 registered, not fixed). P-10 drives the movement phase alone for its scratch cases
+    (`step_movement_and_steering`), because the combat phase would end a swing on an enemy out of sight; the chase
+    tests in `turret_tracking_tests` play whole ticks.
