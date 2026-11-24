@@ -244,6 +244,7 @@ impl StrikeContext<'_> {
                     self.vision_maps,
                     viewer,
                     snapshot.position,
+                    revealed,
                 ))
     }
 }

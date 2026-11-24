@@ -74,3 +74,30 @@ package (§8 rule 1).
 
 **P-4 on WP0's tree.** `the_level_is_read_at_the_blast_centre`, run on WP0's tree through a scratch copy of the WP1
 test file that reads spans from the terrain, passes: Q0099 3(a) held before this plan.
+
+## WP4: a revealed, detected cloaked attacker is a target (D-4), and its grounding
+
+D-4 goes beyond the owner's literal answers, so its grounding is recorded here. It composes two rules already in
+force, each grounded on its own:
+
+1. **The attack reveal is sight.** 5.0.14's `AttackReveal` behaviour (`core` BehaviorData:237–240), applied by the
+   `Visibility Visible` of every air unit's and the Colossus's damage effect (`liberty` EffectData:2421, :1715, …),
+   makes the attacker visible to the struck player for 3 Normal s; built by plan `2026-11-23-vision-and-detection`
+   D-5 (B-55), where a revealed, non-concealed attacker is a target. That plan's §2.2 rule 3 adds that a reveal
+   "grants visibility, not detection: a cloaked attacker stays cloaked" (`a_cloaked_attacker_stays_hidden_without_detection`,
+   which passes unchanged after WP4).
+2. **Detection is a circle and needs vision from elsewhere** (the owner's answer Q0101 2(b): "within its detection
+   radius even up cliffs or past sight blockers whenever another friendly unit grants vision there"), with the
+   weapon filter `TargetFilters Visible` (`core` WeaponData:29) asking for vision in any case.
+
+A concealed attacker that the reveal makes visible to player p and that stands in a cell p detects therefore meets
+both halves: it is visible (by the reveal) and detected (by the circle). Until WP4 the concealment test asked for a
+`Visible` cell specifically, so the reveal counted as sight for a visible attacker and not for a concealed one; D-4
+removes that asymmetry. The common game case is the one Liquipedia, *High Ground and Low Ground*, describes for air
+units over high ground, "revealed if they attack" (vision plan S16): a Missile Turret below a cliff fires at a cloaked
+Banshee attacking from above, within the turret's detection, with no other unit seeing the plateau. Without D-4, the
+owner's answer 2(b) would leave that turret unable to fire. The rule is one parameter on one predicate
+(`SimWorld::is_cloak_revealed`), in its own commit, and reverting that commit restores the old reading.
+
+Before WP4 no shipped detector could reach the case (§3 item 6: detection equalled sight, along the same rays), and
+probe (c) counted zero such checks in every world.
