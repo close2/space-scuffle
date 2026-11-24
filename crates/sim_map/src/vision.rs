@@ -4,6 +4,10 @@
 //! It enforces high-ground line-of-sight occlusion, low-ground spotter mechanics,
 //! tall grass / smoke vent blockers, and neutral capturable watchtowers.
 //!
+//! A sight blocker hides all of itself from ground sources outside it: units outside a blocker
+//! see none of it (Blizzard, *Game Guide: Map Elements*), while a unit inside sees its blocker
+//! and out of it.
+//!
 //! Ground sight follows surface height. On flat terrain that reduces to comparing cliff levels.
 //! On a ramp the observer's and target's heights vary continuously, so a unit at the foot of a
 //! ramp cannot see its top, and one cresting it can see the plateau ahead.
@@ -389,17 +393,15 @@ impl PlayerVisionMap {
                     }
                 }
 
-                // Line-of-sight blocker check:
-                // Smoke vents / tall grass block ground vision across them.
-                // Units outside cannot see inside beyond 1 cell; units inside can see out.
+                // Line-of-sight blocker check: smoke vents and tall grass block ground vision.
+                // "Units inside obstructing terrain can't be seen by units or structures on the
+                // outside" (Blizzard, Game Guide: Map Elements), so a ground ray entering a
+                // blocker from outside stops before its first cell (plan
+                // `2026-11-23-vision-and-detection` D-3). A source inside sees its blocker and
+                // out of it; a ray that has left the blocker stops at the next one. Air sources
+                // and watchtowers see into blockers (Q0101 part 1, default).
                 let target_is_blocker = target_cell.flags.contains(CellFlags::LOS_BLOCKER);
                 if !is_air && !in_blocker && target_is_blocker {
-                    // Entering blocker from outside: reveal edge cell, then terminate ray
-                    let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
-                    if self.visited_in_source[t_idx] != self.current_source_gen {
-                        self.visited_in_source[t_idx] = self.current_source_gen;
-                        self.mark(t_idx, cell_reach, change);
-                    }
                     break;
                 }
 

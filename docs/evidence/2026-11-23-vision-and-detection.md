@@ -57,3 +57,45 @@ also writes the per-checkpoint dumps of §5 step 1 (`probe/dump-wp0/`).
   matrix (flat arenas) and `golden_replay_orders` reach none. So WP3 is expected to change vision states at blocker
   cells in those worlds and, by §8 rule 3 and P-9, no entity state anywhere: the measured traces byte-identical, and
   `golden_replay` re-recorded for the blocker cells' states alone.
+
+**Golden dumps (§5 step 1).** `~/scratch/vision-detection/probe/dump-wp0/{golden_replay,golden_replay_orders}.dump`:
+at each checkpoint the checksum and the RNG word position, every entity (ID, owner, type, position, life, shields,
+front order), every projectile (ID, owner, attacker, target, aim point, position, lifetime) and each player's state,
+visible and detector counts at the default arena's blocker cells (x 15–17, y 15–17).
+
+## WP1: a lost missile lands on its point (B-54)
+
+- **Red run** on WP0's tree (`~/scratch/vision-detection/red/wp1.log`): `lost_missile_tests` 7 of 9 fail (each cause
+  fails with "the missile vanished 4.95 short of its point"; the shipped default is `Fizzle`), the two variant checks
+  pass; `an_authored_fizzle_drops_a_lost_missiles_area` fails on "the shipped missile lands on the point and its area
+  strikes".
+- **Worlds:** `compare.sh world-wp0 world-wp1`: 483 files, 0 differ. As predicted (§7.3): no measured lost missile
+  carries a splash, so landing on the point strikes nobody where vanishing struck nobody.
+- **Goldens:** the per-checkpoint dumps of WP1 equal WP0's line for line, checksums included, in both fixtures, and
+  the sandbox checksum is unchanged. The plan expected a move of the projectile lists (§5); there is none, because
+  `golden_replay`'s only lost missile (probe a: a Roach analogue's at tick 224) lands before the next checkpoint, and
+  no projectile is in flight at any checkpoint, so the changed default (`target_loss_behavior`, hashed with each
+  in-flight projectile's weapon) is never encoded. No re-record.
+
+## WP2: detection has its own radius, latent (B-56)
+
+- **Red run** on WP1's tree (`red/wp2.log`): the new tests do not compile (`VisionSource` has no field
+  `detection_radius`; `UnitArchetype` has no field `detection_radius` and no method `is_detector`).
+- **Latent:** every test of `sim_map`, `sim_core` and `sim_fixtures` passes unchanged, the goldens, the sandbox
+  checksum and `sim_map`'s determinism hashes included.
+
+## WP3: a sight blocker hides its edge (B-57)
+
+- **Red run** on WP2's tree (`red/wp3.log`): `a_blocker_hides_every_cell_from_outside` and
+  `a_source_inside_a_blocker_sees_it_and_out` ("a second blocker hides itself": the second blocker's first cell is
+  `Visible`) fail, and `blocker_edge_tests::a_unit_in_a_blocker_edge_is_not_acquired_from_outside` fails ("ground
+  sight from outside does not reveal the edge cell": the attacker acquires the unit in the edge cell);
+  `air_and_towers_see_into_a_blocker` passes before and after.
+- **Goldens:** `golden_replay`'s dumps of WP3 (`dump-wp3/`) equal WP0's on every entity and projectile line at
+  every checkpoint; they differ only in the vision lines of the blocker cells (from checkpoint 1: player 0's edge
+  cells go from `Visible` to `Fogged`, (17, 15) from 15 sources to 0) and so in all 20 checksums. Probe (c) counted
+  edge sightings on every tick of this golden and no unit in an edge cell, so this is the move §5 allows: the first
+  difference is a blocker cell's state, and no entity differs. Re-recorded under its own header.
+  `golden_replay_orders` and the sandbox checksum are unchanged (their maps' rays reach no blocker).
+- `sim_map`'s `test_cross_platform_determinism_checksum` hashes the vision states of 1,000 random sources on the
+  default arena, so its reference moved (`0x672c257d0fcacc1b` to `0x08753f04b63df2ee`), re-recorded with the reason.

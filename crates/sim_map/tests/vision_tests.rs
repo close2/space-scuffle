@@ -125,9 +125,11 @@ fn test_los_blocker_smoke_vent() {
     vision.apply_vision_source(&map, &unit_west);
     vision.end_tick_update();
 
-    // Can see up to the edge of the smoke vent (x = 8)
-    assert_eq!(vision.visibility_at(8, 9), VisibilityState::Visible);
-    // Cannot see inside the center of smoke vent (x = 9) or beyond it to East (x = 12)
+    // Can see up to the smoke vent (x = 7), and none of it: not its edge cell (x = 8), which
+    // the ray stops before (plan `2026-11-23-vision-and-detection` D-3), nor its centre (x = 9),
+    // nor beyond it to the East (x = 12)
+    assert_eq!(vision.visibility_at(7, 9), VisibilityState::Visible);
+    assert_ne!(vision.visibility_at(8, 9), VisibilityState::Visible);
     assert_ne!(vision.visibility_at(10, 9), VisibilityState::Visible);
     assert_ne!(vision.visibility_at(12, 9), VisibilityState::Visible);
 
@@ -386,5 +388,107 @@ fn incremental_casts_with_unequal_radii_equal_a_recount() {
         assert_eq!(incremental.visible_counter(), full.visible_counter());
         assert_eq!(incremental.detector_counter(), full.detector_counter());
         sources.push(pair[1]);
+    }
+}
+
+/// Whether any cell of the 3x3 blocker of [`flat_with_blocker`] is visible or detected.
+fn any_blocker_cell_reached(vision: &PlayerVisionMap) -> bool {
+    (14..17).any(|y| {
+        (20..23).any(|x| {
+            vision.visibility_at(x, y) == VisibilityState::Visible || vision.is_detected(x, y)
+        })
+    })
+}
+
+/// P-8 (plan `2026-11-23-vision-and-detection` D-3; Blizzard, *Game Guide: Map Elements*: "Units
+/// inside obstructing terrain can't be seen by units or structures on the outside"): a ground
+/// source outside a sight blocker marks none of its cells, from any side and at any distance,
+/// and nothing beyond it.
+#[test]
+fn a_blocker_hides_every_cell_from_outside() {
+    let map = flat_with_blocker();
+    for (x, y) in [
+        (15, 15),
+        (19, 15),
+        (19, 13),
+        (23, 17),
+        (21, 12),
+        (21, 18),
+        (26, 10),
+    ] {
+        let vision = recount(&map, &[ground_source(x, y, 11.0, 11.0)]);
+        assert!(
+            !any_blocker_cell_reached(&vision),
+            "a ground source at ({x}, {y}) sees into the blocker"
+        );
+    }
+    let west = recount(&map, &[ground_source(15, 15, 11.0, 11.0)]);
+    assert_eq!(west.visibility_at(19, 15), VisibilityState::Visible);
+    assert_ne!(
+        west.visibility_at(24, 15),
+        VisibilityState::Visible,
+        "nor beyond it"
+    );
+}
+
+/// P-8: a ground source inside a blocker sees the blocker cells its rays cross and the open
+/// ground beyond, and a ray that left the blocker stops at a second one.
+#[test]
+fn a_source_inside_a_blocker_sees_it_and_out() {
+    let mut map = flat_with_blocker();
+    for y in 14..17 {
+        for x in 26..28 {
+            map.cell_mut(x, y)
+                .unwrap()
+                .flags
+                .insert(CellFlags::LOS_BLOCKER);
+        }
+    }
+    let inside = recount(&map, &[ground_source(21, 15, 11.0, 11.0)]);
+    for y in 14..17 {
+        for x in 20..23 {
+            assert_eq!(
+                inside.visibility_at(x, y),
+                VisibilityState::Visible,
+                "({x}, {y})"
+            );
+        }
+    }
+    assert_eq!(inside.visibility_at(16, 15), VisibilityState::Visible);
+    assert_eq!(inside.visibility_at(25, 15), VisibilityState::Visible);
+    assert_ne!(
+        inside.visibility_at(26, 15),
+        VisibilityState::Visible,
+        "a second blocker hides itself"
+    );
+    assert_ne!(inside.visibility_at(29, 15), VisibilityState::Visible);
+}
+
+/// P-8: air sources and watchtowers see into a blocker (Q0101 part 1, default (a)).
+#[test]
+fn air_and_towers_see_into_a_blocker() {
+    let map = flat_with_blocker();
+    let air = VisionSource {
+        mover_type: MoverType::Air,
+        ..ground_source(15, 15, 11.0, 0.0)
+    };
+    let tower = sim_map::watchtower_source(&sim_map::Watchtower {
+        id: sim_types::EntityId(9000),
+        pos: SimVec2::from_i32(15, 15),
+        capture_radius: SimScalar::from_i32(2),
+        reveal_radius: SimScalar::from_i32(11),
+        controlling_player: Some(PlayerId(0)),
+    });
+    for source in [air, tower] {
+        let vision = recount(&map, &[source]);
+        for y in 14..17 {
+            for x in 20..23 {
+                assert_eq!(
+                    vision.visibility_at(x, y),
+                    VisibilityState::Visible,
+                    "({x}, {y})"
+                );
+            }
+        }
     }
 }
