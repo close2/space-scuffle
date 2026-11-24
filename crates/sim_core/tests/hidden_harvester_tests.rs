@@ -7,7 +7,9 @@
 //! it is not acquired, attacked, splashed, found by an effect search or hit by a missile, it
 //! acquires and sees nothing, and no player order reaches it (Q0108's default); it survives its
 //! extractor's death and comes out where it went in (Q0107's defaults); and the invariant of
-//! `UnitTask::housed_in` holds on every tick of a long run.
+//! `UnitTask::housed_in` holds on every tick of a long run. In the movement phase (WP5, D-11) it
+//! is no collision pair, push partner or displacement obstacle in either contact pipeline, by the
+//! hidden rule alone.
 //!
 //! # How it fits
 //! Worlds come from `sim_fixtures`' shipped catalogs on a flat map. Every archetype is found by
@@ -15,7 +17,8 @@
 //! circular splash, a unit with a projectile weapon); the area spell is found by the name of its
 //! ability and unlocked by its upgrade's slug, as `psionic_storm_tests` does. Every time is read
 //! from the catalog. Behaviour is driven by `PlayerCommand`s; setup may place entities, set
-//! energy, or put a missile in flight.
+//! energy, or put a missile in flight. WP5's tests also clear a worker's walking flag or its
+//! housing by hand and then run the movement phases alone, so no harvest step sets them again.
 //!
 //! # Invariants
 //! Ticks are simulation ticks: a tick's number is `SimWorld::current_tick` after its step, and
@@ -23,8 +26,9 @@
 
 use std::error::Error;
 
-use sim_core::catalog::UnitArchetype;
+use sim_core::catalog::{ContactRules, MovementPipeline, UnitArchetype};
 use sim_core::economy::{GameCommandError, TaskEventKind};
+use sim_core::movement::DisplacementAdmissionError;
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceNode};
 use sim_types::{
@@ -877,5 +881,151 @@ fn the_snapshot_publishes_a_housed_worker_as_housed() -> TestResult {
         inside += u32::from(bubble.housed);
     }
     assert!(inside > 0, "the worker went inside");
+    Ok(())
+}
+
+/// How the WP5 scenes leave the housed worker before the movement phases run alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Housing {
+    /// As the harvest step leaves it: housed and mining-walking (a ghost), the reference.
+    AsHarvested,
+    /// Housed, with `is_mineral_walking` cleared by hand: only the hidden rule keeps it out.
+    HiddenOnly,
+    /// Neither housed nor mining-walking: a plain body, the control that the scene touches it.
+    Body,
+}
+
+/// Switches `world`'s contact phase to `pipeline`, as `push_priority_tests` does.
+fn use_pipeline(world: &mut SimWorld, pipeline: MovementPipeline) -> TestResult {
+    let rules = world.catalog.movement_rules();
+    world
+        .catalog
+        .set_movement_rules(rules.with_contact(ContactRules {
+            pipeline,
+            ..rules.contact()
+        })?);
+    Ok(())
+}
+
+/// Leaves `id` as `housing` says.
+fn set_housing(world: &mut SimWorld, id: EntityId, housing: Housing) -> TestResult {
+    let actor = world.entities.get_mut(&id).ok_or("the worker is alive")?;
+    match housing {
+        Housing::AsHarvested => {}
+        Housing::HiddenOnly => actor.is_mineral_walking = false,
+        Housing::Body => {
+            actor.is_mineral_walking = false;
+            actor.task.housed_in = None;
+        }
+    }
+    Ok(())
+}
+
+/// One tick of the movement and contact phases alone, so no harvest step sets the walking flag
+/// again.
+fn movement_tick(world: &mut SimWorld) {
+    world.step_movement_and_steering();
+    world.resolve_collisions_and_push();
+    assert_eq!(world.diagnostics(), []);
+}
+
+/// The positions, world units, of the housed worker, an idle friend overlapping it and a friend
+/// walking through it, over 24 ticks of the movement phases under `pipeline`, with the housed
+/// worker left as `housing` says.
+fn crossing(pipeline: MovementPipeline, housing: Housing) -> Result<Vec<SimVec2>, Box<dyn Error>> {
+    let mut world = world()?;
+    use_pipeline(&mut world, pipeline)?;
+    let housed = gatherer(&mut world, point(15.0, 6.0), GEYSER)?;
+    until_granted(&mut world, housed)?;
+    let at = world.entities[&housed].position;
+    let worker = worker_kind(&world)?;
+    let friend = world.spawn_unit(worker, ME, at - point(0.25, 0.0))?;
+    let walker = world.spawn_unit(worker, ME, at - point(0.0, 2.5))?;
+    let target = at + point(0.0, 2.5);
+    step(
+        &mut world,
+        vec![command(ME, vec![walker], UnitOrder::Move { target })],
+    );
+    assert!(world.entities[&housed].is_housed());
+    set_housing(&mut world, housed, housing)?;
+    let mut trace = Vec::new();
+    for _ in 0..24 {
+        movement_tick(&mut world);
+        trace.extend([housed, friend, walker].map(|id| world.entities[&id].position));
+    }
+    Ok(trace)
+}
+
+/// WP5 (D-11, Amendment 1): a housed worker is no collision pair and no push partner in either
+/// pipeline, even with its mining walk's flag cleared by hand: an idle friend standing in it and
+/// a friend walking through it move exactly as they do past the ghost the harvest leaves, while
+/// the same worker as a plain body moves them.
+#[test]
+fn a_housed_worker_is_no_body_in_either_pipeline() -> TestResult {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        let reference = crossing(pipeline, Housing::AsHarvested)?;
+        assert_ne!(
+            crossing(pipeline, Housing::Body)?,
+            reference,
+            "{pipeline:?}: a plain body there is met"
+        );
+        assert_eq!(
+            crossing(pipeline, Housing::HiddenOnly)?,
+            reference,
+            "{pipeline:?}: the housed worker is no body"
+        );
+    }
+    Ok(())
+}
+
+/// WP5 (D-11): a housed worker is no obstacle to a displacement's landing point, while the same
+/// worker as a plain body is.
+#[test]
+fn a_housed_worker_is_no_displacement_obstacle() -> TestResult {
+    for housing in [Housing::HiddenOnly, Housing::Body] {
+        let mut scene = scene()?;
+        set_housing(&mut scene.world, scene.housed, housing)?;
+        let landing = scene.world.entities[&scene.housed].position - point(0.2, 0.0);
+        let admitted = scene
+            .world
+            .validate_displacement_destination(scene.control, landing);
+        if housing == Housing::Body {
+            assert_eq!(
+                admitted,
+                Err(DisplacementAdmissionError::Occupied(scene.housed))
+            );
+        } else {
+            assert_eq!(admitted, Ok(()), "the housed worker takes no room");
+        }
+    }
+    Ok(())
+}
+
+/// WP5 (D-11): the pairwise push of `resolve_push_interaction` leaves a housed worker and the
+/// friend standing in it where they are, while the same worker as a plain body is pushed.
+#[test]
+fn a_housed_worker_is_no_push_partner() -> TestResult {
+    for housing in [Housing::HiddenOnly, Housing::Body] {
+        let mut scene = scene()?;
+        set_housing(&mut scene.world, scene.housed, housing)?;
+        let mut housed = scene.world.entities[&scene.housed].clone();
+        let mut friend = scene.world.entities[&scene.control].clone();
+        friend.position = housed.position - point(0.2, 0.0);
+        let before = (housed.position, friend.position);
+        let radius = scene
+            .world
+            .catalog
+            .get(housed.unit_type_id)?
+            .collision_radius;
+        let distance = sim_core::movement::checked_distance(housed.position, friend.position)
+            .ok_or("the distance fits")?;
+        sim_core::resolve_push_interaction(&mut housed, &mut friend, distance, radius + radius)?;
+        let after = (housed.position, friend.position);
+        if housing == Housing::Body {
+            assert_ne!(after, before, "a plain body is pushed");
+        } else {
+            assert_eq!(after, before, "the housed worker is no push partner");
+        }
+    }
     Ok(())
 }

@@ -659,7 +659,8 @@ impl SimWorld {
     }
 
     /// Validates that no other live unit of `id`'s body class overlaps `point`, each at its
-    /// collision radius. A registered structure is not a body (plan
+    /// collision radius. A hidden unit (cargo, or a harvester inside its structure; plan
+    /// `2026-11-24-hidden-harvesters` D-11) takes no room. A registered structure is not a body (plan
     /// `2026-11-18-structure-contact` D-2 B3, B-131): its footprint has already judged `point` at
     /// the terrain radius in [`Self::validate_placement_terrain`], so it is skipped here.
     fn validate_placement_unoccupied(
@@ -675,7 +676,7 @@ impl SimWorld {
         for other in self.entities.values().filter(|e| {
             e.id != id
                 && e.is_alive()
-                && !e.is_loaded_in_transport()
+                && !e.is_hidden()
                 && !self.map.structures().contains_key(&e.id)
         }) {
             let other_policy = MotionPolicy::resolve(&self.catalog, &self.map, other)?;
