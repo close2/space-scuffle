@@ -1155,7 +1155,7 @@ mod tests {
         assert!(fronts(&left_out)
             .iter()
             .all(|front| front.as_ref() != Some(&order)));
-        assert!(fronts(&[anchored])[0].as_ref() != Some(&order));
+        assert_ne!(fronts(&[anchored])[0].as_ref(), Some(&order));
         Ok(())
     }
 }
