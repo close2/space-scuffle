@@ -772,3 +772,48 @@ control group and press the key while it is inside.
 ---
 
 ## As built
+
+Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`, then merged with `main` `7dc356fc`
+(weapon validation, schema 43). Evidence: [`docs/evidence/2026-11-24-hidden-harvesters.md`](../evidence/2026-11-24-hidden-harvesters.md).
+
+| WP | Commit | What |
+|---|---|---|
+| WP0 | `e3514fb0` | B-161 opened on this plan, B-196 registered (the number stood), evidence: §2.1's counts, P-0 (no measured world harvests: 1,390 worlds probed, 0 harvesting ticks), baseline |
+| WP1 | `e659fe6b` | `hides_harvesters` (sim_types capability, required RON field on all 49 rows, true on the three extractor analogues with citations, `CatalogError::HidesHarvestersWithoutExtractor`) |
+| WP2 | `ba096000` | `UnitTask::housed_in`, `Entity::housing`/`is_housed`/`is_hidden`, grant/take/fresh_leg/reap release, §3.3's readers, refused orders, schema 41 -> 44, goldens and sandbox re-recorded |
+| WP3 | `56c44091` | `BubbleRenderInstance::housed`, the client's presence gate, `BattleSelection::leave`, `can_receive_order` |
+| merge | `18999b6f` | schema 43 (main) -> 44; goldens and sandbox re-proved and re-recorded on the merged tree |
+| WP4 | this commit | records |
+| WP5 | not started | waits for the contact solver |
+
+**Decisions and deviations from the plan.**
+
+1. **Q0108's default as filed, not as the plan's table had it (D-8 changed).** The filed default (a) says "you cannot
+   order it while it is inside"; the plan's D-8 and P-5 had an order reach the worker and bring it out. Built: no
+   command reaches a housed unit, immediate or queued. `SimWorld::dispatch_command` drops housed recipients from any
+   command before it is routed (one rule for every command kind: game commands, movement, production, stim, casts,
+   plain orders), and a command left with no recipient is refused with the new
+   `GameCommandError::HousedRecipient(id)`. Dropping rather than refusing the whole command (as `LoadedRecipient` does
+   for cargo) keeps a group order from failing when a gas worker goes inside between the frame it was given and the
+   tick that runs it. The client never sends one (`can_receive_order`). The check sits in `world/commands.rs`, not in
+   `movement/` (out of bounds before WP5) nor in `Entity::issue_order` (internal callers). P-5 was rewritten to this
+   rule: `no_order_reaches_a_housed_worker`. If the owner answers (b), the drop is removed and D-8's original rule
+   applies (`fresh_leg` already clears `housed_in`).
+2. **The client's sandbox profile** still draws a housed bubble (`apply_battle_fog` runs only under the `Player`
+   profile, and nothing else hides bubbles there), but no profile picks it (`presence_of` hides it with no fog).
+   The playing profile, the one P-10 is about, neither draws nor picks it. Recorded, not changed.
+3. **An attacker's `current_target`** keeps naming a worker whose attack order was dropped when it went inside; the
+   chase ends the order through `end_attack`, as for a target that boards a transport. The order is what P-3 checks.
+4. **A gas trip writes the bubble's shell twice** (going in and coming out, `effects::stance`'s presence change, as
+   for a unit that cloaks). The steady-state test allows one material write per presence change.
+5. **The missile that does not validate its weapon filters** (weapon validation's `ValidateWeapon 0`, on `main` since
+   `7dc356fc`) follows its target unless it is cargo; a housed target keeps its position, so the missile follows it
+   and lands harmlessly (impact damage passes `is_damageable`, which reads `is_hidden`). Left on
+   `is_loaded_in_transport`; `passes_weapon_filters` reaches `is_hidden` through `is_damageable`.
+6. **ArchetypeCapabilities** carries `#[expect(clippy::struct_excessive_bools)]` (its fourth bool), as `WeaponSpec` does.
+7. **Tests not by slug, one exception:** the area spell of P-3 is found by its ability name and unlocked by its
+   upgrade's slug, as `psionic_storm_tests` does.
+
+**Rewritten tests (§8 rule 4):** none; no existing test shot, splashed, sighted or clicked a gas gatherer.
+
+**Open:** WP5 (movement readers); Q0107 and Q0108 unanswered, defaults built; B-196 deferred.
