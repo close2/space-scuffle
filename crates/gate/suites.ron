@@ -105,6 +105,12 @@ SuiteCatalog(
         "client/capture_path_gpu_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/concealment_gpu_tests": (class: Gpu),
+        // The attack snapshot on real shaders (plan 2026-11-24-attacker-snapshot WP3): two children,
+        // three shots and a sandbox watch.
+        "client/attack_snapshot_gpu_tests": (class: Gpu, triggers: [
+            "crates/client/src/{battle_hud/**,battle_pipeline/fog.rs,bubble_shader.rs,effects/catalog/**}",
+            "assets/catalog/effects.ron",
+        ]),
         // A selected structure's rally (plan 2026-11-23-production-queue WP5): one child, three
         // shots.
         "client/rally_gpu_tests": (class: Gpu),

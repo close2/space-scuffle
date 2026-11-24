@@ -107,3 +107,30 @@ So the `battle` take's `clash` scene (from the first shot, about tick 305) shows
 its frames, at the opening of the lane fight; nothing else in the video changes. The video is rendered by CI from the
 storyboard, so no file is re-recorded; the storyboard needs no change. The high-water mark of the records in the longest
 shipped scenario is 1 (plan R-2).
+
+## 4. WP3: real-shader verification and the look's review
+
+`crates/client/tests/attack_snapshot_gpu_tests.rs` (P-17, P-18), run through `support/gpu_run.rs`, which takes the GPU
+lock per child on radv:
+
+| Driver | Footprint | Changed by the image | Mean chroma: snapshot / live | Sandbox |
+|---|---|---|---|---|
+| radv (RX 580) | 324 px | 324 | 6.82 / 32.84 (first run 6.82 / 34.87) | no snapshot entity, no pool; the simulation recorded the snapshot |
+| lavapipe (as CI) | 324 px | 324 | 6.77 / 32.54 | likewise |
+
+Red (`red/wp3-red.log`): with `defaults.snapshot` removed from `effects.ron` (the image drawn without its look),
+lavapipe measured 26.19 / 32.54, and the test failed on its bound: the snapshot may keep at most half of the live
+unit's chroma. The still image alone dims it a little (0.80); the look dims it to 0.21.
+
+P-18's second half, "frames byte-identical to before", is shown structurally rather than by pixels: under the
+sandbox no pool resource exists and no snapshot entity is spawned, the pool system runs only under the `Player`
+profile, and the smog's one change is a filter on a marker no sandbox entity carries.
+
+Guards: `concealment_gpu_tests` (radv) and `smog_golden_tests` pass unchanged (`wp3-guards.log`).
+
+**Capture for review** (`~/scratch/attacker-snapshot/capture-radv/`, radv, the shots of the pixel test kept through
+`SPACE_SCUFFLE_ATTACK_SNAPSHOT_KEEP`): `snapshot.png` shows the image on the stone plateau, a pale grey see-through
+ghost of the enemy `pulse_bot`, beside the local `pulse_bot` below the cliff drawn live; `without.png` the same frame
+without it; `live.png` the attacker revealed and drawn live where the image stood. The look's values (`attack_snapshot`
+in `effects.ron`: tint (0.36, 0.40, 0.46, 0.68), veil 0.4, matte 0.85, shadow 1.0) are the first values and await the
+orchestrator's or the owner's review; none was changed in WP3.
