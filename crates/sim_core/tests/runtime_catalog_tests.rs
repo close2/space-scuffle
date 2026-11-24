@@ -2702,3 +2702,73 @@ fn a_stance_with_scan_move_and_no_hold_position_is_refused() -> TestResult {
     assert!(UnitCatalog::from_ron_str(&factions, &held).is_ok());
     Ok(())
 }
+
+/// Plan `2026-11-24-attack-orders` P-8, the simulation half (B-174, C6): an anchoring mode
+/// authored with no A command at run time refuses an `AttackTarget` to a unit settled in it,
+/// while the shipped mode takes it, with no rebuild.
+#[test]
+fn an_anchoring_mode_authored_without_attack_refuses_an_attack() -> TestResult {
+    use sim_types::{AttackCommand, UnitOrder};
+    let bundle = Bundle::new("anchored-no-attack")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch.modes.iter().position(|mode| {
+                mode.is_immobile
+                    && !mode.orders.hold_position
+                    && mode.orders.attack == AttackCommand::Attack
+                    && arch
+                        .stance_weapon_against(Some(mode), sim_types::MoverType::Ground)
+                        .is_some()
+            })?;
+            Some((arch.clone(), mode))
+        })
+        .ok_or("an armed anchoring mode with Attack and no Hold Position")?;
+    let target_kind = shipped
+        .units
+        .archetypes()
+        .find(|other| {
+            !other.is_immobile_by_default()
+                && other.mover_type == sim_types::MoverType::Ground
+                && other.modes.is_empty()
+        })
+        .ok_or("a ground walker")?
+        .unit_type_id;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let orders = arch.modes[mode].orders;
+    std::fs::write(
+        &path,
+        replace_field_after(
+            &text,
+            &anchor,
+            "orders",
+            &format!(
+                "(stop: {}, hold_position: {}, attack: None)",
+                orders.stop, orders.hold_position
+            ),
+        ),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, takes) in [(&shipped, true), (&edited, false)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        let enemy = world.spawn_unit(
+            target_kind,
+            PlayerId(1),
+            SimVec2::new(SimScalar::from_num(16), SimScalar::from_num(12)),
+        )?;
+        assert_eq!(
+            queued_order_reaches(&mut world, unit, &UnitOrder::attack(enemy)),
+            takes,
+            "edited {}",
+            !takes
+        );
+    }
+    bundle.finish()?;
+    Ok(())
+}

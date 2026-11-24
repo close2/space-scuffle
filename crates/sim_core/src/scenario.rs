@@ -31,7 +31,8 @@ use sim_map::{
     MapStartLocation, MapValidationError, TerrainKind,
 };
 use sim_types::{
-    AbilityTargetKind, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId,
+    AbilityTargetKind, AttackCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2,
+    UnitOrder, UnitTypeId,
 };
 
 use crate::catalog::{RuntimeCatalogs, UnitCatalog};
@@ -289,19 +290,19 @@ pub struct ScenarioManifest {
 /// unit identity (charter §3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum InitialOrder {
-    /// Every mobile armed unit of `player_slot` that is not a harvester attack-moves to the
-    /// approach of `target_player_slot`'s base ([`start_approaches`]).
+    /// Every mobile unit of `player_slot` with an A command that is not a harvester attack-moves
+    /// to the approach of `target_player_slot`'s base ([`start_approaches`]).
     AttackMoveToStart {
-        /// Owner whose combat-capable mobile units receive the order.
+        /// Owner whose mobile units with an A command receive the order.
         player_slot: u8,
         /// Owner of the destination start location.
         target_player_slot: u8,
     },
-    /// Every mobile armed unit of `player_slot` that is not a harvester attack-moves to the centre
-    /// of `cell`. A scenario names its targets this way when the first-free-cell rule of
+    /// Every mobile unit of `player_slot` with an A command that is not a harvester attack-moves
+    /// to the centre of `cell`. A scenario names its targets this way when the first-free-cell rule of
     /// [`start_approaches`] would not give the players mirror-image destinations.
     AttackMoveToCell {
-        /// Owner whose combat-capable mobile units receive the order.
+        /// Owner whose mobile units with an A command receive the order.
         player_slot: u8,
         /// Destination cell `(x, y)` in grid cells; the order aims at its centre, in world units.
         cell: (u32, u32),
@@ -391,7 +392,7 @@ pub fn start_approaches(
 /// The client's battle start and the route trace tool both call this, so a traced battle starts
 /// exactly as the game does. A unit receives an [`InitialOrder::AttackMoveToStart`] or
 /// [`InitialOrder::AttackMoveToCell`] when its owner matches, it is mobile, it is not a harvester
-/// and it has a weapon. A unit receives an [`InitialOrder::EnterModes`] when its owner matches and
+/// and it has an A command (plan `2026-11-24-attack-orders` D-6). A unit receives an [`InitialOrder::EnterModes`] when its owner matches and
 /// its archetype has a mode-switch ability: a cast of the first one, queued behind the orders the
 /// list gave it before (so a scenario lists that order after the moves it should follow).
 ///
@@ -496,7 +497,10 @@ fn enter_modes(world: &mut SimWorld, player_slot: u8) -> Result<(), ScenarioErro
     Ok(())
 }
 
-/// Orders every mobile armed non-harvester of `player_slot` to attack-move to `target`.
+/// Orders every unit of `player_slot` that is not anchored, not a harvester and has an A command
+/// in its settled stance (Attack or Scan Move, plan `2026-11-24-attack-orders` D-6, B-186) to
+/// attack-move to `target`. An unarmed one walks along and acquires nothing; harvesters are left
+/// out as a scenario choice, so a scenario's workers keep mining.
 fn attack_move_combatants(
     world: &mut SimWorld,
     player_slot: u8,
@@ -509,9 +513,7 @@ fn attack_move_combatants(
         if entity.owner == PlayerId(player_slot)
             && !entity.is_immobile
             && archetype.capabilities.harvester.is_none()
-            && (archetype.ground_weapon.is_some()
-                || archetype.air_weapon.is_some()
-                || archetype.weapon.is_some())
+            && entity.settled_attack_command(archetype) != AttackCommand::None
         {
             entity
                 .issue_order(order.clone(), false)
@@ -1088,6 +1090,72 @@ mod tests {
         // The first ring holds fewer than 25 cells, so the order of rings decides the result.
         let first_ring = 2 * (right - left + 3) + 2 * (top - bottom + 1);
         assert!(first_ring < 25, "first ring of {first_ring} cells");
+        Ok(())
+    }
+
+    /// Plan `2026-11-24-attack-orders` P-10 (D-6, B-186): a scenario's attack-move reaches every
+    /// mobile unit of the slot whose settled stance has an A command, unarmed scan-movers
+    /// included, and still leaves out harvesters, anchored units, units with no A command and
+    /// the other slot's units.
+    #[test]
+    fn an_attack_move_reaches_every_mobile_unit_with_an_a_command(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use sim_types::{AttackCommand, EntityId, PlayerId, StanceOrders, UnitOrder};
+        let map = sim_map::GameMap::new(48, 48, sim_map::MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = crate::test_support::world(map, 9);
+        let find = |pick: &dyn Fn(&crate::UnitArchetype) -> bool| {
+            world
+                .catalog
+                .archetypes()
+                .find(|arch| pick(arch))
+                .map(|arch| arch.unit_type_id)
+                .ok_or("a shipped archetype with the property")
+        };
+        let mobile = |arch: &crate::UnitArchetype| !arch.is_immobile_by_default();
+        let armed = find(&|arch| {
+            mobile(arch) && arch.stance_armed(None) && arch.capabilities.harvester.is_none()
+        })?;
+        let scan_mover = find(&|arch| {
+            mobile(arch) && arch.stance_orders(None).attack == AttackCommand::ScanMove
+        })?;
+        let harvester = find(&|arch| mobile(arch) && arch.capabilities.harvester.is_some())?;
+        let structure = find(&|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. }) && arch.stance_armed(None)
+        })?;
+        // A walker whose default stance is authored without an A command, as P-8's run-time edit
+        // makes one.
+        let silent = find(&|arch| {
+            mobile(arch)
+                && arch.stance_armed(None)
+                && arch.capabilities.harvester.is_none()
+                && arch.unit_type_id != armed
+        })?;
+        world.catalog.get_mut(silent)?.default_stance_orders = Some(StanceOrders {
+            attack: AttackCommand::None,
+            ..StanceOrders::ALL
+        });
+        let at = |x: i32| SimVec2::from_i32(x, 10);
+        let mut spawn = |kind, owner: u8, x| world.spawn_unit(kind, PlayerId(owner), at(x));
+        let ordered = [spawn(armed, 0, 4)?, spawn(scan_mover, 0, 8)?];
+        let left_out = [
+            spawn(harvester, 0, 12)?,
+            spawn(silent, 0, 16)?,
+            spawn(armed, 1, 20)?,
+        ];
+        let anchored = world.spawn_structure(structure, PlayerId(0), 30, 30)?;
+        let target = SimVec2::from_i32(40, 40);
+        super::attack_move_combatants(&mut world, 0, target)?;
+        let order = UnitOrder::AttackMove { target };
+        let fronts = |ids: &[EntityId]| -> Vec<Option<UnitOrder>> {
+            ids.iter()
+                .map(|id| world.entities[id].order_queue.front().cloned())
+                .collect()
+        };
+        assert_eq!(fronts(&ordered), vec![Some(order.clone()); 2]);
+        assert!(fronts(&left_out)
+            .iter()
+            .all(|front| front.as_ref() != Some(&order)));
+        assert!(fronts(&[anchored])[0].as_ref() != Some(&order));
         Ok(())
     }
 }

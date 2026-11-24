@@ -126,3 +126,41 @@ Logs `~/scratch/attack-orders/red/wp1-red-a.log` and `wp1-red-b.log`:
 
 `sim_types`, `sim_fixtures` and `sim_core` (every target, the matrix included): 109 test binaries, none failed
 (`~/scratch/attack-orders/wp1-sim-tests.log`). Clippy on the three crates with `-D warnings` is clean.
+
+## WP2: the simulation
+
+### Red run (on the WP1 tree)
+
+Logs `~/scratch/attack-orders/red/wp2-red.log` and `wp2-red-p8.log`:
+
+| Test | Failure |
+|---|---|
+| `stance_orders_tests::the_simulation_gives_an_attack_only_to_a_unit_that_can_attack_its_target` (P-2) | "welder_drone Default EnemyAir queue false: takes false": the ground-only worker was given the attack on an air unit |
+| `stance_orders_tests::one_attack_command_reaches_each_named_unit_that_can_attack_the_target` (P-3) | "EnemyAir: the unarmed unit is left as it was": the unarmed unit took the attack |
+| `scenario::tests::an_attack_move_reaches_every_mobile_unit_with_an_a_command` (P-10) | the scan-mover had no order (`[Some(AttackMove …), None]`) |
+| `runtime_catalog_tests::an_anchoring_mode_authored_without_attack_refuses_an_attack` (P-8, simulation half; run against WP1's `world/commands.rs`) | "edited true": the sieged tank authored without Attack took the attack |
+
+Green on both trees, as the plan expected: `friendly_attack_tests` (P-4, both the in-reach and the closing-in
+case: an attack ordered on an own unit is carried out today, and the chase in `movement/` closes in, so R-1 did not
+occur and nothing moves to WP5), `an_unarmed_attack_mover_walks_past_enemies_and_acquires_nothing` (P-5) and
+`sim_fixtures` `no_matrix_battle_scripts_an_attack_that_misses_a_unit_it_names` (P-9: every scripted first-tick
+`AttackTarget` reaches its units and every `AttackMove` names units with an A command).
+
+### Tests rewritten by §8 rule 4
+
+- `scenario_tests::enter_modes_queues_behind_earlier_orders` expected the burrowing units (unarmed by default) to
+  take no attack-move and switch at once. They now have Attack and walk along (D-6). To keep the test's "switch at
+  once" branch, the test authors the default stance of the mode units unarmed by default without an A command in
+  the world's catalog before the orders, a run-time edit the catalog allows; both branches are still counted.
+
+### The grep of plan §11
+
+Every `AttackTarget` given straight to a world in `crates/sim_core/tests/`, `crates/sim_fixtures/` and the client's
+tests was checked by running them: the sim crates' tests issue it through `Entity::issue_order` (not gated) or to
+armed units that reach the target's plane; the crowd harness's `Attack` role units are armed (the crowd tests pass);
+the client's world tests submit through client admission. None needed a rewrite.
+
+### Green
+
+`sim_fixtures` and `sim_core`, every target with `--no-fail-fast` (the matrix and the goldens included): 100 test
+binaries, none failed (`~/scratch/attack-orders/wp2-sim-tests.log`).
