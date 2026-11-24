@@ -33,3 +33,8 @@ whether the fog stays lifted beyond the Refinery's own sight while the SCV is in
 - **3(a):** The worker comes out **where it went in**.
 
 **Reasoning:** Matches StarCraft II (workers inside a Refinery, Assimilator, or Extractor survive its destruction and pop out next to the wreckage).
+
+## Resolution
+
+Answered with the default (a), which plan `2026-11-24-hidden-harvesters` built in WP2 (`ba096000`) and WP3
+(`56c44091`) and merged with this file's move to `closed/`. Nothing further changes.

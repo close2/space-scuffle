@@ -177,10 +177,11 @@ const fn game_error_slot(error: &GameCommandError) -> usize {
         GameCommandError::Transport(_) => 25,
         GameCommandError::Production(_) => 26,
         GameCommandError::Invariant(_) => 27,
+        GameCommandError::HousedRecipient(_) => 28,
     }
 }
 
-fn game_errors() -> [GameCommandError; 28] {
+fn game_errors() -> [GameCommandError; 29] {
     let node = ResourceNodeId(7);
     [
         GameCommandError::MatchOver,
@@ -218,6 +219,7 @@ fn game_errors() -> [GameCommandError; 28] {
         GameCommandError::Transport(TransportAdmissionError::MissingEntity(ID)),
         GameCommandError::Production(ProductionAdmissionError::EmptySelection),
         GameCommandError::Invariant(INVARIANT),
+        GameCommandError::HousedRecipient(ID),
     ]
 }
 

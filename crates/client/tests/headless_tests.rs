@@ -93,6 +93,7 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     };
 
     let definition = client::runtime_battle::BattleDefinition::load(

@@ -852,6 +852,7 @@ mod tests {
             stance: StanceView::default(),
             status: StatusFlags::default(),
             barrier_ratio: 0.0,
+            housed: false,
         }
     }
 

@@ -33,6 +33,10 @@
 //!   The running baseline keeps the tick driver, so the difference between the two is the
 //!   presentation systems' own work while time passes (plan `2026-11-04-battle-flipbook-animation`
 //!   WP5).
+//!   Three workers of the local player gather gas through an extractor that hides its harvesters
+//!   in both running children, so during the window they go inside and come out, their bubbles
+//!   published `housed` and back (plan `2026-11-24-hidden-harvesters` P-10); everyone else stands
+//!   idle.
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
@@ -131,6 +135,105 @@ impl Variant {
     }
 }
 
+/// Workers in the gas crew of the running children.
+const GAS_CREW: usize = 3;
+
+/// The gas crew of the running children and how often, across all frames so far, one of them
+/// went inside its extractor or came out, read from the presented bubbles' `housed` flag (plan
+/// `2026-11-24-hidden-harvesters` P-10). Fixed-size, so watching it allocates nothing.
+#[derive(Resource, Clone, Copy, Debug)]
+struct GasCrew {
+    ids: [sim_types::EntityId; GAS_CREW],
+    housed: [bool; GAS_CREW],
+    entered: u32,
+    left: u32,
+}
+
+/// Places a completed extractor that hides its harvesters over the gas node nearest the local
+/// base, and three workers of the local player beside it gathering from it.
+fn add_gas_crew(
+    simulation: &mut sim_core::SimWorld,
+) -> Result<GasCrew, Box<dyn std::error::Error>> {
+    let local = sim_types::PlayerId(0);
+    let find = |test: &dyn Fn(&sim_core::catalog::UnitArchetype) -> bool, what: &'static str| {
+        simulation
+            .catalog
+            .archetypes()
+            .find(|a| test(a))
+            .map(|a| a.unit_type_id)
+            .ok_or(what)
+    };
+    let extractor = find(
+        &|a| a.capabilities.is_gas_extractor && a.capabilities.hides_harvesters,
+        "an extractor that hides its harvesters",
+    )?;
+    let worker = find(&|a| a.capabilities.harvester.is_some(), "a harvester")?;
+    let base = simulation
+        .entities
+        .values()
+        .find(|e| e.owner == local && e.is_immobile)
+        .map(|e| e.position)
+        .ok_or("a local base")?;
+    let mut nodes: Vec<(sim_types::SimScalar, usize, (u32, u32))> = simulation
+        .map
+        .resources()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == sim_types::ResourceKind::Gas)
+        .map(|(index, node)| (node.pos.distance_sq(base), index, node.cell))
+        .collect();
+    nodes.sort_unstable();
+    let (_, index, _) = nodes
+        .into_iter()
+        .find(|(_, _, cell)| {
+            simulation
+                .spawn_structure(extractor, local, cell.0 - 1, cell.1 - 1)
+                .is_ok()
+        })
+        .ok_or("a gas node near the local base that takes an extractor")?;
+    let target = sim_types::ResourceNodeId(u32::try_from(index)?);
+    let toward = base - simulation.map.resources()[index].pos;
+    let side = toward.normalize_or_zero() * sim_types::SimScalar::from_num(2.5);
+    let at = simulation.map.resources()[index].pos + side;
+    let mut ids = [sim_types::EntityId(0); GAS_CREW];
+    for (slot, id) in ids.iter_mut().enumerate() {
+        let offset = sim_types::SimScalar::from_num(0.6) * sim_types::SimScalar::from_num(slot);
+        *id = simulation.spawn_unit(worker, local, at + sim_types::SimVec2::new(offset, offset))?;
+        simulation
+            .entities
+            .get_mut(id)
+            .ok_or("a spawned worker")?
+            .issue_order(sim_types::UnitOrder::Harvest { target }, false)?;
+    }
+    Ok(GasCrew {
+        ids,
+        housed: [false; GAS_CREW],
+        entered: 0,
+        left: 0,
+    })
+}
+
+/// Counts the crew's comings and goings from the presented bubbles, on every frame.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn watch_gas_crew(session: Res<'_, BattleSession>, mut crew: ResMut<'_, GasCrew>) {
+    let bubbles = &session.frames.current().bubbles;
+    for slot in 0..GAS_CREW {
+        let id = crew.ids[slot];
+        let housed = bubbles
+            .iter()
+            .any(|bubble| bubble.entity_id == id && bubble.housed);
+        if housed && !crew.housed[slot] {
+            crew.entered += 1;
+        } else if !housed && crew.housed[slot] {
+            crew.left += 1;
+        }
+        crew.housed[slot] = housed;
+    }
+}
+
 /// The positive control: one heap allocation, freed in the same frame.
 fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
@@ -149,6 +252,11 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     };
     let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
+    let crew = if variant.is_running() {
+        Some(add_gas_crew(&mut simulation)?)
+    } else {
+        None
+    };
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut simulation,
@@ -193,6 +301,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
             client::setup_indicator_assets_system,
         ),
     );
+    if let Some(crew) = crew {
+        app.insert_resource(crew).add_systems(Last, watch_gas_crew);
+    }
     if variant == Variant::RunningBaseline {
         app.add_systems(Update, advance_battle_ticks);
     }
@@ -763,6 +874,7 @@ fn run_child(variant: Variant) -> TestResult {
     };
     let before = tick(&app);
     let spawned_before = effects_spawned(&app);
+    let crew_before = app.world().get_resource::<GasCrew>().copied();
     measured_steady_frames(&mut app, frames);
     if variant == Variant::EffectStream {
         check_effect_stream(&app, frames, spawned_before)?;
@@ -778,6 +890,19 @@ fn run_child(variant: Variant) -> TestResult {
     if after - before != frames / 2 {
         return Err(format!("the battle ran {} ticks in {frames} frames", after - before).into());
     }
+    let crew = app
+        .world()
+        .get_resource::<GasCrew>()
+        .copied()
+        .zip(crew_before)
+        .ok_or("invariant: a running child has its gas crew")?;
+    if crew.0.entered <= crew.1.entered || crew.0.left <= crew.1.left {
+        return Err(format!(
+            "the gas crew must go inside and come out in the window: {:?} then {:?}",
+            crew.1, crew.0
+        )
+        .into());
+    }
     let busy = app
         .world()
         .resource::<BattleSession>()
@@ -785,10 +910,16 @@ fn run_child(variant: Variant) -> TestResult {
         .current()
         .bubbles
         .iter()
-        .find(|bubble| bubble.anim_state != sim_types::AnimState::Idle)
+        .find(|bubble| {
+            bubble.anim_state != sim_types::AnimState::Idle
+                && !crew.0.ids.contains(&bubble.entity_id)
+        })
         .map(|bubble| bubble.entity_id);
     if let Some(id) = busy {
-        return Err(format!("the running window must stay idle, but {id:?} is not").into());
+        return Err(format!(
+            "the running window must stay idle but for the gas crew, and {id:?} is not"
+        )
+        .into());
     }
     Ok(())
 }

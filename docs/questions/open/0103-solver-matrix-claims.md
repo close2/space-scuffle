@@ -1,7 +1,7 @@
 # Q0103: With the new movement solver, two battle claims break. Change the claims, call them bugs, or switch the nudge off?
 
 - **Asked:** 2026-11-24
-- **Blocking:** the merge of the new movement solver, together with [Q0102](0102-solver-cost-gap.md). Other work
+- **Blocking:** the merge of the new movement solver, together with [Q0102](../closed/0102-solver-cost-gap.md). Other work
   continues meanwhile.
 - **Default until answered:** (a) for battle 26 and (b) for battle 28. These are applied when you answer, or at the
   merge if that comes first. Until then the solver branch keeps the old expectations, and its battle test fails on
@@ -75,3 +75,6 @@ Battle 26 with the fix: the zerglings win 22 of 24.
   B-193).
 
 ## Answer
+
+- **Battle 26 — Option (a):** Restate the claim to what is measured (zerglings mostly win), citing the Q0095 melee ring-nudge (`D-δ`).
+- **Battle 28 — Option (b):** Keep the StarCraft II claim (zerglings overrun immortals) and merge the movement solver with Battle 28 marked as an expected failure for known bug `B-192`, so `B-192` (retargeting around a surrounded front row) and `B-193` (enemy shoving) remain tracked for a dedicated follow-up fix.

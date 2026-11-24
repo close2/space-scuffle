@@ -773,7 +773,7 @@ by name, WP2 adds its row.
 
 ## 15. Draft owner questions (for the orchestrator to file; not filed by this plan)
 
-Filed as [Q0104](../questions/open/0104-attack-click-on-own-unit.md) and [Q0105](../questions/open/0105-attack-click-on-unattackable-target.md) (Q0101 and Q0103 are taken by the vision and contact-solver plans).
+Filed as [Q0104](../questions/open/0104-attack-click-on-own-unit.md) and [Q0105](../questions/closed/0105-attack-click-on-unattackable-target.md) (Q0101 and Q0103 are taken by the vision and contact-solver plans).
 
 ```markdown
 # Q0104: Does "A, then click my own unit" attack it?

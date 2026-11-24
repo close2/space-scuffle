@@ -783,7 +783,8 @@ fields!(UnitTask {
     return_ticks,
     wait_ticks,
     depot,
-    last_node
+    last_node,
+    housed_in
 });
 fields!(Construction {
     remaining_ticks,

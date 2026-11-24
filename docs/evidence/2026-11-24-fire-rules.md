@@ -248,3 +248,14 @@ later. So every move is a counted event of B-197 (P-15).
 ## Client skirmish
 
 The pilot trains `pulse_bot`, which has no turret; the skirmish's stage log is not affected by any package (§7.3).
+
+## Merge with `main` `d92e40bb` (hidden harvesters, schema 44)
+
+Schema 44 is the hidden-harvesters plan's, merged first; this plan keeps 45. On the merged tree, with the three
+fields left out of the encoding at schema 44 and D-3 switched off (scratch commit object `9a568676`), both goldens
+and `DEFAULT_SANDBOX_CHECKSUM` (`8_410_876_910_713_629_694`) reproduce main's schema-44 values on native debug and
+release and `wasm32-wasip1` release and debug (`proof-latent44/status`). Per-tick dumps of the merged tree with
+D-3 off and on (`dump-m-off/`, `dump-m-on/`) differ exactly as before the merge: in `golden_replay` the turret
+angles of entities 33 to 35 on 273 entity-ticks from tick 181 to 549, nothing else; `golden_replay_orders` equal.
+The lists were re-recorded once at schema 45 (sandbox `6_724_706_104_475_870_814`) and reproduce on the same four
+builds (`proof-merged/status`).

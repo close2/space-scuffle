@@ -82,9 +82,14 @@ impl Presence {
 }
 
 /// The [`Presence`] of `bubble` under `fog`, where `None` is no fog: the sandbox, the editor and
-/// the headless check, which show the truth.
+/// the headless check, which show the truth. A housed bubble, inside a structure while it
+/// gathers, is [`Presence::Hidden`] with or without fog, for every viewer (plan
+/// `2026-11-24-hidden-harvesters` D-10): the truth is that it is not on the map.
 #[must_use]
 pub fn presence_of(fog: Option<&BattleFog>, bubble: &BubbleRenderInstance) -> Presence {
+    if bubble.housed {
+        return Presence::Hidden;
+    }
     fog.map_or(Presence::Shown, |fog| fog.presence(bubble))
 }
 
@@ -202,9 +207,14 @@ impl BattleFog {
     /// Out of sight, a unit of another player is [`Presence::Hidden`], unless its own attack
     /// reveals it to the viewer, which puts it in sight wherever it stands. In sight but undetected,
     /// a burrowed unit is [`Presence::Hidden`] and a cloaked one [`Presence::Shimmer`]. The
-    /// bubble is judged at the position it is drawn at, `world_pos`, in world units.
+    /// bubble is judged at the position it is drawn at, `world_pos`, in world units. A housed
+    /// bubble, inside a structure while it gathers, is [`Presence::Hidden`] for every viewer,
+    /// its owner included (plan `2026-11-24-hidden-harvesters` D-10).
     #[must_use]
     pub fn presence(&self, bubble: &BubbleRenderInstance) -> Presence {
+        if bubble.housed {
+            return Presence::Hidden;
+        }
         let [x, y, _] = bubble.world_pos;
         if !self.shows(bubble.owner, x, y)
             && self
@@ -528,6 +538,7 @@ mod tests {
             stance: sim_types::StanceView::default(),
             status: sim_types::StatusFlags::default(),
             barrier_ratio: 0.0,
+            housed: false,
         }
     }
 
@@ -624,6 +635,34 @@ mod tests {
             ),
             Presence::Hidden
         );
+    }
+
+    /// Plan `2026-11-24-hidden-harvesters` D-10: a housed bubble is hidden for every viewer,
+    /// its owner included, in sight or not, attack-revealed or not, and with no fog at all.
+    #[test]
+    fn a_housed_unit_is_hidden_with_fog_without_fog_and_from_its_owner() {
+        let mut view = view();
+        view.attack_revealed = vec![EntityId(5)];
+        let fog = fog_of(&view);
+        for owner in [ME, THEM] {
+            for at in [[1.5, 0.5], [0.5, 0.5]] {
+                let mut bubble = unit(owner, 5, Concealment::None, at);
+                bubble.housed = true;
+                assert_eq!(
+                    fog.presence(&bubble),
+                    Presence::Hidden,
+                    "{owner:?} at {at:?}"
+                );
+                assert_eq!(presence_of(Some(&fog), &bubble), Presence::Hidden);
+                assert_eq!(presence_of(None, &bubble), Presence::Hidden, "no fog");
+                bubble.housed = false;
+                assert_eq!(presence_of(None, &bubble), Presence::Shown, "the control");
+            }
+        }
+        let mut own = unit(ME, 5, Concealment::None, [1.5, 0.5]);
+        assert_eq!(fog.presence(&own), Presence::Shown, "the control");
+        own.housed = true;
+        assert_eq!(fog.presence(&own), Presence::Hidden);
     }
 
     #[test]

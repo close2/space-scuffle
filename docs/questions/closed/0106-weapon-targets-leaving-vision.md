@@ -38,3 +38,11 @@ against a lone Colossus at full range.
 - **2(a):** An automatic target that leaves vision is dropped immediately, and the unit picks the best visible enemy or resumes its order.
 - **3(a):** Every teleport effect (Blink, Mass Recall, Adept Shade, Battlecruiser Tactical Jump) makes in-flight missiles miss. **Important timing requirement:** for spells with a cast/channel/wind-up time (such as Mass Recall, Tactical Jump, or Adept Shade travelling), missile disjointing must occur **only at the tick the actual teleport happens**, not when the ability is first cast.
 - **4(a):** A unit is seen when the cell at its **centre** is visible.
+
+## Resolution
+
+- Parts 2, 3 and 4 (a) were built by plan `2026-11-24-weapon-validation` and merged as `7dc356fc`. On part 3's
+  timing: a missile's target is dropped by `Entity::teleport_to`, which runs on the tick the unit actually moves
+  (Blink's `commit_cast`); no shipped ability teleports after a cast or channel time. Any future one must call
+  `teleport_to` on its arrival tick, and the plan's As built records that rule.
+- Part 1 (a) is that plan's WP7 (B-195), which starts after the contact solver merges.

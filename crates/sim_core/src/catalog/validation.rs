@@ -1376,10 +1376,24 @@ impl StructureArchetypeDef {
         Ok(())
     }
 
+    /// Checks that only a gas extractor hides its harvesters (plan `2026-11-24-hidden-harvesters`
+    /// D-1): in 5.0.14 `HideHarvesters` is a flag of a resource behaviour, which only a structure
+    /// holding a resource carries.
+    fn validate_hidden_harvesters(&self) -> SimResult<()> {
+        if self.hides_harvesters && !self.is_gas_extractor {
+            return Err(CatalogError::HidesHarvestersWithoutExtractor {
+                definition: self.slug.clone(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         structure_attributes(&self.slug, &self.attributes)?;
         self.validate_auto_rally()?;
+        self.validate_hidden_harvesters()?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
             &self.slug,
@@ -1823,6 +1837,37 @@ mod tests {
             assert_eq!(refused.as_deref(), rejected, "{case}");
             structure.auto_rally = None;
         }
+        Ok(())
+    }
+
+    /// Plan `2026-11-24-hidden-harvesters` D-1: only a gas extractor may hide its harvesters; a
+    /// shipped extractor that hides them validates, and any other structure that does is refused
+    /// with the typed error naming it.
+    #[test]
+    fn only_a_gas_extractor_hides_its_harvesters() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::StructureCatalogFile;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        let extractor = file
+            .structures
+            .iter()
+            .position(|structure| structure.is_gas_extractor && structure.hides_harvesters)
+            .ok_or("real catalog has no extractor that hides its harvesters")?;
+        let other = file
+            .structures
+            .iter()
+            .position(|structure| !structure.is_gas_extractor)
+            .ok_or("real catalog has no structure that is not an extractor")?;
+        file.structures[extractor].validate()?;
+        let structure = &mut file.structures[other];
+        structure.hides_harvesters = true;
+        let slug = structure.slug.clone();
+        assert!(matches!(
+            structure.validate(),
+            Err(crate::error::SimCoreError::SpellCatalog(
+                crate::catalog::CatalogError::HidesHarvestersWithoutExtractor { definition }
+            )) if definition == slug
+        ));
         Ok(())
     }
 

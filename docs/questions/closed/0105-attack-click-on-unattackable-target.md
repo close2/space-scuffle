@@ -23,3 +23,8 @@ unburrowed Lurker.
 - **Option (a): Attack-move to where the target stands.**
 
 **Reasoning:** Matches StarCraft II — in mixed selections (e.g. Marines + Marauders A-clicking an air unit) or with an unburrowed Lurker, units without a weapon for that target attack-move toward that location and engage valid targets along the way rather than standing idle.
+
+## Resolution
+
+Already in place: the default (a) was built by plan `2026-11-24-attack-orders` (D-5) and merged as `e313268f`.
+Nothing further changes.

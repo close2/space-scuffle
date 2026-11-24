@@ -83,6 +83,11 @@ pub struct BubbleRenderInstance {
     /// for an archetype without one.
     #[serde(default)]
     pub barrier_ratio: f32,
+    /// Inside a structure, hidden from every player (plan `2026-11-24-hidden-harvesters` D-9): a
+    /// gatherer in its extractor. A client draws and picks nothing of it. Older records read it
+    /// as `false`.
+    #[serde(default)]
+    pub housed: bool,
 }
 
 /// Where an entity stands in one attack cycle, in whole simulation ticks (25 Hz).
@@ -551,6 +556,7 @@ mod tests {
             stance: StanceView::default(),
             status: StatusFlags::default(),
             barrier_ratio: 0.0,
+            housed: false,
         };
 
         let event = CombatEventVisual::HitscanTracer {

@@ -24,15 +24,14 @@ use sim_map::CliffLevel;
 use sim_types::{EntityId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 impl SimWorld {
-    /// Rebuilds the exit occupancy from the live, unloaded units and their largest collision
-    /// radius. Registered structures are left out: they are not bodies (D-2 B4).
+    /// Rebuilds the exit occupancy from the live units that are not hidden (carried, or inside a
+    /// structure while they gather) and their largest collision radius. Registered structures
+    /// are left out: they are not bodies (D-2 B4).
     pub(crate) fn rebuild_production_occupancy(&mut self) -> Result<(), ProductionInvariant> {
         self.production.occupancy.clear();
         self.production.max_radius = SimScalar::ZERO;
         for entity in self.entities.values().filter(|e| {
-            e.is_alive()
-                && !e.is_loaded_in_transport()
-                && !self.map.structures().contains_key(&e.id)
+            e.is_alive() && !e.is_hidden() && !self.map.structures().contains_key(&e.id)
         }) {
             let arch = self.catalog.get(entity.unit_type_id).map_err(|_| {
                 ProductionInvariant::MissingArchetype {

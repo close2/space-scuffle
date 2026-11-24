@@ -122,6 +122,7 @@ fn test_render_snapshot_full_serialization() {
                 revealed: i == 9,
             },
             barrier_ratio: if i == 5 { 0.4 } else { 0.0 },
+            housed: false,
         });
     }
 
@@ -159,6 +160,7 @@ fn test_render_snapshot_full_serialization() {
         stance: StanceView::default(),
         status: StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     });
 
     bubbles.push(BubbleRenderInstance {
@@ -194,6 +196,7 @@ fn test_render_snapshot_full_serialization() {
         stance: StanceView::default(),
         status: StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     });
 
     // 5 combat visual events
@@ -461,6 +464,7 @@ fn attack_swing_round_trips_and_the_float_progress_lane_is_gone() {
         stance: StanceView::default(),
         status: StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     };
     for attack_swing in [Some(swing), None] {
         bubble.attack_swing = attack_swing;
@@ -507,6 +511,7 @@ fn plain_bubble() -> BubbleRenderInstance {
         stance: StanceView::default(),
         status: StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     }
 }
 
