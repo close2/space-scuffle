@@ -236,3 +236,43 @@ the measured worlds were not run again.
   `battle_context_order_tests` 30, `battle_card_tests` 34, `battle_card_path_tests` 4, `battle_mode_tests` 21,
   `battle_hud_tests` 35, `sync_steady_state_tests` 8, `skirmish_match_tests` 7 (1 ignored), client library 540, all
   passed; the skirmish stage log is unchanged. `sim_core/sc2_who_wins_matchup_matrix_tests` (release): 3 passed.
+
+## WP5: movement admission by A command (D-9)
+
+Branch `attack-orders-wp5`, cut from `main` at `6b813f1e` (contact solver merged) and merged with `main` at
+`708576ac` (turret-wind-up WP3). Scripts as above, copied to `~/scratch/attack-orders-wp5/scripts/` with
+`CARGO_TARGET_DIR=/home/spacescuffle/cargo-target/attack-orders-wp5`.
+
+### Red run (on `6b813f1e` with the two new tests only)
+
+`cargo test -p sim_core --test stance_orders_tests an_attack_move`
+(`~/scratch/attack-orders-wp5/red/stance_orders_tests.log`):
+
+- `an_attack_move_reaches_only_the_named_units_that_are_mobile_with_an_a_command`: FAILED, the command was admitted
+  for all three named units (`left: Ok(3)`, `right: Ok(1)`).
+- `an_attack_move_left_with_no_recipient_is_valid_and_does_nothing`: FAILED, the sieged tank and the unarmed
+  structure both took it (`left: Ok(2)`, `right: Ok(0)`).
+
+### The fixture check
+
+P-9's `AttackMove` branch now also requires the unit to be mobile in its settled stance and to carry the order after
+the first tick. On `2174010b` it named `21_lurker_vs_6_marines`: the Lurker side burrows on the first tick and was
+then given `AttackMove(16, 32)`, which D-9 filters away (the burrowed stance is anchored; Q0098). `31210942` gives
+that side no order; the check then passes.
+
+### Worlds (against `main` at `708576ac`, both exported, rebuilt and measured the same way)
+
+- `compare.sh world-main world-wp5` (the merge `f5c4cd4d`, D-9 with the old battle 21 order):
+  `files base=483 new=483 differing=0`.
+- `compare.sh world-main world-wp5b` (`31210942`, battle 21 without the order): `files base=483 new=483
+  differing=0`.
+- Battle 21 traced tick by tick on its 20 seeds (`matchup_trace --battle 21_lurker_vs_6_marines --seeds 16`, tick and
+  unit CSVs): `main` against both trees, `files base=62 new=62 differing=0`.
+
+### Tests
+
+- `golden_replay_tests` debug and release: 4 passed each. `sim_fixtures` (sandbox checksum, matrix fixture checks,
+  trace tests): all passed. `sc2_who_wins_matchup_matrix_tests` (release): 4 passed.
+- `sim_core`: `stance_orders_tests` 13, `checked_movement_tests` 19, `rally_tests` 13, `transport_ownership_tests`
+  15, `scenario_tests` 29, `attack_move_simulation_tests` 9, `friendly_attack_tests` 2, `full_match_tests` 2; all
+  passed.
