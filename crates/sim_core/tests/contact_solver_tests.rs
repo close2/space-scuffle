@@ -746,7 +746,8 @@ fn the_block_switch_off_is_bit_identical() -> TestResult {
     Ok(())
 }
 
-/// WP1's digest of the E2-T1 scene (`print_the_block_digests` on WP1's tree).
-const PRESS_DIGEST_WP1: u64 = 0xa381_a7c5_b898_2232;
+/// WP1's digest of the E2-T1 scene (`print_the_block_digests` on WP1's commit `1ccccb00` merged
+/// with `main` `802df056`, schema 47).
+const PRESS_DIGEST_WP1: u64 = 0x7e1c_ffb0_addd_e4de;
 /// WP1's digest of battle 28's first seed of record.
-const BATTLE_DIGEST_WP1: u64 = 0x7b60_8f52_c557_67c4;
+const BATTLE_DIGEST_WP1: u64 = 0x3957_40dd_8944_647d;

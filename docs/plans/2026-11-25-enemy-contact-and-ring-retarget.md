@@ -676,3 +676,49 @@ No other question: E-2 is the game's rule (no deviation), K-1 and B-209 are defe
 
 Weapon validation WP7 (pursuit to the last-seen point) owns `locomotion.rs`'s chase of a lost target and may take
 schema 47; P2 touches neither. P3 rebases on it. `DESIGN.md` §2 is unchanged; no crate gains a dependency.
+
+---
+
+## Amendment 1 (implementer, 2026-11-24): P1 and P2 as built
+
+Decisions taken while implementing WP0 to WP2, each recorded here so that it can be reviewed or brought back. None
+chose a constant, tolerance or switch after seeing a matrix or harness figure.
+
+1. **Base.** `main` moved to `802df056` (weapon validation WP7, schema 47) during WP2. The branch merged it, and every
+   arm of the evidence (WP0, WP1, WP2, switch off) was rebuilt on the merged base: WP0's and WP1's commits each merged
+   with `802df056` in scratch trees, WP2 the branch head. The pre-merge WP0 runs (`matrix/wp0-*`) are kept but not used.
+   The close-battle list is the same on both bases.
+2. **The overlap counters** (§6) count bodies only: living units that do not pass through units (hidden, mineral
+   walking, collision suppressed) and whose archetype is not immobile by default (structures meet units through their
+   footprints). B7′'s engaged unit-ticks are the ticks ending with the unit's attack target in its band (the solver's
+   "engaged"; the trace's `Engaged` class, any enemy in band, is wider).
+3. **Placed bodies (E-2).** A body whose position this tick was not set by its own committed walk is not bounded in
+   application zero: the movement phase records no proposed step for it (a cast in the movement phase, such as Blink's
+   teleport, sets `pos_at_tick_start` to the origin and the position to the destination). Such a body enters at its
+   committed position (`SolverBody::walk_from = committed`). Bounding a teleport as a walk would cut it short at the first
+   enemy on the straight line from its origin. Test `a_placed_body_is_not_bounded`.
+4. **Terrain slides (E-2).** §11's risk "terrain slide after a bounded step closes on an enemy" appeared in E2-T2: a
+   walker sliding along an enemy into the corner of a wall had its bounded step slid back along the wall into the enemy,
+   and C-8's even split then moved the enemy by 0.0006. A terrain step whose result differs from its bounded target and
+   closes on an enemy of the application beyond its allowance is refused, the body staying (`closes_too_far`); in
+   application zero it stays where its walk began.
+5. **Projection rounding.** The projection removes `PROJECTION_SLACK` (8 raw units of Q32.32) beyond each excess, the
+   bound of its own arithmetic's rounding (truncated unit vector, scaled step, dot product). Without it a projected step
+   could still close by a raw unit or two, and the guard would then scale a body touching an enemy to zero, stopping a
+   slide dead.
+6. **Pair list.** Built twice (the plan's alternative): an enemy-only list at the walks' starts with reach `2M` for
+   application zero (skipped with one owner or no walk), then the contact list as before. The index of enemy pairs (§9's
+   first allowed cost step) is kept from the start, behaviour-identical by construction; the allowed cost step was not
+   otherwise used.
+7. **Tests.** K1-T1's first scene let a Verlet rebuild empty the cache between the passes and passed on the base; the
+   scene now keeps every correction below half the pair slack, and is red on the base (−0.1000 reused, −0.0437 fresh).
+   E2-T3's walker starts touching the post at 30° (on open ground steering side-steps a clipping walker before contact,
+   so the scene did not test the projection). E2-T4's 2:1 split is pinned at the solver
+   (`two_walkers_share_the_gap_by_their_walks`); in the world, steering's side rule slows the slower walker first, so the
+   distances covered are not 2:1 (1.92 and 0.75), while both scenes meet at contact.
+8. **E2-T5 fails as specified and is `#[ignore]`d.** The pressed friend stops at the enemy's surface (overlap 0, the post
+   unmoved), but its walking friend keeps walking into it: C-2 gives a moving body no share against an idle standing
+   friend, and that friend can no longer yield, so their overlap grows to about 90 % until the walker is thrown back, every
+   25 ticks (bodies as wide as a two-cell corridor; in a wider corridor the walker squeezes past at about 68 %). The
+   plan's expectation (friend overlap within D-α's moving bound) needs a friend-pair rule that a body blocked by an enemy
+   counts as unable to move, which §7.5 forbids changing within P2. Reported for review with the matrix's B6 figures.
