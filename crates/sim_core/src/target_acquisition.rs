@@ -257,23 +257,36 @@ impl SimWorld {
             return false;
         }
         !target.is_concealed()
-            || Self::is_cloak_revealed(map, vision_maps, attacker_owner, target.position)
+            || Self::is_cloak_revealed(
+                map,
+                vision_maps,
+                attacker_owner,
+                target.position,
+                target.is_attack_revealed_to(attacker_owner),
+            )
     }
 
-    /// Whether `viewer` has detector vision over a cloaked entity at `position`.
+    /// Whether `viewer` sees the concealed unit at `position` (world units) and detects it: its
+    /// cell is `Visible` to `viewer` or it is `attack_revealed` to `viewer` (plan
+    /// `2026-11-23-vision-and-detection` D-5), and its cell is detected. Detection alone is not
+    /// sight, and the reveal never gives detection (owner answer Q0101 2(b); plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` D-4). A viewer without a vision map detects
+    /// nothing.
     #[must_use]
     pub(crate) fn is_cloak_revealed(
         map: &SimMap,
         vision_maps: &PerPlayer<PlayerVisionMap>,
         viewer: PlayerId,
         position: SimVec2,
+        attack_revealed: bool,
     ) -> bool {
         let Some(vision) = vision_maps.get(viewer) else {
             return false;
         };
-        map.world_to_cell(position).is_ok_and(|(cx, cy)| {
-            vision.visibility_at(cx, cy) == VisibilityState::Visible && vision.is_detected(cx, cy)
-        })
+        Self::sees_point(map, vision_maps, viewer, position, attack_revealed)
+            && map
+                .world_to_cell(position)
+                .is_ok_and(|(cx, cy)| vision.is_detected(cx, cy))
     }
 
     /// Checks whether an entity is available to be tracked, acquired, or hit in combat
@@ -431,7 +444,13 @@ impl SimWorld {
         }
         Self::sees_enemy(&self.map, &self.vision_maps, viewer, attacker)
             && (!attacker.is_concealed()
-                || Self::is_cloak_revealed(&self.map, &self.vision_maps, viewer, attacker.position))
+                || Self::is_cloak_revealed(
+                    &self.map,
+                    &self.vision_maps,
+                    viewer,
+                    attacker.position,
+                    attacker.is_attack_revealed_to(viewer),
+                ))
     }
 
     /// Sends a helpless victim directly away from its attacker.

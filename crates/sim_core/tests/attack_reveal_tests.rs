@@ -18,8 +18,9 @@
 use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AttackVisibility, EntityId, MoverType, PlayerId, PlayerSlot, PlayerView, SimScalar, SimVec2,
-    SplashCliff, SplashImpact, SplashShape, SplashZone, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AttackVisibility, EntityId, MoverType, PlayerId, PlayerSlot, PlayerView, ShapeKind, SimScalar,
+    SimVec2, SplashCliff, SplashImpact, SplashShape, SplashZone, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -241,7 +242,9 @@ impl Bench {
 /// P-10: one strike of a `Visible` weapon reveals the attacker to the struck unit's owner for
 /// exactly its reveal ticks: the counter holds the full value after the striking tick, one less
 /// after each later tick, and the victim, which could not see the attacker before, acquires it
-/// on the next tick. Its own player and a third player are unaffected.
+/// on the next tick. Its own player and a third player are unaffected: a third player is no ally
+/// of the struck one, as there are no teams (owner answer Q0101 4(b), plan
+/// `2026-11-24-owner-answers-cliff-and-vision` P-13).
 #[test]
 fn a_visible_strike_reveals_the_attacker_for_its_ticks() -> TestResult {
     let mut bench = bench(visible_air_attacker, |_| {})?;
@@ -395,6 +398,128 @@ fn a_cloaked_attacker_stays_hidden_without_detection() -> TestResult {
     let mut view = PlayerView::default();
     bench.world.write_player_view(PlayerId(1), &mut view);
     assert!(!view.revealed.contains(&bench.attacker), "not detected");
+    Ok(())
+}
+
+/// A shipped detector structure, as an unarmed copy under the next free identity.
+fn unarmed_detector(world: &mut SimWorld) -> Option<(UnitTypeId, UnitArchetype)> {
+    let arch = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.is_detector() && matches!(arch.shape, ShapeKind::BuildingDome { .. }))?
+        .clone();
+    let id = UnitTypeId(
+        world
+            .catalog
+            .archetypes()
+            .map(|a| a.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    let mut copy = arch.clone();
+    copy.unit_type_id = id;
+    "scratch_reveal_detector".clone_into(&mut copy.slug);
+    copy.weapon = None;
+    copy.ground_weapon = None;
+    copy.air_weapon = None;
+    world.catalog.register(copy);
+    Some((id, arch))
+}
+
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-11 (D-4): the attack reveal counts as
+/// sight of a concealed attacker. A cloaked air attacker over the plateau strikes the victim
+/// below it; an unarmed detector structure of the victim's player stands below the plateau with
+/// the attacker inside its detection radius, and no unit of that player sees the plateau. During
+/// the reveal the victim acquires and strikes the attacker and the victim's view lists it as
+/// revealed; once the reveal ends, the victim drops it, strikes it no more and the view no
+/// longer lists it.
+#[test]
+fn a_detected_cloaked_attacker_is_answered_during_its_reveal() -> TestResult {
+    let mut bench = bench(visible_air_attacker, |_| {})?;
+    let reveal = bench.reveal.ok_or("the shipped air weapon is Visible")?;
+    bench
+        .world
+        .entities
+        .get_mut(&bench.attacker)
+        .ok_or("spawned")?
+        .is_cloaked = true;
+    let (detector_type, detector_arch) =
+        unarmed_detector(&mut bench.world).ok_or("a shipped detector structure")?;
+    let ShapeKind::BuildingDome { footprint_w, .. } = detector_arch.shape else {
+        return Err("a structure has a dome".into());
+    };
+    // Three rows north of the row every unit stands on, its east edge on the cliff.
+    let detector = bench.world.spawn_structure(
+        detector_type,
+        PlayerId(1),
+        PLATEAU - u32::from(footprint_w),
+        19,
+    )?;
+    let attacker_at = bench.world.entities[&bench.attacker].position;
+    let detector_at = bench.world.entities[&detector].position;
+    assert!(
+        detector_at.x < SimScalar::from_i32(i32::try_from(PLATEAU)?),
+        "below the plateau"
+    );
+    assert!(
+        detector_at.distance(attacker_at)
+            < detector_arch.detection_radius.ok_or("a detector")? - SimScalar::ONE,
+        "the attacker is within the detection radius"
+    );
+    let attacker_vitals = |bench: &Bench| {
+        bench
+            .world
+            .entities
+            .get(&bench.attacker)
+            .map(|e| e.hp + e.shields)
+    };
+    let full = attacker_vitals(&bench);
+    let struck = bench.until_struck(0)?;
+    // Take the victim out of the attacker's filters so that no later strike refreshes it.
+    bench
+        .world
+        .entities
+        .get_mut(&bench.victim)
+        .ok_or("alive")?
+        .is_invulnerable = true;
+    let mut answered = false;
+    let mut listed = false;
+    for tick in struck + 1..struck + u32::from(reveal) {
+        step(&mut bench.world, tick);
+        let mut view = PlayerView::default();
+        bench.world.write_player_view(PlayerId(1), &mut view);
+        listed |= view.revealed.contains(&bench.attacker);
+        answered |= attacker_vitals(&bench) < full;
+        assert!(bench.world.entities[&bench.attacker].is_attack_revealed_to(PlayerId(1)));
+    }
+    assert!(listed, "listed as revealed during the reveal");
+    assert!(answered, "struck during the reveal");
+    let mut tick = struck + u32::from(reveal);
+    while bench.world.entities[&bench.attacker].is_attack_revealed_to(PlayerId(1)) {
+        step(&mut bench.world, tick);
+        tick += 1;
+    }
+    let after = attacker_vitals(&bench);
+    for later in tick..tick + 60 {
+        step(&mut bench.world, later);
+        assert_ne!(
+            bench.victim_target(),
+            Some(bench.attacker),
+            "tick {later}: dropped"
+        );
+        let mut view = PlayerView::default();
+        bench.world.write_player_view(PlayerId(1), &mut view);
+        assert!(
+            !view.revealed.contains(&bench.attacker),
+            "tick {later}: not listed"
+        );
+    }
+    assert_eq!(
+        attacker_vitals(&bench),
+        after,
+        "never struck after the reveal"
+    );
     Ok(())
 }
 

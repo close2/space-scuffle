@@ -802,7 +802,8 @@ any test that counts projectiles right after a target's death (search `projectil
 - **F-4: effect-tree missiles on target loss.** Each spell's `CEffectLaunchMissile` carries its own flags (S3's
   `NeuralParasiteLaunchMissile` clears `PointFallback`); the effect engine's `ActiveMissile` would read them per
   node. No shipped spell missile carries an area, so no outcome differs today.
-- **B-184, detectors under construction** (S13): kept detecting (today) until §15 part 3 is answered.
+- **B-184, detectors under construction** (S13): kept detecting (today) until §15 part 3 is answered. Q0101
+  answered; taken up by plan [`2026-11-24-owner-answers-cliff-and-vision`](2026-11-24-owner-answers-cliff-and-vision.md).
 - **Overseer, Observer and Overseer Siege Modes (13.75), Scanner Sweep and Oracle Revelation** (S9 to S11): no
   analogue or ability shipped. The `detection_radius` field (D-2) and an area reveal persistent are their hooks.
 
@@ -916,4 +917,5 @@ merged, schema 40), merged into the branch as `393cf1fc` before WP0. Evidence:
 
 **Open:** Q0101 is unanswered; its defaults are built (air and towers see into blockers, detection needs the
 detector's line of sight, detectors under construction detect, a reveal shows the attacker to the struck player
-only). B-182 to B-185 stay deferred (§14).
+only). B-182 to B-185 stay deferred (§14). Q0101 answered; taken up by plan
+[`2026-11-24-owner-answers-cliff-and-vision`](2026-11-24-owner-answers-cliff-and-vision.md).

@@ -1512,3 +1512,81 @@ fn the_view_lists_only_the_viewers_own_resolved_rallies() -> TestResult {
     assert_eq!(view_of(&world, HOME).rallies, []);
     Ok(())
 }
+
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-11 (D-4): `PlayerView::revealed` lists a
+/// concealed enemy that is attack-revealed to the viewer and stands in a cell the viewer
+/// detects but does not see, for as long as the reveal lasts. On a map whose columns from 16
+/// stand a cliff level up, a cloaked enemy air unit hovers over the plateau inside the detection
+/// radius of the viewer's detector structure below it, which cannot see the plateau.
+#[test]
+fn revealed_lists_an_attack_revealed_detected_attacker() -> TestResult {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = sim_fixtures::world(map, 0x0B5);
+    let detector_arch = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.is_detector() && matches!(arch.shape, ShapeKind::BuildingDome { .. }))
+        .cloned()
+        .ok_or("a shipped detector structure")?;
+    let ShapeKind::BuildingDome { footprint_w, .. } = detector_arch.shape else {
+        return Err("a structure has a dome".into());
+    };
+    let flyer_arch = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Air
+                && arch.max_speed > SimScalar::ZERO
+                && !arch.is_detector()
+        })
+        .cloned()
+        .ok_or("a shipped air unit")?;
+    let detector = world.spawn_structure(
+        detector_arch.unit_type_id,
+        HOME,
+        16 - u32::from(footprint_w),
+        15,
+    )?;
+    let at = SimVec2::new(
+        SimScalar::from_num(17.5),
+        world.entities[&detector].position.y,
+    );
+    let flyer = world.spawn_unit(flyer_arch.unit_type_id, PlayerId(1), at)?;
+    let reveal_ticks = 5;
+    {
+        let entity = world.entities.get_mut(&flyer).ok_or("spawned")?;
+        entity.is_cloaked = true;
+        entity
+            .issue_order(UnitOrder::HoldPosition, false)
+            .map_err(|error| format!("{error:?}"))?;
+        entity.attack_reveal_ticks[PlayerSlot::ALL[0]] = reveal_ticks;
+    }
+    let cell = world.map.world_to_cell(at)?;
+    for _ in 1..reveal_ticks {
+        step(&mut world, Vec::new());
+        let vision = &world.vision_maps[PlayerSlot::ALL[0]];
+        assert!(vision.is_detected(cell.0, cell.1), "detected");
+        assert_ne!(
+            vision.visibility_at(cell.0, cell.1),
+            VisibilityState::Visible,
+            "not seen"
+        );
+        assert!(world.entities[&flyer].is_attack_revealed_to(HOME));
+        assert!(
+            view_of(&world, HOME).revealed.contains(&flyer),
+            "listed during the reveal"
+        );
+    }
+    step(&mut world, Vec::new());
+    assert!(!world.entities[&flyer].is_attack_revealed_to(HOME));
+    assert!(
+        !view_of(&world, HOME).revealed.contains(&flyer),
+        "not listed once the reveal ends"
+    );
+    Ok(())
+}
