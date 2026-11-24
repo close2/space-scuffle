@@ -7,8 +7,8 @@
 //!   point that reaches them, at the fraction of the nearest such point; the primary target is
 //!   struck directly on any level; a ramp counts as both of its landings (owner answer Q0099
 //!   1(c), plan `2026-11-24-owner-answers-cliff-and-vision` P-2, P-5) and the level is read at
-//!   the search point (Q0099 3(a), P-4); an air unit has the level of the ground below it
-//!   (`StarCraft` II's `SearchFlags SameCliff`, `core` EffectData:67).
+//!   the search point (Q0099 3(a), P-4); an area on the air plane and a unit in the air ignore
+//!   levels (Q0099 2(b), P-3) (`StarCraft` II's `SearchFlags SameCliff`, `core` EffectData:67).
 //! - P-2 ([`SplashCliff::Any`]): an area strikes exactly what it strikes on a flat map.
 //! - P-3 (`strike_target_on_other_level`): an attacker-centred area whose target stands on
 //!   another level than the attacker strikes that target directly, once, at the first zone's
@@ -658,33 +658,86 @@ fn a_same_level_line_keeps_each_search_to_its_point() {
     }
 }
 
-/// D-2's default: an air area keeps to the level of the ground below its centre. A shot at an
-/// air target over the plateau strikes an air unit over the plateau and spares one over the
-/// low ground at the same distance.
+/// Spawns a scratch cliff-walking body (a clone of the first shipped mobile `CliffWalker`, the
+/// Colossus analogue) for `owner` at `position`.
+fn walker(world: &mut SimWorld, owner: PlayerId, position: SimVec2) -> EntityId {
+    let kind = register(world, MoverType::CliffWalker, "splash_cliff_walker", |_| {});
+    world
+        .spawn_unit(kind, owner, position)
+        .expect("open ground")
+}
+
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-3 (owner answer Q0099 2(b)): an air blast
+/// ignores cliff levels. A shot at an air target over the plateau, kept to its level, strikes an
+/// air unit over the plateau and one over the low ground at the same distance alike, and a
+/// cliff-walking unit standing on the low ground too (the area's plane spans every level).
 #[test]
-fn an_air_area_keeps_to_the_level_below() {
+fn an_air_area_ignores_levels() {
     let mut world = world(Terrain::Cliff);
-    let weapon = scratch_weapon(&world);
-    let reach = splash_of(&weapon).reach();
-    let inside = reach + s(BODY) - epsilon();
+    let weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    let inside = s(2.0) + s(BODY) - epsilon();
     let target_at = at(edge() + 0.6, ROW);
     let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, ROW));
     let target = flyer(&mut world, RED, target_at);
     let over_plateau = flyer(&mut world, RED, offset(target_at, SimScalar::ZERO, inside));
     let over_low = flyer(&mut world, RED, offset(target_at, -inside, SimScalar::ZERO));
+    let walking_low = walker(
+        &mut world,
+        RED,
+        offset(target_at, -inside * s(0.6), -inside * s(0.8)),
+    );
+    assert!(
+        world.entities[&over_low].position.x < s(edge()),
+        "over the low ground"
+    );
+    assert!(
+        world.entities[&walking_low].position.x < s(edge()),
+        "on the low ground"
+    );
     let losses = first_strike(
         &mut world,
         attacker,
         target,
-        &[target, over_plateau, over_low],
+        &[target, over_plateau, over_low, walking_low],
     );
-    assert_eq!(losses[0], SimScalar::from_i32(DAMAGE), "the direct strike");
-    assert_eq!(
-        losses[1],
-        strike_at(&weapon, reach - epsilon()),
-        "over the plateau"
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], whole, "over the plateau");
+    assert_eq!(losses[2], whole, "over the low ground");
+    assert_eq!(losses[3], whole, "a cliff walker on the low ground");
+}
+
+/// P-3 (Q0099 2(b)): an air unit ignores cliff levels inside a ground-centred area. A weapon
+/// hitting air and ground fires at a cliff-walking target on the plateau (its area searches
+/// every plane, centred on the plateau's level); an air unit over the low ground is struck, and
+/// a ground unit on the low ground at the same distance is spared (it stands on another level).
+#[test]
+fn an_air_unit_in_a_ground_centred_area_ignores_levels() {
+    let mut world = world(Terrain::Cliff);
+    let weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    let inside = s(2.0) + s(BODY) - epsilon();
+    let target_at = at(edge() + 0.6, ROW);
+    let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, ROW));
+    let target = walker(&mut world, RED, target_at);
+    let air_low = flyer(&mut world, RED, offset(target_at, -inside, SimScalar::ZERO));
+    let ground_low = body(
+        &mut world,
+        RED,
+        offset(target_at, -inside * s(0.6), -inside * s(0.8)),
     );
-    assert_eq!(losses[2], SimScalar::ZERO, "over the low ground");
+    assert!(
+        world.entities[&air_low].position.x < s(edge()),
+        "over the low ground"
+    );
+    assert!(
+        world.entities[&ground_low].position.x < s(edge()),
+        "on the low ground"
+    );
+    let losses = first_strike(&mut world, attacker, target, &[target, air_low, ground_low]);
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], whole, "in the air over the low ground");
+    assert_eq!(losses[2], SimScalar::ZERO, "on the low ground");
 }
 
 /// The scratch weapon made attacker-centred (a burst), with its range its reach and the

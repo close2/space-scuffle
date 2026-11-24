@@ -24,9 +24,10 @@
 //! 5. An area with a target radius condition opens only around a target whose collision radius
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
 //! 6. An area whose `cliff` is `Same` strikes only units whose cliff span overlaps the span of
-//!    a search point that reaches them: a ramp cell spans both its landings (owner answer Q0099
-//!    1(c); plan `2026-11-24-owner-answers-cliff-and-vision` D-2). The level is read at the
-//!    search point (Q0099 3(a)).
+//!    a search point that reaches them: a ramp cell spans both its landings, and an area on the
+//!    air plane, or a unit in the air, spans every level (owner answer Q0099 1(c), 2(b); plan
+//!    `2026-11-24-owner-answers-cliff-and-vision` D-2). The level is read at the search point
+//!    (Q0099 3(a)).
 //! 7. A projectile whose target is lost lands at the last tracked point unless its weapon says
 //!    `Fizzle` (plan `2026-11-23-vision-and-detection` D-1).
 //! 8. A strike by a `Visible` weapon reveals its attacker to the struck unit's owner for the
@@ -244,6 +245,19 @@ impl StrikeContext<'_> {
                     viewer,
                     snapshot.position,
                 ))
+    }
+}
+
+/// The cliff levels a position counts as for an area kept to its level, as the plane or mover
+/// type `mover` reads them: every level in the air ([`CliffSpan::ALL`]: an air blast and an air
+/// unit ignore cliff levels, owner answer Q0099 2(b)), and otherwise the ground's span under
+/// `pos` (a ramp cell spans both its landings, Q0099 1(c)). A `CliffWalker` stands on the ground
+/// and keeps the ground's span (plan `2026-11-24-owner-answers-cliff-and-vision` D-2, §14 F-2).
+fn level_span(map: &SimMap, pos: SimVec2, mover: MoverType) -> CliffSpan {
+    if mover == MoverType::Air {
+        CliffSpan::ALL
+    } else {
+        map.cliff_span_at(pos)
     }
 }
 
@@ -1211,8 +1225,9 @@ impl SimWorld {
     /// nearest search point, and a unit in `struck` not at all (the game's `noMarkers` validator
     /// on the damage effect); each unit struck is appended to `struck`. An area kept to its level
     /// ([`SplashCliff::Same`]) counts only the search points whose cliff span overlaps the
-    /// unit's: a ramp cell spans both its landings (plan `2026-11-23-splash-cliff-levels` D-1;
-    /// owner answer Q0099 1(c), plan `2026-11-24-owner-answers-cliff-and-vision` D-2). Spares `area.primary`, already struck directly,
+    /// unit's: a ramp cell spans both its landings, and an area on the air plane or a unit in the
+    /// air spans every level (plan `2026-11-23-splash-cliff-levels` D-1; owner answer Q0099
+    /// 1(c), 2(b), plan `2026-11-24-owner-answers-cliff-and-vision` D-2). Spares `area.primary`, already struck directly,
     /// and the attacker, which never damages itself. Each struck entity then runs its
     /// retaliation against the attacker.
     fn strike_area(
@@ -1229,7 +1244,11 @@ impl SimWorld {
         levels.clear();
         let same_level = splash.cliff == SplashCliff::Same;
         if same_level {
-            levels.extend(points.iter().map(|&point| self.map.cliff_span_at(point)));
+            levels.extend(
+                points
+                    .iter()
+                    .map(|&point| level_span(&self.map, point, area.plane)),
+            );
         }
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -1257,7 +1276,7 @@ impl SimWorld {
             if same_level {
                 // Only a unit already in reach reads its level, so the map is read once per
                 // unit the area could strike, not once per entity.
-                let own = self.map.cliff_span_at(other.position);
+                let own = level_span(&self.map, other.position, other_arch.mover_type);
                 let Some(on_level) = points
                     .iter()
                     .zip(&levels)
@@ -1282,8 +1301,9 @@ impl SimWorld {
     /// The other-level strike of an attacker-centred area (plan `2026-11-23-splash-cliff-levels`
     /// D-3, `StarCraft` II's `BanelingVolatileBurstDirectFallbackSet` on `CliffLevelNotEqual`):
     /// when `target_id`'s cliff span does not overlap that of the attacker's release position
-    /// (`source.origin`), the exact complement of the area's level test (a ramp spans both its
-    /// landings, plan `2026-11-24-owner-answers-cliff-and-vision` D-2), the target takes
+    /// (`source.origin`) on the area's plane, the exact complement of the area's level test (a
+    /// ramp spans both its landings and the air every level, plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` D-2), the target takes
     /// `splash`'s strike directly, at the fraction of the
     /// first zone (distance zero), once, and runs its retaliation. It passes the area's own
     /// filters, as `strike_area` applies them, without their distance and level tests. It runs
@@ -1299,17 +1319,17 @@ impl SimWorld {
         let Some(target) = self.entities.get(&target_id) else {
             return;
         };
-        if self
-            .map
-            .cliff_span_at(target.position)
-            .overlaps(self.map.cliff_span_at(source.origin))
-            || !Self::area_may_strike(source, splash, area, target_id, target)
-        {
-            return;
-        }
         let Ok(target_arch) = self.catalog.get(target.unit_type_id) else {
             return;
         };
+        if level_span(&self.map, target.position, target_arch.mover_type).overlaps(level_span(
+            &self.map,
+            source.origin,
+            area.plane,
+        )) || !Self::area_may_strike(source, splash, area, target_id, target)
+        {
+            return;
+        }
         let Some(raw) = self.area_raw_damage(source, splash, area, target_arch, SimScalar::ZERO)
         else {
             return;
