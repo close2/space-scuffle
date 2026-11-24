@@ -2134,3 +2134,47 @@ the merge.
 3. **File Q0103** (17.4) when WP6a's battle 26 figures are in, and update Q0102 with G-6′'s cost.
 4. **The merge to `main` waits for Q0102's answer,** and for Q0103's, since battle 26 must be green to merge. WP7
    is unchanged.
+
+## Amendment 18 (implementer, 2026-11-24, at the orchestrator's direction): WP6a stopped for review; WP6's matrix ranges and bug rows
+
+**WP6a, G-6′ (§17.3), is stopped by its matrix rule** and kept on the branch `contact-solver-g6p-wip`
+(`2cfb880f`, pushed). Evidence §13.13 has the figures.
+- **Tests:** tests 1 and 4 of §17.3 were red on the plan head and are green with G-6′; the guards 2 and 3 are
+  green on both.
+- **Switch off:** bit-identical to the plan head. On the test-1 scene and on battle 28's first seed of record, a
+  scratch build with `ring_retarget` unhashed at schema 40 reproduces the head's per-tick checksum digests, and
+  every harness CSV is byte-identical to the head's.
+- **Battle 28:** returns to zergling wins on all 24 seeds.
+- **The stop:** battles 33, 38a and 38b leave their ranges on seeds of record, which §17.3 makes a stop for
+  review.
+  - 33: the zealots win 21 of 24, and 5 survive on seed 33 against the range's 0 to 3.
+  - 38a: 10 zerglings survive on the first seed of record against 3 to 8.
+  - 38b: 2 marines survive on the first seed of record against 4 to 8, and the zerglings win 9 of 24.
+- **Not restated.** Per §17.3, none of these battles is restated in this step.
+- **What follows from the stop:**
+  - R10 becomes the bug row B-192 of `DESIGN.md` §4.
+  - D-ε gets no deviation row.
+  - WP6 is finished without G-6′.
+  - Battle 28 stays a winner flip on the plan branch, so the matrix test is red on battles 26 (Q0103) and 28
+    (B-192).
+- **A second finding is registered as B-193.** Enemy contact moves engaged units. C-8 lets enemies separate evenly,
+  and the solver passes a crowd's press through the front rank, so engaged immortals move 3.61 world units while in
+  contact on battle 28's seed 1 (Legacy 0.85). With G-6′, whose surround presses from every side, they move 94.6.
+
+**Matrix ranges restated for WP6** (20 seeds under the solver pipeline, §13.11, commit `96d668fb`). Only the
+numbers changed; every claim still holds.
+
+| Battle | Old | New |
+|---|---|---|
+| 33_24_marines_vs_12_zealots | blue 0..13 | blue 0..16 |
+| 36b_marines_beat_zealots_without_storm | red 9..12 | red 9..13 |
+| 38b_marines_beat_zerglings_without_fungal | blue 1..1, red 5..8 | blue 0..1, red 4..8 |
+
+**Not restated:**
+- Battle 26 waits for Q0103.
+- Battle 28 waits for R10 (B-192).
+- Battle 33's claim still says "narrowly", though under the solver the marines win all 20 seeds by 8 to 16. That
+  is reported in §13.11 and left for the review.
+
+**Bug rows** (`DESIGN.md` §4; B-182 to B-187 are taken on `main` at `cff46b37` and by the attack-orders plan): B-188 to B-191 as §17.2 lists them, B-192 (R10), B-193 (enemy
+contact). B-157 is marked fixed: T9 holds on both ranges. B-158 is narrowed to B-189.

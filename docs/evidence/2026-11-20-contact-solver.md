@@ -1757,3 +1757,132 @@ range met that residual already: cross 967, θ 180°, in §13.8's A0 trace.
 
 **Verdict.** This is no regression of the solver between ranges. The development range under-samples the large
 head-on configurations, and T4's cross failure (give-ups > 0) is the same open failure on both ranges.
+
+### 13.13 WP6a, G-6′ (Amendment 17 §17.3): stopped by the matrix rule; WP6 finished without it
+
+**Code** (branch `contact-solver-g6p-wip`, `2cfb880f`, pushed; plan Amendment 18):
+- **Switch:** `contact.retarget_from_full_ring`, on when absent.
+- **`RingAim::Unruled`:** the bearing point lies beyond the leash or in terrain. It is chased as `Straight` but
+  never counts as a slot.
+- **`SimWorld::ring_retarget`:** acquisition's own candidate test and key (`candidate_key`, shared with
+  `scan_candidates`), read at tick-start positions. It takes the first ring that the rule does not stand on.
+- **The hand-over in `prepare_pursuit`:** it drops the route and restarts the memory but keeps the leash origin.
+  `MotionProposal::ring_retarget` rewrites the front acquired attack on commit.
+- **Memory:** `MovementMemory::ring_retarget`, hashed at schema 42. Acquisition keeps it unless a candidate outranks
+  it.
+- **The mirror's D-R10 column** (`harness/room.rs`). It counts unit-ticks in which a unit stands, out of its band, on
+  an automatic chase while another enemy within its scan range has room on its ring. Measured at tick-start
+  positions with exact blocked arcs in `f64`; the leash and terrain are not modelled. Only the mirror has automatic
+  chases: the scene families use player `Attack` and `Move` orders, so their D-R10 is 0 by construction.
+
+**Tests** (`crates/sim_core/tests/ring_retarget_tests.rs`, scratch archetypes, geometry from the capacity formula:
+r 0.375, R 0.75, range 0.1, C = 10, N = 60):
+
+| Test | Plan head | G-6′ |
+|---|---|---|
+| 1 `a_full_ring_hands_an_automatic_chaser_to_a_free_one` (plain, mirrored, relabelled) | red: at tick 93 attacker 11 stands at full ring 3 while far ring 2 in its scan range has room | green |
+| 2 `an_explicit_attack_on_a_full_ring_stands` (guard) | green | green |
+| 3 `a_retarget_never_lengthens_the_leash` (leash 2) and `a_retarget_keeps_the_leash_origin` | first green; second red (no hand-over happens) | green |
+| 4 `a_retargeted_chase_keeps_its_target_until_outranked` | red (no hand-over) | green |
+| 5 `the_full_ring_switch_off_is_bit_identical` | — | green |
+| 6 `ring::tests::a_bearing_point_beyond_the_leash_is_unruled` | — | green |
+
+**Switch off: bit-identical to the plan head.** Per-tick checksum digests (FNV-1a) of test 1's scene (400 ticks)
+and of battle 28 on its first seed of record:
+
+| Build | Test-1 scene | Battle 28 |
+|---|---|---|
+| Plan head `9fccdcab` (no switch) | `0x0931bd388fcef5c7` | `0x19eff3295cc2c0df` |
+| G-6′, switch off, `ring_retarget` unhashed, schema 40 (scratch) | `0x0931bd388fcef5c7` | `0x19eff3295cc2c0df` |
+| G-6′, switch off, schema 42 (pinned in test 5) | `0xcc46f75ff253c4fd` | `0x819f469ee6dbe465` |
+
+**Harness, development seeds 1 to 1,000, under Amendment 8's step rule against the head** (`runs/non-1`, step 1 +
+P8 + O1 + N):
+- **Scene families:** gap, arc, cross, corridor and corner are byte-identical to the head with the switch on, every
+  CSV and its relabelled twin. This is as §17.3 expected: they have no automatic chase.
+- **Mirror:** blue 0.568 [0.478, 0.654] with 882 draws (head 0.538 [0.448, 0.626], 883). T9 holds and nothing is
+  worse beyond noise.
+- **D-S:** unchanged, because the arc and corridor files are byte-identical.
+- **D-R10 on the mirror:** 5,993 unit-ticks in 207 scenes under G-6′. The cases left are those the measure does not
+  model: the leash, terrain, and candidates whose bearing point is unruled.
+
+| Figure | Head | G-6′ | Step rule |
+|---|---|---|---|
+| T1 to T8, every scene family | (§13.10) | byte-identical | holds |
+| T9 mirror | 0.538 [0.448, 0.626] | 0.568 [0.478, 0.654] | holds |
+| D-S (arc, corridor) | 102,537 / 2,502 | identical | holds |
+| D-R10 (mirror) | see below | 5,993 | reported |
+
+**Battles 28 and 26 on the 24 seeds of §13.12** (`diag/g6p`):
+
+| Battle | Legacy | Solver (head) | G-6′ |
+|---|---|---|---|
+| 28, strict zergling wins | 24 | 5 | **24** (survivors 44 to 52 on the seeds of record) |
+| 26, strict zergling wins (for Q0103) | 1 | 20 | **22**, all four seeds of record (4, 31, 27 and 7 left) |
+
+Zerglings in contact / blocked in battle 28, mean over the 24 seeds:
+
+| Tick | 100 | 150 | 200 | 250 | 300 | 350 | 400 |
+|---|---|---|---|---|---|---|---|
+| Legacy | 8.5 / 11.9 | 14.4 / 10.8 | 20.0 / 8.3 | 24.5 / 5.7 | 24.9 / 5.4 | 22.4 / 3.2 | 18.7 / 2.7 |
+| Solver | 11.1 / 39.6 | 11.9 / 58.1 | 11.9 / 52.6 | 12.2 / 46.0 | 11.6 / 37.2 | 12.4 / 28.6 | 13.7 / 21.9 |
+| G-6′ | 15.2 / 7.5 | 28.2 / 8.2 | 40.9 / 6.5 | 46.8 / 4.4 | 37.6 / 4.8 | 25.7 / 10.7 | 14.3 / 20.2 |
+
+**Ring occupancy, battle 28 seed 1, tick 250, under G-6′:**
+- In band: every immortal has 1 to 8 zerglings, the far column included.
+- Blocked: 11 zerglings.
+- Target switches over the battle: 404, of which 84 are to a nearer enemy; the rest are G-6′'s hand-overs.
+
+**Battle 26 seed 3203386110, tick 125, under G-6′:** the front colossi have 10, 4 and 3 zerglings in band, and only
+1 zergling is blocked (44 under the head).
+
+**Finding: enemy contact moves engaged units** (B-193). Distance moved while in contact, in world units on seed 1
+of battle 28, the immortals' total:
+
+| Legacy | Solver (head) | G-6′ |
+|---|---|---|
+| 0.85 | 3.61 | 94.6 |
+
+On battle 26's seed of record, the colossi's total is 0.45, 8.32 and 44.3. C-8 lets enemies separate evenly, and the
+solver passes a crowd's press through its front rank. Under G-6′'s surround the press comes from every side, and the
+immortals are shoved several world units. Whether the game lets units push enemies at all is **verify**.
+
+**The full matrix, 24 seeds (seeds of record plus 1 to 20), G-6′** (`matrix/g6p`). Against the head's solver run,
+outcomes changed only in battles of zerglings or zealots against a clump: 26, 27, 28, 29, 32, 33, 36a, 36b, 38a and
+38b. Leaving their ranges on seeds of record:
+
+| Battle | Range | G-6′ on the seeds of record | All 24 seeds |
+|---|---|---|---|
+| 33_24_marines_vs_12_zealots | blue 0..16, red 0..3 | seed 33: red 5 left | zealots win 21 (head: marines 20 of 20) |
+| 38a_fungal_turns_zerglings | blue 3..8 | 3203386110: 10 zerglings left | 7 of 24 within range |
+| 38b_marines_beat_zerglings_without_fungal | blue 0..1, red 4..8 | 3203386110: 2 marines left | zerglings win 9 |
+
+36a and 36b return inside their ranges on all seeds. 27 and 29 move within their ranges. 32, 35 and 39a fail on
+non-record seeds, as under the head.
+
+**By §17.3 this is a stop for review:** a matrix battle other than 26 and 28 leaves its range. No battle is
+restated, and no variant was tried.
+
+**Cost** (release benchmarks, `perf stat -e instructions:u`, under the gate lock; ticks per second on the shared
+server):
+
+| Scenario | Legacy, plan head | Solver, plan head | G-6′ build, Legacy | G-6′ |
+|---|---:|---:|---:|---:|
+| 64 × 64 | 9.47 G | 15.79 G (+66.8 %), 111/s | 10.64 G | 17.18 G (+61.4 % on its own Legacy, +81.4 % on the plan head's), 108/s |
+| 128 × 128 | 10.06 G | 10.83 G (+7.6 %), 183/s | 10.91 G | 11.69 G (+7.1 %), 176/s |
+| canyon | 17.16 G | 27.04 G (+57.6 %), 80/s | 18.26 G | 28.14 G (+54.1 %), 79/s |
+
+- **Why the G-6′ build's Legacy costs 1.17 G more.** The shared `candidate_key` refactor costs acquisition 33.4 %
+  of that build's instructions, against 25.1 % for the plan head's `scan_candidates` (`perf record -e
+  instructions:u`). Behaviour is identical: the switch-off proof above covers it.
+- **Not optimised.** The stop came first, and §17.3 allows one cost step only after a pass.
+- **Plan head's 64 × 64 figure.** It is +66.8 % since main's merge (`36b914fd`), against +62.6 % before it. The
+  merge lowered both pipelines, Legacy more (10.35 → 9.47 G). This goes to Q0102.
+
+**WP6 finished without G-6′** (Amendment 18):
+- **Bug rows B-188 to B-193:** the four of §17.2, R10 and the enemy-contact finding.
+- **B-157 fixed, B-158 narrowed.**
+- **The Movement row.**
+- **`DESIGN.md` §5's throughput table.**
+- **The matrix amendment.**
+- **The matrix test stays red** on battles 26 (Q0103) and 28 (B-192) on the plan branch.

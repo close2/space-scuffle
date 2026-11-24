@@ -532,10 +532,7 @@ mod tests {
     fn a_registered_structure_is_no_collision_body() -> Result<(), Box<dyn std::error::Error>> {
         // Both pipelines (plan `2026-11-20-contact-solver` §8.1, restated for the solver's bodies
         // at WP6): the legacy pass's body list and the contact solver's.
-        for pipeline in [
-            MovementPipeline::Legacy,
-            MovementPipeline::Solver,
-        ] {
+        for pipeline in [MovementPipeline::Legacy, MovementPipeline::Solver] {
             let (mut world, structure, _) = structure_and_units()?;
             let rules = world.catalog.movement_rules();
             world
