@@ -314,7 +314,7 @@ fn a_waiting_friend_takes_at_most_half() {
         ..mover
     };
     assert_eq!(
-        contact_shares(&mover, &waiting, true),
+        contact_shares(&mover, &waiting, true, false),
         PairShares::Weights(SimScalar::HALF, SimScalar::HALF)
     );
 }

@@ -413,6 +413,7 @@ impl SimWorld {
             iterations: contact.iterations,
             dead_band_permille: contact.dead_band_permille,
             moving_friends_push: contact.moving_friends_push,
+            enemies_push_each_other: contact.enemies_push_each_other,
         };
         let (map, pathfinder) = (&self.map, &mut self.pathfinder);
         let diagnostics = &mut self.tick_diagnostics;

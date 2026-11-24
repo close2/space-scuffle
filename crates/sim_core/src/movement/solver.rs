@@ -11,6 +11,13 @@
 //! loop. A final pass over the hard pairs (enemies, and pairs in which one body may not move)
 //! sums its corrections without averaging (C-1b).
 //!
+//! Enemies never push each other (E-1 of plan `2026-11-24-solver-retarget-and-shoving`, B-193,
+//! which supersedes C-8's even split): in an enemy pair each body takes the share of the gap its
+//! own displacement this tick closed, measured from the positions at the start of each iteration
+//! ([`approach_shares`]), and a body whose terrain step was refused in the previous application
+//! counts as fixed against its enemies. The switch `contact.enemies_push_each_other` restores the
+//! even split.
+//!
 //! # How it fits
 //! The movement phase fills the solver from the bodies' tick-start and committed positions and
 //! gives it the terrain step (`slide_target`, `permits_segment` from the tick start and
@@ -24,6 +31,9 @@
 //!   terrain step read that body alone; the early stop is a global test. The result is a
 //!   function of the set of bodies.
 //! - A body with a share of zero in a pair is never moved by it; a fixed body is never moved.
+//! - An enemy pair's shares are a function of its two bodies' tick-start and current positions
+//!   and whether each was refused by terrain in the previous application, so they are recomputed
+//!   with the pair's correction and never depend on body order.
 //! - An overlap of at most the dead band (`dead_band_permille` of the radius sum) is never
 //!   corrected (C-4).
 //! - Checked arithmetic: a pair whose correction cannot be represented is reported as a typed
@@ -91,11 +101,17 @@ pub enum PairShares {
     /// Two moving friends under D-β off: each takes the share of its own approach along the line
     /// of centres this tick, a body that did not close taking none ([`approach_shares`]).
     ByApproach,
+    /// Two enemies under E-1 (plan `2026-11-24-solver-retarget-and-shoving` §4.1): each takes the
+    /// share of the gap its own displacement closed, from the positions at the start of each
+    /// iteration ([`approach_shares`]); a body refused by terrain counts as fixed.
+    EnemyByClosing,
 }
 
 /// The shares of the pair `(a, b)`, first matching row wins (plan `2026-11-20-contact-solver`
 /// C-2, the push table of plan `2026-11-09-friendly-blocking` D-4 as inverse-mass weights).
 /// `moving_friends_push` is D-β: two moving friends push by priority when true.
+/// `enemies_push_each_other` restores C-8's even split of enemy pairs; when false (E-1, plan
+/// `2026-11-24-solver-retarget-and-shoving` §4.1, which supersedes C-8) they share by closing.
 ///
 /// | Case | a | b |
 /// |---|---|---|
@@ -103,7 +119,8 @@ pub enum PairShares {
 /// | one fixed | 0 | 1 |
 /// | enemies, both holding | none | |
 /// | enemies, one holding | 0 | 1 |
-/// | enemies | ½ | ½ |
+/// | enemies, switch off (E-1) | by closing | |
+/// | enemies, switch on | ½ | ½ |
 /// | friends, both holding | none | |
 /// | friends, one anchored (holding or engaged), the other not, or holding against engaged | 0 | 1 |
 /// | friends, both engaged | ½ | ½ |
@@ -112,7 +129,12 @@ pub enum PairShares {
 /// | friends, both moving, D-β off | by approach | |
 /// | friends, otherwise | ½ | ½ |
 #[must_use]
-pub fn contact_shares(a: &ContactParty, b: &ContactParty, moving_friends_push: bool) -> PairShares {
+pub fn contact_shares(
+    a: &ContactParty,
+    b: &ContactParty,
+    moving_friends_push: bool,
+    enemies_push_each_other: bool,
+) -> PairShares {
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
     let weights = |x, y| PairShares::Weights(x, y);
     match (a.fixed, b.fixed) {
@@ -126,7 +148,8 @@ pub fn contact_shares(a: &ContactParty, b: &ContactParty, moving_friends_push: b
             (true, true) => PairShares::None,
             (true, false) => weights(zero, one),
             (false, true) => weights(one, zero),
-            (false, false) => weights(half, half),
+            (false, false) if enemies_push_each_other => weights(half, half),
+            (false, false) => PairShares::EnemyByClosing,
         };
     }
     match (a.holding, b.holding) {
@@ -185,6 +208,16 @@ pub fn approach_shares(
     step_a: SimVec2,
     step_b: SimVec2,
 ) -> Result<(SimScalar, SimScalar), MovementMathError> {
+    Ok(closing_split(normal, step_a, step_b)?.unwrap_or((SimScalar::HALF, SimScalar::HALF)))
+}
+
+/// Each body's approach along `normal` (from `b` to `a`) as a share of their sum, `None` when
+/// neither closed ([`approach_shares`] without its even fallback).
+fn closing_split(
+    normal: SimVec2,
+    step_a: SimVec2,
+    step_b: SimVec2,
+) -> Result<Option<(SimScalar, SimScalar)>, MovementMathError> {
     let along = |step: SimVec2| super::math::checked_dot(step, normal);
     let closing_a = SimScalar::ZERO
         .saturating_sub(along(step_a)?)
@@ -194,13 +227,13 @@ pub fn approach_shares(
         .checked_add(closing_b)
         .ok_or(MovementMathError::Unrepresentable)?;
     if sum == SimScalar::ZERO {
-        return Ok((SimScalar::HALF, SimScalar::HALF));
+        return Ok(None);
     }
     let share = |part: SimScalar| {
         part.checked_div(sum)
             .ok_or(MovementMathError::Unrepresentable)
     };
-    Ok((share(closing_a)?, share(closing_b)?))
+    Ok(Some((share(closing_a)?, share(closing_b)?)))
 }
 
 /// One body of the solver's tick.
@@ -221,9 +254,18 @@ pub(crate) struct SolverBody {
     pub ghost: bool,
 }
 
-/// What one pair's geometry gives in an iteration: both bodies' corrections, shares applied,
-/// `None` within the dead band, or the arithmetic fault to report.
-type Correction = Result<Option<(SimVec2, SimVec2)>, MovementMathError>;
+/// What one pair's geometry gives in an iteration: both bodies' corrections and the shares they
+/// were scaled by, `None` within the dead band, or the arithmetic fault to report.
+type Correction = Result<Option<Push>, MovementMathError>;
+
+/// One pair's corrections in an iteration, shares applied, and the shares themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Push {
+    delta_a: SimVec2,
+    delta_b: SimVec2,
+    share_a: SimScalar,
+    share_b: SimScalar,
+}
 
 /// One pair that may touch, lower id first, with its shares.
 #[derive(Debug, Clone, Copy)]
@@ -236,6 +278,9 @@ struct Pair {
     hard: bool,
     /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
     last: bool,
+    /// E-1: an enemy pair whose shares follow each body's closing ([`PairShares::EnemyByClosing`]);
+    /// `share_a` and `share_b` are then unused.
+    by_closing: bool,
     /// D-δ: in a friend pair, the radial direction of a body that may only be nudged along its
     /// ring; its correction keeps only the part perpendicular to it.
     nudge_a: Option<SimVec2>,
@@ -244,8 +289,11 @@ struct Pair {
     /// The overlap at or below which the pair is left alone (C-4), world units.
     dead_band: SimScalar,
     /// The pair's correction at its bodies' current positions, once computed: reused while
-    /// neither body moves, since it is a function of the two positions alone.
+    /// neither body moves, since it is a function of the two positions alone (and, for a
+    /// by-closing pair, of whether each was refused by terrain, kept in `cached_refused`).
     cached: Option<Correction>,
+    /// Whether each body was refused by terrain when `cached` was computed (by-closing pairs).
+    cached_refused: (bool, bool),
 }
 
 /// Which pairs a summing pass reads (C-1, C-1b).
@@ -275,6 +323,8 @@ pub(crate) struct SolverSettings {
     pub dead_band_permille: u16,
     /// D-β.
     pub moving_friends_push: bool,
+    /// E-1's switch: enemies split their overlap evenly when true.
+    pub enemies_push_each_other: bool,
 }
 
 /// What one solve did.
@@ -321,6 +371,9 @@ pub(crate) struct ContactSolver {
     pairs: Vec<Pair>,
     /// Each body's position when the pair list was last built.
     anchors: Vec<SimVec2>,
+    /// Each body's committed position: where its proposal put it, before any correction (E-1's
+    /// fallback, [`closing_shares`]).
+    committed: Vec<SimVec2>,
     sums: Vec<Accumulator>,
     /// Per body: the scale of its summed step in a hard pass ([`Self::bound_summed_steps`]).
     scales: Vec<SimScalar>,
@@ -338,6 +391,11 @@ struct BodyStep {
     /// The target of the body's latest terrain step when that step left it where it was
     /// without a fault, world units; `None` after a step that moved it or faulted.
     held: Option<SimVec2>,
+    /// E-1: the latest step the body attempted (an application that gave it corrections) went to a
+    /// target other than where it stood and terrain left it in place, so it counts as fixed
+    /// against its enemies until it attempts another. An application without corrections for it,
+    /// such as the friends' summed pass, leaves the flag as it was.
+    refused: bool,
 }
 
 impl ContactSolver {
@@ -417,21 +475,28 @@ impl ContactSolver {
             source,
         };
         let friends = a.party.owner == b.party.owner;
-        let (share_a, share_b) =
-            match contact_shares(&a.party, &b.party, settings.moving_friends_push) {
-                PairShares::None => return,
-                PairShares::Weights(x, y) => (x, y),
-                PairShares::ByApproach => {
-                    let shares = pair_normal(&a, &b).and_then(|normal| {
-                        let step = |body: &SolverBody| checked_vec_sub(body.position, body.start);
-                        approach_shares(normal, step(&a)?, step(&b)?)
-                    });
-                    match shares {
-                        Ok(shares) => shares,
-                        Err(source) => return report(fault(source)),
-                    }
+        let shares = contact_shares(
+            &a.party,
+            &b.party,
+            settings.moving_friends_push,
+            settings.enemies_push_each_other,
+        );
+        let by_closing = shares == PairShares::EnemyByClosing;
+        let (share_a, share_b) = match shares {
+            PairShares::None => return,
+            PairShares::Weights(x, y) => (x, y),
+            PairShares::EnemyByClosing => (SimScalar::HALF, SimScalar::HALF),
+            PairShares::ByApproach => {
+                let shares = pair_normal(&a, &b).and_then(|normal| {
+                    let step = |body: &SolverBody| checked_vec_sub(body.position, body.start);
+                    approach_shares(normal, step(&a)?, step(&b)?)
+                });
+                match shares {
+                    Ok(shares) => shares,
+                    Err(source) => return report(fault(source)),
                 }
-            };
+            }
+        };
         let Some(radius_sum) = a.policy.radius.checked_add(b.policy.radius) else {
             return report(fault(MovementMathError::Unrepresentable));
         };
@@ -453,11 +518,13 @@ impl ContactSolver {
                 || share_a == SimScalar::ZERO
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
+            by_closing,
             nudge_a: a.party.nudge.filter(|_| friends),
             nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
             dead_band,
             cached: None,
+            cached_refused: (false, false),
         });
     }
 
@@ -479,6 +546,9 @@ impl ContactSolver {
         mut terrain: impl FnMut(&SolverBody, SimVec2) -> Result<Option<SimVec2>, MovementMathError>,
         report: &mut impl FnMut(MovementInvariant),
     ) -> SolveReport {
+        self.committed.clear();
+        self.committed
+            .extend(self.bodies.iter().map(|b| b.position));
         self.build_pairs(map_size, settings, &mut connected, report);
         self.steps.clear();
         self.steps.resize(self.bodies.len(), BodyStep::default());
@@ -533,16 +603,27 @@ impl ContactSolver {
             }
             let (ia, ib) = (pair.a as usize, pair.b as usize);
             let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
+            let refused = (self.steps[ia].refused, self.steps[ib].refused);
             let correction = match pair.cached {
-                Some(cached) if !self.steps[ia].moved && !self.steps[ib].moved => cached,
-                _ => pair_correction(pair, a, b),
+                Some(cached)
+                    if !self.steps[ia].moved
+                        && !self.steps[ib].moved
+                        && (!pair.by_closing || pair.cached_refused == refused) =>
+                {
+                    cached
+                }
+                _ => {
+                    let committed = (self.committed[ia], self.committed[ib]);
+                    pair_correction(pair, (a, b), committed, refused)
+                }
             };
             pair.cached = Some(correction);
+            pair.cached_refused = refused;
             match correction {
                 Ok(None) => {}
-                Ok(Some((delta_a, delta_b))) => {
-                    let added = add_to(&mut self.sums, ia, delta_a, pair.share_a)
-                        .and_then(|()| add_to(&mut self.sums, ib, delta_b, pair.share_b));
+                Ok(Some(push)) => {
+                    let added = add_to(&mut self.sums, ia, push.delta_a, push.share_a)
+                        .and_then(|()| add_to(&mut self.sums, ib, push.delta_b, push.share_b));
                     if let Err(source) = added {
                         report(MovementInvariant::Arithmetic {
                             entity: a.id,
@@ -627,6 +708,7 @@ impl ContactSolver {
             if acc.count == 0 || body.party.fixed {
                 continue;
             }
+            last.refused = false;
             let step = if average && acc.count > 1 {
                 let count = SimScalar::from_num(acc.count);
                 super::math::checked_vec_div(acc.sum, count)
@@ -636,10 +718,13 @@ impl ContactSolver {
             let target = step.and_then(|step| checked_vec_add(body.position, step));
             // Every terrain step sets or clears `held`, and only a terrain step moves a body, so
             // a held target was refused from the present position: the step would repeat.
-            if target.is_ok() && target.ok() == last.held {
+            let attempted = target.ok();
+            let here = body.position;
+            let stays = |held: Option<SimVec2>| held.is_some_and(|t| t != here);
+            if target.is_ok() && attempted == last.held {
+                last.refused = stays(attempted);
                 continue;
             }
-            let attempted = target.ok();
             last.held = None;
             match target.and_then(|target| terrain(body, target)) {
                 Ok(Some(next)) if next != body.position => {
@@ -647,7 +732,10 @@ impl ContactSolver {
                     last.moved = true;
                     moved = true;
                 }
-                Ok(_) => last.held = attempted,
+                Ok(_) => {
+                    last.held = attempted;
+                    last.refused = stays(attempted);
+                }
                 Err(source) => report(MovementInvariant::Arithmetic {
                     entity: body.id,
                     operation: "contact solver terrain step",
@@ -789,6 +877,9 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
 }
 
 /// The pair's corrections for `a` and `b`, shares applied, or `None` within the dead band.
+/// `committed` holds both bodies' committed positions and `refused` whether each was refused by
+/// terrain in the previous application, which a by-closing enemy pair reads
+/// ([`closing_shares`]).
 // PERFORMANCE RATIONALE:
 // Why: This runs for every listed pair in every iteration; a root for the distance and another
 // for the normal, each with 128-bit divisions, were most of the solver's cost (evidence §5.3).
@@ -797,7 +888,12 @@ fn pair_normal(a: &SolverBody, b: &SolverBody) -> Result<SimVec2, MovementMathEr
 // beyond it takes one root, shared by its distance and its normal ([`unit_components`]).
 // Trade-off: The distance and the normal are not computed by the general helpers, so the
 // equivalence is stated here: the same floor root and the same truncated quotients.
-fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
+fn pair_correction(
+    pair: &Pair,
+    (a, b): (&SolverBody, &SolverBody),
+    committed: (SimVec2, SimVec2),
+    refused: (bool, bool),
+) -> Correction {
     let x = i128::from(a.position.x.raw()) - i128::from(b.position.x.raw());
     let y = i128::from(a.position.y.raw()) - i128::from(b.position.y.raw());
     let (ux, uy) = (x.unsigned_abs(), y.unsigned_abs());
@@ -826,18 +922,60 @@ fn pair_correction(pair: &Pair, a: &SolverBody, b: &SolverBody) -> Correction {
         normal if normal == SimVec2::ZERO => SimVec2::new(-SimScalar::ONE, SimScalar::ZERO),
         normal => normal,
     };
+    let (share_a, share_b) = if pair.by_closing {
+        closing_shares(normal, (a, b), committed, refused)?
+    } else {
+        (pair.share_a, pair.share_b)
+    };
     let push = |share: SimScalar| {
         overlap
             .checked_mul(share)
             .ok_or(MovementMathError::Unrepresentable)
             .and_then(|amount| checked_vec_scale(normal, amount))
     };
-    let delta_a = along_ring(push(pair.share_a)?, pair.nudge_a)?;
-    let delta_b = along_ring(
-        super::math::checked_vec_neg(push(pair.share_b)?)?,
-        pair.nudge_b,
+    let delta_a = along_ring(push(share_a)?, pair.nudge_a)?;
+    let delta_b = along_ring(super::math::checked_vec_neg(push(share_b)?)?, pair.nudge_b)?;
+    Ok(Some(Push {
+        delta_a,
+        delta_b,
+        share_a,
+        share_b,
+    }))
+}
+
+/// E-1's shares of an enemy pair (plan `2026-11-24-solver-retarget-and-shoving` §4.1): a body
+/// refused by terrain in the previous application counts as fixed and its partner takes all
+/// (when only one is); otherwise each takes the share of the gap its displacement since the
+/// tick's start closed along `normal` (from `b` to `a`). When neither displacement closed, each
+/// takes the share its committed step (from the tick's start to `committed`) closed: a body that
+/// steps into an enemy every tick still yields after a correction carried it back past its start
+/// (As built, WP1: a press against a wall left a residual each tick, and the even split walked
+/// the standing enemy away). Only when neither of those closed either is the split even.
+fn closing_shares(
+    normal: SimVec2,
+    (a, b): (&SolverBody, &SolverBody),
+    committed: (SimVec2, SimVec2),
+    refused: (bool, bool),
+) -> Result<(SimScalar, SimScalar), MovementMathError> {
+    match refused {
+        (true, false) => return Ok((SimScalar::ZERO, SimScalar::ONE)),
+        (false, true) => return Ok((SimScalar::ONE, SimScalar::ZERO)),
+        _ => {}
+    }
+    let displaced = closing_split(
+        normal,
+        checked_vec_sub(a.position, a.start)?,
+        checked_vec_sub(b.position, b.start)?,
     )?;
-    Ok(Some((delta_a, delta_b)))
+    if let Some(shares) = displaced {
+        return Ok(shares);
+    }
+    let stepped = closing_split(
+        normal,
+        checked_vec_sub(committed.0, a.start)?,
+        checked_vec_sub(committed.1, b.start)?,
+    )?;
+    Ok(stepped.unwrap_or((SimScalar::HALF, SimScalar::HALF)))
 }
 
 #[cfg(test)]
@@ -923,19 +1061,23 @@ mod tests {
             (&waiting, &moving, PairShares::Weights(HALF, HALF)),
         ];
         for (a, b, expected) in rows {
-            assert_eq!(contact_shares(a, b, true), expected, "{a:?} / {b:?}");
-            assert_eq!(contact_shares(b, a, true), swap(expected), "{b:?} / {a:?}");
+            assert_eq!(contact_shares(a, b, true, true), expected, "{a:?} / {b:?}");
+            assert_eq!(
+                contact_shares(b, a, true, true),
+                swap(expected),
+                "{b:?} / {a:?}"
+            );
         }
         assert_eq!(
-            contact_shares(&moving, &moving, true),
+            contact_shares(&moving, &moving, true, true),
             PairShares::Weights(HALF, HALF)
         );
         assert_eq!(
-            contact_shares(&moving, &moving, false),
+            contact_shares(&moving, &moving, false, true),
             PairShares::ByApproach
         );
         assert_eq!(
-            contact_shares(&moving, &idle, false),
+            contact_shares(&moving, &idle, false, true),
             PairShares::Weights(ZERO, ONE)
         );
     }
@@ -966,6 +1108,7 @@ mod tests {
         iterations: 14,
         dead_band_permille: 10,
         moving_friends_push: true,
+        enemies_push_each_other: false,
     };
 
     fn ground(radius: SimScalar) -> MotionPolicy {
@@ -1077,14 +1220,16 @@ mod tests {
             .collect()
     }
 
-    /// C-1a: the same bodies in shuffled order give bit-identical positions, under D-β on and off.
+    /// C-1a: the same bodies in shuffled order give bit-identical positions, under D-β on and off,
+    /// and with enemies sharing by closing (E-1) or evenly; the crowds hold enemy pairs.
     #[test]
     fn the_solution_does_not_depend_on_body_order() -> Result<(), Box<dyn std::error::Error>> {
         let mut world = flat_world(Some(30))?;
         for seed in 1..=30 {
-            for push in [true, false] {
+            for (push, enemies) in [(true, false), (false, false), (true, true)] {
                 let settings = SolverSettings {
                     moving_friends_push: push,
+                    enemies_push_each_other: enemies,
                     ..SETTINGS
                 };
                 let bodies = crowd(seed, 48);
@@ -1106,7 +1251,7 @@ mod tests {
                 let mut b: Vec<_> = two.bodies.iter().map(|b| (b.id, b.position)).collect();
                 a.sort_by_key(|p| p.0);
                 b.sort_by_key(|p| p.0);
-                assert_eq!(a, b, "seed {seed}, D-β {push}");
+                assert_eq!(a, b, "seed {seed}, D-β {push}, enemies push {enemies}");
             }
         }
         Ok(())
@@ -1160,6 +1305,86 @@ mod tests {
         ];
         let (solved, _) = solve_on(&mut world, &bodies, SETTINGS);
         assert!(overlap_share(&solved.bodies[0], &solved.bodies[1]) <= 0.01);
+        Ok(())
+    }
+
+    /// E-T6 (plan `2026-11-24-solver-retarget-and-shoving` §4.1): in an enemy pair overlapping by
+    /// 0.1, a body that stepped in while the other stood takes all of it; two that both stepped in
+    /// take it in proportion to their approach (0.2 against 0.1: two thirds and one third); two
+    /// that stood take half each. With the switch on, the split is even whoever closed.
+    #[test]
+    fn enemy_shares_follow_each_bodys_closing() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let moved =
+            |body: &SolverBody, x: f64| f64::from((body.position.x - at(x, 0.0).x).to_f32());
+        let cases = [
+            // (a's start, b's start, a's share, b's share, enemies push each other)
+            (19.8, 20.9, 1.0, 0.0, false),
+            (19.8, 21.0, 2.0 / 3.0, 1.0 / 3.0, false),
+            (20.0, 20.9, 0.5, 0.5, false),
+            (19.8, 20.9, 0.5, 0.5, true),
+        ];
+        for (start_a, start_b, share_a, share_b, enemies) in cases {
+            let settings = SolverSettings {
+                enemies_push_each_other: enemies,
+                ..SETTINGS
+            };
+            let bodies = [
+                solver_body(1, party(0), 0.5, at(start_a, 20.0), at(20.0, 20.0)),
+                solver_body(2, party(1), 0.5, at(start_b, 20.0), at(20.9, 20.0)),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, settings);
+            assert_eq!(errors, []);
+            let (a, b) = (&solved.bodies[0], &solved.bodies[1]);
+            let label = format!("starts {start_a}, {start_b}, enemies push {enemies}");
+            assert!(
+                (moved(a, 20.0) + 0.1 * share_a).abs() < 1e-6,
+                "{label}: a {}",
+                moved(a, 20.0)
+            );
+            assert!(
+                (moved(b, 20.9) - 0.1 * share_b).abs() < 1e-6,
+                "{label}: b {}",
+                moved(b, 20.9)
+            );
+            assert_eq!(a.position.y, at(0.0, 20.0).y, "{label}");
+        }
+        Ok(())
+    }
+
+    /// E-T5 (plan `2026-11-24-solver-retarget-and-shoving` §4.1): a body that stepped off a wall
+    /// into a standing enemy takes the whole overlap, as far as the wall lets it back; once the wall
+    /// holds it, it counts as fixed in the enemy pair and the enemy takes the rest. The wall is
+    /// never entered, the pair ends without overlap, and the enemy moves only by what the closer
+    /// could not take.
+    #[test]
+    fn a_terrain_held_closer_hands_its_enemy_share_to_the_partner(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Column 10 is wall: a body of radius 0.375 touches it at x = 11.375.
+        let mut world = flat_world(Some(10))?;
+        let closer = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let bodies = [
+            solver_body(1, closer, 0.375, at(11.4, 20.0), at(11.6, 20.0)),
+            solver_body(2, party(1), 0.75, at(12.3, 20.0), at(12.3, 20.0)),
+        ];
+        let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+        assert_eq!(errors, []);
+        let (a, b) = (&solved.bodies[0], &solved.bodies[1]);
+        assert!(
+            a.position.x >= at(11.375, 0.0).x,
+            "wall entered: {:?}",
+            a.position
+        );
+        assert!(overlap_share(a, b) <= 0.0001, "{}", overlap_share(a, b));
+        // Overlap 0.425; the closer had 0.225 of room back to the wall.
+        let pushed = f64::from((b.position.x - at(12.3, 0.0).x).to_f32());
+        assert!(
+            (0.0..=0.2 + 1e-3).contains(&pushed),
+            "the enemy moved {pushed}, more than the closer could not take"
+        );
         Ok(())
     }
 
