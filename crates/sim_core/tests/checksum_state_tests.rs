@@ -233,6 +233,12 @@ fn every_public_entity_field_changes_the_world_checksum() {
                 to: point(4, 4),
                 start_tick: Tick(5),
             }),
+            // Plan `2026-11-23-vision-and-detection` D-7: the reveal counters, per player.
+            attack_reveal_ticks => {
+                let mut ticks = sim_types::PerPlayer::<u16>::default();
+                ticks[PlayerSlot::ALL[1]] = 54;
+                ticks
+            },
         },
         |entity| {
             world.entities.insert(EntityId(1), entity.clone());
@@ -357,6 +363,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.max_projectile_lifetime_ticks = 1;
     original.suicide_on_attack = false;
     original.structure_strike = None;
+    original.attack_visibility = sim_types::AttackVisibility::Snapshot;
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -419,6 +426,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 structure_strike => Some(sim_types::StructureStrike {
                     damage: SimScalar::ONE, upgrade_per_level: SimScalar::ONE, ignores_armor: true,
                 }),
+                // Plan `2026-11-23-vision-and-detection` D-7: each case, and the reveal ticks.
+                attack_visibility => sim_types::AttackVisibility::Visible { reveal_ticks: 54 },
+                attack_visibility => sim_types::AttackVisibility::Hidden,
             },
         |weapon| {
             world

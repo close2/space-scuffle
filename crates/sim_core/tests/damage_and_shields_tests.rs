@@ -145,6 +145,7 @@ fn dummy_weapon_spec(
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     }
 }
 
@@ -786,6 +787,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     };
 
     // Case B: Weapon with friendly_fire: false

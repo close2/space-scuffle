@@ -19,9 +19,9 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
-    PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
-    SplashCliff, SplashImpact, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackVisibility, Attribute, AttributeFlags,
+    MoverType, PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle,
+    SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -971,6 +971,13 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        if self.attack_visibility == (AttackVisibility::Visible { reveal_ticks: 0 }) {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.attack_visibility"),
+                "a visible attack reveals its attacker for at least one tick",
+            ));
+        }
         self.validate_random_delay(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
@@ -4322,6 +4329,46 @@ mod detection_tests {
         }
         structure.detection_radius = Some(11.0);
         structure.validate()?;
+        Ok(())
+    }
+}
+
+/// Attack visibility (plan `2026-11-23-vision-and-detection` D-4): a `Visible` weapon reveals its
+/// attacker for at least one tick; zero is refused naming the field.
+#[cfg(test)]
+mod attack_visibility_tests {
+    use crate::catalog::CatalogFile;
+    use crate::error::SimCoreError;
+    use sim_types::AttackVisibility;
+
+    #[test]
+    fn a_visible_weapon_reveals_for_at_least_a_tick() -> Result<(), Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file
+            .units
+            .into_iter()
+            .find(|unit| unit.ground_weapon.is_some())
+            .ok_or("a shipped unit with a ground weapon")?;
+        let weapon = unit
+            .ground_weapon
+            .as_mut()
+            .ok_or("invariant: the unit was chosen for its ground weapon")?;
+        weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 0 };
+        let refused = match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        };
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|field| field.ends_with("attack_visibility")),
+            "a zero reveal is refused naming the field, got {refused:?}"
+        );
+        if let Some(weapon) = unit.ground_weapon.as_mut() {
+            weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 54 };
+        }
+        unit.validate()?;
         Ok(())
     }
 }

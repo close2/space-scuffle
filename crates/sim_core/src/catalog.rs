@@ -24,12 +24,13 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
-    ArchetypeCapabilities, ArmorClassId, AttackDashSpec, Attribute, AttributeBonuses,
-    AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape, HarvesterSpec,
-    MoverType, OverclockSpec, PlacementFlag, PlacementFlags, ProjectileTargetLossBehavior,
-    ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SplashCliff,
-    SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StanceOrders,
-    StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    ArchetypeCapabilities, ArmorClassId, AttackDashSpec, AttackVisibility, Attribute,
+    AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape,
+    HarvesterSpec, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
+    ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
+    SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
+    SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId,
+    UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -1414,6 +1415,10 @@ struct WeaponSpecDef {
     /// `2026-11-10-spellcaster-mechanics` D-14).
     #[serde(default)]
     pub(crate) melee: bool,
+    /// What the weapon's damage shows of its attacker to the player it strikes (plan
+    /// `2026-11-23-vision-and-detection` D-4); omitted, a snapshot.
+    #[serde(default)]
+    pub(crate) attack_visibility: AttackVisibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1636,6 +1641,7 @@ impl UnitArchetypeDef {
             suicide_on_attack: w.suicide_on_attack,
             structure_strike: w.structure_strike,
             melee: w.melee,
+            attack_visibility: w.attack_visibility,
         })
     }
 

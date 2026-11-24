@@ -95,7 +95,11 @@ use std::collections::BTreeMap;
 /// outside an attack order (a `bool`), `WeaponSpec::allowed_movement` and
 /// `WeaponSpec::fires_outside_attack_order`, after `turret_idle` (plan `2026-11-23-turret-wind-up`
 /// D-9).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 40;
+/// Schema 41 adds each entity's attack-reveal counters per player, `Entity::attack_reveal_ticks`,
+/// after `displacement`, and each weapon's attack visibility (0 snapshot, 1 visible with its
+/// reveal ticks, 2 hidden), `WeaponSpec::attack_visibility`, after `melee` (plan
+/// `2026-11-23-vision-and-detection` D-7).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 41;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

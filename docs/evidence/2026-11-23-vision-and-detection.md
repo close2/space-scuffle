@@ -99,3 +99,19 @@ visible and detector counts at the default arena's blocker cells (x 15–17, y 1
   `golden_replay_orders` and the sandbox checksum are unchanged (their maps' rays reach no blocker).
 - `sim_map`'s `test_cross_platform_determinism_checksum` hashes the vision states of 1,000 random sources on the
   default arena, so its reference moved (`0x672c257d0fcacc1b` to `0x08753f04b63df2ee`), re-recorded with the reason.
+- **Worlds:** WP2 and WP3 each leave every measured world byte-identical to WP0 (`compare-wp2.txt`,
+  `compare-wp3.txt`: 483 files, 0 differ). For WP3 this is the prediction of probe (c): the showcase scenarios'
+  edge sightings change vision states only, which no measured file records, and no unit stood in an edge cell.
+- **Proof** (`proof-wp3/`, a `git archive` copy of `e52c0c83`): both goldens and the sandbox reproduce on native
+  debug and release and `wasm32-wasip1` release and debug.
+
+## WP4: attack visibility and reveal state, latent (schema 41)
+
+- **Red run** on WP3's tree (`red/wp4.log`): nothing compiles: `AttackVisibility` is unresolved, and `WeaponSpec`,
+  `WeaponSpecDef`, `Entity` and `PlayerView` lack `attack_visibility`, `attack_reveal_ticks`,
+  `is_attack_revealed_to` and `attack_revealed`.
+- **Latent proof, step 1** (`proof-wp4-latent/`, a copy of the working tree with both fields in the encoding's
+  unhashed lists and the schema at 40): both goldens and the sandbox (`5_438_070_395_987_993_470`) reproduce as
+  recorded for WP3 on native debug and release and `wasm32-wasip1` release and debug.
+- **Step 2:** the fields hashed, schema 41; every checkpoint of both goldens changed and the sandbox is
+  `1_550_645_596_559_574_539`. The encoding unit tests' schema byte is 41.

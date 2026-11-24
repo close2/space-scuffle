@@ -527,6 +527,28 @@ pub struct WeaponSpec {
     /// D-14) read it.
     #[serde(default)]
     pub melee: bool,
+    /// What the weapon's damage shows of its attacker to the player it strikes (plan
+    /// `2026-11-23-vision-and-detection` D-4). Omitted, the engine default: a snapshot.
+    #[serde(default)]
+    pub attack_visibility: AttackVisibility,
+}
+
+/// What a weapon's damage shows of its attacker to the player it strikes: `StarCraft` II's
+/// `CEffectDamage` `Visibility` (`core` EffectData:62).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttackVisibility {
+    /// A snapshot in fog and on the minimap, never a target (the engine default). The
+    /// simulation records nothing; the presentation is bug B-183.
+    #[default]
+    Snapshot,
+    /// The attacker becomes visible, and so targetable, to each struck unit's owner for
+    /// `reveal_ticks` (`AttackReveal`, `core` BehaviorData:237–240, 3 Normal s).
+    Visible {
+        /// How long one hit reveals the attacker, in whole ticks.
+        reveal_ticks: u16,
+    },
+    /// Nothing is shown.
+    Hidden,
 }
 
 /// Whether a weapon's unit may move while it attacks: `StarCraft` II's `CWeapon`
@@ -718,6 +740,20 @@ mod tests {
             ron::from_str("(zones: [], cliff: Any, strike_target_on_other_level: true)")?;
         assert_eq!(splash.cliff, SplashCliff::Any);
         assert!(splash.strike_target_on_other_level);
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-vision-and-detection` D-4: an omitted attack visibility reads as the
+    /// engine default, a snapshot; the visible case carries its reveal in whole ticks.
+    #[test]
+    fn attack_visibility_defaults_to_a_snapshot_and_reads_its_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use super::AttackVisibility;
+        assert_eq!(AttackVisibility::default(), AttackVisibility::Snapshot);
+        let visible: AttackVisibility = ron::from_str("Visible(reveal_ticks: 54)")?;
+        assert_eq!(visible, AttackVisibility::Visible { reveal_ticks: 54 });
+        let hidden: AttackVisibility = ron::from_str("Hidden")?;
+        assert_eq!(hidden, AttackVisibility::Hidden);
         Ok(())
     }
 }

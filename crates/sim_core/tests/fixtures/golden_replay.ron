@@ -402,6 +402,13 @@
 // (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
 // wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-vision-and-detection WP4 (checksum schema 40 -> 41): each entity
+// also encodes its attack-reveal counters and each weapon its attack visibility, so every
+// checkpoint changed. No behaviour did: with the two fields left out of the encoding at schema
+// 40, both fixtures reproduce as recorded for this plan's WP3 (B-57) here and for plan
+// 2026-11-23-turret-wind-up WP1 in golden_replay_orders.ron, on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 // Re-recorded for plan 2026-11-23-vision-and-detection WP3 (B-57): a ground ray entering a sight
 // blocker from outside stops before its first cell, so the default arena's blocker (cells x 15
 // to 17, y 15 to 17) is no longer seen from outside, and the vision states and counters of its
@@ -411,7 +418,7 @@
 // sight reached from outside (WP0's probe c). Native debug and release and wasm32-wasip1
 // release and debug agree on the list below.
 (
-    checksum_schema: 40,
+    checksum_schema: 41,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -437,25 +444,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x81d116414a59f28d,
-        0x891eebb15b6cf0b7,
-        0x66d3e13e1d390313,
-        0x089069aca0bb1d1f,
-        0xa4dd6aa859eb3e1c,
-        0x1d50885b154e88d1,
-        0xb7f85042c3d1af02,
-        0x95daec450b048375,
-        0x3ed721b3cd7ba27d,
-        0x0737c741f77ec736,
-        0xa3fa8e7abe275f99,
-        0x996d5f467eaaeef7,
-        0xf7b9f4375670dc94,
-        0x7ba6a6478d06caf3,
-        0xa02e67ec4bce04d3,
-        0x4c3bf535d15a7eda,
-        0x138f1a87d86757c9,
-        0xa917ed75a22bdce9,
-        0x6386f55323574172,
-        0x9b7689288f8e0f9c,
+        0x410cb1802a2a5704,
+        0x79c5f4dcc31e186c,
+        0xc40990429d527ec7,
+        0x5abc2595a55aa989,
+        0x4f4327c551abdf7a,
+        0x5ec5cd505da9d893,
+        0x95a7710bb875c919,
+        0x4676c35106b590df,
+        0x6dfc46826162791e,
+        0x59e7a26e80190dd3,
+        0xd80539e9086dba12,
+        0x474dca9c3e6512ed,
+        0xbcaf08cc5aa4fb9d,
+        0x4cbb1611394a8dfc,
+        0xa5c008af10052625,
+        0x831bd6d70db17501,
+        0xcd82443fb06ec558,
+        0x888cb129ea737d54,
+        0x8343773c2f82b838,
+        0x37d263264d1d1e9a,
     ],
 )

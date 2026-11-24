@@ -296,6 +296,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     };
 
     let air_weapon_high_dps = WeaponSpec {
@@ -333,6 +334,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
     };
 
     let arch = UnitArchetype {
