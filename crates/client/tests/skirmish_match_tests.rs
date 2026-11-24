@@ -1425,8 +1425,11 @@ fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
     let (burrower_type, burrowed_mode) = mode_unit(&harness, ModeKind::Burrow);
     let (tank_type, siege_mode) = mode_unit(&harness, ModeKind::Siege);
     let burrower = spawn_near(&mut harness, home, 4.0, burrower_type, LOCAL_PLAYER);
-    let tank = spawn_near(&mut harness, home, 7.0, tank_type, LOCAL_PLAYER);
     let at = harness.simulated_position(burrower);
+    // The tank stands near the burrower, so it stays well inside the spotter's sight however the
+    // air bodies spawned onto one point below (spotter and detector) separate; not on their point,
+    // so a click on it selects the tank.
+    let tank = spawn_near(&mut harness, at, 5.0, tank_type, LOCAL_PLAYER);
     let spotter_type = spotter_type(&harness);
     let spotter = spawn_near(&mut harness, at, 3.0, spotter_type, OPPONENT);
 
@@ -1498,6 +1501,20 @@ fn the_opponent_sees_a_burrowed_unit_only_where_it_detects_it() {
     );
 
     // The siege, ordered by key, in the spotter's sight.
+    let sight = harness
+        .world()
+        .catalog
+        .get(spotter_type)
+        .expect("the spotter's archetype")
+        .sight_radius
+        .to_f32();
+    let apart = harness
+        .simulated_position(tank)
+        .distance(harness.simulated_position(spotter));
+    assert!(
+        apart < sight - 2.0,
+        "precondition: the tank stands well inside the spotter's sight ({apart} of {sight})"
+    );
     present_to(&mut harness, LOCAL_PLAYER);
     harness.select(tank);
     tap_mode_key(&mut harness, ModeDirection::Enter);
