@@ -3133,3 +3133,250 @@ fn an_edited_attack_visibility_hides_an_air_attacker() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// The first shipped mobile ground archetype whose ground weapon is a missile without an area,
+/// and that weapon.
+fn ground_missile_archetype(
+    catalogs: &RuntimeCatalogs,
+) -> Option<(sim_core::UnitArchetype, sim_core::WeaponSpec)> {
+    catalogs
+        .units
+        .archetypes()
+        .filter(|arch| {
+            arch.mover_type == sim_types::MoverType::Ground && arch.max_speed > SimScalar::ZERO
+        })
+        .find_map(|arch| {
+            arch.weapon_against(sim_types::MoverType::Ground, None)
+                .filter(|w| w.projectile_speed.is_some() && w.splash.is_none())
+                .map(|w| (arch.clone(), w.clone()))
+        })
+}
+
+/// Authors `missile_validation: <flags>` on the ground missile of
+/// [`ground_missile_archetype`] in `bundle`'s `units.ron`, before the row's first missile speed.
+fn author_missile_validation(bundle: &Bundle, flags: &str) -> TestResult {
+    let shipped = bundle.load()?;
+    let (arch, _) = ground_missile_archetype(&shipped).ok_or("a ground missile is shipped")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", arch.slug))
+        .ok_or("the archetype's row")?;
+    let field = row
+        + units[row..]
+            .find("projectile_speed: Some(")
+            .ok_or("the row's missile speed")?;
+    let edited = format!(
+        "{}missile_validation: {flags},\n                {}",
+        &units[..field],
+        &units[field..]
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), edited)?;
+    Ok(())
+}
+
+/// Fires `catalogs`' ground missile at an unarmed unit that Blinks (a scratch `BlinkTeleport`
+/// ability, none being shipped) while the missile flies; returns whether the unit was struck.
+fn blinker_struck(catalogs: RuntimeCatalogs) -> Result<bool, Box<dyn std::error::Error>> {
+    let (shooter_arch, _) =
+        ground_missile_archetype(&catalogs).ok_or("a shipped weapon is a ground missile")?;
+    let mut units = catalogs.units;
+    let mut blinker = shooter_arch.clone();
+    blinker.unit_type_id = UnitTypeId(
+        units
+            .archetypes()
+            .map(|a| a.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    "scratch_blinker".clone_into(&mut blinker.slug);
+    blinker.weapon = None;
+    blinker.ground_weapon = None;
+    blinker.air_weapon = None;
+    blinker.abilities = vec![sim_types::AbilitySpec {
+        name: "scratch blink".into(),
+        target_kind: sim_types::AbilityTargetKind::TargetPosition,
+        energy_cost: SimScalar::ZERO,
+        cast_range: SimScalar::from_i32(30),
+        cooldown_ticks: 0,
+        effect: sim_types::AbilityEffectSpec::BlinkTeleport {
+            max_range: SimScalar::from_i32(30),
+            cooldown_ticks: 0,
+        },
+        leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
+    }];
+    let blinker_type = blinker.unit_type_id;
+    units.register(blinker);
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        0xB23,
+        units,
+        catalogs.upgrades,
+    )?;
+    let shooter = world.spawn_unit(
+        shooter_arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::from_i32(12, 16),
+    )?;
+    let target = world.spawn_unit(blinker_type, PlayerId(1), SimVec2::from_i32(16, 16))?;
+    let vitals = |world: &SimWorld| world.entities.get(&target).map(|t| (t.hp, t.shields));
+    let full = vitals(&world);
+    world
+        .entities
+        .get_mut(&shooter)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let step = |world: &mut SimWorld, tick: u32| {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    let mut tick = 1;
+    while world.projectiles.is_empty() {
+        assert!(tick < 100, "the missile launched within 100 ticks");
+        step(&mut world, tick);
+        tick += 1;
+    }
+    assert!(
+        world.execute_ability(target, 0, Some(SimVec2::from_i32(16, 19)), None),
+        "the blink is admitted"
+    );
+    for later in tick..tick + 200 {
+        step(&mut world, later);
+        if world.projectiles.is_empty() {
+            break;
+        }
+    }
+    Ok(vitals(&world) != full)
+}
+
+/// P-2 (plan `2026-11-24-weapon-validation` D-1, D-4): authoring `missile_validation: (weapon:
+/// true, teleport: false)` on the shipped ground missile makes it follow a Blink and strike, in
+/// the same binary; the shipped default drops the blinker.
+#[test]
+fn an_authored_teleport_validation_off_follows_the_blink() -> TestResult {
+    let bundle = Bundle::new("teleport-validation")?;
+    let shipped = bundle.load()?;
+    author_missile_validation(&bundle, "(weapon: true, teleport: false)")?;
+    let edited = bundle.load()?;
+    let (_, edited_weapon) =
+        ground_missile_archetype(&edited).ok_or("the edited missile is still shipped")?;
+    assert_eq!(
+        edited_weapon.missile_validation,
+        sim_types::MissileValidation {
+            weapon: true,
+            teleport: false,
+        },
+        "premise: the edit reached the ground missile"
+    );
+    assert!(
+        !blinker_struck(shipped)?,
+        "the shipped missile drops a target that blinks"
+    );
+    assert!(
+        blinker_struck(edited)?,
+        "the authored flag follows the blink and strikes"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Fires `catalogs`' ground missile at an unarmed unit that cloaks, undetected, right after the
+/// launch; returns whether the missile still homes on it one tick later.
+fn missile_keeps_a_cloaked_target(
+    catalogs: RuntimeCatalogs,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let (shooter_arch, _) =
+        ground_missile_archetype(&catalogs).ok_or("a shipped weapon is a ground missile")?;
+    let mut units = catalogs.units;
+    let mut dummy = shooter_arch.clone();
+    dummy.unit_type_id = UnitTypeId(
+        units
+            .archetypes()
+            .map(|a| a.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    "scratch_unarmed_target".clone_into(&mut dummy.slug);
+    dummy.weapon = None;
+    dummy.ground_weapon = None;
+    dummy.air_weapon = None;
+    let dummy_type = dummy.unit_type_id;
+    units.register(dummy);
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        0xB33,
+        units,
+        catalogs.upgrades,
+    )?;
+    let shooter = world.spawn_unit(
+        shooter_arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::from_i32(10, 16),
+    )?;
+    let target = world.spawn_unit(dummy_type, PlayerId(1), SimVec2::from_i32(16, 16))?;
+    world
+        .entities
+        .get_mut(&shooter)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let step = |world: &mut SimWorld, tick: u32| {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    let mut tick = 1;
+    while world.projectiles.is_empty() {
+        assert!(tick < 100, "the missile launched within 100 ticks");
+        step(&mut world, tick);
+        tick += 1;
+    }
+    world
+        .entities
+        .get_mut(&target)
+        .ok_or("in flight")?
+        .is_cloaked = true;
+    step(&mut world, tick);
+    Ok(world
+        .projectiles
+        .first()
+        .is_some_and(|missile| missile.target_id == Some(target)))
+}
+
+/// P-4 (plan `2026-11-24-weapon-validation` D-1, D-4): authoring `missile_validation: (weapon:
+/// false, teleport: true)`, the Brood Lord's flags, on the shipped ground missile makes it keep
+/// homing on a target that cloaks undetected, in the same binary; the shipped default drops it.
+#[test]
+fn an_authored_weapon_validation_off_follows_a_cloaking_target() -> TestResult {
+    let bundle = Bundle::new("weapon-validation")?;
+    let shipped = bundle.load()?;
+    author_missile_validation(&bundle, "(weapon: false, teleport: true)")?;
+    let edited = bundle.load()?;
+    let (_, edited_weapon) =
+        ground_missile_archetype(&edited).ok_or("the edited missile is still shipped")?;
+    assert!(
+        !edited_weapon.missile_validation.weapon,
+        "premise: the edit reached the ground missile"
+    );
+    assert!(
+        !missile_keeps_a_cloaked_target(shipped)?,
+        "the shipped missile drops a target that cloaks"
+    );
+    assert!(
+        missile_keeps_a_cloaked_target(edited)?,
+        "the authored flag keeps homing on it"
+    );
+    bundle.finish()?;
+    Ok(())
+}

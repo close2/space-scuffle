@@ -70,6 +70,7 @@ fn blades() -> WeaponSpec {
         structure_strike: None,
         melee: false,
         attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     }
 }
 
