@@ -708,6 +708,55 @@ translation on every tick again.
 
 ---
 
+## Amendment 2 (implementation, 2026-11-24): WP3 under the contact solver
+
+**Finding.** WP3 starts on `main` at `e5f5c565` (checksum schema 46), where the contact-solver plan
+([`2026-11-20-contact-solver`](2026-11-20-contact-solver.md)) has merged and its pipeline, `Solver`, is the shipped
+default (`assets/catalog/movement_rules.ron`); `Legacy` stays selectable until that plan's WP7. §11's condition for
+WP3 holds. Read on that tree:
+
+- **The hold still has one site, shared by both pipelines.** `walking_goal` (`movement/locomotion.rs`) still holds
+  the wind-up, with D-6's old condition (`Windup && !has_turret`, ground-first weapon). It is called by
+  `prepare_actor_motion` for every mover under either pipeline, before any pipeline-specific stage: the hold breaks
+  out before the order is classified, so it runs before pursuit (where the solver's ring rule, `ring_aim`, and the
+  legacy band check differ), before the walk's steering (`step_toward`'s intent rule) and before the contact phase.
+  The solver replaced none of `walking_goal`.
+- **Neither pipeline reads the hold elsewhere.** The legacy anchoring (`is_anchored_in_combat`) counts every
+  `Windup` as anchored whatever the weapon, and the solver's `engaged` reads the band of a live target, not the weapon
+  phase. Neither reads `has_turret` or the swing's weapon, so neither needs a change for D-6.
+
+**Decisions.**
+
+1. **D-6's condition goes where the hold is, once.** `walking_goal` holds a unit whose weapon phase is `Windup`
+   unless the weapon of the swing is `AllowedMovement::Moving`. Because the function is shared, the legacy pipeline
+   gets the same rule without a second site; adding one would duplicate a condition that cannot differ between the
+   pipelines. P-10 runs under both pipelines (switching `ContactRules::pipeline` in the catalog, as
+   `push_priority_tests` does), so that the legacy pipeline's keeping the hold is tested while it exists.
+2. **The weapon of the swing** (Amendment 1) is the one combat resolves for the swing's bound target:
+   `UnitArchetype::weapon_against(plane, entity.active_siege_weapon())`, the plane being the archetype mover type
+   of `WeaponPhase::Windup`'s `target_id`, and, when that entity is gone, the plane the combat phase falls back to
+   (`SimWorld::idle_weapon_plane`, B-79: the ground when the unit has a ground weapon, otherwise the air), made
+   `pub(crate)` so that the two phases share one rule. If no weapon resolves, the unit stands (the engine default,
+   `Stopped`); the combat phase returns such a swing to `Ready` on the same tick. The old line read
+   `actor.siege_weapon` whether or not the tank was sieged; a sieged tank is immobile and never reaches the line,
+   so `active_siege_weapon` changes nothing observable.
+3. **The fire-rules plan's WP6 is not touched.** That WP will have pursuit report whether it walked a unit under an
+   attack order ([`2026-11-24-fire-rules`](2026-11-24-fire-rules.md) §11 WP6). The hold returns before pursuit runs,
+   so a unit held for its wind-up is reported as not walked, which is what it did; WP6 needs no change for it and
+   this WP adds no transient, no field and no reading of the chase.
+4. **Baseline.** §7's WP0 baseline predates the solver. WP3 measures against `e5f5c565` itself (same scripts,
+   `~/scratch/turret-wp3/`), so every move is WP3's. §7's WP3 column stands, with one addition read from Amendment 1:
+   the Phoenix analogue (`flying_saucer`, an air weapon only) stood for every wind-up under both orders, so the
+   matrix battles where it chases may move too.
+5. **Stop rule 3 under the charter's §8 guidance.** A winner change in a close battle that the trace explains by the
+   hold (a unit standing for its wind-up instead of chasing, or a `Moving` unit no longer standing) is restated with
+   the evidence and a fixture comment, as stop rule 3 already allows; a stall, or a unit that stands while able to
+   fight for any reason other than its own wind-up, stops the package and is reported.
+
+The rest of WP3 is as §11 says. B-numbers it registers, if any, start at B-207 (provisional, next free at merge).
+
+---
+
 ## As built (WP0 to WP2; WP3 pending)
 
 WP0 to WP2 ran as one branch, `turret-wind-up-plan`, one commit each; WP3 waits for the contact-solver branch
