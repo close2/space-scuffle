@@ -78,3 +78,5 @@ Battle 26 with the fix: the zerglings win 22 of 24.
 
 - **Battle 26 — Option (a):** Restate the claim to what is measured (zerglings mostly win), citing the Q0095 melee ring-nudge (`D-δ`).
 - **Battle 28 — Option (b):** Keep the StarCraft II claim (zerglings overrun immortals) and merge the movement solver with Battle 28 marked as an expected failure for known bug `B-192`, so `B-192` (retargeting around a surrounded front row) and `B-193` (enemy shoving) remain tracked for a dedicated follow-up fix.
+
+**Standing guidance (recorded in `AGENTS.md` §8):** Good, natural pathing and movement outweigh locking in the exact winner of close matchups. When a movement improvement shifts a close battle's winner (even across all runs, e.g. Battle 26 or close battles like 33/38a/38b when evaluating `D-ε`), restate the claim as a minor deviation rather than halting work; treat a shift as a bug only when the underlying behaviour itself is broken or unexpected (such as `B-192`'s stalled rear Zerglings in Battle 28 or `B-193`'s enemy shoving).

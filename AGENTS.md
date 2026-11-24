@@ -194,7 +194,12 @@ Decisions that belong to the owner live in `docs/questions/`, one file per quest
   close behaviour; cite the source in the plan. A difference the owner has not named as a deviation is a bug,
   recorded in the bug register of `DESIGN.md` §4 until fixed. Deviations that allow more (preferably configurable)
   and minor differences in details are allowed if recorded; StarCraft II's own engine bugs need not be reproduced.
-  The owner's sanctioned deviations are listed in `docs/questions/closed/0052-sanctioned-sc2-deviations.md`.
+  Good, natural pathing and movement take priority over preserving the exact winner of a close matchup: if a
+  movement improvement gives a small advantage that flips a close battle's winner (even across all runs), record it
+  as a minor deviation and restate the claim rather than blocking or reverting the improvement. Treat a matchup
+  shift as a bug only when the underlying unit behaviour itself is broken or unexpected (e.g. units stalling instead
+  of engaging reachable targets). The owner's sanctioned deviations are listed in
+  `docs/questions/closed/0052-sanctioned-sc2-deviations.md`.
 
 ---
 
