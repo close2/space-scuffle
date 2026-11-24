@@ -24,6 +24,14 @@
 //! the whole gap. So enemies are never moved by an enemy's press; an overlap that exists already
 //! (a spawn, an unload, a terrain residual) is still split evenly (C-8).
 //!
+//! **A friend held by an enemy passes on what it cannot take (F-1, plan Amendment 2, A2.1).**
+//! Under E-2 every listed enemy pair is a wall for each of its bodies (E-2's direction and
+//! allowance at the application's start, [`ContactSolver::build_walls`]). In the averaged
+//! iterations and the hard friends' pass, the part of a friend correction that points into a wall
+//! beyond its allowance is removed and given to the pair's other body along their normal, so a
+//! walker that presses a friend against an enemy is pushed back instead of walking into it; the
+//! slide along the enemy stays with the friend. Without walls every friend correction is C-2's.
+//!
 //! # How it fits
 //! The movement phase fills the solver from the bodies' tick-start and committed positions and
 //! gives it the terrain step (`slide_target`, `permits_segment` from the tick start and
@@ -128,6 +136,9 @@ pub enum PairShares {
 /// | friends, both moving, D-β on | the lower priority takes all; equal ½ ½ | |
 /// | friends, both moving, D-β off | by approach | |
 /// | friends, otherwise | ½ | ½ |
+///
+/// F-1 (plan `2026-11-25-enemy-contact-and-ring-retarget` Amendment 2): a friend held by an enemy
+/// passes on what it cannot take, in the solver, after these shares.
 #[must_use]
 pub fn contact_shares(a: &ContactParty, b: &ContactParty, moving_friends_push: bool) -> PairShares {
     let (zero, half, one) = (SimScalar::ZERO, SimScalar::HALF, SimScalar::ONE);
@@ -266,6 +277,8 @@ struct Pair {
     hard: bool,
     /// Enemies, or a fixed body: the hard constraints applied last (plan Amendment 7, item 4).
     last: bool,
+    /// The two bodies have different owners.
+    enemy: bool,
     /// E-2: the first and second body's shares of the gap between them, frozen for the tick
     /// ([`enemy_weights`]); zero for a friend pair.
     gap_shares: (SimScalar, SimScalar),
@@ -360,6 +373,14 @@ impl Reach {
     };
 }
 
+/// F-1: an enemy a body may close on by at most `allow` along `toward` (a unit vector from the
+/// body towards it), at the application's start; E-2's terms of the pair.
+#[derive(Debug, Clone, Copy, Default)]
+struct Wall {
+    toward: SimVec2,
+    allow: SimScalar,
+}
+
 /// One enemy pair E-2 examines in an application: the bodies' slots, the unit vector from the
 /// first towards the second, and how far each may close on the other along it, world units.
 #[derive(Debug, Clone, Copy)]
@@ -411,6 +432,13 @@ pub(crate) struct ContactSolver {
     adjust: Vec<SimVec2>,
     /// The enemy pairs E-2 examines in the current application.
     limits: Vec<Limit>,
+    /// F-1: the walls of the current application, grouped by body ([`Self::build_walls`]).
+    walls: Vec<Wall>,
+    /// F-1: body `i`'s walls are `walls[wall_start[i]..wall_start[i + 1]]`; empty when no body
+    /// has one.
+    wall_start: Vec<u32>,
+    /// F-1: the next free slot of each body's walls while they are laid out.
+    wall_next: Vec<u32>,
     grid: BodyGrid,
     near: Vec<usize>,
 }
@@ -556,6 +584,7 @@ impl ContactSolver {
                 || share_b == SimScalar::ZERO,
             last: a.party.owner != b.party.owner || a.party.fixed || b.party.fixed,
             gap_shares,
+            enemy: !friends,
             nudge_a: a.party.nudge.filter(|_| friends),
             nudge_b: b.party.nudge.filter(|_| friends),
             radius_sum,
@@ -593,6 +622,7 @@ impl ContactSolver {
         let mut done = SolveReport::default();
         for _ in 0..settings.iterations {
             done.iterations += 1;
+            self.build_walls(settings.enemies_block, report);
             self.accumulate(Pass::Averaged, report);
             if !self.apply((true, settings.enemies_block), &mut terrain, report) {
                 break;
@@ -605,11 +635,13 @@ impl ContactSolver {
         // C-1b, prioritised (plan Amendment 7, item 4): the hard friendly pairs first, then the
         // enemy and fixed constraints, so that no friend's correction is the last word against
         // an enemy or a fixed body.
+        self.build_walls(settings.enemies_block, report);
         self.accumulate(Pass::HardFriends, report);
         self.bound_summed_steps(report);
         self.apply((false, settings.enemies_block), &mut terrain, report);
         // The enemy and fixed constraints keep the last word unbounded: D-α never relaxes them,
         // and a body may close on a friend to clear an enemy.
+        self.build_walls(false, report);
         self.accumulate(Pass::EnemyAndFixed, report);
         self.apply((false, settings.enemies_block), &mut terrain, report);
         done.pairs = self.pairs.len();
@@ -642,18 +674,32 @@ impl ContactSolver {
             }
             let (ia, ib) = (pair.a as usize, pair.b as usize);
             let (a, b) = (&self.bodies[ia], &self.bodies[ib]);
+            let walls = (
+                walls_of(&self.walls, &self.wall_start, ia),
+                walls_of(&self.walls, &self.wall_start, ib),
+            );
+            let walled = !pair.enemy && (!walls.0.is_empty() || !walls.1.is_empty());
             let counts = (self.steps[ia].moves, self.steps[ib].moves);
             let correction = match pair.cached {
-                Some(cached) if pair.cached_at == counts => cached,
+                Some(cached) if !walled && pair.cached_at == counts => cached,
                 _ => pair_correction(pair, a, b),
             };
-            pair.cached = Some(correction);
+            // F-1: a correction transformed by walls is not kept, since the walls move with the
+            // enemies.
+            pair.cached = (!walled).then_some(correction);
             pair.cached_at = counts;
             match correction {
                 Ok(None) => {}
-                Ok(Some((delta_a, delta_b))) => {
-                    let added = add_to(&mut self.sums, ia, delta_a, pair.share_a)
-                        .and_then(|()| add_to(&mut self.sums, ib, delta_b, pair.share_b));
+                Ok(Some(deltas)) => {
+                    let added = if walled {
+                        transfer(deltas, (a, b), walls).and_then(|(delta_a, delta_b, given)| {
+                            add_given(&mut self.sums, ia, delta_a, (pair.share_a, given.0))?;
+                            add_given(&mut self.sums, ib, delta_b, (pair.share_b, given.1))
+                        })
+                    } else {
+                        add_to(&mut self.sums, ia, deltas.0, pair.share_a)
+                            .and_then(|()| add_to(&mut self.sums, ib, deltas.1, pair.share_b))
+                    };
                     if let Err(source) = added {
                         report(MovementInvariant::Arithmetic {
                             entity: a.id,
@@ -669,6 +715,62 @@ impl ContactSolver {
                 }),
             }
         }
+    }
+
+    /// F-1 (plan `2026-11-25-enemy-contact-and-ring-retarget` Amendment 2, A2.1): the walls of
+    /// this application, from the positions at its start: every listed enemy pair gives each of
+    /// its bodies a wall towards the other, with E-2's allowance (the body's frozen share of the
+    /// gap). None when `enabled` is false or there is no enemy pair.
+    // PERFORMANCE RATIONALE:
+    // Why: Each friend pair asks for both bodies' walls, in every application.
+    // What: The walls are counted per body, then laid out grouped by body in one retained buffer
+    // with an offset per body (two passes, no sort, no allocation in steady state).
+    // Trade-off: One root per listed enemy pair per application, and two retained buffers.
+    fn build_walls(&mut self, enabled: bool, report: &mut impl FnMut(MovementInvariant)) {
+        self.walls.clear();
+        self.wall_start.clear();
+        if !enabled || self.enemy_pairs.is_empty() {
+            return;
+        }
+        self.limits.clear();
+        for &index in &self.enemy_pairs {
+            let pair = &self.pairs[index as usize];
+            let (a, b) = (&self.bodies[pair.a as usize], &self.bodies[pair.b as usize]);
+            match limit_within(pair, (a, b), None) {
+                Ok(Some(limit)) => self.limits.push(limit),
+                Ok(None) => {}
+                Err(source) => report(MovementInvariant::Arithmetic {
+                    entity: a.id,
+                    operation: "contact solver wall",
+                    source,
+                }),
+            }
+        }
+        self.wall_start.resize(self.bodies.len() + 1, 0);
+        for limit in &self.limits {
+            self.wall_start[limit.a as usize + 1] += 1;
+            self.wall_start[limit.b as usize + 1] += 1;
+        }
+        for slot in 1..self.wall_start.len() {
+            self.wall_start[slot] += self.wall_start[slot - 1];
+        }
+        let total = self.wall_start.last().copied().unwrap_or(0) as usize;
+        self.walls.resize(total, Wall::default());
+        self.wall_next.clear();
+        self.wall_next.extend_from_slice(&self.wall_start);
+        for limit in &self.limits {
+            // The negation of a unit vector is representable.
+            let away = SimVec2::new(-limit.toward_b.x, -limit.toward_b.y);
+            for (body, toward, allow) in [
+                (limit.a, limit.toward_b, limit.allow_a),
+                (limit.b, away, limit.allow_b),
+            ] {
+                let at = &mut self.wall_next[body as usize];
+                self.walls[*at as usize] = Wall { toward, allow };
+                *at += 1;
+            }
+        }
+        self.limits.clear();
     }
 
     /// Keeps the hard friend pass monotone (plan Amendment 15, O1): a body whose summed step has a
@@ -1008,6 +1110,72 @@ fn closes_too_far(limits: &[Limit], slot: usize, from: SimVec2, to: SimVec2) -> 
     })
 }
 
+/// The walls of the body in `slot`: empty when no body has one.
+fn walls_of<'w>(walls: &'w [Wall], start: &[u32], slot: usize) -> &'w [Wall] {
+    match (start.get(slot), start.get(slot + 1)) {
+        (Some(&from), Some(&to)) => &walls[from as usize..to as usize],
+        _ => &[],
+    }
+}
+
+/// F-1's blocked part of the correction `delta` against `walls`:
+/// `Σ max(0, delta · u − allow) · u`, the part E-2 would project off.
+fn blocked(delta: SimVec2, walls: &[Wall]) -> Result<SimVec2, MovementMathError> {
+    let mut sum = SimVec2::ZERO;
+    for wall in walls {
+        let closing = super::math::checked_dot(delta, wall.toward)?;
+        if closing > wall.allow {
+            let excess = closing
+                .checked_sub(wall.allow)
+                .ok_or(MovementMathError::Unrepresentable)?;
+            sum = checked_vec_add(sum, checked_vec_scale(wall.toward, excess)?)?;
+        }
+    }
+    Ok(sum)
+}
+
+/// F-1 (Amendment 2, A2.1): the friend pair `(a, b)`'s corrections `deltas` with the blocked
+/// part of each removed and given to the other along the pair's normal `n` (from `b` to `a`):
+/// `δ_a′ = δ_a − β_a − (β_b · n) n` and `δ_b′ = δ_b − β_b − (β_a · n) n`. Also returns whether
+/// each body was given a transferred part, which counts towards its contact count.
+fn transfer(
+    (delta_a, delta_b): (SimVec2, SimVec2),
+    (a, b): (&SolverBody, &SolverBody),
+    (walls_a, walls_b): (&[Wall], &[Wall]),
+) -> Result<(SimVec2, SimVec2, (bool, bool)), MovementMathError> {
+    let (blocked_a, blocked_b) = (blocked(delta_a, walls_a)?, blocked(delta_b, walls_b)?);
+    if blocked_a == SimVec2::ZERO && blocked_b == SimVec2::ZERO {
+        return Ok((delta_a, delta_b, (false, false)));
+    }
+    let normal = pair_normal(a, b)?;
+    let along = |part: SimVec2| {
+        super::math::checked_dot(part, normal).and_then(|amount| checked_vec_scale(normal, amount))
+    };
+    let (to_b, to_a) = (along(blocked_a)?, along(blocked_b)?);
+    Ok((
+        checked_vec_sub(checked_vec_sub(delta_a, blocked_a)?, to_a)?,
+        checked_vec_sub(checked_vec_sub(delta_b, blocked_b)?, to_b)?,
+        (to_a != SimVec2::ZERO, to_b != SimVec2::ZERO),
+    ))
+}
+
+/// Adds `delta` to slot `index`'s sum, counting it, when the pair's share is positive or the
+/// body was given a transferred part (F-1).
+fn add_given(
+    sums: &mut [Accumulator],
+    index: usize,
+    delta: SimVec2,
+    (share, given): (SimScalar, bool),
+) -> Result<(), MovementMathError> {
+    if share <= SimScalar::ZERO && !given {
+        return Ok(());
+    }
+    let slot = &mut sums[index];
+    slot.sum = checked_vec_add(slot.sum, delta)?;
+    slot.count += 1;
+    Ok(())
+}
+
 /// The step `planned` holds, or zero.
 fn planned_step(planned: Option<Result<SimVec2, MovementMathError>>) -> SimVec2 {
     match planned {
@@ -1046,16 +1214,26 @@ fn enemy_limit(
     (a, b): (&SolverBody, &SolverBody),
     steps: (SimVec2, SimVec2),
 ) -> Result<Option<Limit>, MovementMathError> {
+    let reach = i128::from(pair.radius_sum.raw()) + l1_raw(steps.0) + l1_raw(steps.1);
+    limit_within(pair, (a, b), Some(reach.unsigned_abs()))
+}
+
+/// The [`Limit`] of the enemy pair `(a, b)` at their current positions, or `None` when their
+/// centres lie farther apart than `reach` raw units (no root); `reach` `None` takes every pair.
+fn limit_within(
+    pair: &Pair,
+    (a, b): (&SolverBody, &SolverBody),
+    reach: Option<u128>,
+) -> Result<Option<Limit>, MovementMathError> {
     let x = i128::from(b.position.x.raw()) - i128::from(a.position.x.raw());
     let y = i128::from(b.position.y.raw()) - i128::from(a.position.y.raw());
-    let reach = i128::from(pair.radius_sum.raw()) + l1_raw(steps.0) + l1_raw(steps.1);
-    let (ux, uy, reach) = (x.unsigned_abs(), y.unsigned_abs(), reach.unsigned_abs());
+    let (ux, uy) = (x.unsigned_abs(), y.unsigned_abs());
     let squared = ux
         .checked_mul(ux)
         .and_then(|xx| uy.checked_mul(uy).and_then(|yy| xx.checked_add(yy)))
         .ok_or(MovementMathError::Unrepresentable)?;
     if reach
-        .checked_mul(reach)
+        .and_then(|reach| reach.checked_mul(reach))
         .is_some_and(|limit| squared > limit)
     {
         return Ok(None);
@@ -2294,6 +2472,166 @@ mod tests {
             assert!(exact_overlap_share(&solved.bodies[0], &solved.bodies[1]).abs() < 1e-6);
             assert_eq!(solved.bodies[0].position.y, solved.bodies[1].position.y);
         }
+        Ok(())
+    }
+
+    /// The displacement of `after` from `before`, world units, from the raw values.
+    fn moved(before: SimVec2, after: SimVec2) -> (f64, f64) {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "test arithmetic on raw values far below 2^52"
+        )]
+        let raw = |v: SimScalar| v.raw() as f64 / 4_294_967_296.0;
+        (raw(after.x - before.x), raw(after.y - before.y))
+    }
+
+    /// Three raw units of Q32.32, world units: the rounding of one transferred correction.
+    const RAW3: f64 = 3.0 / 4_294_967_296.0;
+
+    /// F-T2 (plan `2026-11-25-enemy-contact-and-ring-retarget` Amendment 2, A2.1): an idle friend
+    /// touching a standing enemy at 45° to the line of a walker pressing it (overlap 0.1) slides
+    /// along the enemy: in one averaged iteration its displacement is the tangential part of its
+    /// unbounded correction, `0.1 · (x̂ · t) · t = (0.05, 0.05)`; the walker takes the normal part,
+    /// 0.05 back along its line; the enemy does not move.
+    #[test]
+    fn a_held_friend_keeps_its_slide() -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let settings = SolverSettings {
+            iterations: 1,
+            ..SETTINGS
+        };
+        let idle = ContactParty {
+            idle: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+        let enemy_at = at(20.0 + diagonal, 20.0 - diagonal);
+        let bodies = [
+            solver_body(1, idle, 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+            solver_body(2, party(1), 0.5, enemy_at, enemy_at),
+            solver_body(3, walker, 0.5, at(18.9, 20.0), at(19.1, 20.0)),
+        ];
+        let (solved, errors) = solve_on(&mut world, &bodies, settings);
+        assert_eq!(errors, []);
+        assert_eq!(solved.bodies[1].position, enemy_at, "the enemy moved");
+        let friend = moved(bodies[0].position, solved.bodies[0].position);
+        assert!(
+            (friend.0 - 0.05).abs() <= 1e-6 && (friend.1 - 0.05).abs() <= 1e-6,
+            "the held friend moved {friend:?}"
+        );
+        let back = moved(bodies[2].committed, solved.bodies[2].position);
+        assert!(
+            (back.0 + 0.05).abs() <= 1e-6 && back.1.abs() <= RAW3,
+            "the walker moved {back:?}"
+        );
+        assert!(worst_enemy_overlap(&solved.bodies) <= ROUNDING_SHARE);
+        Ok(())
+    }
+
+    /// F-T3 (Amendment 2, A2.1): an engaged melee unit under D-δ (its target due west), whose ring
+    /// tangent runs straight into a neighbouring enemy touching it from the north, is pressed from
+    /// the south by a walking friend. It never closes on the neighbour (it does not move at all:
+    /// its tangential part is blocked, its radial part removed by D-δ); the presser takes the
+    /// blocked part, along its own line only, so no radial correction reaches it; no enemy moves.
+    #[test]
+    fn a_nudged_attacker_between_a_presser_and_an_enemy() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut world = flat_world(None)?;
+        let attacker = ContactParty {
+            engaged: true,
+            nudge: Some(SimVec2::new(SimScalar::ONE, SimScalar::ZERO)),
+            ..party(0)
+        };
+        let presser = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let bodies = [
+            solver_body(1, attacker, 0.5, at(21.0, 20.0), at(21.0, 20.0)),
+            solver_body(2, party(1), 0.5, at(20.0, 20.0), at(20.0, 20.0)),
+            solver_body(3, party(1), 0.5, at(21.0, 21.0), at(21.0, 21.0)),
+            solver_body(4, presser, 0.5, at(21.0, 18.95), at(21.0, 19.1)),
+        ];
+        let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+        assert_eq!(errors, []);
+        assert_eq!(
+            solved.bodies[0].position,
+            at(21.0, 20.0),
+            "the attacker moved"
+        );
+        assert_eq!(
+            solved.bodies[1].position,
+            at(20.0, 20.0),
+            "the target moved"
+        );
+        assert_eq!(
+            solved.bodies[2].position,
+            at(21.0, 21.0),
+            "the neighbour moved"
+        );
+        assert_eq!(
+            solved.bodies[3].position.x,
+            at(21.0, 0.0).x,
+            "a radial correction reached the presser"
+        );
+        assert!(
+            solved.bodies[3].position.y < at(0.0, 19.1).y,
+            "the presser took nothing"
+        );
+        assert!(worst_enemy_overlap(&solved.bodies) <= ROUNDING_SHARE);
+        Ok(())
+    }
+
+    /// F-T6 (Amendment 2, A2.1, its stated limit): walker → friend → friend → standing enemy, the
+    /// walker stepping 0.05 a tick for 50 ticks. Only the enemy invariants are asserted: the enemy
+    /// never moves and never overlaps a friend. The chain's friend overlaps, F-1's limit, are
+    /// printed for the evidence.
+    #[test]
+    fn a_two_friend_chain_against_an_enemy_holds_the_enemy(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut world = flat_world(None)?;
+        let idle = ContactParty {
+            idle: true,
+            ..party(0)
+        };
+        let walker = ContactParty {
+            moving: true,
+            ..party(0)
+        };
+        let enemy = at(22.0, 20.0);
+        let mut friends = [at(18.0, 20.0), at(19.0, 20.0), at(20.0, 20.0)];
+        let mut worst_friend = 0.0_f64;
+        for tick in 0..50 {
+            let step = SimVec2::new(SimScalar::from_num(0.05), SimScalar::ZERO);
+            let bodies = [
+                solver_body(1, party(1), 1.0, enemy, enemy),
+                solver_body(2, walker, 0.5, friends[0], friends[0] + step),
+                solver_body(3, idle, 0.5, friends[1], friends[1]),
+                solver_body(4, idle, 0.5, friends[2], friends[2]),
+            ];
+            let (solved, errors) = solve_on(&mut world, &bodies, SETTINGS);
+            assert_eq!(errors, []);
+            assert_eq!(
+                solved.bodies[0].position, enemy,
+                "tick {tick}: the enemy moved"
+            );
+            let worst = worst_enemy_overlap(&solved.bodies);
+            assert!(
+                worst <= ROUNDING_SHARE,
+                "tick {tick}: enemy overlap {worst}"
+            );
+            for (slot, body) in friends.iter_mut().zip(&solved.bodies[1..]) {
+                *slot = body.position;
+            }
+            for pair in solved.bodies[1..].windows(2) {
+                worst_friend = worst_friend.max(exact_overlap_share(&pair[0], &pair[1]));
+            }
+        }
+        println!("F-T6 largest friend overlap in the chain: {worst_friend:.4}");
         Ok(())
     }
 

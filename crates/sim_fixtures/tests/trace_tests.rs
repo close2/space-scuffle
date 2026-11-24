@@ -464,6 +464,56 @@ fn engaged_unit_ticks_count_the_states_in_band_of_the_target() -> TestResult {
     Ok(())
 }
 
+/// W0-T6 (plan `2026-11-25-enemy-contact-and-ring-retarget` Amendment 2, A2.2): the replica of
+/// the solver's D-δ eligibility. In the constructed two-unit battle, once the melee unit stands in
+/// band of the ranged unit it is eligible, its radial pointing from its target to it, and the
+/// ranged unit, in band of it too, is not (a ranged weapon); with the catalog's switch off, or on
+/// the legacy pipeline, neither is.
+#[test]
+fn the_nudge_replica_answers_as_the_solver_rule() -> TestResult {
+    use sim_core::catalog::{ContactRules, MovementPipeline};
+    use sim_fixtures::trace::contact_checks::nudge_radial;
+    let battle = scripted(&squad(RANGED, 15.0, 32.0), &squad(MELEE, 10.0, 32.0))?;
+    for (nudge, pipeline, eligible) in [
+        (true, MovementPipeline::Solver, true),
+        (false, MovementPipeline::Solver, false),
+        (true, MovementPipeline::Legacy, false),
+    ] {
+        let mut catalogs = sim_fixtures::shipped_catalogs();
+        sim_fixtures::without_random_delays(&mut catalogs.units);
+        let rules = catalogs.units.movement_rules();
+        catalogs
+            .units
+            .set_movement_rules(rules.with_contact(ContactRules {
+                nudge_engaged_along_ring: nudge,
+                pipeline,
+                ..rules.contact()
+            })?);
+        let mut run = BattleRun::new(&battle, catalogs, 1, 0.0)?;
+        let (blue, red) = (run.blue[0], run.red[0]);
+        let mut seen_melee = false;
+        for _ in 0..ticks_to_contact(5.0)? + 3 {
+            assert!(run.step().is_empty(), "no diagnostics");
+            let (Some(b), Some(r)) = (run.world.entities.get(&blue), run.world.entities.get(&red))
+            else {
+                break;
+            };
+            assert_eq!(nudge_radial(&run.world, b), None, "the ranged unit");
+            if let Some((x, y)) = nudge_radial(&run.world, r) {
+                assert!(eligible, "{nudge} {pipeline:?}");
+                let (dx, dy) = (
+                    f64::from((r.position.x - b.position.x).to_f32()),
+                    f64::from((r.position.y - b.position.y).to_f32()),
+                );
+                assert!((x * dy - y * dx).abs() < 1e-3 && x * dx + y * dy > 0.0);
+                seen_melee = true;
+            }
+        }
+        assert_eq!(seen_melee, eligible, "{nudge} {pipeline:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn tracing_a_battle_changes_nothing_and_reproduces_the_matrix_result() -> TestResult {
     let matrix = Matrix::from_ron_str(MATRIX_RON)?;
@@ -647,7 +697,7 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
          red_churn_explained,red_churn_unexplained,blue_blocked,red_blocked,blue_shots,\
          red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,blue_shove_e,red_shove_e,\
          blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-         friend_overlap_ticks"
+         friend_overlap_ticks,blue_shove_e_prime,red_shove_e_prime"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).

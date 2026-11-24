@@ -33,7 +33,7 @@
 //! - The contact checks ([`super::contact_checks`], plan `2026-11-24-solver-retarget-and-shoving`
 //!   §5.1: D-SHOVE, D-R10, D-CHURN and the counters of its behaviour checks; then plan
 //!   `2026-11-25-enemy-contact-and-ring-retarget` §6: D-SHOVE-E, B7′'s engaged unit-ticks, the
-//!   enemy-overlap ticks and the friend overlap, appended last) are the last [`CHECK_COLUMNS`]
+//!   enemy-overlap ticks and the friend overlap, appended last; then its Amendment 2's D-SHOVE-E′) are the last [`CHECK_COLUMNS`]
 //!   columns, a measurement like the blocking columns; a table written before them
 //!   ([`SPLIT_CSV_HEADER`]) is read without them.
 
@@ -58,7 +58,7 @@ blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,red_r10_unruled,red
 blue_churn_explained,blue_churn_unexplained,red_churn_explained,red_churn_unexplained,\
 blue_blocked,red_blocked,blue_shots,red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,\
 blue_shove_e,red_shove_e,blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
-friend_overlap_ticks";
+friend_overlap_ticks,blue_shove_e_prime,red_shove_e_prime";
 
 /// The header of a `matrix.csv` written before the contact checks, still read by `--compare`.
 pub const SPLIT_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
@@ -86,7 +86,7 @@ const UNSPLIT_COLUMNS: usize = 12;
 const SPLIT_COLUMNS: usize = 14;
 
 /// Contact-check columns at the end of a current row ([`ContactChecks`]).
-const CHECK_COLUMNS: usize = 28;
+const CHECK_COLUMNS: usize = 30;
 
 /// Columns of `matrix.csv`: [`SPLIT_COLUMNS`], then the contact checks.
 const CSV_COLUMNS: usize = SPLIT_COLUMNS + CHECK_COLUMNS;
@@ -251,6 +251,8 @@ fn checks_cells(checks: &ContactChecks) -> String {
     cells.push(checks.enemy_overlap_ticks.to_string());
     cells.push(format!("{:.6}", checks.friend_overlap));
     cells.push(checks.friend_overlap_ticks.to_string());
+    cells.push(format!("{:.4}", blue.shove_e_prime));
+    cells.push(format!("{:.4}", red.shove_e_prime));
     cells.join(",")
 }
 
@@ -272,6 +274,7 @@ fn parse_checks(cells: &[&str]) -> Result<ContactChecks, String> {
         checks.unit_ticks = int(18 + side)?;
         checks.shove_e = real(21 + side)?;
         checks.engaged_ticks = int(23 + side)?;
+        checks.shove_e_prime = real(28 + side)?;
     }
     Ok(ContactChecks {
         sides,
@@ -909,6 +912,7 @@ mod tests {
                     SideChecks {
                         shove: 1.25,
                         shove_e: 0.5,
+                        shove_e_prime: 0.25,
                         r10: [1, 2, 3, 4],
                         churn: [5, 6],
                         blocked: 7,
@@ -919,6 +923,7 @@ mod tests {
                     SideChecks {
                         shove: 0.0,
                         shove_e: 0.0,
+                        shove_e_prime: 0.0,
                         r10: [0, 0, 0, 11],
                         churn: [0, 12],
                         blocked: 13,

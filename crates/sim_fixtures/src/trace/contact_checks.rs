@@ -25,6 +25,14 @@
 //!   radial part of its displacement over the enemies touching it at the tick's start
 //!   ([`shove_e_of`]). A nudge along the unit's own attack ring is tangential to the enemy it
 //!   touches and counts only to second order; a shove away from the enemy counts fully.
+//! - **D-SHOVE-E′** ([`SideChecks::shove_e_prime`], plan Amendment 2, A2.2, B2-b): D-SHOVE-E with
+//!   the component of a D-δ-eligible unit's displacement along its own target ring's tangent
+//!   removed first ([`shove_e_prime_of`]). Eligibility is a replica of the solver's
+//!   `ContactParty::nudge` ([`nudge_radial`], pinned by W0-T6): the catalog's
+//!   `nudge_engaged_along_ring` on, the solver pipeline, not holding, immobile or unpushable, a melee
+//!   weapon against a live target (its current target, else its attack order's, not lost to fog)
+//!   in band. The band is the trace's (range and radii, without range upgrades or status
+//!   modifiers).
 //! - **B7** ([`SideChecks::shots`], [`SideChecks::unit_ticks`]): releases (a weapon cooldown that
 //!   rose, as [`super::swing::infer`] reads them; a unit that releases and dies in one tick is
 //!   not counted) and living unit-ticks, so shots per unit-second can be formed.
@@ -61,6 +69,7 @@ use super::activity::{classify, Activity, ActivityInput};
 use super::{attack_target, in_band, to_f64};
 use crate::harness::metrics::Point;
 use crate::harness::room::{classify_room, RingQuery, RoomClass};
+use sim_core::catalog::MovementPipeline;
 use sim_core::movement::MovementLayer;
 use sim_core::{is_threat_to, Entity, SimWorld, UnitArchetype};
 use sim_types::{AttackOrigin, EntityId, PlayerId, SimScalar, SimVec2, UnitOrder};
@@ -86,6 +95,9 @@ pub struct SideChecks {
     /// D-SHOVE-E: world units moved outward from touching enemies while proposing no motion
     /// ([`shove_e_of`]).
     pub shove_e: f64,
+    /// D-SHOVE-E′: D-SHOVE-E without a D-δ-eligible unit's motion along its own ring
+    /// ([`shove_e_prime_of`]).
+    pub shove_e_prime: f64,
     /// Living unit-ticks ending with the unit's attack target in its band (B7′).
     pub engaged_ticks: u32,
     /// D-R10 unit-ticks, indexed by [`RoomClass::index`]: leash, terrain, unruled, free.
@@ -156,6 +168,64 @@ pub fn shove_of(proposed_none: bool, holding: bool, enemy_touching: bool, moved:
     }
 }
 
+/// D-SHOVE-E′ for one unit and one tick (plan Amendment 2, A2.2): [`shove_e_of`] after removing
+/// from `moved` its component along `tangent`, the unit tangent of its own target ring when it
+/// was eligible for D-δ at the tick's start (`None` otherwise, when nothing is removed).
+#[must_use]
+pub fn shove_e_prime_of(
+    (proposed_none, holding): (bool, bool),
+    moved: Point,
+    away: impl IntoIterator<Item = Point>,
+    tangent: Option<Point>,
+) -> f64 {
+    let moved = tangent.map_or(moved, |(tx, ty)| {
+        let along = moved.0 * tx + moved.1 * ty;
+        (moved.0 - along * tx, moved.1 - along * ty)
+    });
+    shove_e_of(proposed_none, holding, moved, away)
+}
+
+/// The replica of the solver's D-δ eligibility (`ContactParty::nudge`, pinned by W0-T6): the unit
+/// vector from `entity`'s target to it when the catalog lets allies nudge engaged melee units,
+/// the world runs the solver pipeline, `entity` is not holding (nor immobile or unpushable), and
+/// its melee weapon reaches a live target in band (its current target, else its attack order's,
+/// not lost to fog); `None` otherwise.
+#[must_use]
+pub fn nudge_radial(world: &SimWorld, entity: &Entity) -> Option<Point> {
+    let rules = world.catalog.movement_rules().contact();
+    if !rules.nudge_engaged_along_ring
+        || rules.pipeline != MovementPipeline::Solver
+        || entity.cannot_be_pushed()
+    {
+        return None;
+    }
+    let target_id = entity
+        .current_target
+        .or(match entity.order_queue.front() {
+            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+            _ => None,
+        })
+        .filter(|&id| {
+            !entity
+                .movement
+                .last_seen
+                .is_some_and(|seen| seen.target == id && seen.lost)
+        })?;
+    let target = world.entities.get(&target_id).filter(|t| t.is_alive())?;
+    let arch = world.catalog.get(entity.unit_type_id).ok()?;
+    let target_arch = world.catalog.get(target.unit_type_id).ok()?;
+    let weapon = arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())?;
+    if !weapon.melee || !in_band(world, entity, arch, target, SimScalar::ZERO) {
+        return None;
+    }
+    let (dx, dy) = (
+        to_f64(entity.position.x) - to_f64(target.position.x),
+        to_f64(entity.position.y) - to_f64(target.position.y),
+    );
+    let length = dx.hypot(dy);
+    (length > 0.0).then(|| (dx / length, dy / length))
+}
+
 /// One unit's last target switch, for D-CHURN: tick, from, to.
 type Switch = (u32, EntityId, EntityId);
 
@@ -205,6 +275,8 @@ struct Seen {
     /// A body for the overlaps and for touching (module documentation).
     body: bool,
     engaged: bool,
+    /// The tangent of its own target ring when D-δ may nudge it ([`nudge_radial`]).
+    tangent: Option<Point>,
     proposed_none: bool,
     holding: bool,
     target: Option<EntityId>,
@@ -292,6 +364,9 @@ impl ContactMeter {
             !away.is_empty(),
             moved,
         );
+        let flags = (before.proposed_none, before.holding);
+        checks.shove_e_prime +=
+            shove_e_prime_of(flags, delta, away.iter().copied(), before.tangent);
         checks.shove_e += shove_e_of(before.proposed_none, before.holding, delta, away);
         checks.shots += u32::from(entity.weapon_cooldown_remaining > before.cooldown);
         checks.blocked += u32::from(is_blocked(world, entity, arch));
@@ -494,6 +569,7 @@ fn seen(world: &SimWorld, entity: &Entity, arch: &UnitArchetype) -> Seen {
         ),
         body: !entity.passes_through_units() && !arch.is_immobile_by_default(),
         engaged,
+        tangent: nudge_radial(world, entity).map(|(x, y)| (-y, x)),
         proposed_none: engaged || standing_order,
         holding: entity.is_on_hold() || entity.cannot_be_pushed(),
         target,
@@ -616,6 +692,25 @@ mod tests {
         let two = [(1.0, 0.0), (0.0, 1.0)];
         assert!((shove_e_of(true, false, (0.1, 0.05), two) - 0.1).abs() < 1e-12);
         assert!((shove_e_of(true, false, (0.03, 0.04), [(0.0, 0.0)]) - 0.05).abs() < 1e-12);
+    }
+
+    /// W0-T7 (plan Amendment 2, A2.2): a D-δ nudge along the unit's own target ring (its target
+    /// due west, so the tangent is ±y) that is radial to a second touching enemy (due south)
+    /// counts 0 in D-SHOVE-E′ and in full in D-SHOVE-E; a push radial to the own target counts in
+    /// both; a unit not eligible for D-δ counts the same in both.
+    #[test]
+    fn shove_e_prime_removes_only_the_own_ring_tangent() {
+        let tangent = Some((0.0, 1.0));
+        let touching = [(1.0, 0.0), (0.0, 1.0)];
+        let nudge = (0.0, 0.1);
+        assert!((shove_e_of(true, false, nudge, touching) - 0.1).abs() < 1e-12);
+        assert!(shove_e_prime_of((true, false), nudge, touching, tangent).abs() < 1e-12);
+        let push = (0.1, 0.0);
+        assert!((shove_e_of(true, false, push, touching) - 0.1).abs() < 1e-12);
+        assert!((shove_e_prime_of((true, false), push, touching, tangent) - 0.1).abs() < 1e-12);
+        let both = (0.1, 0.05);
+        assert!((shove_e_prime_of((true, false), both, touching, None) - 0.1).abs() < 1e-12);
+        assert!(shove_e_prime_of((true, true), push, touching, tangent).abs() < 1e-12);
     }
 
     /// W0-T3: a return to the previous target within the window is reported with its reason; a

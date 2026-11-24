@@ -17,7 +17,8 @@
 //! - a walker stops at a standing enemy's surface (E2-T2), and one whose path clips an enemy
 //!   slides past it (E2-T3), the enemy unmoved in both;
 //! - two enemies walking head-on meet at contact, sharing the gap by their speeds (E2-T4);
-//! - an idle body pushed by a friend into a standing enemy stops at its surface (E2-T5);
+//! - an idle body pushed by a friend into a standing enemy stops at its surface, and the friend
+//!   pressing it takes what it cannot (E2-T5, F-T1);
 //! - with `contact.enemies_block` off the simulation is WP1's, bit for bit (E2-T8).
 //!
 //! The scenes use scratch archetypes (C5) and derive their sizes from the radii and the ring
@@ -612,17 +613,25 @@ fn two_walkers_meet_at_contact() -> TestResult {
     Ok(())
 }
 
-/// E2-T5: in a corridor two cells wide, a walker as wide as the corridor on `Move` pushes an idle
-/// friend of the same width ahead of it (neither can pass or step aside) into a standing enemy
-/// post: the friend stops at the post's surface (overlap within [`ROUNDING`] on every tick,
-/// touching at the end), the post never moves, and the friends' overlap at the end is within
-/// D-α's moving bound.
+/// F-T1 (E2-T5; plan `2026-11-25-enemy-contact-and-ring-retarget` Amendment 2, A2.1): a walker
+/// on `Move` pushes an idle friend of its own width ahead of it into a standing enemy post. The
+/// friend ends touching the post (overlap within [`ROUNDING`] on every tick), the post never
+/// moves, and the friends' overlap stays within D-α's moving bound on every tick (F-1: the friend
+/// the post holds passes the part of its yield it cannot take to the walker). Two scenes: a
+/// corridor two cells wide, as wide as the bodies (neither can pass or step aside), and an open
+/// field.
 #[test]
-#[ignore = "fails under the plan's design: the friend stops at the post, but the walker keeps \
-            walking into it (C-2 gives a moving body no share against an idle friend) up to 90 % \
-            overlap; evidence 2026-11-25-enemy-contact-and-ring-retarget §5"]
 fn a_body_pressed_by_friends_stops_at_an_enemy() -> TestResult {
-    let mut world = corridor_world(0x0E2_0005, 2)?;
+    press_through_a_friend(Some(2))?;
+    press_through_a_friend(None)
+}
+
+/// F-T1's scene in a corridor of `rows` cells, or in the open field when `None`.
+fn press_through_a_friend(rows: Option<u32>) -> TestResult {
+    let mut world = match rows {
+        Some(rows) => corridor_world(0x0E2_0005, rows)?,
+        None => scratch_world(solver_rules()?, 0x0E2_0005)?,
+    };
     let (big, block) = (world_units(LARGE), 1.0);
     let centre = f64::from(CORRIDOR_ROW) + 1.0;
     let post = world.spawn_unit(UnitTypeId(POST), RED, at(CENTRE.0, centre))?;
@@ -647,25 +656,28 @@ fn a_body_pressed_by_friends_stops_at_an_enemy() -> TestResult {
             },
         )],
     );
+    let moving = f64::from(solver_rules()?.contact().moving_overlap_permille) / 1000.0;
     for tick in 0..150 {
         step(&mut world, vec![]);
         assert_eq!(
             position(&world, post)?,
             start,
-            "the post moved at tick {tick}"
+            "{rows:?}: the post moved at tick {tick}"
         );
         let gap = exact_distance(position(&world, idle)?, start) - (big + block);
-        assert!(gap >= -ROUNDING, "tick {tick}: overlap {}", -gap);
+        assert!(gap >= -ROUNDING, "{rows:?}: tick {tick}: overlap {}", -gap);
+        let friends = exact_distance(position(&world, idle)?, position(&world, walker)?);
+        let overlap = (2.0 * block - friends) / (2.0 * block);
+        assert!(
+            overlap <= moving,
+            "{rows:?}: tick {tick}: friend overlap {overlap}"
+        );
     }
     let gap = exact_distance(position(&world, idle)?, start) - (big + block);
     assert!(
         gap <= 1.0 / 64.0,
-        "the idle friend stopped {gap} short of the post"
+        "{rows:?}: the idle friend stopped {gap} short of the post"
     );
-    let friends = exact_distance(position(&world, idle)?, position(&world, walker)?);
-    let moving = f64::from(solver_rules()?.contact().moving_overlap_permille) / 1000.0;
-    let overlap = (2.0 * block - friends) / (2.0 * block);
-    assert!(overlap <= moving, "friend overlap {overlap}");
     Ok(())
 }
 
