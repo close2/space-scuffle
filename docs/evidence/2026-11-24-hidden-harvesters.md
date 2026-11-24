@@ -240,3 +240,8 @@ output paths changed (`scripts/`).
 - **Goldens** (`golden-wp5/summary.txt`, on the exported WP5 tree, no re-recording): `golden_replay_tests` on native
   release and debug and `wasm32-wasip1` release and debug, and `sim_fixtures`' `fixture_tests` (the sandbox
   checksum) on native release and debug, all pass. No fixture file changed.
+- **After merging `main` `ffc6f298`** (attack-orders WP5, merge `8701972f`), measured again against that `main`
+  (`world-main2/` against `world-merged/`, `income/main2-*` against `income/merged-*`, `golden-merged/`): 483 world
+  files, 0 differing; the matrix keeps 2 and 25 expectation failures; 26 income files byte-identical (5,661 takes;
+  35 tick ends inside for each of 917 gas trips, 0 for each of 4,623 mineral trips); the goldens and the sandbox pass
+  unchanged on native release and debug and `wasm32-wasip1` release and debug.
