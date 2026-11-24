@@ -771,6 +771,45 @@ control group and press the key while it is inside.
 
 ---
 
+## Amendment 1 (implementation, 2026-11-24): WP5 under the contact solver, as a body rule
+
+**Finding.** WP5 starts on `main` at `708576ac`, where the contact solver
+([`2026-11-20-contact-solver`](2026-11-20-contact-solver.md)) is the shipped pipeline and `Legacy` stays selectable.
+Read on that tree:
+
+- **`Entity::takes_part_in_movement` now gates the whole movement phase, not only contact.** Both pipelines build
+  their bodies from the entries of `prepare_movement_snapshot` (`movement/locomotion.rs`) or, outside a full step,
+  from the same filter in `resolve_collisions_and_push` (`movement/collision.rs`). A unit outside it is not stepped
+  at all: its movement memory (`repath_cooldown`, `abandoned_ticks`), `pos_at_tick_start` and hull turn stop for the
+  tick. All three are hashed, and `abandoned_ticks` survives the new leg's `MovementMemory::restart`. Taking
+  `is_hidden()` there would freeze them for the 35 ticks of every gas gather, which moves a harvesting world's
+  checksum and may move its take ticks (P-11), against D-11's "byte-identical everywhere". Cargo is outside the
+  phase because its position is the carrier's; a housed unit keeps its own position (D-7) and stands halted like
+  any arrived worker.
+- **The body is decided in three places, all reading the same two flags.** The legacy `collision_body` and the
+  solver's `solver_body` (both `movement/collision.rs`) mark a body `ghost` from `is_mineral_walking ||
+  suppress_collision`, and each pipeline's pair builder skips every pair with a ghost (`resolve_collisions_and_push`,
+  `ContactSolver::build_pairs`). `prepare_movement_snapshot` leaves the same bodies out of the steering obstacles
+  every walker in either pipeline steers and is pushed against. The displacement admission's body list
+  (`validate_placement_unoccupied`, `movement/mod.rs`) and `steering.rs::resolve_push_interaction` read
+  `is_loaded_in_transport()` only.
+
+**Decisions.**
+
+1. **`takes_part_in_movement` stays on `is_loaded_in_transport()`.** A housed unit is still stepped by the movement
+   phase, as today; it is halted (`halt_task`), so it coasts at rest.
+2. **Hidden is no body, through one predicate.** `Entity::passes_through_units()` is `is_hidden() ||
+   is_mineral_walking || suppress_collision`, and the three sites that read the two flags today read it instead:
+   `collision_body` and `solver_body` (no collision pair, either pipeline) and the steering obstacle filter (no push
+   partner, either pipeline). The displacement admission and `resolve_push_interaction` take `is_hidden()` for
+   `is_loaded_in_transport()`, as D-11 says.
+3. **Expected byte-identical everywhere,** as D-11: every housed unit also has `is_mineral_walking` set by its
+   `step_harvest` before the movement phase, so the predicate changes nothing on any tick a full step runs. The
+   displacement admission changes for a unit placed onto a housed worker (a mineral-walking worker blocks a placement
+   today); no measured world harvests (P-0).
+
+---
+
 ## As built
 
 Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`, then merged with `main` `7dc356fc`
@@ -784,7 +823,7 @@ Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`
 | WP3 | `56c44091` | `BubbleRenderInstance::housed`, the client's presence gate, `BattleSelection::leave`, `can_receive_order` |
 | merge | `18999b6f` | schema 43 (main) -> 44; goldens and sandbox re-proved and re-recorded on the merged tree |
 | WP4 | this commit | records |
-| WP5 | not started | waits for the contact solver |
+| WP5 | `78d68c64` | Amendment 1 (`27747d2c`): `Entity::passes_through_units` (hidden, mining walk, suppressed collision) marks both pipelines' bodies ghost and leaves them out of the steering obstacles; `validate_placement_unoccupied` and `resolve_push_interaction` read `is_hidden`; `takes_part_in_movement` unchanged; three tests in `hidden_harvester_tests` (red first, both pipelines) |
 
 **Decisions and deviations from the plan.**
 
@@ -816,4 +855,9 @@ Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`
 
 **Rewritten tests (§8 rule 4):** none; no existing test shot, splashed, sighted or clicked a gas gatherer.
 
-**Open:** WP5 (movement readers); Q0107 and Q0108 unanswered, defaults built; B-196 deferred.
+8. **WP5 as Amendment 1, not as D-11 wrote it.** `takes_part_in_movement` keeps `is_loaded_in_transport`, because
+   on the contact solver's tree it gates the whole movement phase and taking `is_hidden` there would freeze a housed
+   worker's hashed movement memory for every gather. The body rule reads `is_hidden` instead, through one predicate.
+   WP5 started on `main` `708576ac` and was measured against it: §7's WP5 column held (evidence §6).
+
+**Open:** Q0107 and Q0108 unanswered, defaults built; B-196 deferred.

@@ -884,14 +884,14 @@ impl SimWorld {
             }
             match self.motion_entry(id) {
                 Ok(entry) => {
-                    // A body without collision (mining, or a status's suppression) is no
-                    // obstacle anyone steers around, and a registered structure is no body:
+                    // A body without collision (hidden, mining, or a status's suppression) is
+                    // no obstacle anyone steers around, and a registered structure is no body:
                     // units meet it through its footprint, as they meet terrain (D-2 B2).
-                    if let Some(actor) = self.entities.get(&id).filter(|a| {
-                        !entry.foundation
-                            && !a.is_mineral_walking
-                            && !a.status_modifiers().suppress_collision
-                    }) {
+                    if let Some(actor) = self
+                        .entities
+                        .get(&id)
+                        .filter(|a| !entry.foundation && !a.passes_through_units())
+                    {
                         let obstacle = self.obstacle_of(entry, actor);
                         let class = entry.policy.body_class();
                         self.movement.obstacles[class].push(obstacle);

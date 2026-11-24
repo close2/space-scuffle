@@ -119,7 +119,7 @@ impl SimWorld {
             fixed: actor.is_immobile || actor.unpushable,
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
-            ghost: actor.is_mineral_walking || actor.status_modifiers().suppress_collision,
+            ghost: actor.passes_through_units(),
             idle: actor.is_idle(),
         }
     }
@@ -464,7 +464,7 @@ impl SimWorld {
             policy: entry.policy,
             start: actor.pos_at_tick_start,
             position: actor.position,
-            ghost: actor.is_mineral_walking || actor.status_modifiers().suppress_collision,
+            ghost: actor.passes_through_units(),
         }
     }
 }
