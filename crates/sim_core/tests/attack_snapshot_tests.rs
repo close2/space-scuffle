@@ -6,7 +6,9 @@
 //! attack visibility is `Snapshot` (`StarCraft` II's `CEffectDamage` default, `core`
 //! EffectData:62) on a unit of a player who does not see the attacker leaves that player one
 //! still image of the attacker, refreshed by later strikes and dropped once the player sees the
-//! image's spot or the attacker itself. The image is never a target.
+//! image's spot or the attacker itself, and at the latest the catalog's
+//! `attack_snapshot_cap_ticks` after the strike that made or last refreshed it (plan Amendment 1,
+//! owner answer Q0112 2(c)). The image is never a target.
 //!
 //! # How it fits
 //! Combat records the snapshot in the simulation's unhashed presentation workspace, the vision
@@ -17,14 +19,19 @@
 //!   (charter §3.3).
 //! - Every map is built through `sim_map`: a plateau with no ramp, so the low ground never sees
 //!   up and a ground unit never climbs it.
+//! - The tests of the drops by sight run on a scratch catalog whose cap is far longer than the
+//!   test, so only sight ends the image there; the cap's own tests run on the shipped catalog
+//!   and on scratch copies of it read from disk.
 
-use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
+use sim_core::catalog::{CatalogLoadError, RuntimeCatalogs};
+use sim_core::{SimCoreError, SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AnimState, AttackVisibility, Concealment, EntityId, MoverType, PlayerCommand, PlayerId,
     PlayerView, ShapeKind, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashShape, SplashZone,
-    Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState,
+    Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState, TICKS_PER_SECOND,
 };
+use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -38,6 +45,52 @@ const PLATEAU: u32 = 16;
 const ROW: f64 = 16.5;
 /// Ticks every walk below is allowed.
 const WALK_LIMIT: u32 = 3_000;
+/// The shipped units.ron's authored cap, as written there (plan Amendment 1: 1 second).
+const SHIPPED_CAP: &str = "attack_snapshot_cap_ticks: Some(25),";
+/// A cap far longer than any test below, so only sight ends an image under it.
+const LONG_CAP: u32 = 1_000_000;
+
+/// A copy of the shipped catalog directory with its snapshot cap authored as `cap` (the text
+/// after `attack_snapshot_cap_ticks: `), loaded through the runtime loader and removed again.
+fn catalogs_with_cap(label: &str, cap: &str) -> Result<RuntimeCatalogs, CatalogLoadError> {
+    let directory = scratch_catalog(label, cap).map_err(|source| CatalogLoadError::Io {
+        path: PathBuf::from(label),
+        source,
+    })?;
+    let loaded = RuntimeCatalogs::load_from_directory(&directory);
+    std::fs::remove_dir_all(&directory).map_err(|source| CatalogLoadError::Io {
+        path: directory.clone(),
+        source,
+    })?;
+    loaded
+}
+
+/// Copies the shipped catalog directory to a scratch directory and replaces the authored cap in
+/// its `units.ron`.
+fn scratch_catalog(label: &str, cap: &str) -> std::io::Result<PathBuf> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog");
+    let directory = std::env::temp_dir().join(format!(
+        "space-scuffle-attack-snapshot-{}-{label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory)?;
+    for entry in std::fs::read_dir(source)? {
+        let path = entry?.path();
+        if let Some(name) = path.file_name() {
+            std::fs::copy(&path, directory.join(name))?;
+        }
+    }
+    let units = directory.join("units.ron");
+    let text = std::fs::read_to_string(&units)?;
+    if !text.contains(SHIPPED_CAP) {
+        return Err(std::io::Error::other(
+            "the shipped units.ron authors the cap as SHIPPED_CAP",
+        ));
+    }
+    let edited = text.replace(SHIPPED_CAP, &format!("attack_snapshot_cap_ticks: {cap},"));
+    std::fs::write(&units, edited)?;
+    Ok(directory)
+}
 
 /// A map whose cells with x >= [`PLATEAU`] stand one cliff level up, with no ramp.
 fn plateau_map() -> Result<GameMap, sim_map::MapError> {
@@ -169,9 +222,33 @@ struct Bench {
     arch: UnitArchetype,
 }
 
-/// Builds the bench with the attacker's weapon changed by `edit`.
+/// Builds the bench on the shipped catalogs with the attacker's weapon changed by `edit`.
 fn bench(edit: impl FnOnce(&mut WeaponSpec)) -> Result<Bench, Box<dyn std::error::Error>> {
-    let mut world = sim_fixtures::world(plateau_map()?, 0x183);
+    bench_on(sim_fixtures::try_world(plateau_map()?, 0x183)?, edit)
+}
+
+/// Builds the bench on a scratch copy of the shipped catalogs whose snapshot cap is authored as
+/// `cap`, with the attacker's weapon changed by `edit`.
+fn bench_with_cap(
+    label: &str,
+    cap: &str,
+    edit: impl FnOnce(&mut WeaponSpec),
+) -> Result<Bench, Box<dyn std::error::Error>> {
+    let catalogs = catalogs_with_cap(label, cap)?;
+    let world = SimWorld::with_catalogs(plateau_map()?, 0x183, catalogs.units, catalogs.upgrades)?;
+    bench_on(world, edit)
+}
+
+/// The bench on a scratch catalog with [`LONG_CAP`]: an image there ends only by sight.
+fn uncapped_bench(label: &str) -> Result<Bench, Box<dyn std::error::Error>> {
+    bench_with_cap(label, &format!("Some({LONG_CAP})"), |_| {})
+}
+
+/// Builds the bench in `world` with the attacker's weapon changed by `edit`.
+fn bench_on(
+    mut world: SimWorld,
+    edit: impl FnOnce(&mut WeaponSpec),
+) -> Result<Bench, Box<dyn std::error::Error>> {
     let (arch, mut weapon) = snapshot_ground_attacker(&world)
         .ok_or("a shipped ground attacker with a Snapshot weapon")?;
     edit(&mut weapon);
@@ -397,10 +474,10 @@ fn other_visibilities_record_no_snapshot() -> TestResult {
 }
 
 /// P-5: a later strike from a new spot replaces the image: one entry, the later tick, the new
-/// pose.
+/// pose. Under a long cap, so the image the second strike finds is the first one.
 #[test]
 fn a_later_strike_refreshes_the_snapshot() -> TestResult {
-    let mut bench = bench(|_| {})?;
+    let mut bench = uncapped_bench("refresh")?;
     let first = bench.until_struck(bench.victim)?;
     let first_at = bench.world.entities[&bench.attacker].position;
     let moved = at(f64::from(PLATEAU) + 0.5, ROW + 1.0);
@@ -474,18 +551,20 @@ fn scout_the_spot(bench: &mut Bench, spot: SimVec2) -> TestResult {
 
 /// P-6: the image is dropped on the tick its spot is first seen, and does not come back when the
 /// spot is fogged again.
+/// Under a long cap, so only sight ends the image.
 #[test]
 fn seeing_the_spot_drops_the_snapshot() -> TestResult {
-    let mut bench = bench(|_| {})?;
+    let mut bench = uncapped_bench("spot")?;
     let spot = struck_then_gone(&mut bench)?;
     scout_the_spot(&mut bench, spot)
 }
 
 /// P-7: the image is dropped on the tick the attacker itself is shown to the player, wherever it
 /// stands.
+/// Under a long cap, so only sight ends the image.
 #[test]
 fn seeing_the_attacker_drops_the_snapshot() -> TestResult {
-    let mut bench = bench(|_| {})?;
+    let mut bench = uncapped_bench("attacker")?;
     let watch = at(f64::from(WIDTH) - 6.5, ROW);
     bench.spotter(1, watch)?;
     bench.until_struck(bench.victim)?;
@@ -508,9 +587,10 @@ fn seeing_the_attacker_drops_the_snapshot() -> TestResult {
 }
 
 /// P-8: the attacker's death out of sight does not drop the image; seeing the spot does.
+/// Under a long cap, so only sight ends the image.
 #[test]
 fn an_attacker_dead_out_of_sight_keeps_its_snapshot_until_the_spot_is_seen() -> TestResult {
-    let mut bench = bench(|_| {})?;
+    let mut bench = uncapped_bench("dead")?;
     let spot = struck_then_gone(&mut bench)?;
     bench
         .world
@@ -535,9 +615,10 @@ fn an_attacker_dead_out_of_sight_keeps_its_snapshot_until_the_spot_is_seen() -> 
 
 /// P-10: while the image is listed, the struck player's units neither acquire nor strike the
 /// attacker, and an explicit attack order on it strikes nothing.
+/// Under a long cap, so only sight ends the image.
 #[test]
 fn the_snapshot_is_never_a_target() -> TestResult {
-    let mut bench = bench(|_| {})?;
+    let mut bench = uncapped_bench("target")?;
     bench.until_struck(bench.victim)?;
     let full = bench.vitals(bench.attacker);
     for _ in 0..60 {
@@ -676,4 +757,158 @@ fn an_area_strike_leaves_one_snapshot_per_struck_player() -> TestResult {
     assert_eq!(bench.snapshots(2), [(bench.attacker, Tick(struck))]);
     assert!(bench.snapshots(3).is_empty(), "a player it did not strike");
     Ok(())
+}
+
+/// Orders the attacker east along the plateau, out of every sight of player 1, and steps until
+/// player 1's image is gone. After every tick, a listed image must be younger than `cap` ticks.
+/// Returns the strike tick of the last image listed and the first tick without one.
+fn walk_off_until_gone(bench: &mut Bench, cap: u32) -> Result<(u32, u32), String> {
+    let far = at(f64::from(WIDTH) - 4.5, ROW);
+    step_with(
+        &mut bench.world,
+        vec![order(
+            PlayerId(0),
+            bench.attacker,
+            UnitOrder::Move { target: far },
+        )],
+    );
+    let mut last = None;
+    for _ in 0..WALK_LIMIT {
+        let now = bench.world.current_tick;
+        match bench.snapshots(1).as_slice() {
+            [(_, struck)] if now.wrapping_sub(struck.0) < cap => last = Some(struck.0),
+            [(_, struck)] => {
+                return Err(format!(
+                    "tick {now}: the image of the strike on {struck:?} outlived the cap {cap}"
+                ))
+            }
+            [] => {
+                return last
+                    .map(|struck| (struck, now))
+                    .ok_or_else(|| format!("tick {now}: no image when the walk began"))
+            }
+            more => return Err(format!("tick {now}: one image, got {more:?}")),
+        }
+        step(&mut bench.world);
+    }
+    Err(format!("the image ended within {WALK_LIMIT} ticks"))
+}
+
+/// Amendment 1 (Q0112 2(c)): under the shipped catalog, an image left alone (its attacker walks
+/// off out of sight and strikes no more) ends exactly 1 second (25 ticks) after its strike, and
+/// not a tick earlier.
+#[test]
+fn a_snapshot_left_alone_ends_when_the_cap_is_reached() -> TestResult {
+    let mut bench = bench(|_| {})?;
+    let cap = u32::from(TICKS_PER_SECOND);
+    bench.until_struck(bench.victim)?;
+    let (struck, gone) = walk_off_until_gone(&mut bench, cap)?;
+    assert_eq!(gone, struck + cap, "ends on the tick the cap is reached");
+    Ok(())
+}
+
+/// Amendment 1: a later strike before the cap moves the image to the attacker's new pose and
+/// restarts the cap, so it outlives the first strike's cap and ends the cap after the last strike.
+/// The cap here is a scratch catalog's 200 ticks, longer than the attacker's walk between the two
+/// strikes.
+#[test]
+fn a_later_strike_before_the_cap_restarts_it() -> TestResult {
+    let cap = 200;
+    let mut bench = bench_with_cap("restart", &format!("Some({cap})"), |_| {})?;
+    let first = bench.until_struck(bench.victim)?;
+    let first_at = bench.world.entities[&bench.attacker].position;
+    let moved = at(f64::from(PLATEAU) + 0.5, ROW + 1.0);
+    bench.walk(0, bench.attacker, moved, |_| Ok(()))?;
+    step_with(
+        &mut bench.world,
+        vec![order(
+            PlayerId(0),
+            bench.attacker,
+            UnitOrder::attack(bench.victim),
+        )],
+    );
+    let second = bench.until_struck(bench.victim)?;
+    assert!(second < first + cap, "premise: struck again before the cap");
+    let second_at = bench.world.entities[&bench.attacker].position;
+    assert_ne!(second_at, first_at, "premise: it struck from a new spot");
+    let view = view_of(&bench.world, 1);
+    let [entry] = view.attack_snapshots.as_slice() else {
+        return Err(format!("one snapshot, got {:?}", view.attack_snapshots).into());
+    };
+    assert_eq!(entry.struck, Tick(second), "refreshed by the second strike");
+    assert_eq!(
+        [entry.bubble.world_pos[0], entry.bubble.world_pos[1]],
+        [second_at.x.to_f32(), second_at.y.to_f32()],
+        "moved to the new pose"
+    );
+    while bench.world.current_tick < first + cap {
+        step(&mut bench.world);
+    }
+    assert_eq!(
+        bench.snapshots(1).len(),
+        1,
+        "listed past the first strike's cap"
+    );
+    let (last, gone) = walk_off_until_gone(&mut bench, cap)?;
+    assert!(last >= second);
+    assert_eq!(gone, last + cap, "ends the cap after the last strike");
+    Ok(())
+}
+
+/// Amendment 1: under the shipped cap, seeing the image's spot (here also the attacker standing
+/// on it) still ends the image at once, long before the cap.
+#[test]
+fn sight_still_ends_a_snapshot_before_the_cap() -> TestResult {
+    let mut bench = bench(|_| {})?;
+    let struck = bench.until_struck(bench.victim)?;
+    let spot = bench.world.entities[&bench.attacker].position;
+    assert_eq!(bench.snapshots(1).len(), 1, "premise: the image is listed");
+    bench.spotter(1, at(f64::from(PLATEAU) + 3.5, ROW + 2.0))?;
+    step(&mut bench.world);
+    assert!(
+        sees(&bench.world, &view_of(&bench.world, 1), spot),
+        "premise: the spotter sees the spot"
+    );
+    assert!(bench.snapshots(1).is_empty(), "ended by sight");
+    assert!(bench.world.current_tick < struck + u32::from(TICKS_PER_SECOND));
+    Ok(())
+}
+
+/// Amendment 1: the cap is read from the catalog at run time. A scratch copy of the shipped
+/// catalog authoring 40 ticks makes an image left alone last 40 ticks; one authoring `None`
+/// keeps it until it is seen, as before the amendment.
+#[test]
+fn the_cap_is_read_from_the_catalog() -> TestResult {
+    let mut forty = bench_with_cap("forty", "Some(40)", |_| {})?;
+    forty.until_struck(forty.victim)?;
+    let (struck, gone) = walk_off_until_gone(&mut forty, 40)?;
+    assert_eq!(gone, struck + 40);
+
+    let mut none = bench_with_cap("none", "None", |_| {})?;
+    none.until_struck(none.victim)?;
+    let struck = none.snapshots(1);
+    let far = at(f64::from(WIDTH) - 4.5, ROW);
+    none.walk(0, none.attacker, far, |_| Ok(()))?;
+    for _ in 0..300 {
+        step(&mut none.world);
+    }
+    assert_eq!(none.snapshots(1), struck, "no cap: kept until seen");
+    Ok(())
+}
+
+/// Amendment 1: a cap of 0, which would drop every image before it is shown, is refused at load
+/// with a typed error naming `units.ron` and the field.
+#[test]
+fn a_cap_of_zero_is_refused() -> TestResult {
+    match catalogs_with_cap("zero", "Some(0)").err() {
+        Some(CatalogLoadError::Invalid {
+            path,
+            source: SimCoreError::CatalogInvalidValue { field, .. },
+        }) => {
+            assert_eq!(path.file_name(), Some(std::ffi::OsStr::new("units.ron")));
+            assert_eq!(field, "attack_snapshot_cap_ticks");
+            Ok(())
+        }
+        other => Err(format!("a cap of 0 is refused, got {other:?}").into()),
+    }
 }

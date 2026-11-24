@@ -38,3 +38,16 @@ Every option changes presentation only: no battle outcome, replay or checksum mo
 - **1(a):** Close `B-183` for the battlefield view and track the minimap half as `B-204` until a minimap is built.
 - **2(c) — start with a 1-second cap:** The snapshot stays until you see that spot again or see the attacker itself, **capped at 1 second** after each shot (a later shot from the same attacker refreshes/moves it). Starting with 1 second keeps mobile high-ground attackers from leaving stale ghosts behind and can be tuned easily later since it is presentation-only.
 - **3(a):** Cloaked or burrowed attackers leave a snapshot **only if you detect the spot they fire from** (with a detector in range); otherwise you see nothing.
+
+## Resolution
+
+Built on branch `snapshot-cap` by plan `2026-11-24-attacker-snapshot` (WP1 to WP4 on the defaults, Amendment 1 for 2(c)).
+
+- **1(a):** as the plan built it: B-183 is fixed for the battlefield view and the minimap half is B-204.
+- **2(c):** commit `c6b2de8c`. A snapshot ends when its player sees its spot or its attacker, and at the latest
+  `attack_snapshot_cap_ticks` after the strike that made or last refreshed it; a later strike by the same attacker
+  moves it and restarts the cap. The cap is authored in `assets/catalog/units.ron` as `Some(25)` (1 second), read at
+  run time, documented there, and refused at load when 0 (`SimCoreError::CatalogInvalidValue`); `None` restores the
+  game's "until seen". No checksum, golden or schema value moved. It is a difference from StarCraft II 5.0.14, which
+  names no duration, chosen by this answer.
+- **3(a):** as the plan built it: a concealed attacker leaves a snapshot only where the struck player detects it.

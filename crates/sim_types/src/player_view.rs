@@ -96,7 +96,8 @@ pub struct PlayerView {
     /// Attackers of other players that struck the viewer's units from where the viewer did not
     /// see them, each as it stood at its last such strike, sorted by entity ID (plan
     /// `2026-11-24-attacker-snapshot` D-4): `StarCraft` II's damage `Visibility Snapshot`. An
-    /// entry stays until the viewer sees its spot or the attacker itself. It is an image, never a
+    /// entry stays until the viewer sees its spot or the attacker itself, and at most the catalog's
+    /// `attack_snapshot_cap_ticks` after `struck` (plan Amendment 1). It is an image, never a
     /// target: an attacker listed here is in neither `revealed` nor `attack_revealed` for being
     /// listed. Skipped when empty, so a record without snapshots keeps its serialized bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

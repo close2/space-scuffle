@@ -588,7 +588,8 @@ impl Default for MissileValidation {
 pub enum AttackVisibility {
     /// A snapshot in fog and on the minimap, never a target (the engine default). The struck
     /// player keeps a still image of the attacker where it struck from, never a target, until it
-    /// sees that spot or the attacker (plan `2026-11-24-attacker-snapshot` D-2). The minimap
+    /// sees that spot or the attacker (plan `2026-11-24-attacker-snapshot` D-2), and at most
+    /// `units.ron`'s `attack_snapshot_cap_ticks` after the strike (plan Amendment 1). The minimap
     /// half waits for a minimap (B-204).
     #[default]
     Snapshot,

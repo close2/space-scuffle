@@ -1492,11 +1492,15 @@ fn pooled(harness: &Harness) -> usize {
 }
 
 /// P-16: with a snapshot held and its list unchanged, running frames create, modify and remove
-/// no asset, spawn nothing, and keep the fog's and the pool's buffers.
+/// no asset, spawn nothing, and keep the fog's and the pool's buffers. The catalog's snapshot
+/// cap (1 second, plan Amendment 1) is lifted, so the image no strike refreshes is held through
+/// the windows: this test measures a held image, not its lifetime, which `sim_core`'s
+/// `attack_snapshot_tests` pins.
 #[test]
 fn a_held_attack_snapshot_changes_nothing_on_running_frames() {
     let mut harness = skirmish();
     settle(&mut harness, true);
+    harness.world_mut().catalog.set_attack_snapshot_cap(None);
     let staged = hold_a_snapshot(&mut harness);
     // No more strikes: the victim leaves every weapon's filters.
     harness
@@ -1524,7 +1528,8 @@ fn a_held_attack_snapshot_changes_nothing_on_running_frames() {
 }
 
 /// P-16: a snapshot refreshed by later strikes of the same attacker spawns no snapshot entity
-/// (the strikes' own effects may spawn theirs).
+/// (the strikes' own effects may spawn theirs). Under the shipped cap: each strike comes before
+/// the cap ends the image.
 #[test]
 fn a_refreshed_attack_snapshot_spawns_nothing() {
     let mut harness = skirmish();

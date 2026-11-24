@@ -1,6 +1,18 @@
 // assets/catalog/units.ron
 // Authoritative Mobile Unit Catalog for Space Scuffle (StarCraft II Patch 5.0.14)
+//
+// `attack_snapshot_cap_ticks`: the longest an attack snapshot lasts, in whole ticks at 25 per
+// second (plan `docs/plans/2026-11-24-attacker-snapshot.md` Amendment 1; owner answer Q0112
+// 2(c)). A weapon whose `attack_visibility` is `Snapshot` (the default) leaves the player it
+// strikes from out of sight a still image of the attacker. The image ends when that player sees
+// its spot or the attacker, and at the latest this many ticks after the strike that made it or
+// last refreshed it; a later strike by the same attacker on that player moves the image and
+// restarts the cap. 25 is 1 second, the owner's starting value. StarCraft II 5.0.14 names no
+// duration (the image lasts until seen); `None`, or leaving the field out, restores that.
+// Presentation only: no tick decision reads it, so changing it moves no battle, replay or
+// checksum. Validated at load: at least 1 (0 would drop every image before it is shown).
 (
+    attack_snapshot_cap_ticks: Some(25),
     units: [
         (
             slug: "welder_drone",
