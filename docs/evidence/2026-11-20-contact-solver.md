@@ -1579,3 +1579,181 @@ two ranges' scene mixes, which Legacy shows here.
 - the §4 bug rows for the failing T-figures, and the Movement row;
 - the amendment listing the matrix restatements;
 - `cargo gate quick` and the client battle targets.
+
+### 13.12 Diagnosis of the two matrix flips and the held-out cross give-ups (no code change)
+
+**Tools.** The battle trace runner (`crates/sim_core/examples/matchup_trace.rs`, release) at plan head `96df6dda`.
+- **Runs:** battles 26 and 28 on the four seeds of record plus seeds 1 to 20 (24 seeds) under each pipeline. Legacy
+  is a scratch catalog with `pipeline: Legacy`; nothing else differs.
+- **Unit-level traces:** battle 28 seed 1 (an immortal win under Solver) and battle 26 seed 3203386110 (of record; a
+  zergling win under Solver).
+- **Counterfactuals:** scratch catalogs with `nudge_engaged_along_ring: false` (D-δ off) or `moving_friends_push:
+  false` (D-β off).
+- **Ring occupancy** is computed from the unit CSV. For each enemy unit:
+  - the zerglings inside its band (centre distance ≤ 1.225 against an immortal, ≤ 1.475 against a colossus);
+  - the free part of its ring, in degrees: ring points no other body's disc covers.
+
+No instrumented build was needed, so no new branch exists. Outputs are in `~/scratch/contact-solver/wp4b/diag/`.
+
+#### Battle 28 (100 zerglings against 10 immortals): G-6 stands the zerglings at saturated rings
+
+**Outcome:** Legacy 24 of 24 zergling wins; Solver 5 of 24 (seeds of record: 3203386110 and 33 won, 11 and 22 lost).
+
+**Zerglings in contact over time** (mean over the 24 seeds; in contact / blocked; a finished seed counts 0):
+
+| Tick | 100 | 150 | 200 | 250 | 300 | 350 | 400 | 500 | 600 |
+|---|---|---|---|---|---|---|---|---|---|
+| Legacy | 8.5 / 11.9 | 14.4 / 10.8 | 20.0 / 8.3 | 24.5 / 5.7 | 24.9 / 5.4 | 22.4 / 3.2 | 18.7 / 2.7 | 16.3 / 1.4 | 9.5 / 1.3 |
+| Solver | 11.1 / 39.6 | 11.9 / 58.1 | 11.9 / 52.6 | 12.2 / 46.0 | 11.6 / 37.2 | 12.4 / 28.6 | 13.7 / 21.9 | 13.3 / 10.9 | 10.6 / 4.8 |
+
+Under Solver the zerglings in contact level off at about 12. The rest stand "blocked": they have a target outside
+their band and do not move.
+
+| Seed 1, whole battle | Legacy | Solver |
+|---|---|---|
+| zergling-seconds blocked | 105 | 678 |
+| zergling-seconds flanking | 437 | 44 |
+| target switches | 491 | 40 |
+
+Every switch, under either pipeline, moves to a nearer enemy. Under Legacy, 453 of 491 come while flanking.
+
+**Where they stand** (seed 1, Solver). The immortals stand in two touching columns (spacing 1.5 = 2 × 0.75). The
+western column (ids 101, 105, 107, 109) faces the zerglings; the eastern column is 102 to 110.
+
+| Tick | Western column: in band / free ring | Eastern column: in band / free ring | Blocked zerglings |
+|---|---|---|---|
+| 150 | 5, 2, 2, 3 / 0° each | 0 each / 98° to 166° | 70, all targeting western immortals, median 2.6 beyond the band |
+| 250 | 4, 2, 1, 2 / 0° | 0 each / 98° to 154° | 35 |
+| 350 | 2, 1, 4 / 0° | 0 each / 62° to 180° | 34 |
+
+Under Legacy at tick 250, every immortal except 107 has 2 to 5 zerglings in band, the eastern column included, and
+only 3 zerglings are blocked.
+
+**Mechanism.** The zerglings acquire the nearest immortals, the western column. Each western ring is saturated:
+zerglings on the west face, the touching neighbours to north and south, the eastern twin behind. The ring rule then
+finds no free angle and applies **G-6: stand, keep the order, accrue no stall** (`movement/ring.rs`, Q0089).
+- A standing zergling never comes nearer to another immortal, so acquisition never switches it.
+- The eastern column's free rings (about 100° to 180° each) stay empty for the whole fight.
+- Under Legacy the crowd-edge walk carries the zerglings round the block, and the nearest-enemy rescan hands them
+  to the eastern immortals.
+
+**What it is not:**
+- *Give-ups:* G-6 accrues no stall.
+- *A ring slot missed by the P8 cache:* P8 was proved byte-identical, and the eastern rings are free in the snapshot
+  itself.
+- *O1:* the blocked zerglings stand 2 to 5 beyond the band, out of contact with the engaged rank's hard pairs.
+- *D-δ:* with it off, the zerglings win 3 of 24 instead of 5, so D-δ helps them here.
+- *D-β:* with it off, they win 8 of 24.
+
+**R-number.** It is new: none of R1 to R9 covers it.
+- R1 is the chord into the engaged rank when the target's ring *has* a gap. Here the ring has none.
+- D-S ("stuck with room") counts room on the same target's ring.
+- **Proposed R10:** an automatic chase whose target's ring is saturated stands (G-6) although another enemy within
+  the acquisition range has a free, reachable ring slot.
+
+**Against StarCraft II.** I judge this a real regression, though no source in the plan settles it.
+- SC-10 ("units outside the concave stand") describes a contact surface that is full. Here two fifths or more of the
+  eastern immortals' rings are free and reachable round the ends of the block.
+- The game's zerglings visibly spread round a clump of ranged units, and the claim "without splash, immortals are
+  overrun" rests on that.
+- The plan's sources do not describe how the game's acquisition treats a target with no free slot.
+
+**Candidate fix, not fitted to the test (proposed G-6′).** When an *automatic* chase (attack-move or auto-acquire;
+not an explicit Attack on a unit) finds no free slot on its target's ring, acquisition retargets:
+- It runs the unit's normal acquisition (same priorities, same scan range, same leash), skipping enemies whose ring
+  has no admissible free slot for this unit.
+- It takes the best remaining enemy. Only if none has a slot does the unit stand as G-6 says.
+
+Properties:
+- Deterministic and order-free: read from the snapshot, like G-2.
+- Cheap: the P8 cache already holds each (target, radius, ρ) ring per tick.
+- Generic: it names no unit and no battle, and states one rule for every melee and ranged chaser.
+
+It is a new mechanic, so it needs a plan amendment. Its SC2 source is to be cited, or it is to be recorded as a
+deviation. Expected side effects:
+- the harness's single-target families (arc, corridor) have no other enemy, so their figures should not move;
+- battle 26 would also gain zerglings (see below);
+- the cost is one extra ring query per standing chaser and tick.
+
+#### Battle 26 (100 zerglings against 6 colossi): D-δ puts more zerglings on the front colossi
+
+**Outcome:** Legacy 1 of 24 zergling wins (seed 16, not of record, as the fixture's watch item says); Solver 20 of
+24. Of the seeds of record, Solver loses only 33, the seed the placebo finding is about.
+
+**Zerglings in contact over time** (mean over 24 seeds; in contact / blocked):
+
+| Tick | 50 | 100 | 150 | 200 | 250 | 300 |
+|---|---|---|---|---|---|---|
+| Legacy | 5.8 / 6.9 | 12.1 / 5.4 | 17.8 / 3.2 | 18.8 / 2.0 | 13.9 / 1.6 | 9.6 / 0.4 |
+| Solver | 12.5 / 13.2 | 20.1 / 26.0 | 20.0 / 16.3 | 16.7 / 8.1 | 18.2 / 6.0 | 12.9 / 5.0 |
+
+**Ring occupancy** (seed 3203386110, tick 125):
+
+| Pipeline | Front colossi (101, 103, 105): in band / free ring | Rear colossi | Zerglings |
+|---|---|---|---|
+| Solver | 10, 5, 5 / 0° | 88° to 124° free | 44 blocked: the same G-6 stand as battle 28 |
+| Legacy | 3, 2, 4 / 32°, 32°, 0° | — | 26 flanking |
+
+**The two artefacts named for review are both absent:**
+- *Zerglings spread wider than the sweep reaches:* a colossus shot costs the zerglings 48.7 health under Solver and
+  41.8 under Legacy (1.28 against 1.17 deaths per shot). The zerglings are hit more densely, not less.
+- *The colossus target or line changing because of packing:*
+  - the colossi fire 0.920 shots per colossus-second under Solver and 0.910 under Legacy, with no target switch
+    under either pipeline;
+  - zergling hits per engaged zergling-second are equal (2.138 against 2.134);
+  - largest enemy overlap is 2.7 % of a zergling diameter under Solver, 2.1 % under Legacy.
+- *Side observation:* the zerglings' crowd presses the colossi and immortals back (red unit-ticks pushed in contact:
+  195 against 4 in battle 26; 131 against 3 in battle 28). C-8 lets enemies separate evenly under both pipelines; the
+  Solver passes the press of the rear ranks through the front rank. This does not reduce the colossi's fire.
+
+**Mechanism: D-δ.** With `nudge_engaged_along_ring: false` the zerglings win **0 of 24** (mean in contact 8.6). With
+`moving_friends_push: false` they win 1 of 24. D-δ (N, adopted by Amendment 16) lets an engaged zergling slide along
+its ring when friends press it, so a front colossus's ring packs to capacity: 10 zerglings round colossus 101 against
+3 under Legacy. The first colossi die sooner, and the fight ends before the sweeps kill enough zerglings.
+
+**Against StarCraft II.** This is the deviation D-δ, as the owner sanctioned it, doing what it was adopted for:
+zerglings pack their target's contact surface, and the game's zerglings do too. I do not judge it a regression.
+- The claim "six colossi vaporize a hundred zerglings" was already within noise on seed 33: a raw-unit placebo
+  flipped it (fixture comment, plan 2026-11-19-crowd-slide §2.3).
+- The fixture comment says a lost seed of record means the claim itself is re-examined. Three of the four seeds of
+  record are now lost.
+- G-6′ above would put the standing zerglings on the rear colossi as well, which favours them further.
+
+**Candidate fix:** none for the movement. The claim, or its expected range, is the owner's to re-examine. It is not
+a range to be widened by the implementer.
+
+#### Held-out cross give-ups (6 against 2): partly the same mechanism, and a scene-mix difference
+
+All eight give-ups, development and held-out, are the same rule firing: a plain `Move` is given up after 10 s
+without progress (R4), at ticks 348 to 437, inside the jam where the two groups cross.
+
+| Seed | Range | θ, n, r, v | Units given up | Trace |
+|---|---|---|---|---|
+| 704 | development | 135°, 13, 0.75, 0.1 | 1 | velocity 0, 23.5 from its goal |
+| 900 | development | 90°, 14, 0.875, 0.1 | 1 | velocity 0, 20.6 from its goal |
+| 9,000,180 | held-out | 90°, 13, 0.75, 0.1 | 1 | velocity 0, 17.2 from its goal: as in the development range |
+| 9,000,353 | held-out | 180°, 14, 1, 0.125 | 2 | velocity 0, two bodies on the line ahead (§13.11) |
+| 9,000,606 | held-out | 180°, 14, 1, 0.125 | 2 | the same scene as 9,000,353: its trace is identical line for line |
+| 9,000,475 | held-out | 180°, 12, 0.875, 0.1 | 1 | 0.71 from its goal, three units in its way |
+
+**The difference is in the scenes drawn, not in a new behaviour:**
+- The cross family draws its scenes from a finite grid: θ, n, radius, speed and a starting heading.
+- Four of the six held-out give-ups come from one configuration (180°, 14, 1, 0.125). Development has no scene of
+  that configuration; held-out has three, and two of them are the same scene.
+- Head-on scenes (θ 180°) give 5 of the 6 held-out give-ups and none of development's, although each range has about
+  345 head-on scenes.
+- Every other held-out give-up configuration appears in development at most twice; one of those development scenes
+  gives up.
+- The bootstrap behind the noise rule resamples scenes within a range. It cannot cover a configuration that one range
+  lacks.
+- Legacy moves between the ranges just as much and the other way: 152 give-ups in development, 100 held-out. By θ:
+  - 180°: 98 → 49;
+  - 135°: 41 → 51;
+  - 90°: 13 → 0.
+
+**Correction to §13.11.** Not all held-out give-ups are head-on: 9,000,180 is a 90° jam like the development pair.
+The head-on cases (9,000,353, its duplicate 9,000,606, and 9,000,475) show WP3's side-rule residual. The development
+range met that residual already: cross 967, θ 180°, in §13.8's A0 trace.
+
+**Verdict.** This is no regression of the solver between ranges. The development range under-samples the large
+head-on configurations, and T4's cross failure (give-ups > 0) is the same open failure on both ranges.
