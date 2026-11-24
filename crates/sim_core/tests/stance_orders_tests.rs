@@ -466,12 +466,11 @@ fn the_default_stance_takes_stop_when_mobile_or_armed_and_hold_when_mobile() {
     for arch in catalogs.units.archetypes() {
         let mobile = !arch.is_immobile_by_default();
         let armed = arch.stance_armed(None);
+        // The A command has its own derivation and table (plan `2026-11-24-attack-orders` P-1).
+        let orders = arch.stance_orders(None);
         assert_eq!(
-            arch.stance_orders(None),
-            StanceOrders {
-                stop: mobile || armed,
-                hold_position: mobile,
-            },
+            (orders.stop, orders.hold_position),
+            (mobile || armed, mobile),
             "{}",
             arch.slug
         );
@@ -567,5 +566,306 @@ fn a_unit_armed_only_in_its_mode_is_armed_for_the_stance_it_settles_in(
             "{stance:?}"
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Plan `2026-11-24-attack-orders` (B-174, B-175): the simulation gives `AttackTarget` only to
+// the named units that can attack the target (`Entity::can_attack`), and an unarmed
+// attack-mover walks.
+// ---------------------------------------------------------------------------------------------
+
+/// The opponent of every test unit.
+const THEM: PlayerId = PlayerId(1);
+
+/// The targets of P-2, spawned in that order into a world from [`unit_in`]: an enemy ground
+/// unit, an enemy air unit, an own ground unit (the same archetype as the enemy's) and the unit
+/// itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    EnemyGround,
+    EnemyAir,
+    OwnGround,
+    Itself,
+}
+
+/// A mobile ground archetype without modes and an air archetype, both found by property.
+fn target_archetypes(
+    catalogs: &RuntimeCatalogs,
+) -> Result<(UnitArchetype, UnitArchetype), Box<dyn std::error::Error>> {
+    let ground = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            !arch.is_immobile_by_default()
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+        })
+        .ok_or("a mobile ground archetype without modes")?
+        .clone();
+    let air = catalogs
+        .units
+        .archetypes()
+        .find(|arch| arch.mover_type == MoverType::Air)
+        .ok_or("an air archetype")?
+        .clone();
+    Ok((ground, air))
+}
+
+/// Spawns the three other targets of [`Target`] into `world` around (20, 20), in a fixed order
+/// so every copy of a test world names the same entities, and returns the target `which`.
+fn spawn_targets(
+    world: &mut SimWorld,
+    unit: EntityId,
+    (ground, air): (&UnitArchetype, &UnitArchetype),
+    which: Target,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    let enemy_ground = world.spawn_unit(ground.unit_type_id, THEM, at(32, 20))?;
+    let enemy_air = world.spawn_unit(air.unit_type_id, THEM, at(20, 32))?;
+    let own_ground = world.spawn_unit(ground.unit_type_id, ME, at(8, 20))?;
+    Ok(match which {
+        Target::EnemyGround => enemy_ground,
+        Target::EnemyAir => enemy_air,
+        Target::OwnGround => own_ground,
+        Target::Itself => unit,
+    })
+}
+
+/// Whether the unit of `world` can attack `target`, by `Entity::can_attack`.
+fn can_attack(world: &SimWorld, unit: EntityId, target: EntityId) -> bool {
+    let entity = &world.entities[&unit];
+    let target = &world.entities[&target];
+    let archetype = world
+        .catalog
+        .get(entity.unit_type_id)
+        .expect("its archetype");
+    let target_archetype = world
+        .catalog
+        .get(target.unit_type_id)
+        .expect("its archetype");
+    entity.can_attack(archetype, target, target_archetype)
+}
+
+/// P-2 (B-174, B-175): for every shipped archetype in each of its stances, an `AttackTarget`,
+/// immediate or queued, on an enemy ground unit, an enemy air unit, an own unit or the unit
+/// itself reaches the unit exactly when `Entity::can_attack` holds. A unit it reaches ends the
+/// tick as if the order had been given to it directly; a unit it does not reach ends the tick
+/// equal, field for field, to the same unit in a world that received no command. The owner is
+/// not read, and a unit never attacks itself.
+#[test]
+fn the_simulation_gives_an_attack_only_to_a_unit_that_can_attack_its_target(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let (ground, air) = target_archetypes(&catalogs)?;
+    let (mut taken, mut refused, mut own_taken) = (0, 0, 0);
+    for arch in catalogs
+        .units
+        .archetypes()
+        .filter(|arch| !needs_a_geyser(arch))
+    {
+        let switches = switches_of(arch);
+        for stance in stances(&switches) {
+            let mut verdicts = Vec::new();
+            for which in [
+                Target::EnemyGround,
+                Target::EnemyAir,
+                Target::OwnGround,
+                Target::Itself,
+            ] {
+                for queue in [false, true] {
+                    let label = format!("{} {stance:?} {which:?} queue {queue}", arch.slug);
+                    let build =
+                        || -> Result<(SimWorld, EntityId, EntityId), Box<dyn std::error::Error>> {
+                            let (mut world, unit) = unit_in(&catalogs, arch, &switches, stance)?;
+                            let target = spawn_targets(&mut world, unit, (&ground, &air), which)?;
+                            Ok((world, unit, target))
+                        };
+                    let (mut commanded, unit, target) = build()?;
+                    let (mut untouched, ..) = build()?;
+                    let (mut forced, ..) = build()?;
+                    let takes = can_attack(&commanded, unit, target);
+                    let order = UnitOrder::attack(target);
+                    forced
+                        .entities
+                        .get_mut(&unit)
+                        .ok_or("the forced unit")?
+                        .issue_order(order.clone(), queue)?;
+                    step_with(&mut commanded, vec![command(vec![unit], order, queue)]);
+                    step(&mut untouched);
+                    step(&mut forced);
+                    let expected = if takes { &forced } else { &untouched };
+                    assert_eq!(
+                        commanded.entities[&unit], expected.entities[&unit],
+                        "{label}: takes {takes}"
+                    );
+                    assert_eq!(
+                        commanded.compute_checksum(),
+                        expected.compute_checksum(),
+                        "{label}: takes {takes}"
+                    );
+                    verdicts.push((which, takes));
+                    if takes {
+                        taken += 1;
+                        own_taken += usize::from(which == Target::OwnGround);
+                    } else {
+                        refused += 1;
+                    }
+                }
+            }
+            let of = |which: Target| {
+                verdicts
+                    .iter()
+                    .find(|(target, _)| *target == which)
+                    .map(|(_, takes)| *takes)
+            };
+            let label = format!("{} {stance:?}", arch.slug);
+            assert_eq!(of(Target::Itself), Some(false), "{label}: never itself");
+            assert_eq!(
+                of(Target::OwnGround),
+                of(Target::EnemyGround),
+                "{label}: the owner is not read"
+            );
+        }
+    }
+    assert!(taken > 0 && refused > 0, "{taken} taken, {refused} refused");
+    assert!(own_taken > 0, "an own unit is attacked");
+    Ok(())
+}
+
+/// A mobile ground archetype without modes that is armed against ground and not against air,
+/// and a mobile unarmed archetype whose A command is Scan Move; both found by property.
+fn ground_gunner_and_unarmed(
+    catalogs: &RuntimeCatalogs,
+) -> Result<(UnitArchetype, UnitArchetype), Box<dyn std::error::Error>> {
+    let gunner = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            !arch.is_immobile_by_default()
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+                && arch.weapon_against(MoverType::Ground, None).is_some()
+                && arch.weapon_against(MoverType::Air, None).is_none()
+        })
+        .ok_or("a ground-only armed walker")?
+        .clone();
+    let unarmed = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            !arch.is_immobile_by_default()
+                && arch.stance_orders(None).attack == sim_types::AttackCommand::ScanMove
+        })
+        .ok_or("an unarmed scan-mover")?
+        .clone();
+    Ok((gunner, unarmed))
+}
+
+/// P-3 (`ToSelection`, 5.0.14 `core` AbilData:127-129): one `AttackTarget` command naming a
+/// ground-only armed unit and an unarmed one reaches neither when aimed at an enemy air unit,
+/// and only the armed one when aimed at an enemy ground unit.
+#[test]
+fn one_attack_command_reaches_each_named_unit_that_can_attack_the_target(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let (gunner, unarmed) = ground_gunner_and_unarmed(&catalogs)?;
+    let (ground, air) = target_archetypes(&catalogs)?;
+    for (which, gunner_takes) in [(Target::EnemyAir, false), (Target::EnemyGround, true)] {
+        let build =
+            || -> Result<(SimWorld, [EntityId; 2], EntityId), Box<dyn std::error::Error>> {
+                let (mut world, armed) = unit_in(&catalogs, &gunner, &[], Stance::Default)?;
+                let walker = world.spawn_unit(unarmed.unit_type_id, ME, at(24, 24))?;
+                let target = spawn_targets(&mut world, armed, (&ground, &air), which)?;
+                Ok((world, [armed, walker], target))
+            };
+        let (mut world, [armed, walker], target) = build()?;
+        let (mut untouched, ..) = build()?;
+        step_with(
+            &mut world,
+            vec![command(
+                vec![armed, walker],
+                UnitOrder::attack(target),
+                false,
+            )],
+        );
+        step(&mut untouched);
+        assert_eq!(
+            world.entities[&walker], untouched.entities[&walker],
+            "{which:?}: the unarmed unit is left as it was"
+        );
+        assert_eq!(
+            world.entities[&armed].order_queue.front() == Some(&UnitOrder::attack(target)),
+            gunner_takes,
+            "{which:?}: the armed unit"
+        );
+        if !gunner_takes {
+            assert_eq!(
+                world.entities[&armed], untouched.entities[&armed],
+                "{which:?}: the armed unit is left as it was"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// P-5 (plan §2.2 rule 2, §3.3): an unarmed mobile unit given `AttackMove` past enemies walks to
+/// the point and acquires nothing, while an armed unit given the same order beside it acquires.
+/// This pins the simulation's rule B-174's and B-186's fixes rely on.
+#[test]
+fn an_unarmed_attack_mover_walks_past_enemies_and_acquires_nothing(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let (gunner, unarmed) = ground_gunner_and_unarmed(&catalogs)?;
+    let mut world = flat_world(0x5a_0200);
+    let walker = world.spawn_unit(unarmed.unit_type_id, ME, at(6, 20))?;
+    let armed = world.spawn_unit(gunner.unit_type_id, ME, at(6, 26))?;
+    // Unarmed ground enemies beside the path: candidates for either unit's scan (the armed
+    // unit's weapon reaches ground), and no threat.
+    let prey = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            !arch.is_immobile_by_default()
+                && arch.mover_type == MoverType::Ground
+                && !arch.stance_armed(None)
+        })
+        .ok_or("an unarmed ground walker")?;
+    for x in [18, 22, 26] {
+        world.spawn_unit(prey.unit_type_id, THEM, at(x, 23))?;
+    }
+    let goal = at(40, 20);
+    step_with(
+        &mut world,
+        vec![
+            command(vec![walker], UnitOrder::AttackMove { target: goal }, false),
+            command(
+                vec![armed],
+                UnitOrder::AttackMove { target: at(40, 26) },
+                false,
+            ),
+        ],
+    );
+    let mut armed_acquired = false;
+    for _ in 0..PATIENCE * 2 {
+        assert_eq!(
+            world.entities[&walker].current_target, None,
+            "the walker acquires nothing"
+        );
+        armed_acquired |= world.entities[&armed].current_target.is_some();
+        if world.entities[&walker].order_queue.is_empty() {
+            break;
+        }
+        step(&mut world);
+    }
+    assert!(
+        world.entities[&walker].order_queue.is_empty(),
+        "the walker finished its attack-move"
+    );
+    assert!(
+        world.entities[&walker].position.distance(goal) < SimScalar::from_num(2),
+        "the walker arrived: {:?}",
+        world.entities[&walker].position
+    );
+    assert!(armed_acquired, "the armed unit beside it acquired");
     Ok(())
 }

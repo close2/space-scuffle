@@ -67,9 +67,20 @@ pub fn min_missile_speed() -> SimScalar {
     SimScalar::ONE.saturating_div(SimScalar::from_i32(100))
 }
 
-/// A typed failure of the spell catalog (plan D-15, D-17).
+/// A typed failure of the spell catalog (plan D-15, D-17), or of a stance's authored orders
+/// (plan `2026-11-24-attack-orders` D-1).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CatalogError {
+    /// A stance authors Scan Move as its A command without Hold Position. Both are commands of
+    /// `StarCraft` II's `move` ability (`core` AbilData:555-557), so a stance with one has the
+    /// other (plan `2026-11-24-attack-orders` D-1).
+    #[error("'{definition}' stance '{stance}' has Scan Move without Hold Position; both are move commands")]
+    ScanMoveWithoutHoldPosition {
+        /// The archetype's slug.
+        definition: String,
+        /// The stance: `default_stance_orders`, or `modes.<mode name>.orders`.
+        stance: String,
+    },
     /// An effect key names no entry of `ability_effects.ron`.
     #[error("'{referenced_by}' names unknown effect '{name}'")]
     UnknownEffect {

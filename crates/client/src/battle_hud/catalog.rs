@@ -43,18 +43,14 @@ pub struct ArchetypeCommands {
     pub label: String,
     /// Whether it can walk or fly.
     pub mobile: bool,
-    /// The plain orders (Stop, Hold Position) it accepts in its default stance, from
-    /// `UnitArchetype::stance_orders` (plan `2026-11-23-anchored-commands` D-4).
+    /// The plain orders (Stop, Hold Position) and the A command it accepts in its default
+    /// stance, from `UnitArchetype::stance_orders` (plans `2026-11-23-anchored-commands` D-4 and
+    /// `2026-11-24-attack-orders` D-4).
     pub default_orders: StanceOrders,
-    /// The plain orders it accepts in each of its modes, indexed like the archetype's `modes`
-    /// (as `ModeStateView::settled_mode` reports a mode), from the same function.
+    /// The plain orders and A command it accepts in each of its modes, indexed like the
+    /// archetype's `modes` (as `ModeStateView::settled_mode` reports a mode), from the same
+    /// function.
     pub mode_orders: Vec<StanceOrders>,
-    /// Whether it carries any weapon in its default stance, from
-    /// `UnitArchetype::stance_armed` (plan `2026-11-23-stance-checked-orders` D-4).
-    pub default_armed: bool,
-    /// Whether it carries a weapon in each of its modes, indexed like `mode_orders`, from the
-    /// same function.
-    pub mode_armed: Vec<bool>,
     /// Whether it carries any weapon in its default stance ([`is_armed`]).
     pub armed: bool,
     /// Whether it can gather resources.
@@ -254,12 +250,6 @@ fn commands_of(
             .modes
             .iter()
             .map(|mode| archetype.stance_orders(Some(mode)))
-            .collect(),
-        default_armed: archetype.stance_armed(None),
-        mode_armed: archetype
-            .modes
-            .iter()
-            .map(|mode| archetype.stance_armed(Some(mode)))
             .collect(),
         armed: is_armed(archetype),
         harvester: archetype.capabilities.harvester.is_some(),

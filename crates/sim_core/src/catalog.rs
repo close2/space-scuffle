@@ -24,13 +24,13 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AllowedMovement, AnimState,
-    ArchetypeCapabilities, ArmorClassId, AttackDashSpec, AttackVisibility, Attribute,
-    AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId, FootprintShape,
-    HarvesterSpec, MissileValidation, MoverType, OverclockSpec, PlacementFlag, PlacementFlags,
-    ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind, SilhouetteClass,
-    SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis, SplashLineOrigin,
-    SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId,
-    UpgradeEffect, WeaponVisualKind,
+    ArchetypeCapabilities, ArmorClassId, AttackCommand, AttackDashSpec, AttackVisibility,
+    Attribute, AttributeBonuses, AttributeFlags, AutoRallySpec, BarrierSpec, FactionId,
+    FootprintShape, HarvesterSpec, MissileValidation, MoverType, OverclockSpec, PlacementFlag,
+    PlacementFlags, ProjectileTargetLossBehavior, ResourceKind, ResourceKindSet, ShapeKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
+    SplashLineOrigin, SplashShape, StanceOrders, StructureStrike, TurretIdle, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod effects;
@@ -283,6 +283,13 @@ pub struct UnitArchetype {
     /// for a mobile unit and for most structures.
     #[serde(default)]
     pub placement_excludes: PlacementFlags,
+    /// The default stance's orders when authored (plan `2026-11-24-attack-orders` D-1): the
+    /// archetype's `default_stance_orders` in `units.ron`, for a unit whose 5.0.14 unit type
+    /// breaks the derived rule of [`Self::stance_orders`] (the unburrowed Lurker carries
+    /// `attack` without a weapon, `voidmulti` UnitData:974). `None` derives them; always `None`
+    /// for a structure. Catalog data, not hashed.
+    #[serde(default)]
+    pub default_stance_orders: Option<StanceOrders>,
 }
 
 impl UnitArchetype {
@@ -317,13 +324,15 @@ impl UnitArchetype {
         matches!(self.shape, ShapeKind::BuildingDome { .. }) || self.max_speed <= SimScalar::ZERO
     }
 
-    /// The plain orders a unit of this archetype accepts in `stance`: the mode's authored
-    /// [`UnitModeSpec::orders`], or, for the default stance (`None`), Stop when the archetype is
-    /// mobile ([`Self::is_immobile_by_default`] is false) or armed ([`Self::stance_armed`]),
-    /// and Hold Position when it is mobile. Pure and allocation-free; the one rule the
-    /// simulation's admission (`SimWorld::issue_plain_order`), the client's command card and
-    /// its admission share (plans `2026-11-23-anchored-commands` D-2 and
-    /// `2026-11-23-stance-checked-orders` D-2).
+    /// The plain orders and the A command a unit of this archetype accepts in `stance`: the
+    /// mode's authored [`UnitModeSpec::orders`], or, for the default stance (`None`), the
+    /// authored [`Self::default_stance_orders`] when there is one, else the derived set: Stop
+    /// when the archetype is mobile ([`Self::is_immobile_by_default`] is false) or armed
+    /// ([`Self::stance_armed`]), Hold Position when it is mobile, and the A command Attack when
+    /// armed, Scan Move when mobile and unarmed, and none otherwise. Pure and allocation-free;
+    /// the one rule the simulation's admission (`SimWorld::issue_plain_order`), the client's
+    /// command card and its admission share (plans `2026-11-23-anchored-commands` D-2,
+    /// `2026-11-23-stance-checked-orders` D-2 and `2026-11-24-attack-orders` D-1).
     ///
     /// In `StarCraft` II 5.0.14 every shipped mobile unit has `stop` and `move` (whose `HoldPos`
     /// command Hold Position is), the armed structures carry `stop` (Photon Cannon, Missile
@@ -331,17 +340,50 @@ impl UnitArchetype {
     /// :10696, :8652, :8784), and the unarmed ones carry neither (Command Center, Nexus,
     /// :10411, :4218; the Shield Battery's `stop` is removed in `balancemulti` UnitData:1463).
     /// The rule is derived, not authored, and exact for every shipped archetype (B-171).
+    ///
+    /// For the A command, every 5.0.14 unit with a weapon carries an attack ability, and every
+    /// unarmed mobile unit puts the `move` ability's Scan Move in its Attack slot (`liberty`
+    /// UnitData:5485-5486 for the Medivac); the unburrowed Lurker, with `attack` and no weapon
+    /// (`voidmulti` UnitData:974), authors its default stance instead (B-174, B-186).
     #[must_use]
     #[inline]
     pub fn stance_orders(&self, stance: Option<&UnitModeSpec>) -> StanceOrders {
         if let Some(mode) = stance {
             return mode.orders;
         }
-        let mobile = !self.is_immobile_by_default();
-        StanceOrders {
-            stop: mobile || self.stance_armed(None),
-            hold_position: mobile,
+        if let Some(authored) = self.default_stance_orders {
+            return authored;
         }
+        let mobile = !self.is_immobile_by_default();
+        let armed = self.stance_armed(None);
+        StanceOrders {
+            stop: mobile || armed,
+            hold_position: mobile,
+            attack: if armed {
+                AttackCommand::Attack
+            } else if mobile {
+                AttackCommand::ScanMove
+            } else {
+                AttackCommand::None
+            },
+        }
+    }
+
+    /// The weapon a unit of this archetype uses in `stance` (`None` is the default stance)
+    /// against a target of locomotion `target_mover`: the mode's replacement ground weapon when
+    /// it sets one, otherwise the archetype's, chosen by [`Self::weapon_against`], the rule
+    /// `Entity::apply_mode_transition` and acquisition apply to a live unit (plan
+    /// `2026-11-24-attack-orders` D-2). Pure and allocation-free.
+    #[must_use]
+    pub fn stance_weapon_against<'a>(
+        &'a self,
+        stance: Option<&'a UnitModeSpec>,
+        target_mover: MoverType,
+    ) -> Option<&'a WeaponSpec> {
+        let replaced = stance
+            .and_then(|mode| mode.ground_weapon_override.as_ref())
+            .and_then(Option::as_ref);
+        self.weapon_against(target_mover, replaced)
     }
 
     /// Whether a unit of this archetype carries a weapon in `stance` (`None` is the default
@@ -1537,6 +1579,10 @@ struct UnitArchetypeDef {
     modes: Vec<UnitModeSpecDef>,
     #[serde(default)]
     effects: ArchetypeEffects,
+    /// The default stance's orders, authored only where the 5.0.14 unit type breaks the derived
+    /// rule (plan `2026-11-24-attack-orders` D-1); omitted derives them.
+    #[serde(default)]
+    default_stance_orders: Option<StanceOrders>,
 }
 
 /// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
@@ -1814,6 +1860,7 @@ impl UnitArchetypeDef {
             modes,
             effects: self.effects,
             placement_excludes: PlacementFlags::empty(),
+            default_stance_orders: self.default_stance_orders,
         })
     }
 }
@@ -2115,6 +2162,9 @@ impl StructureArchetypeDef {
             modes: Vec::new(),
             effects: self.effects,
             placement_excludes: PlacementFlags::of(&self.placement_excludes),
+            // Structures always derive their default stance (plan `2026-11-24-attack-orders`
+            // D-1): every shipped one follows the rule.
+            default_stance_orders: None,
         })
     }
 }
@@ -2241,13 +2291,20 @@ mod tests {
         assert_eq!(walker.stance_orders(None), StanceOrders::ALL);
 
         walker.max_speed = SimScalar::ZERO;
+        let armed = walker.stance_armed(None);
         assert_eq!(
             walker.stance_orders(None),
             StanceOrders {
-                stop: walker.stance_armed(None),
+                stop: armed,
                 hold_position: false,
+                attack: if armed {
+                    AttackCommand::Attack
+                } else {
+                    AttackCommand::None
+                },
             },
-            "speed 0: Stop only when armed (plan 2026-11-23-stance-checked-orders D-2)"
+            "speed 0: Stop and Attack only when armed (plans 2026-11-23-stance-checked-orders D-2, \
+             2026-11-24-attack-orders D-1)"
         );
 
         let structure = catalog
@@ -2270,17 +2327,89 @@ mod tests {
             .clone();
         for stop in [false, true] {
             for hold_position in [false, true] {
-                for is_immobile in [false, true] {
-                    mode.orders = StanceOrders {
-                        stop,
-                        hold_position,
-                    };
-                    mode.is_immobile = is_immobile;
-                    assert_eq!(walker.stance_orders(Some(&mode)), mode.orders);
-                    assert_eq!(structure.stance_orders(Some(&mode)), mode.orders);
+                for attack in [
+                    AttackCommand::None,
+                    AttackCommand::ScanMove,
+                    AttackCommand::Attack,
+                ] {
+                    for is_immobile in [false, true] {
+                        mode.orders = StanceOrders {
+                            stop,
+                            hold_position,
+                            attack,
+                        };
+                        mode.is_immobile = is_immobile;
+                        assert_eq!(walker.stance_orders(Some(&mode)), mode.orders);
+                        assert_eq!(structure.stance_orders(Some(&mode)), mode.orders);
+                    }
                 }
             }
         }
+    }
+
+    /// Plan `2026-11-24-attack-orders` D-1 (B-174, B-186): the default stance's A command is
+    /// Attack when the archetype is armed, Scan Move when it is mobile and unarmed, and none
+    /// otherwise, whatever the weapon block; an authored default stance replaces the whole
+    /// derived set, and a mode's authored set is read as it is.
+    #[test]
+    fn the_default_a_command_follows_weapons_and_mobility_unless_authored() {
+        let catalog = crate::test_support::shipped_catalogs().units;
+        let weapon = catalog
+            .archetypes()
+            .find_map(|arch| arch.weapon.clone())
+            .expect("invariant: the shipped catalog has a weapon");
+        let mut arch = catalog
+            .archetypes()
+            .find(|arch| !arch.is_immobile_by_default() && arch.default_stance_orders.is_none())
+            .expect("invariant: the shipped catalog has a mobile archetype that derives")
+            .clone();
+        let speed = arch.max_speed;
+        for mobile in [true, false] {
+            arch.max_speed = if mobile { speed } else { SimScalar::ZERO };
+            for slot in 0..4 {
+                arch.weapon = None;
+                arch.ground_weapon = None;
+                arch.air_weapon = None;
+                let block = [
+                    &mut arch.weapon,
+                    &mut arch.ground_weapon,
+                    &mut arch.air_weapon,
+                ];
+                if let Some(field) = block.into_iter().nth(slot) {
+                    *field = Some(weapon.clone());
+                }
+                let armed = slot < 3;
+                let expected = match (armed, mobile) {
+                    (true, _) => AttackCommand::Attack,
+                    (false, true) => AttackCommand::ScanMove,
+                    (false, false) => AttackCommand::None,
+                };
+                assert_eq!(
+                    arch.stance_orders(None).attack,
+                    expected,
+                    "mobile {mobile}, weapon slot {slot}"
+                );
+            }
+        }
+        let authored = StanceOrders {
+            stop: false,
+            hold_position: true,
+            attack: AttackCommand::Attack,
+        };
+        arch.default_stance_orders = Some(authored);
+        assert_eq!(arch.stance_orders(None), authored, "the authored set wins");
+        let mut mode = catalog
+            .archetypes()
+            .flat_map(|arch| arch.modes.iter())
+            .next()
+            .expect("invariant: the shipped catalog has a mode")
+            .clone();
+        mode.orders.attack = AttackCommand::ScanMove;
+        assert_eq!(
+            arch.stance_orders(Some(&mode)),
+            mode.orders,
+            "a mode's set is its own, not the authored default's"
+        );
     }
 
     /// Plan `2026-11-23-stance-checked-orders` D-2, D-3 (B-171): the default stance takes Stop
@@ -2296,6 +2425,7 @@ mod tests {
         let stop_only = StanceOrders {
             stop: true,
             hold_position: false,
+            attack: AttackCommand::Attack,
         };
 
         let mut walker = catalog
@@ -2308,9 +2438,19 @@ mod tests {
             walker.ground_weapon = None;
             walker.air_weapon = None;
             assert_eq!(walker.stance_armed(None), armed);
+            // An unarmed walker's A command is Scan Move (plan `2026-11-24-attack-orders` D-1);
+            // its plain orders are both, armed or not.
+            let attack = if armed {
+                AttackCommand::Attack
+            } else {
+                AttackCommand::ScanMove
+            };
             assert_eq!(
                 walker.stance_orders(None),
-                StanceOrders::ALL,
+                StanceOrders {
+                    attack,
+                    ..StanceOrders::ALL
+                },
                 "armed {armed}"
             );
         }

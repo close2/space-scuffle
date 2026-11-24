@@ -1804,14 +1804,17 @@ fn edited_stance_orders_change_the_loaded_rule() -> TestResult {
     let shipped = bundle.load()?;
     let path = bundle.directory.join(FILES[0]);
     let text = std::fs::read_to_string(&path)?;
-    let stop_only = "orders: (stop: true, hold_position: false)";
-    let both = "orders: (stop: true, hold_position: true)";
+    let stop_only = "orders: (stop: true, hold_position: false, attack: Attack)";
+    let both = "orders: (stop: true, hold_position: true, attack: Attack)";
     assert!(
         text.contains(stop_only) && text.contains(both),
         "both shipped sets"
     );
     let edited_text = text
-        .replace(both, "orders: (stop: false, hold_position: true)")
+        .replace(
+            both,
+            "orders: (stop: false, hold_position: true, attack: Attack)",
+        )
         .replace(stop_only, both);
     std::fs::write(&path, edited_text)?;
     let edited = bundle.load()?;
@@ -1825,11 +1828,13 @@ fn edited_stance_orders_change_the_loaded_rule() -> TestResult {
                 StanceOrders {
                     stop: false,
                     hold_position: true,
+                    attack: sim_types::AttackCommand::Attack,
                 }
             } else if before
                 == (StanceOrders {
                     stop: true,
                     hold_position: false,
+                    attack: sim_types::AttackCommand::Attack,
                 })
             {
                 StanceOrders::ALL
@@ -2243,7 +2248,10 @@ fn an_anchoring_mode_given_hold_position_in_its_file_holds() -> TestResult {
             &text,
             &anchor,
             "orders",
-            &format!("(stop: {stop}, hold_position: true)"),
+            &format!(
+                "(stop: {stop}, hold_position: true, attack: {:?})",
+                arch.modes[mode].orders.attack
+            ),
         ),
     )?;
     let edited = bundle.load()?;
@@ -2542,6 +2550,225 @@ fn an_edited_movement_rule_makes_a_unit_hold_fire_while_moving_without_recompili
         SimScalar::ZERO,
         "the edited unit holds fire while it moves"
     );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-24-attack-orders` P-8, the data half (B-174, C6): the Lurker analogue's A
+/// command is read from its authored `default_stance_orders` at run time. With the line removed
+/// from `units.ron` it derives Scan Move, as every other unarmed mobile unit, with no rebuild.
+#[test]
+fn removing_an_authored_default_stance_derives_scan_move() -> TestResult {
+    use sim_types::AttackCommand;
+    let bundle = Bundle::new("authored-default-stance")?;
+    let shipped = bundle.load()?;
+    let authored: Vec<_> = shipped
+        .units
+        .archetypes()
+        .filter(|arch| arch.default_stance_orders.is_some())
+        .map(|arch| (arch.unit_type_id, arch.slug.clone()))
+        .collect();
+    assert_eq!(
+        authored.len(),
+        1,
+        "one archetype authors its default stance"
+    );
+    let (id, slug) = &authored[0];
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let start = text
+        .find("default_stance_orders: Some(")
+        .ok_or("the authored line")?;
+    let end = start + text[start..].find("),\n").ok_or("the line's end")? + 3;
+    std::fs::write(&path, format!("{}{}", &text[..start], &text[end..]))?;
+    let edited = bundle.load()?;
+    let before = shipped.units.get(*id)?;
+    let after = edited.units.get(*id)?;
+    assert!(
+        !before.stance_armed(None),
+        "{slug}: unarmed in its default stance"
+    );
+    assert_eq!(
+        before.stance_orders(None).attack,
+        AttackCommand::Attack,
+        "{slug}"
+    );
+    assert_eq!(after.default_stance_orders, None, "{slug}");
+    assert_eq!(
+        after.stance_orders(None),
+        sim_types::StanceOrders {
+            attack: AttackCommand::ScanMove,
+            ..before.stance_orders(None)
+        },
+        "{slug}: derived"
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-24-attack-orders` P-8, the data half (B-186, C6): an unarmed mobile unit given
+/// `default_stance_orders` with no A command in `units.ron` at run time loses its Scan Move.
+#[test]
+fn an_unarmed_walker_authored_without_an_a_command_loses_scan_move() -> TestResult {
+    use sim_types::AttackCommand;
+    let bundle = Bundle::new("no-scan-move")?;
+    let shipped = bundle.load()?;
+    let walker = shipped
+        .units
+        .archetypes()
+        .find(|arch| {
+            !arch.is_immobile_by_default()
+                && !arch.stance_armed(None)
+                && arch.default_stance_orders.is_none()
+        })
+        .ok_or("an unarmed mobile unit that derives its default stance")?
+        .clone();
+    assert_eq!(
+        walker.stance_orders(None).attack,
+        AttackCommand::ScanMove,
+        "{}",
+        walker.slug
+    );
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let anchor = format!("slug: \"{}\",", walker.slug);
+    let authored = sim_types::StanceOrders {
+        attack: AttackCommand::None,
+        ..walker.stance_orders(None)
+    };
+    let line = format!(
+        "{anchor}\n            default_stance_orders: Some((stop: {}, hold_position: {}, attack: None)),",
+        authored.stop, authored.hold_position
+    );
+    assert_eq!(text.matches(&anchor).count(), 1, "one row");
+    std::fs::write(&path, text.replace(&anchor, &line))?;
+    let edited = bundle.load()?;
+    assert_eq!(
+        edited.units.get(walker.unit_type_id)?.stance_orders(None),
+        authored,
+        "{}",
+        walker.slug
+    );
+    bundle.finish()?;
+    Ok(())
+}
+
+/// Plan `2026-11-24-attack-orders` D-1, P-8 (validation): Scan Move and Hold Position are both
+/// commands of the `move` ability (`core` AbilData:555-557), so a stance authored with Scan Move
+/// and without Hold Position fails to load with the typed error, for a mode and for an authored
+/// default stance alike.
+#[test]
+fn a_stance_with_scan_move_and_no_hold_position_is_refused() -> TestResult {
+    use sim_core::catalog::CatalogError;
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    let factions = sim_fixtures::shipped_factions();
+    let mode = "orders: (stop: true, hold_position: false, attack: Attack)";
+    assert_eq!(units.matches(mode).count(), 1, "the shipped anchoring set");
+    let authored = "default_stance_orders: Some((stop: true, hold_position: true, attack: Attack))";
+    assert_eq!(
+        units.matches(authored).count(),
+        1,
+        "the shipped default set"
+    );
+    for (shipped, edited, stance) in [
+        (
+            mode,
+            "orders: (stop: true, hold_position: false, attack: ScanMove)",
+            "modes.",
+        ),
+        (
+            authored,
+            "default_stance_orders: Some((stop: true, hold_position: false, attack: ScanMove))",
+            "default_stance_orders",
+        ),
+    ] {
+        let result = UnitCatalog::from_ron_str(&factions, &units.replace(shipped, edited));
+        assert!(
+            matches!(
+                &result,
+                Err(SimCoreError::SpellCatalog(CatalogError::ScanMoveWithoutHoldPosition {
+                    stance: found,
+                    ..
+                })) if found.starts_with(stance)
+            ),
+            "{result:?}"
+        );
+    }
+    // Scan Move with Hold Position loads.
+    let held = units.replace(
+        authored,
+        "default_stance_orders: Some((stop: true, hold_position: true, attack: ScanMove))",
+    );
+    assert!(UnitCatalog::from_ron_str(&factions, &held).is_ok());
+    Ok(())
+}
+
+/// Plan `2026-11-24-attack-orders` P-8, the simulation half (B-174, C6): an anchoring mode
+/// authored with no A command at run time refuses an `AttackTarget` to a unit settled in it,
+/// while the shipped mode takes it, with no rebuild.
+#[test]
+fn an_anchoring_mode_authored_without_attack_refuses_an_attack() -> TestResult {
+    use sim_types::{AttackCommand, UnitOrder};
+    let bundle = Bundle::new("anchored-no-attack")?;
+    let shipped = bundle.load()?;
+    let (arch, mode) = shipped
+        .units
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch.modes.iter().position(|mode| {
+                mode.is_immobile
+                    && !mode.orders.hold_position
+                    && mode.orders.attack == AttackCommand::Attack
+                    && arch
+                        .stance_weapon_against(Some(mode), sim_types::MoverType::Ground)
+                        .is_some()
+            })?;
+            Some((arch.clone(), mode))
+        })
+        .ok_or("an armed anchoring mode with Attack and no Hold Position")?;
+    let target_kind = shipped
+        .units
+        .archetypes()
+        .find(|other| {
+            !other.is_immobile_by_default()
+                && other.mover_type == sim_types::MoverType::Ground
+                && other.modes.is_empty()
+        })
+        .ok_or("a ground walker")?
+        .unit_type_id;
+    let anchor = format!("mode_name: \"{}\"", arch.modes[mode].mode_name);
+    let path = bundle.directory.join(FILES[0]);
+    let text = std::fs::read_to_string(&path)?;
+    let orders = arch.modes[mode].orders;
+    std::fs::write(
+        &path,
+        replace_field_after(
+            &text,
+            &anchor,
+            "orders",
+            &format!(
+                "(stop: {}, hold_position: {}, attack: None)",
+                orders.stop, orders.hold_position
+            ),
+        ),
+    )?;
+    let edited = bundle.load()?;
+    for (catalogs, takes) in [(&shipped, true), (&edited, false)] {
+        let loaded = catalogs.units.get(arch.unit_type_id)?;
+        let mut world = bare_world(catalogs)?;
+        let unit = settled_in(&mut world, loaded, mode)?;
+        let enemy = world.spawn_unit(
+            target_kind,
+            PlayerId(1),
+            SimVec2::new(SimScalar::from_num(16), SimScalar::from_num(12)),
+        )?;
+        assert_eq!(
+            queued_order_reaches(&mut world, unit, &UnitOrder::attack(enemy)),
+            takes,
+            "edited {}",
+            !takes
+        );
+    }
     bundle.finish()?;
     Ok(())
 }
