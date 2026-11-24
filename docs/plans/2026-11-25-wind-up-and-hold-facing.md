@@ -621,3 +621,31 @@ the unit standing for one extra step (bug B-207). Fixing it changes the winner o
   `~/scratch/turret-wp3/world-wp3b/`, the turret wind-up evidence file's last section.
 - Branches checked for overlap: `weapon-validation-wp7` (changes `walking_goal`'s neighbourhood, `last_seen_goal`);
   `enemy-contact-plan` (not touched).
+
+## Amendment 1 (2026-11-25, orchestrator review of the WP1 stop)
+
+WP1 fired stop rules 4 (outcomes moved in non-close battles 21 and 32) and 5 (battle 28's `known_bug` battle changed
+state: its claim now holds on seeds 9 and 17 and fails on 5). Review, from the evidence file's WP1 section:
+
+- **The moves are the fix's own effect, not a defect.** Every first difference is classed H, N or V (a lost swing no
+  longer holds, the next swing starts a tick earlier, a swing on a target that left sight ends). Battle 21: the
+  marines' wind-ups on the Lurker analogue end when it burrows out of their sight (5.0.14 `TargetFilters Visible`).
+  Battle 32's seed of record: a marine is no longer held after its Baneling target died. Both are StarCraft II's
+  behaviour. W-1 improves sharply (stale holds 2,446 → 0; standing while able to fight falls in every family).
+- **Decision.** Under `AGENTS.md` §8 (owner commit `35793ef9`: a sound behaviour change that moves a close or
+  not-so-close battle is restated with evidence; a shift is a bug only when the behaviour itself is broken), stop
+  rules 4 and 5 are answered by restating, not by reverting. §15's contingency Q0113 asked exactly this with default
+  (a), keep the fix and restate; the standing guidance answers it, so it is not filed.
+  - Battles 21 and 32 (and close battles 26, 31, 33, 35, 38a whose expectations moved) are restated where a seed of
+    record now misses, each with a first-difference trace and a fixture comment citing §8 and this amendment. A
+    battle whose seeds of record all still hold keeps its expectation; its comment notes the moved non-record seeds.
+  - Battle 28 keeps `known_bug: Some("B-192")` while its claim fails on any seed of record (the matrix test fails
+    a marker that holds everywhere). Its new state is recorded in the evidence.
+- **Still required before WP3 (not waived).** The three untraced items must be traced and explained, or the package
+  stops again:
+  1. W-2's extra stall give-up (battle 31, seed 4): show it follows the flipped run's divergence, not a new stall.
+  2. W-3's battle 26 firing-rate drop of 1.12 %: trace it (fewer shots per alive unit-tick because of what).
+  3. WP2's W-5 "holder hull turns with no available target" 24 → 58: decide with a tick-exact probe whether these
+     are acquired-and-killed-within-a-tick artifacts of the end-of-tick probe or real turns towards nothing; real
+     turns towards nothing are a defect to fix within WP2's rule before WP3.
+- WP3 then runs as planned (held-out seeds confirm, throughput, single golden re-record, records).
