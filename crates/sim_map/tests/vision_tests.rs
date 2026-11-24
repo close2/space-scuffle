@@ -273,37 +273,77 @@ fn detection_and_sight_are_separate_circles() {
     );
 }
 
-/// P-4: detection follows the detector's line of sight: a ground detector below a plateau
-/// detects none of the plateau within its detection circle, and one outside a blocker detects
-/// no cell beyond the blocker's edge.
+/// The detection counters a lone source of detection radius `radius` at cell `(x, y)` leaves
+/// on `map` under owner answer Q0101 2(b): 1 on every cell of the map whose whole-cell offset
+/// from `(x, y)` lies within `radius`, the source's own cell included, 0 elsewhere.
+fn disc(map: &GameMap, x: i32, y: i32, radius: f64) -> Vec<u16> {
+    let mut counters = Vec::new();
+    for cy in 0..map.height() {
+        for cx in 0..map.width() {
+            let dx = f64::from(i32::try_from(cx).unwrap() - x);
+            let dy = f64::from(i32::try_from(cy).unwrap() - y);
+            counters.push(u16::from(dx * dx + dy * dy <= radius * radius));
+        }
+    }
+    counters
+}
+
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-7 (owner answer Q0101 2(b)): detection is
+/// a plain circle that no terrain stops, and it gives no sight. A ground detector below a
+/// plateau detects the plateau within its detection radius and sees none of it; one outside a
+/// sight blocker detects the blocker's cells and the cells beyond within its radius, and sees
+/// none of the blocker.
 #[test]
-fn detection_follows_line_of_sight() {
+fn detection_is_a_plain_circle() {
     let arena = arena::default_arena();
     // The low-ground observer of `test_low_ground_vs_high_ground_occlusion`, detecting 12.
     let below = recount(&arena, &[ground_source(16, 24, 12.0, 12.0)]);
     assert!(below.is_detected(16, 28), "low ground in reach is detected");
-    assert!(
-        !below.is_detected(16, 35),
-        "the plateau the detector cannot see is not detected"
+    assert!(below.is_detected(16, 35), "the plateau is detected");
+    assert_ne!(
+        below.visibility_at(16, 35),
+        VisibilityState::Visible,
+        "and not seen"
     );
+    assert!(!below.is_detected(16, 37), "beyond the radius");
 
     let map = flat_with_blocker();
     let outside = recount(&map, &[ground_source(15, 15, 11.0, 11.0)]);
-    assert!(
-        !outside.is_detected(22, 15) && !outside.is_detected(24, 15),
-        "a blocker stops detection as it stops sight"
-    );
+    for y in 14..17 {
+        for x in 20..23 {
+            assert!(
+                outside.is_detected(x, y),
+                "blocker cell ({x}, {y}) detected"
+            );
+            assert_ne!(
+                outside.visibility_at(x, y),
+                VisibilityState::Visible,
+                "blocker cell ({x}, {y}) not seen"
+            );
+        }
+    }
+    assert!(outside.is_detected(24, 15), "beyond the blocker, detected");
+    assert_ne!(outside.visibility_at(24, 15), VisibilityState::Visible);
 }
 
-/// P-4: with the detection radius equal to the sight radius, the cast detects exactly the cells
-/// it sees, on a flat map, around plateaus and ramps (the shipped default arena), and around a
-/// sight blocker, and its visibility equals that of the same source without detection: the
-/// cast before plan `2026-11-23-vision-and-detection` WP2, cell for cell.
+/// P-7: on an open flat map a detector whose detection radius equals its sight radius detects
+/// exactly the cells it sees; on maps with plateaus, ramps (the shipped default arena) and a
+/// sight blocker its visibility equals that of the same source without detection, cell for
+/// cell, and its detection is the disc of its radius, never beyond it and covering its own cell.
 #[test]
 fn equal_radii_detect_exactly_the_seen_cells() {
     let flat = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).unwrap();
+    for &(x, y) in &[(10, 10), (0, 0), (31, 17)] {
+        for radius in [1.0, 6.5, 11.0, 13.75] {
+            let detector = recount(&flat, &[ground_source(x, y, radius, radius)]);
+            assert_eq!(
+                detector.detector_counter(),
+                detector.visible_counter(),
+                "open ground: detection equals sight at ({x}, {y}) r {radius}"
+            );
+        }
+    }
     let cases = [
-        (flat, vec![(10, 10), (0, 0), (31, 17)]),
         (
             arena::default_arena(),
             vec![(16, 24), (16, 33), (30, 40), (9, 9)],
@@ -330,11 +370,28 @@ fn equal_radii_detect_exactly_the_seen_cells() {
                 );
                 assert_eq!(
                     detector.detector_counter(),
-                    detector.visible_counter(),
-                    "a detector detects exactly what it sees at ({x}, {y}) r {radius}"
+                    disc(map, x, y, radius).as_slice(),
+                    "detection is the disc at ({x}, {y}) r {radius}"
                 );
             }
         }
+    }
+}
+
+/// P-9: on an open flat map the sight rays reach exactly the disc of their radius, for every
+/// whole radius 1 to 32 and the shipped 11, so a detector's circle covers the same cells as
+/// sight there, and a source in the air detects what it did before the circle.
+#[test]
+fn on_open_ground_the_rays_cover_the_detection_disc() {
+    let map = GameMap::new(80, 80, MapCell::default_ground(CliffLevel(0))).unwrap();
+    for radius in 1..=32 {
+        let radius = f64::from(radius);
+        let plain = recount(&map, &[ground_source(40, 40, radius, 0.0)]);
+        assert_eq!(
+            plain.visible_counter(),
+            disc(&map, 40, 40, radius).as_slice(),
+            "radius {radius}"
+        );
     }
 }
 
@@ -372,6 +429,10 @@ fn incremental_casts_with_unequal_radii_equal_a_recount() {
             ..ground_source(16, 33, 7.0, 10.0)
         },
         ground_source(36, 21, 11.0, 0.0),
+        // Plan `2026-11-24-owner-answers-cliff-and-vision` P-8: a detection disc clipped by the
+        // map's corner, and one cast from inside the blocker.
+        ground_source(1, 0, 4.0, 12.0),
+        ground_source(41, 22, 3.0, 9.5),
     ];
     let mut incremental = recount(&map, &[fixed, moving[0]]);
     let mut sources = vec![fixed, moving[0]];
@@ -391,18 +452,15 @@ fn incremental_casts_with_unequal_radii_equal_a_recount() {
     }
 }
 
-/// Whether any cell of the 3x3 blocker of [`flat_with_blocker`] is visible or detected.
+/// Whether any cell of the 3x3 blocker of [`flat_with_blocker`] is visible. Detection is a
+/// circle that a blocker does not stop (owner answer Q0101 2(b), [`detection_is_a_plain_circle`]).
 fn any_blocker_cell_reached(vision: &PlayerVisionMap) -> bool {
-    (14..17).any(|y| {
-        (20..23).any(|x| {
-            vision.visibility_at(x, y) == VisibilityState::Visible || vision.is_detected(x, y)
-        })
-    })
+    (14..17).any(|y| (20..23).any(|x| vision.visibility_at(x, y) == VisibilityState::Visible))
 }
 
 /// P-8 (plan `2026-11-23-vision-and-detection` D-3; Blizzard, *Game Guide: Map Elements*: "Units
 /// inside obstructing terrain can't be seen by units or structures on the outside"): a ground
-/// source outside a sight blocker marks none of its cells, from any side and at any distance,
+/// source outside a sight blocker sees none of its cells, from any side and at any distance,
 /// and nothing beyond it.
 #[test]
 fn a_blocker_hides_every_cell_from_outside() {
@@ -464,7 +522,7 @@ fn a_source_inside_a_blocker_sees_it_and_out() {
     assert_ne!(inside.visibility_at(29, 15), VisibilityState::Visible);
 }
 
-/// P-8: air sources and watchtowers see into a blocker (Q0101 part 1, default (a)).
+/// P-8: air sources and watchtowers see into a blocker (owner answer Q0101 part 1, answered (a)).
 #[test]
 fn air_and_towers_see_into_a_blocker() {
     let map = flat_with_blocker();

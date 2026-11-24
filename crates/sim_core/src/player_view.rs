@@ -76,6 +76,7 @@ impl SimWorld {
                             &self.vision_maps,
                             viewer,
                             entity.position,
+                            entity.is_attack_revealed_to(viewer),
                         )
                 })
                 .map(|entity| entity.id),

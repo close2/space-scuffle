@@ -67,10 +67,12 @@ pub struct PlayerView {
     /// Abilities of the viewer's completed types that still need research, sorted by type and
     /// then ability index.
     pub ability_locks: Vec<AbilityLockView>,
-    /// Concealed entities of other players that the viewer detects now, sorted: each stands in
-    /// a cell that is `Visible` to the viewer and covered by one of the viewer's detectors. A
-    /// concealed entity not listed is hidden from the viewer (plan
-    /// `2026-11-09-effect-visualization` D-5). Never holds the viewer's own entities.
+    /// Concealed entities of other players that the viewer sees and detects now, sorted: each
+    /// stands in a cell covered by one of the viewer's detectors, and that cell is `Visible` to
+    /// the viewer or the entity is attack-revealed to it (plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` D-4). A concealed entity not listed is hidden
+    /// from the viewer (plan `2026-11-09-effect-visualization` D-5). Never holds the viewer's
+    /// own entities.
     #[serde(default)]
     pub revealed: Vec<EntityId>,
     /// Readiness of every effect-tree ability (`AbilityEffectSpec::Effect`) of the viewer's
