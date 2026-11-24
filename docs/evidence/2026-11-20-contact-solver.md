@@ -1803,15 +1803,18 @@ P8 + O1 + N):
 - **Mirror:** blue 0.568 [0.478, 0.654] with 882 draws (head 0.538 [0.448, 0.626], 883). T9 holds and nothing is
   worse beyond noise.
 - **D-S:** unchanged, because the arc and corridor files are byte-identical.
-- **D-R10 on the mirror:** 5,993 unit-ticks in 207 scenes under G-6′. The cases left are those the measure does not
-  model: the leash, terrain, and candidates whose bearing point is unruled.
+- **D-R10 on the mirror:** 5,993 unit-ticks in 207 scenes under G-6′, against 7,761 in 215 with the switch off
+  (the head's behaviour). The cases left are those the measure does not model: the leash, terrain, and candidates
+  whose bearing point is unruled.
+- **Switch off** (`runs/g6poff-1`): every scene CSV and its relabelled twin is byte-identical to the head's. So is the
+  mirror CSV in all of the head's columns; the only addition is the new D-R10 column.
 
 | Figure | Head | G-6′ | Step rule |
 |---|---|---|---|
 | T1 to T8, every scene family | (§13.10) | byte-identical | holds |
 | T9 mirror | 0.538 [0.448, 0.626] | 0.568 [0.478, 0.654] | holds |
 | D-S (arc, corridor) | 102,537 / 2,502 | identical | holds |
-| D-R10 (mirror) | see below | 5,993 | reported |
+| D-R10 (mirror) | 7,761 in 215 scenes (switch off) | 5,993 in 207 scenes | reported |
 
 **Battles 28 and 26 on the 24 seeds of §13.12** (`diag/g6p`):
 
