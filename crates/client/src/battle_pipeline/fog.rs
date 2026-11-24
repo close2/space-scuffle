@@ -19,6 +19,13 @@
 //! `2026-11-23-vision-and-detection` D-6): it is in sight although its cell may be fogged, and a
 //! concealed one still needs `revealed` to be detected.
 //!
+//! # Attack snapshots (plan `2026-11-24-attacker-snapshot` D-5)
+//! The view's `attack_snapshots` list the attackers that struck the viewer's units from where the
+//! viewer did not see them, each as a still render record of where it stood. A snapshot is an
+//! image the view lists, not a unit: it has no [`Presence`], no unit asks about it, and nothing
+//! reads it here but the snapshot pool (`battle_hud::attack_snapshots`), which draws it and never
+//! lets it be picked. The fog only copies the list; the rule that made it is the simulation's.
+//!
 //! # How it fits
 //! The simulation writes a viewer-scoped [`PlayerView`] once per tick. The HUD copies the part
 //! presentation needs into this resource, see [`crate::battle_hud::fog`], and the tick driver and
@@ -41,8 +48,8 @@
 
 use bevy::prelude::*;
 use sim_types::{
-    BubbleRenderInstance, CombatEventVisual, Concealment, EntityId, PlayerId, PlayerView, Tick,
-    VisibilityState,
+    AttackSnapshotView, BubbleRenderInstance, CombatEventVisual, Concealment, EntityId, PlayerId,
+    PlayerView, Tick, VisibilityState,
 };
 
 use super::commands::SessionGeneration;
@@ -111,6 +118,9 @@ pub struct BattleFog {
     /// Units of other players their own attacks reveal to the viewer, sorted, as the view listed
     /// them: in sight wherever they stand.
     attack_revealed: Vec<EntityId>,
+    /// Still images of attackers that struck the viewer unseen, sorted by entity, as the view
+    /// listed them (plan `2026-11-24-attacker-snapshot` D-5).
+    attack_snapshots: Vec<AttackSnapshotView>,
     /// Session, viewer and tick this fog was written for.
     written: Option<(SessionGeneration, PlayerId, Tick)>,
     /// Session whose map seeded `node_present`.
@@ -145,6 +155,11 @@ impl BattleFog {
                 "fog.attack_revealed",
                 self.attack_revealed.as_ptr().addr(),
                 self.attack_revealed.capacity(),
+            ),
+            (
+                "fog.attack_snapshots",
+                self.attack_snapshots.as_ptr().addr(),
+                self.attack_snapshots.capacity(),
             ),
         ]
         .into_iter()
@@ -248,6 +263,13 @@ impl BattleFog {
         self.shows(event.owner(), x, y)
     }
 
+    /// The attack snapshots of the latest view, sorted by entity: still images to draw, never
+    /// units to pick (plan `2026-11-24-attacker-snapshot` D-5). Empty when closed.
+    #[must_use]
+    pub fn attack_snapshots(&self) -> &[AttackSnapshotView] {
+        &self.attack_snapshots
+    }
+
     /// Last seen presence of each node, in map order. Empty before the first refresh.
     #[must_use]
     pub fn node_present(&self) -> &[bool] {
@@ -268,7 +290,7 @@ impl BattleFog {
 
     /// Address and capacity of each retained buffer, which an allocation would move or grow.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 4] {
+    pub fn buffers(&self) -> [(usize, usize); 5] {
         [
             (self.visible.as_ptr() as usize, self.visible.capacity()),
             (
@@ -280,6 +302,10 @@ impl BattleFog {
                 self.attack_revealed.as_ptr() as usize,
                 self.attack_revealed.capacity(),
             ),
+            (
+                self.attack_snapshots.as_ptr() as usize,
+                self.attack_snapshots.capacity(),
+            ),
         ]
     }
 
@@ -290,6 +316,7 @@ impl BattleFog {
         self.visible.clear();
         self.revealed.clear();
         self.attack_revealed.clear();
+        self.attack_snapshots.clear();
         self.written = None;
     }
 
@@ -332,6 +359,11 @@ impl BattleFog {
         self.attack_revealed
             .extend_from_slice(&view.attack_revealed);
         self.attack_revealed.sort_unstable();
+        // `Vec::clone_from` clones into the elements already held and extends only past them,
+        // so the buffer and every element are reused.
+        self.attack_snapshots.clone_from(&view.attack_snapshots);
+        self.attack_snapshots
+            .sort_unstable_by_key(|snapshot| snapshot.entity);
         for node in &view.visible_nodes {
             if let Some(present) = self.node_present.get_mut(node.id.0 as usize) {
                 *present = node.remaining > 0;
@@ -709,7 +741,7 @@ mod tests {
         view.attack_revealed = vec![EntityId(7), EntityId(3)];
         let mut fog = fog_of(&view);
         let warmed = fog.buffers();
-        assert_eq!(warmed.len(), 4, "the fog retains the attack-revealed list");
+        assert_eq!(warmed.len(), 5, "the fog retains the attack-revealed list");
         view.attack_revealed = vec![EntityId(3)];
         fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
         assert_eq!(fog.buffers(), warmed, "a refill reuses every buffer");
@@ -726,5 +758,53 @@ mod tests {
         assert!(fog.is_current(Some((SessionGeneration::FIRST, ME, Tick(4)))));
         assert!(!fog.is_current(Some((SessionGeneration::FIRST, ME, Tick(5)))));
         assert!(!fog.is_current(None));
+    }
+
+    /// The attack snapshot of `id`, struck on `tick`, standing in fog at `(2.5, 0.5)`.
+    fn snapshot(id: u32, tick: u32) -> AttackSnapshotView {
+        AttackSnapshotView {
+            entity: EntityId(id),
+            struck: Tick(tick),
+            bubble: unit(THEM, id, Concealment::None, [2.5, 0.5]),
+        }
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-5: the fog copies the view's snapshots, sorted by
+    /// entity, and they make no unit present: the attacker stays hidden.
+    #[test]
+    fn the_fog_copies_attack_snapshots_sorted_and_they_show_no_unit() {
+        let mut view = view();
+        view.attack_snapshots = vec![snapshot(9, 4), snapshot(3, 6)];
+        let fog = fog_of(&view);
+        let listed: Vec<_> = fog
+            .attack_snapshots()
+            .iter()
+            .map(|entry| (entry.entity, entry.struck))
+            .collect();
+        assert_eq!(listed, [(EntityId(3), Tick(6)), (EntityId(9), Tick(4))]);
+        assert_eq!(
+            fog.presence(&unit(THEM, 9, Concealment::None, [2.5, 0.5])),
+            Presence::Hidden,
+            "an image is not the unit"
+        );
+    }
+
+    /// D-5: a refill replaces the list in place, reusing its buffer, and closing the fog empties
+    /// it.
+    #[test]
+    fn attack_snapshots_are_refilled_in_place_and_closed_with_the_fog() {
+        let mut view = view();
+        view.attack_snapshots = vec![snapshot(3, 6), snapshot(9, 4)];
+        let mut fog = fog_of(&view);
+        let warmed = fog.buffers();
+        assert!(fog
+            .retained_buffers()
+            .any(|(name, _, _)| name == "fog.attack_snapshots"));
+        view.attack_snapshots = vec![snapshot(9, 8)];
+        fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+        assert_eq!(fog.buffers(), warmed, "a refill reuses every buffer");
+        assert_eq!(fog.attack_snapshots(), view.attack_snapshots.as_slice());
+        fog.close();
+        assert!(fog.attack_snapshots().is_empty(), "a closed fog lists none");
     }
 }

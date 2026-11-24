@@ -13,13 +13,15 @@
 //!
 //! # Invariants
 //! - Everything hidden from the viewer is absent by construction, so a reader cannot leak it.
-//! - Integers and enums only. Nothing here crosses the fixed-point boundary.
+//! - Integers and enums, except presentation output converted from fixed point on its way out
+//!   (charter §3.2): a rally's point and an attack snapshot's render record. Nothing here
+//!   flows back into the simulation.
 //! - Every list has a documented sort order, so equal worlds give equal views.
 //! - `visibility.len() == map_width * map_height`, in row-major order.
 
 use crate::enums::VisibilityState;
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
-use crate::snapshot::PlayerStatusView;
+use crate::snapshot::{BubbleRenderInstance, PlayerStatusView};
 use serde::{Deserialize, Serialize};
 
 /// One player's knowledge of the match at one executed tick.
@@ -91,6 +93,14 @@ pub struct PlayerView {
     /// the viewer's own entities.
     #[serde(default)]
     pub attack_revealed: Vec<EntityId>,
+    /// Attackers of other players that struck the viewer's units from where the viewer did not
+    /// see them, each as it stood at its last such strike, sorted by entity ID (plan
+    /// `2026-11-24-attacker-snapshot` D-4): `StarCraft` II's damage `Visibility Snapshot`. An
+    /// entry stays until the viewer sees its spot or the attacker itself. It is an image, never a
+    /// target: an attacker listed here is in neither `revealed` nor `attack_revealed` for being
+    /// listed. Skipped when empty, so a record without snapshots keeps its serialized bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attack_snapshots: Vec<AttackSnapshotView>,
 }
 
 impl PlayerView {
@@ -116,6 +126,7 @@ impl PlayerView {
         self.cast_states.clear();
         self.rallies.clear();
         self.attack_revealed.clear();
+        self.attack_snapshots.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -138,6 +149,21 @@ impl PlayerView {
             .ok()
             .and_then(|index| self.queues.get(index))
     }
+}
+
+/// An attacker that struck the viewer's units from where the viewer did not see it, shown as it
+/// stood at its last such strike: a still image, never a target (`StarCraft` II's damage
+/// `Visibility Snapshot`; plan `2026-11-24-attacker-snapshot` D-4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AttackSnapshotView {
+    /// The attacker. It may since have moved or died; the record says only what the viewer saw.
+    pub entity: EntityId,
+    /// The tick of the strike the image is from.
+    pub struck: Tick,
+    /// The image: the attacker's render record at that strike, still (zero velocity, idle,
+    /// unselected, unconcealed, not housed, no hit flashes). Positions are world units, angles
+    /// radians, as in every render record.
+    pub bubble: BubbleRenderInstance,
 }
 
 /// One structure's production queue, as a range of [`PlayerView::jobs`].
@@ -429,7 +455,70 @@ mod tests {
                 point: [12.5, 7.25],
             }],
             attack_revealed: vec![EntityId(21)],
+            attack_snapshots: vec![AttackSnapshotView {
+                entity: EntityId(30),
+                struck: Tick(88),
+                bubble: still_image(EntityId(30)),
+            }],
         }
+    }
+
+    /// A still render record of entity `id`, as an attack snapshot publishes it.
+    fn still_image(id: EntityId) -> BubbleRenderInstance {
+        use crate::enums::{AnimState, ShapeKind, SilhouetteClass, WeaponVisualKind};
+        use crate::presentation::{Concealment, StanceView, StatusFlags};
+        BubbleRenderInstance {
+            entity_id: id,
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::LightProngs,
+            unit_type: UnitTypeId(5),
+            owner: PlayerId(2),
+            world_pos: [3.5, 4.25, 1.0],
+            ground_z: 1.0,
+            radius: 0.5,
+            velocity: [0.0, 0.0],
+            heading_angle_rad: 0.5,
+            aim_angle_rad: 0.25,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 0.75,
+            shield_ratio: 0.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment: Concealment::None,
+            speed_boosted: false,
+            stance: StanceView::default(),
+            status: StatusFlags::default(),
+            barrier_ratio: 0.0,
+            housed: false,
+        }
+    }
+
+    /// Plan `2026-11-24-attacker-snapshot` D-4: a view without snapshots serializes without the
+    /// field, so its bytes are those of a view written before the field existed, and such a
+    /// view reads the list as empty.
+    #[test]
+    fn a_view_without_attack_snapshots_keeps_its_bytes() {
+        let mut view = populated();
+        let with = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(
+            with.contains("attack_snapshots"),
+            "a non-empty list is written"
+        );
+        view.attack_snapshots.clear();
+        let text = ron::to_string(&view).expect("the view has no unserializable field");
+        assert!(
+            !text.contains("attack_snapshots"),
+            "an empty list is skipped: {text}"
+        );
+        let back: PlayerView = ron::from_str(&text).expect("a missing list reads as empty");
+        assert_eq!(back, view);
     }
 
     #[test]

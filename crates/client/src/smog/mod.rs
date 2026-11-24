@@ -758,8 +758,8 @@ pub fn sync_bouncing_smog_bubbles_system(
     }
 }
 
-/// Bubbles the smog field reads: every bubble except the volume proxy, with the markers that
-/// tell showcase, preview and battle bubbles apart.
+/// Bubbles the smog field reads: every bubble except the volume proxy and the attack snapshots,
+/// with the markers that tell showcase, preview and battle bubbles apart.
 type SmogBubbleQuery<'w, 's> = Query<
     'w,
     's,
@@ -770,7 +770,12 @@ type SmogBubbleQuery<'w, 's> = Query<
         Option<&'static crate::scene_controller::LabPreviewBubble>,
         Option<&'static Visibility>,
     ),
-    Without<SmogVolumeMarker>,
+    (
+        Without<SmogVolumeMarker>,
+        // An attack snapshot is an image, not a body: it pushes no smog (plan
+        // `2026-11-24-attacker-snapshot` D-5).
+        Without<crate::battle_hud::attack_snapshots::AttackSnapshotBubble>,
+    ),
 >;
 
 /// The smog volume's bounding proxy entity.

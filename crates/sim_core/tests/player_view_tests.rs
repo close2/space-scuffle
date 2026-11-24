@@ -1590,3 +1590,90 @@ fn revealed_lists_an_attack_revealed_detected_attacker() -> TestResult {
     );
     Ok(())
 }
+
+/// A 32x32 world whose cells with x >= 16 stand one cliff level up (no ramp), with a ranged
+/// ground attacker of [`HOME`] on the plateau's edge ordered to attack a tough unit of [`AWAY`]
+/// below it, which cannot see it (plan `2026-11-24-attacker-snapshot`).
+fn hidden_attacker_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = SimWorld::with_catalogs(map, 0x183, units()?, UpgradeCatalog::default())?;
+    let kind = world
+        .catalog
+        .archetypes()
+        .filter(|arch| {
+            matches!(arch.shape, ShapeKind::UnitSphere)
+                && arch.mover_type == sim_types::MoverType::Ground
+        })
+        .find(|arch| {
+            arch.weapon_against(sim_types::MoverType::Ground, None)
+                .is_some_and(|w| {
+                    w.attack_visibility == sim_types::AttackVisibility::Snapshot
+                        && w.max_range >= SimScalar::from_i32(4)
+                })
+        })
+        .ok_or("a ranged Snapshot attacker")?
+        .unit_type_id;
+    let at = |x: f64| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(16.5));
+    let attacker = world.spawn_unit(kind, HOME, at(16.5))?;
+    let victim = world.spawn_unit(kind, AWAY, at(13.5))?;
+    let entity = world.entities.get_mut(&victim).ok_or("spawned")?;
+    entity.max_hp = SimScalar::from_i32(100_000);
+    entity.hp = entity.max_hp;
+    step(
+        &mut world,
+        vec![command(HOME, vec![attacker], UnitOrder::attack(victim))],
+    );
+    Ok((world, attacker))
+}
+
+/// Plan `2026-11-24-attacker-snapshot` P-2: only the struck player's view lists the attacker's
+/// snapshot; and a warmed view refills its snapshot list in place while it is held.
+#[test]
+fn only_the_struck_players_view_lists_a_snapshot_and_refills_it_in_place() -> TestResult {
+    let (mut world, attacker) = hidden_attacker_world()?;
+    until(&mut world, 400, |w| {
+        !view_of(w, AWAY).attack_snapshots.is_empty()
+    })?;
+    let away = view_of(&world, AWAY);
+    assert_eq!(
+        away.attack_snapshots
+            .iter()
+            .map(|entry| entry.entity)
+            .collect::<Vec<_>>(),
+        [attacker]
+    );
+    assert!(!away.attack_revealed.contains(&attacker));
+    assert!(!away.revealed.contains(&attacker));
+    for other in [HOME, PlayerId(2), PlayerId(9)] {
+        assert!(
+            view_of(&world, other).attack_snapshots.is_empty(),
+            "{other:?}"
+        );
+    }
+    let mut view = PlayerView::default();
+    world.write_player_view(AWAY, &mut view);
+    let warmed = (
+        view.attack_snapshots.capacity(),
+        view.attack_snapshots.as_ptr() as usize,
+    );
+    for _ in 0..200 {
+        step(&mut world, Vec::new());
+        world.write_player_view(AWAY, &mut view);
+        assert_eq!(view.attack_snapshots.len(), 1, "held");
+        assert_eq!(
+            (
+                view.attack_snapshots.capacity(),
+                view.attack_snapshots.as_ptr() as usize
+            ),
+            warmed,
+            "tick {}",
+            world.current_tick
+        );
+    }
+    Ok(())
+}

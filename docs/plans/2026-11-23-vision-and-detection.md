@@ -793,7 +793,7 @@ any test that counts projectiles right after a target's death (search `projectil
   using D-1's point fallback. *Taken up by plan `2026-11-24-weapon-validation` (WP2).*
 - **F-2: B-183, the snapshot of a hidden ground attacker** (S5, S15). A `PlayerView` list of attack snapshots (entity,
   position and type at the strike, held for the presentation time of a snapshot, **verify**) and the client's fog
-  and minimap drawing. Presentation only; no simulation rule.
+  and minimap drawing. Presentation only; no simulation rule. *Taken up by plan `2026-11-24-attacker-snapshot`.*
 - **F-3: B-185, the `Visible` filter's fog half.** A target outside its attacker's vision is lost: no firing, no
   tracking (pursuit to its last seen position), and a missile in flight lands on the point. Needs
   `is_entity_targetable` to take vision and a pursuit rule under `movement/`; its own plan once the contact-solver

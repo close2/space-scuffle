@@ -26,7 +26,7 @@ mod attack_dash;
 mod casts;
 mod commands;
 pub(crate) mod presentation;
-mod snapshot;
+pub(crate) mod snapshot;
 mod upgrade_stats;
 mod upkeep;
 mod vision;

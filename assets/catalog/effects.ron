@@ -1961,6 +1961,22 @@
                 ),
             ],
         ),
+        // An attack snapshot (defaults.snapshot; plan 2026-11-24-attacker-snapshot D-5): the
+        // still image of an attacker that struck the viewer from where the viewer did not see
+        // it, left where it stood (StarCraft II's damage `Visibility Snapshot`). It must read as
+        // "seen in the fog, not here now": a cool grey over most of its picture, partly
+        // see-through, its glass highlight matted and no shadow at its foot, so no one takes it
+        // for a live unit. One held Shell layer, written straight into the image's own bubble.
+        "attack_snapshot": (
+            class: Minor,
+            event: Mode,
+            layers: [
+                (
+                    block: Shell(tint: (0.36, 0.40, 0.46, 0.68), veil: 0.4, matte: 0.85, shadow: 1.0),
+                    duration: 0.3, curve: "come_in", held: true, priority: Critical,
+                ),
+            ],
+        ),
         // A mode switch that anchors its unit (Siege-Tank analogue's siege and unsiege;
         // defaults.mode.transition): the hull ploughs a furrow round itself as it locks or
         // unlocks, the furrow's arc closing with the switch's progress (Critical: the switch is
@@ -3409,5 +3425,8 @@
             detected: "detected_mark",
         ),
         mode: (transition: "mode_seal_sweep"),
+        // The still image of an attacker that struck the viewer unseen (plan
+        // 2026-11-24-attacker-snapshot D-5): exactly one held Shell layer.
+        snapshot: "attack_snapshot",
     ),
 )

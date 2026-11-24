@@ -15,7 +15,9 @@
 //! - Both entry points take `&self`, so reading them cannot change a checksum.
 //! - Hidden state does not reach the output: entities are filtered by owner (other players'
 //!   concealed entities by detection), nodes by `Visible` cells, and a site is judged with
-//!   [`Knowledge::Player`].
+//!   [`Knowledge::Player`]. An attack snapshot is the viewer's own record of what struck it
+//!   unseen (plan `2026-11-24-attacker-snapshot` D-4): its pose at the strike, never the
+//!   attacker's state now.
 //! - A warmed [`PlayerView`] is refilled without allocating unless a list grows.
 //! - A viewer outside the player slots gets an empty view and no panic.
 
@@ -25,9 +27,9 @@ use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    AbilityEffectSpec, AbilityLockView, CarrierView, CastStateView, CommandOptionView,
-    CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView, PlayerView,
-    QueuedItem, QueuedJobView, RallyView, ResourceNodeId, ShapeKind, SiteRefusal,
+    AbilityEffectSpec, AbilityLockView, AttackSnapshotView, CarrierView, CastStateView,
+    CommandOptionView, CommandSubject, ModeStateView, PlacementFlag, PlayerId, PlayerStatusView,
+    PlayerView, QueuedItem, QueuedJobView, RallyView, ResourceNodeId, ShapeKind, SiteRefusal,
     StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
@@ -93,6 +95,7 @@ impl SimWorld {
                 })
                 .map(|entity| entity.id),
         );
+        self.record_attack_snapshots(viewer, out);
         for (node, index) in self.map.resources().iter().zip(0_u32..) {
             if vision.visibility_at(node.cell.0, node.cell.1) == VisibilityState::Visible {
                 out.visible_nodes.push(VisibleNodeView {
@@ -100,6 +103,34 @@ impl SimWorld {
                     remaining: node.remaining,
                 });
             }
+        }
+    }
+
+    /// Fills `out.attack_snapshots` with `viewer`'s attack snapshots, sorted by attacker, each
+    /// as the attacker's still render record at its strike (plan `2026-11-24-attacker-snapshot`
+    /// D-4). The archetype is found by the snapshot's type, so a dead attacker's image is built.
+    ///
+    /// A snapshot whose attacker the viewer is shown now is left out: the vision phase drops it
+    /// on the next tick, but the attacker may have walked into sight after this tick's vision
+    /// phase, and the view must never hold both the unit and its image (plan R-7).
+    fn record_attack_snapshots(&self, viewer: PlayerId, out: &mut PlayerView) {
+        for record in self.presentation.attack_snapshots_of(viewer) {
+            if Self::snapshot_attacker_shown(&self.map, &self.vision_maps, &self.entities, record) {
+                continue;
+            }
+            let Ok(arch) = self.catalog.get(record.pose.unit_type) else {
+                continue;
+            };
+            out.attack_snapshots.push(AttackSnapshotView {
+                entity: record.attacker,
+                struck: record.struck,
+                bubble: crate::world::snapshot::snapshot_bubble(
+                    record.attacker,
+                    &record.pose,
+                    arch,
+                    &self.map,
+                ),
+            });
         }
     }
 
