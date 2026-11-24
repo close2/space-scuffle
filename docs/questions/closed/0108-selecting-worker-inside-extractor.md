@@ -28,3 +28,8 @@ control group and press the key while it is inside.
 - **Option (a): Not selectable while inside, leaves active selection, kept in control groups, cannot be ordered while inside.**
 
 **Reasoning:** Matches StarCraft II verbatim — a worker hidden inside a gas extractor cannot be clicked or box-selected and leaves the current active selection, while remaining registered in its control groups so pressing the group key selects it again once it exits.
+
+## Resolution
+
+Answered with the default (a), which plan `2026-11-24-hidden-harvesters` built in WP2 (`ba096000`) and WP3
+(`56c44091`) and merged with this file's move to `closed/`. Nothing further changes.
