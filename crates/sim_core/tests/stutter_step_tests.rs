@@ -3,6 +3,10 @@
 //! Verifies that issuing a Move command during `WeaponPhase::Backswing`
 //! immediately aborts the follow-through animation, shifts the weapon into `Cooldown`,
 //! and allows the unit to translate away from a melee chaser while maintaining full DPS.
+//!
+//! The wind-up before the release is the other half of the swing: it holds its unit unless the
+//! weapon fires while moving (`AllowedMovement::Moving`, `StarCraft` II's `AllowedMovement`), whatever
+//! the mount (plan `2026-11-23-turret-wind-up` D-6, P-10), under both movement pipelines.
 
 #![allow(
     clippy::unwrap_used,
@@ -12,9 +16,13 @@
     clippy::too_many_lines
 )]
 
-use sim_core::WeaponPhase;
+use sim_core::catalog::{ContactRules, MovementPipeline, UnitArchetype};
+use sim_core::{SimWorld, WeaponPhase, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
+use sim_types::{
+    AllowedMovement, EntityId, MoverType, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2,
+    Tick, TickBundle, UnitOrder, UnitTypeId,
+};
 
 #[test]
 fn test_stutter_step_backswing_cancellation() {
@@ -306,4 +314,173 @@ fn a_move_during_a_long_backswing_still_cancels_it_and_keeps_the_cooldown() {
         marine.position.x < x_before,
         "the marine walks away at once"
     );
+}
+
+/// The weapon slots of `archetype` that hold a weapon, mutably.
+fn weapons_mut(archetype: &mut UnitArchetype) -> impl Iterator<Item = &mut WeaponSpec> {
+    [
+        &mut archetype.weapon,
+        &mut archetype.ground_weapon,
+        &mut archetype.air_weapon,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// The shipped ground archetype of lowest type id that moves and has a ranged weapon against
+/// its own kind: the scratch weapon's carrier, found by property.
+fn ranged_ground_unit(world: &SimWorld) -> UnitTypeId {
+    world
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == MoverType::Ground
+                && archetype.max_speed > SimScalar::ZERO
+                && archetype
+                    .weapon_against(MoverType::Ground, None)
+                    .is_some_and(|weapon| {
+                        !weapon.melee && weapon.target_flags.intersects(archetype.attributes)
+                    })
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .expect("the shipped catalog has a moving ground unit with a ranged weapon")
+        .unit_type_id
+}
+
+/// One tick of a chase that begins in a wind-up, with the carrier's weapons rewritten as a
+/// scratch weapon: a 6-tick damage point, the mount `has_turret` (a turret turns at 90° a
+/// tick) and `allowed_movement`, under the movement `pipeline`.
+///
+/// The unit attacks an enemy of its kind 30 world units east, which holds; after two ticks of
+/// walking its weapon is put into a wind-up against that enemy, far out of reach, so the chase
+/// would move it, or, when `target_gone`, against an entity that no longer exists (a target
+/// killed and reaped on the tick before). Returns the unit's displacement in the next movement
+/// phase, world units.
+fn displacement_in_wind_up(
+    pipeline: MovementPipeline,
+    has_turret: bool,
+    allowed_movement: AllowedMovement,
+    target_gone: bool,
+) -> SimScalar {
+    let map =
+        GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, 0x1234_5678);
+    let rules = world.catalog.movement_rules();
+    world.catalog.set_movement_rules(
+        rules
+            .with_contact(ContactRules {
+                pipeline,
+                ..rules.contact()
+            })
+            .expect("invariant: the shipped contact rules are valid"),
+    );
+    let unit_type = ranged_ground_unit(&world);
+    for weapon in weapons_mut(world.catalog.get_mut(unit_type).expect("the carrier")) {
+        weapon.has_turret = has_turret;
+        weapon.turret_turn_rate = SimAngle::DEG_90;
+        weapon.allowed_movement = allowed_movement;
+        weapon.damage_point_ticks = 6;
+        weapon.period_ticks = weapon.period_ticks.max(12);
+    }
+    let at = |x: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(20));
+    let unit = world
+        .spawn_unit(unit_type, PlayerId(0), at(10))
+        .expect("invariant: spawn the unit");
+    let enemy = world
+        .spawn_unit(unit_type, PlayerId(1), at(40))
+        .expect("invariant: spawn the enemy");
+    let command = |player: u8, entity: EntityId, order: UnitOrder| PlayerCommand {
+        player_id: PlayerId(player),
+        entities: vec![entity],
+        order,
+        queue: false,
+    };
+    let bundle = |tick: u32, commands: Vec<PlayerCommand>| TickBundle {
+        tick: Tick(tick),
+        commands,
+        state_checksum: None,
+    };
+    world.step(&bundle(
+        0,
+        vec![
+            command(0, unit, UnitOrder::attack(enemy)),
+            command(1, enemy, UnitOrder::HoldPosition),
+        ],
+    ));
+    world.step(&bundle(1, Vec::new()));
+    let before = {
+        let entity = world.entities.get_mut(&unit).expect("the unit");
+        assert_ne!(entity.position, at(10), "premise: the chase walks the unit");
+        entity.weapon_phase = WeaponPhase::Windup {
+            target_id: if target_gone {
+                EntityId(u32::MAX)
+            } else {
+                enemy
+            },
+            remaining_ticks: 6,
+        };
+        entity.position
+    };
+    // The movement phase alone: the property is its own (the combat phase, which runs after it,
+    // ends this swing on an enemy out of sight).
+    world.step_movement_and_steering();
+    assert!(
+        world.drain_diagnostics().next().is_none(),
+        "the movement phase is healthy"
+    );
+    world.entities[&unit].position.distance(before)
+}
+
+/// P-10 (plan `2026-11-23-turret-wind-up` D-6, B-90, B-45): a unit in a wind-up whose weapon
+/// is not `Moving` stands that tick, turreted or not; a unit whose weapon is `Moving` keeps
+/// walking through its wind-up, turreted or not. The mount plays no part, and both movement
+/// pipelines hold alike (Amendment 2).
+#[test]
+fn a_wind_up_holds_its_unit_unless_its_weapon_fires_while_moving() {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        for has_turret in [false, true] {
+            for allowed in [
+                AllowedMovement::Stopped,
+                AllowedMovement::Slowing,
+                AllowedMovement::Moving,
+            ] {
+                let walked = displacement_in_wind_up(pipeline, has_turret, allowed, false);
+                if allowed == AllowedMovement::Moving {
+                    assert!(
+                        walked > SimScalar::ZERO,
+                        "{pipeline:?}, turret {has_turret}: a `Moving` weapon's wind-up does not hold its unit"
+                    );
+                } else {
+                    assert_eq!(
+                        walked,
+                        SimScalar::ZERO,
+                        "{pipeline:?}, turret {has_turret}, {allowed:?}: the wind-up holds the unit"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Plan `2026-11-23-turret-wind-up` Amendment 2 (pins B-207): a wind-up whose target is gone
+/// (killed and reaped on the tick before) is read with the weapon the combat phase steps an idle
+/// unit's cycle with, the ground weapon here, so it holds the unit unless that weapon is `Moving`,
+/// for one tick, until the combat phase ends the swing. `StarCraft` II cancels the attack at once;
+/// the fix is registered as B-207 and changes this test.
+#[test]
+fn a_wind_up_whose_target_is_gone_holds_as_its_idle_weapon_says() {
+    for pipeline in [MovementPipeline::Solver, MovementPipeline::Legacy] {
+        for has_turret in [false, true] {
+            assert_eq!(
+                displacement_in_wind_up(pipeline, has_turret, AllowedMovement::Stopped, true),
+                SimScalar::ZERO,
+                "{pipeline:?}, turret {has_turret}: a stale `Stopped` swing holds for its tick"
+            );
+            assert!(
+                displacement_in_wind_up(pipeline, has_turret, AllowedMovement::Moving, true)
+                    > SimScalar::ZERO,
+                "{pipeline:?}, turret {has_turret}: a stale `Moving` swing does not hold"
+            );
+        }
+    }
 }
