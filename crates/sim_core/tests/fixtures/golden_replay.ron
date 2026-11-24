@@ -402,6 +402,13 @@
 // (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
 // wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-20-contact-solver WP6 (the switch-over, Amendment 16): the shipped
+// movement rules run `pipeline: Solver`; the first changed checkpoint is 0 (ticks 1 to 50), the
+// first contact of the opening walk. Proof: with `pipeline: Legacy` the same tree (main 36b914fd
+// merged, schema 40) reproduces main's previous list at every checkpoint, and
+// DEFAULT_SANDBOX_CHECKSUM, on native debug and release and wasm32-wasip1 release and debug;
+// the switch is the only change. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
 (
     checksum_schema: 40,
     seed: 0x5EED_0F_5CAFF1E,
@@ -429,25 +436,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x4d23fe955d0bf888,
-        0xf2ff677a82127c09,
-        0xea892e4ca9c19656,
-        0x185d0e7b754ac1d2,
-        0xd180e98c043fd160,
-        0x5edf82a36d5ccbe1,
-        0x835b445606053950,
-        0x18fac8f8994d7203,
-        0xfceeaf8611574889,
-        0xb7af12a6a96deea2,
-        0x8d34e6a64ef15a2f,
-        0x0ede47caed36d83f,
-        0x8a77d612f1ecfe9b,
-        0x6d36dd4c99bb8c06,
-        0x3818f506ed1ac480,
-        0x97cbbfec92789ebe,
-        0x29d45808cd839b06,
-        0xcd7c0a9a56a7a89f,
-        0xe021183181ce99c8,
-        0xe37d10215053579c,
+        0x2fba59fe930c5143,
+        0x77b15bda2587ce4a,
+        0xb5dd83d244032c88,
+        0x25da25a052dd8cf0,
+        0x261026cbe5863591,
+        0xd3c91674d5f69020,
+        0xd99419adbf001090,
+        0x307573ccf461a1ac,
+        0x46ab563d07f40f17,
+        0xa9e1905c794700af,
+        0x95231ec5d44ae227,
+        0xda518d3b21ae543c,
+        0xbeff2f4562598a1f,
+        0x9f40bdf133b7b2a3,
+        0x06e59f7bcc9eff93,
+        0xfa8e84775053aa2f,
+        0xe74f152bbc02fddf,
+        0x6572e4484cc5be7e,
+        0xb2a4d07a15907225,
+        0xe436d59864a5403e,
     ],
 )

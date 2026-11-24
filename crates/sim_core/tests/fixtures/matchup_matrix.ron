@@ -1027,6 +1027,10 @@
     // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2), and
     // docs/evidence/2026-11-05-sc2-deviation-fixes.md §12 (B-3), §11 (B-29), §5.3 (B-2), §4.6 (B-9) and §1
     // (WP1).
+    // Restated for plan 2026-11-20-contact-solver WP6 (the solver pipeline becomes the default):
+    // on the 20 matrix seeds the marines now win every one with 8 to 16 left (seed 11 of record:
+    // 14). Blue's upper bound 13 -> 16; reported as a finding, since the claim's "narrowly" no
+    // longer describes the fight (evidence §14).
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",
@@ -1044,7 +1048,7 @@
             ],
             order: AttackMove(20, 48),
         ),
-        expect: (blue: (0, 13), red: (0, 3)),
+        expect: (blue: (0, 16), red: (0, 3)),
     ),
     (
         name: "34_20_hydras_vs_12_mutas",
@@ -1119,6 +1123,8 @@
     // record) marine entity 8 keeps walking at tick 118 where it used to step forward, and the
     // marines win with 12 left (11 before); the range was the control's measured spread, not a
     // StarCraft II figure.
+    // Restated for plan 2026-11-20-contact-solver WP6: under the solver pipeline the marines win
+    // all 20 matrix seeds with 9 to 13 left (seed 3203386110 of record: 13); red 9..12 -> 9..13.
     (
         name: "36b_marines_beat_zealots_without_storm",
         claim: "Control of 36a: without the storm the same marines beat the zealots and the High Templar analogue",
@@ -1138,7 +1144,7 @@
             ],
             order: AttackMove(46, 45),
         ),
-        expect: (blue: (0, 0), red: (9, 12)),
+        expect: (blue: (0, 0), red: (9, 13)),
     ),
     // Battles 37a/37b (plan 2026-11-10-spellcaster-mechanics §10.2, Amendment 6): Abduct's own
     // effect. Two sieged tanks 6 apart hold behind four marines; the Viper analogue waits on the
@@ -1227,6 +1233,9 @@
     ),
     // Control of 38a: no cast. The marines win all 20 seeds with 6 to 8 left (5 once in 52
     // seeds); every zergling dies and the idle caster outlives the 400-tick limit.
+    // Restated for plan 2026-11-20-contact-solver WP6: under the solver pipeline the marines win
+    // all 20 matrix seeds with 4 to 8 left, and on 7 the idle caster dies too (seed 3203386110 of
+    // record: blue 0, red 6); blue 1..1 -> 0..1, red 5..8 -> 4..8.
     (
         name: "38b_marines_beat_zerglings_without_fungal",
         claim: "Control of 38a: without Fungal Growth the same marines beat the zerglings",
@@ -1245,7 +1254,7 @@
             ],
             order: HoldPosition,
         ),
-        expect: (blue: (1, 1), red: (5, 8)),
+        expect: (blue: (0, 1), red: (4, 8)),
     ),
     // Battles 39a/39b (plan 2026-11-10-spellcaster-mechanics §10.2): Blinding Cloud flips a fight.
     // Three sieged tanks hold in a column 1.8 apart, every one within 2 of their centroid; eight
