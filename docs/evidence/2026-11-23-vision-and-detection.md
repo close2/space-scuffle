@@ -115,3 +115,19 @@ visible and detector counts at the default arena's blocker cells (x 15–17, y 1
   recorded for WP3 on native debug and release and `wasm32-wasip1` release and debug.
 - **Step 2:** the fields hashed, schema 41; every checkpoint of both goldens changed and the sandbox is
   `1_550_645_596_559_574_539`. The encoding unit tests' schema byte is 41.
+- **Worlds:** `compare-wp4.txt`: 483 files, 0 differ.
+- **Proof** (`proof-wp4/`, a copy of `cf846dc3`): the re-recorded goldens and sandbox reproduce on native debug and
+  release and `wasm32-wasip1` release and debug.
+
+## WP5: battle 41
+
+- `41_void_ray_above_a_cliff_vs_hydras` on 20 seeds before the reveal (`b41/wp5/`): the Hydra analogues reach the
+  foot of the cliff (x 44 to 45) and stop, within the Void Ray analogue's reach and it within theirs. Struck by an
+  attacker they cannot see, they flee as helpless out of its reach (`HELPLESS_FLEE_DISTANCE`) and never start a
+  swing: 0 Hydra shots on every seed, the Void Ray untouched (150 life, 100 shields), 18 to 38 Void Ray strikes per
+  seed. The battle runs to tick 600 with 5 or 6 Hydras left (5 on seeds 3, 7 and 14). The plan predicted a Void
+  Ray win; the "never fire" half of P-14's premise holds, the win does not, because the helpless flee takes the
+  Hydras out of reach. They stop at the foot within reach, so §7.4's Hold Position fallback is not needed.
+- **Worlds:** `compare-wp5.txt`: only `matrix.csv`, `matrix.md` and the matrix log differ, by battle 41's 20 new rows
+  (1,200 runs instead of 1,180; still 0 expectation failures on the seeds of record and 4 over all seeds); every
+  other row and every other file is byte-identical.

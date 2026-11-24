@@ -1322,6 +1322,74 @@ fn play_again_starts_with_a_fresh_memory_and_the_enemy_still_hidden() {
     }
 }
 
+// --- Attack reveal (plan 2026-11-23-vision-and-detection D-6, P-15) ------------------------------
+
+/// Sets how many more ticks `foe`'s attacks reveal it to the local player.
+fn reveal_to_viewer(harness: &mut Harness, foe: EntityId, ticks: u16) {
+    let slot = LOCAL_PLAYER.slot().expect("the viewer is seated");
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&foe)
+        .expect("the foe exists")
+        .attack_reveal_ticks[slot] = ticks;
+}
+
+#[test]
+fn an_attack_revealed_enemy_is_drawn_and_pickable_in_fog() {
+    let mut harness = skirmish();
+    let place = home(&harness) + Vec2::new(OUT_OF_SIGHT, 0.0);
+    let foe = spawn_soldier(&mut harness, ENEMY, place);
+    assert_nothing_of_it_is_drawn(&harness, foe);
+
+    reveal_to_viewer(&mut harness, foe, 1_000);
+    run_ticks(&mut harness, 2);
+    assert!(model(&harness).view.attack_revealed.contains(&foe));
+    assert!(
+        drawn(&harness, foe),
+        "an attack-revealed enemy is drawn in fog"
+    );
+    let at = harness.simulated_position(foe);
+    harness.look_at(at);
+    harness.select(foe);
+    assert_eq!(harness.selection().inspected(), Some(foe), "and pickable");
+
+    reveal_to_viewer(&mut harness, foe, 0);
+    run_ticks(&mut harness, 2);
+    assert!(!model(&harness).view.attack_revealed.contains(&foe));
+    assert_nothing_of_it_is_drawn(&harness, foe);
+    assert_eq!(
+        harness.selection().inspected(),
+        None,
+        "hidden again once the list drops it"
+    );
+}
+
+#[test]
+fn an_attack_revealed_cloaked_enemy_still_needs_detection() {
+    let mut harness = skirmish();
+    let place = home(&harness) + Vec2::new(OUT_OF_SIGHT, 0.0);
+    let foe = spawn_soldier(&mut harness, ENEMY, place);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&foe)
+        .expect("the foe exists")
+        .is_cloaked = true;
+    reveal_to_viewer(&mut harness, foe, 1_000);
+    run_ticks(&mut harness, 2);
+    assert!(model(&harness).view.attack_revealed.contains(&foe));
+    assert!(!model(&harness).view.revealed.contains(&foe));
+    let at = harness.simulated_position(foe);
+    harness.look_at(at);
+    harness.select(foe);
+    assert_eq!(
+        harness.selection().inspected(),
+        None,
+        "an undetected cloaked unit is never picked"
+    );
+}
+
 // --- No allocation on the per-frame path (charter 3.3) -------------------------------------------
 
 #[test]

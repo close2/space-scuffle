@@ -603,6 +603,10 @@
             weapon: None,
             air_weapon: Some((
                 name: "Disruptor Beam",
+                // 5.0.14 IonCannonsU (liberty EffectData:1984): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1185,6 +1189,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             air_weapon: Some((
                 name: "Sky Torpedo Volley",
+                // 5.0.14 LanzerTorpedoesDamage (liberty EffectData:1715): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1325,6 +1333,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             air_weapon: Some((
                 name: "Lexington Rockets",
+                // 5.0.14 LiberatorMissileDamage (void EffectData:2935): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -1421,6 +1433,10 @@
             armor_class: Some("directorate_vehicle_plating"),
             weapon: Some((
                 name: "Backlash Thermite Rockets",
+                // 5.0.14 BacklashRocketsU (liberty EffectData:2566): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2223,6 +2239,10 @@
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Thermal Lance Sweep",
+                // 5.0.14 ThermalLancesMU (liberty EffectData:2421): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2431,6 +2451,10 @@
             armor_class: Some("enclave_air_armor"),
             weapon: Some((
                 name: "Prismatic Beam",
+                // 5.0.14 PrismaticBeamMUBase (liberty EffectData:125) and VoidRaySwarmDamage (void EffectData:1807): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2460,6 +2484,10 @@
             )),
             air_weapon: Some((
                 name: "Prismatic Beam",
+                // 5.0.14 PrismaticBeamMUBase (liberty EffectData:125) and VoidRaySwarmDamage (void EffectData:1807): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: LaserBeam,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -2549,6 +2577,10 @@
             armor_class: Some("enclave_air_armor"),
             weapon: Some((
                 name: "Interceptor Fleet Salvo",
+                // 5.0.14 InterceptorBeamAADamage and InterceptorBeamAGDamage (voidmulti EffectData:2264, :2280): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3243,6 +3275,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             weapon: Some((
                 name: "Glaive Stinger",
+                // 5.0.14 GlaiveWurmU1 to U3 (liberty EffectData:2229, :2234, :2239): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3271,6 +3307,10 @@
             )),
             air_weapon: Some((
                 name: "Glaive Stinger",
+                // 5.0.14 GlaiveWurmU1 to U3 (liberty EffectData:2229, :2234, :2239): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3358,6 +3398,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             air_weapon: Some((
                 name: "Parasitic Spores",
+                // 5.0.14 ParasiteSporeDamage (liberty EffectData:2589): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3443,6 +3487,10 @@
             armor_class: Some("swarm_flyer_carapace"),
             ground_weapon: Some((
                 name: "Broodling Swarm",
+                // 5.0.14 BroodlingEscortDamage (liberty EffectData:2788): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,
@@ -3471,6 +3519,10 @@
             )),
             weapon: Some((
                 name: "Broodling Swarm",
+                // 5.0.14 BroodlingEscortDamage (liberty EffectData:2788): Visibility Visible; AttackReveal lasts 3 Normal s (core
+                // BehaviorData:237-240), 3 x 25 / 1.4 = 53.6 ticks, rounded half up to 54 (Q0052 S-5);
+                // plan 2026-11-23-vision-and-detection D-4, D-5.
+                attack_visibility: Visible(reveal_ticks: 54),
                 visual_kind: Projectile,
                 target_flags: (bits: 255),
                 min_range: 0.0,

@@ -9,6 +9,11 @@
 //! the vision maps it leaves. Its bookkeeping is derived state: the checksum reads
 //! `vision_maps` and `known_blocked_cells`, never the counted-source lists.
 //!
+//! The phase also counts down every entity's attack-reveal counters (plan
+//! `2026-11-23-vision-and-detection` D-5) before anything reads vision: a reveal set by a strike
+//! in phase 7 of tick t is seen by that tick's retaliation and by acquisition on the following
+//! `reveal_ticks - 1` ticks, so it is in force for exactly `reveal_ticks` ticks.
+//!
 //! # Invariants
 //! - Incremental recasting leaves every counter and state exactly as a full recount would.
 //! - Sight lists are sorted by ID, with watchtowers at the top of the ID range.
@@ -76,6 +81,16 @@ impl SimWorld {
         }
         self.map
             .update_watchtower_capture(&self.vision.watchtower_units);
+    }
+
+    /// Takes one tick off every entity's nonzero attack-reveal counters (plan
+    /// `2026-11-23-vision-and-detection` D-5).
+    fn count_down_attack_reveals(&mut self) {
+        for entity in self.entities.values_mut() {
+            for ticks in &mut entity.attack_reveal_ticks {
+                *ticks = ticks.saturating_sub(1);
+            }
+        }
     }
 
     /// Lists every sight source for this tick in ID order, watchtowers after all entities.
@@ -158,6 +173,7 @@ impl SimWorld {
     // Trade-off: One retained list of sources, and a full recount whenever terrain or a map is
     // edited outside this function. Counters and states end exactly as a full recount leaves them.
     pub fn update_vision(&mut self) {
+        self.count_down_attack_reveals();
         self.update_watchtower_control();
 
         let mut sights = std::mem::take(&mut self.vision.sights);

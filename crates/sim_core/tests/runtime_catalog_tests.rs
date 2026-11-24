@@ -2772,3 +2772,137 @@ fn an_edited_detection_radius_loses_a_cloaked_enemy() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Whether a holding ground unit of player 1 that hits air ever targets an air unit of
+/// `attacker` striking it from over a plateau it cannot see, within 100 ticks, in `catalogs`.
+fn victim_answers_from_below(
+    catalogs: RuntimeCatalogs,
+    attacker: UnitTypeId,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let victim_arch = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && !arch.is_detector()
+                && arch
+                    .weapon_against(sim_types::MoverType::Air, None)
+                    .is_some_and(|w| w.max_range >= SimScalar::from_i32(4))
+        })
+        .cloned()
+        .ok_or("a ground unit that hits air")?;
+    let attacker_arch = catalogs.units.get(attacker)?.clone();
+    let reach = attacker_arch
+        .weapon_against(sim_types::MoverType::Ground, None)
+        .ok_or("the attacker hits ground")?
+        .max_range
+        .min(
+            victim_arch
+                .weapon_against(sim_types::MoverType::Air, None)
+                .ok_or("the victim hits air")?
+                .max_range,
+        )
+        + attacker_arch.collision_radius
+        + victim_arch.collision_radius
+        - SimScalar::from_num(0.25);
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
+        }
+    }
+    let mut world = SimWorld::with_catalogs(map, 9, catalogs.units, catalogs.upgrades)?;
+    let over = SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(16.5));
+    let shooter = world.spawn_unit(attacker, PlayerId(0), over)?;
+    let victim = world.spawn_unit(
+        victim_arch.unit_type_id,
+        PlayerId(1),
+        SimVec2::new(over.x - reach, over.y),
+    )?;
+    let mut commands = vec![
+        sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: sim_types::UnitOrder::attack(victim),
+            queue: false,
+        },
+        sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![victim],
+            order: sim_types::UnitOrder::HoldPosition,
+            queue: false,
+        },
+    ];
+    for tick in 0..100_u32 {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: std::mem::take(&mut commands),
+            state_checksum: None,
+        });
+        if world
+            .entities
+            .get(&victim)
+            .is_some_and(|v| v.current_target == Some(shooter))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// P-16 (plan `2026-11-23-vision-and-detection` D-4): a catalog copy that makes an air unit's
+/// weapons `Snapshot` keeps it hidden from the ground unit it strikes from over a plateau, which
+/// the shipped `Visible` weapons reveal, in the same binary.
+#[test]
+fn an_edited_attack_visibility_hides_an_air_attacker() -> TestResult {
+    let bundle = Bundle::new("attack-visibility")?;
+    let shipped = bundle.load()?;
+    let attacker = shipped
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Air
+                && arch.max_speed > SimScalar::ZERO
+                && arch
+                    .weapon_against(sim_types::MoverType::Ground, None)
+                    .is_some_and(|w| {
+                        w.splash.is_none()
+                            && matches!(
+                                w.attack_visibility,
+                                sim_types::AttackVisibility::Visible { .. }
+                            )
+                    })
+        })
+        .cloned()
+        .ok_or("a shipped air unit with a Visible weapon against ground")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", attacker.slug))
+        .ok_or("the attacker's row")?;
+    let end = units[row + 1..]
+        .find("slug: \"")
+        .map_or(units.len(), |next| row + 1 + next);
+    let edited_row = units[row..end].replace(
+        "attack_visibility: Visible(reveal_ticks: 54)",
+        "attack_visibility: Snapshot",
+    );
+    std::fs::write(
+        bundle.directory.join(FILES[0]),
+        format!("{}{edited_row}{}", &units[..row], &units[end..]),
+    )?;
+    let edited = bundle.load()?;
+    assert_eq!(
+        edited
+            .units
+            .get(attacker.unit_type_id)?
+            .weapon_against(sim_types::MoverType::Ground, None)
+            .map(|w| w.attack_visibility),
+        Some(sim_types::AttackVisibility::Snapshot),
+        "premise: the edit reached the weapon"
+    );
+    assert!(victim_answers_from_below(shipped, attacker.unit_type_id)?);
+    assert!(!victim_answers_from_below(edited, attacker.unit_type_id)?);
+    bundle.finish()?;
+    Ok(())
+}

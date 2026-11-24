@@ -1802,3 +1802,46 @@ fn b90_weapon_movement_follows_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// P-11 (plan `2026-11-23-vision-and-detection` §2.3): 5.0.14 sets `Visibility Visible` on
+/// every damage effect of a unit on the air plane (air units and the Colossus, `liberty`
+/// EffectData:2421, :1715, :2229, :2589, :2788, :2566, :1984, :125, `void` :1807, :2935,
+/// `voidmulti` :2264, …), each revealing its attacker for `AttackReveal`'s 3 Normal s (`core`
+/// BehaviorData:237–240), 54 whole ticks; every other weapon keeps the `Snapshot` default, and no
+/// shipped weapon is `Hidden`.
+#[test]
+fn attack_visibility_follows_starcraft() -> TestResult {
+    let catalog =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    let mut visible = 0;
+    let air_plane = |mover: MoverType| matches!(mover, MoverType::Air | MoverType::CliffWalker);
+    for arch in catalog.archetypes() {
+        let own = [&arch.weapon, &arch.ground_weapon, &arch.air_weapon]
+            .into_iter()
+            .flatten()
+            .map(|weapon| (arch.mover_type, weapon));
+        // A mode's weapons fire on the plane the mode puts the unit on.
+        let modes = arch.modes.iter().flat_map(|mode| {
+            let mover = mode.mover_type_override.unwrap_or(arch.mover_type);
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .filter_map(|weapon| weapon.as_ref().and_then(Option::as_ref))
+                .map(move |weapon| (mover, weapon))
+        });
+        for (mover, weapon) in own.chain(modes) {
+            let expected = if air_plane(mover) {
+                visible += 1;
+                sim_types::AttackVisibility::Visible { reveal_ticks: 54 }
+            } else {
+                sim_types::AttackVisibility::Snapshot
+            };
+            assert_eq!(
+                weapon.attack_visibility, expected,
+                "{} ({mover:?}) {}",
+                arch.slug, weapon.name
+            );
+        }
+    }
+    assert!(visible > 0, "the shipped catalog has air-plane weapons");
+    Ok(())
+}
