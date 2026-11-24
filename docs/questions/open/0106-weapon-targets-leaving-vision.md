@@ -34,3 +34,7 @@ against a lone Colossus at full range.
 
 ## Answer
 
+- **1(a):** A player's attack order on a unit that leaves vision walks to where the unit was last seen and stops there, resuming the attack if the unit enters vision again.
+- **2(a):** An automatic target that leaves vision is dropped immediately, and the unit picks the best visible enemy or resumes its order.
+- **3(a):** Every teleport effect (Blink, Mass Recall, Adept Shade, Battlecruiser Tactical Jump) makes in-flight missiles miss. **Important timing requirement:** for spells with a cast/channel/wind-up time (such as Mass Recall, Tactical Jump, or Adept Shade travelling), missile disjointing must occur **only at the tick the actual teleport happens**, not when the ability is first cast.
+- **4(a):** A unit is seen when the cell at its **centre** is visible.

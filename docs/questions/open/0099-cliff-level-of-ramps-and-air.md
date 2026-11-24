@@ -26,3 +26,6 @@ Liberator's anti-air shot at a Viking over high ground with a second Viking over
 
 ## Answer
 
+- **1(c):** A unit on a ramp counts as **both** cliff levels (so a ramp never separates splash between high and low ground).
+- **2(b):** Air blasts **ignore cliff levels** (air-to-air splash does not miss across a ground cliff line).
+- **3(a):** The cliff level is read **at the blast's centre point**.

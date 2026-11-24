@@ -58,3 +58,7 @@ Two battle claims break under the solver; they are asked about separately in
 [Q0103](0103-solver-matrix-claims.md). The merge waits for both answers.
 
 ## Answer
+
+- **Option (a): Accept `+66.8 %` instructions on the 400-unit 64×64 scenario.**
+
+**Reasoning:** The ratio increase from `+62.6 %` to `+66.8 %` is an artifact of Legacy getting faster from the turret wind-up merge (`10.35 G → 9.47 G`), while actual speed passes Q0093 (c)'s 50 TPS bar with wide headroom on every scenario (`111` TPS = 4.4× real time on 64×64, `183` TPS on 128×128, `80` TPS on Showcase canyon). Do not compromise overlap tolerances over the relative instruction ratio; merge remains gated only on Q0103.
