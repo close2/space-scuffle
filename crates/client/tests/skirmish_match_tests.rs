@@ -305,7 +305,17 @@ const CROSSED_FLOOR: f32 = 10.0;
 /// whose frames take seconds, always runs at that cap, so it is the worst case any load can
 /// reach. On 2026-11-05, at load averages of 17 to 27 on 16 cores, built rings changed by 0.3 to
 /// 1.4 on radv and by 1.7 on lavapipe, against 60.1 or more for crossed rings: a ratio of 35.
+///
+/// The dome's damage look is the other clock it reads: below [`DAMAGE_LOOK_HEALTH`] its cracks
+/// and, below 0.35, the brown-out of B-120 (2026-11-19) flicker with Bevy's global shader time,
+/// which runs with the frames, not with the paused battle. The staged foundation therefore has
+/// full health in both shots ([`stage_construction`]), and the parent checks that the shots
+/// presented it.
 const CROSSED_RATIO: f32 = 3.0;
+/// Health share below which the dome draws a damage look (`assets/shaders/bubble_dome.wgsl`:
+/// static cracks below 0.75, scanlines below 0.50, and the time-driven brown-out and crack
+/// flicker below 0.35). Both shots must present at least this, so their difference is the fill.
+const DAMAGE_LOOK_HEALTH: f32 = 0.75;
 
 /// Screen pixels of one ring of the foundation's dome.
 #[derive(Debug, Serialize, Deserialize)]
@@ -319,6 +329,8 @@ struct Ring {
 struct WindowedReport {
     /// The construction share each shot presented, from the bubble instance itself.
     presented: Vec<f32>,
+    /// The health share each shot presented, from the bubble instance itself.
+    health: Vec<f32>,
     rings: Vec<Ring>,
     /// Physical pixel rows of the command panel's top edge and of the world's middle.
     panel_top: u32,
@@ -360,6 +372,11 @@ fn assert_fill_rises(report: &WindowedReport, early: &image::RgbImage, late: &im
     let [first, second] = report.presented[..] else {
         panic!("two shots: {report:?}");
     };
+    assert!(
+        report.health.len() == 2 && report.health.iter().all(|&h| h >= DAMAGE_LOOK_HEALTH),
+        "both shots show the foundation without a damage look: health {:?}",
+        report.health
+    );
     assert!(first < second, "the shares rose: {first} then {second}");
     let mut crossed = Vec::new();
     let mut built = Vec::new();
@@ -460,7 +477,8 @@ fn published_tick(session: &BattleSession) -> u32 {
 }
 
 /// Stages the child through the world: funds the bank at boot, then, once the pilot has raised a
-/// foundation, sets its share for each shot. Shared by the windowed child and
+/// foundation, sets its share for each shot, at full health so that no damage look varies
+/// between the shots. Shared by the windowed child and
 /// `a_staged_share_is_published_however_short_the_frame`, so the headless test runs this code.
 #[allow(
     clippy::needless_pass_by_value,
@@ -504,15 +522,18 @@ fn stage_construction(
                 return;
             }
             let world = session.world_mut().expect("a ready session has a world");
-            let construction = world
+            let foundation = world
                 .entities
                 .values_mut()
-                .find_map(|unit| {
-                    (unit.owner == LOCAL_PLAYER)
-                        .then_some(unit.construction.as_mut())
-                        .flatten()
-                })
+                .find(|unit| unit.owner == LOCAL_PLAYER && unit.construction.is_some())
                 .expect("the pilot raised a foundation");
+            // Full health keeps the dome's damage look, whose flicker runs on shader time while
+            // the battle is paused, out of both shots (see CROSSED_RATIO).
+            foundation.hp = foundation.max_hp;
+            let construction = foundation
+                .construction
+                .as_mut()
+                .expect("invariant: the foundation was found by its construction");
             construction.remaining_ticks =
                 ((1.0 - share) * construction.total_ticks as f32).round() as u32;
             lab.battle_paused = false;
@@ -537,10 +558,11 @@ struct Capture {
     report: WindowedReport,
 }
 
-/// Bevy world centre and radius of the viewer's foundation, and its presented share.
+/// Bevy world centre and radius of the viewer's foundation, and its presented construction and
+/// health shares.
 fn foundation(
     bubbles: &Query<'_, '_, (&BubbleInstance, &GlobalTransform), With<LiveBattleBubble>>,
-) -> Option<(Vec3, f32, f32)> {
+) -> Option<(Vec3, f32, f32, f32)> {
     bubbles
         .iter()
         .find(|(bubble, _)| {
@@ -551,6 +573,7 @@ fn foundation(
                 transform.translation(),
                 transform.scale().x,
                 bubble.0.build_or_queue_progress.unwrap_or(0.0),
+                bubble.0.hp_ratio,
             )
         })
 }
@@ -582,12 +605,13 @@ fn capture_shots(
     if staging.phase != StagePhase::Ready || capture.pending {
         return;
     }
-    let (Some((centre, radius, presented)), Ok((camera, transform))) =
+    let (Some((centre, radius, presented, health)), Ok((camera, transform))) =
         (foundation(&bubbles), cameras.get_single())
     else {
         panic!("the foundation is on screen");
     };
     capture.report.presented.push(presented);
+    capture.report.health.push(health);
     if staging.shot == 0 {
         capture.report.rings = rings(camera, transform, centre, radius);
         let scale = ui.pixels_per_point;
