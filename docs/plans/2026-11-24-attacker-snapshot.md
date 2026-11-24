@@ -26,7 +26,30 @@ which waits for a minimap; the record this plan publishes is that minimap's inpu
 - Line numbers drift, so search for the quoted symbol.
 - Claims not confirmed while planning are marked **verify**.
 - Later decisions are appended as `## Amendment N (orchestrator, YYYY-MM-DD): <decision>`, numbered from 1.
-- An `## As built` section follows the merge.
+- An `## Amendment 1 (2026-11-25, orchestrator): Q0112 answered 2(c), a 1-second cap
+
+The owner answered Q0112 1(a), **2(c)** and 3(a). Parts 1 and 3 are what this plan built. Part 2 changes D-3's
+lifetime: a snapshot still ends when its struck player sees its cell or the attacker, and it now also ends **at most
+1 second after the strike that made or last refreshed it** (a later strike by the same attacker on that player moves
+the record and restarts the cap). The owner wants the value easy to tune, so it is data, not a code constant:
+
+- **What changes.** The record keeps the tick of its last strike (unhashed, in `PresentationWorkspace`, like the pose).
+  `prune_attack_snapshots` (`world/vision.rs`) also drops a record once `tick - strike_tick` reaches the cap. The cap
+  is read at run time from the catalog (one authored field in seconds or ticks, beside the other vision or
+  presentation rules the catalog already loads; 1 second is 25 ticks, `TICKS_PER_SECOND`), validated (a cap of 0 is
+  refused with a typed error, since it would drop every snapshot before it is shown), and documented where it is
+  authored.
+- **Why.** Owner answer Q0112 2(c): a mobile high-ground attacker must not leave stale ghosts behind.
+- **Tests (red first).** In `attack_snapshot_tests.rs`: a snapshot left alone disappears exactly when the cap is
+  reached and not a tick earlier; a second strike before the cap moves the record and restarts the cap; the existing
+  "seen cell" and "seen attacker" drops still end it earlier; the cap is read from the catalog (a scratch catalog with a
+  different cap changes the lifetime); the validation refuses 0. The client steady-state and allocation tests keep
+  passing (the record grows by one integer, no heap data).
+- **Unchanged.** No checksum, golden or schema value moves (the records are unhashed and read by no tick decision);
+  the proof on four builds of the plan's WP1 is repeated on the final tree. Q0112 moves to `closed/` with a
+  `## Resolution` in the same branch.
+
+## As built` section follows the merge.
 - New register rows are numbered **B-204** to **B-206** and the draft question **Q0112**: all provisional, the next
   free numbers at merge. Another plan has reserved B-202, B-203, Q0110 and Q0111.
 
