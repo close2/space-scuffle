@@ -8,9 +8,14 @@
 //! On a ramp the observer's and target's heights vary continuously, so a unit at the foot of a
 //! ramp cannot see its top, and one cresting it can see the plateau ahead.
 //!
+//! Detection is a second circle cast along the same rays: a source detects the cells within its
+//! detection radius that its line of sight reaches, whether or not they lie within its sight
+//! radius (plan `2026-11-23-vision-and-detection` D-2).
+//!
 //! # Invariants
-//! Sight radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and catalogs load, so
-//! the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens authored data.
+//! Sight and detection radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and
+//! catalogs load, so the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens
+//! authored data.
 
 use crate::grid::{CellFlags, GameMap, Watchtower};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, VisibilityState};
@@ -131,6 +136,15 @@ enum SightChange {
     Remove,
 }
 
+/// Which counters one source raises on one cell.
+#[derive(Clone, Copy)]
+struct Reach {
+    /// The cell lies within the source's sight circle.
+    sees: bool,
+    /// The cell lies within the source's detection circle.
+    detects: bool,
+}
+
 /// Vision source query parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisionSource {
@@ -140,8 +154,11 @@ pub struct VisionSource {
     pub mover_type: MoverType,
     /// Maximum sight radius in world units.
     pub sight_radius: SimScalar,
-    /// Whether this observer is an active detector (reveals cloaked / burrowed units).
-    pub is_detector: bool,
+    /// Detection radius in world units, `ZERO` for a source that detects nothing. Detection
+    /// follows the source's line of sight (the same cliff and blocker rules as sight) but has
+    /// its own circle, which may be larger or smaller than the sight circle (5.0.14's
+    /// `Detector11`-style `Detect`, plan `2026-11-23-vision-and-detection` D-2).
+    pub detection_radius: SimScalar,
 }
 
 /// The sight a watchtower gives its controlling player.
@@ -151,7 +168,7 @@ pub fn watchtower_source(tower: &Watchtower) -> VisionSource {
         pos: tower.pos,
         mover_type: MoverType::Air, // Elevated observation platform overlooks cliffs
         sight_radius: tower.reveal_radius,
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     }
 }
 
@@ -250,25 +267,32 @@ impl PlayerVisionMap {
         self.cast(map, source, SightChange::Remove);
     }
 
-    /// Records one source seeing the cell at `index`.
+    /// Records one source seeing the cell at `index` when `sees`, and detecting it when
+    /// `detects`. `Remove` takes back exactly what `Add` or `Tally` counted with the same flags.
     #[inline]
-    fn mark(&mut self, index: usize, is_detector: bool, change: SightChange) {
+    fn mark(&mut self, index: usize, reach: Reach, change: SightChange) {
         if change == SightChange::Remove {
-            self.visible_counter[index] = self.visible_counter[index].saturating_sub(1);
-            if is_detector {
+            if reach.detects {
                 self.detector_counter[index] = self.detector_counter[index].saturating_sub(1);
             }
-            if self.visible_counter[index] == 0 && self.states[index] == VisibilityState::Visible {
-                self.states[index] = VisibilityState::Fogged;
+            if reach.sees {
+                self.visible_counter[index] = self.visible_counter[index].saturating_sub(1);
+                if self.visible_counter[index] == 0
+                    && self.states[index] == VisibilityState::Visible
+                {
+                    self.states[index] = VisibilityState::Fogged;
+                }
             }
             return;
         }
-        self.visible_counter[index] = self.visible_counter[index].saturating_add(1);
-        if is_detector {
+        if reach.detects {
             self.detector_counter[index] = self.detector_counter[index].saturating_add(1);
         }
-        if change == SightChange::Add {
-            self.states[index] = VisibilityState::Visible;
+        if reach.sees {
+            self.visible_counter[index] = self.visible_counter[index].saturating_add(1);
+            if change == SightChange::Add {
+                self.states[index] = VisibilityState::Visible;
+            }
         }
     }
 
@@ -286,9 +310,15 @@ impl PlayerVisionMap {
         let is_air = matches!(source.mover_type, MoverType::Air | MoverType::CliffWalker);
         let source_in_blocker = center_cell.flags.contains(CellFlags::LOS_BLOCKER);
 
-        let r_int = (source.sight_radius.saturating_ceil().saturating_to_u32() as usize)
-            .min(MAX_PRECOMPUTED_RADIUS);
-        let r_sq = source.sight_radius * source.sight_radius;
+        // The rays are walked to the farther of the two circles; each cell is then seen and
+        // detected by its own circle (plan `2026-11-23-vision-and-detection` D-2).
+        let reach = source.sight_radius.max(source.detection_radius);
+        let r_int =
+            (reach.saturating_ceil().saturating_to_u32() as usize).min(MAX_PRECOMPUTED_RADIUS);
+        let r_sq = reach * reach;
+        let sight_sq = source.sight_radius * source.sight_radius;
+        let detect_sq = source.detection_radius * source.detection_radius;
+        let detects_any = source.detection_radius > SimScalar::ZERO;
 
         self.current_source_gen = self.current_source_gen.wrapping_add(1);
         if self.current_source_gen == 0 {
@@ -299,7 +329,11 @@ impl PlayerVisionMap {
         // Always reveal observer's own cell
         let center_idx = (center_y as usize) * (self.width as usize) + (center_x as usize);
         self.visited_in_source[center_idx] = self.current_source_gen;
-        self.mark(center_idx, source.is_detector, change);
+        let own = Reach {
+            sees: true,
+            detects: detects_any,
+        };
+        self.mark(center_idx, own, change);
 
         if r_int == 0 {
             return;
@@ -328,6 +362,10 @@ impl PlayerVisionMap {
                 if (dist_sq << 32) > r_sq.raw() {
                     break;
                 }
+                let cell_reach = Reach {
+                    sees: (dist_sq << 32) <= sight_sq.raw(),
+                    detects: detects_any && (dist_sq << 32) <= detect_sq.raw(),
+                };
 
                 let Ok(target_cell) = map.cell(tx, ty) else {
                     break;
@@ -360,7 +398,7 @@ impl PlayerVisionMap {
                     let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
                     if self.visited_in_source[t_idx] != self.current_source_gen {
                         self.visited_in_source[t_idx] = self.current_source_gen;
-                        self.mark(t_idx, source.is_detector, change);
+                        self.mark(t_idx, cell_reach, change);
                     }
                     break;
                 }
@@ -371,7 +409,7 @@ impl PlayerVisionMap {
                 let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
                 if self.visited_in_source[t_idx] != self.current_source_gen {
                     self.visited_in_source[t_idx] = self.current_source_gen;
-                    self.mark(t_idx, source.is_detector, change);
+                    self.mark(t_idx, cell_reach, change);
                 }
             }
         }
@@ -451,7 +489,11 @@ mod incremental_tests {
             pos: SimVec2::from_i32(x, y),
             mover_type: MoverType::Ground,
             sight_radius: SimScalar::from_i32(6),
-            is_detector,
+            detection_radius: if is_detector {
+                SimScalar::from_i32(6)
+            } else {
+                SimScalar::ZERO
+            },
         }
     }
 

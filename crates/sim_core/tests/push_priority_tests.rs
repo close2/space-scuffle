@@ -82,7 +82,6 @@ fn scratch_unit(
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: None,
-            is_detector: false,
         )"#
     )
 }

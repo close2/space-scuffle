@@ -553,7 +553,11 @@ fn target_availability_matches_simulation_at_submission_and_execution() -> TestR
                 pos: target_pos,
                 mover_type: MoverType::Air,
                 sight_radius: SimScalar::from_i32(3),
-                is_detector: detector,
+                detection_radius: if detector {
+                    SimScalar::from_i32(3)
+                } else {
+                    SimScalar::ZERO
+                },
             },
         );
         vision.end_tick_update();

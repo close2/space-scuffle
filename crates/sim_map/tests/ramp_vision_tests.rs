@@ -64,7 +64,7 @@ fn seen_from(map: &GameMap, pos: SimVec2, mover_type: MoverType, radius: i32) ->
             pos,
             mover_type,
             sight_radius: SimScalar::from_i32(radius),
-            is_detector: false,
+            detection_radius: SimScalar::ZERO,
         },
     );
     vision.end_tick_update();

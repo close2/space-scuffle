@@ -15,7 +15,7 @@
 
 use crate::SimWorld;
 use sim_map::{watchtower_source, CellFlags, VisionSource};
-use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimVec2, VisibilityState};
+use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimScalar, SimVec2, VisibilityState};
 
 /// One sight source already counted into a player's vision map.
 #[derive(Clone, Copy)]
@@ -101,9 +101,13 @@ impl SimWorld {
                             entity.owner,
                         ),
                         // A status may suppress detection (plan
-                        // `2026-11-10-spellcaster-mechanics` §6.4).
-                        is_detector: arch.is_detector
-                            && !entity.status_modifiers().suppress_detection,
+                        // `2026-11-10-spellcaster-mechanics` §6.4). Sight upgrades leave the
+                        // detection radius as authored (plan
+                        // `2026-11-23-vision-and-detection` D-2).
+                        detection_radius: arch
+                            .detection_radius
+                            .filter(|_| !entity.status_modifiers().suppress_detection)
+                            .unwrap_or(SimScalar::ZERO),
                     },
                 });
             }
@@ -128,8 +132,8 @@ impl SimWorld {
     ///
     /// Height only varies inside a ramp cell, so elsewhere the cell stands in for the position.
     fn sees_the_same(&self, a: &VisionSource, b: &VisionSource) -> bool {
-        if (a.mover_type, a.sight_radius, a.is_detector)
-            != (b.mover_type, b.sight_radius, b.is_detector)
+        if (a.mover_type, a.sight_radius, a.detection_radius)
+            != (b.mover_type, b.sight_radius, b.detection_radius)
         {
             return false;
         }

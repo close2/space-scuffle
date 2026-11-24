@@ -1429,7 +1429,7 @@ fn missile_caster(harness: &mut Harness) -> (UnitTypeId, u8) {
                 && arch.mover_type == sim_types::MoverType::Ground
                 && arch.modes.is_empty()
                 && arch.abilities.is_empty()
-                && !arch.is_detector
+                && !arch.is_detector()
                 && !world
                     .entities
                     .values()

@@ -738,7 +738,7 @@ fn hold_keeps_a_burrowed_unit_fighting_an_enemy_that_walks_into_range() {
             archetype.max_speed > SimScalar::ZERO
                 && archetype.mover_type == sim_types::MoverType::Ground
                 && archetype.modes.is_empty()
-                && !archetype.is_detector
+                && !archetype.is_detector()
                 && presentable(&harness, archetype.unit_type_id)
         })
         .expect("a presentable ground walker")

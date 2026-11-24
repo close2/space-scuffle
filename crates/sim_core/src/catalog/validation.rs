@@ -97,6 +97,23 @@ fn sight(definition: &str, field: &str, value: f64) -> SimResult<()> {
     Ok(())
 }
 
+/// Rejects an authored detection radius that is not above zero once quantized, or that vision
+/// would have to shorten (plan `2026-11-23-vision-and-detection` D-2). `None` detects nothing.
+fn detection(definition: &str, value: Option<f64>) -> SimResult<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    sight(definition, "detection_radius", value)?;
+    if SimScalar::from_num(value) <= SimScalar::ZERO {
+        return Err(invalid(
+            definition,
+            "detection_radius",
+            "must lie above zero; omit the field for a unit that does not detect",
+        ));
+    }
+    Ok(())
+}
+
 fn angle(definition: &str, field: &str, value: f32) -> SimResult<()> {
     if !value.is_finite() {
         return Err(invalid(
@@ -632,6 +649,7 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
+        detection(&self.slug, self.detection_radius.map(f64::from))?;
         start_energy(
             &self.slug,
             f64::from(self.start_energy),
@@ -1348,6 +1366,7 @@ impl StructureArchetypeDef {
         self.validate_footprint_shape()?;
         self.validate_radius()?;
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        detection(&self.slug, self.detection_radius)?;
         structure_scan_range(
             &self.slug,
             self.ground_weapon.is_some() || self.air_weapon.is_some(),
@@ -4236,6 +4255,73 @@ mod weapon_movement_tests {
             }
         }
         assert!(checked > 0, "premise: the catalog has weapons");
+        Ok(())
+    }
+}
+
+/// Detection radii (plan `2026-11-23-vision-and-detection` D-2): a unit or structure row that
+/// detects authors a radius above zero and at most the vision bound; every refusal names
+/// `detection_radius`.
+#[cfg(test)]
+mod detection_tests {
+    use crate::catalog::{CatalogFile, StructureCatalogFile};
+    use crate::error::{SimCoreError, SimResult};
+    use sim_map::MAX_SIGHT_RADIUS_CELLS;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn refused_field(result: &SimResult<()>) -> Option<&str> {
+        match result {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field.as_str()),
+            _ => None,
+        }
+    }
+
+    fn refused_radii() -> [f64; 4] {
+        [0.0, -1.0, f64::from(MAX_SIGHT_RADIUS_CELLS) + 0.5, f64::NAN]
+    }
+
+    #[test]
+    fn a_unit_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file.units.into_iter().next().ok_or("shipped units")?;
+        for radius in refused_radii() {
+            #[allow(clippy::cast_possible_truncation, reason = "test values are small")]
+            let radius = radius as f32;
+            unit.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&unit.validate()),
+                Some("detection_radius"),
+                "unit radius {radius}"
+            );
+        }
+        unit.detection_radius = Some(11.0);
+        unit.validate()?;
+        unit.detection_radius = None;
+        unit.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: StructureCatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/structures.ron"))?;
+        let mut structure = file
+            .structures
+            .into_iter()
+            .next()
+            .ok_or("shipped structures")?;
+        for radius in refused_radii() {
+            structure.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&structure.validate()),
+                Some("detection_radius"),
+                "structure radius {radius}"
+            );
+        }
+        structure.detection_radius = Some(11.0);
+        structure.validate()?;
         Ok(())
     }
 }

@@ -76,7 +76,6 @@
                 // Options Melee: SCV FusionCutter, liberty WeaponData:195-201 (Melee :201).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -191,7 +190,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: Some((
                     hp_cost: 10.0,
@@ -282,7 +280,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -371,7 +368,6 @@
                 // Options Melee: Zealot PsiBlades, liberty WeaponData:150-158 (Melee :158).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -538,7 +534,6 @@
                     leave_name: Some("Tank Mode"),
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -635,7 +630,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -719,7 +713,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: Some((
                     hp_cost: 20.0,
@@ -813,7 +806,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -897,7 +889,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -992,7 +983,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1133,7 +1123,6 @@
                 upgrade_bonus_per_level: 3.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1224,7 +1213,6 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1282,7 +1270,6 @@
             build_time_ticks: 750,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1376,7 +1363,6 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1462,7 +1448,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1521,7 +1506,8 @@
             build_time_ticks: 857,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: None,
-            is_detector: true,
+            // 5.0.14 Raven: Detector11 (liberty BehaviorData:1175-1178), linked at liberty UnitData:5613; Sight 11 (:5607): detection equals sight (plan 2026-11-23-vision-and-detection D-2).
+            detection_radius: Some(11.0),
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1608,7 +1594,6 @@
                 // Options Melee: Probe ParticleBeam, liberty WeaponData:142-148 (Melee :148).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -1724,7 +1709,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1812,7 +1796,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1897,7 +1880,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -1996,7 +1978,6 @@
                     effect: Effect("psionic_storm"),    // Effect PsiStormPersistent, liberty :2063
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2084,7 +2065,6 @@
                 // Options Melee: Dark Templar WarpBlades, liberty WeaponData:161-169 (Melee :169).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2176,7 +2156,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 3.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2282,7 +2261,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 1.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2341,7 +2319,8 @@
             build_time_ticks: 446,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
-            is_detector: true,
+            // 5.0.14 Observer: Detector11 (liberty BehaviorData:1175-1178), linked at liberty UnitData:3446; Sight 11 (:3442): detection equals sight (plan 2026-11-23-vision-and-detection D-2).
+            detection_radius: Some(11.0),
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2396,7 +2375,6 @@
             build_time_ticks: 893,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2509,7 +2487,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2595,7 +2572,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2685,7 +2661,6 @@
                 // Options Melee: Drone Spines, liberty WeaponData:349-355 (Melee :355).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 // Harvest time, amount and return delay are the resource's (placement_rules.ron;
@@ -2776,7 +2751,6 @@
                 // Options Melee: Zergling Claws, liberty WeaponData:357-363 (Melee :363).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2885,7 +2859,6 @@
                 // Options Melee: Baneling VolatileBurst, liberty WeaponData:463-472 (Melee :472); its structure strike is VolatileBurstBuilding, swarm WeaponData:200-203 (Melee :203).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -2970,7 +2943,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3079,7 +3051,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3212,7 +3183,6 @@
                     leave_name: Some("Unburrow"),
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3327,7 +3297,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3416,7 +3385,6 @@
                 bonus_upgrade_per_level: 1.0,
             )),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3529,7 +3497,6 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3628,7 +3595,6 @@
                 // Options Melee: Ultralisk KaiserBlades, liberty WeaponData:430-439 (Melee :439).
                 melee: true,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3766,7 +3732,6 @@
                 upgrade_bonus_per_level: 1.0,
                 bonus_upgrade_per_level: 0.0,
             )),
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3844,7 +3809,6 @@
                     effect: Effect("fungal_growth"),    // Effect FungalGrowthLaunchMissile, void :673
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -3946,7 +3910,6 @@
                     effect: Effect("blinding_cloud"),   // Effect BlindingCloudCP, swarm :1207
                 ),
             ],
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,
@@ -4005,7 +3968,6 @@
             build_time_ticks: 446,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: None,
-            is_detector: false,
             capabilities: (
                 overclock: None,
                 harvester: None,

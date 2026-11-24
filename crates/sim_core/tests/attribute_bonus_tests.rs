@@ -74,7 +74,6 @@ fn catalog_ron(bonuses: &str) -> String {
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: {weapon},
-            is_detector: false,
         )"#
         )
     };

@@ -91,7 +91,11 @@ fn test_cross_platform_determinism_checksum() {
             ),
             mover_type: mover,
             sight_radius: SimScalar::from_num(r),
-            is_detector: rng.gen_bool(0.1),
+            detection_radius: if rng.gen_bool(0.1) {
+                SimScalar::from_num(r)
+            } else {
+                SimScalar::ZERO
+            },
         };
 
         vision.apply_vision_source(&arena, &source);
@@ -190,7 +194,7 @@ fn test_performance_quality_gate() {
             ),
             mover_type: MoverType::Ground,
             sight_radius: SimScalar::from_num(10),
-            is_detector: false,
+            detection_radius: SimScalar::ZERO,
         };
         vision.apply_vision_source(&arena, &source);
     }

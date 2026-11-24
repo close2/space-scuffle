@@ -105,7 +105,6 @@ const WINDUP_MELEE_RON: &str = r#"(
                 splash: None,
                 projectile_speed: None,
             )),
-            is_detector: false,
             capabilities: (overclock: None),
         ),"#;
 

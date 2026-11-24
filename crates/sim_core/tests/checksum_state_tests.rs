@@ -843,7 +843,7 @@ fn fog_counters_and_stale_clearance_are_detected() {
         pos: point(3, 3),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::ONE,
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
     world.vision_maps[P0].apply_vision_source(&world.map, &source);
     let once = world.compute_checksum();
@@ -858,7 +858,7 @@ fn fog_counters_and_stale_clearance_are_detected() {
     detector_vision.apply_vision_source(
         &world.map,
         &VisionSource {
-            is_detector: true,
+            detection_radius: SimScalar::ONE,
             ..source
         },
     );

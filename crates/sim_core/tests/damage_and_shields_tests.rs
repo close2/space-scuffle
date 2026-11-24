@@ -92,7 +92,7 @@ fn dummy_target_archetype(
         ground_weapon: None,
         air_weapon: None,
         abilities: Vec::new(),
-        is_detector: false,
+        detection_radius: None,
         requires_structures: Vec::new(),
         trains_units: Vec::new(),
         researches_upgrades: Vec::new(),

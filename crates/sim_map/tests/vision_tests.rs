@@ -29,7 +29,7 @@ fn test_low_ground_vs_high_ground_occlusion() {
         pos: SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(24.5)),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::from_num(12),
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
 
     vision.begin_tick_update();
@@ -69,7 +69,7 @@ fn test_air_spotter_high_ground_reveal() {
         pos: SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(24.5)),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::from_num(12),
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
 
     vision.begin_tick_update();
@@ -82,7 +82,7 @@ fn test_air_spotter_high_ground_reveal() {
         pos: SimVec2::new(SimScalar::from_num(16.5), SimScalar::from_num(32.5)),
         mover_type: MoverType::Air,
         sight_radius: SimScalar::from_num(8),
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
 
     vision.begin_tick_update();
@@ -118,7 +118,7 @@ fn test_los_blocker_smoke_vent() {
         pos: SimVec2::new(SimScalar::from_num(5.5), SimScalar::from_num(9.5)),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::from_num(10),
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
 
     vision.begin_tick_update();
@@ -136,7 +136,7 @@ fn test_los_blocker_smoke_vent() {
         pos: SimVec2::new(SimScalar::from_num(9.5), SimScalar::from_num(9.5)),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::from_num(10),
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
 
     vision.begin_tick_update();
@@ -195,4 +195,196 @@ fn test_watchtower_capture_and_vision() {
 
     assert_ne!(vision_p1.visibility_at(28, 38), VisibilityState::Visible);
     assert_ne!(vision_p2.visibility_at(28, 38), VisibilityState::Visible);
+}
+
+/// A ground source at cell centre `(x, y)` with the given sight and detection radii.
+fn ground_source(x: i32, y: i32, sight: f64, detection: f64) -> VisionSource {
+    VisionSource {
+        pos: SimVec2::new(
+            SimScalar::from_num(f64::from(x) + 0.5),
+            SimScalar::from_num(f64::from(y) + 0.5),
+        ),
+        mover_type: MoverType::Ground,
+        sight_radius: SimScalar::from_num(sight),
+        detection_radius: SimScalar::from_num(detection),
+    }
+}
+
+/// A fogged map with `sources` counted by a full recount.
+fn recount(map: &GameMap, sources: &[VisionSource]) -> PlayerVisionMap {
+    let mut vision = PlayerVisionMap::new(map.width(), map.height());
+    vision.set_all_fogged();
+    vision.begin_tick_update();
+    for source in sources {
+        vision.apply_vision_source(map, source);
+    }
+    vision.end_tick_update();
+    vision
+}
+
+/// A flat 32x32 map with a 3x3 sight blocker at cells x 20–22, y 14–16.
+fn flat_with_blocker() -> GameMap {
+    let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).unwrap();
+    for y in 14..17 {
+        for x in 20..23 {
+            map.cell_mut(x, y)
+                .unwrap()
+                .flags
+                .insert(CellFlags::LOS_BLOCKER);
+        }
+    }
+    map
+}
+
+/// P-4 (plan `2026-11-23-vision-and-detection` D-2): sight and detection are two circles cast
+/// along the same rays. A detector seeing 4 and detecting 7 detects cells at 6 it does not
+/// see; one seeing 7 and detecting 3 sees cells at 5 it does not detect.
+#[test]
+fn detection_and_sight_are_separate_circles() {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).unwrap();
+    let far_detector = recount(&map, &[ground_source(10, 10, 4.0, 7.0)]);
+    assert_eq!(far_detector.visibility_at(13, 10), VisibilityState::Visible);
+    assert!(far_detector.is_detected(13, 10), "inside both circles");
+    assert_ne!(far_detector.visibility_at(16, 10), VisibilityState::Visible);
+    assert!(
+        far_detector.is_detected(16, 10),
+        "detected beyond its sight, within its detection"
+    );
+    assert!(!far_detector.is_detected(18, 10), "beyond both circles");
+
+    let near_detector = recount(&map, &[ground_source(10, 10, 7.0, 3.0)]);
+    assert_eq!(
+        near_detector.visibility_at(15, 10),
+        VisibilityState::Visible
+    );
+    assert!(
+        !near_detector.is_detected(15, 10),
+        "seen beyond its detection, not detected"
+    );
+    assert!(near_detector.is_detected(12, 10), "inside both circles");
+    assert!(near_detector.is_detected(10, 10), "its own cell");
+
+    let plain = recount(&map, &[ground_source(10, 10, 7.0, 0.0)]);
+    assert!(
+        plain.detector_counter().iter().all(|&count| count == 0),
+        "a source without a detection radius detects nothing, not even its own cell"
+    );
+}
+
+/// P-4: detection follows the detector's line of sight: a ground detector below a plateau
+/// detects none of the plateau within its detection circle, and one outside a blocker detects
+/// no cell beyond the blocker's edge.
+#[test]
+fn detection_follows_line_of_sight() {
+    let arena = arena::default_arena();
+    // The low-ground observer of `test_low_ground_vs_high_ground_occlusion`, detecting 12.
+    let below = recount(&arena, &[ground_source(16, 24, 12.0, 12.0)]);
+    assert!(below.is_detected(16, 28), "low ground in reach is detected");
+    assert!(
+        !below.is_detected(16, 35),
+        "the plateau the detector cannot see is not detected"
+    );
+
+    let map = flat_with_blocker();
+    let outside = recount(&map, &[ground_source(15, 15, 11.0, 11.0)]);
+    assert!(
+        !outside.is_detected(22, 15) && !outside.is_detected(24, 15),
+        "a blocker stops detection as it stops sight"
+    );
+}
+
+/// P-4: with the detection radius equal to the sight radius, the cast detects exactly the cells
+/// it sees, on a flat map, around plateaus and ramps (the shipped default arena), and around a
+/// sight blocker, and its visibility equals that of the same source without detection: the
+/// cast before plan `2026-11-23-vision-and-detection` WP2, cell for cell.
+#[test]
+fn equal_radii_detect_exactly_the_seen_cells() {
+    let flat = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).unwrap();
+    let cases = [
+        (flat, vec![(10, 10), (0, 0), (31, 17)]),
+        (
+            arena::default_arena(),
+            vec![(16, 24), (16, 33), (30, 40), (9, 9)],
+        ),
+        (
+            flat_with_blocker(),
+            vec![(15, 15), (21, 15), (21, 14), (27, 20)],
+        ),
+    ];
+    for (map, cells) in &cases {
+        for &(x, y) in cells {
+            for radius in [1.0, 6.5, 11.0, 13.75] {
+                let detector = recount(map, &[ground_source(x, y, radius, radius)]);
+                let plain = recount(map, &[ground_source(x, y, radius, 0.0)]);
+                assert_eq!(
+                    detector.states(),
+                    plain.states(),
+                    "at ({x}, {y}) r {radius}"
+                );
+                assert_eq!(
+                    detector.visible_counter(),
+                    plain.visible_counter(),
+                    "at ({x}, {y}) r {radius}"
+                );
+                assert_eq!(
+                    detector.detector_counter(),
+                    detector.visible_counter(),
+                    "a detector detects exactly what it sees at ({x}, {y}) r {radius}"
+                );
+            }
+        }
+    }
+}
+
+/// P-4: a sight upgrade, which widens the sight circle alone (5.0.14 changes no `Detect`), leaves
+/// the detection circle unchanged.
+#[test]
+fn an_upgraded_sight_leaves_detection() {
+    let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0))).unwrap();
+    let base = recount(&map, &[ground_source(20, 20, 11.0, 11.0)]);
+    let upgraded = recount(&map, &[ground_source(20, 20, 13.0, 11.0)]);
+    assert_eq!(base.detector_counter(), upgraded.detector_counter());
+    assert_ne!(base.visible_counter(), upgraded.visible_counter());
+}
+
+/// P-5: adding and removing sources whose detection and sight radii differ, on a map with
+/// plateaus, ramps and a sight blocker, leaves every state and counter exactly as a full
+/// recount does.
+#[test]
+fn incremental_casts_with_unequal_radii_equal_a_recount() {
+    let mut map = arena::default_arena();
+    for y in 20..23 {
+        for x in 40..43 {
+            map.cell_mut(x, y)
+                .unwrap()
+                .flags
+                .insert(CellFlags::LOS_BLOCKER);
+        }
+    }
+    let fixed = ground_source(16, 24, 9.0, 11.0);
+    let moving = [
+        ground_source(41, 21, 11.0, 6.0),
+        ground_source(30, 40, 6.0, 13.75),
+        VisionSource {
+            mover_type: MoverType::Air,
+            ..ground_source(16, 33, 7.0, 10.0)
+        },
+        ground_source(36, 21, 11.0, 0.0),
+    ];
+    let mut incremental = recount(&map, &[fixed, moving[0]]);
+    let mut sources = vec![fixed, moving[0]];
+    for pair in moving.windows(2) {
+        incremental.remove_vision_source(&map, &pair[0]);
+        incremental.add_vision_source(&map, &pair[1]);
+        // A recount that saw every earlier source carries the same fog memory.
+        let mut full = recount(&map, &sources);
+        full.begin_tick_update();
+        full.apply_vision_source(&map, &fixed);
+        full.apply_vision_source(&map, &pair[1]);
+        full.end_tick_update();
+        assert_eq!(incremental.states(), full.states());
+        assert_eq!(incremental.visible_counter(), full.visible_counter());
+        assert_eq!(incremental.detector_counter(), full.detector_counter());
+        sources.push(pair[1]);
+    }
 }

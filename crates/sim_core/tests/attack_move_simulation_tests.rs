@@ -392,7 +392,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         ground_weapon: Some(ground_weapon.clone()),
         air_weapon: Some(air_weapon_high_dps.clone()),
         abilities: Vec::new(),
-        is_detector: false,
+        detection_radius: None,
         requires_structures: Vec::new(),
         trains_units: Vec::new(),
         researches_upgrades: Vec::new(),

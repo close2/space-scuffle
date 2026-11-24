@@ -2684,3 +2684,91 @@ fn an_authored_fizzle_drops_a_lost_missiles_area() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// P-7 (plan `2026-11-23-vision-and-detection` D-2, §2.4): exactly five shipped archetypes
+/// detect (the Observer, Raven, Missile Turret, Photon Cannon and Spore Crawler analogues), each
+/// with 5.0.14's `Detector11` radius, which equals its sight radius.
+#[test]
+fn detection_radius_follows_starcraft() -> TestResult {
+    let catalogs = RuntimeCatalogs::load_from_directory(catalog_directory())?;
+    let detectors: Vec<_> = catalogs
+        .units
+        .archetypes()
+        .filter(|arch| arch.detection_radius.is_some())
+        .collect();
+    assert_eq!(detectors.len(), 5, "five detectors are shipped");
+    for arch in detectors {
+        assert!(arch.is_detector());
+        assert_eq!(arch.detection_radius, Some(SimScalar::from_i32(11)));
+        assert_eq!(arch.detection_radius, Some(arch.sight_radius));
+    }
+    Ok(())
+}
+
+/// Whether a mobile detector of player 0 standing 8 from a cloaked enemy lets its player attack
+/// that enemy, with `catalogs`.
+fn detector_reveals_at_eight(
+    catalogs: RuntimeCatalogs,
+    detector: UnitTypeId,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let enemy_type = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == sim_types::MoverType::Ground
+                && arch.max_speed > SimScalar::ZERO
+                && !arch.is_detector()
+        })
+        .map(|arch| arch.unit_type_id)
+        .ok_or("a mobile ground archetype")?;
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        5,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    world.spawn_unit(detector, PlayerId(0), SimVec2::from_i32(10, 16))?;
+    let enemy = world.spawn_unit(enemy_type, PlayerId(1), SimVec2::from_i32(18, 16))?;
+    world.entities.get_mut(&enemy).ok_or("spawned")?.is_cloaked = true;
+    world.step(&sim_types::TickBundle {
+        tick: sim_types::Tick(0),
+        commands: Vec::new(),
+        state_checksum: None,
+    });
+    Ok(world.is_entity_available_for_combat(PlayerId(0), enemy))
+}
+
+/// Zero recompilation for B-56: a catalog copy that shortens a mobile detector's detection
+/// radius to 6 loses a cloaked enemy at 8 that the shipped radius 11 reveals, while its sight
+/// still covers the enemy's cell.
+#[test]
+fn an_edited_detection_radius_loses_a_cloaked_enemy() -> TestResult {
+    let bundle = Bundle::new("detection")?;
+    let shipped = bundle.load()?;
+    let detector = shipped
+        .units
+        .archetypes()
+        .find(|arch| arch.is_detector() && arch.max_speed > SimScalar::ZERO)
+        .cloned()
+        .ok_or("a mobile detector is shipped")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", detector.slug))
+        .ok_or("the detector's row")?;
+    let edited_text = format!(
+        "{}{}",
+        &units[..row],
+        replace_first_field(&units[row..], "detection_radius", "Some(6.0)")
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), edited_text)?;
+    let edited = bundle.load()?;
+    assert_eq!(
+        edited.units.get(detector.unit_type_id)?.detection_radius,
+        Some(SimScalar::from_i32(6)),
+        "premise: the edit reached the detector"
+    );
+    assert!(detector_reveals_at_eight(shipped, detector.unit_type_id)?);
+    assert!(!detector_reveals_at_eight(edited, detector.unit_type_id)?);
+    bundle.finish()?;
+    Ok(())
+}

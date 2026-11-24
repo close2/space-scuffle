@@ -63,7 +63,7 @@ fn unarmed(world: &SimWorld) -> UnitTypeId {
         a.weapon.is_none()
             && a.ground_weapon.is_none()
             && a.air_weapon.is_none()
-            && !a.is_detector
+            && !a.is_detector()
             && a.mover_type == MoverType::Ground
     })
 }
@@ -283,7 +283,7 @@ fn a_suppressed_detector_reveals_nothing() {
     let mut w = world();
     let plain = unarmed(&w);
     let detector = pick(&w, |a| {
-        a.is_detector && a.weapon.is_none() && a.ground_weapon.is_none() && a.air_weapon.is_none()
+        a.is_detector() && a.weapon.is_none() && a.ground_weapon.is_none() && a.air_weapon.is_none()
     });
     let hidden = spawn(&mut w, plain, 1, SimVec2::from_i32(30, 24));
     w.entities.get_mut(&hidden).expect("alive").is_cloaked = true;

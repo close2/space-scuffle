@@ -159,7 +159,6 @@ impl Scratch<'_> {
             build_time_ticks: 100,
             ground_weapon: {ground},
             air_weapon: {air},
-            is_detector: false,
         )"#,
             slug = self.slug,
             mover = self.mover,
