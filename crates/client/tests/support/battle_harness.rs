@@ -332,8 +332,9 @@ impl Harness {
     /// Window position showing the center of unit `id`'s bubble.
     pub fn unit_on_screen(&mut self, id: EntityId) -> Vec2 {
         let world = self.app.world_mut();
+        // A unit's own bubble, never the still image an attack snapshot draws of it.
         let point = world
-            .query::<(&GlobalTransform, &BubbleInstance)>()
+            .query_filtered::<(&GlobalTransform, &BubbleInstance), With<LiveBattleBubble>>()
             .iter(world)
             .find(|(_, bubble)| bubble.0.entity_id == id)
             .map(|(transform, _)| transform.translation())

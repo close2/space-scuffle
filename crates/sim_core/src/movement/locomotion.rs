@@ -56,8 +56,8 @@ use crate::steering::{
 use crate::{SimWorld, WeaponPhase};
 use sim_map::{MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
-    AnimState, AttackOrigin, EntityId, PerPlayer, PlayerSlot, SimAngle, SimScalar, SimVec2, Tick,
-    UnitOrder, MAX_PLAYERS,
+    AllowedMovement, AnimState, AttackOrigin, EntityId, PerPlayer, PlayerSlot, SimAngle, SimScalar,
+    SimVec2, Tick, UnitOrder, MAX_PLAYERS,
 };
 use std::ops::ControlFlow;
 
@@ -1096,8 +1096,9 @@ impl SimWorld {
 
     /// Settles an actor that does not walk this tick, or finds the point its order walks to.
     ///
-    /// Breaks with the finished action for a unit that holds, winds up a fixed weapon, pursues,
-    /// casts or has nothing to do. Continues with the proposal and the goal in world units.
+    /// Breaks with the finished action for a unit that holds, winds up a weapon that does not fire
+    /// while moving ([`Self::wind_up_holds`]), pursues, casts or has nothing to do. Continues with
+    /// the proposal and the goal in world units.
     fn walking_goal(
         &self,
         entry: MotionEntry,
@@ -1143,17 +1144,7 @@ impl SimWorld {
             }
             return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
         }
-        let arch = self
-            .catalog
-            .get(actor.unit_type_id)
-            .map_err(|_| MovementInvariant::MissingArchetype(id))?;
-        let has_turret = actor
-            .siege_weapon
-            .as_ref()
-            .or(arch.ground_weapon.as_ref())
-            .or(arch.weapon.as_ref())
-            .is_some_and(|w| w.has_turret);
-        if matches!(actor.weapon_phase, WeaponPhase::Windup { .. }) && !has_turret {
+        if self.wind_up_holds(actor)? {
             proposal.velocity = SimVec2::ZERO;
             return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
         }
@@ -1193,6 +1184,37 @@ impl SimWorld {
             }
         };
         Ok(ControlFlow::Continue((proposal, target)))
+    }
+
+    /// Whether `actor`'s swing holds it this tick: it is in its wind-up and the weapon of the
+    /// swing does not fire while moving (plan `2026-11-23-turret-wind-up` D-6, B-90, B-45;
+    /// `StarCraft` II's `AllowedMovement`, where only `Moving` fires on the move). The mount plays
+    /// no part. `Slowing` holds like `Stopped` (B-178).
+    ///
+    /// The weapon of the swing is the one the combat phase resolves for it (Amendment 2): against
+    /// the plane of the swing's bound target, or, when that target is gone, the plane the combat
+    /// phase steps an idle weapon on ([`SimWorld::idle_weapon_plane`]); a sieged unit's siege
+    /// weapon first. A swing with no weapon to resolve holds, the engine default. Both movement
+    /// pipelines call this through [`Self::walking_goal`], before pursuit.
+    fn wind_up_holds(&self, actor: &Entity) -> Result<bool, MovementInvariant> {
+        let WeaponPhase::Windup { target_id, .. } = actor.weapon_phase else {
+            return Ok(false);
+        };
+        let arch = self
+            .catalog
+            .get(actor.unit_type_id)
+            .map_err(|_| MovementInvariant::MissingArchetype(actor.id))?;
+        let plane = self
+            .entities
+            .get(&target_id)
+            .and_then(|target| self.catalog.get(target.unit_type_id).ok())
+            .map_or_else(
+                || Self::idle_weapon_plane(actor, arch),
+                |target| target.mover_type,
+            );
+        Ok(arch
+            .weapon_against(plane, actor.active_siege_weapon())
+            .is_none_or(|weapon| weapon.allowed_movement != AllowedMovement::Moving))
     }
 
     /// Settles a unit with no walk this tick, whose order ended without arriving or which holds

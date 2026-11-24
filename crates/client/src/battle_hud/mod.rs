@@ -15,7 +15,8 @@
 //!                      collect_card_keys, after collect_key_intent
 //! PreparePresentation  sync_live_battle_system, refresh_hud_model, refresh_battle_fog,
 //!                      apply_battle_fog, refresh_hud_focus, collect_battle_feed,
-//!                      refresh_command_card, refresh_queue_panel, refresh_result_screen
+//!                      refresh_command_card, refresh_queue_panel, refresh_result_screen;
+//!                      sync_attack_snapshots after refresh_battle_fog
 //! Present              update_placement_preview
 //! ```
 //! The bars are egui panels drawn before [`lab_ui_system`](crate::lab_ui_system) measures what is
@@ -34,6 +35,7 @@
 //! - [`HudGeometry`] holds only rectangles drawn on the current frame.
 
 pub mod actions;
+pub mod attack_snapshots;
 pub mod card;
 pub mod catalog;
 pub mod feed;
@@ -128,7 +130,8 @@ impl Plugin for BattleHudPlugin {
     fn build(&self, app: &mut App) {
         // Readers take the fog as an `Option`, and its absence is what keeps `Sandbox` unfiltered.
         if app.world().get_resource::<BattleProfile>() == Some(&BattleProfile::Player) {
-            app.init_resource::<BattleFog>();
+            app.init_resource::<BattleFog>()
+                .init_resource::<attack_snapshots::AttackSnapshotPool>();
         }
         app.init_resource::<HudGeometry>()
             .init_resource::<HudLayout>()
@@ -167,6 +170,9 @@ impl Plugin for BattleHudPlugin {
                     )
                         .chain()
                         .after(crate::sync_live_battle_system)
+                        .in_set(BattleSet::PreparePresentation),
+                    attack_snapshots::sync_attack_snapshots
+                        .after(fog::refresh_battle_fog)
                         .in_set(BattleSet::PreparePresentation),
                     placement::update_placement_preview.in_set(BattleSet::Present),
                 )

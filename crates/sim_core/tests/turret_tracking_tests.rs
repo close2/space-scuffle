@@ -12,10 +12,12 @@
 //!   would with no enemy there and never starts a swing;
 //! - a turreted air unit whose weapon is `Moving` and fires outside attack orders (the Phoenix's
 //!   analogue), ordered to move past an enemy air unit, turns its turret independently of its
-//!   hull and fires while it moves, its hull keeping its heading and translating on every tick
-//!   it does not wind up. The movement phase still holds it for each wind-up, because it reads
-//!   the ground-first weapon rather than the swing's (plan Amendment 1); WP3 of the plan removes
-//!   that hold for a `Moving` weapon.
+//!   hull and fires while it moves, its hull keeping its heading and translating on every tick,
+//!   its wind-up included.
+//!
+//! A wind-up holds its unit unless the weapon of the swing is `Moving` (plan D-6, WP3), whatever
+//! the mount: in a chase the turreted ground unit stands for each wind-up, and a hull weapon that
+//! is `Moving` (the Void Ray's analogue) keeps chasing through its wind-up inside an attack order.
 //!
 //! Positions are world units; angles are `SimAngle` binary angles.
 
@@ -174,9 +176,8 @@ fn a_turret_that_needs_an_attack_order_holds_fire_while_retreating() -> TestResu
 
 /// B-45: a turret whose weapon is `Moving` and fires outside attack orders (the Phoenix's
 /// analogue) tracks an enemy air unit it passes under a move and fires at it, its turret turning
-/// independently of the hull, while its hull keeps its heading and translates on every tick it
-/// does not wind up. The wind-up still holds it (plan `2026-11-23-turret-wind-up` Amendment 1);
-/// WP3 removes that hold for a `Moving` weapon and then requires a translation on every tick.
+/// independently of the hull, while its hull keeps its heading and translates on every tick of
+/// the pass, its wind-ups included (plan `2026-11-23-turret-wind-up` P-6, D-6, Amendment 1).
 #[test]
 fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestResult {
     let mut world = shipped_world()?;
@@ -206,7 +207,7 @@ fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestR
     step(&mut reference, 0, vec![order(0, lone, away.clone())]);
     let enemy_life = |world: &SimWorld| world.entities.get(&enemy).map(|e| (e.hp, e.shields));
     let unharmed = enemy_life(&world);
-    let (mut fired, mut turned, mut began_in_windup) = (false, false, false);
+    let (mut fired, mut turned, mut wound_up) = (false, false, false);
     let mut last = point(20, 20);
     for tick in 1..25 {
         step(&mut world, tick, Vec::new());
@@ -219,15 +220,11 @@ fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestR
                 "the hull sets off as it would with no enemy"
             );
         }
-        // Amendment 1: the movement phase, which runs before the combat phase, still holds this
-        // unit on a tick that begins in its wind-up (WP3 removes the hold).
-        if !began_in_windup {
-            assert_ne!(
-                unit.position, last,
-                "tick {tick}: the hull moves on every tick it does not begin winding up"
-            );
-        }
-        began_in_windup = matches!(unit.weapon_phase, WeaponPhase::Windup { .. });
+        assert_ne!(
+            unit.position, last,
+            "tick {tick}: the hull moves on every tick, its wind-ups included"
+        );
+        wound_up |= matches!(unit.weapon_phase, WeaponPhase::Windup { .. });
         last = unit.position;
         assert_eq!(
             unit.heading,
@@ -246,10 +243,141 @@ fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestR
     }
     assert!(turned, "the turret turns independently of the hull");
     assert!(fired, "the weapon fires while the unit moves");
+    assert!(wound_up, "premise: the pass includes a wind-up");
     assert_ne!(
         enemy_life(&world),
         unharmed,
         "the enemy takes damage from the passing turret"
+    );
+    Ok(())
+}
+
+/// One tick of a chase: whether the movement phase began it with the unit in its wind-up, and
+/// whether the unit's position changed on it.
+type ChaseFrame = (bool, bool);
+
+/// A chase under an explicit attack order: a unit of `unit_type` at (10, 32), facing east,
+/// attacks an enemy of its own kind 4 world units beyond its weapon's range further east, which
+/// holds its position. On the tick the unit's first swing starts, the enemy is ordered to walk
+/// east to (60, 32), out of the unit's reach, so the chase would move the unit during its
+/// wind-up. Returns the frames of the `ticks` ticks after that order.
+fn chase_frames(
+    unit_type: UnitTypeId,
+    ticks: u32,
+) -> Result<Vec<ChaseFrame>, Box<dyn std::error::Error>> {
+    let mut world = shipped_world()?;
+    let archetype = world.catalog.get(unit_type)?;
+    let range = archetype
+        .weapon_against(archetype.mover_type, None)
+        .ok_or("the unit's weapon against its own kind")?
+        .max_range;
+    let unit = world.spawn_unit(unit_type, PlayerId(0), point(10, 32))?;
+    let start = SimVec2::new(range + SimScalar::from_i32(14), SimScalar::from_i32(32));
+    let enemy = world.spawn_unit(unit_type, PlayerId(1), start)?;
+    step(
+        &mut world,
+        0,
+        vec![
+            order(
+                0,
+                unit,
+                UnitOrder::AttackTarget {
+                    target: enemy,
+                    origin: sim_types::AttackOrigin::Explicit,
+                },
+            ),
+            order(1, enemy, UnitOrder::HoldPosition),
+        ],
+    );
+    let in_windup = |world: &SimWorld| -> Result<(bool, SimVec2), Box<dyn std::error::Error>> {
+        let entity = world.entities.get(&unit).ok_or("unit")?;
+        Ok((
+            matches!(entity.weapon_phase, WeaponPhase::Windup { .. }),
+            entity.position,
+        ))
+    };
+    let mut tick = 1;
+    while !in_windup(&world)?.0 {
+        if tick > 400 {
+            return Err("premise: the unit starts a swing".into());
+        }
+        step(&mut world, tick, Vec::new());
+        tick += 1;
+    }
+    let flee = order(
+        1,
+        enemy,
+        UnitOrder::Move {
+            target: point(60, 32),
+        },
+    );
+    let mut frames = Vec::new();
+    let mut commands = vec![flee];
+    for tick in tick..tick + ticks {
+        let (began_in_windup, before) = in_windup(&world)?;
+        step(&mut world, tick, std::mem::take(&mut commands));
+        frames.push((began_in_windup, in_windup(&world)?.1 != before));
+    }
+    Ok(frames)
+}
+
+/// B-90 (plan `2026-11-23-turret-wind-up` D-6, P-10): the turreted ground unit whose weapon keeps
+/// the engine default (`Stopped`; the Siege Tank's or the Hellion's analogue) stands for every
+/// tick of its wind-up while the enemy it attacks walks out of its reach, as a hull weapon's
+/// unit does, and chases once the swing is over.
+#[test]
+fn a_turret_that_must_stand_to_fire_stands_for_its_wind_up_in_a_chase() -> TestResult {
+    let world = shipped_world()?;
+    let unit_type = find(&world, MoverType::Ground, |weapon| {
+        weapon.has_turret
+            && weapon.damage_point_ticks > 0
+            && weapon.allowed_movement == AllowedMovement::Stopped
+            && !weapon.fires_outside_attack_order
+    })?;
+    let frames = chase_frames(unit_type, 40)?;
+    assert!(
+        frames.first().is_some_and(|(windup, _)| *windup),
+        "premise: the chase begins in a wind-up"
+    );
+    assert!(
+        frames.iter().any(|(windup, moved)| !windup && *moved),
+        "premise: the unit chases once its swing is over"
+    );
+    for (tick, (windup, moved)) in frames.iter().enumerate() {
+        assert!(
+            !(*windup && *moved),
+            "tick {tick} of the chase: the wind-up holds the turreted unit"
+        );
+    }
+    Ok(())
+}
+
+/// B-45 (plan `2026-11-23-turret-wind-up` D-6, P-10, S6): a hull weapon that fires while moving
+/// (`Moving`, the Void Ray's analogue) does not hold its unit for its wind-up: inside an attack
+/// order it chases the enemy walking out of its reach on the ticks of its wind-up.
+#[test]
+fn a_hull_weapon_that_fires_while_moving_chases_through_its_wind_up() -> TestResult {
+    let world = shipped_world()?;
+    let moving = |weapon: &WeaponSpec| {
+        !weapon.has_turret
+            && weapon.damage_point_ticks > 0
+            && weapon.allowed_movement == AllowedMovement::Moving
+    };
+    let unit_type = find(&world, MoverType::Air, moving)
+        .or_else(|_| find(&world, MoverType::Ground, moving))?;
+    let frames = chase_frames(unit_type, 40)?;
+    assert!(
+        frames.first().is_some_and(|(windup, _)| *windup),
+        "premise: the chase begins in a wind-up"
+    );
+    let wind_up_ticks = frames.iter().filter(|(windup, _)| *windup).count();
+    let walked_in_wind_up = frames
+        .iter()
+        .filter(|(windup, moved)| *windup && *moved)
+        .count();
+    assert!(
+        walked_in_wind_up > 0,
+        "the unit chases through its wind-up ({wind_up_ticks} wind-up ticks, none walked)"
     );
     Ok(())
 }

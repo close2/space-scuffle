@@ -141,6 +141,9 @@ const CONCERNS: &[Concern] = &[
             "PreUpdate: bevy_asset::assets::Assets<client::bubble_shader::BubbleDomeMaterial>::track_assets",
             // Spawn path: the smog's bouncing bubbles get their materials at startup.
             "Startup: client::smog::setup_smog_volume_system",
+            // The still images of attackers that struck the viewer unseen (plan
+            // 2026-11-24-attacker-snapshot D-5): their own pooled materials only.
+            "Update: client::battle_hud::attack_snapshots::sync_attack_snapshots",
             // Snapshot lanes, one system per scene.
             "Update: client::scene_controller::sync_lab_preview_system",
             "Update: client::scene_controller::sync_live_battle_system",

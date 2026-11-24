@@ -1185,6 +1185,11 @@ pub struct DefaultsDef {
     /// Mode switches and stances a unit's block names nothing for (plan §5.2 `defaults.mode`).
     #[serde(default)]
     pub mode: ModeDefaultsDef,
+    /// The look of an attack snapshot: the still image of an attacker that struck the viewer
+    /// unseen (plan `2026-11-24-attacker-snapshot` D-5). It must name an effect of exactly one
+    /// held `Shell` layer, which modulates the image's own bubble; nothing is spawned.
+    #[serde(default)]
+    pub snapshot: Option<String>,
 }
 
 /// The looks of concealment; every entry is optional and names a `Mode` effect.

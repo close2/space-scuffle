@@ -7,12 +7,16 @@
 //! weapon it fires. Also owns [`PresentationWorkspace`], the provenance the tick records for
 //! events that outlive their cause: the source of each projectile in flight, which barriers
 //! absorbed damage this tick, and where spell missiles landed this tick (plan
-//! `2026-11-17-effect-snapshot-identity` D-6).
+//! `2026-11-17-effect-snapshot-identity` D-6). It also holds each player's attack snapshots:
+//! the attackers that struck that player's units from where it did not see them, each in the pose
+//! of its last such strike (plan `2026-11-24-attacker-snapshot` D-1, D-4).
 //!
 //! # How it fits
 //! Combat resolution asks [`weapon_source`] when a weapon releases and records projectile
 //! sources; the effect engine records each spell missile's landing; the snapshot writer (tick
-//! phase 10) reads the rest and drains the landings into events.
+//! phase 10) reads the rest and drains the landings into events. Combat records attack
+//! snapshots as strikes land (phase 7), the vision phase drops those their viewer has seen
+//! again (phase 3), and `SimWorld::write_player_view` publishes a viewer's own.
 //! Nothing here names a unit, mode or effect: modes and abilities are indices into the source
 //! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::burrowed`.
 //!
@@ -23,13 +27,16 @@
 //!   with their projectile. Spell-missile landings are held in fixed point and only until the
 //!   next snapshot, which `step_into` writes every tick.
 //! - Its buffers keep their capacity, so a warmed workspace allocates nothing in steady state.
+//! - Attack snapshots are sorted by `(viewer, attacker)`, at most one per pair, and in fixed
+//!   point. They last across ticks, but they are presentation like the rest: no tick decision
+//!   reads them, which a paired-world test pins (plan `2026-11-24-attacker-snapshot` P-9).
 
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, ATTACK_DASH_BUFF_ID, OVERCLOCK_BUFF_ID};
 use sim_types::{
     AbilityEffectSpec, AbilitySource, Concealment, EffectSource, EntityId, ModeTransitionView,
-    PlayerId, ShapeKind, SimScalar, SimVec2, StanceView, StatusFlags, WeaponKey, WeaponSlot,
-    WeaponSpec,
+    PlayerId, ShapeKind, SimAngle, SimScalar, SimVec2, StanceView, StatusFlags, Tick, UnitTypeId,
+    WeaponKey, WeaponSlot, WeaponSpec,
 };
 
 /// Where a spell missile presented as a projectile landed on this tick: the provenance of a
@@ -44,6 +51,42 @@ pub(crate) struct SpellImpactRecord {
     pub(crate) contact: SimVec2,
     /// The caster type and ability that launched it.
     pub(crate) source: AbilitySource,
+}
+
+/// One player's snapshot of an attacker that struck it unseen (plan
+/// `2026-11-24-attacker-snapshot` D-2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AttackSnapshotRecord {
+    /// The player whose units were struck, and who keeps the image.
+    pub(crate) viewer: PlayerId,
+    /// The attacker. It may since have moved or died.
+    pub(crate) attacker: EntityId,
+    /// The tick of the strike that last refreshed it.
+    pub(crate) struck: Tick,
+    /// What the image shows.
+    pub(crate) pose: SnapshotPose,
+}
+
+/// What the snapshot shows of the attacker, as it stood at the strike (plan
+/// `2026-11-24-attacker-snapshot` D-4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SnapshotPose {
+    /// The attacker's catalog type, so a dead attacker's image is still built.
+    pub(crate) unit_type: UnitTypeId,
+    /// The attacker's player.
+    pub(crate) owner: PlayerId,
+    /// Where it stood, world units.
+    pub(crate) position: SimVec2,
+    /// Its hull's facing, binary angle.
+    pub(crate) heading: SimAngle,
+    /// Its turret's facing, binary angle.
+    pub(crate) turret: SimAngle,
+    /// Its settled mode, an index into the archetype's modes; `None` in its default stance.
+    pub(crate) mode: Option<u8>,
+    /// Its health as a share of its maximum, in `0..=1`.
+    pub(crate) hp_fraction: SimScalar,
+    /// Its shields as a share of the archetype's maximum, in `0..=1`; 0 without shields.
+    pub(crate) shield_fraction: SimScalar,
 }
 
 // PERFORMANCE RATIONALE:
@@ -62,6 +105,16 @@ pub(crate) struct PresentationWorkspace {
     barrier_hits: Vec<EntityId>,
     /// Spell missiles that landed since the last snapshot, in the order their impacts ran.
     spell_impacts: Vec<SpellImpactRecord>,
+    // PERFORMANCE RATIONALE:
+    // Why: Every `Snapshot` strike on an unseen attacker records or refreshes an entry, every
+    // tick prunes the list, and every view reads one player's entries in attacker order; none of
+    // it may allocate once warm, and the order must not depend on a hasher.
+    // What: One `Vec` sorted by `(viewer, attacker)`: a binary search inserts or refreshes in
+    // O(log n), one `retain` pass prunes, and one player's entries are a contiguous run.
+    // Trade-off: O(n) element moves on an insertion instead of a map's O(log n), for n at most
+    // players times attackers, with no allocation once the list holds its high-water mark.
+    /// Attack snapshots, sorted by `(viewer, attacker)`, at most one per pair.
+    attack_snapshots: Vec<AttackSnapshotRecord>,
 }
 
 impl PresentationWorkspace {
@@ -110,6 +163,53 @@ impl PresentationWorkspace {
     /// capacity.
     pub(crate) fn drain_spell_impacts(&mut self) -> std::vec::Drain<'_, SpellImpactRecord> {
         self.spell_impacts.drain(..)
+    }
+
+    /// Records `record`, replacing the entry of the same viewer and attacker if there is one: a
+    /// later strike moves the image to the attacker's new pose (plan
+    /// `2026-11-24-attacker-snapshot` D-2, refresh).
+    pub(crate) fn record_attack_snapshot(&mut self, record: AttackSnapshotRecord) {
+        let key = (record.viewer, record.attacker);
+        match self
+            .attack_snapshots
+            .binary_search_by_key(&key, |entry| (entry.viewer, entry.attacker))
+        {
+            Ok(index) => self.attack_snapshots[index] = record,
+            Err(index) => self.attack_snapshots.insert(index, record),
+        }
+    }
+
+    /// Keeps only the attack snapshots `keep` accepts, in order, keeping the buffer's capacity.
+    pub(crate) fn prune_attack_snapshots(
+        &mut self,
+        keep: impl FnMut(&AttackSnapshotRecord) -> bool,
+    ) {
+        self.attack_snapshots.retain(keep);
+    }
+
+    /// The attack snapshots `viewer` keeps, sorted by attacker.
+    pub(crate) fn attack_snapshots_of(
+        &self,
+        viewer: PlayerId,
+    ) -> impl Iterator<Item = &AttackSnapshotRecord> + '_ {
+        let start = self
+            .attack_snapshots
+            .partition_point(|entry| entry.viewer < viewer);
+        self.attack_snapshots[start..]
+            .iter()
+            .take_while(move |entry| entry.viewer == viewer)
+    }
+
+    /// Whether any player keeps an attack snapshot.
+    pub(crate) fn has_attack_snapshots(&self) -> bool {
+        !self.attack_snapshots.is_empty()
+    }
+
+    /// Forgets every attack snapshot: the test hook of plan `2026-11-24-attacker-snapshot` P-9,
+    /// which shows that no tick decision reads them.
+    #[cfg(test)]
+    pub(crate) fn forget_attack_snapshots(&mut self) {
+        self.attack_snapshots.clear();
     }
 }
 
@@ -319,5 +419,82 @@ mod tests {
         assert!(!workspace.barrier_hit(EntityId(3)));
         workspace.clear_barrier_hits();
         assert!(!workspace.barrier_hit(EntityId(7)));
+    }
+
+    /// An attack snapshot of `attacker` for `viewer`, struck on `tick` at `x`.
+    fn snap(viewer: u8, attacker: u32, tick: u32, x: i32) -> AttackSnapshotRecord {
+        AttackSnapshotRecord {
+            viewer: PlayerId(viewer),
+            attacker: EntityId(attacker),
+            struck: Tick(tick),
+            pose: SnapshotPose {
+                unit_type: UnitTypeId(3),
+                owner: PlayerId(7),
+                position: SimVec2::from_i32(x, 4),
+                heading: SimAngle::ZERO,
+                turret: SimAngle::ZERO,
+                mode: None,
+                hp_fraction: SimScalar::ONE,
+                shield_fraction: SimScalar::ZERO,
+            },
+        }
+    }
+
+    fn keys(workspace: &PresentationWorkspace, viewer: u8) -> Vec<(u32, u32)> {
+        workspace
+            .attack_snapshots_of(PlayerId(viewer))
+            .map(|entry| (entry.attacker.0, entry.struck.0))
+            .collect()
+    }
+
+    /// D-4: records are kept sorted by viewer and attacker whatever order they arrive in, and
+    /// one viewer's run lists only its own.
+    #[test]
+    fn attack_snapshots_are_sorted_by_viewer_then_attacker() {
+        let mut workspace = PresentationWorkspace::default();
+        for (viewer, attacker) in [(1, 9), (0, 5), (1, 2), (3, 1), (0, 1)] {
+            workspace.record_attack_snapshot(snap(viewer, attacker, 10, 1));
+        }
+        assert_eq!(keys(&workspace, 0), [(1, 10), (5, 10)]);
+        assert_eq!(keys(&workspace, 1), [(2, 10), (9, 10)]);
+        assert_eq!(keys(&workspace, 2), []);
+        assert_eq!(keys(&workspace, 3), [(1, 10)]);
+        let all: Vec<_> = workspace
+            .attack_snapshots
+            .iter()
+            .map(|entry| (entry.viewer, entry.attacker))
+            .collect();
+        let mut sorted = all.clone();
+        sorted.sort_unstable();
+        assert_eq!(all, sorted);
+    }
+
+    /// D-2, refresh: a later strike replaces the pose and the tick; one entry per pair.
+    #[test]
+    fn a_later_strike_refreshes_the_one_entry() {
+        let mut workspace = PresentationWorkspace::default();
+        workspace.record_attack_snapshot(snap(1, 4, 10, 1));
+        workspace.record_attack_snapshot(snap(1, 4, 25, 6));
+        let entries: Vec<_> = workspace.attack_snapshots_of(PlayerId(1)).collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].struck, Tick(25));
+        assert_eq!(entries[0].pose.position, SimVec2::from_i32(6, 4));
+    }
+
+    /// D-2, drop: the prune keeps exactly what its function accepts, in order, and keeps the
+    /// buffer's capacity.
+    #[test]
+    fn the_prune_keeps_what_its_function_accepts() {
+        let mut workspace = PresentationWorkspace::default();
+        for attacker in 1..=6 {
+            workspace.record_attack_snapshot(snap(0, attacker, attacker, 1));
+        }
+        let capacity = workspace.attack_snapshots.capacity();
+        workspace.prune_attack_snapshots(|entry| entry.attacker.0 % 2 == 0);
+        assert_eq!(keys(&workspace, 0), [(2, 2), (4, 4), (6, 6)]);
+        assert_eq!(workspace.attack_snapshots.capacity(), capacity);
+        workspace.prune_attack_snapshots(|_| false);
+        assert!(!workspace.has_attack_snapshots());
+        assert_eq!(workspace.attack_snapshots.capacity(), capacity);
     }
 }

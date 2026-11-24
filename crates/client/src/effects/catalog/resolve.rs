@@ -82,6 +82,7 @@ pub(super) fn resolve(
     }
     let budget = resolver.budget(file, &effects)?;
     let defaults = resolver.defaults(file)?;
+    check_snapshot_look(path, &effects, defaults.snapshot)?;
     let effect_names = resolver
         .effect_ids
         .iter()
@@ -98,6 +99,26 @@ pub(super) fn resolve(
         budget,
         defaults,
     })
+}
+
+/// Checks that the attack snapshot's look, `snapshot`, if named, is exactly one held `Shell`
+/// layer: it modulates the still image's own bubble and spawns nothing (plan
+/// `2026-11-24-attacker-snapshot` D-5).
+fn check_snapshot_look(
+    path: &Path,
+    effects: &[Effect],
+    snapshot: Option<EffectId>,
+) -> Result<(), EffectCatalogError> {
+    let Some(effect) = snapshot.and_then(|id| effects.get(usize::from(id.0))) else {
+        return Ok(());
+    };
+    match effect.layers.as_slice() {
+        [layer] if layer.held && matches!(layer.block, Block::Shell(_)) => Ok(()),
+        _ => Err(EffectCatalogError::SnapshotLookNotHeldShell {
+            path: path.to_path_buf(),
+            effect: effect.name.clone(),
+        }),
+    }
 }
 
 /// Checks that every effect a `Status` effect lays or spawns on a hit is itself a `Status`
@@ -1890,6 +1911,7 @@ impl Resolver<'_> {
             },
             anchor_transition: one(file.defaults.mode.transition.as_ref())?,
             anchored: one(file.defaults.mode.anchored.as_ref())?,
+            snapshot: one(file.defaults.snapshot.as_ref())?,
         })
     }
 }

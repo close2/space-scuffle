@@ -586,8 +586,10 @@ impl Default for MissileValidation {
 /// `CEffectDamage` `Visibility` (`core` EffectData:62).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttackVisibility {
-    /// A snapshot in fog and on the minimap, never a target (the engine default). The
-    /// simulation records nothing; the presentation is bug B-183.
+    /// A snapshot in fog and on the minimap, never a target (the engine default). The struck
+    /// player keeps a still image of the attacker where it struck from, never a target, until it
+    /// sees that spot or the attacker (plan `2026-11-24-attacker-snapshot` D-2). The minimap
+    /// half waits for a minimap (B-204).
     #[default]
     Snapshot,
     /// The attacker becomes visible, and so targetable, to each struck unit's owner for
