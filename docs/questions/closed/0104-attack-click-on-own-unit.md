@@ -28,3 +28,9 @@ Recommendation: (a). Right-clicking your own unit is unchanged in every case.
 - **Option (a): Attack it.** Units that can hit the clicked friendly unit attack it, the others walk to it, and the clicked unit itself does nothing even if selected. Right-clicking your own unit remains unchanged.
 
 **Reasoning:** Matches StarCraft II's standard force-attack mechanic (used to kill stuck units, deny buildings, etc.).
+
+## Resolution
+
+Answered (a), the default, which was already built: plan `2026-11-24-attack-orders` WP2/WP3, merged to main in
+e313268f (B-175). Units that can hit the clicked own unit attack it, the others walk to it, and the clicked unit
+ignores the order. Nothing further to change.
