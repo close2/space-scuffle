@@ -2545,3 +2545,142 @@ fn an_edited_movement_rule_makes_a_unit_hold_fire_while_moving_without_recompili
     bundle.finish()?;
     Ok(())
 }
+
+/// The shipped archetype carrying a splash missile, and that weapon.
+fn splash_missile_archetype(
+    catalogs: &RuntimeCatalogs,
+) -> Option<(sim_core::UnitArchetype, sim_core::WeaponSpec)> {
+    catalogs.units.archetypes().find_map(|arch| {
+        [&arch.weapon, &arch.ground_weapon, &arch.air_weapon]
+            .into_iter()
+            .flatten()
+            .find(|w| w.splash.is_some() && w.projectile_speed.is_some())
+            .map(|w| (arch.clone(), w.clone()))
+    })
+}
+
+/// Fires `catalogs`' splash missile at an unarmed target, kills the target in flight, and
+/// returns whether a bystander beside the target was struck by the area at the point.
+fn lost_splash_strikes(catalogs: RuntimeCatalogs) -> Result<bool, Box<dyn std::error::Error>> {
+    let (shooter_arch, weapon) =
+        splash_missile_archetype(&catalogs).ok_or("a shipped weapon is a splash missile")?;
+    let plane = if shooter_arch.air_weapon.as_ref() == Some(&weapon) {
+        sim_types::MoverType::Air
+    } else {
+        sim_types::MoverType::Ground
+    };
+    let mut target_arch = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.mover_type == plane
+                && arch.max_speed > SimScalar::ZERO
+                && weapon.target_flags.intersects(arch.attributes)
+        })
+        .cloned()
+        .ok_or("an archetype on the weapon's plane")?;
+    let mut units = catalogs.units;
+    let dummy = UnitTypeId(
+        units
+            .archetypes()
+            .map(|a| a.unit_type_id.0)
+            .max()
+            .unwrap_or(0)
+            + 1,
+    );
+    target_arch.unit_type_id = dummy;
+    "scratch_unarmed_target".clone_into(&mut target_arch.slug);
+    target_arch.weapon = None;
+    target_arch.ground_weapon = None;
+    target_arch.air_weapon = None;
+    units.register(target_arch);
+    let mut world = SimWorld::with_catalogs(
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+        41,
+        units,
+        catalogs.upgrades,
+    )?;
+    let shooter = world.spawn_unit(
+        shooter_arch.unit_type_id,
+        PlayerId(0),
+        SimVec2::from_i32(13, 16),
+    )?;
+    let target = world.spawn_unit(dummy, PlayerId(1), SimVec2::from_i32(16, 16))?;
+    let bystander = world.spawn_unit(
+        dummy,
+        PlayerId(1),
+        SimVec2::new(SimScalar::from_i32(16), SimScalar::from_num(16.5)),
+    )?;
+    let vitals = |world: &SimWorld| world.entities.get(&bystander).map(|b| (b.hp, b.shields));
+    let full = vitals(&world);
+    world
+        .entities
+        .get_mut(&shooter)
+        .ok_or("spawned")?
+        .issue_order(sim_types::UnitOrder::attack(target), false)
+        .map_err(|error| format!("{error:?}"))?;
+    let step = |world: &mut SimWorld, tick: u32| {
+        world.step(&sim_types::TickBundle {
+            tick: sim_types::Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+    };
+    let mut tick = 1;
+    while world.projectiles.is_empty() {
+        assert!(tick < 100, "the missile launched within 100 ticks");
+        step(&mut world, tick);
+        tick += 1;
+    }
+    world.entities.get_mut(&target).ok_or("in flight")?.hp = SimScalar::ZERO;
+    // Stop once the missile is spent: later the shooter acquires the bystander itself.
+    for later in tick..tick + 200 {
+        step(&mut world, later);
+        if world.projectiles.is_empty() {
+            break;
+        }
+    }
+    Ok(vitals(&world) != full)
+}
+
+/// P-3 (plan `2026-11-23-vision-and-detection` D-1): authoring `target_loss_behavior: Fizzle`
+/// on the shipped splash missile restores the vanishing missile, with no area at the point, in
+/// the same binary.
+#[test]
+fn an_authored_fizzle_drops_a_lost_missiles_area() -> TestResult {
+    let bundle = Bundle::new("fizzle")?;
+    let shipped = bundle.load()?;
+    let (arch, _) = splash_missile_archetype(&shipped).ok_or("a splash missile is shipped")?;
+    let units = std::fs::read_to_string(bundle.directory.join(FILES[0]))?;
+    let row = units
+        .find(&format!("slug: \"{}\"", arch.slug))
+        .ok_or("the archetype's row")?;
+    let field = row
+        + units[row..]
+            .find("projectile_speed: Some(")
+            .ok_or("the row's missile speed")?;
+    let edited_text = format!(
+        "{}target_loss_behavior: Fizzle,\n                {}",
+        &units[..field],
+        &units[field..]
+    );
+    std::fs::write(bundle.directory.join(FILES[0]), edited_text)?;
+    let edited = bundle.load()?;
+    let (_, edited_weapon) =
+        splash_missile_archetype(&edited).ok_or("the edited missile is still shipped")?;
+    assert_eq!(
+        edited_weapon.target_loss_behavior,
+        sim_types::ProjectileTargetLossBehavior::Fizzle,
+        "premise: the edit reached the splash missile"
+    );
+    assert!(
+        lost_splash_strikes(shipped)?,
+        "the shipped missile lands on the point and its area strikes"
+    );
+    assert!(
+        !lost_splash_strikes(edited)?,
+        "the authored fizzle vanishes without an area"
+    );
+    bundle.finish()?;
+    Ok(())
+}

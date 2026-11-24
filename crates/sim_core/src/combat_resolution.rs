@@ -25,6 +25,8 @@
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
 //! 6. An area whose `cliff` is `Same` strikes only units on the cliff level of a search point
 //!    that reaches them (plan `2026-11-23-splash-cliff-levels` D-1).
+//! 7. A projectile whose target is lost lands at the last tracked point unless its weapon says
+//!    `Fizzle` (plan `2026-11-23-vision-and-detection` D-1).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};

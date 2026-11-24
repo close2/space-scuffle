@@ -338,13 +338,17 @@ impl SplashSpec {
 /// (e.g. loaded into a transport, cloaked without detection, expired hallucination, or destroyed).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProjectileTargetLossBehavior {
-    /// Default SC2 homing projectile behavior: if the target becomes unavailable
-    /// in flight (loaded into transport, cloaked/burrowed without detection,
-    /// expired hallucination, stasis, or died), the projectile harmlessly fizzles/disjoints.
-    #[default]
+    /// `PointFallback 0` (e.g. `StarCraft` II's `NeuralParasiteLaunchMissile`, `liberty`
+    /// EffectData:1013): once the target fails the weapon's filters, the missile is removed
+    /// without landing, so neither its strike nor its area lands anywhere.
     Fizzle,
-    /// Ballistic/artillery behavior: continues to the last known `target_pos`
-    /// and detonates splash damage on the ground coordinate even if the original unit vanished.
+    /// 5.0.14's `PointFallback` (`core` EffectData:97), the default of every attack missile:
+    /// once the target fails the weapon's filters (it dies, is loaded, turns invulnerable, or
+    /// cloaks or burrows undetected), the missile flies on to the last point it tracked, in
+    /// world units, and lands there; its strike reaches no unit, its area strikes around the
+    /// point. Permanent: a target that becomes available again is not re-acquired (plan
+    /// `2026-11-23-vision-and-detection` D-1).
+    #[default]
     ImpactLastKnownPosition,
     /// Seeking missile behavior (SC1 Valkyrie / SC2 Mirage / Glaive-style retargeting):
     /// when the current target becomes unavailable in flight, scans spatial neighborhood within
