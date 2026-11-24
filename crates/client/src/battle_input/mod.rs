@@ -504,16 +504,20 @@ fn handle_targeting_pointer(
             queue.submit_cast(world, frame.owner, selection.ids(), cast)?;
             return Ok((OrderMarkerKind::Attack, target.marker));
         }
-        // In the Attack mode a click on a unit the viewer does not own attacks that unit, with
-        // the same fog rules as selection (plan `2026-11-23-stance-checked-orders` D-6). A click
-        // on one's own unit stays an attack-move to the ground under it (B-175).
+        // In the A mode a click on any unit the viewer may pick, with the same fog rules as
+        // selection and one's own units included, attacks it with the members that can attack
+        // it and sends the others to the ground under it (plan `2026-11-24-attack-orders` D-5,
+        // B-175, Q0104's and Q0105's defaults).
         if *mode == CommandMode::AttackMove {
-            let enemy = ray
-                .and_then(|ray| view.pick_unit(world, frame.owner, ray))
-                .filter(|unit| unit.owner != frame.owner);
-            if let Some(unit) = enemy {
-                let order = UnitOrder::attack(unit.id);
-                queue.submit_selection(world, frame.owner, selection.ids(), order, frame.shift)?;
+            if let Some(unit) = ray.and_then(|ray| view.pick_unit(world, frame.owner, ray)) {
+                queue.submit_attack_on_unit(
+                    world,
+                    frame.owner,
+                    selection.ids(),
+                    unit.id,
+                    context_order::sim_point(unit.ground),
+                    frame.shift,
+                )?;
                 return Ok((OrderMarkerKind::Attack, unit.ground));
             }
         }

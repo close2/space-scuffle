@@ -32,7 +32,8 @@ use std::fmt::Write;
 
 use bevy::prelude::*;
 use sim_types::{
-    CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerView, UnitOrder, UnitTypeId,
+    AttackCommand, CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerView, UnitOrder,
+    UnitTypeId,
 };
 
 use super::catalog::{ArchetypeCommands, CastCommand, CastId, ModeCommand, ModeId};
@@ -154,8 +155,11 @@ impl Default for CardPage {
 /// The identity a slot shows, so that the slot owns no string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardLabel {
-    /// Attack-move.
+    /// The `attack` ability's A command: an attack-move on a point, or an attack on a unit.
     Attack,
+    /// The `move` ability's Scan Move, the A command of a selection with no member that has
+    /// Attack (plan `2026-11-24-attack-orders` D-4; 5.0.14 face `AcquireMove`).
+    ScanMove,
     /// Opens the structure list.
     Build,
     /// Carry a load home.
@@ -548,17 +552,31 @@ fn cast_entry(model: &HudModel, facts: &[SelectedFact], cast: CastId) -> Option<
 /// Calls `emit` with each root entry, in the order of the card's table.
 fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
     let view = &model.view;
-    // Attack is shown for a unit armed in the stance it is in or is switching to (plan
-    // `2026-11-23-stance-checked-orders` D-4, B-173): 5.0.14's sieged tank, burrowed Lurker and
-    // armed structures carry `attack` (`liberty` UnitData:5172-5174, :793-796, :11083-11084).
-    if facts
-        .iter()
-        .filter(|fact| !fact.foundation)
-        .any(|fact| settled_armed(model, fact))
-    {
+    // The A slot is shown when a member's settled stance has an A command (plan
+    // `2026-11-24-attack-orders` D-4, B-174, B-186): Attack when one has `attack` (5.0.14's armed
+    // units and stances, and the unburrowed Lurker), otherwise Scan Move, the face 5.0.14 puts
+    // in every unarmed mobile unit's Attack slot (`liberty` UnitData:5485-5486). Both arm the
+    // same mode on the same key.
+    let mut a_command = AttackCommand::None;
+    for fact in facts.iter().filter(|fact| !fact.foundation) {
+        match settled_attack(model, fact) {
+            AttackCommand::Attack => {
+                a_command = AttackCommand::Attack;
+                break;
+            }
+            AttackCommand::ScanMove => a_command = AttackCommand::ScanMove,
+            AttackCommand::None => {}
+        }
+    }
+    let a_label = match a_command {
+        AttackCommand::Attack => Some(CardLabel::Attack),
+        AttackCommand::ScanMove => Some(CardLabel::ScanMove),
+        AttackCommand::None => None,
+    };
+    if let Some(label) = a_label {
         emit(CardEntry::free(
             CardAction::Mode(CommandMode::AttackMove),
-            CardLabel::Attack,
+            label,
         ));
     }
     // Mode entries follow Attack, by mode, the enter entry of a mode before its leave entry.
@@ -666,6 +684,7 @@ fn key_caption(key: KeyCode) -> &'static str {
 fn label_text(label: CardLabel, model: &HudModel) -> &str {
     match label {
         CardLabel::Attack => "Attack",
+        CardLabel::ScanMove => "Scan Move",
         CardLabel::Build => "Build",
         CardLabel::ReturnCargo => "Return cargo",
         CardLabel::Overclock => "Overclock",
@@ -893,17 +912,15 @@ fn settled_orders(
         .unwrap_or(archetype.default_orders)
 }
 
-/// Whether `fact`'s unit is armed in the stance it is in or is switching to, by the same
-/// lookup as [`settled_orders`]; the rule of admission's `Entity::settled_armed`. A unit whose
-/// type the HUD catalog does not hold is not armed.
-fn settled_armed(model: &HudModel, fact: &SelectedFact) -> bool {
+/// The A command of `fact`'s unit in the stance it is in or is switching to, by
+/// [`settled_orders`]; the rule of admission's `Entity::settled_attack_command`. A unit whose
+/// type the HUD catalog does not hold has none.
+fn settled_attack(model: &HudModel, fact: &SelectedFact) -> AttackCommand {
     model
         .catalog
         .archetype(fact.unit_type)
-        .is_some_and(|archetype| {
-            settled_mode(model, fact)
-                .and_then(|mode| archetype.mode_armed.get(usize::from(mode)).copied())
-                .unwrap_or(archetype.default_armed)
+        .map_or(AttackCommand::None, |archetype| {
+            settled_orders(model, fact, archetype).attack
         })
 }
 
@@ -1615,21 +1632,25 @@ mod tests {
         Ok(())
     }
 
+    /// Plan `2026-11-24-attack-orders` D-4 (B-174): the unit armed only in its mode authors
+    /// Attack in its default stance (5.0.14's unburrowed Lurker carries `attack`), so it shows
+    /// Attack first in both stances, then its switch.
     #[test]
-    fn a_unit_armed_only_in_its_mode_shows_attack_only_in_its_mode() -> TestResult {
+    fn a_unit_armed_only_in_its_mode_shows_attack_in_both_stances() -> TestResult {
         let mut world = flat_world()?;
         let lurker = mode_unit(&mut world, false)?;
         let mode = command_of(&model_of(&world, &[]), &world, lurker)?.mode;
         let card = card_for(&world, &[lurker]);
-        assert_eq!(labels(&card), [mode_label(mode, ModeDirection::Enter)]);
+        assert_eq!(
+            labels(&card),
+            [CardLabel::Attack, mode_label(mode, ModeDirection::Enter)]
+        );
         assert_eq!(
             card.slots[0].as_ref().ok_or("slot")?.key,
             COMMAND_CARD_KEYS[0]
         );
         switch(&mut world, lurker);
         let card = card_for(&world, &[lurker]);
-        // Armed in its settled stance, it shows Attack first (plan
-        // `2026-11-23-stance-checked-orders` D-4, B-173).
         assert_eq!(
             labels(&card),
             [CardLabel::Attack, mode_label(mode, ModeDirection::Leave)]
@@ -1836,14 +1857,16 @@ mod tests {
         Ok(())
     }
 
+    /// Plan `2026-11-24-attack-orders` D-4 (B-174): the unit armed only when burrowed shows
+    /// Attack in every stance it settles in, since its default stance authors Attack (5.0.14's
+    /// unburrowed and unburrowing Lurker carry `attack`).
     #[test]
-    fn a_burrowed_unit_armed_only_when_burrowed_shows_attack_and_follows_its_settled_stance(
-    ) -> TestResult {
+    fn a_burrowed_unit_armed_only_when_burrowed_shows_attack_in_every_stance() -> TestResult {
         let mut world = flat_world()?;
         let lurker = mode_unit(&mut world, false)?;
         assert!(
-            !shows_attack(&card_for(&world, &[lurker])),
-            "unarmed by default"
+            shows_attack(&card_for(&world, &[lurker])),
+            "unburrowed: Attack without a weapon"
         );
         assert!(world.execute_ability(lurker, 0, None, None));
         assert!(
@@ -1863,9 +1886,122 @@ mod tests {
         assert!(world.execute_ability(lurker, 0, None, None));
         assert!(world.entities[&lurker].channeling_remaining_ticks > 0);
         assert!(
-            !shows_attack(&card_for(&world, &[lurker])),
-            "unburrowing: unarmed in the stance it settles in"
+            shows_attack(&card_for(&world, &[lurker])),
+            "unburrowing: Attack in the stance it settles in"
         );
+        Ok(())
+    }
+
+    // --- The A command by stance (plan `2026-11-24-attack-orders` D-4, B-174, B-186) --------
+
+    /// A unit of `ME` that is mobile, unarmed and has Scan Move in its default stance (the
+    /// Medivac class); found by capability.
+    fn scan_mover(world: &mut SimWorld) -> Outcome<EntityId> {
+        unit_where(world, |a| {
+            !a.is_immobile_by_default() && a.stance_orders(None).attack == AttackCommand::ScanMove
+        })
+    }
+
+    #[test]
+    fn an_unarmed_mobile_unit_shows_scan_move_first() -> TestResult {
+        let mut world = flat_world()?;
+        let medivac = scan_mover(&mut world)?;
+        let card = card_for(&world, &[medivac]);
+        let first = card.slots[0].as_ref().ok_or("slot")?;
+        assert_eq!(first.label, CardLabel::ScanMove);
+        assert_eq!(first.key, COMMAND_CARD_KEYS[0]);
+        assert_eq!(first.action, CardAction::Mode(CommandMode::AttackMove));
+        assert!(
+            card.text[0].caption.ends_with("Scan Move"),
+            "{}",
+            card.text[0].caption
+        );
+        assert!(!shows_attack(&card));
+        Ok(())
+    }
+
+    #[test]
+    fn a_selection_with_any_attack_member_shows_attack_and_no_scan_move() -> TestResult {
+        let mut world = flat_world()?;
+        let medivac = scan_mover(&mut world)?;
+        let lurker = mode_unit(&mut world, false)?;
+        let marine = unit_where(&mut world, |a| {
+            crate::battle_pipeline::commands::is_armed(a) && a.modes.is_empty()
+        })?;
+        for selection in [[medivac, lurker], [medivac, marine]] {
+            let shown = labels(&card_for(&world, &selection));
+            assert_eq!(shown.first(), Some(&CardLabel::Attack), "{selection:?}");
+            assert!(!shown.contains(&CardLabel::ScanMove), "{selection:?}");
+        }
+        Ok(())
+    }
+
+    /// R-2: every unarmed mobile archetype gains the A slot as its first root entry, on the first
+    /// key, and shows it once; its other entries follow in their own order.
+    #[test]
+    fn every_unarmed_mobile_unit_has_its_a_slot_first() -> TestResult {
+        let mut world = flat_world()?;
+        let kinds: Vec<_> = world
+            .catalog
+            .archetypes()
+            .filter(|a| !is_dome(a) && !a.is_immobile_by_default() && !a.stance_armed(None))
+            .map(|a| (a.unit_type_id, a.stance_orders(None).attack))
+            .collect();
+        assert!(
+            kinds.len() >= 8,
+            "{} unarmed mobile archetypes",
+            kinds.len()
+        );
+        for (index, (kind, attack)) in kinds.into_iter().enumerate() {
+            let at = SimVec2::new(
+                SimScalar::from_i32(6 + 4 * i32::try_from(index)?),
+                SimScalar::from_i32(40),
+            );
+            let unit = world.spawn_unit(kind, ME, at)?;
+            let card = card_for(&world, &[unit]);
+            let expected = match attack {
+                AttackCommand::Attack => CardLabel::Attack,
+                AttackCommand::ScanMove => CardLabel::ScanMove,
+                AttackCommand::None => return Err("an unarmed walker has an A command".into()),
+            };
+            let shown = labels(&card);
+            assert_eq!(shown.first(), Some(&expected), "{kind:?}");
+            assert_eq!(
+                card.slots[0].as_ref().ok_or("slot")?.key,
+                COMMAND_CARD_KEYS[0]
+            );
+            assert!(
+                !shown[1..]
+                    .iter()
+                    .any(|label| matches!(label, CardLabel::Attack | CardLabel::ScanMove)),
+                "{kind:?}: {shown:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// P-12: a warm card of a Medivac-class unit and the unburrowed Lurker analogue rewrites no
+    /// text.
+    #[test]
+    fn a_warm_card_of_a_scan_mover_and_an_unburrowed_lurker_allocates_no_new_text() -> TestResult {
+        let mut world = flat_world()?;
+        let medivac = scan_mover(&mut world)?;
+        let lurker = mode_unit(&mut world, false)?;
+        let model = model_of(&world, &[]);
+        for facts in [
+            vec![fact(&world, medivac)],
+            vec![fact(&world, lurker)],
+            vec![fact(&world, medivac), fact(&world, lurker)],
+        ] {
+            let mut card = CommandCard::default();
+            derive_card(&model, &facts, &mut card);
+            let slots = card.text.each_ref().map(|text| text.caption.as_ptr());
+            derive_card(&model, &facts, &mut card);
+            assert_eq!(
+                card.text.each_ref().map(|text| text.caption.as_ptr()),
+                slots
+            );
+        }
         Ok(())
     }
 
@@ -1941,6 +2077,7 @@ mod tests {
             spec.orders = sim_types::StanceOrders {
                 stop,
                 hold_position,
+                ..spec.orders
             };
             Ok(())
         };

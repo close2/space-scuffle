@@ -3,8 +3,10 @@
 //
 // Player 0 fields a siege line that holds where it spawns, in a row beside its hall: every unit with
 // a mode switch anchors or burrows at once (EnterModes; a unit with earlier orders would switch
-// after them). The burrowing units carry no weapon until they burrow, so an attack-move would not
-// take them along. Player 0's other units have no orders and fight where they stand. Player 1's
+// after them). Player 0 is given no attack-move, so its burrowing units stay in the line (an
+// attack-move takes every unit with an A command, unarmed ones included; plan
+// docs/plans/2026-11-24-attack-orders.md D-6). Player 0's other units have no orders and fight
+// where they stand. Player 1's
 // raiders attack-move into the line, towards player 0's base. The take is its own battle, so
 // the `battle` take's scenario, outcome and winner are unchanged.
 (

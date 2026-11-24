@@ -100,6 +100,7 @@ fn dummy_target_archetype(
         modes: Vec::new(),
         effects: sim_core::catalog::ArchetypeEffects::default(),
         placement_excludes: sim_types::PlacementFlags::empty(),
+        default_stance_orders: None,
     }
 }
 

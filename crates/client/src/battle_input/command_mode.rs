@@ -49,9 +49,12 @@ pub enum CommandMode {
     /// A left click selects.
     #[default]
     Normal,
-    /// The next left click attacks: an enemy unit under the pointer is attacked
-    /// (`UnitOrder::AttackTarget`), and anywhere else is an attack-move to the ground point,
-    /// which only mobile members take (plan `2026-11-23-stance-checked-orders` D-6, D-7).
+    /// The A mode, armed by the card's Attack or Scan Move entry: the next left click on a unit
+    /// under the pointer, one's own included, attacks it with the members that can attack it
+    /// (`UnitOrder::AttackTarget`) and attack-moves the others to the ground under it, and a
+    /// click anywhere else is an attack-move to the ground point, which only mobile members with
+    /// an A command take (plans `2026-11-23-stance-checked-orders` D-6, D-7 and
+    /// `2026-11-24-attack-orders` D-4, D-5).
     AttackMove,
     /// The next left click places this structure.
     Place(UnitTypeId),

@@ -9,8 +9,8 @@ use bevy::prelude::Resource;
 use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId,
-    SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, EntityId, PlayerCommand,
+    PlayerId, SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -553,6 +553,80 @@ impl BattleCommandQueue {
         )
     }
 
+    /// Sends an A-click on the unit `target` (plan `2026-11-24-attack-orders` D-5): an
+    /// `AttackTarget` to the members of `selection` that can attack it ([`Entity::can_attack`],
+    /// whoever owns it), then an `AttackMove` to `point`, the ground under it, to every other
+    /// member with an A command except `target` itself. Either command is left out when it has
+    /// no recipient; both go into the same tick with disjoint recipients.
+    ///
+    /// A member with Scan Move walks, as 5.0.14's `AcquireMove` aimed at a unit goes to it (it
+    /// would follow it, B-187); so does a member with Attack that cannot attack the target, by
+    /// Q0105's default. An own target is attacked, by Q0104's default (B-175). Both commands
+    /// are checked before either is queued, so a refusal leaves the queue as it was. Returns
+    /// the sequence of the last command queued. Allocation belongs to the user action.
+    /// # Errors
+    /// [`SubmissionError::EmptySelection`] if no member can take either order,
+    /// [`SubmissionError::InvalidTarget`] if `target` is not available for combat, or the other
+    /// typed errors of [`Self::submit`].
+    pub fn submit_attack_on_unit(
+        &mut self,
+        world: &SimWorld,
+        player: PlayerId,
+        selection: &[EntityId],
+        target: EntityId,
+        point: SimVec2,
+        queued: bool,
+    ) -> Result<SubmissionSequence, SubmissionError> {
+        let generation = self.generation.ok_or(SubmissionError::NotReady)?;
+        accepts_orders(world, player)?;
+        let attack = UnitOrder::attack(target);
+        let walk = UnitOrder::AttackMove { target: point };
+        let subject = order_subject(world, player, &attack)?;
+        let mut attackers = Vec::with_capacity(selection.len());
+        let mut walkers = Vec::with_capacity(selection.len());
+        for id in selection {
+            let Some(entity) = world
+                .entities
+                .get(id)
+                .filter(|entity| entity.owner == player && can_receive_order(entity, &attack))
+            else {
+                continue;
+            };
+            let archetype = world
+                .catalog
+                .get(entity.unit_type_id)
+                .map_err(|_| SubmissionError::MissingArchetype(*id))?;
+            if can_execute(world, entity, archetype, &attack, subject) {
+                attackers.push(*id);
+            } else if *id != target && can_execute(world, entity, archetype, &walk, None) {
+                walkers.push(*id);
+            }
+        }
+        let commands =
+            [(attackers, attack), (walkers, walk)].map(|(entities, order)| PlayerCommand {
+                player_id: player,
+                entities,
+                order,
+                queue: queued,
+            });
+        if commands.iter().all(|command| command.entities.is_empty()) {
+            return Err(SubmissionError::EmptySelection);
+        }
+        for command in commands
+            .iter()
+            .filter(|command| !command.entities.is_empty())
+        {
+            validate(world, command)?;
+        }
+        let mut last = None;
+        for command in commands {
+            if !command.entities.is_empty() {
+                last = Some(self.capture(generation, command, None)?);
+            }
+        }
+        last.ok_or(SubmissionError::EmptySelection)
+    }
+
     /// Prepares one exact pre-step bundle, retaining scratch allocation for later ticks.
     /// `sequences[index]` correlates each authoritative command outcome with submission.
     /// Rejections are appended to caller-owned evidence before another tick can clear it.
@@ -649,8 +723,9 @@ pub fn any_recipient(
 }
 
 /// Whether any member of `selection` could take an attack on some unit: a completed unit of
-/// `player` armed in its settled stance. Unlike [`any_recipient`] it names no target, for the
-/// Attack mode, whose click may yet aim at a unit (plan `2026-11-23-stance-checked-orders` D-6).
+/// `player` whose settled stance has Attack ([`Entity::settled_attack_command`]). Unlike
+/// [`any_recipient`] it names no target, for the A mode, whose click may yet aim at a unit
+/// (plans `2026-11-23-stance-checked-orders` D-6 and `2026-11-24-attack-orders` D-4).
 #[must_use]
 pub fn any_attacker(world: &SimWorld, player: PlayerId, selection: &[EntityId]) -> bool {
     let order = UnitOrder::attack(EntityId(0));
@@ -663,7 +738,9 @@ pub fn any_attacker(world: &SimWorld, player: PlayerId, selection: &[EntityId]) 
                 world
                     .catalog
                     .get(entity.unit_type_id)
-                    .is_ok_and(|archetype| entity.settled_armed(archetype))
+                    .is_ok_and(|archetype| {
+                        entity.settled_attack_command(archetype) == AttackCommand::Attack
+                    })
             })
     })
 }
@@ -717,9 +794,10 @@ fn capable(
     // A unit leaving an anchoring mode counts as mobile: the simulation keeps a move given
     // during the channel and walks when it ends (plan `2026-11-09-client-mode-commands` D-7).
     let mobile = !entity.immobile_after_channel(archetype) && archetype.max_speed > SimScalar::ZERO;
-    // Armed in the stance the unit is in or is switching to, as Stop, Hold and the mode entries
-    // ask (plan `2026-11-23-stance-checked-orders` D-4, B-173).
-    let armed = entity.settled_armed(archetype);
+    // The A command of the stance the unit is in or is switching to, as Stop, Hold and the mode
+    // entries ask (plans `2026-11-23-stance-checked-orders` D-4 and `2026-11-24-attack-orders`
+    // D-4).
+    let attack = entity.settled_attack_command(archetype);
     match order {
         // Stop and Hold Position follow the settled stance's data (plan
         // `2026-11-23-anchored-commands` D-3): a unit has Stop when its StarCraft II unit type
@@ -730,13 +808,16 @@ fn capable(
         UnitOrder::HoldPosition => entity.settled_stance_orders(archetype).hold_position,
         // Walking orders address movable actors only.
         UnitOrder::Move { .. } | UnitOrder::Idle => mobile,
-        // An attack on a unit goes to every member armed in its settled stance: 5.0.14's sieged
-        // tank, burrowed Lurker and armed structures carry `attack` (`liberty` UnitData:5172-5174,
-        // :793-796, :11083-11084; `ToSelection`, `core` AbilData:127-129). An attack on a point
-        // walks, so it needs a mobile member; an anchored unit's attack on a point is refused
-        // (Q0098's default, plan D-7).
-        UnitOrder::AttackMove { .. } => mobile && armed,
-        UnitOrder::AttackTarget { .. } => armed,
+        // An attack on a point goes to every mobile member whose settled stance has an A command:
+        // Attack, or the `move` ability's Scan Move that 5.0.14 puts in every unarmed mobile
+        // unit's Attack slot (`liberty` UnitData:5485-5486; `ToSelection`, `core`
+        // AbilData:555-557). An anchored unit's attack on a point is refused (Q0098). An attack
+        // on a unit needs Attack (the sieged tank, the Lurker analogue unburrowed or burrowed,
+        // the armed structures; `liberty` UnitData:5172-5174, :793-796, :11083-11084, `voidmulti`
+        // UnitData:974); `can_execute` adds the target check (plan `2026-11-24-attack-orders`
+        // D-4).
+        UnitOrder::AttackMove { .. } => mobile && attack != AttackCommand::None,
+        UnitOrder::AttackTarget { .. } => attack == AttackCommand::Attack,
         UnitOrder::UseStim => can_overclock(world, entity, archetype),
         // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
@@ -796,19 +877,18 @@ fn can_execute(
     order: &UnitOrder,
     subject: Option<&UnitArchetype>,
 ) -> bool {
-    // The weapon of the settled stance, as `Entity::apply_mode_transition` will set it: the
-    // mode's replacement ground weapon, or the archetype's own (plan
-    // `2026-11-23-stance-checked-orders` D-4).
-    let reaches_target = !matches!(order, UnitOrder::AttackTarget { .. })
-        || subject.is_some_and(|target| {
-            let replaced = entity
-                .settled_mode(archetype)
-                .and_then(|mode| mode.ground_weapon_override.as_ref())
-                .and_then(Option::as_ref);
-            archetype
-                .weapon_against(target.mover_type, replaced)
-                .is_some()
-        });
+    // An attack on a unit follows the simulation's own rule, `Entity::can_attack`: the settled
+    // stance's weapon reaches the target, which is another unit, whoever owns it (plan
+    // `2026-11-24-attack-orders` D-2, B-175).
+    let reaches_target = match *order {
+        UnitOrder::AttackTarget { target, .. } => subject.is_some_and(|target_archetype| {
+            world
+                .entities
+                .get(&target)
+                .is_some_and(|target| entity.can_attack(archetype, target, target_archetype))
+        }),
+        _ => true,
+    };
     reaches_target && capable(world, entity, archetype, order, subject)
 }
 
@@ -820,11 +900,15 @@ fn order_subject<'w>(
     order: &UnitOrder,
 ) -> Result<Option<&'w UnitArchetype>, SubmissionError> {
     let (aimed_at, entity) = match *order {
+        // Any unit available for combat, one's own included: 5.0.14's attack command has no
+        // alliance filter (`core` AbilData:117-119; plan `2026-11-24-attack-orders` D-4, B-175).
+        // The right click never builds an attack on an own unit (`friendly_order`).
         UnitOrder::AttackTarget { target, .. } => (
             target,
-            world.entities.get(&target).filter(|entity| {
-                entity.owner != player && world.is_entity_available_for_combat(player, target)
-            }),
+            world
+                .entities
+                .get(&target)
+                .filter(|_| world.is_entity_available_for_combat(player, target)),
         ),
         UnitOrder::Construct { foundation } => (
             foundation,
