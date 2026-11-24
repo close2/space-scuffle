@@ -141,3 +141,110 @@ carried from tick to tick while its phase agrees with the real one. `scripts/pro
 This revises §7.3's prediction in two places: battles 2a, 2b, 3, 9a, 9b and 12a to 12c count no delay (their turrets
 are always back on target by the end of the cooldown), and the showcase effects scenario counts none. A world with a
 zero count that moves is a defect of the package (§7.2).
+
+## WP1: the fields, latent (schema 43 -> 45)
+
+**Red runs** (`~/scratch/fire-rules/red/`). With the tests written first, `sim_core`'s lib tests,
+`weapon_catalog_rules_tests` and `checksum_state_tests` did not compile (`wp1-compile.log`: no field
+`fires_at_other_targets`, `locks_turret_while_firing` or `weapon_target`). On a field-only stub (the fields, left
+unhashed, no data, no validation, no clearing; `wp1-stub.log`) seven tests failed: `b180_b179_fire_rules_follow_starcraft`
+(P-8), `fire_rule_refusals_name_their_field` (P-11), the two validation unit tests, `commit_order_clears_the_weapon_
+target_for_every_order`, `every_public_entity_field_changes_the_world_checksum` and `a_projectiles_fire_rules_change_
+the_world_checksum`.
+
+**Golden proof** (`scripts/proofcopy.sh`, each build in its own fresh target directory on a `git archive` copy with
+fresh mtimes). With the data, validation and clearing in place and the three fields left out of the encoding at
+schema 43 (commit object `9ca05d1c`), `golden_replay`, `golden_replay_orders` and `DEFAULT_SANDBOX_CHECKSUM`
+(`17_697_741_365_715_682_877`) reproduce as recorded on native debug and release and `wasm32-wasip1` release and
+debug (`proof-latent/status`, every run green). With the fields hashed at schema 45 the lists were re-recorded
+(header in both fixtures; sandbox `16_215_936_981_767_392_313`), and the WP1 commit `34672217` reproduces them on the
+same four builds (`proof-wp1/status`).
+
+**Worlds.** WP1's tree (`scripts/wpcopy.sh`) is byte-identical to WP0 in every output file (483 files).
+
+## WP2: the locked turret (B-179)
+
+**Red run** on WP1's tree (`red/wp2.log`): `a_locked_turret_holds_through_its_wind_up` failed (the turret turned
+from 88.20° to 86.40° on the second wind-up tick) and `an_authored_lock_off_turns_the_turret` failed (the shipped
+turret turned 88.20°, 86.40°, 84.60°, 82.82°, 81.05° through its swing); `an_unlocked_turret_turns_through_its_
+wind_up` and `the_lock_changes_neither_release_nor_damage` passed (guards).
+
+**Worlds.** Byte-identical to WP0 in every output file, as probe (a) predicted (no delayed swing).
+
+## WP3: targets off the attack order (B-180)
+
+**Red run** on WP2's tree (`red/wp3-int-red.log`, `red/wp3.log`): `a_weapon_that_fires_while_moving_strikes_what_
+it_passes_in_a_chase` (P-4), `a_standing_unit_fires_at_a_seen_enemy_while_its_target_is_unseen` (P-6),
+`its_own_target_is_ranked_as_acquisition_ranks` (P-9: no own target) and `an_authored_order_target_only_weapon_holds_
+in_a_chase` (P-10) failed. The guards passed before and after: `the_order_target_comes_first` (P-3), `a_weapon_
+that_stands_to_fire_holds_in_a_chase` (P-5) and the two immobile tests (P-7). The test dummies hold position: a
+struck idle unarmed unit flees (helpless flight), which first made the immobile test's order end.
+
+**D-4's verify: reach against pursuit** (`target_acquisition::chase_reading_tests`). For a standing target, at
+offsets −0.5, −0.01, 0, +0.01 and +0.5 world units from the edge of reach, acquisition's reading
+(`reaches_from_here`, before the tick) and pursuit's (the unit stood on the tick) agree. A target that crosses the
+edge in the movement phase before its attacker's pursuit runs (the legacy pipeline moves units one by one; the
+target spawned first) splits them for that tick: walking out from 0.05 inside, reach says in reach while pursuit
+chases; walking in from 0.05 outside, reach says out while pursuit stands. This is the gate mismatch that conditions
+WP6 (§11): a `Stopped` or `Slowing` weapon may choose an own target on a tick its unit walks, or hold one tick too
+long. Probe (b) counted no mismatch in the measured worlds (no own target would be set in them).
+
+**Worlds.** Byte-identical to WP0 in every output file, as probe (b) predicted (every opportunity gated).
+
+## WP4: turrets between shots (B-197) and the lock's backswing
+
+**Red run** on WP3's tree (`red/wp4.log`): `a_turret_follows_its_target_between_shots` failed (tick 4: the
+turret held 84.24° where it should have turned to 82.82°), `the_next_swing_starts_no_later` failed (the weapon
+rotated after its cooldown) and `a_locked_turret_holds_through_its_backswing` failed (no turn in the cooldown,
+ticks 17 to 45). The guards `between_shots_a_hull_weapon_does_not_turn_its_hull` and `a_swing_out_of_the_
+backswing_turns_it` passed before and after.
+
+**Re-derived** (named in the commit): `weapon_cadence_tests::b29_an_engaged_weapon_fires_within_the_engaged_arc_
+without_turning` and `b29_a_target_that_leaves_the_engaged_arc_is_acquired_again` knocked the turret off its target
+right after a shot and expected it to stay there through the cooldown; they now knock it on the tick the cooldown
+ends, which keeps what they test (B-29's two arcs). `turret_tracking_tests.rs` and `hull_turning_tests.rs` pass
+unchanged.
+
+**R-7 (hull weapons).** Under an attack order pursuit aims a hull in its band every tick (`aim_if_in_range`), so S3
+needs nothing new there. A unit on Hold Position has no pursuit, and between shots its hull stays where it fired
+while its target walks across its front (`between_shots_a_hull_weapon_does_not_turn_its_hull`). Registered as
+**B-199** (provisional), the hull half of B-197.
+
+**Goldens.** Per-tick dumps of both goldens on WP3's tree and WP4's (`scripts/goldendump.sh`, `dump-wp3/`,
+`dump-wp4/`): in `golden_replay` only the turret angles of entities 33 to 35 (`red_siege`, unsieged, 180° arc)
+differ, on 273 entity-ticks from tick 181 (entity 33 in its backswing turns one binary unit towards entity 16) to
+tick 549; every other field of every entity is equal on all 1000 ticks. Probe (c) counted exactly 273 shadow angle
+differences there and no delay. The checkpoints at ticks 250, 300, 450 and 500 changed and were re-recorded.
+`golden_replay_orders` and `DEFAULT_SANDBOX_CHECKSUM` are unchanged. The re-recorded list reproduces on native
+debug and release and `wasm32-wasip1` release and debug (`proof-wp4/status`).
+
+**Worlds** (`compare-wp4.txt`, `scripts/matrixdiff.py`). Battles 31 and 33, the showcase and the showcase effects
+scenario are byte-identical; only `matrix.csv` and `matrix.md` differ:
+
+| Battle | Seeds whose row moved (of record) | Columns | Mean survivors, blue / red | Mean end tick |
+|---|---|---|---|---|
+| 21 (Lurker) | 3 / 20 (0) | end tick, lead hull | 1.00 / 1.20, unchanged | 474.9 -> 474.8 |
+| 26 (Colossi) | 17 / 20 (4) | end tick, survivors, blocking, reversals | 0.40 / 4.05, unchanged | 425.6 -> 418.1 |
+| 28 (Immortals) | 20 / 20 (4) | end tick, survivors, blocking, reversals | lings 24.25 -> 23.55 / 0 | 643.8 -> 641.4 |
+| 30 (Immortals) | 10 / 20 (3) | end tick, blocking, reversals | 0 / 10.00, unchanged | 247.6 -> 248.0 |
+| 37b (sieged tank) | 6 / 20 (1) | lead hull, blocking | 1.00 / 6.00, unchanged | 600 |
+| 39b (sieged tanks) | 2 / 20 (1) | lead hull, blocking | 1.00 / 2.50, unchanged | 600 |
+| 40 (sieged tanks) | 15 / 20 (3) | end tick | 0 / 2.75, unchanged | 273.1 -> 272.1 |
+
+No winner and no expectation changed: 0 failures on the seeds of record and 4 over all seeds, as at WP0. P-16's
+direction holds where survivors move (battle 28: the Immortal analogues' enemies lose more) and battles 26, 28 and
+40 end earlier; battle 30 ends 0.4 ticks later on average with the same survivors.
+
+**Traces** (`scripts/trace.sh`, `scripts/firstdiff4.py`, `firstdiff-wp4.txt`). Per-tick unit tables of the ten
+battles probe (c) counted delays in, on all 20 seeds, WP3 against WP4: 128 seeds move, in exactly those ten
+battles (10: 4 seeds, 21: 13, 26: 18, 28: 20, 30: 16, 37b: 9, 39a: 1, 39b: 20, 40: 19, 42: 8); every seed without
+a probe event is identical. In 125 the first difference is the probe's first delay for that battle and seed, tick
+and unit (the WP3 weapon rotates after its cooldown, the WP4 one winds up). The other three (battle 30 seed 17
+tick 177 unit 26, 37b seed 8 tick 151 unit 10, 40 seed 15 tick 129 unit 11) are the probe's "later" events, each a
+target switch: the turret had followed a target that died or was lost during the cooldown, and the new target lay
+nearer the angle the frozen turret had kept. P-13 concerns the same target; no swing at the same target starts
+later. So every move is a counted event of B-197 (P-15).
+
+## Client skirmish
+
+The pilot trains `pulse_bot`, which has no turret; the skirmish's stage log is not affected by any package (§7.3).

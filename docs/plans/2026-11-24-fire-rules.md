@@ -35,7 +35,8 @@ golden replays and matrix battles that move by behaviour (B-197), and work acros
 catalog and the fixtures.
 
 **Status of this document:** a stage 1 blueprint under charter §6, written on 2026-11-24 against `main` at
-`7dc356fc` (checksum schema 43; 44 reserved by the hidden-harvesters work).
+`7dc356fc` (checksum schema 43; 44 reserved by the hidden-harvesters work). WP0 to WP5 built (see As built); WP6
+needed, after the contact solver merges.
 - Line numbers drift, so search for the quoted symbol.
 - Claims not confirmed while planning are marked **verify**.
 - Later decisions are appended as `## Amendment N (orchestrator, YYYY-MM-DD): <decision>`, numbered from 1.
@@ -747,4 +748,32 @@ elsewhere).
 
 ## As built
 
-Not started.
+WP0 to WP5 on branch `fire-rules-plan`, one commit each, on `main` at `7dc356fc` (schema 43). Q0109's defaults are
+built (parts 1 to 4, answer (a) each). Evidence: [`2026-11-24-fire-rules`](../evidence/2026-11-24-fire-rules.md).
+
+| Package | Commit | What landed | Worlds |
+|---|---|---|---|
+| WP0 | `84a612c3` | B-179 and B-180 pointed here, B-197 and B-198 registered; the survey; baseline and probes | — |
+| WP1 | `34672217` | `fires_at_other_targets`, `locks_turret_while_firing`, `Entity::weapon_target`; D-6 data; D-7 refusals; schema 45 (44 reserved) | byte-identical; goldens by the schema bytes only (proved on four builds) |
+| WP2 | `1b047eb4` | D-2's wind-up half (B-179) | byte-identical |
+| WP3 | `fb39028d` | D-4 (`attack_order_target`, `can_work`, `combat::within_band`), D-5 (`decide_weapon_target`, `OwnTargetScan`) (B-180) | byte-identical |
+| WP4 | `b5522eb3` | D-3 (`face_target_between_shots`), D-2's backswing half (B-197, B-179) | matrix battles 21, 26, 28, 30, 37b, 39b, 40 (no winner or claim changed); `golden_replay` by turret angles alone |
+| WP5 | this commit | records, evidence, pointers in plan `2026-11-23-turret-wind-up` | — |
+
+**Differences from the blueprint.**
+- **Expected moves (§7.3).** WP0's probe narrowed WP4's list: battles 2a, 2b, 3, 9a, 9b and 12a to 12c and the
+  showcase effects scenario count bearing changes between shots but no delay, and none moved; battles 10, 39a and 42
+  moved tick by tick but not in `matrix.csv`; `golden_replay_orders` and the sandbox checksum did not move.
+- **Clearing `weapon_target`.** Besides `commit_order` and transport loading (D-1), every acquisition outcome that
+  changes the order clears it (`engage`, `AbandonAttack`), as do helpless flight and the call for help, which
+  rewrite orders without `commit_order`. A queued order leaves the front order, and so the own target, in place.
+  An immobile unit (`is_immobile`, or no speed) never gets one (rule 6).
+- **D-3 in the backswing** runs after the backswing's ready step and only when that step started nothing, so a
+  turret never turns by more than its rate in a tick.
+- **D-4's verify found a gate mismatch** (`target_acquisition::chase_reading_tests`): reach and pursuit agree for a
+  standing target, the band's edge included, but a target that crosses the edge in the movement phase before its
+  attacker's pursuit splits them for that tick. Probe (b) counted none in the measured worlds. **WP6 is therefore
+  needed** (§11), after the contact solver merges.
+- **R-7 found:** a hull unit on Hold Position does not face its target between shots; registered as **B-199**
+  (provisional), the hull half of B-197, deferred (a movement-side rule).
+- **Numbers.** Schema 45, B-197, B-198 and B-199 are provisional: next free at merge.
