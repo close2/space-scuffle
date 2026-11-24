@@ -415,6 +415,55 @@ fn a_unit_behind_a_friend_is_held_up_before_it_reaches_the_target() -> TestResul
     Ok(())
 }
 
+/// W0-T5 (plan `2026-11-25-enemy-contact-and-ring-retarget` §6): B7′'s engaged unit-ticks on
+/// a constructed two-unit battle. The melee unit walks 5 world units to the holding ranged unit;
+/// it counts exactly the observed states in which the ranged unit, its only target, lies within
+/// its band (read here from the catalog's range and radii), and the ranged unit, in range of it
+/// from the first tick, counts every state from its first acquisition on.
+#[test]
+fn engaged_unit_ticks_count_the_states_in_band_of_the_target() -> TestResult {
+    use sim_fixtures::trace::contact_checks::ContactMeter;
+    let battle = scripted(&squad(RANGED, 15.0, 32.0), &squad(MELEE, 10.0, 32.0))?;
+    let mut catalogs = sim_fixtures::shipped_catalogs();
+    sim_fixtures::without_random_delays(&mut catalogs.units);
+    let melee = catalogs
+        .units
+        .get(catalogs.units.id_by_slug(MELEE).ok_or("melee unit")?)?;
+    let ranged = catalogs
+        .units
+        .get(catalogs.units.id_by_slug(RANGED).ok_or("ranged unit")?)?;
+    let weapon = melee.weapon.as_ref().ok_or("melee weapon")?;
+    let band = weapon.max_range + melee.collision_radius + ranged.collision_radius;
+    let mut run = BattleRun::new(&battle, catalogs, 1, 0.0)?;
+    let (blue, red) = (run.blue[0], run.red[0]);
+    let mut meter = ContactMeter::new();
+    meter.observe(&run.world);
+    let (mut in_band, mut states) = (0_u32, 1_u32);
+    while !run.is_finished() {
+        assert!(run.step().is_empty(), "no diagnostics");
+        meter.observe(&run.world);
+        let (Some(b), Some(r)) = (run.world.entities.get(&blue), run.world.entities.get(&red))
+        else {
+            break;
+        };
+        if !(b.is_alive() && r.is_alive()) {
+            break;
+        }
+        states += 1;
+        in_band += u32::from(b.position.distance(r.position) <= band);
+    }
+    let checks = meter.total();
+    assert!(in_band > 0 && in_band < states, "{in_band} of {states}");
+    assert_eq!(checks.sides[1].engaged_ticks, in_band);
+    // The holding ranged unit is in range of the melee unit from its first acquisition on.
+    assert!(
+        checks.sides[0].engaged_ticks + 1 >= states - 1,
+        "{checks:?}"
+    );
+    assert!(checks.sides[0].engaged_ticks <= states);
+    Ok(())
+}
+
 #[test]
 fn tracing_a_battle_changes_nothing_and_reproduces_the_matrix_result() -> TestResult {
     let matrix = Matrix::from_ron_str(MATRIX_RON)?;
@@ -592,7 +641,13 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
         lines[0],
         "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
          red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups,\
-         proposal_reversals,contact_reversals"
+         proposal_reversals,contact_reversals,blue_shove,red_shove,blue_r10_leash,\
+         blue_r10_terrain,blue_r10_unruled,blue_r10_free,red_r10_leash,red_r10_terrain,\
+         red_r10_unruled,red_r10_free,blue_churn_explained,blue_churn_unexplained,\
+         red_churn_explained,red_churn_unexplained,blue_blocked,red_blocked,blue_shots,\
+         red_shots,blue_unit_ticks,red_unit_ticks,enemy_overlap,blue_shove_e,red_shove_e,\
+         blue_engaged_ticks,red_engaged_ticks,enemy_overlap_ticks,friend_overlap,\
+         friend_overlap_ticks"
     );
     // The reversals split into proposal- and contact-caused ones that sum to them (plan
     // `2026-11-19-crowd-edge-steering` D-5).
@@ -600,6 +655,7 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
         let cells: Vec<u32> = line
             .split(',')
             .skip(9)
+            .take(5)
             .map(str::parse)
             .collect::<Result<_, _>>()?;
         assert_eq!(cells[1], cells[3] + cells[4], "{line}");

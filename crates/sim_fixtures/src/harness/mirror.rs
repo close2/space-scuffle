@@ -6,7 +6,12 @@
 //! the same army at the point reflection of every position (plan `2026-11-20-contact-solver`
 //! §6.2). Blue, spawned first, has the lower entity ids. [`run`] plays the battle: both sides
 //! attack-move to the other's centroid, again every 100 ticks, for at most 3,000 ticks, with the
-//! random weapon delays removed, and reports who won and the visible reversals (M1).
+//! random weapon delays removed, and reports who won, the visible reversals (M1), and two contact
+//! checks of plan `2026-11-24-solver-retarget-and-shoving` (§5.1): D-SHOVE, the distance units
+//! were moved by enemy contact while proposing no motion, and D-R10, the unit-ticks spent standing
+//! on an automatic chase while another enemy had room, in its four columns
+//! ([`crate::trace::contact_checks`]); and, appended last, D-SHOVE-E of plan
+//! `2026-11-25-enemy-contact-and-ring-retarget` §6, the outward part of that distance only.
 //!
 //! # How it fits
 //! Archetypes are chosen by their properties from the shipped catalog, never by name (charter
@@ -20,6 +25,7 @@
 use super::corpus::{permute, Lattice, SplitMix64, LATTICE};
 use super::metrics::{point, reverses, to_f64, Point};
 use super::{Family, HarnessError, RunOptions};
+use crate::trace::contact_checks::ContactMeter;
 use sim_core::{SimWorld, UnitCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -47,7 +53,7 @@ pub struct MirrorScene {
 }
 
 /// One mirror battle's line of the harness's CSV.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct MirrorRow {
     /// The seed.
     pub seed: u64,
@@ -63,25 +69,39 @@ pub struct MirrorRow {
     pub rev_amp: u32,
     /// Simulation diagnostics raised.
     pub diagnostics: u32,
+    /// D-SHOVE over both sides, world units. Reported, not a threshold.
+    pub shove: f64,
+    /// D-R10 over both sides, unit-ticks: leash, terrain, unruled, free
+    /// ([`crate::harness::room::RoomClass`]). Reported, not a threshold.
+    pub dr10: [u32; 4],
+    /// D-SHOVE-E over both sides, world units. Reported, not a threshold.
+    pub shove_e: f64,
 }
 
 impl MirrorRow {
     /// The CSV header, in [`Self::to_csv`] order.
     pub const HEADER: &'static str =
-        "family,seed,winner,ticks,blue_left,red_left,rev_amp,diagnostics";
+        "family,seed,winner,ticks,blue_left,red_left,rev_amp,diagnostics,shove,dr10_leash,\
+dr10_terrain,dr10_unruled,dr10_free,shove_e";
 
     /// The row as one CSV line.
     #[must_use]
     pub fn to_csv(&self) -> String {
         format!(
-            "mirror,{},{},{},{},{},{},{}",
+            "mirror,{},{},{},{},{},{},{},{:.4},{},{},{},{},{:.4}",
             self.seed,
             self.winner,
             self.ticks,
             self.blue_left,
             self.red_left,
             self.rev_amp,
-            self.diagnostics
+            self.diagnostics,
+            self.shove,
+            self.dr10[0],
+            self.dr10[1],
+            self.dr10[2],
+            self.dr10[3],
+            self.shove_e
         )
     }
 }
@@ -212,6 +232,8 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
             Some((*id, point(entity.position), None, to_f64(speed)))
         })
         .collect();
+    let mut contact = ContactMeter::new();
+    contact.observe(world);
     for tick in 0..LIMIT_TICKS {
         let living = |side: &[EntityId], world: &SimWorld| -> Vec<EntityId> {
             side.iter()
@@ -250,6 +272,7 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
         row.diagnostics = row
             .diagnostics
             .saturating_add(u32::try_from(world.drain_diagnostics().count()).unwrap_or(u32::MAX));
+        contact.observe(world);
         for (id, position, step, speed) in &mut last {
             let Some(entity) = world.entities.get(id).filter(|e| e.is_alive()) else {
                 continue;
@@ -278,6 +301,14 @@ fn play(world: &mut SimWorld, sides: &[Vec<EntityId>; 2], seed: u64) -> MirrorRo
     };
     row.blue_left = count(&sides[0]);
     row.red_left = count(&sides[1]);
+    let checks = contact.total();
+    for side in &checks.sides {
+        row.shove += side.shove;
+        row.shove_e += side.shove_e;
+        for (total, count) in row.dr10.iter_mut().zip(side.r10) {
+            *total = total.saturating_add(count);
+        }
+    }
     row.winner = match (row.blue_left > 0, row.red_left > 0) {
         (true, false) => 0,
         (false, true) => 1,
