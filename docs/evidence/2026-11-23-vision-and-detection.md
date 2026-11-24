@@ -131,3 +131,24 @@ visible and detector counts at the default arena's blocker cells (x 15–17, y 1
 - **Worlds:** `compare-wp5.txt`: only `matrix.csv`, `matrix.md` and the matrix log differ, by battle 41's 20 new rows
   (1,200 runs instead of 1,180; still 0 expectation failures on the seeds of record and 4 over all seeds); every
   other row and every other file is byte-identical.
+
+## WP6: an air attacker is revealed to the player it strikes (B-55)
+
+- **Red run** on WP5's tree (`red/wp6.log`): `attack_reveal_tests` fail where they need a shipped air weapon that is
+  `Visible` (none is), and so do `attack_visibility_follows_starcraft` (P-11) and
+  `an_edited_attack_visibility_hides_an_air_attacker` (P-16); `a_fresh_unit_is_revealed_to_nobody` and
+  `a_ground_attacker_above_stays_unseen` (P-12) pass before and after. The client's P-15 tests
+  (`battle_fog_tests`) pass on WP5's tree too: WP4 already writes `attack_revealed` from the counters, so a counter
+  set by hand is listed, drawn and pickable before any strike sets one (As built).
+- **Battle 41** (`b41/wp6/`, P-14): on every seed the Void Ray analogue's first strike lands on tick 30 to 33, the
+  Hydra analogues start their first swing 4 or 5 ticks later and release their first shot 7 ticks later; every
+  Hydra shot (21 to 23 per seed) falls at most 10 ticks after a Void Ray strike, inside the 54-tick reveal
+  window that strike opened, and none before the first strike; no B-185 tail occurs because the Void Ray keeps
+  striking until it dies. The Hydras win all 20 seeds with all 6 left, ending on ticks 103 to 108 (before: no shot,
+  a stalemate to tick 600). The prediction "the Void Ray's time to win grows or it loses" holds as "it loses".
+- **Worlds (P-13):** `compare-wp6.txt`: only the matrix files differ, by battle 41's rows alone. Every row of battles
+  26 and 35, the two battles with hidden air strikes but no answerable one (probe b), is byte-identical, as is every
+  other world. (The trace binary of this run was built before battle 41's expectation was re-recorded, so its log
+  counts battle 41's four seeds of record as expectation failures; the rows themselves are the WP6 rule's, and the
+  matrix test checks the re-recorded expectation.)
+- **Goldens and sandbox:** unchanged (no air-plane unit in them), as §5 requires.

@@ -858,3 +858,61 @@ The question number is the next free at filing (0101 on `e212ca44`).
   rows stored north first (row = 63 − y).
 - No prototype: WP2 and WP4 are latent by construction, WP1's and WP3's moves are traced from dumps, and WP6's
   direction is predicted (P-14) and measured on battle 41.
+
+---
+
+## As built
+
+Implemented on branch `vision-detection-plan`, one commit per package, on `main` at `36b914fd` (the turret wind-up
+merged, schema 40), merged into the branch as `393cf1fc` before WP0. Evidence:
+[`docs/evidence/2026-11-23-vision-and-detection.md`](../evidence/2026-11-23-vision-and-detection.md).
+
+| WP | Commit | What landed |
+|---|---|---|
+| WP0 | `c45a2747` | B-54 to B-57 restated, B-182 to B-185 registered; baseline; probes (a) to (c); golden dumps |
+| WP1 | `c847f873` | D-1: the `PointFallback` default; `lost_missile_tests.rs`; P-3 |
+| WP2 | `be33a440` | D-2: `detection_radius` (map, catalog, data); P-4, P-5, P-7 |
+| WP3 | `e52c0c83` | D-3: the blocker edge; `golden_replay` re-recorded (vision of the blocker cells only) |
+| WP4 | `cf846dc3` | D-4, D-6 plumbing, D-7: `AttackVisibility`, the counters, `attack_revealed`; schema 41 |
+| WP5 | `cd7da623` | Battle 41 |
+| WP6 | `4b67f9c5` | D-5: the reveal, `sees_enemy` and its four readers; the data of §2.3; battle 41 re-recorded |
+| WP7 | this commit | Records |
+
+**What differs from the blueprint** (no decision changed, so no amendment):
+
+1. **WP1 moved no golden.** §5 expected the projectile lists to move. The dumps of WP1 equal WP0's, checksums
+   included: `golden_replay`'s only lost missile (tick 224) lands before the next checkpoint, and no projectile is
+   in flight at any checkpoint, so the new default, hashed with each in-flight projectile's weapon, is never
+   encoded. B-54 does change an encoded value (`target_loss_behavior` 0 → 1 for in-flight projectiles), which §5
+   did not say; it shows only where a projectile is in flight at a checkpoint.
+2. **Probe (b)'s tag** is computed at the strike and on each of the next 53 ticks, for a unit of the struck side
+   whose weapon hits the attacker's plane and flags, within its scan extent (scan range or weapon range plus both
+   radii), while the attacker's cell is still not `Visible` to that side. No event was tagged; battles 26 and 35
+   have untagged hidden air strikes, and both stayed byte-identical in WP6.
+3. **Probe (a)** found no lost missile in the showcase effects scenario (§7.3 expected Roach missiles lost to the
+   Lurker analogue's burrow) and only `dead` causes anywhere.
+4. **WP2's mechanical readers** were not where §10 put them: `world/presentation.rs`, `published_actions.rs` and
+   `editor/tools.rs` do not read `is_detector`. The readers that do, and the struct literals that author it, are
+   tests in `sim_core`, `sim_map`, `sim_fixtures` and `client`, the client's `editor/los_preview.rs` and
+   `battle_pipeline/commands/tests.rs`, and `sim_fixtures`' corpus row; all moved to the method or the radius in
+   WP2. Structures author the radius as `Option<f64>` and units as `Option<f32>`, as each authors `sight_radius`.
+5. **WP3** adds `crates/sim_core/tests/blocker_edge_tests.rs` for the end-to-end P-8 test, and re-records
+   `sim_map`'s `test_cross_platform_determinism_checksum` reference (it hashes vision states on the default arena,
+   whose blocker cells changed), neither in §10's table. No measured world moved: probe (c) counted no unit in an
+   edge cell anywhere.
+6. **WP4 fills `attack_revealed`** from the counters already (§10 had it filled in WP6). The list stays empty until
+   WP6 sets a counter, so WP4 stays latent; as a consequence the client's P-15 tests pass on WP5's tree as well.
+   `battle_hud/fog.rs` needed no change (it hands the whole view to `BattleFog::refill`). `PerPlayer` gained a
+   `Canonical` encoding (each slot in order). The predicate D-5 calls `sees` is `SimWorld::sees_enemy`.
+7. **Battle 41 before WP6** is a stalemate, not the Void Ray win §7.4 expected: the Hydra analogues stop at the foot
+   within reach, as required, but flee as helpless out of the Void Ray's reach once struck, and never fire. After
+   WP6 they answer within the reveal windows and win every seed with all six left (P-14: "it loses").
+8. **Schema** 41, the next free number after the turret wind-up's 40; `main` has not moved since.
+9. **C7's float allowances** grow by two in `catalog.rs` (the units' `Option<f32>` and the structures'
+   `Option<f64>` detection radius) and two in `catalog/validation.rs` (the radius check), both authoring
+   boundaries converted to `SimScalar` at load; §5 said they would not change. The allowance list
+   (`crates/workspace_checks/tests/charter.rs`) is outside §10's table.
+
+**Open:** Q0101 is unanswered; its defaults are built (air and towers see into blockers, detection needs the
+detector's line of sight, detectors under construction detect, a reveal shows the attacker to the struck player
+only). B-182 to B-185 stay deferred (§14).
