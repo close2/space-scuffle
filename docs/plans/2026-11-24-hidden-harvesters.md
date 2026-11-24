@@ -823,7 +823,7 @@ Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`
 | WP3 | `56c44091` | `BubbleRenderInstance::housed`, the client's presence gate, `BattleSelection::leave`, `can_receive_order` |
 | merge | `18999b6f` | schema 43 (main) -> 44; goldens and sandbox re-proved and re-recorded on the merged tree |
 | WP4 | this commit | records |
-| WP5 | not started | waits for the contact solver |
+| WP5 | `78d68c64` | Amendment 1 (`27747d2c`): `Entity::passes_through_units` (hidden, mining walk, suppressed collision) marks both pipelines' bodies ghost and leaves them out of the steering obstacles; `validate_placement_unoccupied` and `resolve_push_interaction` read `is_hidden`; `takes_part_in_movement` unchanged; three tests in `hidden_harvester_tests` (red first, both pipelines) |
 
 **Decisions and deviations from the plan.**
 
@@ -855,4 +855,9 @@ Built on the branch `hidden-harvesters-plan`, 2026-11-24, from `main` `e313268f`
 
 **Rewritten tests (§8 rule 4):** none; no existing test shot, splashed, sighted or clicked a gas gatherer.
 
-**Open:** WP5 (movement readers); Q0107 and Q0108 unanswered, defaults built; B-196 deferred.
+8. **WP5 as Amendment 1, not as D-11 wrote it.** `takes_part_in_movement` keeps `is_loaded_in_transport`, because
+   on the contact solver's tree it gates the whole movement phase and taking `is_hidden` there would freeze a housed
+   worker's hashed movement memory for every gather. The body rule reads `is_hidden` instead, through one predicate.
+   WP5 started on `main` `708576ac` and was measured against it: §7's WP5 column held (evidence §6).
+
+**Open:** Q0107 and Q0108 unanswered, defaults built; B-196 deferred.
