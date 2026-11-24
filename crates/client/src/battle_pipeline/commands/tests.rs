@@ -394,9 +394,11 @@ fn stationary_armed_actor_can_target_hostile_but_cannot_attack_move() -> TestRes
         ),
         Err(SubmissionError::Capability(id))
     );
+    // An own unit is a valid target (plan `2026-11-24-attack-orders` D-4, B-175), but a unit
+    // never attacks itself (D-2, Q0104's default).
     assert_eq!(
         queue.submit(&world, command(id, owner, UnitOrder::attack(id), false)),
-        Err(SubmissionError::InvalidTarget(id))
+        Err(SubmissionError::Capability(id))
     );
     world.entities.get_mut(&target).ok_or("target absent")?.hp = SimScalar::ZERO;
     let mut input = bundle();
@@ -553,7 +555,11 @@ fn target_availability_matches_simulation_at_submission_and_execution() -> TestR
                 pos: target_pos,
                 mover_type: MoverType::Air,
                 sight_radius: SimScalar::from_i32(3),
-                is_detector: detector,
+                detection_radius: if detector {
+                    SimScalar::from_i32(3)
+                } else {
+                    SimScalar::ZERO
+                },
             },
         );
         vision.end_tick_update();
@@ -1764,8 +1770,8 @@ fn enemies(world: &mut SimWorld) -> Result<[EntityId; 2], Box<dyn std::error::Er
     Ok(spawned)
 }
 
-/// Whether the card derived for `selection` shows Attack.
-fn card_attack(world: &SimWorld, selection: &[EntityId]) -> bool {
+/// The A-slot label the card derived for `selection` shows (Attack or Scan Move), if any.
+fn card_a_slot(world: &SimWorld, selection: &[EntityId]) -> Option<ASlot> {
     use crate::battle_hud::card::{derive_card, CardLabel, CommandCard};
     use crate::battle_hud::catalog::CommandCatalog;
     use crate::battle_hud::model::{HudModel, SelectedFact};
@@ -1787,29 +1793,216 @@ fn card_attack(world: &SimWorld, selection: &[EntityId]) -> bool {
     card.slots
         .iter()
         .flatten()
-        .any(|slot| slot.label == CardLabel::Attack)
+        .find_map(|slot| match slot.label {
+            CardLabel::Attack => Some(ASlot::Attack),
+            CardLabel::ScanMove => Some(ASlot::ScanMove),
+            _ => None,
+        })
 }
 
-/// P-3, the Attack half: over the stance set, alone and in every pair, the card shows Attack
-/// exactly when an attack on a ground or an air enemy would reach a member.
+/// The two labels of the A slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ASlot {
+    Attack,
+    ScanMove,
+}
+
+/// The stance set of [`stance_members`] extended (plan `2026-11-24-attack-orders` P-6) with one
+/// unit of every unarmed mobile archetype, the unburrowed Lurker analogue among them; the
+/// unburrowing one is the set's "leaving" member that keeps Hold Position. Built the same way
+/// every time.
+fn attack_members() -> Result<StanceSet, Box<dyn std::error::Error>> {
+    let (mut world, mut members) = stance_members()?;
+    let kinds: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|a| !is_dome(a) && !a.is_immobile_by_default() && !a.stance_armed(None))
+        .map(|a| a.unit_type_id)
+        .collect();
+    for (index, kind) in kinds.into_iter().enumerate() {
+        let x = SimScalar::from_i32(8 + 3 * i32::try_from(index)?);
+        let unit = world.spawn_unit(kind, ME, SimVec2::new(x, SimScalar::from_i32(30)))?;
+        members.push(("unarmed walker", unit));
+    }
+    Ok((world, members))
+}
+
+/// A point every mobile member can walk to.
+fn reachable_point() -> SimVec2 {
+    SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(40))
+}
+
+/// P-6 (plan `2026-11-24-attack-orders` D-4, B-174, B-186): over the extended stance set, alone
+/// and in every pair, the card shows the A slot exactly when an attack-move on a reachable point
+/// would reach a member or a member has Attack ([`any_attacker`]); its label is Attack exactly
+/// when a member has Attack, and Scan Move otherwise. An attack on an enemy that reaches a
+/// member is always under an Attack label.
 #[test]
-fn the_card_shows_attack_exactly_when_admission_takes_an_attack() -> TestResult {
-    let (mut world, members) = stance_members()?;
+fn the_card_shows_the_a_slot_exactly_when_admission_takes_an_a_command() -> TestResult {
+    let (mut world, members) = attack_members()?;
     let targets = enemies(&mut world)?;
-    let (mut shown, mut hidden) = (0, 0);
+    let walk = UnitOrder::AttackMove {
+        target: reachable_point(),
+    };
+    let (mut attack, mut scan, mut hidden) = (0, 0, 0);
     for selection in &stance_selections(&members) {
         let ids: Vec<_> = selection.iter().map(|(_, id)| *id).collect();
-        let admitted = targets
+        let attacker = any_attacker(&world, ME, &ids);
+        let walker = any_recipient(&world, ME, &ids, &walk);
+        let shown = card_a_slot(&world, &ids);
+        assert_eq!(shown.is_some(), attacker || walker, "{selection:?}");
+        assert_eq!(shown == Some(ASlot::Attack), attacker, "{selection:?}");
+        if targets
             .iter()
-            .any(|target| any_recipient(&world, ME, &ids, &UnitOrder::attack(*target)));
-        assert_eq!(card_attack(&world, &ids), admitted, "{selection:?}");
-        if admitted {
-            shown += 1;
-        } else {
-            hidden += 1;
+            .any(|target| any_recipient(&world, ME, &ids, &UnitOrder::attack(*target)))
+        {
+            assert_eq!(shown, Some(ASlot::Attack), "{selection:?}");
+        }
+        match shown {
+            Some(ASlot::Attack) => attack += 1,
+            Some(ASlot::ScanMove) => scan += 1,
+            None => hidden += 1,
         }
     }
-    assert!(shown > 0 && hidden > 0, "{shown} shown, {hidden} hidden");
+    assert!(
+        attack > 0 && scan > 0 && hidden > 0,
+        "{attack} Attack, {scan} Scan Move, {hidden} none"
+    );
+    Ok(())
+}
+
+/// P-6, the attack on a unit (plan `2026-11-24-attack-orders` D-2, D-3): for every member of the
+/// extended stance set and an enemy ground unit, an enemy air unit and an own ground unit as the
+/// target, client admission of the member equals the simulation's delivery of the same command
+/// in a rebuilt world (its command phase, `SimWorld::process_commands`).
+#[test]
+fn client_admission_of_an_attack_on_a_unit_equals_the_simulations_delivery() -> TestResult {
+    let build = || -> Result<(StanceSet, [EntityId; 3]), Box<dyn std::error::Error>> {
+        let (mut world, members) = attack_members()?;
+        let [ground, air] = enemies(&mut world)?;
+        let own_type = type_where(&world, |a| {
+            !is_dome(a) && a.mover_type == MoverType::Ground && a.max_speed > SimScalar::ZERO
+        })?;
+        let own = world.spawn_unit(
+            own_type,
+            ME,
+            SimVec2::new(SimScalar::from_i32(20), SimScalar::from_i32(20)),
+        )?;
+        Ok(((world, members), [ground, air, own]))
+    };
+    let ((_, members), targets) = build()?;
+    let (mut taken, mut refused) = (0, 0);
+    for (member_index, &(role, member)) in members.iter().enumerate() {
+        for (target_index, target) in targets.into_iter().enumerate() {
+            let ((mut world, rebuilt), again) = build()?;
+            assert_eq!(
+                rebuilt[member_index],
+                (role, member),
+                "the set is rebuilt identically"
+            );
+            assert_eq!(again[target_index], target);
+            let order = UnitOrder::attack(target);
+            let admitted = any_recipient(&world, ME, &[member], &order);
+            let mut input = bundle();
+            input.tick = Tick(world.current_tick);
+            input.commands = vec![command(member, ME, order.clone(), true)];
+            // The command phase alone: an anchored member out of reach would drop the attack
+            // later in the same tick, which is combat's rule, not admission's.
+            world.process_commands(&input);
+            let took = world.entities[&member].order_queue.contains(&order);
+            assert_eq!(took, admitted, "{role} {member:?} on target {target_index}");
+            if took {
+                taken += 1;
+            } else {
+                refused += 1;
+            }
+        }
+    }
+    assert!(taken > 0 && refused > 0, "{taken} taken, {refused} refused");
+    Ok(())
+}
+
+/// D-5: an A-click on a unit sends `AttackTarget` to the members that can attack it and
+/// `AttackMove` to the point under it to every other member with an A command, never to the
+/// target itself; with no member of either kind it is refused and nothing is queued.
+#[test]
+fn an_attack_on_a_unit_splits_the_selection_into_attackers_and_walkers() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let marine = soldier(&mut world, 0)?;
+    let partner = soldier(&mut world, 1)?;
+    let medivac = unit_where(&mut world, 2, |a| {
+        !a.is_immobile_by_default() && a.stance_orders(None).attack == AttackCommand::ScanMove
+    })?;
+    let lurker = unit_where(&mut world, 3, |a| {
+        !is_armed(a) && a.stance_orders(None).attack == AttackCommand::Attack
+    })?;
+    let structure_type = type_where(&world, |a| is_dome(a) && !is_armed(a))?;
+    let structure = world.spawn_structure(structure_type, ME, 40, 40)?;
+    let [ground, air] = enemies(&mut world)?;
+    let point = reachable_point();
+    let walk = UnitOrder::AttackMove { target: point };
+    let sent = |queue: &BattleCommandQueue| -> Vec<(Vec<EntityId>, UnitOrder)> {
+        queue
+            .pending_commands()
+            .map(|(_, command)| (command.entities.clone(), command.order.clone()))
+            .collect()
+    };
+    let selection = [marine, medivac, lurker, structure];
+    queue.submit_attack_on_unit(&world, ME, &selection, ground, point, false)?;
+    assert_eq!(
+        sent(&queue),
+        [
+            (vec![marine], UnitOrder::attack(ground)),
+            (vec![medivac, lurker], walk.clone()),
+        ],
+        "an enemy ground unit"
+    );
+    let marine_reaches_air = world
+        .catalog
+        .get(world.entities[&marine].unit_type_id)?
+        .weapon_against(MoverType::Air, None)
+        .is_some();
+    let mut queue = BattleCommandQueue::default();
+    queue.activate(SessionGeneration::FIRST)?;
+    queue.submit_attack_on_unit(&world, ME, &selection, air, point, false)?;
+    let expected = if marine_reaches_air {
+        vec![
+            (vec![marine], UnitOrder::attack(air)),
+            (vec![medivac, lurker], walk.clone()),
+        ]
+    } else {
+        // Q0105's default: a member with Attack that cannot attack the target walks.
+        vec![(vec![marine, medivac, lurker], walk.clone())]
+    };
+    assert_eq!(sent(&queue), expected, "an enemy air unit");
+
+    let mut queue = BattleCommandQueue::default();
+    queue.activate(SessionGeneration::FIRST)?;
+    queue.submit_attack_on_unit(
+        &world,
+        ME,
+        &[marine, medivac, partner],
+        partner,
+        point,
+        true,
+    )?;
+    assert_eq!(
+        sent(&queue),
+        [
+            (vec![marine], UnitOrder::attack(partner)),
+            (vec![medivac], walk.clone()),
+        ],
+        "an own unit (Q0104's default); the clicked unit gets neither order"
+    );
+    assert!(queue.pending_commands().all(|(_, command)| command.queue));
+
+    let mut queue = BattleCommandQueue::default();
+    queue.activate(SessionGeneration::FIRST)?;
+    assert_eq!(
+        queue.submit_attack_on_unit(&world, ME, &[structure, partner], partner, point, false),
+        Err(SubmissionError::EmptySelection)
+    );
+    assert_eq!(queue.pending_len(), 0);
     Ok(())
 }
 

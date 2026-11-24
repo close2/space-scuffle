@@ -908,7 +908,7 @@ fn spotter_type(harness: &Harness) -> UnitTypeId {
         .find(|archetype| {
             archetype.max_speed > SimScalar::ZERO
                 && archetype.mover_type == MoverType::Air
-                && !archetype.is_detector
+                && !archetype.is_detector()
                 && !is_armed(archetype)
                 && presentable_type(harness, archetype.unit_type_id)
         })
@@ -924,7 +924,7 @@ fn detector_type(harness: &Harness) -> UnitTypeId {
         .archetypes()
         .find(|archetype| {
             archetype.max_speed > SimScalar::ZERO
-                && archetype.is_detector
+                && archetype.is_detector()
                 && presentable_type(harness, archetype.unit_type_id)
         })
         .expect("the catalog ships a presentable mobile detector")

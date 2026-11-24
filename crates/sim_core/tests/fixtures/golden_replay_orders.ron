@@ -328,14 +328,37 @@
 // (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
 // wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
-// Re-recorded for plan 2026-11-20-contact-solver WP6 (the switch-over, Amendment 16): the shipped
-// movement rules run `pipeline: Solver`; the first changed checkpoint is 2 (ticks 21 to 30).
-// Proof: with `pipeline: Legacy` the same tree (main 36b914fd merged, schema 40) reproduces main's
-// previous list at every checkpoint on native debug and release and wasm32-wasip1 release and
-// debug; the switch is the only change. Native debug and release and wasm32-wasip1 release and
-// debug agree on the list below.
+// Re-recorded for plan 2026-11-23-vision-and-detection WP4 (checksum schema 40 -> 41): each entity
+// also encodes its attack-reveal counters and each weapon its attack visibility, so every
+// checkpoint changed. No behaviour did: with the two fields left out of the encoding at schema
+// 40, both fixtures reproduce as recorded for plan 2026-11-23-turret-wind-up WP1 (schema 39 ->
+// 40) here and for this plan's WP3 in golden_replay.ron, on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
+// agree on the list below.
+// Re-recorded for plan 2026-11-24-weapon-validation WP1 (checksum schema 41 -> 43; 42 is reserved
+// for the contact solver): each entity also encodes its teleport count, each projectile its
+// target's teleport count and each weapon its missile validation, so every checkpoint changed. No
+// behaviour did: with the three fields left out of the encoding at schema 41, both fixtures
+// reproduce the lists recorded for plan 2026-11-23-vision-and-detection (schema 41), on native
+// debug and release and wasm32-wasip1 release and debug. Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-hidden-harvesters WP2, on its merge with main 7dc356fc (checksum
+// schema 43 -> 44): each unit task also encodes its housing structure, `UnitTask::housed_in`, so
+// every checkpoint changed. No behaviour did: with the field left out of the encoding at schema
+// 43, both fixtures reproduce the lists recorded for plan 2026-11-24-weapon-validation WP1
+// (schema 41 -> 43), on native debug and release and wasm32-wasip1 release and debug. Nothing in
+// this replay harvests, so the field is `None` on every unit at every checkpoint. Native debug and
+// release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-fire-rules on its merge with main d92e40bb (checksum schema 44 ->
+// 45): each weapon also encodes whether it may fire at targets other than its attack order's and
+// whether it locks its turret while firing, and each entity the target its weapon chose inside an
+// attack order (WP1, D-8). Proof: with the three fields left out of the encoding at schema 44 and
+// WP4's turrets-between-shots rule (D-3) switched off, both fixtures and DEFAULT_SANDBOX_CHECKSUM
+// reproduce main's schema-44 values on native debug and release and wasm32-wasip1 release and debug.
+// No behaviour changed: per-tick dumps of the merged tree with D-3 off and on are equal on every
+// tick. Native debug and release and wasm32-wasip1 release and debug agree on the list below.
 (
-    checksum_schema: 40,
+    checksum_schema: 45,
     seed: 0x0DE5_0F_0D3125,
     total_ticks: 600,
     checkpoint_interval: 10,
@@ -356,65 +379,65 @@
         (tick: 420, squads: ["blue_column", "blue_armor"], order: Move(40, 22)),
     ],
     checksums: [
-        0x87b3e4f52239be69,
-        0x76f8a1a0645526cc,
-        0x840acb729924e9c6,
-        0x413e27fdce23d50c,
-        0x736e78bf220b8efe,
-        0x128e0fa7e7786240,
-        0x463d89d81b798981,
-        0x149421c8b23bebcf,
-        0x9d117c49ba167f8f,
-        0x503cdb7c86fb6342,
-        0x4c483a70f0baf123,
-        0x0c06e7a044d9a0fe,
-        0x1e36d0d1923ecf9f,
-        0x0472edfe0b9c49b3,
-        0xf87f29c0661f75b7,
-        0xa9a86e40c7e7f958,
-        0xd17b839e1fd850be,
-        0x0ef389c8d499a7eb,
-        0xdca6d511430e933c,
-        0x1e7fc82595809dc8,
-        0x720a81c6dba4677e,
-        0x2250b2d2bc33cd3f,
-        0x9581c165a0752e95,
-        0x3e1a41684be38a84,
-        0x9a98d3e19e634d69,
-        0xf8c36754b9431b66,
-        0xf9bf92ee6162972b,
-        0xb92454ba392b69b7,
-        0xac146ffb3027c86e,
-        0x9215398024ae92c0,
-        0x5b1e59bf42098b45,
-        0x4c0115e2b682a37a,
-        0xce6df13c07316c02,
-        0x527afd1e32244492,
-        0xad4557a3272fcc60,
-        0x8b32fae17cb35f02,
-        0x9c9f37be6ea62139,
-        0x4233bac22b393136,
-        0x28aa400330d6a2ed,
-        0xc2672fcd1559d449,
-        0x1fff8d44e5ba4677,
-        0xb0752d64598a799b,
-        0x8c0309439d3a0ebc,
-        0x66c1dbce24638d81,
-        0xc0c2e12376e60b80,
-        0x70522f56ae942cb0,
-        0x599be7c081de8054,
-        0xaa4d4daaf6df70bf,
-        0xf446d0e186b3308b,
-        0x404307fff18e345b,
-        0xca38422b598821ff,
-        0x663c80aed6b38505,
-        0x64503717a4904a52,
-        0x2fe811c4d0daa21a,
-        0x74150ad3352ea843,
-        0xbf291bac4afe79aa,
-        0x0c243fc74eee80a7,
-        0x98d1a0897fdbf426,
-        0x898e1d53b6f35800,
-        0x703e9d7331ef6baa,
+        0x36f3443e9c4e0192,
+        0xff51f0e063e88bec,
+        0x0a4a6e493ee4d558,
+        0x64be5181ec6df9f2,
+        0x378363e5190bd222,
+        0x0d6206ce5a502683,
+        0x81e411621fd32ff8,
+        0x2ceb343dc3494f80,
+        0xa4e839944579c352,
+        0xf79db998a93a64f0,
+        0xef435ecc44b336ef,
+        0xd0df0412cf0491fa,
+        0xfe103b17be245e32,
+        0x01016e1a56a8b3c5,
+        0x7c1848074cfde057,
+        0xc9ae8ebd8ba1aec3,
+        0x26a3c565100b8665,
+        0x3d15a82ed5178d01,
+        0xce6d04151cc00257,
+        0xd34cc3b826f1feb8,
+        0xae4830a43aba16af,
+        0xe4511aa2f7390806,
+        0x3787bbf50ed0daf4,
+        0x1d7a4cff7b3917a9,
+        0x9e7e0ecc03b58de8,
+        0x75b4be5d02f9e606,
+        0xf445ad6f6668e11e,
+        0x9216d6a3bbce6820,
+        0xe7d752a4f33795b4,
+        0x37c9af73c461a693,
+        0xbc0a36c9997d0490,
+        0xac27b0c0d4f138f3,
+        0xbf868c0f5b64176a,
+        0x04a72d14f7eb5da9,
+        0x38a1950f42f4c069,
+        0x6fceb72091c9ea29,
+        0x13aeba22a83bf53c,
+        0xf5b615791df3ba92,
+        0x2a728841cdb9e206,
+        0xf646d8d17c130b16,
+        0xbd7287d06ebe3bbc,
+        0x2a5a5379f96958b7,
+        0xf2f5ab30c8b3f4b5,
+        0x1d2c1e2b1d04e040,
+        0xc4c93515ceb4ba1f,
+        0xbd2775490bef7e94,
+        0x85e1706bbe1983aa,
+        0xd5510fdb086b5474,
+        0x35cf274d4576b682,
+        0x5acb7f2dda45884e,
+        0x5425dbdbde810363,
+        0x79dbc8f36edec4de,
+        0x6483de27bb4b04b1,
+        0xada68edbd6c85c8a,
+        0x72a5b21055cd2524,
+        0x2a7546da21d564f8,
+        0x46c846e2fee93417,
+        0xec76c78c9a47337c,
+        0xb6067e72f5a2d8e4,
+        0x1693fe8df943c8ea,
     ],
 )

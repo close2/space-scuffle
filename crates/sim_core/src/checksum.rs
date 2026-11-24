@@ -95,7 +95,25 @@ use std::collections::BTreeMap;
 /// outside an attack order (a `bool`), `WeaponSpec::allowed_movement` and
 /// `WeaponSpec::fires_outside_attack_order`, after `turret_idle` (plan `2026-11-23-turret-wind-up`
 /// D-9).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 40;
+/// Schema 41 adds each entity's attack-reveal counters per player, `Entity::attack_reveal_ticks`,
+/// after `displacement`, and each weapon's attack visibility (0 snapshot, 1 visible with its
+/// reveal ticks, 2 hidden), `WeaponSpec::attack_visibility`, after `melee` (plan
+/// `2026-11-23-vision-and-detection` D-7).
+/// Schema 43 adds each entity's teleport count, `Entity::teleport_count`, after
+/// `attack_reveal_ticks`, each projectile's target teleport count,
+/// `ActiveProjectile::target_teleport_count`, after `strikes`, and each weapon's missile
+/// validation (weapon, teleport; a `bool` each), `WeaponSpec::missile_validation`, after
+/// `attack_visibility` (plan `2026-11-24-weapon-validation` D-7). Number 42 is reserved for the
+/// contact solver's branch; whichever merges second takes the next free number.
+/// Schema 44 adds each unit task's housing structure, `UnitTask::housed_in`, after `last_node`
+/// (plan `2026-11-24-hidden-harvesters` D-3). Number 42 is reserved for the contact solver's
+/// branch.
+/// Schema 45 adds each weapon's fire rules (a `bool` each), `WeaponSpec::fires_at_other_targets`
+/// and `WeaponSpec::locks_turret_while_firing`, after `fires_outside_attack_order`, and each
+/// entity's own weapon target, `Entity::weapon_target`, after `current_target` (plan
+/// `2026-11-24-fire-rules` D-8). Number 44 is the hidden-harvesters
+/// plan's, merged first.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 45;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

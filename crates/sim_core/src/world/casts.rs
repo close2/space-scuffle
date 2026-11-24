@@ -29,13 +29,13 @@ use crate::entity::Entity;
 use crate::SimWorld;
 use sim_types::{
     AbilityEffectSpec, AbilitySource, AbilitySpec, AbilityTargetKind, EffectContext, EffectTarget,
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, VisibilityState,
+    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2,
 };
 
 impl SimWorld {
     /// Whether `entity_id` could take an order to cast the ability at `ability_index` of its
     /// archetype at `target_pos` (world units) or on `target_entity`: alive, completed and not
-    /// carried, the ability unlocked and off cooldown, the energy at hand, and the target
+    /// hidden (5.0.14 `CasterIsNotHidden`), the ability unlocked and off cooldown, the energy at hand, and the target
     /// valid, visible to the caster's owner and admitted by the ability's target filter (plan
     /// D-7.2).
     ///
@@ -59,7 +59,7 @@ impl SimWorld {
         };
         entity.is_alive()
             && entity.is_completed
-            && !entity.is_loaded_in_transport()
+            && !entity.is_hidden()
             && self.is_ability_unlocked(arch, entity.owner, &ability.name)
             && entity
                 .ability_cooldowns
@@ -131,12 +131,8 @@ impl SimWorld {
     /// Whether `viewer` sees `target` well enough to aim a spell at it: its cell is visible to
     /// `viewer` (where `viewer` has a vision map) and, if concealed, detected.
     fn is_seen_by(&self, viewer: PlayerId, target: &Entity) -> bool {
-        let visible = self.vision_maps.get(viewer).is_none_or(|vision| {
-            self.map
-                .world_to_cell(target.position)
-                .is_ok_and(|(x, y)| vision.visibility_at(x, y) == VisibilityState::Visible)
-        });
-        visible && Self::is_entity_targetable(target, &self.map, &self.vision_maps, viewer)
+        Self::sees_enemy(&self.map, &self.vision_maps, viewer, target)
+            && Self::is_entity_targetable(target, &self.map, &self.vision_maps, viewer)
     }
 
     /// Whether `caster` stands in range of the cast's target (plan D-7.1, `StarCraft` II

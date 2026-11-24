@@ -1085,9 +1085,19 @@
         ),
         expect: (blue: (5, 999), red: (0, 0)),
     ),
+    // Restated for plan 2026-11-24-weapon-validation WP5 (B-185 weapon half) by its Amendment 1: a
+    // weapon strikes only what its player sees (5.0.14 TargetFilters Visible, core WeaponData:29), and
+    // an automatic attack whose target is lost to fog is dropped for the attack-move below it (D-5,
+    // Q0106 part 2's default); a unit is seen by the cell of its centre (Q0106 part 4's default). A
+    // Colossus analogue that flees beyond the Viking analogues' sight (10) is therefore lost to them
+    // and survives. On every seed the first difference from WP4's tree is a counted probe event: a
+    // strike or missile on an unseen Colossus, or a Viking's acquired attack dropped one tick after
+    // its target is lost to fog (ticks 190 to 295). Vikings still lose nothing; 1 to 3 Colossi are
+    // left at tick 900 on the 20 seeds (0 or 1 before, battles ending on ticks 320 to 530). A
+    // different answer to Q0106 part 2 or part 4 re-opens this expectation.
     (
         name: "35_12_vikings_vs_6_colossi",
-        claim: "Vikings lose nothing; a helpless colossus may flee out of their scan range",
+        claim: "Vikings lose nothing; colossi that flee out of their sight survive (5.0.14 TargetFilters Visible)",
         map_cells: 96,
         ticks: 900,
         blue: (
@@ -1102,7 +1112,7 @@
             ],
             order: AttackMove(28, 48),
         ),
-        expect: (blue: (12, 12), red: (0, 1)),
+        expect: (blue: (12, 12), red: (1, 3)),
     ),
     // Plan 2026-11-10-spellcaster-mechanics §10.2, WP2b. The High Templar analogue stands behind six
     // zealots; sixteen marines attack-move into them and are in contact from tick 109. On tick 150 the
@@ -1357,6 +1367,75 @@
             mode: Some("siege_mode"),
         ),
         expect: (blue: (0, 0), red: (2, 3)),
+    ),
+    // Battle 41 (plan 2026-11-23-vision-and-detection §7.4): battle 40's plateau without its ramp
+    // (every cell with x >= 47 at level 1) and an air attacker over it. The Void Ray analogue
+    // (range 6) holds over the plateau; the Hydralisk analogues (range 5, sight 9) attack-move to
+    // the foot of the cliff, where it reaches them and they would reach it, but ground sight from
+    // below never sees its plateau cell. Before the reveal (WP5's tree, B-55 open) the Hydras,
+    // struck by a Void Ray they could not see, fled as helpless out of its reach and never fired:
+    // on all 20 seeds the battle ran to tick 600 with the Void Ray untouched and 5 or 6 Hydras
+    // left. Re-recorded for WP6 (B-55 fixed): each Void Ray strike reveals it to the Hydras' player
+    // for 54 ticks; the Hydras first swing 4 or 5 ticks after its first strike, every Hydra shot
+    // falls within 10 ticks of a strike (inside the reveal window), none before the first, and
+    // they win all 20 seeds with all 6 left, ending on ticks 103 to 108.
+    (
+        name: "41_void_ray_above_a_cliff_vs_hydras",
+        claim: "A Void Ray over a plateau is revealed to the Hydras it strikes below (5.0.14 Visibility Visible, AttackReveal 3 s)",
+        map_cells: 96,
+        terrain: [
+            (from: (47, 0), to: (95, 95), level: 1),
+        ],
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 6, columns: 2, origin: (38.0, 44.5), spacing: 1.0),
+            ],
+            order: AttackMove(46, 45),
+        ),
+        red: (
+            squads: [
+                (unit: "prismatic_saucer", count: 1, columns: 1, origin: (50.0, 44.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (6, 6), red: (0, 0)),
+    ),
+    // Battle 42 (plan 2026-11-24-weapon-validation §7.4): a sieged Siege Tank analogue (range 13,
+    // sight 11) on a flat map against four Worker analogues (sight 8) inside its sight and reach
+    // and outside their own sight of it. Sight is whole cells (a cell is seen when its offset from
+    // the viewer's cell is within the radius), so the positions follow the plan's rule by cells:
+    // the tank stands at a cell centre (cell 50) and the workers in cell column 41, 9 cells away
+    // (beyond a worker's 8, inside the tank's 11), whatever the spawn jitter. A struck worker
+    // cannot see the tank to answer, so it flees 5 directly away, to 13.55 to 14.09 on the 20
+    // seeds: outside the tank's sight, still inside its reach (13 + 0.875 + 0.375 = 14.25). 5.0.14's
+    // weapon filter Visible (core WeaponData:29; CrucioShockCannon range 13, liberty
+    // WeaponData:259; SiegeTankSieged sight 11, UnitData:5171) lets the tank shell only what its
+    // side sees. Recorded on WP4's tree (B-185 open): the first shell strikes three workers, which
+    // flee out of its sight; the tank then takes the fourth, which flees too, and shells it beyond
+    // its sight until it dies (its last tick 180 to 246); on all 20 seeds 3 workers are left at tick 900
+    // and no worker ever swings.
+    // Re-recorded for WP5 (B-185 weapon half fixed): once the fourth worker flees out of sight, the
+    // tank's acquired attack is lost to fog with no seen candidate and is dropped (the first
+    // difference on every seed, ticks 150 to 214); it shells nothing beyond its sight, and all 4
+    // workers and the tank are left at tick 900 on all 20 seeds.
+    (
+        name: "42_sieged_tank_vs_fleeing_workers",
+        claim: "A sieged tank cannot shell what its side does not see (5.0.14 TargetFilters Visible; Siege Tank range 13, sight 11)",
+        map_cells: 64,
+        ticks: 900,
+        blue: (
+            squads: [
+                (unit: "welder_drone", count: 4, columns: 1, origin: (41.85, 30.25), spacing: 1.5),
+            ],
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 1, columns: 1, origin: (50.5, 32.5), spacing: 1.0),
+            ],
+            mode: Some("siege_mode"),
+        ),
+        expect: (blue: (4, 4), red: (1, 1)),
     ),
     ],
 )

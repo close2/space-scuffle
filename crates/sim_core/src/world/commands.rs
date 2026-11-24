@@ -13,6 +13,9 @@
 //! - Commands are handled in bundle order, and each command's outcome carries its index in the
 //!   bundle.
 //! - No command writes carrier links, so one transport validation covers the whole phase.
+//! - No command reaches a unit inside a structure (plan `2026-11-24-hidden-harvesters` D-8,
+//!   Q0108's default (a)): such a recipient is dropped from the command, and a command left with
+//!   no recipient is refused with `GameCommandError::HousedRecipient`.
 
 use crate::economy::{GameCommandError, GameCommandOutcome};
 use crate::movement::{MovementInvariant, MovementOutcome};
@@ -49,6 +52,65 @@ impl SimWorld {
             });
             return;
         }
+        if cmd.entities.iter().any(|id| self.is_housed_unit(*id)) {
+            self.dispatch_without_housed(command_index, cmd);
+            return;
+        }
+        self.route_command(command_index, cmd);
+    }
+
+    /// Whether `id` is a unit inside a structure, gathering (plan `2026-11-24-hidden-harvesters`
+    /// D-3).
+    fn is_housed_unit(&self, id: EntityId) -> bool {
+        self.entities
+            .get(&id)
+            .is_some_and(crate::entity::Entity::is_housed)
+    }
+
+    /// Dispatches `cmd` without its housed recipients: no order reaches a unit while it is inside
+    /// a structure (plan `2026-11-24-hidden-harvesters` D-8, Q0108's default (a)), whether the
+    /// command is immediate or queued, so the unit's gather runs its time. The command reaches
+    /// the others; with no other recipient it is refused with
+    /// [`GameCommandError::HousedRecipient`] naming the first housed one.
+    ///
+    /// The client sends no order to a housed unit, but a unit may go inside between the frame
+    /// a command was given and the tick that runs it; dropping the unit rather than refusing the
+    /// whole command keeps a group order from failing on that race.
+    // PERFORMANCE RATIONALE:
+    // Why: A command's recipients are borrowed from the tick bundle and cannot be edited there.
+    // What: A command that names a housed unit is rebuilt once without it.
+    // Trade-off: One allocation for such a command, rare and outside the steady state; a
+    //            command naming no housed unit is routed as it is.
+    fn dispatch_without_housed(&mut self, command_index: usize, cmd: &PlayerCommand) {
+        let entities: Vec<EntityId> = cmd
+            .entities
+            .iter()
+            .copied()
+            .filter(|id| !self.is_housed_unit(*id))
+            .collect();
+        if entities.is_empty() {
+            if let Some(&first) = cmd.entities.first() {
+                self.economy.outcomes.push(GameCommandOutcome {
+                    tick: Tick(self.current_tick),
+                    command_index,
+                    player: cmd.player_id,
+                    result: Err(GameCommandError::HousedRecipient(first)),
+                });
+            }
+            return;
+        }
+        let admitted = PlayerCommand {
+            player_id: cmd.player_id,
+            entities,
+            order: cmd.order.clone(),
+            queue: cmd.queue,
+        };
+        self.route_command(command_index, &admitted);
+    }
+
+    /// Routes a command whose recipients are all outside structures to the subsystem that
+    /// admits it.
+    fn route_command(&mut self, command_index: usize, cmd: &PlayerCommand) {
         if matches!(
             cmd.order,
             UnitOrder::Build { .. }
@@ -301,54 +363,84 @@ impl SimWorld {
     /// A unit takes Stop or Hold Position only when its settled stance has the command
     /// ([`Entity::settled_stance_orders`]), as `StarCraft` II sends a command to every selected
     /// unit that has it and to no other (`ToSelection`, `core` AbilData:1015-1016, :553; plan
-    /// `2026-11-23-stance-checked-orders` D-1). A unit that does not take it is left exactly as
-    /// it was; that is the game's admission rule, not a failure, so it raises no diagnostic,
-    /// and a command no named unit takes is valid and does nothing. A unit whose archetype is
-    /// missing from the catalog takes neither.
+    /// `2026-11-23-stance-checked-orders` D-1). It takes an `AttackTarget` only when it can
+    /// attack the target ([`Entity::can_attack`]: its settled stance has Attack, the target is
+    /// another live unit, and the stance's weapon reaches the target's plane and attributes),
+    /// whoever owns the target (`core` AbilData:117-129; plan `2026-11-24-attack-orders` D-3,
+    /// B-174, B-175). A unit that does not take it is left exactly as it was; that is the
+    /// game's admission rule, not a failure, so it raises no diagnostic, and a command no named
+    /// unit takes is valid and does nothing. A unit whose archetype is missing from the catalog
+    /// takes none of the three.
     ///
     /// A stop or hold-position order ends a move without arriving. A unit whose archetype brakes
     /// over several ticks keeps the velocity it had, and movement glides it to rest (B-39, the
     /// owner's answer to Q0067); any other unit stops at once.
     ///
     /// [`Entity::settled_stance_orders`]: crate::entity::Entity::settled_stance_orders
+    /// [`Entity::can_attack`]: crate::entity::Entity::can_attack
     fn issue_plain_order(&mut self, cmd: &PlayerCommand) {
         let ends_motion =
             !cmd.queue && matches!(cmd.order, UnitOrder::Stop | UnitOrder::HoldPosition);
         for &ent_id in &cmd.entities {
-            if let Some(ent) = self.entities.get_mut(&ent_id) {
-                if ent.owner == cmd.player_id {
-                    let arch = self.catalog.get(ent.unit_type_id).ok();
-                    let takes = match cmd.order {
-                        UnitOrder::Stop => {
-                            arch.is_some_and(|arch| ent.settled_stance_orders(arch).stop)
-                        }
-                        UnitOrder::HoldPosition => {
-                            arch.is_some_and(|arch| ent.settled_stance_orders(arch).hold_position)
-                        }
-                        _ => true,
-                    };
-                    if !takes {
-                        continue;
-                    }
-                    let momentum = ent.velocity;
-                    let glides =
-                        ends_motion && arch.is_some_and(|arch| arch.deceleration < arch.max_speed);
-                    let issued = ent.issue_order(cmd.order.clone(), cmd.queue);
-                    if glides && issued.is_ok() {
-                        ent.velocity = momentum;
-                    }
-                    if let Err(source) = issued {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source: MovementInvariant::Admission {
-                                    entity: ent_id,
-                                    source,
-                                },
-                            });
-                    }
-                }
+            if !self.takes_plain_order(cmd, ent_id) {
+                continue;
             }
+            let Some(ent) = self.entities.get_mut(&ent_id) else {
+                continue;
+            };
+            let arch = self.catalog.get(ent.unit_type_id).ok();
+            let momentum = ent.velocity;
+            let glides = ends_motion && arch.is_some_and(|arch| arch.deceleration < arch.max_speed);
+            let issued = ent.issue_order(cmd.order.clone(), cmd.queue);
+            if glides && issued.is_ok() {
+                ent.velocity = momentum;
+            }
+            if let Err(source) = issued {
+                self.tick_diagnostics
+                    .push(SimulationDiagnostic::MovementInvariant {
+                        tick: Tick(self.current_tick),
+                        source: MovementInvariant::Admission {
+                            entity: ent_id,
+                            source,
+                        },
+                    });
+            }
+        }
+    }
+
+    /// Whether the unit `ent_id`, named in `cmd`, takes its plain order: it exists, the player
+    /// owns it, and, for Stop, Hold Position and an attack on a unit, its archetype is in the
+    /// catalog and its settled stance takes the order. An attack's target must exist and be
+    /// alive; a target that is gone refuses the command for every recipient, with no
+    /// diagnostic (plan `2026-11-24-attack-orders` D-3). Read-only: the recipient is borrowed
+    /// mutably only after this answer.
+    fn takes_plain_order(&self, cmd: &PlayerCommand, ent_id: EntityId) -> bool {
+        let Some(ent) = self
+            .entities
+            .get(&ent_id)
+            .filter(|ent| ent.owner == cmd.player_id)
+        else {
+            return false;
+        };
+        let arch = self.catalog.get(ent.unit_type_id).ok();
+        match cmd.order {
+            UnitOrder::Stop => arch.is_some_and(|arch| ent.settled_stance_orders(arch).stop),
+            UnitOrder::HoldPosition => {
+                arch.is_some_and(|arch| ent.settled_stance_orders(arch).hold_position)
+            }
+            UnitOrder::AttackTarget { target, .. } => {
+                let Some(target) = self
+                    .entities
+                    .get(&target)
+                    .filter(|target| target.is_alive())
+                else {
+                    return false;
+                };
+                let target_arch = self.catalog.get(target.unit_type_id).ok();
+                arch.zip(target_arch)
+                    .is_some_and(|(arch, target_arch)| ent.can_attack(arch, target, target_arch))
+            }
+            _ => true,
         }
     }
 }

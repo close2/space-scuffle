@@ -4,13 +4,24 @@
 //! It enforces high-ground line-of-sight occlusion, low-ground spotter mechanics,
 //! tall grass / smoke vent blockers, and neutral capturable watchtowers.
 //!
+//! A sight blocker hides all of itself from ground sources outside it: units outside a blocker
+//! see none of it (Blizzard, *Game Guide: Map Elements*), while a unit inside sees its blocker
+//! and out of it.
+//!
 //! Ground sight follows surface height. On flat terrain that reduces to comparing cliff levels.
 //! On a ramp the observer's and target's heights vary continuously, so a unit at the foot of a
 //! ramp cannot see its top, and one cresting it can see the plateau ahead.
 //!
+//! Detection is a plain circle of its own radius, which no terrain stops (owner answer Q0101
+//! 2(b), plan `2026-11-24-owner-answers-cliff-and-vision` D-3): a source detects every cell whose
+//! whole-cell offset from its own cell lies within its detection radius, up cliffs and into sight
+//! blockers, whether or not the cell lies within its sight radius. A detected cell gives no
+//! sight, so a concealed unit there is a target only where its player also sees it.
+//!
 //! # Invariants
-//! Sight radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and catalogs load, so
-//! the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens authored data.
+//! Sight and detection radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and
+//! catalogs load, so the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens
+//! authored data.
 
 use crate::grid::{CellFlags, GameMap, Watchtower};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, VisibilityState};
@@ -131,6 +142,15 @@ enum SightChange {
     Remove,
 }
 
+/// Which counters one source raises on one cell.
+#[derive(Clone, Copy)]
+struct Reach {
+    /// The cell lies within the source's sight circle.
+    sees: bool,
+    /// The cell lies within the source's detection circle.
+    detects: bool,
+}
+
 /// Vision source query parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisionSource {
@@ -140,8 +160,12 @@ pub struct VisionSource {
     pub mover_type: MoverType,
     /// Maximum sight radius in world units.
     pub sight_radius: SimScalar,
-    /// Whether this observer is an active detector (reveals cloaked / burrowed units).
-    pub is_detector: bool,
+    /// Detection radius in world units, `ZERO` for a source that detects nothing. Detection is
+    /// a plain circle of this radius, which no cliff or sight blocker stops, and it may be
+    /// larger or smaller than the sight circle (5.0.14's `Detector11`-style `Detect`, plan
+    /// `2026-11-23-vision-and-detection` D-2; owner answer Q0101 2(b)). A detected cell gives
+    /// no sight: a concealed unit there is a target only where its player also sees it.
+    pub detection_radius: SimScalar,
 }
 
 /// The sight a watchtower gives its controlling player.
@@ -151,7 +175,7 @@ pub fn watchtower_source(tower: &Watchtower) -> VisionSource {
         pos: tower.pos,
         mover_type: MoverType::Air, // Elevated observation platform overlooks cliffs
         sight_radius: tower.reveal_radius,
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     }
 }
 
@@ -250,32 +274,100 @@ impl PlayerVisionMap {
         self.cast(map, source, SightChange::Remove);
     }
 
-    /// Records one source seeing the cell at `index`.
+    /// Records one source seeing the cell at `index` when `sees`, and detecting it when
+    /// `detects`. `Remove` takes back exactly what `Add` or `Tally` counted with the same flags.
     #[inline]
-    fn mark(&mut self, index: usize, is_detector: bool, change: SightChange) {
+    fn mark(&mut self, index: usize, reach: Reach, change: SightChange) {
         if change == SightChange::Remove {
-            self.visible_counter[index] = self.visible_counter[index].saturating_sub(1);
-            if is_detector {
+            if reach.detects {
                 self.detector_counter[index] = self.detector_counter[index].saturating_sub(1);
             }
-            if self.visible_counter[index] == 0 && self.states[index] == VisibilityState::Visible {
-                self.states[index] = VisibilityState::Fogged;
+            if reach.sees {
+                self.visible_counter[index] = self.visible_counter[index].saturating_sub(1);
+                if self.visible_counter[index] == 0
+                    && self.states[index] == VisibilityState::Visible
+                {
+                    self.states[index] = VisibilityState::Fogged;
+                }
             }
             return;
         }
-        self.visible_counter[index] = self.visible_counter[index].saturating_add(1);
-        if is_detector {
+        if reach.detects {
             self.detector_counter[index] = self.detector_counter[index].saturating_add(1);
         }
-        if change == SightChange::Add {
-            self.states[index] = VisibilityState::Visible;
+        if reach.sees {
+            self.visible_counter[index] = self.visible_counter[index].saturating_add(1);
+            if change == SightChange::Add {
+                self.states[index] = VisibilityState::Visible;
+            }
         }
     }
 
+    /// Casts `source` in two passes, both depending only on its cell, radii and mover type:
+    /// sight along the rays to the sight radius, under every cliff, ramp and blocker rule, and
+    /// detection on the disc of the detection radius, which reads no terrain (owner answer Q0101
+    /// 2(b), plan `2026-11-24-owner-answers-cliff-and-vision` D-3). `Remove` therefore takes back
+    /// exactly what `Add` or `Tally` counted for the same source.
     fn cast(&mut self, map: &GameMap, source: &VisionSource, change: SightChange) {
-        let Ok((center_x, center_y)) = map.world_to_cell(source.pos) else {
+        let Ok(center) = map.world_to_cell(source.pos) else {
             return;
         };
+        self.cast_sight(map, source, center, change);
+        self.cast_detection(map, center, source.detection_radius, change);
+    }
+
+    /// Marks detection on every map cell whose whole-cell offset from `center` lies within
+    /// `radius` (world units), `center` included; nothing when `radius` is not positive. No
+    /// terrain is read, and each offset is visited once, so no generation stamp is needed.
+    fn cast_detection(
+        &mut self,
+        map: &GameMap,
+        center: (u32, u32),
+        radius: SimScalar,
+        change: SightChange,
+    ) {
+        if radius <= SimScalar::ZERO {
+            return;
+        }
+        // Radii above the table's are rejected at load (module invariants), so the clamp never
+        // shortens authored data.
+        let r = i32::try_from(
+            radius
+                .saturating_ceil()
+                .saturating_to_u32()
+                .min(MAX_SIGHT_RADIUS_CELLS),
+        )
+        .unwrap_or(0);
+        let detect_sq = radius * radius;
+        let detects = Reach {
+            sees: false,
+            detects: true,
+        };
+        for dy in -r..=r {
+            for dx in -r..=r {
+                // Whole cells, as the sight rays measure them.
+                let dist_sq = i64::from(dx * dx + dy * dy);
+                if (dist_sq << 32) > detect_sq.raw() {
+                    continue;
+                }
+                if let Some((tx, ty)) = map.offset_cell(center, (dx, dy)) {
+                    let index = (ty as usize) * (self.width as usize) + (tx as usize);
+                    self.mark(index, detects, change);
+                }
+            }
+        }
+    }
+
+    /// Walks `source`'s sight rays from cell `center` to its sight radius and marks the cells
+    /// they reach as seen, stopping each ray at a cliff, ramp crest or sight blocker it may not
+    /// see past.
+    fn cast_sight(
+        &mut self,
+        map: &GameMap,
+        source: &VisionSource,
+        (center_x, center_y): (u32, u32),
+        change: SightChange,
+    ) {
         let Ok(center_cell) = map.cell(center_x, center_y) else {
             return;
         };
@@ -286,9 +378,14 @@ impl PlayerVisionMap {
         let is_air = matches!(source.mover_type, MoverType::Air | MoverType::CliffWalker);
         let source_in_blocker = center_cell.flags.contains(CellFlags::LOS_BLOCKER);
 
-        let r_int = (source.sight_radius.saturating_ceil().saturating_to_u32() as usize)
-            .min(MAX_PRECOMPUTED_RADIUS);
-        let r_sq = source.sight_radius * source.sight_radius;
+        let reach = source.sight_radius;
+        let r_int =
+            (reach.saturating_ceil().saturating_to_u32() as usize).min(MAX_PRECOMPUTED_RADIUS);
+        let r_sq = reach * reach;
+        let sees = Reach {
+            sees: true,
+            detects: false,
+        };
 
         self.current_source_gen = self.current_source_gen.wrapping_add(1);
         if self.current_source_gen == 0 {
@@ -299,7 +396,7 @@ impl PlayerVisionMap {
         // Always reveal observer's own cell
         let center_idx = (center_y as usize) * (self.width as usize) + (center_x as usize);
         self.visited_in_source[center_idx] = self.current_source_gen;
-        self.mark(center_idx, source.is_detector, change);
+        self.mark(center_idx, sees, change);
 
         if r_int == 0 {
             return;
@@ -351,17 +448,15 @@ impl PlayerVisionMap {
                     }
                 }
 
-                // Line-of-sight blocker check:
-                // Smoke vents / tall grass block ground vision across them.
-                // Units outside cannot see inside beyond 1 cell; units inside can see out.
+                // Line-of-sight blocker check: smoke vents and tall grass block ground vision.
+                // "Units inside obstructing terrain can't be seen by units or structures on the
+                // outside" (Blizzard, Game Guide: Map Elements), so a ground ray entering a
+                // blocker from outside stops before its first cell (plan
+                // `2026-11-23-vision-and-detection` D-3). A source inside sees its blocker and
+                // out of it; a ray that has left the blocker stops at the next one. Air sources
+                // and watchtowers see into blockers (owner answer Q0101 part 1, answered (a)).
                 let target_is_blocker = target_cell.flags.contains(CellFlags::LOS_BLOCKER);
                 if !is_air && !in_blocker && target_is_blocker {
-                    // Entering blocker from outside: reveal edge cell, then terminate ray
-                    let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
-                    if self.visited_in_source[t_idx] != self.current_source_gen {
-                        self.visited_in_source[t_idx] = self.current_source_gen;
-                        self.mark(t_idx, source.is_detector, change);
-                    }
                     break;
                 }
 
@@ -371,7 +466,7 @@ impl PlayerVisionMap {
                 let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
                 if self.visited_in_source[t_idx] != self.current_source_gen {
                     self.visited_in_source[t_idx] = self.current_source_gen;
-                    self.mark(t_idx, source.is_detector, change);
+                    self.mark(t_idx, sees, change);
                 }
             }
         }
@@ -451,7 +546,11 @@ mod incremental_tests {
             pos: SimVec2::from_i32(x, y),
             mover_type: MoverType::Ground,
             sight_radius: SimScalar::from_i32(6),
-            is_detector,
+            detection_radius: if is_detector {
+                SimScalar::from_i32(6)
+            } else {
+                SimScalar::ZERO
+            },
         }
     }
 

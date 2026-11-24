@@ -2,7 +2,9 @@
 //!
 //! # Responsibility
 //! Writes the world's visible state into a [`RenderSnapshot`]: player status, resource nodes,
-//! one bubble per entity not carried in a transport, the catalog statuses each such bubble
+//! one bubble per entity not carried in a transport (a gatherer inside a structure is published
+//! with `housed` set, so its client keeps one render entity through every gas trip; plan
+//! `2026-11-24-hidden-harvesters` D-9), the catalog statuses each such bubble
 //! bears, the effect engine's areas, links and spell missiles, and the tick's visual events,
 //! including a `SpellImpact` per spell missile that landed during the tick. A bubble's attack
 //! cycle (`AttackSwing`) is derived from the weapon state machine through the same weapon
@@ -422,6 +424,7 @@ fn bubble_instance(
         status: presentation::status(entity, barrier_hit),
         barrier_ratio: presentation::barrier_ratio(entity, arch),
         speed_boosted,
+        housed: entity.is_housed(),
     }
 }
 

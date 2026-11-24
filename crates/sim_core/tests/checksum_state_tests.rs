@@ -89,6 +89,7 @@ fn projectile() -> ActiveProjectile {
         source_slug: Some("fixture-source".to_owned()),
         remaining_lifetime_ticks: 25,
         strikes: 1,
+        target_teleport_count: 0,
     }
 }
 
@@ -183,6 +184,8 @@ fn every_public_entity_field_changes_the_world_checksum() {
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
             // Plan `2026-11-22-harvest-timing` D-5: the return-delay countdown.
             task => sim_core::UnitTask { return_ticks: 3, ..Default::default() },
+            // Plan `2026-11-24-hidden-harvesters` D-3, P-8: the housing structure.
+            task => sim_core::UnitTask { housed_in: Some(EntityId(2)), ..Default::default() },
             cargo => Some(sim_core::Cargo { kind: ResourceKind::Gas, amount: 5 }),
             construction => Some(sim_core::production::construction::Construction {
                 remaining_ticks: 3,
@@ -206,6 +209,8 @@ fn every_public_entity_field_changes_the_world_checksum() {
             shield_hit_flash_ticks => 7,
             hull_hit_flash_ticks => 7,
             current_target => Some(EntityId(2)),
+            // Plan `2026-11-24-fire-rules` D-8: the target the weapon chose inside an attack order.
+            weapon_target => Some(EntityId(2)),
             is_immobile => true,
             unpushable => true,
             is_sieged => true,
@@ -233,6 +238,14 @@ fn every_public_entity_field_changes_the_world_checksum() {
                 to: point(4, 4),
                 start_tick: Tick(5),
             }),
+            // Plan `2026-11-23-vision-and-detection` D-7: the reveal counters, per player.
+            attack_reveal_ticks => {
+                let mut ticks = sim_types::PerPlayer::<u16>::default();
+                ticks[PlayerSlot::ALL[1]] = 54;
+                ticks
+            },
+            // Plan `2026-11-24-weapon-validation` D-7: the teleport count.
+            teleport_count => 1,
         },
         |entity| {
             world.entities.insert(EntityId(1), entity.clone());
@@ -253,6 +266,8 @@ fn every_projectile_field_and_live_effect_state_changes_the_world_checksum() {
             target_pos => point(4, 3), speed => SimScalar::from_i32(2),
             weapon_spec => { let mut changed = weapon(); changed.base_damage += SimScalar::ONE; changed },
             source_slug => None, remaining_lifetime_ticks => 24, strikes => 2,
+            // Plan `2026-11-24-weapon-validation` D-7: the target's teleport count at launch.
+            target_teleport_count => 1,
         },
         |projectile| {
             world.projectiles = vec![projectile.clone()];
@@ -324,6 +339,27 @@ fn a_projectiles_movement_and_order_rules_change_the_world_checksum() {
     );
 }
 
+/// Whether a weapon may fire at targets other than its attack order's, and whether it locks its
+/// turret while firing (plan `2026-11-24-fire-rules` D-8), are hashed with the weapon a projectile
+/// in flight carries: each field alone changes the checksum.
+#[test]
+fn a_projectiles_fire_rules_change_the_world_checksum() {
+    let mut world = world();
+    let mut checksum_with = |others: bool, lock: bool| {
+        let mut projectile = projectile();
+        projectile.weapon_spec.fires_at_other_targets = others;
+        projectile.weapon_spec.locks_turret_while_firing = lock;
+        world.projectiles = vec![projectile];
+        world.compute_checksum()
+    };
+    let defaults = checksum_with(false, false);
+    let others = checksum_with(true, false);
+    let lock = checksum_with(false, true);
+    assert_ne!(defaults, others, "checksum omitted fires_at_other_targets");
+    assert_ne!(defaults, lock, "checksum omitted locks_turret_while_firing");
+    assert_ne!(others, lock, "checksum confused the two fire rules");
+}
+
 #[test]
 fn embedded_weapon_fields_and_splash_are_sensitive() {
     let mut world = world();
@@ -340,6 +376,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.attribute_bonuses = AttributeBonuses::NONE;
     original.allowed_movement = sim_types::AllowedMovement::Stopped;
     original.fires_outside_attack_order = false;
+    original.fires_at_other_targets = false;
+    original.locks_turret_while_firing = false;
     original.attacks_count = 1;
     original.first_strike_delay_ticks = 0;
     original.strike_interval_ticks = 0;
@@ -357,6 +395,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.max_projectile_lifetime_ticks = 1;
     original.suicide_on_attack = false;
     original.structure_strike = None;
+    original.attack_visibility = sim_types::AttackVisibility::Snapshot;
+    original.missile_validation = sim_types::MissileValidation::default();
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -394,6 +434,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
                 turret_turn_rate => SimAngle::PI,
                 allowed_movement => sim_types::AllowedMovement::Moving, fires_outside_attack_order => true,
+                fires_at_other_targets => true, locks_turret_while_firing => true,
                 base_damage => SimScalar::from_i32(2),
                 attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
                 first_strike_delay_ticks => 1, strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE), channeled => true,
@@ -419,6 +460,12 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 structure_strike => Some(sim_types::StructureStrike {
                     damage: SimScalar::ONE, upgrade_per_level: SimScalar::ONE, ignores_armor: true,
                 }),
+                // Plan `2026-11-23-vision-and-detection` D-7: each case, and the reveal ticks.
+                attack_visibility => sim_types::AttackVisibility::Visible { reveal_ticks: 54 },
+                attack_visibility => sim_types::AttackVisibility::Hidden,
+                // Plan `2026-11-24-weapon-validation` D-7: each flag alone.
+                missile_validation => sim_types::MissileValidation { weapon: false, teleport: true },
+                missile_validation => sim_types::MissileValidation { weapon: true, teleport: false },
             },
         |weapon| {
             world
@@ -843,7 +890,7 @@ fn fog_counters_and_stale_clearance_are_detected() {
         pos: point(3, 3),
         mover_type: MoverType::Ground,
         sight_radius: SimScalar::ONE,
-        is_detector: false,
+        detection_radius: SimScalar::ZERO,
     };
     world.vision_maps[P0].apply_vision_source(&world.map, &source);
     let once = world.compute_checksum();
@@ -858,7 +905,7 @@ fn fog_counters_and_stale_clearance_are_detected() {
     detector_vision.apply_vision_source(
         &world.map,
         &VisionSource {
-            is_detector: true,
+            detection_radius: SimScalar::ONE,
             ..source
         },
     );

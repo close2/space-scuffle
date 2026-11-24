@@ -37,9 +37,9 @@ pub mod weapon;
 
 // Flat convenient re-exports
 pub use commands::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
-    AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand,
-    RallyTarget, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackCommand,
+    AttackDashSpec, AttackOrigin, AutoRallySpec, BarrierSpec, HarvesterSpec, OverclockSpec,
+    PlayerCommand, RallyTarget, StanceOrders, TickBundle, TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use effects::{
     CancelOrdersDef, DamageDef, DamageResponses, DisplaceDef, DisplaceDestination, EffectAnchor,
@@ -81,10 +81,10 @@ pub use upgrades::{
     PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect, UpgradeStat,
 };
 pub use weapon::{
-    default_projectile_lifetime_ticks, AllowedMovement, Attribute, AttributeBonuses,
-    ProjectileTargetLossBehavior, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
-    SplashLineOrigin, SplashShape, SplashSpec, SplashZone, StructureStrike, TurretIdle, WeaponSpec,
-    DEFAULT_PROJECTILE_LIFETIME_TICKS,
+    default_projectile_lifetime_ticks, AllowedMovement, AttackVisibility, Attribute,
+    AttributeBonuses, MissileValidation, ProjectileTargetLossBehavior, SplashCliff, SplashImpact,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
+    StructureStrike, TurretIdle, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
 /// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,

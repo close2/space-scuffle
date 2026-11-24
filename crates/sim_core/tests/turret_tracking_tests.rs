@@ -253,3 +253,143 @@ fn a_turret_that_fires_while_moving_tracks_and_fires_while_retreating() -> TestR
     );
     Ok(())
 }
+
+/// One tick of the between-shots scene: the weapon phase, the turret angle, the hull heading,
+/// and the bearing to the enemy (`None` once it is gone).
+type ShotFrame = (WeaponPhase, SimAngle, SimAngle, Option<SimAngle>);
+
+/// The between-shots scene of B-197: a unit of `unit_type` at (20, 20) facing south, under a
+/// player's attack (or on Hold Position when `hold`) on an enemy of the same kind 5 south of it,
+/// which walks east across its front. Returns, for each of `ticks` ticks after the orders, the
+/// unit's weapon phase, turret angle, hull heading and the bearing from it to the enemy (binary
+/// angle, `None` once the enemy is gone).
+fn between_shots_scene(
+    unit_type: UnitTypeId,
+    hold: bool,
+    ticks: u32,
+) -> Result<Vec<ShotFrame>, Box<dyn std::error::Error>> {
+    let mut world = shipped_world()?;
+    let unit = spawn_facing_south(&mut world, unit_type)?;
+    let enemy = world.spawn_unit(unit_type, PlayerId(1), point(20, 25))?;
+    let unit_order = if hold {
+        UnitOrder::HoldPosition
+    } else {
+        UnitOrder::AttackTarget {
+            target: enemy,
+            origin: sim_types::AttackOrigin::Explicit,
+        }
+    };
+    step(
+        &mut world,
+        0,
+        vec![
+            order(0, unit, unit_order),
+            order(
+                1,
+                enemy,
+                UnitOrder::Move {
+                    target: point(60, 25),
+                },
+            ),
+        ],
+    );
+    let mut frames = Vec::new();
+    for tick in 1..=ticks {
+        step(&mut world, tick, Vec::new());
+        let entity = world.entities.get(&unit).ok_or("unit")?;
+        let bearing = world.entities.get(&enemy).map(|other| {
+            let delta = other.position - entity.position;
+            SimAngle::atan2(delta.y, delta.x)
+        });
+        frames.push((
+            entity.weapon_phase.clone(),
+            entity.turret_angle,
+            entity.heading,
+            bearing,
+        ));
+    }
+    Ok(frames)
+}
+
+/// Whether `phase` is between shots: the follow-through or the cooldown of the last.
+fn between_shots(phase: &WeaponPhase) -> bool {
+    matches!(phase, WeaponPhase::Backswing { .. } | WeaponPhase::Cooldown)
+}
+
+/// P-12 of plan `2026-11-24-fire-rules` (B-197, D-3; 5.0.14 `FaceTargetWhileInCooldown`, `core`
+/// WeaponData:34): a turret whose weapon does not lock it turns towards its target on every tick
+/// of its backswing and cooldown, by at most its rate, while the target walks across its front.
+#[test]
+fn a_turret_follows_its_target_between_shots() -> TestResult {
+    let world = shipped_world()?;
+    let unit_type = find(&world, MoverType::Ground, |weapon| {
+        weapon.has_turret
+            && !weapon.locks_turret_while_firing
+            && weapon.allowed_movement == AllowedMovement::Stopped
+    })?;
+    let rate = weapons(world.catalog.get(unit_type)?)
+        .find(|weapon| weapon.has_turret)
+        .ok_or("the turret")?
+        .turret_turn_rate;
+    let frames = between_shots_scene(unit_type, false, 80)?;
+    let mut tracked = 0;
+    for (tick, pair) in frames.windows(2).enumerate() {
+        let ((before_phase, before, ..), (after_phase, after, _, bearing)) = (&pair[0], &pair[1]);
+        let Some(bearing) = bearing else {
+            continue;
+        };
+        if !(between_shots(before_phase) && between_shots(after_phase)) {
+            continue;
+        }
+        assert_eq!(
+            *after,
+            before.rotate_towards(*bearing, rate.raw()),
+            "tick {}: the turret turns towards its target at its rate",
+            tick + 2
+        );
+        tracked += usize::from(after != before);
+    }
+    assert!(tracked > 0, "premise: the target moved between shots");
+    Ok(())
+}
+
+/// P-12 of plan `2026-11-24-fire-rules`: between shots, the weapon phase leaves a hull weapon's
+/// mount, the hull, where it is: a unit on Hold Position (no pursuit turns it) keeps its heading
+/// through every backswing and cooldown tick while its target walks across its front. Its hull
+/// turns again when its next swing needs it (R-7: B-199, the hull half of B-197).
+#[test]
+fn between_shots_a_hull_weapon_does_not_turn_its_hull() -> TestResult {
+    let world = shipped_world()?;
+    let unit_type = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| {
+            archetype.mover_type == MoverType::Ground
+                && archetype.max_speed > SimScalar::ZERO
+                && weapons(archetype).any(|weapon| {
+                    !weapon.has_turret
+                        && weapon.max_range >= SimScalar::from_i32(5)
+                        && weapon.target_flags.intersects(archetype.attributes)
+                })
+        })
+        .min_by_key(|archetype| archetype.unit_type_id)
+        .ok_or("a shipped ranged hull weapon")?
+        .unit_type_id;
+    let frames = between_shots_scene(unit_type, true, 80)?;
+    let mut between = 0;
+    for (tick, pair) in frames.windows(2).enumerate() {
+        let ((before_phase, _, before, _), (after_phase, _, after, bearing)) = (&pair[0], &pair[1]);
+        if bearing.is_none() || !(between_shots(before_phase) && between_shots(after_phase)) {
+            continue;
+        }
+        assert_eq!(
+            after,
+            before,
+            "tick {}: the hull holds between shots",
+            tick + 2
+        );
+        between += 1;
+    }
+    assert!(between > 0, "premise: the unit fired and cooled down");
+    Ok(())
+}

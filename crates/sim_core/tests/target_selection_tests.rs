@@ -159,7 +159,6 @@ impl Scratch<'_> {
             build_time_ticks: 100,
             ground_weapon: {ground},
             air_weapon: {air},
-            is_detector: false,
         )"#,
             slug = self.slug,
             mover = self.mover,
@@ -694,6 +693,9 @@ fn swings_under(
         ));
     }
     let mut swung = false;
+    // Vision before combat, as `step` orders the phases: a weapon strikes only what its player
+    // sees (plan `2026-11-24-weapon-validation` D-3).
+    world.update_vision();
     for _ in 0..10 {
         world.step_weapons_and_projectiles();
         let unit = world.entities.get(&chooser).ok_or("chooser")?;

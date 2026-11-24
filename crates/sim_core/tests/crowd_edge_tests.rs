@@ -122,7 +122,6 @@ fn scratch_unit(slug: &str, id: u16, radius: f32, speed: f32, range: Option<f32>
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: {weapon},
-            is_detector: false,
         )"#
     )
 }

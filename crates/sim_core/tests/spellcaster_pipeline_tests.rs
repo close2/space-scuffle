@@ -65,7 +65,7 @@ fn unarmed(world: &SimWorld) -> UnitTypeId {
         a.weapon.is_none()
             && a.ground_weapon.is_none()
             && a.air_weapon.is_none()
-            && !a.is_detector
+            && !a.is_detector()
             && a.mover_type == MoverType::Ground
     })
 }
@@ -458,7 +458,7 @@ fn a_cloaked_enemy_is_a_valid_target_only_under_detection() {
     let mut w = world();
     let kind = unarmed(&w);
     let detector = pick(&w, |a| {
-        a.is_detector && a.weapon.is_none() && a.ground_weapon.is_none() && a.air_weapon.is_none()
+        a.is_detector() && a.weapon.is_none() && a.ground_weapon.is_none() && a.air_weapon.is_none()
     });
     let index = grant(
         &mut w,

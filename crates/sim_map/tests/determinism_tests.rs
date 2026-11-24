@@ -91,7 +91,11 @@ fn test_cross_platform_determinism_checksum() {
             ),
             mover_type: mover,
             sight_radius: SimScalar::from_num(r),
-            is_detector: rng.gen_bool(0.1),
+            detection_radius: if rng.gen_bool(0.1) {
+                SimScalar::from_num(r)
+            } else {
+                SimScalar::ZERO
+            },
         };
 
         vision.apply_vision_source(&arena, &source);
@@ -121,7 +125,10 @@ fn test_cross_platform_determinism_checksum() {
     // where the tier's disc does not fit are refused. Before: 0x69cd_c3bf_29fa_dbd8 (the grid).
     // Re-recorded under Amendment 4: the switch commit's 0xa324_e36c_647d_586e was recorded
     // before the last edits of that commit, and its own tree already produced this value.
-    const EXPECTED_CHECKSUM: u64 = 0x672c_257d_0fca_cc1b;
+    // Re-recorded for plan 2026-11-23-vision-and-detection WP3 (B-57; was 0x672c_257d_0fca_cc1b):
+    // a ground ray no longer marks the first cell of a sight blocker it enters from outside, so
+    // the hashed states of the default arena's blocker cells (x 15 to 17, y 15 to 17) changed.
+    const EXPECTED_CHECKSUM: u64 = 0x0875_3f04_b63d_f2ee;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"
@@ -190,7 +197,7 @@ fn test_performance_quality_gate() {
             ),
             mover_type: MoverType::Ground,
             sight_radius: SimScalar::from_num(10),
-            is_detector: false,
+            detection_radius: SimScalar::ZERO,
         };
         vision.apply_vision_source(&arena, &source);
     }

@@ -1073,6 +1073,24 @@ fn enter_modes_queues_behind_earlier_orders() {
         .decode()
         .expect("map decodes");
     let mut world = load_scenario_world(&assets_root(), scenario).expect("world builds");
+    // Every shipped mode unit has an A command (the burrowing one authors Attack, plan
+    // `2026-11-24-attack-orders` D-1), so an attack-move takes them all along. To keep a unit
+    // that gets its switch at once, the units unarmed in their default stance are authored here
+    // without one, as a run-time catalog edit may.
+    let unarmed_moded: Vec<_> = world
+        .catalog
+        .archetypes()
+        .filter(|arch| !arch.modes.is_empty() && !arch.stance_armed(None))
+        .map(|arch| arch.unit_type_id)
+        .collect();
+    assert!(!unarmed_moded.is_empty(), "a mode unit unarmed by default");
+    for kind in unarmed_moded {
+        let arch = world.catalog.get_mut(kind).expect("shipped");
+        arch.default_stance_orders = Some(sim_types::StanceOrders {
+            attack: sim_types::AttackCommand::None,
+            ..arch.stance_orders(None)
+        });
+    }
     apply_initial_orders(
         &mut world,
         &document,
@@ -1121,8 +1139,8 @@ fn enter_modes_queues_behind_earlier_orders() {
             at_once += 1;
         }
     }
-    // The anchoring units are armed and walk first; the burrowing ones are unarmed until they
-    // burrow, take no attack-move and switch at once.
+    // The anchoring units have an A command and walk first; the burrowing ones, without one
+    // here, take no attack-move and switch at once.
     assert!(
         queued > 0 && at_once > 0,
         "queued {queued}, at once {at_once}"

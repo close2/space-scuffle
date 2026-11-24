@@ -135,7 +135,7 @@ impl SimWorld {
                 entity: id,
                 reason: "Overclock actor disappeared",
             })?;
-        if actor.is_loaded_in_transport() {
+        if actor.is_hidden() {
             return Ok(false);
         }
         let prepared = actor
@@ -187,7 +187,7 @@ impl SimWorld {
     /// world units, would be admitted now: the simulation's own admission, run without mutation
     /// and without drawing from the generator.
     ///
-    /// `false` for every ordinary refusal (dead, uncompleted, carried, channelling, stunned or
+    /// `false` for every ordinary refusal (dead, uncompleted, hidden, channelling, stunned or
     /// locked after a cast, unknown or locked ability, cooldown, energy, range, target or
     /// placement) and also
     /// for malformed authored data,
@@ -210,7 +210,7 @@ impl SimWorld {
 
     /// Runs every check of a cast, in order, without mutation.
     ///
-    /// Returns `Ok(None)` for an ordinary refusal (dead, uncompleted, carried, channeling, unknown
+    /// Returns `Ok(None)` for an ordinary refusal (dead, uncompleted, hidden, channeling, unknown
     /// or locked ability, cooldown, energy, range or placement) and an error for malformed
     /// authored data.
     fn admit_cast(
@@ -228,7 +228,7 @@ impl SimWorld {
         // An uncompleted entity casts nothing, so a foundation's energy is never spent (plan
         // `2026-11-23-regeneration` D-1 invariant 3).
         if !entity.is_completed
-            || entity.is_loaded_in_transport()
+            || entity.is_hidden()
             || entity.channeling_remaining_ticks > 0
             || entity.is_action_locked()
         {
@@ -465,9 +465,7 @@ impl SimWorld {
             }
             AbilityEffectSpec::BlinkTeleport { .. } => {
                 if let Some(dest) = target_pos {
-                    entity.position = dest;
-                    entity.velocity = SimVec2::ZERO;
-                    entity.current_funnel_waypoints.clear();
+                    entity.teleport_to(dest);
                 }
             }
             AbilityEffectSpec::CloakToggle { is_burrow, .. } => toggle_cloak(entity, is_burrow),

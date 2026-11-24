@@ -170,7 +170,6 @@ fn unit_ron(slug: &str, id: u16, life: f32, weapon: &str) -> String {
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: {weapon},
-            is_detector: false,
         )"#
     )
 }

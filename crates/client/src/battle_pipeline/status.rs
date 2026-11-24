@@ -255,6 +255,7 @@ pub fn write_game_reason(output: &mut String, error: &GameCommandError) {
         GameCommandError::ForeignRecipient(_) => "a selected unit belongs to another player",
         GameCommandError::DeadRecipient(_) => "a selected unit was destroyed",
         GameCommandError::LoadedRecipient(_) => "a selected unit is being transported",
+        GameCommandError::HousedRecipient(_) => "a selected unit is inside an extractor",
         GameCommandError::Build(rejection) => {
             write_build_rejection(output, rejection);
             return;

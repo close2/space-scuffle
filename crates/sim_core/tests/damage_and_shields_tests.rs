@@ -92,7 +92,7 @@ fn dummy_target_archetype(
         ground_weapon: None,
         air_weapon: None,
         abilities: Vec::new(),
-        is_detector: false,
+        detection_radius: None,
         requires_structures: Vec::new(),
         trains_units: Vec::new(),
         researches_upgrades: Vec::new(),
@@ -100,6 +100,7 @@ fn dummy_target_archetype(
         modes: Vec::new(),
         effects: sim_core::catalog::ArchetypeEffects::default(),
         placement_excludes: sim_types::PlacementFlags::empty(),
+        default_stance_orders: None,
     }
 }
 
@@ -121,6 +122,8 @@ fn dummy_weapon_spec(
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: base,
         attribute_bonuses: AttributeBonuses::NONE
             .with(Attribute::Armored, bonus_armored)
@@ -145,6 +148,8 @@ fn dummy_weapon_spec(
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     }
 }
 
@@ -742,6 +747,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
@@ -786,6 +793,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     };
 
     // Case B: Weapon with friendly_fire: false

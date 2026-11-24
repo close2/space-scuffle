@@ -274,6 +274,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(10),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
@@ -296,6 +298,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     };
 
     let air_weapon_high_dps = WeaponSpec {
@@ -311,6 +315,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(25),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
@@ -333,6 +339,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     };
 
     let arch = UnitArchetype {
@@ -392,7 +400,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         ground_weapon: Some(ground_weapon.clone()),
         air_weapon: Some(air_weapon_high_dps.clone()),
         abilities: Vec::new(),
-        is_detector: false,
+        detection_radius: None,
         requires_structures: Vec::new(),
         trains_units: Vec::new(),
         researches_upgrades: Vec::new(),
@@ -400,6 +408,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         modes: Vec::new(),
         effects: sim_core::catalog::ArchetypeEffects::default(),
         placement_excludes: sim_types::PlacementFlags::empty(),
+        default_stance_orders: None,
     };
 
     // 1. Target Ground -> Chooses Ground weapon

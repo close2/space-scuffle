@@ -402,15 +402,50 @@
 // (schema 38 -> 39), with this plan's WP2 rules in place, on native debug and release and
 // wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
-// Re-recorded for plan 2026-11-20-contact-solver WP6 (the switch-over, Amendment 16): the shipped
-// movement rules run `pipeline: Solver`; the first changed checkpoint is 0 (ticks 1 to 50), the
-// first contact of the opening walk. Proof: with `pipeline: Legacy` the same tree (main 36b914fd
-// merged, schema 40) reproduces main's previous list at every checkpoint, and
-// DEFAULT_SANDBOX_CHECKSUM, on native debug and release and wasm32-wasip1 release and debug;
-// the switch is the only change. Native debug and release and wasm32-wasip1 release and debug
+// Re-recorded for plan 2026-11-23-vision-and-detection WP4 (checksum schema 40 -> 41): each entity
+// also encodes its attack-reveal counters and each weapon its attack visibility, so every
+// checkpoint changed. No behaviour did: with the two fields left out of the encoding at schema
+// 40, both fixtures reproduce as recorded for this plan's WP3 (B-57) here and for plan
+// 2026-11-23-turret-wind-up WP1 in golden_replay_orders.ron, on native debug and release and
+// wasm32-wasip1 release and debug. Native debug and release and wasm32-wasip1 release and debug
 // agree on the list below.
+// Re-recorded for plan 2026-11-23-vision-and-detection WP3 (B-57): a ground ray entering a sight
+// blocker from outside stops before its first cell, so the default arena's blocker (cells x 15
+// to 17, y 15 to 17) is no longer seen from outside, and the vision states and counters of its
+// edge cells changed from checkpoint 1 (ticks 1 to 50) on, so every checkpoint changed. No
+// entity's or projectile's state differs at any checkpoint (per-checkpoint dumps of WP0 and
+// WP3 in the plan's evidence), and no unit ever stands in a blocker cell that an enemy's ground
+// sight reached from outside (WP0's probe c). Native debug and release and wasm32-wasip1
+// release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-weapon-validation WP1 (checksum schema 41 -> 43; 42 is reserved
+// for the contact solver): each entity also encodes its teleport count, each projectile its
+// target's teleport count and each weapon its missile validation, so every checkpoint changed. No
+// behaviour did: with the three fields left out of the encoding at schema 41, both fixtures
+// reproduce the lists recorded for plan 2026-11-23-vision-and-detection (schema 41), on native
+// debug and release and wasm32-wasip1 release and debug. Native debug and release and
+// wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-hidden-harvesters WP2, on its merge with main 7dc356fc (checksum
+// schema 43 -> 44): each unit task also encodes its housing structure, `UnitTask::housed_in`, so
+// every checkpoint changed. No behaviour did: with the field left out of the encoding at schema
+// 43, both fixtures reproduce the lists recorded for plan 2026-11-24-weapon-validation WP1
+// (schema 41 -> 43), on native debug and release and wasm32-wasip1 release and debug. Nothing in
+// this replay harvests, so the field is `None` on every unit at every checkpoint. Native debug and
+// release and wasm32-wasip1 release and debug agree on the list below.
+// Re-recorded for plan 2026-11-24-fire-rules on its merge with main d92e40bb (checksum schema 44 ->
+// 45): each weapon also encodes whether it may fire at targets other than its attack order's and
+// whether it locks its turret while firing, and each entity the target its weapon chose inside an
+// attack order (WP1, D-8). Proof: with the three fields left out of the encoding at schema 44 and
+// WP4's turrets-between-shots rule (D-3) switched off, both fixtures and DEFAULT_SANDBOX_CHECKSUM
+// reproduce main's schema-44 values on native debug and release and wasm32-wasip1 release and debug.
+// Behaviour changed too (WP4, B-197, 5.0.14 FaceTargetWhileInCooldown): a turret faces its target
+// through its backswing and cooldown. Per-tick dumps of the merged tree with D-3 off and on differ
+// only in the turret angles of "red_siege" (entities 33 to 35), on 273 entity-ticks from tick 181
+// (entity 33 in its backswing turns 1 binary unit towards entity 16) to tick 549; every other
+// field of every entity is equal on all 1000 ticks. The other rules of the plan (WP2, WP3) move
+// nothing here. Native debug and release and wasm32-wasip1 release and debug agree on the list
+// below.
 (
-    checksum_schema: 40,
+    checksum_schema: 45,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -436,25 +471,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x2fba59fe930c5143,
-        0x77b15bda2587ce4a,
-        0xb5dd83d244032c88,
-        0x25da25a052dd8cf0,
-        0x261026cbe5863591,
-        0xd3c91674d5f69020,
-        0xd99419adbf001090,
-        0x307573ccf461a1ac,
-        0x46ab563d07f40f17,
-        0xa9e1905c794700af,
-        0x95231ec5d44ae227,
-        0xda518d3b21ae543c,
-        0xbeff2f4562598a1f,
-        0x9f40bdf133b7b2a3,
-        0x06e59f7bcc9eff93,
-        0xfa8e84775053aa2f,
-        0xe74f152bbc02fddf,
-        0x6572e4484cc5be7e,
-        0xb2a4d07a15907225,
-        0xe436d59864a5403e,
+        0xbbed2112c18e50c8,
+        0xf3ab7a13ec8efb5a,
+        0xddc307db80d858b1,
+        0x13b8c4175468fb98,
+        0xed98284f85e1af6b,
+        0x56e5a135bed11379,
+        0x0e8df53ddcebcfca,
+        0x2f00acdf37c5165a,
+        0x6da930c972122aa0,
+        0x89b67b97ecc491f6,
+        0x0fa9d89f6ed974ea,
+        0x96810b3d8b1c3e7f,
+        0x5714505680a60523,
+        0xd0755ebc47dfca67,
+        0x56b715150f51ed86,
+        0xb9d9e61ba90b59c3,
+        0x2f55d8ef82764851,
+        0x356ee0af2edc518b,
+        0xe4b2be72bec59311,
+        0xe0ede2d7abdf5012,
     ],
 )

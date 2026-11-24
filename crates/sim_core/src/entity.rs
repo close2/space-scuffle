@@ -12,9 +12,10 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
-    EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
-    SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackCommand, AttackDashSpec, AttackOrigin, BarrierSpec,
+    EffectSource, EntityId, MoverType, OverclockSpec, PerPlayer, PlayerId, ResourceKind,
+    ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, StanceOrders, UnitModeSpec, UnitOrder,
+    UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -225,6 +226,10 @@ pub struct ActiveProjectile {
     /// Strikes of `weapon_spec` this projectile carries: every strike of the attack when they
     /// land together, one when the weapon spaces its strikes ([`PendingStrikes`]).
     pub strikes: u8,
+    /// The target's [`Entity::teleport_count`] when the projectile was launched or last locked
+    /// onto it; a target whose count has moved on since teleported in flight (plan
+    /// `2026-11-24-weapon-validation` D-2). Zero for a projectile without a unit target.
+    pub target_teleport_count: u16,
 }
 
 /// What a unit remembers about its movement order between ticks.
@@ -360,6 +365,14 @@ pub struct UnitTask {
     pub depot: Option<EntityId>,
     /// Node last gathered from, where `ReturnCargo` resumes. Outlives orders.
     pub last_node: Option<ResourceNodeId>,
+    /// The structure this gatherer is inside, hidden, while it gathers (plan
+    /// `2026-11-24-hidden-harvesters` D-2, D-3); `None` otherwise.
+    ///
+    /// **Invariant:** `Some(s)` implies that the front order is `Harvest`, that `gather_ticks`
+    /// is above 0, and that `s` is alive and its archetype hides its harvesters. The line sets it
+    /// when it grants the node; the take, every new leg ([`crate::economy`]'s `fresh_leg`) and
+    /// the structure's death clear it.
+    pub housed_in: Option<EntityId>,
 }
 
 /// The state of a unit's damage-absorbing barrier ([`BarrierSpec`], B-41).
@@ -527,6 +540,13 @@ pub struct Entity {
     pub hull_hit_flash_ticks: u8,
     /// Currently acquired combat target handle (used for independent turret tracking).
     pub current_target: Option<EntityId>,
+    /// The enemy this unit's weapon works against inside an attack order whose target it cannot
+    /// work against this tick, for a weapon whose data lets it fire at other targets
+    /// ([`WeaponSpec::fires_at_other_targets`], plan `2026-11-24-fire-rules` D-1, D-4).
+    /// Written only by target acquisition and read only by the combat phase; pursuit never reads
+    /// it, so the unit keeps chasing its order's target. Cleared by every order that replaces
+    /// the unit's orders, by boarding a transport, and when acquisition releases it.
+    pub weapon_target: Option<EntityId>,
     /// Where this unit's automatic target last stood, world units, recorded by target
     /// acquisition for an archetype whose tie-break is `AcquireTieBreak::ClosestToPrevious`, so
     /// that once the target is lost (dead, gone, out of reach) the unit takes the candidate
@@ -578,6 +598,15 @@ pub struct Entity {
     pub cast_lock_ticks: u16,
     /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
     pub displacement: Option<crate::effects::Displacement>,
+    /// For each player, the ticks left during which this unit is revealed to that player by its
+    /// own attacks: a strike of a weapon whose attack visibility is `Visible` on a unit of player
+    /// p raises the count for p to the weapon's reveal ticks, and the vision phase counts it down
+    /// (plan `2026-11-23-vision-and-detection` D-5). All zero at spawn.
+    pub attack_reveal_ticks: PerPlayer<u16>,
+    /// How many times the unit has been relocated by a teleport, wrapping: written only by
+    /// [`Self::teleport_to`], compared by missiles in flight, never reset (plan
+    /// `2026-11-24-weapon-validation` D-2). Zero at spawn.
+    pub teleport_count: u16,
     /// The combined modifiers of the statuses this unit carries: a cache of the fold of
     /// `SimWorld::effects` for this entity, refreshed by the effect engine whenever one of its
     /// statuses is inserted or removed, and so derived state, left out of the checksum.
@@ -682,6 +711,7 @@ impl Entity {
             shield_hit_flash_ticks: 0,
             hull_hit_flash_ticks: 0,
             current_target: None,
+            weapon_target: None,
             previous_target_position: None,
             engaged_target: None,
             is_immobile: is_immobile_archetype,
@@ -700,6 +730,8 @@ impl Entity {
             route_orders_issued: 0,
             cast_lock_ticks: 0,
             displacement: None,
+            attack_reveal_ticks: PerPlayer::default(),
+            teleport_count: 0,
             status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
@@ -727,6 +759,31 @@ impl Entity {
         self.status_modifiers.stun || self.cast_lock_ticks > 0 || self.displacement.is_some()
     }
 
+    /// Relocates the unit to `destination` (world units) by a teleport: sets the position,
+    /// stops it, clears its funnel waypoints and counts the teleport in
+    /// [`Self::teleport_count`] (wrapping), so missiles in flight at it can tell (plan
+    /// `2026-11-24-weapon-validation` D-2).
+    ///
+    /// Invariant: every instantaneous relocation that 5.0.14 performs with a `CEffectTeleport`
+    /// goes through this method. Displacements that fly (`Displace`), unloads and placement do
+    /// not.
+    pub fn teleport_to(&mut self, destination: SimVec2) {
+        self.position = destination;
+        self.velocity = SimVec2::ZERO;
+        self.current_funnel_waypoints.clear();
+        self.teleport_count = self.teleport_count.wrapping_add(1);
+    }
+
+    /// Whether this unit's attacks reveal it to `player` now: a counter of
+    /// [`Self::attack_reveal_ticks`] above zero (plan `2026-11-23-vision-and-detection` D-5).
+    /// False for a player outside the slots.
+    #[must_use]
+    pub fn is_attack_revealed_to(&self, player: PlayerId) -> bool {
+        self.attack_reveal_ticks
+            .get(player)
+            .is_some_and(|&ticks| ticks > 0)
+    }
+
     /// Whether the unit is hidden by cloak or burrow now: cloaked and not revealed by a status
     /// (plan D-11). A revealed unit is seen like any other unit wherever its owner's enemies
     /// have vision.
@@ -746,6 +803,32 @@ impl Entity {
     #[must_use]
     pub const fn is_loaded_in_transport(&self) -> bool {
         self.transport_carrier.is_some()
+    }
+
+    /// The structure this unit is inside while it gathers, if any (plan
+    /// `2026-11-24-hidden-harvesters` D-3); see [`UnitTask::housed_in`].
+    #[must_use]
+    pub const fn housing(&self) -> Option<EntityId> {
+        self.task.housed_in
+    }
+
+    /// Whether this unit is inside a structure that hides its harvesters, gathering (plan
+    /// `2026-11-24-hidden-harvesters` D-2).
+    #[must_use]
+    pub const fn is_housed(&self) -> bool {
+        self.task.housed_in.is_some()
+    }
+
+    /// Whether this unit is in the editor's filter state `Hidden` (plan
+    /// `2026-11-24-hidden-harvesters` D-4): carried in a transport, or inside a structure that
+    /// hides its harvesters. In `StarCraft` II 5.0.14 weapons (144 of 146 `TargetFilters`),
+    /// acquisition (`AcquireFilters`), effect searches (199 of 247 `SearchFilters`), loading and
+    /// the `CasterIsNotHidden` validator exclude `Hidden` units, so a hidden unit is not
+    /// acquired, attacked, splashed, found by a search or loaded, and it casts, acquires and
+    /// sees nothing.
+    #[must_use]
+    pub const fn is_hidden(&self) -> bool {
+        self.is_loaded_in_transport() || self.is_housed()
     }
 
     /// Whether the front order is a task, which [`crate::economy`] drives instead of movement.
@@ -917,6 +1000,9 @@ impl Entity {
         }
 
         self.hold_through_return_wait();
+        // The weapon's own target belongs to the attack order being replaced (plan
+        // `2026-11-24-fire-rules` D-1); acquisition chooses anew under the new order.
+        self.weapon_target = None;
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
@@ -1297,6 +1383,41 @@ impl Entity {
         archetype.stance_orders(self.settled_mode(archetype))
     }
 
+    /// The A command of the stance this unit is in or is switching to ([`Self::settled_mode`]),
+    /// by [`UnitArchetype::stance_orders`]: Attack, Scan Move or none (plan
+    /// `2026-11-24-attack-orders` D-2). `archetype` must be this unit's. Read-only and
+    /// allocation-free, so the client's card and its admission share the simulation's rule.
+    #[must_use]
+    pub fn settled_attack_command(&self, archetype: &UnitArchetype) -> AttackCommand {
+        self.settled_stance_orders(archetype).attack
+    }
+
+    /// Whether an attack order on `target` reaches this unit (`StarCraft` II's `ToSelection`,
+    /// `core` AbilData:127-129; plan `2026-11-24-attack-orders` D-2): the stance it is in or is
+    /// switching to has [`AttackCommand::Attack`], `target` is another unit, and that stance's
+    /// weapon against `target`'s plane ([`UnitArchetype::stance_weapon_against`]) exists and its
+    /// `target_flags` meet `target`'s attributes, as automatic acquisition requires.
+    ///
+    /// The target's owner is not read: 5.0.14's attack ability leaves out own and allied units
+    /// only for acquisition and the smart click (`core` AbilData:117-119, B-175), so an A-click on
+    /// one's own unit attacks it. `archetype` must be this unit's and `target_archetype`
+    /// `target`'s. Read-only and allocation-free; the simulation's admission
+    /// (`SimWorld::issue_plain_order`) and the client's share it.
+    #[must_use]
+    pub fn can_attack(
+        &self,
+        archetype: &UnitArchetype,
+        target: &Self,
+        target_archetype: &UnitArchetype,
+    ) -> bool {
+        let stance = self.settled_mode(archetype);
+        target.id != self.id
+            && archetype.stance_orders(stance).attack == AttackCommand::Attack
+            && archetype
+                .stance_weapon_against(stance, target_archetype.mover_type)
+                .is_some_and(|weapon| weapon.target_flags.intersects(target_archetype.attributes))
+    }
+
     /// Whether this unit is armed in the stance it is in or is switching to
     /// ([`Self::settled_mode`]), by [`UnitArchetype::stance_armed`]. `archetype` must be this
     /// unit's. Read-only and allocation-free, so the client's Attack entry and its admission
@@ -1572,6 +1693,336 @@ mod order_walks_tests {
         }
         entity.order_queue.clear();
         assert!(!entity.order_walks(), "no order does not walk");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod weapon_target_tests {
+    //! Plan `2026-11-24-fire-rules` D-1: the target a weapon chose inside an attack order belongs
+    //! to that order, so every order that replaces the unit's orders clears it, and a queued
+    //! order, which leaves the front order in place, keeps it.
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AttackOrigin, EntityId, MoverType, PlayerId, RallyTarget, ResourceNodeId, SimScalar,
+        SimVec2, UnitOrder, UnitTypeId,
+    };
+
+    /// One order of every `UnitOrder` variant; the match keeps the list whole.
+    fn every_order(point: SimVec2) -> Vec<UnitOrder> {
+        let orders = vec![
+            UnitOrder::Idle,
+            UnitOrder::Move { target: point },
+            UnitOrder::AttackMove { target: point },
+            UnitOrder::AttackTarget {
+                target: EntityId(99),
+                origin: AttackOrigin::Explicit,
+            },
+            UnitOrder::HoldPosition,
+            UnitOrder::Stop,
+            UnitOrder::UseStim,
+            UnitOrder::Produce {
+                unit_type: UnitTypeId(0),
+            },
+            UnitOrder::Harvest {
+                target: ResourceNodeId(0),
+            },
+            UnitOrder::ReturnCargo,
+            UnitOrder::Build {
+                structure_type: UnitTypeId(0),
+                cell_x: 2,
+                cell_y: 2,
+            },
+            UnitOrder::Construct {
+                foundation: EntityId(99),
+            },
+            UnitOrder::CastAbility {
+                ability_index: 0,
+                target_pos: Some(point),
+                target_entity: None,
+            },
+            UnitOrder::CancelConstruction,
+            UnitOrder::Research { upgrade: 0 },
+            UnitOrder::CancelProduction { job_index: 0 },
+            UnitOrder::Load {
+                carrier: EntityId(99),
+            },
+            UnitOrder::UnloadAll,
+            UnitOrder::SetRally {
+                target: RallyTarget::Point(point),
+            },
+        ];
+        for order in &orders {
+            match order {
+                UnitOrder::Idle
+                | UnitOrder::Move { .. }
+                | UnitOrder::AttackMove { .. }
+                | UnitOrder::AttackTarget { .. }
+                | UnitOrder::HoldPosition
+                | UnitOrder::Stop
+                | UnitOrder::UseStim
+                | UnitOrder::Produce { .. }
+                | UnitOrder::Harvest { .. }
+                | UnitOrder::ReturnCargo
+                | UnitOrder::Build { .. }
+                | UnitOrder::Construct { .. }
+                | UnitOrder::CastAbility { .. }
+                | UnitOrder::CancelConstruction
+                | UnitOrder::Research { .. }
+                | UnitOrder::CancelProduction { .. }
+                | UnitOrder::Load { .. }
+                | UnitOrder::UnloadAll
+                | UnitOrder::SetRally { .. } => {}
+            }
+        }
+        orders
+    }
+
+    #[test]
+    fn commit_order_clears_the_weapon_target_for_every_order(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 3);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground unit")?;
+        let unit = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let entity = world.entities.get_mut(&unit).ok_or("unit")?;
+        assert_eq!(entity.weapon_target, None, "a new unit has chosen nothing");
+        for order in every_order(SimVec2::from_i32(4, 4)) {
+            entity.weapon_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), false);
+            assert_eq!(entity.weapon_target, None, "{order:?} replaces the orders");
+            entity.order_queue = [UnitOrder::AttackTarget {
+                target: EntityId(98),
+                origin: AttackOrigin::Explicit,
+            }]
+            .into_iter()
+            .collect();
+            entity.weapon_target = Some(EntityId(77));
+            entity.commit_order(order.clone(), true);
+            assert_eq!(
+                entity.weapon_target,
+                Some(EntityId(77)),
+                "{order:?} queued leaves the front order and its weapon target"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod teleport_tests {
+    //! Plan `2026-11-24-weapon-validation` D-2 (P-3): [`Entity::teleport_to`] relocates the unit
+    //! and counts one teleport per call, wrapping.
+    use crate::test_support::world;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
+
+    fn walker() -> Result<super::Entity, Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = world(map, 5);
+        let kind = world
+            .catalog
+            .archetypes()
+            .find(|arch| arch.mover_type == MoverType::Ground && arch.max_speed > SimScalar::ZERO)
+            .map(|arch| arch.unit_type_id)
+            .ok_or("the shipped catalog has a mobile ground archetype")?;
+        let id = world.spawn_unit(kind, PlayerId(0), SimVec2::from_i32(4, 4))?;
+        Ok(world
+            .entities
+            .remove(&id)
+            .ok_or("the spawned unit exists")?)
+    }
+
+    #[test]
+    fn a_teleport_relocates_the_unit_and_counts_once() -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = walker()?;
+        assert_eq!(unit.teleport_count, 0, "a new unit has never teleported");
+        unit.velocity = SimVec2::from_i32(1, 0);
+        unit.current_funnel_waypoints.push(SimVec2::from_i32(9, 9));
+        let destination = SimVec2::from_i32(11, 7);
+        unit.teleport_to(destination);
+        assert_eq!(unit.position, destination);
+        assert_eq!(unit.velocity, SimVec2::ZERO);
+        assert_eq!(unit.current_funnel_waypoints, Vec::<SimVec2>::new());
+        assert_eq!(unit.teleport_count, 1);
+        unit.teleport_to(destination);
+        assert_eq!(unit.teleport_count, 2, "every call counts, even in place");
+        Ok(())
+    }
+
+    #[test]
+    fn the_teleport_count_wraps() -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = walker()?;
+        unit.teleport_count = u16::MAX;
+        unit.teleport_to(SimVec2::from_i32(2, 2));
+        assert_eq!(unit.teleport_count, 0);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod can_attack_tests {
+    //! Plan `2026-11-24-attack-orders` D-2: `Entity::can_attack`, the one rule for "can this
+    //! unit attack that unit" the simulation's admission and the client's share.
+    use crate::catalog::UnitArchetype;
+    use crate::test_support::world;
+    use crate::SimWorld;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{
+        AbilityEffectSpec, AttackCommand, AttributeFlags, EntityId, MoverType, PlayerId, SimVec2,
+        StanceOrders,
+    };
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn bare() -> Result<SimWorld, Box<dyn std::error::Error>> {
+        Ok(world(
+            GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?,
+            5,
+        ))
+    }
+
+    /// The first shipped archetype `pick` accepts.
+    fn find(world: &SimWorld, pick: impl Fn(&UnitArchetype) -> bool) -> Option<UnitArchetype> {
+        world.catalog.archetypes().find(|arch| pick(arch)).cloned()
+    }
+
+    /// Whether `unit` can attack `target`, by their own archetypes.
+    fn attacks(world: &SimWorld, unit: EntityId, target: EntityId) -> bool {
+        let unit = &world.entities[&unit];
+        let target = &world.entities[&target];
+        let (Ok(arch), Ok(target_arch)) = (
+            world.catalog.get(unit.unit_type_id),
+            world.catalog.get(target.unit_type_id),
+        ) else {
+            return false;
+        };
+        unit.can_attack(arch, target, target_arch)
+    }
+
+    /// Self is refused, the owner is not read, and the plane and attribute flags of the target
+    /// are: a ground-only armed walker attacks an enemy and an own ground unit, never itself or
+    /// an air unit, and nothing its weapon's `target_flags` leave out.
+    #[test]
+    fn self_is_refused_owner_ignored_plane_and_flags_read() -> TestResult {
+        let mut world = bare()?;
+        let gunner = find(&world, |arch| {
+            !arch.is_immobile_by_default()
+                && arch.mover_type == MoverType::Ground
+                && arch.air_weapon.is_none()
+                && arch.weapon_against(MoverType::Ground, None).is_some()
+                && arch.modes.is_empty()
+        })
+        .ok_or("a ground-only armed walker")?;
+        let flyer = find(&world, |arch| arch.mover_type == MoverType::Air).ok_or("an air unit")?;
+        let at = |x: i32| SimVec2::from_i32(x, 10);
+        let unit = world.spawn_unit(gunner.unit_type_id, PlayerId(0), at(8))?;
+        let own = world.spawn_unit(gunner.unit_type_id, PlayerId(0), at(10))?;
+        let enemy = world.spawn_unit(gunner.unit_type_id, PlayerId(1), at(12))?;
+        let enemy_air = world.spawn_unit(flyer.unit_type_id, PlayerId(1), at(14))?;
+        assert!(attacks(&world, unit, enemy), "an enemy ground unit");
+        assert!(
+            attacks(&world, unit, own),
+            "an own ground unit: the owner is not read"
+        );
+        assert!(!attacks(&world, unit, unit), "never itself");
+        assert!(!attacks(&world, unit, enemy_air), "no weapon against air");
+
+        let mut blind = gunner.clone();
+        for weapon in [&mut blind.weapon, &mut blind.ground_weapon]
+            .into_iter()
+            .flatten()
+        {
+            weapon.target_flags = AttributeFlags::empty();
+        }
+        let shooter = &world.entities[&unit];
+        let target = &world.entities[&enemy];
+        assert!(
+            !shooter.can_attack(&blind, target, &gunner),
+            "target_flags that meet none of the target's attributes"
+        );
+
+        let mut scan_mover = gunner.clone();
+        scan_mover.default_stance_orders = Some(StanceOrders {
+            attack: AttackCommand::ScanMove,
+            ..StanceOrders::ALL
+        });
+        assert!(
+            !shooter.can_attack(&scan_mover, target, &gunner),
+            "an armed stance whose A command is not Attack"
+        );
+        assert_eq!(
+            shooter.settled_attack_command(&scan_mover),
+            AttackCommand::ScanMove
+        );
+        assert_eq!(
+            shooter.settled_attack_command(&gunner),
+            AttackCommand::Attack
+        );
+        Ok(())
+    }
+
+    /// A unit armed only in its mode, with Attack in its default stance (the Lurker analogue,
+    /// plan S7): it attacks nothing until it is burrowing, and from the start of the switch it
+    /// attacks with the mode's replacement weapon, as the settled stance gives it.
+    #[test]
+    fn the_settled_replacement_weapon_is_used_while_switching() -> TestResult {
+        let mut world = bare()?;
+        let burrower = find(&world, |arch| {
+            !arch.stance_armed(None)
+                && !arch.is_immobile_by_default()
+                && arch.modes.iter().any(|mode| arch.stance_armed(Some(mode)))
+        })
+        .ok_or("a unit armed only in its mode")?;
+        let ground = find(&world, |arch| {
+            !arch.is_immobile_by_default() && arch.mover_type == MoverType::Ground
+        })
+        .ok_or("a ground walker")?;
+        let switch = burrower
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.effect, AbilityEffectSpec::SwitchMode { .. }))
+            .ok_or("its switch")?;
+        let unit = world.spawn_unit(burrower.unit_type_id, PlayerId(0), SimVec2::from_i32(8, 8))?;
+        let enemy = world.spawn_unit(ground.unit_type_id, PlayerId(1), SimVec2::from_i32(10, 8))?;
+        assert_eq!(
+            world.entities[&unit].settled_attack_command(&burrower),
+            burrower.stance_orders(None).attack
+        );
+        assert!(
+            !attacks(&world, unit, enemy),
+            "no weapon in the default stance"
+        );
+        let mode = burrower
+            .modes
+            .iter()
+            .find(|mode| burrower.stance_armed(Some(mode)))
+            .ok_or("the arming mode")?;
+        assert!(
+            burrower
+                .stance_weapon_against(Some(mode), MoverType::Ground)
+                .is_some(),
+            "the mode's replacement weapon"
+        );
+        assert!(burrower
+            .stance_weapon_against(None, MoverType::Ground)
+            .is_none());
+        assert!(world.execute_ability(unit, u8::try_from(switch)?, None, None));
+        assert!(
+            world.entities[&unit].channeling_remaining_ticks > 0,
+            "switching"
+        );
+        assert!(attacks(&world, unit, enemy), "the settled stance's weapon");
+        assert_eq!(
+            world.entities[&unit].settled_attack_command(&burrower),
+            mode.orders.attack
+        );
         Ok(())
     }
 }

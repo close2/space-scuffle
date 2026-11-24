@@ -1322,6 +1322,74 @@ fn play_again_starts_with_a_fresh_memory_and_the_enemy_still_hidden() {
     }
 }
 
+// --- Attack reveal (plan 2026-11-23-vision-and-detection D-6, P-15) ------------------------------
+
+/// Sets how many more ticks `foe`'s attacks reveal it to the local player.
+fn reveal_to_viewer(harness: &mut Harness, foe: EntityId, ticks: u16) {
+    let slot = LOCAL_PLAYER.slot().expect("the viewer is seated");
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&foe)
+        .expect("the foe exists")
+        .attack_reveal_ticks[slot] = ticks;
+}
+
+#[test]
+fn an_attack_revealed_enemy_is_drawn_and_pickable_in_fog() {
+    let mut harness = skirmish();
+    let place = home(&harness) + Vec2::new(OUT_OF_SIGHT, 0.0);
+    let foe = spawn_soldier(&mut harness, ENEMY, place);
+    assert_nothing_of_it_is_drawn(&harness, foe);
+
+    reveal_to_viewer(&mut harness, foe, 1_000);
+    run_ticks(&mut harness, 2);
+    assert!(model(&harness).view.attack_revealed.contains(&foe));
+    assert!(
+        drawn(&harness, foe),
+        "an attack-revealed enemy is drawn in fog"
+    );
+    let at = harness.simulated_position(foe);
+    harness.look_at(at);
+    harness.select(foe);
+    assert_eq!(harness.selection().inspected(), Some(foe), "and pickable");
+
+    reveal_to_viewer(&mut harness, foe, 0);
+    run_ticks(&mut harness, 2);
+    assert!(!model(&harness).view.attack_revealed.contains(&foe));
+    assert_nothing_of_it_is_drawn(&harness, foe);
+    assert_eq!(
+        harness.selection().inspected(),
+        None,
+        "hidden again once the list drops it"
+    );
+}
+
+#[test]
+fn an_attack_revealed_cloaked_enemy_still_needs_detection() {
+    let mut harness = skirmish();
+    let place = home(&harness) + Vec2::new(OUT_OF_SIGHT, 0.0);
+    let foe = spawn_soldier(&mut harness, ENEMY, place);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&foe)
+        .expect("the foe exists")
+        .is_cloaked = true;
+    reveal_to_viewer(&mut harness, foe, 1_000);
+    run_ticks(&mut harness, 2);
+    assert!(model(&harness).view.attack_revealed.contains(&foe));
+    assert!(!model(&harness).view.revealed.contains(&foe));
+    let at = harness.simulated_position(foe);
+    harness.look_at(at);
+    harness.select(foe);
+    assert_eq!(
+        harness.selection().inspected(),
+        None,
+        "an undetected cloaked unit is never picked"
+    );
+}
+
 // --- No allocation on the per-frame path (charter 3.3) -------------------------------------------
 
 #[test]
@@ -1429,7 +1497,7 @@ fn missile_caster(harness: &mut Harness) -> (UnitTypeId, u8) {
                 && arch.mover_type == sim_types::MoverType::Ground
                 && arch.modes.is_empty()
                 && arch.abilities.is_empty()
-                && !arch.is_detector
+                && !arch.is_detector()
                 && !world
                     .entities
                     .values()
@@ -1579,5 +1647,149 @@ fn a_named_status_look_shows_only_on_a_unit_the_viewer_sees() {
         named_looks_on(&harness, victim),
         0,
         "an unseen enemy shows no named status look"
+    );
+}
+
+// --- Gatherers inside their extractor (plan 2026-11-24-hidden-harvesters P-10) ----------------
+
+/// Places a completed extractor that hides its harvesters, of the local player, over the gas
+/// node nearest home, and returns that node.
+fn local_extractor(harness: &mut Harness) -> ResourceNodeId {
+    let extractor = harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.is_gas_extractor && a.capabilities.hides_harvesters)
+        .expect("the catalog ships an extractor that hides its harvesters")
+        .unit_type_id;
+    let at = sim_position(home(harness));
+    let mut gas: Vec<(SimScalar, usize, (u32, u32))> = harness
+        .world()
+        .map
+        .resources()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == ResourceKind::Gas)
+        .map(|(index, node)| (node.pos.distance_sq(at), index, node.cell))
+        .collect();
+    gas.sort_unstable();
+    for (_, index, cell) in gas {
+        if harness
+            .world_mut()
+            .spawn_structure(extractor, LOCAL_PLAYER, cell.0 - 1, cell.1 - 1)
+            .is_ok()
+        {
+            run_ticks(harness, 2);
+            return ResourceNodeId(u32::try_from(index).expect("few nodes"));
+        }
+    }
+    panic!("no gas node near home takes an extractor");
+}
+
+/// The local player's harvesters, ordered by ID.
+fn local_workers(harness: &Harness) -> Vec<EntityId> {
+    harness
+        .world()
+        .entities
+        .values()
+        .filter(|unit| {
+            unit.owner == LOCAL_PLAYER
+                && harness
+                    .world()
+                    .catalog
+                    .get(unit.unit_type_id)
+                    .is_ok_and(|a| a.capabilities.harvester.is_some())
+        })
+        .map(|unit| unit.id)
+        .collect()
+}
+
+fn housed(harness: &Harness, id: EntityId) -> bool {
+    harness.world().entities[&id].is_housed()
+}
+
+/// P-10: a gas worker inside its extractor is not drawn, ringed, picked or box-selected; it
+/// leaves the selection and stays in its control group; a recall while it is inside selects the
+/// others, and an order then does not name it. Each claim has its control: the same gestures
+/// reach it once it is out.
+#[test]
+fn a_worker_inside_its_extractor_is_not_drawn_picked_selected_or_ordered() {
+    let mut harness = skirmish();
+    let node = local_extractor(&mut harness);
+    let [gas, other, ..] = local_workers(&harness)[..] else {
+        panic!("the skirmish gives the player workers");
+    };
+    harness.look_at(harness.simulated_position(gas));
+    harness.select(gas);
+    harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+        let position = harness.unit_on_screen(other);
+        harness.click(MouseButton::Left, position);
+    });
+    harness.with_key_held(KeyCode::ControlLeft, |harness| {
+        harness.tap_key(KeyCode::Digit1);
+    });
+    let mut both = vec![gas, other];
+    both.sort_unstable();
+    assert_eq!(harness.selection().group(0), both);
+    let render = bubble(&harness, gas);
+
+    submit(
+        &mut harness,
+        LOCAL_PLAYER,
+        &[gas],
+        UnitOrder::Harvest { target: node },
+    );
+    run_until(&mut harness, "the worker goes inside", |harness| {
+        housed(harness, gas)
+    });
+    harness.step(1);
+    assert!(housed(&harness, gas), "paused inside");
+    assert_eq!(bubble(&harness, gas), render, "the render entity stays");
+    assert_nothing_of_it_is_drawn(&harness, gas);
+    assert!(!harness.draws_selected(gas), "no ring or health bar");
+    assert_eq!(harness.selection().ids(), [other], "it left the selection");
+    assert_eq!(harness.selection().group(0), both, "the group keeps it");
+
+    // A click and a box over it select it not.
+    let place = harness.simulated_position(gas);
+    harness.look_at(place);
+    let on_it = harness.unit_on_screen(gas);
+    harness.click(MouseButton::Left, on_it);
+    assert!(
+        !harness.selection().ids().contains(&gas),
+        "picked through a click"
+    );
+    let corner = harness.ground_on_screen(place - Vec2::splat(1.5));
+    let across = harness.ground_on_screen(place + Vec2::splat(1.5));
+    harness.drag(corner, across);
+    assert!(!harness.selection().ids().contains(&gas), "picked by a box");
+
+    // A recall selects the others, and an order then reaches only them.
+    harness.tap_key(KeyCode::Digit1);
+    assert_eq!(harness.selection().ids(), [other], "the recall drops it");
+    let ground = harness.ground_on_screen(harness.open_ground(place, 6.0));
+    harness.click(MouseButton::Right, ground);
+    let orders = pending(&harness);
+    assert!(!orders.is_empty(), "status: {}", harness.status());
+    for order in &orders {
+        assert!(!order.entities.contains(&gas), "{order:?}");
+    }
+
+    // Out again at the take: drawn, the same render entity, and the group selects it.
+    run_until(&mut harness, "the worker comes out", |harness| {
+        !housed(harness, gas)
+    });
+    harness.step(1);
+    assert_eq!(
+        bubble(&harness, gas),
+        render,
+        "one render entity through the gas cycle"
+    );
+    assert!(drawn(&harness, gas), "the control: drawn once out");
+    harness.tap_key(KeyCode::Digit1);
+    assert_eq!(
+        harness.selection().ids(),
+        both,
+        "the control: the recall selects it again"
     );
 }

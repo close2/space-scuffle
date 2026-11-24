@@ -269,6 +269,8 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
@@ -313,6 +315,8 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     };
 
     let ability = AbilitySpec {
@@ -705,7 +709,7 @@ fn test_cloak_invisibility_and_detector_reveal() {
         "Blue unit must not acquire cloaked enemy without a detector"
     );
 
-    // Blue player deploys a detector (Tesla Sentinel Dome with is_detector = true) at (9, 15)
+    // Blue player deploys a detector (Tesla Sentinel Dome, which has a detection radius) at (9, 15)
     let _ = world.spawn_structure(turret_id, player_blue, 9, 15);
 
     // Step next tick: detector reveals cloaked unit in detection radius

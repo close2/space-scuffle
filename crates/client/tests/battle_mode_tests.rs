@@ -738,7 +738,7 @@ fn hold_keeps_a_burrowed_unit_fighting_an_enemy_that_walks_into_range() {
             archetype.max_speed > SimScalar::ZERO
                 && archetype.mover_type == sim_types::MoverType::Ground
                 && archetype.modes.is_empty()
-                && !archetype.is_detector
+                && !archetype.is_detector()
                 && presentable(&harness, archetype.unit_type_id)
         })
         .expect("a presentable ground walker")
@@ -980,5 +980,274 @@ fn attack_on_the_ground_with_a_sieged_tank_and_a_walker_moves_the_walker_only() 
         orders[0].entities,
         [walker],
         "the sieged tank takes no attack-move"
+    );
+}
+
+// --- The A command by stance (plan `2026-11-24-attack-orders` P-7; B-174, B-175, B-186) -----
+
+/// A presentable mobile archetype whose default stance has the A command `attack` and which
+/// carries no weapon in it: Scan Move for the Medivac class, Attack for the unburrowed Lurker
+/// analogue (S6, S7); found by the stance's data, never by name.
+fn unarmed_with(harness: &Harness, attack: sim_types::AttackCommand) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            !archetype.is_immobile_by_default()
+                && !is_armed(archetype)
+                && archetype.stance_orders(None).attack == attack
+                && presentable(harness, archetype.unit_type_id)
+        })
+        .unwrap_or_else(|| panic!("the catalog ships a presentable unarmed unit with {attack:?}"))
+        .unit_type_id
+}
+
+/// A presentable armed ground walker without modes that is no worker (the marine class).
+fn marine_type(harness: &Harness) -> UnitTypeId {
+    harness
+        .world()
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.max_speed > SimScalar::ZERO
+                && is_armed(archetype)
+                && archetype.modes.is_empty()
+                && archetype.capabilities.harvester.is_none()
+                && archetype.mover_type == sim_types::MoverType::Ground
+                && presentable(harness, archetype.unit_type_id)
+        })
+        .expect("a presentable armed walker without modes")
+        .unit_type_id
+}
+
+/// The label of the card's A slot, if it shows one.
+fn a_slot_label(harness: &Harness) -> Option<client::battle_hud::card::CardLabel> {
+    use client::battle_input::command_mode::CommandMode;
+    card(harness).slots.iter().flatten().find_map(|slot| {
+        (slot.action == CardAction::Mode(CommandMode::AttackMove)).then_some(slot.label)
+    })
+}
+
+/// Selects `units` by clicking the first and Shift-clicking the rest.
+fn select_all(harness: &mut Harness, units: &[EntityId]) {
+    harness.select(units[0]);
+    for unit in &units[1..] {
+        let on_screen = harness.unit_on_screen(*unit);
+        harness.with_key_held(KeyCode::ShiftLeft, |harness| {
+            harness.step(1);
+            harness.click(MouseButton::Left, on_screen);
+            harness.step(1);
+        });
+    }
+    harness.step(1);
+    let mut selected = harness.selection().ids().to_vec();
+    selected.sort_unstable();
+    let mut wanted = units.to_vec();
+    wanted.sort_unstable();
+    assert_eq!(selected, wanted, "the selection");
+}
+
+/// Arms the A mode and left-clicks `unit`; returns the captured commands.
+fn a_click_on_unit(harness: &mut Harness, unit: EntityId) -> Vec<PlayerCommand> {
+    arm_attack(harness);
+    let on_screen = harness.unit_on_screen(unit);
+    harness.click(MouseButton::Left, on_screen);
+    pending(harness)
+}
+
+/// Arms the A mode and left-clicks open ground `distance` from `near`; returns the commands.
+fn a_click_on_ground(harness: &mut Harness, near: EntityId, distance: f32) -> Vec<PlayerCommand> {
+    arm_attack(harness);
+    let ground = harness.open_ground(harness.simulated_position(near), distance);
+    let on_screen = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Left, on_screen);
+    pending(harness)
+}
+
+/// Whether `order` is an attack-move to within half a world unit of `unit`'s position.
+fn attack_moves_to(harness: &Harness, order: &UnitOrder, unit: EntityId) -> bool {
+    let at = harness.world().entities[&unit].position;
+    matches!(order, UnitOrder::AttackMove { target } if target.distance(at) < SimScalar::from_num(0.5))
+}
+
+/// P-7: a Medivac-class unit alone shows Scan Move; `A` then a ground click attack-moves it,
+/// and `A` then a click on an enemy attack-moves it to the point under the enemy.
+#[test]
+fn a_scan_mover_shows_scan_move_and_attack_moves_on_ground_and_on_an_enemy() {
+    use client::battle_hud::card::CardLabel;
+    let mut harness = skirmish();
+    let kind = unarmed_with(&harness, sim_types::AttackCommand::ScanMove);
+    let unit = spawn_mine(&mut harness, kind);
+    harness.select(unit);
+    harness.step(1);
+    assert_eq!(a_slot_label(&harness), Some(CardLabel::ScanMove));
+
+    let orders = a_click_on_ground(&mut harness, unit, 5.0);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::AttackMove { .. }),
+        "{:?}",
+        orders[0].order
+    );
+    assert_eq!(orders[0].entities, [unit]);
+    run_ticks(&mut harness, 1);
+
+    let enemy = enemy_structure(&mut harness, unit, 6.0);
+    let orders = a_click_on_unit(&mut harness, enemy);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        attack_moves_to(&harness, &orders[0].order, enemy),
+        "{:?}",
+        orders[0].order
+    );
+    assert_eq!(orders[0].entities, [unit]);
+    assert_no_diagnostics(&harness);
+}
+
+/// P-7: the unburrowed Lurker analogue shows Attack and attack-moves on the ground.
+#[test]
+fn the_unburrowed_lurker_analogue_shows_attack_and_attack_moves_on_the_ground() {
+    use client::battle_hud::card::CardLabel;
+    let mut harness = skirmish();
+    let kind = unarmed_with(&harness, sim_types::AttackCommand::Attack);
+    let unit = spawn_mine(&mut harness, kind);
+    harness.select(unit);
+    harness.step(1);
+    assert_eq!(a_slot_label(&harness), Some(CardLabel::Attack));
+    let orders = a_click_on_ground(&mut harness, unit, 5.0);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::AttackMove { .. }),
+        "{:?}",
+        orders[0].order
+    );
+    assert_eq!(orders[0].entities, [unit]);
+    run_ticks(&mut harness, 1);
+    assert!(
+        matches!(
+            harness.world().entities[&unit].order_queue.front(),
+            Some(UnitOrder::AttackMove { .. })
+        ),
+        "the unarmed attack-mover walks"
+    );
+}
+
+/// The mixed army of P-7: a marine-class unit, a Medivac-class unit and the unburrowed Lurker
+/// analogue, side by side and selected, in that order.
+fn mixed_army(harness: &mut Harness) -> [EntityId; 3] {
+    let kinds = [
+        marine_type(harness),
+        unarmed_with(harness, sim_types::AttackCommand::ScanMove),
+        unarmed_with(harness, sim_types::AttackCommand::Attack),
+    ];
+    let marine = spawn_mine(harness, kinds[0]);
+    let near = harness.simulated_position(marine);
+    let medivac = spawn_at(harness, near, 4.0, kinds[1], LOCAL_PLAYER);
+    let lurker = spawn_at(harness, near, 8.0, kinds[2], LOCAL_PLAYER);
+    let army = [marine, medivac, lurker];
+    select_all(harness, &army);
+    army
+}
+
+/// P-7: a mixed army A-clicked on the ground sends one attack-move naming all three; A-clicked
+/// on an enemy ground unit, it sends an attack to the marine-class unit and an attack-move to
+/// the point under the enemy to the other two.
+#[test]
+fn a_mixed_army_attack_moves_together_and_splits_on_an_enemy() {
+    let mut harness = skirmish();
+    let [marine, medivac, lurker] = mixed_army(&mut harness);
+    let orders = a_click_on_ground(&mut harness, marine, 14.0);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::AttackMove { .. }),
+        "{:?}",
+        orders[0].order
+    );
+    let mut named = orders[0].entities.clone();
+    named.sort_unstable();
+    let mut army = vec![marine, medivac, lurker];
+    army.sort_unstable();
+    assert_eq!(named, army, "one attack-move naming all three");
+    run_ticks(&mut harness, 1);
+
+    let enemy = enemy_structure(&mut harness, marine, 16.0);
+    let orders = a_click_on_unit(&mut harness, enemy);
+    assert_eq!(orders.len(), 2, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::attack(enemy));
+    assert_eq!(orders[0].entities, [marine]);
+    assert!(
+        attack_moves_to(&harness, &orders[1].order, enemy),
+        "{:?}",
+        orders[1].order
+    );
+    let mut walkers = orders[1].entities.clone();
+    walkers.sort_unstable();
+    let mut expected = vec![medivac, lurker];
+    expected.sort_unstable();
+    assert_eq!(walkers, expected);
+    assert!(
+        matches!(
+            harness.marker(),
+            Some((
+                client::battle_input::order_marker::OrderMarkerKind::Attack,
+                _
+            ))
+        ),
+        "one Attack marker"
+    );
+    run_ticks(&mut harness, 1);
+    assert!(attacks(&harness, marine, enemy) || !harness.world().entities.contains_key(&enemy));
+}
+
+/// P-7 (B-175, Q0104's default): A-clicked on one's own unit, the armed member attacks it (an
+/// explicit target after the tick), the others attack-move to it, and the clicked unit, though
+/// selected, gets neither order. A right click on one's own unit is no attack.
+#[test]
+fn an_a_click_on_ones_own_unit_attacks_it() {
+    let mut harness = skirmish();
+    let [marine, medivac, lurker] = mixed_army(&mut harness);
+    let near = harness.simulated_position(marine);
+    let kind = marine_type(&harness);
+    let own = spawn_at(&mut harness, near, 11.0, kind, LOCAL_PLAYER);
+    select_all(&mut harness, &[marine, medivac, lurker, own]);
+    let orders = a_click_on_unit(&mut harness, own);
+    assert_eq!(orders.len(), 2, "status: {}", harness.status());
+    assert_eq!(orders[0].order, UnitOrder::attack(own));
+    assert_eq!(orders[0].entities, [marine]);
+    assert!(
+        attack_moves_to(&harness, &orders[1].order, own),
+        "{:?}",
+        orders[1].order
+    );
+    let mut walkers = orders[1].entities.clone();
+    walkers.sort_unstable();
+    let mut expected = vec![medivac, lurker];
+    expected.sort_unstable();
+    assert_eq!(walkers, expected, "the clicked unit gets neither order");
+    run_ticks(&mut harness, 1);
+    assert!(
+        attacks(&harness, marine, own),
+        "an explicit attack on the own unit"
+    );
+    assert!(harness.world().entities[&own].order_queue.is_empty());
+
+    harness.select(medivac);
+    let on_screen = harness.unit_on_screen(own);
+    harness.click(MouseButton::Right, on_screen);
+    assert!(
+        pending(&harness)
+            .iter()
+            .all(|command| !matches!(command.order, UnitOrder::AttackTarget { .. })),
+        "a right click on an own unit attacks nothing"
+    );
+    select_all(&mut harness, &[marine]);
+    let on_screen = harness.unit_on_screen(own);
+    harness.click(MouseButton::Right, on_screen);
+    assert!(
+        pending(&harness)
+            .iter()
+            .all(|command| !matches!(command.order, UnitOrder::AttackTarget { .. })),
+        "a right click on an own unit attacks nothing"
     );
 }

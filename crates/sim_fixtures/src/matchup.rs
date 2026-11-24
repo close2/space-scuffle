@@ -1407,6 +1407,84 @@ mod tests {
         Ok(())
     }
 
+    /// Whether `unit`, named in a first-tick attack `order`, took it (plan
+    /// `2026-11-24-attack-orders` P-9): an `AttackTarget` leaves the unit's queue with that
+    /// explicit target, and an `AttackMove` names only a unit whose settled stance has an A
+    /// command.
+    fn took_attack(world: &SimWorld, unit: EntityId, order: &UnitOrder) -> Result<bool, String> {
+        let entity = world
+            .entities
+            .get(&unit)
+            .ok_or_else(|| format!("unit {unit:?} missing"))?;
+        let archetype = world
+            .catalog
+            .get(entity.unit_type_id)
+            .map_err(|error| error.to_string())?;
+        Ok(match order {
+            UnitOrder::AttackTarget { .. } => entity.order_queue.contains(order),
+            UnitOrder::AttackMove { .. } => {
+                entity.settled_attack_command(archetype) != sim_types::AttackCommand::None
+            }
+            _ => true,
+        })
+    }
+
+    #[test]
+    fn no_matrix_battle_scripts_an_attack_that_misses_a_unit_it_names(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // P-9 (plan 2026-11-24-attack-orders): a scripted first-tick `AttackTarget` reaches
+        // every unit it names, and a scripted `AttackMove` names only units with an A command.
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let seed = matrix.seeds[0];
+        let (mut missed, mut attacks, mut moves) = (Vec::new(), 0, 0);
+        for battle in &matrix.battles {
+            let mut run = BattleRun::new(
+                battle,
+                crate::shipped_catalogs(),
+                seed,
+                matrix.jitter_for(seed),
+            )?;
+            let named: Vec<(EntityId, UnitOrder)> = run
+                .commands
+                .iter()
+                .filter(|command| {
+                    matches!(
+                        command.order,
+                        UnitOrder::AttackTarget { .. } | UnitOrder::AttackMove { .. }
+                    )
+                })
+                .flat_map(|command| {
+                    command
+                        .entities
+                        .iter()
+                        .map(|&unit| (unit, command.order.clone()))
+                })
+                .collect();
+            for (_, order) in &named {
+                match order {
+                    UnitOrder::AttackTarget { .. } => attacks += 1,
+                    _ => moves += 1,
+                }
+            }
+            run.step();
+            for (unit, order) in &named {
+                if !took_attack(&run.world, *unit, order)? {
+                    missed.push(battle.name.clone());
+                    break;
+                }
+            }
+        }
+        assert!(
+            attacks > 0 && moves > 0,
+            "{attacks} attacks, {moves} attack-moves scripted"
+        );
+        assert!(
+            missed.is_empty(),
+            "battles whose scripted attack misses a unit: {missed:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_squad_with_its_own_order_gets_it_and_the_rest_follow_the_side() -> Result<(), MatchupError>
     {

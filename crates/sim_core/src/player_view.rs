@@ -70,13 +70,26 @@ impl SimWorld {
                     entity.owner != viewer
                         && entity.is_concealed()
                         && entity.is_alive()
-                        && !entity.is_loaded_in_transport()
+                        && !entity.is_hidden()
                         && Self::is_cloak_revealed(
                             &self.map,
                             &self.vision_maps,
                             viewer,
                             entity.position,
+                            entity.is_attack_revealed_to(viewer),
                         )
+                })
+                .map(|entity| entity.id),
+        );
+        // Entity-ID order, so the list is sorted (plan `2026-11-23-vision-and-detection` D-6).
+        out.attack_revealed.extend(
+            self.entities
+                .values()
+                .filter(|entity| {
+                    entity.owner != viewer
+                        && entity.is_alive()
+                        && !entity.is_hidden()
+                        && entity.is_attack_revealed_to(viewer)
                 })
                 .map(|entity| entity.id),
         );

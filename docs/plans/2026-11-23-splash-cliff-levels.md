@@ -625,6 +625,8 @@ is named in WP4's commit.
   search, read with `cliff_level_at`. Its own plan.
 - **F-2: ramp and air readings other than D-2's defaults**, if the owner's answer to the draft question differs: a
   change of `cliff_level_at` (ramp) or of `strike_area`'s plane test (air), with this plan's tests re-derived.
+  Taken up by plan [`2026-11-24-owner-answers-cliff-and-vision`](2026-11-24-owner-answers-cliff-and-vision.md)
+  (Q0099 1(c), 2(b)).
 - **F-3: a published "level" for the client** (e.g. dimming a blast's other level): not in the game; not planned.
 - **The Baneling ordered onto a friendly unit** stays splash-centres' F-3.
 

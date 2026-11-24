@@ -189,9 +189,11 @@ pub enum SplashImpact {
 
 /// Which cliff levels a weapon's area reaches: `StarCraft` II's `SearchFlags` `SameCliff`.
 ///
-/// A level is read from the map under a position (`sim_map::GameMap::cliff_level_at`): a ramp
-/// counts as its lower landing and an air unit has the level of the ground below it (plan
-/// `2026-11-23-splash-cliff-levels` D-2, owner question Q0099's defaults).
+/// A position's levels are read from the map under it (`sim_map::GameMap::cliff_span_at`): a
+/// ramp counts as both of its landings (owner answer Q0099 1(c), plan
+/// `2026-11-24-owner-answers-cliff-and-vision` D-1), and an area on the air plane and a unit in
+/// the air ignore cliff levels (Q0099 2(b), that plan's D-2). The level is read at the search
+/// point (Q0099 3(a)).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplashCliff {
     /// Only units on the cliff level of the search point that reaches them (`SameCliff 1`, the
@@ -338,13 +340,17 @@ impl SplashSpec {
 /// (e.g. loaded into a transport, cloaked without detection, expired hallucination, or destroyed).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProjectileTargetLossBehavior {
-    /// Default SC2 homing projectile behavior: if the target becomes unavailable
-    /// in flight (loaded into transport, cloaked/burrowed without detection,
-    /// expired hallucination, stasis, or died), the projectile harmlessly fizzles/disjoints.
-    #[default]
+    /// `PointFallback 0` (e.g. `StarCraft` II's `NeuralParasiteLaunchMissile`, `liberty`
+    /// EffectData:1013): once the target fails the weapon's filters, the missile is removed
+    /// without landing, so neither its strike nor its area lands anywhere.
     Fizzle,
-    /// Ballistic/artillery behavior: continues to the last known `target_pos`
-    /// and detonates splash damage on the ground coordinate even if the original unit vanished.
+    /// 5.0.14's `PointFallback` (`core` EffectData:97), the default of every attack missile:
+    /// once the target fails the weapon's filters (it dies, is loaded, turns invulnerable, or
+    /// cloaks or burrows undetected), the missile flies on to the last point it tracked, in
+    /// world units, and lands there; its strike reaches no unit, its area strikes around the
+    /// point. Permanent: a target that becomes available again is not re-acquired (plan
+    /// `2026-11-23-vision-and-detection` D-1).
+    #[default]
     ImpactLastKnownPosition,
     /// Seeking missile behavior (SC1 Valkyrie / SC2 Mirage / Glaive-style retargeting):
     /// when the current target becomes unavailable in flight, scans spatial neighborhood within
@@ -406,7 +412,7 @@ pub enum TurretIdle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts of one weapon (turret, channel, suicide, melee), each read by a different rule"
+    reason = "independent authored facts of one weapon (turret, turret lock, attack-order options, channel, suicide, melee), each read by a different rule"
 )]
 pub struct WeaponSpec {
     /// Descriptive name of the weapon system.
@@ -447,6 +453,24 @@ pub struct WeaponSpec {
     /// D-2, D-4).
     #[serde(default)]
     pub fires_outside_attack_order: bool,
+    /// Whether the weapon may work against a target other than its unit's attack order's: the
+    /// inverse of `StarCraft` II's `Options OnlyFireAtAttackOrderTarget`, which every weapon sets
+    /// by default (`core` WeaponData:21), so `false` is the engine default. Inside an attack order
+    /// whose target it cannot work against this tick (out of its engagement band, or failing the
+    /// weapon filter), such a weapon works against the enemy acquisition chose for it
+    /// (`Entity::weapon_target`), while its unit is not walking or the weapon is
+    /// [`AllowedMovement::Moving`]; the order's target keeps priority whenever it can be worked
+    /// (plan `2026-11-24-fire-rules` D-1, D-4).
+    #[serde(default)]
+    pub fires_at_other_targets: bool,
+    /// Whether the weapon's turret holds still while the weapon fires: `StarCraft` II's
+    /// `LegacyOptions LockTurretWhileFiring` (only the Hellion's `InfernalFlameThrower` sets it,
+    /// `liberty` WeaponData:590), `false` by default. The turret does not turn from the start of a
+    /// swing to the end of its backswing; a new swing that starts out of the backswing ends the
+    /// lock. Meaningful only with `has_turret`, which catalog validation requires (plan
+    /// `2026-11-24-fire-rules` D-1, D-2).
+    #[serde(default)]
+    pub locks_turret_while_firing: bool,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
     /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).
@@ -523,6 +547,57 @@ pub struct WeaponSpec {
     /// D-14) read it.
     #[serde(default)]
     pub melee: bool,
+    /// What the weapon's damage shows of its attacker to the player it strikes (plan
+    /// `2026-11-23-vision-and-detection` D-4). Omitted, the engine default: a snapshot.
+    #[serde(default)]
+    pub attack_visibility: AttackVisibility,
+    /// What the weapon's missile re-checks about its target in flight (plan
+    /// `2026-11-24-weapon-validation` D-1). Omitted, the engine default: both checks. Read only
+    /// for a weapon with a `projectile_speed`; catalog validation refuses a non-default value on
+    /// an instant weapon.
+    #[serde(default)]
+    pub missile_validation: MissileValidation,
+}
+
+/// What a weapon's missile re-checks about its target in flight: `StarCraft` II's
+/// `CEffectLaunchMissile` flags (`core` EffectData:95–109). A check that fails makes the
+/// missile lose its target, and `target_loss_behavior` decides what it does then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissileValidation {
+    /// `ValidateWeapon` (:101): the target must keep passing the weapon's filters (alive,
+    /// unloaded, vulnerable, seen and, if concealed, detected). `false`: only its existence
+    /// is followed, and the filters are checked at impact instead.
+    pub weapon: bool,
+    /// `ValidateTeleport` (:100): a target that teleports after the launch is lost.
+    pub teleport: bool,
+}
+
+impl Default for MissileValidation {
+    /// The engine default of every `CEffectLaunchMissile`: both checks on.
+    fn default() -> Self {
+        Self {
+            weapon: true,
+            teleport: true,
+        }
+    }
+}
+
+/// What a weapon's damage shows of its attacker to the player it strikes: `StarCraft` II's
+/// `CEffectDamage` `Visibility` (`core` EffectData:62).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttackVisibility {
+    /// A snapshot in fog and on the minimap, never a target (the engine default). The
+    /// simulation records nothing; the presentation is bug B-183.
+    #[default]
+    Snapshot,
+    /// The attacker becomes visible, and so targetable, to each struck unit's owner for
+    /// `reveal_ticks` (`AttackReveal`, `core` BehaviorData:237–240, 3 Normal s).
+    Visible {
+        /// How long one hit reveals the attacker, in whole ticks.
+        reveal_ticks: u16,
+    },
+    /// Nothing is shown.
+    Hidden,
 }
 
 /// Whether a weapon's unit may move while it attacks: `StarCraft` II's `CWeapon`
@@ -714,6 +789,51 @@ mod tests {
             ron::from_str("(zones: [], cliff: Any, strike_target_on_other_level: true)")?;
         assert_eq!(splash.cliff, SplashCliff::Any);
         assert!(splash.strike_target_on_other_level);
+        Ok(())
+    }
+
+    /// Plan `2026-11-23-vision-and-detection` D-4: an omitted attack visibility reads as the
+    /// engine default, a snapshot; the visible case carries its reveal in whole ticks.
+    #[test]
+    fn attack_visibility_defaults_to_a_snapshot_and_reads_its_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use super::AttackVisibility;
+        assert_eq!(AttackVisibility::default(), AttackVisibility::Snapshot);
+        let visible: AttackVisibility = ron::from_str("Visible(reveal_ticks: 54)")?;
+        assert_eq!(visible, AttackVisibility::Visible { reveal_ticks: 54 });
+        let hidden: AttackVisibility = ron::from_str("Hidden")?;
+        assert_eq!(hidden, AttackVisibility::Hidden);
+        Ok(())
+    }
+    /// Plan `2026-11-24-weapon-validation` D-1: an omitted missile validation reads as the engine
+    /// default, both checks on (`CEffectLaunchMissile`, `core` EffectData:100–101); an authored
+    /// row reads each flag as written.
+    #[test]
+    fn missile_validation_defaults_to_both_checks_and_reads_both_cases(
+    ) -> Result<(), ron::error::SpannedError> {
+        use super::MissileValidation;
+        let both = MissileValidation {
+            weapon: true,
+            teleport: true,
+        };
+        assert_eq!(MissileValidation::default(), both);
+        let at_impact: MissileValidation = ron::from_str("(weapon: false, teleport: true)")?;
+        assert_eq!(
+            at_impact,
+            MissileValidation {
+                weapon: false,
+                teleport: true,
+            }
+        );
+        let follows_teleports: MissileValidation =
+            ron::from_str("(weapon: true, teleport: false)")?;
+        assert_eq!(
+            follows_teleports,
+            MissileValidation {
+                weapon: true,
+                teleport: false,
+            }
+        );
         Ok(())
     }
 }

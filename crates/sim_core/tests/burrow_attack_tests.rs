@@ -52,6 +52,8 @@ fn spines() -> WeaponSpec {
         turret_idle: sim_types::TurretIdle::Hold,
         allowed_movement: sim_types::AllowedMovement::Stopped,
         fires_outside_attack_order: false,
+        fires_at_other_targets: false,
+        locks_turret_while_firing: false,
         base_damage: SimScalar::from_num(10),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
@@ -74,6 +76,8 @@ fn spines() -> WeaponSpec {
         suicide_on_attack: false,
         structure_strike: None,
         melee: false,
+        attack_visibility: sim_types::AttackVisibility::Snapshot,
+        missile_validation: sim_types::MissileValidation::default(),
     }
 }
 

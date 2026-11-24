@@ -264,6 +264,7 @@ fn preview_instance(
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     }
 }
 
@@ -339,6 +340,7 @@ fn swarm_instance(
         stance: sim_types::StanceView::default(),
         status: sim_types::StatusFlags::default(),
         barrier_ratio: 0.0,
+        housed: false,
     }
 }
 
@@ -1367,6 +1369,7 @@ mod tests {
             stance: sim_types::StanceView::default(),
             status: sim_types::StatusFlags::default(),
             barrier_ratio: 0.0,
+            housed: false,
         };
         (instance, Transform::from_xyz(x, 0.5, SWARM_MIN_Z))
     }

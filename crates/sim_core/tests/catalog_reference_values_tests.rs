@@ -23,7 +23,7 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttributeFlags, SimAngle, SimScalar, TurretIdle};
+use sim_types::{AttackCommand, AttributeFlags, SimAngle, SimScalar, TurretIdle};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -664,6 +664,84 @@ fn b88_structure_attributes_follow_starcraft() -> TestResult {
         &[],
         |a| [f32::from(a.attributes.bits())],
     )
+}
+
+/// Whether a structure hides its harvesters, as 1 or 0 (5.0.14 `CBehaviorResource`
+/// `Flags HideHarvesters` on a behaviour of the structure's `BehaviorArray`; plan
+/// `2026-11-24-hidden-harvesters` S1, S2, D-1). Only the three gas extractors carry such a
+/// behaviour; no later layer clears the flag.
+const SC2_STRUCTURE_HIDES_HARVESTERS: [(&str, [f32; 1], &str); 49] = [
+    ("Command Center", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Orbital Command", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Planetary Fortress", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Supply Depot", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Refinery", [1.0], "HarvestableVespeneGeyserGas Flags HideHarvesters 1, liberty BehaviorData:824; Refinery BehaviorArray, liberty UnitData:5806"),
+    ("Barracks", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Engineering Bay", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Bunker", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Sensor Tower", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Missile Turret", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Factory", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Ghost Academy", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Starport", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Armory", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Fusion Core", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Tech Lab", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Reactor", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Nexus", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Pylon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Assimilator", [1.0], "HarvestableVespeneGeyserGasProtoss Flags HideHarvesters 1, liberty BehaviorData:836; Assimilator BehaviorArray, liberty UnitData:4151"),
+    ("Gateway", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Forge", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Photon Cannon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Shield Battery", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Cybernetics Core", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Twilight Council", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Stargate", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Robotics Facility", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Templar Archives", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Dark Shrine", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Robotics Bay", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Fleet Beacon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hatchery", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Lair", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hive", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Extractor", [1.0], "HarvestableVespeneGeyserGasZerg Flags HideHarvesters 1, liberty BehaviorData:848; Extractor BehaviorArray, liberty UnitData:8179"),
+    ("Spawning Pool", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Evolution Chamber", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spine Crawler", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spore Crawler", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Roach Warren", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Baneling Nest", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hydralisk Den", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Lurker Den", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spire", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Greater Spire", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Infestation Pit", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Nydus Network", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Ultralisk Cavern", [0.0], "no resource behaviour with HideHarvesters"),
+];
+
+/// B-161 (plan `2026-11-24-hidden-harvesters` P-1): every structure authors whether it hides
+/// its harvesters as its analogue does, and no unit hides any.
+#[test]
+fn b161_structures_hide_harvesters_as_starcraft() -> TestResult {
+    check_table(
+        "hides_harvesters",
+        true,
+        &SC2_STRUCTURE_HIDES_HARVESTERS,
+        &[],
+        |a| [f32::from(u8::from(a.capabilities.hides_harvesters))],
+    )?;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for archetype in catalogs.units.archetypes().filter(|a| !is_structure(a)) {
+        assert!(
+            !archetype.capabilities.hides_harvesters,
+            "{}: a unit hides no harvesters",
+            archetype.slug
+        );
+    }
+    Ok(())
 }
 
 /// B-88 (P-2, plan `2026-11-23-structure-attributes` D-3): one meaning of "structure". An
@@ -3131,6 +3209,201 @@ fn b171_structures_take_the_plain_orders_of_their_starcraft_unit_type() {
             "{name}: Stop and Hold Position, StarCraft II {source}"
         );
     }
+}
+
+/// The A command of each sourced stance, as `(analogue, mode, command, source)` (plan
+/// `2026-11-24-attack-orders` D-1, P-1; `mode` is `None` for the default stance). Every unarmed
+/// mobile unit puts the `move` ability's `AcquireMove` (Scan Move) in its Attack slot (row 0,
+/// column 4) and carries no `attack` (S6); the unburrowed Lurker carries `attack` without a
+/// weapon (S7); the sieged tank and the burrowed Lurker carry `attack` (S10); the armed
+/// structures carry `attack` and the unarmed ones none that a multiplayer game enables (plan
+/// `2026-11-23-stance-checked-orders` S6, S7, S9, S10).
+const SC2_ATTACK_COMMANDS: [(&str, Option<&str>, AttackCommand, &str); 20] = [
+    (
+        "Medivac",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:5475-5478, :5485-5486",
+    ),
+    (
+        "Raven",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:5621-5622; voidmulti :2653-2654; balancemulti :2490-2491",
+    ),
+    (
+        "Observer",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:3443-3445, :3452-3453",
+    ),
+    (
+        "Warp Prism",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:3859-3860",
+    ),
+    (
+        "Infestor",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:10108-10109; balancemulti :740-741",
+    ),
+    (
+        "Viper",
+        None,
+        AttackCommand::ScanMove,
+        "swarm UnitData:2363-2364",
+    ),
+    (
+        "Overlord",
+        None,
+        AttackCommand::ScanMove,
+        "liberty UnitData:7391-7395, :7400-7401",
+    ),
+    (
+        "Lurker",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:727-729, :735-736; voidmulti UnitData:974; balancemulti UnitData:909 (LurkerMP)",
+    ),
+    (
+        "Lurker",
+        Some("burrowed"),
+        AttackCommand::Attack,
+        "liberty UnitData:793-796 (LurkerMPBurrowed)",
+    ),
+    (
+        "Siege Tank",
+        Some("siege_mode"),
+        AttackCommand::Attack,
+        "liberty UnitData:5172-5174 (SiegeTankSieged)",
+    ),
+    (
+        "Photon Cannon",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:11083-11084",
+    ),
+    (
+        "Missile Turret",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:6064-6065",
+    ),
+    (
+        "Planetary Fortress",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:10696-10697",
+    ),
+    (
+        "Spine Crawler",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:8652-8653",
+    ),
+    (
+        "Spore Crawler",
+        None,
+        AttackCommand::Attack,
+        "liberty UnitData:8784-8785",
+    ),
+    (
+        "Command Center",
+        None,
+        AttackCommand::None,
+        "liberty UnitData:10411-10418",
+    ),
+    (
+        "Orbital Command",
+        None,
+        AttackCommand::None,
+        "liberty UnitData:10557-10564",
+    ),
+    (
+        "Nexus",
+        None,
+        AttackCommand::None,
+        "liberty UnitData:4218-4223; swarm AbilData:968-970 (PurifyNexusRequirements)",
+    ),
+    (
+        "Shield Battery",
+        None,
+        AttackCommand::None,
+        "liberty UnitData:1603-1605; balancemulti UnitData:1463",
+    ),
+    (
+        "Bunker",
+        None,
+        AttackCommand::None,
+        "liberty UnitData:6192-6193; AbilData:3606-3611 (passenger redirect)",
+    ),
+];
+
+/// Plan `2026-11-24-attack-orders` P-1 (B-174, B-186): every sourced stance's A command, read
+/// through `UnitArchetype::stance_orders` as the simulation and the client read it.
+#[test]
+fn b186_stances_have_the_a_command_of_their_starcraft_unit_type() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (name, mode, command, source) in SC2_ATTACK_COMMANDS {
+        let archetypes: Vec<_> = catalogs
+            .units
+            .archetypes()
+            .filter(|arch| analogue(arch) == name)
+            .collect();
+        assert_eq!(archetypes.len(), 1, "one {name} analogue");
+        let arch = archetypes[0];
+        let stance = match mode {
+            Some(mode) => Some(
+                arch.get_mode(mode)
+                    .ok_or_else(|| format!("the {name} analogue has its mode {mode}"))?,
+            ),
+            None => None,
+        };
+        assert_eq!(
+            arch.stance_orders(stance).attack,
+            command,
+            "{name} {mode:?}: the A command, StarCraft II {source}"
+        );
+    }
+    Ok(())
+}
+
+/// Plan `2026-11-24-attack-orders` D-1, P-1: the default stance's A command is derived (Attack
+/// when armed, Scan Move when mobile and unarmed, none otherwise) for every shipped archetype
+/// but the one that authors its default stance, and only the Lurker analogue does (S7). Every
+/// shipped mode authors Attack, and every one of them is armed (S8, S10).
+#[test]
+fn the_a_command_is_derived_for_every_archetype_but_the_lurker_analogue() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut authored = Vec::new();
+    for arch in catalogs.units.archetypes() {
+        let derived = if arch.stance_armed(None) {
+            AttackCommand::Attack
+        } else if arch.is_immobile_by_default() {
+            AttackCommand::None
+        } else {
+            AttackCommand::ScanMove
+        };
+        match arch.default_stance_orders {
+            Some(orders) => {
+                authored.push(analogue(arch).to_owned());
+                assert_eq!(arch.stance_orders(None), orders, "{}", arch.slug);
+            }
+            None => assert_eq!(arch.stance_orders(None).attack, derived, "{}", arch.slug),
+        }
+        for mode in &arch.modes {
+            assert!(arch.stance_armed(Some(mode)), "{}", mode.mode_name);
+            assert_eq!(
+                mode.orders.attack,
+                AttackCommand::Attack,
+                "{}",
+                mode.mode_name
+            );
+        }
+    }
+    assert_eq!(authored, ["Lurker"]);
 }
 
 /// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan

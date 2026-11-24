@@ -3,10 +3,12 @@
 //! # Responsibility
 //! The two cliff fields of `SplashSpec`, played through `SimWorld::step` on small maps with a
 //! level-1 plateau beside level-0 ground, and one with a ramp between them:
-//! - P-1 ([`SplashCliff::Same`]): an area strikes only units on the cliff level of a search
+//! - P-1 ([`SplashCliff::Same`]): an area strikes only units sharing a cliff level with a search
 //!   point that reaches them, at the fraction of the nearest such point; the primary target is
-//!   struck directly on any level; a ramp counts as its lower landing; an air unit has the level
-//!   of the ground below it (`StarCraft` II's `SearchFlags SameCliff`, `core` EffectData:67).
+//!   struck directly on any level; a ramp counts as both of its landings (owner answer Q0099
+//!   1(c), plan `2026-11-24-owner-answers-cliff-and-vision` P-2, P-5) and the level is read at
+//!   the search point (Q0099 3(a), P-4); an area on the air plane and a unit in the air ignore
+//!   levels (Q0099 2(b), P-3) (`StarCraft` II's `SearchFlags SameCliff`, `core` EffectData:67).
 //! - P-2 ([`SplashCliff::Any`]): an area strikes exactly what it strikes on a flat map.
 //! - P-3 (`strike_target_on_other_level`): an attacker-centred area whose target stands on
 //!   another level than the attacker strikes that target directly, once, at the first zone's
@@ -15,7 +17,7 @@
 //!   (`BanelingVolatileBurstDirectFallbackSet`, `voidmulti` EffectData:2327–2358).
 //!
 //! # How it fits
-//! The rule lives in `combat_resolution.rs` (phase 7) and reads `GameMap::cliff_level_at`; this
+//! The rule lives in `combat_resolution.rs` (phase 7) and reads `GameMap::cliff_span_at`; this
 //! file plays it through the public API. A scratch weapon is a copy of a shipped circular splash
 //! weapon (the one with the largest reach), found by property, made instant and given plain
 //! numbers so each expectation is computed from the copy's own zones. Bodies are scratch clones
@@ -31,7 +33,7 @@
 #![allow(clippy::expect_used, clippy::too_many_lines)]
 
 use sim_core::{SimWorld, UnitArchetype};
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, RampDir};
+use sim_map::{CellFlags, CliffLevel, CliffSpan, GameMap, MapCell, RampDir};
 use sim_types::{
     AttributeBonuses, AttributeFlags, EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind,
     SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashLine, SplashLineAxis,
@@ -86,6 +88,9 @@ enum Terrain {
     /// As `Cliff`, with a ramp ascending East over columns 21 to 23 and rows 18 to 21 into the
     /// plateau; its cells store their lower landing's level, 0.
     Ramp,
+    /// As `Ramp`, with a level-2 block over columns 21 to 23 and rows 22 and 23, beside the
+    /// ramp: a third level next to a ramp between levels 0 and 1.
+    RampBesideThirdLevel,
 }
 
 /// A 48 × 48 world with the shipped catalogs, no random weapon delays, and `terrain`.
@@ -101,7 +106,16 @@ fn world(terrain: Terrain) -> SimWorld {
             }
         }
     }
-    if terrain == Terrain::Ramp {
+    if terrain == Terrain::RampBesideThirdLevel {
+        for y in 22..=23 {
+            for x in 21..EDGE {
+                map.cell_mut(x, y)
+                    .expect("invariant: inside the map")
+                    .cliff_level = CliffLevel(2);
+            }
+        }
+    }
+    if matches!(terrain, Terrain::Ramp | Terrain::RampBesideThirdLevel) {
         for y in 18..=21 {
             for x in 21..EDGE {
                 let cell = map.cell_mut(x, y).expect("invariant: inside the map");
@@ -420,13 +434,20 @@ fn an_any_level_area_strikes_as_before() {
     }
 }
 
-/// P-1 with D-2: a ramp counts as its lower landing. A shot at a target on the plateau at the
-/// ramp's top strikes a unit on the plateau beside it and spares one on the ramp's top cell at
-/// the same distance; reaching every level, it strikes both alike (the control).
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-2 (owner answer Q0099 1(c)): a ramp
+/// counts as both of its landings. A shot at a target on the plateau at the ramp's top strikes a
+/// unit on the ramp's top cell as it strikes one on the plateau beside it, kept to its level or
+/// reaching every level alike.
 #[test]
-fn a_same_level_area_counts_a_ramp_as_its_lower_landing() {
+fn a_same_level_area_counts_a_ramp_as_both_landings() {
     let probe = world(Terrain::Ramp);
-    assert_eq!(probe.map.cliff_level_at(at(23.5, 19.5)), CliffLevel(0));
+    assert_eq!(
+        probe.map.cliff_span_at(at(23.5, 19.5)),
+        CliffSpan {
+            low: CliffLevel(0),
+            high: CliffLevel(1),
+        }
+    );
     assert!(
         probe.map.ramp_profile(23, 19).is_some(),
         "the ramp's top cell"
@@ -444,13 +465,119 @@ fn a_same_level_area_counts_a_ramp_as_its_lower_landing() {
         assert!(distance <= splash_of(&weapon).reach(), "both in reach");
         let losses = first_strike(&mut world, attacker, target, &[target, on_ramp, beside]);
         assert_eq!(losses[2], strike_at(&weapon, distance), "{cliff:?}: beside");
-        let ramp = if cliff == SplashCliff::Same {
+        assert_eq!(
+            losses[1],
+            strike_at(&weapon, distance),
+            "{cliff:?}: on the ramp's top cell"
+        );
+    }
+}
+
+/// The scratch weapon with one zone of radius `reach` at the whole strike, kept to its level as
+/// `cliff` says.
+fn one_zone_weapon(world: &SimWorld, reach: f64, cliff: SplashCliff) -> WeaponSpec {
+    let mut weapon = scratch_weapon(world);
+    let splash = splash_mut(&mut weapon);
+    splash.cliff = cliff;
+    splash.zones = vec![SplashZone {
+        radius: s(reach),
+        fraction: SimScalar::ONE,
+    }];
+    weapon
+}
+
+/// P-2 (Q0099 1(c)): a shot centred on a ramp's top cell strikes units within reach on both of
+/// the ramp's landings (the low ground west of the ramp, the plateau east of it) and on the ramp
+/// itself, and spares a unit on a third level (a level-2 block beside the ramp) at a nearer
+/// distance; reaching every level, it strikes that unit too (the control). A blue body on the
+/// plateau gives the gunner sight of the ramp.
+#[test]
+fn a_shot_centred_on_a_ramp_strikes_both_landings_and_spares_a_third_level() {
+    for cliff in [SplashCliff::Same, SplashCliff::Any] {
+        let mut world = world(Terrain::RampBesideThirdLevel);
+        let weapon = one_zone_weapon(&world, 3.0, cliff);
+        let centre = at(23.5, 20.5);
+        let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, 20.5));
+        let _spotter = body(&mut world, BLUE, at(edge() + 1.5, 16.5));
+        let target = body(&mut world, RED, centre);
+        let low = body(&mut world, RED, at(20.5, 20.5));
+        let ramp = body(&mut world, RED, at(21.5, 19.5));
+        let plateau = body(&mut world, RED, at(24.5, 20.5));
+        let third = body(&mut world, RED, at(23.5, 22.5));
+        assert_eq!(
+            world.map.cliff_span_at(world.entities[&third].position),
+            CliffSpan::single(CliffLevel(2)),
+            "the third level"
+        );
+        let losses = first_strike(
+            &mut world,
+            attacker,
+            target,
+            &[target, low, ramp, plateau, third],
+        );
+        let whole = SimScalar::from_i32(DAMAGE);
+        assert_eq!(losses[0], whole, "{cliff:?}: the direct strike");
+        assert_eq!(losses[1], whole, "{cliff:?}: the lower landing");
+        assert_eq!(losses[2], whole, "{cliff:?}: the ramp");
+        assert_eq!(losses[3], whole, "{cliff:?}: the upper landing");
+        let third_loss = if cliff == SplashCliff::Same {
             SimScalar::ZERO
         } else {
-            strike_at(&weapon, distance)
+            whole
         };
-        assert_eq!(losses[1], ramp, "{cliff:?}: on the ramp's top cell");
+        assert_eq!(losses[4], third_loss, "{cliff:?}: the third level");
     }
+}
+
+/// P-2: away from the ramp the cliff still separates the levels. On the ramp's map a shot at a
+/// target on the low ground beside the cliff, kept to its level, spares a unit on the plateau
+/// across the edge and strikes one on the low ground at the same distance.
+#[test]
+fn beside_a_cliff_away_from_the_ramp_the_levels_stay_apart() {
+    let mut world = world(Terrain::Ramp);
+    let weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    let target_at = at(edge() - 0.5, 14.5);
+    let attacker = gunner(&mut world, &weapon, at(edge() - 6.0, 14.5));
+    let target = body(&mut world, RED, target_at);
+    let plateau = body(&mut world, RED, at(edge() + 0.5, 14.5));
+    let low = body(&mut world, RED, at(edge() - 0.5, 15.5));
+    let losses = first_strike(&mut world, attacker, target, &[target, plateau, low]);
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], SimScalar::ZERO, "the plateau, across the cliff");
+    assert_eq!(losses[2], whole, "the low ground");
+}
+
+/// P-4 (owner answer Q0099 3(a), built by plan `2026-11-23-splash-cliff-levels`): the level is
+/// read at the blast's centre point. With `offset_by_unit_radius`, a target whose centre stands
+/// on the plateau 0.1 from the edge, shot from the low ground to the west, is struck by an area
+/// centred on its west edge, 0.15 over the low ground: a low-ground bystander 1.0 from that
+/// centre is struck, and a plateau bystander 1.0 from it is spared, though it stands on the
+/// target's own level.
+#[test]
+fn the_level_is_read_at_the_blast_centre() {
+    let mut world = world(Terrain::Cliff);
+    let mut weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    splash_mut(&mut weapon).offset_by_unit_radius = true;
+    let target_at = at(edge() + 0.1, ROW);
+    let centre = at(edge() + 0.1 - BODY, ROW);
+    assert_eq!(
+        world.map.cliff_span_at(centre),
+        CliffSpan::single(CliffLevel(0)),
+        "the offset centre is over the low ground"
+    );
+    let attacker = gunner(&mut world, &weapon, at(edge() - 5.0, ROW));
+    let _spotter = body(&mut world, BLUE, at(edge() + 4.0, ROW + 4.0));
+    let target = body(&mut world, RED, target_at);
+    let low = body(&mut world, RED, offset(centre, s(-0.6), s(0.8)));
+    let high = body(&mut world, RED, offset(centre, s(0.6), s(-0.8)));
+    assert!(world.entities[&low].position.x < s(edge()), "low ground");
+    assert!(world.entities[&high].position.x >= s(edge()), "plateau");
+    let losses = first_strike(&mut world, attacker, target, &[target, low, high]);
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], whole, "low ground, the centre's level");
+    assert_eq!(losses[2], SimScalar::ZERO, "plateau, the target's level");
 }
 
 /// P-1: the reference is the search centre, not the attacker. A gunner below the plateau (a
@@ -531,33 +658,86 @@ fn a_same_level_line_keeps_each_search_to_its_point() {
     }
 }
 
-/// D-2's default: an air area keeps to the level of the ground below its centre. A shot at an
-/// air target over the plateau strikes an air unit over the plateau and spares one over the
-/// low ground at the same distance.
+/// Spawns a scratch cliff-walking body (a clone of the first shipped mobile `CliffWalker`, the
+/// Colossus analogue) for `owner` at `position`.
+fn walker(world: &mut SimWorld, owner: PlayerId, position: SimVec2) -> EntityId {
+    let kind = register(world, MoverType::CliffWalker, "splash_cliff_walker", |_| {});
+    world
+        .spawn_unit(kind, owner, position)
+        .expect("open ground")
+}
+
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-3 (owner answer Q0099 2(b)): an air blast
+/// ignores cliff levels. A shot at an air target over the plateau, kept to its level, strikes an
+/// air unit over the plateau and one over the low ground at the same distance alike, and a
+/// cliff-walking unit standing on the low ground too (the area's plane spans every level).
 #[test]
-fn an_air_area_keeps_to_the_level_below() {
+fn an_air_area_ignores_levels() {
     let mut world = world(Terrain::Cliff);
-    let weapon = scratch_weapon(&world);
-    let reach = splash_of(&weapon).reach();
-    let inside = reach + s(BODY) - epsilon();
+    let weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    let inside = s(2.0) + s(BODY) - epsilon();
     let target_at = at(edge() + 0.6, ROW);
     let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, ROW));
     let target = flyer(&mut world, RED, target_at);
     let over_plateau = flyer(&mut world, RED, offset(target_at, SimScalar::ZERO, inside));
     let over_low = flyer(&mut world, RED, offset(target_at, -inside, SimScalar::ZERO));
+    let walking_low = walker(
+        &mut world,
+        RED,
+        offset(target_at, -inside * s(0.6), -inside * s(0.8)),
+    );
+    assert!(
+        world.entities[&over_low].position.x < s(edge()),
+        "over the low ground"
+    );
+    assert!(
+        world.entities[&walking_low].position.x < s(edge()),
+        "on the low ground"
+    );
     let losses = first_strike(
         &mut world,
         attacker,
         target,
-        &[target, over_plateau, over_low],
+        &[target, over_plateau, over_low, walking_low],
     );
-    assert_eq!(losses[0], SimScalar::from_i32(DAMAGE), "the direct strike");
-    assert_eq!(
-        losses[1],
-        strike_at(&weapon, reach - epsilon()),
-        "over the plateau"
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], whole, "over the plateau");
+    assert_eq!(losses[2], whole, "over the low ground");
+    assert_eq!(losses[3], whole, "a cliff walker on the low ground");
+}
+
+/// P-3 (Q0099 2(b)): an air unit ignores cliff levels inside a ground-centred area. A weapon
+/// hitting air and ground fires at a cliff-walking target on the plateau (its area searches
+/// every plane, centred on the plateau's level); an air unit over the low ground is struck, and
+/// a ground unit on the low ground at the same distance is spared (it stands on another level).
+#[test]
+fn an_air_unit_in_a_ground_centred_area_ignores_levels() {
+    let mut world = world(Terrain::Cliff);
+    let weapon = one_zone_weapon(&world, 2.0, SplashCliff::Same);
+    let inside = s(2.0) + s(BODY) - epsilon();
+    let target_at = at(edge() + 0.6, ROW);
+    let attacker = gunner(&mut world, &weapon, at(edge() + 6.0, ROW));
+    let target = walker(&mut world, RED, target_at);
+    let air_low = flyer(&mut world, RED, offset(target_at, -inside, SimScalar::ZERO));
+    let ground_low = body(
+        &mut world,
+        RED,
+        offset(target_at, -inside * s(0.6), -inside * s(0.8)),
     );
-    assert_eq!(losses[2], SimScalar::ZERO, "over the low ground");
+    assert!(
+        world.entities[&air_low].position.x < s(edge()),
+        "over the low ground"
+    );
+    assert!(
+        world.entities[&ground_low].position.x < s(edge()),
+        "on the low ground"
+    );
+    let losses = first_strike(&mut world, attacker, target, &[target, air_low, ground_low]);
+    let whole = SimScalar::from_i32(DAMAGE);
+    assert_eq!(losses[0], whole, "the direct strike");
+    assert_eq!(losses[1], whole, "in the air over the low ground");
+    assert_eq!(losses[2], SimScalar::ZERO, "on the low ground");
 }
 
 /// The scratch weapon made attacker-centred (a burst), with its range its reach and the
@@ -634,6 +814,54 @@ fn an_attacker_centred_area_strikes_a_target_on_its_own_level_once() {
         "the area alone"
     );
     assert_eq!(losses[1], SimScalar::ZERO, "below");
+}
+
+/// P-5 (Q0099 1(c), rule 4): a burst is the exact complement of its fallback. With an inner
+/// zone of radius 0.5 at the whole strike and an outer one at half, a burst from the ramp's top
+/// cell at a target 1.0 east on the plateau (edge 0.75 away) strikes it once, by the area, at
+/// half: the ramp shares a level with its upper landing. A burst from the low ground beside the
+/// cliff at a target 1.0 east on the plateau strikes it once, by the fallback, at the whole
+/// strike (the first zone's fraction). Neither target is struck twice.
+#[test]
+fn a_burst_on_a_ramp_strikes_its_target_at_the_top_by_its_area() {
+    let whole = SimScalar::from_i32(DAMAGE);
+    let half = whole * SimScalar::HALF;
+    for (origin, expected, label) in [
+        (at(23.5, 19.5), half, "from the ramp, by the area"),
+        (
+            at(edge() - 0.5, 14.5),
+            whole,
+            "from the low ground, by the fallback",
+        ),
+    ] {
+        let mut world = world(Terrain::Ramp);
+        let mut weapon = burst_weapon(&world, true);
+        let splash = splash_mut(&mut weapon);
+        splash.zones = vec![
+            SplashZone {
+                radius: s(0.5),
+                fraction: SimScalar::ONE,
+            },
+            SplashZone {
+                radius: s(2.0),
+                fraction: SimScalar::HALF,
+            },
+        ];
+        weapon.max_range = s(2.0);
+        let attacker = gunner(&mut world, &weapon, origin);
+        let _spotter = body(
+            &mut world,
+            BLUE,
+            SimVec2::new(s(edge() + 3.5), origin.y + s(3.0)),
+        );
+        let target = body(&mut world, RED, offset(origin, s(1.0), SimScalar::ZERO));
+        assert!(
+            world.entities[&target].position.x >= s(edge()),
+            "{label}: the target is on the plateau"
+        );
+        let losses = first_strike(&mut world, attacker, target, &[target]);
+        assert_eq!(losses[0], expected, "{label}: once");
+    }
 }
 
 /// The smallest shipped structure that stands on open ground (a gas extractor stands only over

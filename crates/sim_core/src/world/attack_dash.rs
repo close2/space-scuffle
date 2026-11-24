@@ -48,7 +48,7 @@ use crate::movement::{MovementInvariant, MovementLayer};
 use crate::upgrades::ATTACK_DASH_ABILITY_SLUG;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::SimWorld;
-use sim_map::{MapError, PathRequestWithVision, VisibilityState};
+use sim_map::{MapError, PathRequestWithVision};
 use sim_types::{AttackDashSpec, EntityId, SimScalar, Tick, UnitOrder};
 
 impl SimWorld {
@@ -92,7 +92,7 @@ impl SimWorld {
     fn attack_dash_ready(&self, entity: &Entity) -> Option<AttackDashSpec> {
         if !entity.is_alive()
             || !entity.is_completed
-            || entity.is_loaded_in_transport()
+            || entity.is_hidden()
             || entity.channeling_remaining_ticks > 0
             || entity.is_action_locked()
             || entity.attack_dash_cooldown > 0
@@ -175,14 +175,6 @@ impl SimWorld {
         let Some(target_entity) = self.entities.get(&target) else {
             return false;
         };
-        if !Self::is_entity_targetable(target_entity, &self.map, &self.vision_maps, entity.owner) {
-            return false;
-        }
-        let Some(vision) = self.vision_maps.get(entity.owner) else {
-            return true;
-        };
-        self.map
-            .world_to_cell(target_entity.position)
-            .is_ok_and(|(cx, cy)| vision.visibility_at(cx, cy) == VisibilityState::Visible)
+        Self::passes_weapon_filters(target_entity, &self.map, &self.vision_maps, entity.owner)
     }
 }

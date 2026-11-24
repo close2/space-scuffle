@@ -758,7 +758,7 @@ fn seeded_vision(map: &GameMap, rng: &mut ChaCha8Rng) -> PlayerVisionMap {
                 MoverType::Ground
             },
             sight_radius: SimScalar::from_num(rng.gen_range::<i32, _>(4..12)),
-            is_detector: false,
+            detection_radius: SimScalar::ZERO,
         };
         vision.apply_vision_source(map, &source);
     }

@@ -322,6 +322,71 @@ fn s16_projectile_speed_must_be_positive() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Plan `2026-11-24-weapon-validation` D-1: an instant weapon has no missile, so a missile
+/// validation it authors would be silently meaningless; validation refuses it, naming the
+/// field. The first shipped instant weapon is edited, once with each flag cleared.
+#[test]
+fn an_instant_weapon_authoring_missile_validation_is_refused() {
+    for flags in [
+        "(weapon: false, teleport: true)",
+        "(weapon: true, teleport: false)",
+    ] {
+        assert_rejected(
+            UNITS,
+            "projectile_speed: None,",
+            &format!("projectile_speed: None,\n                missile_validation: {flags},"),
+            "missile_validation",
+        );
+    }
+}
+
+/// P-5 (plan `2026-11-24-weapon-validation` §2.3, D-6): every shipped missile validates both
+/// the weapon and teleports in flight (5.0.14's `CEffectLaunchMissile` defaults, `core`
+/// EffectData:100–101), except the Brood Lord's, whose three missiles clear `ValidateWeapon`
+/// (`liberty` EffectData:2668, :2749, :2780) and validate at impact instead; no instant weapon
+/// authors the field. Mode weapons (a siege mode's override) are included.
+#[test]
+fn missile_validation_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut brood_missiles = 0;
+    for archetype in world.catalog.archetypes() {
+        let brood = archetype
+            .sc2_analogue()
+            .is_some_and(|analogue| analogue.starts_with("Brood Lord"));
+        let modes = archetype.modes.iter().flat_map(|mode| {
+            [
+                mode.ground_weapon_override.as_ref(),
+                mode.air_weapon_override.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(modes) {
+            let slug = &archetype.slug;
+            let expected = if brood && weapon.projectile_speed.is_some() {
+                brood_missiles += 1;
+                sim_types::MissileValidation {
+                    weapon: false,
+                    teleport: true,
+                }
+            } else {
+                sim_types::MissileValidation::default()
+            };
+            assert_eq!(
+                weapon.missile_validation, expected,
+                "{slug}'s {} validates as 5.0.14's missiles do",
+                weapon.name
+            );
+        }
+    }
+    assert!(
+        brood_missiles > 0,
+        "the Brood Lord analogue's missiles are shipped"
+    );
+    Ok(())
+}
+
 #[test]
 fn s16_weapon_ranges_and_cadence_must_be_usable() -> Result<(), Box<dyn std::error::Error>> {
     // The first firing arc a shipped structure states, whatever its value.
@@ -1800,5 +1865,169 @@ fn b90_weapon_movement_follows_starcraft() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+/// P-11 (plan `2026-11-23-vision-and-detection` §2.3): 5.0.14 sets `Visibility Visible` on
+/// every damage effect of a unit on the air plane (air units and the Colossus, `liberty`
+/// EffectData:2421, :1715, :2229, :2589, :2788, :2566, :1984, :125, `void` :1807, :2935,
+/// `voidmulti` :2264, …), each revealing its attacker for `AttackReveal`'s 3 Normal s (`core`
+/// BehaviorData:237–240), 54 whole ticks; every other weapon keeps the `Snapshot` default, and no
+/// shipped weapon is `Hidden`.
+#[test]
+fn attack_visibility_follows_starcraft() -> TestResult {
+    let catalog =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    let mut visible = 0;
+    let air_plane = |mover: MoverType| matches!(mover, MoverType::Air | MoverType::CliffWalker);
+    for arch in catalog.archetypes() {
+        let own = [&arch.weapon, &arch.ground_weapon, &arch.air_weapon]
+            .into_iter()
+            .flatten()
+            .map(|weapon| (arch.mover_type, weapon));
+        // A mode's weapons fire on the plane the mode puts the unit on.
+        let modes = arch.modes.iter().flat_map(|mode| {
+            let mover = mode.mover_type_override.unwrap_or(arch.mover_type);
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .filter_map(|weapon| weapon.as_ref().and_then(Option::as_ref))
+                .map(move |weapon| (mover, weapon))
+        });
+        for (mover, weapon) in own.chain(modes) {
+            let expected = if air_plane(mover) {
+                visible += 1;
+                sim_types::AttackVisibility::Visible { reveal_ticks: 54 }
+            } else {
+                sim_types::AttackVisibility::Snapshot
+            };
+            assert_eq!(
+                weapon.attack_visibility, expected,
+                "{} ({mover:?}) {}",
+                arch.slug, weapon.name
+            );
+        }
+    }
+    assert!(visible > 0, "the shipped catalog has air-plane weapons");
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 weapons whose `OnlyFireAtAttackOrderTarget` or `LockTurretWhileFiring`
+/// differs from the engine defaults, resolved through the override chain with XML comments
+/// stripped: `(analogue, fires_at_other_targets, locks_turret_while_firing, source)` (plan
+/// `2026-11-24-fire-rules` §2.3, B-180, B-179). Every weapon of every other archetype, and every
+/// mode's weapon, has the defaults: `Options OnlyFireAtAttackOrderTarget 1` is on the `CWeapon`
+/// default (`core` WeaponData:21), and `LockTurretWhileFiring` appears only on the Hellion's
+/// `InfernalFlameThrower`. The Void Ray's options that would clear the target condition are
+/// commented out (`void` WeaponData:172–173), and the Siege Tank's hidden `90mmCannonsFake`, which
+/// clears it, is not modelled (B-198).
+const SC2_FIRE_RULES: [(&str, bool, bool, &str); 5] = [
+    (
+        "Phoenix",
+        true,
+        false,
+        "IonCannons OnlyFireAtAttackOrderTarget 0: libertymulti WeaponData:21, swarm WeaponData:178",
+    ),
+    (
+        "Immortal",
+        true,
+        false,
+        "PhaseDisruptors OnlyFireAtAttackOrderTarget 0: voidmulti WeaponData:206, balancemulti \
+         WeaponData:186",
+    ),
+    (
+        "Colossus",
+        true,
+        false,
+        "ThermalLances OnlyFireAtAttackOrderTarget 0: voidmulti WeaponData:257, balancemulti \
+         WeaponData:230",
+    ),
+    (
+        "Planetary Fortress",
+        true,
+        false,
+        "TwinIbiksCannon OnlyFireAtAttackOrderTarget 0: liberty WeaponData:140",
+    ),
+    (
+        "Hellion",
+        false,
+        true,
+        "InfernalFlameThrower LegacyOptions LockTurretWhileFiring 1: liberty WeaponData:590",
+    ),
+];
+
+/// P-8 of plan `2026-11-24-fire-rules`: every shipped weapon's `fires_at_other_targets` and
+/// `locks_turret_while_firing` equal §2.3's table, the defaults for every unlisted analogue and
+/// every mode's weapon.
+#[test]
+fn b180_b179_fire_rules_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, _, source) in SC2_FIRE_RULES {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    let defaults = (false, false);
+    let default_source = "core WeaponData:21, no LockTurretWhileFiring";
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_FIRE_RULES
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue);
+        let (expected, source) =
+            listed.map_or((defaults, default_source), |row| ((row.1, row.2), row.3));
+        // A mode's weapon is another 5.0.14 weapon; no modelled one differs from the defaults.
+        let checks = own_weapons(archetype)
+            .map(|weapon| (weapon, expected, source))
+            .chain(mode_weapons(archetype).map(|weapon| (weapon, defaults, default_source)));
+        for (weapon, expected, source) in checks {
+            assert_eq!(
+                (
+                    weapon.fires_at_other_targets,
+                    weapon.locks_turret_while_firing
+                ),
+                expected,
+                "{} {}: OnlyFireAtAttackOrderTarget (inverted) and LockTurretWhileFiring as \
+                 StarCraft II's weapon ({source})",
+                archetype.slug,
+                weapon.name,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// P-11 of plan `2026-11-24-fire-rules` (D-7): a lock needs a turret to lock, and a weapon that
+/// removes its attacker when it fires may not fire at a target its attack order did not name;
+/// each refusal names its field.
+#[test]
+fn fire_rule_refusals_name_their_field() {
+    assert_rejected(
+        UNITS,
+        "has_turret: false,",
+        "has_turret: false, locks_turret_while_firing: true,",
+        "locks_turret_while_firing",
+    );
+    assert_rejected(
+        UNITS,
+        "suicide_on_attack: true,",
+        "suicide_on_attack: true, fires_at_other_targets: true,",
+        "fires_at_other_targets",
+    );
+}
+
+/// P-11 of plan `2026-11-24-fire-rules`: a turreted weapon may lock its turret, and any weapon
+/// that does not remove its attacker may fire at other targets; both fields may be set together.
+#[test]
+fn fire_rules_are_accepted_where_they_make_sense() -> TestResult {
+    let edited = UNITS.replacen(
+        "has_turret: true,",
+        "has_turret: true, locks_turret_while_firing: true, fires_at_other_targets: true,",
+        1,
+    );
+    assert_ne!(edited, UNITS, "premise: the shipped catalog has a turret");
+    UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &edited, STRUCTURES)?;
     Ok(())
 }

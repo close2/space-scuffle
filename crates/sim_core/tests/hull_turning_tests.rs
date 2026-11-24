@@ -117,7 +117,6 @@ fn unit_ron(
             supply_provided: 0,
             build_time_ticks: 100,
             weapon: {weapon},
-            is_detector: false,
         )"#
     )
 }

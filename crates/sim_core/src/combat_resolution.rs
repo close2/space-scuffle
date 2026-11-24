@@ -18,19 +18,32 @@
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
 //! 4. An attacker-centred area ([`SplashImpact::Attacker`]) is the only damage of its shot: no
 //!    direct strike, so no weapon hit effect; its target is struck by the area like any other
-//!    unit in it (plan `2026-11-23-splash-centres` D-1), or, when it stands on another cliff
-//!    level and the area says so, by the area's other-level strike, which is part of the area
+//!    unit in it (plan `2026-11-23-splash-centres` D-1), or, when it shares no cliff level with
+//!    the release position and the area says so, by the area's other-level strike, which is part of the area
 //!    and passes the area's own filters (plan `2026-11-23-splash-cliff-levels` D-3).
 //! 5. An area with a target radius condition opens only around a target whose collision radius
 //!    is below it; otherwise it searches nothing and publishes nothing (D-3).
-//! 6. An area whose `cliff` is `Same` strikes only units on the cliff level of a search point
-//!    that reaches them (plan `2026-11-23-splash-cliff-levels` D-1).
+//! 6. An area whose `cliff` is `Same` strikes only units whose cliff span overlaps the span of
+//!    a search point that reaches them: a ramp cell spans both its landings, and an area on the
+//!    air plane, or a unit in the air, spans every level (owner answer Q0099 1(c), 2(b); plan
+//!    `2026-11-24-owner-answers-cliff-and-vision` D-2). The level is read at the search point
+//!    (Q0099 3(a)).
+//! 7. A projectile whose target is lost lands at the last tracked point unless its weapon says
+//!    `Fizzle` (plan `2026-11-23-vision-and-detection` D-1).
+//! 8. A strike by a `Visible` weapon reveals its attacker to the struck unit's owner for the
+//!    weapon's `reveal_ticks`, recorded before the strike's retaliation runs, so the response
+//!    of the same tick sees it (plan `2026-11-23-vision-and-detection` D-5).
+//! 9. A missile loses its target when the target teleports after the launch, unless its weapon
+//!    clears `missile_validation.teleport`, and when the target fails the weapon's filters,
+//!    unless its weapon clears `missile_validation.weapon`; a missile that does not validate the
+//!    weapon strikes only a target that passes it at impact (plan `2026-11-24-weapon-validation`
+//!    D-4).
 
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     charge_random_delay, fires_without_attack_order, mitigate_weapon_strike, raw_strike_damage,
-    shares_combat_plane, splash_raw_damage, step_entity_weapon, Mandate, WeaponTarget,
+    shares_combat_plane, splash_raw_damage, step_entity_weapon, within_band, Mandate, WeaponTarget,
 };
 use crate::entity::{
     ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
@@ -38,12 +51,12 @@ use crate::entity::{
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
-use sim_map::{CliffLevel, PlayerVisionMap, SimMap};
+use sim_map::{CliffSpan, PlayerVisionMap, SimMap};
 use sim_types::{
-    AbilitySource, CombatEventVisual, EffectContext, EffectSource, EffectTarget, EntityId,
-    LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior,
-    SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact, SplashShape, StrikeEnds, Tick,
-    UnitOrder, UnitTypeId, WeaponVisualKind,
+    AbilitySource, AttackVisibility, CombatEventVisual, EffectContext, EffectSource, EffectTarget,
+    EntityId, LineView, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
+    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashCliff, SplashImpact,
+    SplashShape, StrikeEnds, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -62,6 +75,9 @@ struct TargetSnapshot {
     damageable: bool,
     /// Requires detection before anyone may aim at it.
     cloaked: bool,
+    /// For each player, whether the entity's own attacks reveal it to that player (B-55), as
+    /// [`Entity::is_attack_revealed_to`] at the start of the weapon phase.
+    attack_revealed: PerPlayer<bool>,
 }
 
 /// One discharged weapon waiting for dispatch.
@@ -145,11 +161,11 @@ pub(crate) struct CombatWorkspace {
     // PERFORMANCE RATIONALE:
     // Why: An area kept to its level compares each unit in reach with the level of every search
     // point, and a strike must not allocate.
-    // What: The levels of the current strike's search points, read once per strike beside the
-    // points, in the same order.
+    // What: The cliff spans of the current strike's search points, read once per strike beside
+    // the points, in the same order.
     // Trade-off: One more buffer held at its high-water mark (a line's point count).
-    /// Cliff level of each of the current strike's search points, for an area kept to its level.
-    splash_levels: Vec<CliffLevel>,
+    /// Cliff span of each of the current strike's search points, for an area kept to its level.
+    splash_levels: Vec<CliffSpan>,
     /// Units with pending line searches this tick, in `EntityId` order.
     line_owners: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
@@ -206,17 +222,43 @@ struct StrikeContext<'a> {
 }
 
 impl StrikeContext<'_> {
-    /// Whether `viewer`'s weapons may strike the entity `snapshot` describes: it passes the
-    /// damage gate and, if cloaked, is revealed to `viewer`.
+    /// Whether `viewer`'s weapons may strike the entity `snapshot` describes: the weapon filter
+    /// of [`SimWorld::passes_weapon_filters`] on the snapshot. It passes the damage gate, is
+    /// seen by `viewer` (its cell `Visible`, or attack-revealed) and, if cloaked, is revealed
+    /// to `viewer` (plan `2026-11-24-weapon-validation` D-3).
     fn is_available(&self, viewer: PlayerId, snapshot: TargetSnapshot) -> bool {
+        let revealed = viewer
+            .slot()
+            .is_some_and(|slot| snapshot.attack_revealed[slot]);
         snapshot.damageable
+            && SimWorld::sees_point(
+                self.map,
+                self.vision_maps,
+                viewer,
+                snapshot.position,
+                revealed,
+            )
             && (!snapshot.cloaked
                 || SimWorld::is_cloak_revealed(
                     self.map,
                     self.vision_maps,
                     viewer,
                     snapshot.position,
+                    revealed,
                 ))
+    }
+}
+
+/// The cliff levels a position counts as for an area kept to its level, as the plane or mover
+/// type `mover` reads them: every level in the air ([`CliffSpan::ALL`]: an air blast and an air
+/// unit ignore cliff levels, owner answer Q0099 2(b)), and otherwise the ground's span under
+/// `pos` (a ramp cell spans both its landings, Q0099 1(c)). A `CliffWalker` stands on the ground
+/// and keeps the ground's span (plan `2026-11-24-owner-answers-cliff-and-vision` D-2, §14 F-2).
+fn level_span(map: &SimMap, pos: SimVec2, mover: MoverType) -> CliffSpan {
+    if mover == MoverType::Air {
+        CliffSpan::ALL
+    } else {
+        map.cliff_span_at(pos)
     }
 }
 
@@ -406,10 +448,7 @@ impl SimWorld {
     /// [`Self::advance_pending_lines`]).
     fn pending_line_weapon(&self, id: EntityId, plane: MoverType) -> Option<(WeaponSpec, String)> {
         let entity = self.entities.get(&id)?;
-        if !entity.is_alive()
-            || entity.is_loaded_in_transport()
-            || entity.channeling_remaining_ticks > 0
-        {
+        if !entity.is_alive() || entity.is_hidden() || entity.channeling_remaining_ticks > 0 {
             return None;
         }
         let rate = entity.attack_rate_multiplier().ok()?;
@@ -442,6 +481,9 @@ impl SimWorld {
                     mover,
                     damageable: Self::is_damageable(entity),
                     cloaked: entity.is_concealed(),
+                    attack_revealed: PerPlayer::from_fn(|slot| {
+                        entity.is_attack_revealed_to(slot.id())
+                    }),
                 },
             ));
         }
@@ -474,7 +516,7 @@ impl SimWorld {
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
                 || entity.is_action_locked()
-                || entity.is_loaded_in_transport()
+                || entity.is_hidden()
                 || !entity.is_completed
             {
                 continue;
@@ -485,7 +527,7 @@ impl SimWorld {
 
             // A swing stays bound to the target it started on. Otherwise the orders decide
             // (plan `2026-11-23-turret-wind-up` D-2).
-            let ordered = Self::ordered_target(combat, entity, arch);
+            let ordered = Self::ordered_target(&context, combat, entity, arch, attack_mult);
             let mandate = ordered.map_or(Mandate::AttackOrder, |(_, mandate)| mandate);
             let target_opt_id = if let WeaponPhase::Windup { target_id, .. } = entity.weapon_phase {
                 Some(target_id)
@@ -547,6 +589,70 @@ impl SimWorld {
         }
     }
 
+    /// The target `entity` (of archetype `arch`, its attack rate `attack_rate`) works against
+    /// inside an attack order on `target` (plan `2026-11-24-fire-rules` D-4, B-180).
+    ///
+    /// The order's target whenever the weapon can work against it this tick: it is available to
+    /// the weapon ([`StrikeContext::is_available`], which asks for vision) and lies in the
+    /// engagement band, with no slop. Otherwise the weapon's own target, which acquisition keeps
+    /// only for a weapon that may fire at other targets and, while the unit chases, fires while
+    /// moving ([`Entity::weapon_target`]), with [`Mandate::OwnInitiative`]: the target is not the
+    /// order's, so a hull weapon would not turn the hull. With neither, the order's target, as
+    /// before: the weapon idles until it can work against it.
+    fn attack_order_target(
+        context: &StrikeContext<'_>,
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        attack_rate: AttackRate,
+        target: EntityId,
+    ) -> (EntityId, Mandate) {
+        let ordered = (target, Mandate::AttackOrder);
+        let Some(own) = entity.weapon_target else {
+            return ordered;
+        };
+        if Self::can_work(context, combat, entity, arch, attack_rate, target) {
+            return ordered;
+        }
+        let licensed = combat.snapshot(own).is_some_and(|snapshot| {
+            arch.weapon_against(snapshot.mover, entity.active_siege_weapon())
+                .is_some_and(|weapon| weapon.fires_at_other_targets)
+        });
+        if licensed {
+            (own, Mandate::OwnInitiative)
+        } else {
+            ordered
+        }
+    }
+
+    /// Whether `entity` (of archetype `arch`) can work against `target` this tick: the weapon it
+    /// would use against the target's plane (range resolved for its owner's upgrades) is
+    /// available to it and the target lies in its engagement band, with no slop.
+    fn can_work(
+        context: &StrikeContext<'_>,
+        combat: &CombatWorkspace,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        attack_rate: AttackRate,
+        target: EntityId,
+    ) -> bool {
+        let Some(snapshot) = combat.snapshot(target) else {
+            return false;
+        };
+        let Some(weapon) =
+            Self::resolved_weapon(context.upgrades, entity, arch, snapshot.mover, attack_rate)
+        else {
+            return false;
+        };
+        context.is_available(entity.owner, snapshot)
+            && within_band(
+                entity.position.distance(snapshot.position),
+                weapon.spec.min_range,
+                weapon.max_range,
+                snapshot.radius + arch.collision_radius,
+            )
+    }
+
     /// The target `entity` (of archetype `arch`) works against when it is not mid-swing, and why
     /// (plan `2026-11-23-turret-wind-up` D-2, B-90). An attack order names its target; a holding
     /// unit works against its `current_target` (`StarCraft` II's Hold Position acquires for it);
@@ -554,14 +660,24 @@ impl SimWorld {
     /// outside an attack order ([`fires_without_attack_order`], the weapon `entity` would use
     /// against the target's plane) works against the `current_target` acquisition tracks for it
     /// ([`Mandate::OwnInitiative`]); every other weapon works against nothing. The mount plays no
-    /// part.
+    /// part. Inside an attack order, a weapon that may fire at other targets works against its
+    /// own target while it cannot work against the order's ([`Self::attack_order_target`]).
     fn ordered_target(
+        context: &StrikeContext<'_>,
         combat: &CombatWorkspace,
         entity: &Entity,
         arch: &UnitArchetype,
+        attack_rate: AttackRate,
     ) -> Option<(EntityId, Mandate)> {
         if let Some(UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front() {
-            return Some((*target, Mandate::AttackOrder));
+            return Some(Self::attack_order_target(
+                context,
+                combat,
+                entity,
+                arch,
+                attack_rate,
+                *target,
+            ));
         }
         let current = entity.current_target?;
         if entity.is_on_hold() {
@@ -635,7 +751,7 @@ impl SimWorld {
         let Some(pending) = entity.pending_strikes.take() else {
             return;
         };
-        if !entity.is_alive() || entity.is_loaded_in_transport() {
+        if !entity.is_alive() || entity.is_hidden() {
             return;
         }
         if pending.ticks_until_next > 1 {
@@ -856,6 +972,10 @@ impl SimWorld {
         self.presentation.record_projectile(id, shot.source);
 
         let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
+        let target_teleport_count = self
+            .entities
+            .get(&shot.target)
+            .map_or(0, |target| target.teleport_count);
         self.projectiles.push(ActiveProjectile {
             id,
             owner: shot.owner,
@@ -870,6 +990,7 @@ impl SimWorld {
             source_slug: Some(shot.source_slug),
             remaining_lifetime_ticks,
             strikes: shot.strikes,
+            target_teleport_count,
         });
     }
 
@@ -965,14 +1086,16 @@ impl SimWorld {
     /// Applies the strikes `source` carries to `target_id`, then the target's retaliation.
     ///
     /// Returns where the shot landed, or `None` when the target no longer exists. A target
-    /// that became unavailable after the shot was prepared, typically killed earlier this
-    /// phase, takes no strikes, but the landed hit still carries any area damage.
+    /// that fails the weapon filter when the hit lands ([`Self::is_weapon_target_available`]:
+    /// typically killed earlier this phase, or, for a missile that does not validate the
+    /// weapon in flight, cloaked undetected or unseen at the landing) takes no strikes, but the
+    /// landed hit still carries any area damage.
     fn apply_weapon_hit(
         &mut self,
         source: HitSource<'_>,
         target_id: EntityId,
     ) -> Option<ResolvedHit> {
-        let available = self.is_entity_available_for_combat(source.owner, target_id);
+        let available = self.is_weapon_target_available(source.owner, target_id);
         let target = self.entities.get_mut(&target_id)?;
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
         let hit = ResolvedHit {
@@ -998,11 +1121,45 @@ impl SimWorld {
                 &mut self.presentation,
             );
         }
+        self.record_attack_reveal(source, target_id);
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
         self.run_weapon_hit_effects(source, target_id, hit.position);
         Some(hit)
+    }
+
+    /// Records that a strike of `source` landed on `victim_id`: a weapon whose attack visibility
+    /// is `Visible` reveals its attacker to the victim's owner for its reveal ticks, raising the
+    /// attacker's counter for that player to them and never lowering it (`StarCraft` II's
+    /// `AttackReveal`, plan `2026-11-23-vision-and-detection` D-5). A strike reduced to nothing
+    /// by a barrier, shields or armour still counts, as the damage effect ran. Nothing happens
+    /// for another weapon, a victim of the attacker's own player, or an attacker that is gone
+    /// or dead. The reveal goes to the struck unit's owner and that player's allies (owner
+    /// answer Q0101 4(b)); the simulation has no teams (`match_state.rs`), so a player's only
+    /// ally is itself (plan `2026-11-24-owner-answers-cliff-and-vision` D-6).
+    fn record_attack_reveal(&mut self, source: HitSource<'_>, victim_id: EntityId) {
+        let AttackVisibility::Visible { reveal_ticks } = source.weapon.attack_visibility else {
+            return;
+        };
+        let Some(viewer) = self
+            .entities
+            .get(&victim_id)
+            .map(|victim| victim.owner)
+            .filter(|&owner| owner != source.owner)
+        else {
+            return;
+        };
+        let Some(attacker) = source
+            .attacker
+            .and_then(|id| self.entities.get_mut(&id))
+            .filter(|attacker| attacker.is_alive())
+        else {
+            return;
+        };
+        if let Some(ticks) = attacker.attack_reveal_ticks.get_mut(viewer) {
+            *ticks = (*ticks).max(reveal_ticks);
+        }
     }
 
     /// Runs on `target_id` every weapon hit effect an upgrade the attacker's owner completed
@@ -1141,8 +1298,10 @@ impl SimWorld {
     /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
     /// nearest search point, and a unit in `struck` not at all (the game's `noMarkers` validator
     /// on the damage effect); each unit struck is appended to `struck`. An area kept to its level
-    /// ([`SplashCliff::Same`]) counts only the search points on the unit's own cliff level (plan
-    /// `2026-11-23-splash-cliff-levels` D-1). Spares `area.primary`, already struck directly,
+    /// ([`SplashCliff::Same`]) counts only the search points whose cliff span overlaps the
+    /// unit's: a ramp cell spans both its landings, and an area on the air plane or a unit in the
+    /// air spans every level (plan `2026-11-23-splash-cliff-levels` D-1; owner answer Q0099
+    /// 1(c), 2(b), plan `2026-11-24-owner-answers-cliff-and-vision` D-2). Spares `area.primary`, already struck directly,
     /// and the attacker, which never damages itself. Each struck entity then runs its
     /// retaliation against the attacker.
     fn strike_area(
@@ -1159,7 +1318,11 @@ impl SimWorld {
         levels.clear();
         let same_level = splash.cliff == SplashCliff::Same;
         if same_level {
-            levels.extend(points.iter().map(|&point| self.map.cliff_level_at(point)));
+            levels.extend(
+                points
+                    .iter()
+                    .map(|&point| level_span(&self.map, point, area.plane)),
+            );
         }
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -1187,11 +1350,11 @@ impl SimWorld {
             if same_level {
                 // Only a unit already in reach reads its level, so the map is read once per
                 // unit the area could strike, not once per entity.
-                let own = self.map.cliff_level_at(other.position);
+                let own = level_span(&self.map, other.position, other_arch.mover_type);
                 let Some(on_level) = points
                     .iter()
                     .zip(&levels)
-                    .filter(|&(_, &level)| level == own)
+                    .filter(|&(_, &level)| level.overlaps(own))
                     .map(|(point, _)| edge_distance(point))
                     .min()
                     .filter(|&distance| distance <= reach)
@@ -1211,8 +1374,11 @@ impl SimWorld {
 
     /// The other-level strike of an attacker-centred area (plan `2026-11-23-splash-cliff-levels`
     /// D-3, `StarCraft` II's `BanelingVolatileBurstDirectFallbackSet` on `CliffLevelNotEqual`):
-    /// when `target_id` stands on another cliff level than the attacker's release position
-    /// (`source.origin`), the target takes `splash`'s strike directly, at the fraction of the
+    /// when `target_id`'s cliff span does not overlap that of the attacker's release position
+    /// (`source.origin`) on the area's plane, the exact complement of the area's level test (a
+    /// ramp spans both its landings and the air every level, plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` D-2), the target takes
+    /// `splash`'s strike directly, at the fraction of the
     /// first zone (distance zero), once, and runs its retaliation. It passes the area's own
     /// filters, as `strike_area` applies them, without their distance and level tests. It runs
     /// whether or not the area opened, and does nothing when the target is gone or on the
@@ -1227,14 +1393,17 @@ impl SimWorld {
         let Some(target) = self.entities.get(&target_id) else {
             return;
         };
-        if self.map.cliff_level_at(target.position) == self.map.cliff_level_at(source.origin)
-            || !Self::area_may_strike(source, splash, area, target_id, target)
-        {
-            return;
-        }
         let Ok(target_arch) = self.catalog.get(target.unit_type_id) else {
             return;
         };
+        if level_span(&self.map, target.position, target_arch.mover_type).overlaps(level_span(
+            &self.map,
+            source.origin,
+            area.plane,
+        )) || !Self::area_may_strike(source, splash, area, target_id, target)
+        {
+            return;
+        }
         let Some(raw) = self.area_raw_damage(source, splash, area, target_arch, SimScalar::ZERO)
         else {
             return;
@@ -1316,6 +1485,7 @@ impl SimWorld {
             if let Some(struck) = struck.as_deref_mut() {
                 struck.push(id);
             }
+            self.record_attack_reveal(source, id);
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }
@@ -1478,12 +1648,37 @@ impl SimWorld {
 
     /// Refreshes a projectile's aim point and returns the surface radius to stop at.
     ///
+    /// The target is followed while it passes the weapon's filters (5.0.14's `ValidateWeapon`;
+    /// [`Self::passes_weapon_filters`], vision included, so a target that walks into fog is lost)
+    /// or, for a weapon that clears `missile_validation.weapon` (the Brood Lord's missiles),
+    /// while it is alive and not loaded: such a missile follows it through fog, cloak and
+    /// invulnerability and leaves the filters to the impact ([`Self::apply_weapon_hit`]). It is
+    /// lost otherwise and, if the weapon validates teleports (`missile_validation.teleport`,
+    /// `ValidateTeleport`), when its teleport count moved on since the launch. The teleport is
+    /// checked before the aim point is refreshed, so a lost missile keeps the point where the
+    /// target stood before it (plan `2026-11-24-weapon-validation` D-4).
+    ///
     /// Returns `None` when the projectile disjoints because its target was lost.
     fn track_projectile_target(&mut self, proj: &mut ActiveProjectile) -> Option<SimScalar> {
         let Some(target_id) = proj.target_id else {
             return Some(SimScalar::ZERO);
         };
-        if self.is_entity_available_for_combat(proj.owner, target_id) {
+        let validation = proj.weapon_spec.missile_validation;
+        let teleported = validation.teleport
+            && self
+                .entities
+                .get(&target_id)
+                .is_some_and(|target| target.teleport_count != proj.target_teleport_count);
+        let followed = if validation.weapon {
+            self.is_weapon_target_available(proj.owner, target_id)
+        } else {
+            // [INF] A loaded target is not followed: its position is its transport's (plan
+            // `2026-11-24-weapon-validation` D-4, R-6).
+            self.entities
+                .get(&target_id)
+                .is_some_and(|target| target.is_alive() && !target.is_loaded_in_transport())
+        };
+        if followed && !teleported {
             let mut radius = SimScalar::HALF;
             if let Some(target) = self.entities.get(&target_id) {
                 proj.target_pos = target.position;
@@ -1494,8 +1689,8 @@ impl SimWorld {
             }
             return Some(radius);
         }
-        // Target became unavailable (cargo loaded, cloaked without detector, invulnerable,
-        // died, or expired).
+        // Target became unavailable (hidden in cargo or a structure, cloaked without detector,
+        // invulnerable, died, or expired) or teleported.
         match proj.weapon_spec.target_loss_behavior {
             ProjectileTargetLossBehavior::Fizzle => None,
             ProjectileTargetLossBehavior::ImpactLastKnownPosition => {
@@ -1509,6 +1704,10 @@ impl SimWorld {
                 proj.target_id = Some(new_id);
                 proj.target_pos = new_pos;
                 proj.target_mover = new_mover;
+                proj.target_teleport_count = self
+                    .entities
+                    .get(&new_id)
+                    .map_or(0, |target| target.teleport_count);
                 Some(new_radius)
             }
         }
@@ -1537,13 +1736,7 @@ impl SimWorld {
                 continue;
             };
             if candidate.owner == proj.owner
-                || !Self::is_target_available_for_combat(
-                    &self.entities,
-                    &self.map,
-                    &self.vision_maps,
-                    proj.owner,
-                    candidate_id,
-                )
+                || !Self::passes_weapon_filters(candidate, &self.map, &self.vision_maps, proj.owner)
             {
                 continue;
             }
@@ -1681,6 +1874,7 @@ mod tests {
             source_slug: None,
             remaining_lifetime_ticks: u16::MAX,
             strikes: 1,
+            target_teleport_count: 0,
         });
         let unit = EffectTarget::Unit(target);
         world.effects.missiles.push(ActiveMissile {
@@ -1701,6 +1895,9 @@ mod tests {
         let (mut projectile_step, mut missile_step) = (None, None);
         for step in 1..=40_u32 {
             world.entities.get_mut(&target).expect("alive").position.x += receding;
+            // The projectile follows only a target its owner sees (plan
+            // `2026-11-24-weapon-validation` D-3): the target's own sight shows its cell.
+            world.update_vision();
             if projectile_step.is_none() {
                 world.advance_projectiles();
                 if world.projectiles.is_empty() {

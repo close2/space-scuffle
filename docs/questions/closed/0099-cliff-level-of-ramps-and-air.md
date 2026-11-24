@@ -26,3 +26,21 @@ Liberator's anti-air shot at a Viking over high ground with a second Viking over
 
 ## Answer
 
+- **1(c):** A unit on a ramp counts as **both** cliff levels (so a ramp never separates splash between high and low ground).
+- **2(b):** Air blasts **ignore cliff levels** (air-to-air splash does not miss across a ground cliff line).
+- **3(a):** The cliff level is read **at the blast's centre point**.
+
+## Resolution (2026-11-24)
+
+Built by plan [`2026-11-24-owner-answers-cliff-and-vision`](../../plans/2026-11-24-owner-answers-cliff-and-vision.md)
+(bug B-200, fixed; [evidence](../../evidence/2026-11-24-owner-answers-cliff-and-vision.md)):
+
+- **1(c):** a ramp cell counts as both of its landings: `GameMap::cliff_span_at` replaces `cliff_level_at` and returns
+  a span of levels, and a `SameCliff` area strikes a unit whose span overlaps that of a search point reaching it. The
+  Baneling analogue's direct strike on a target on another level is the exact complement. Commit `c0094e7e` (WP1).
+- **2(b):** an area on the air plane and a unit in the air span every level, so air blasts ignore cliff levels. A
+  Colossus analogue stands on the ground and keeps the ground's level (plan §14 F-2). Commit `b74aaa10` (WP2).
+- **3(a):** already built by plan `2026-11-23-splash-cliff-levels`, commit `e839bb4c`: the level is read at each
+  search point. WP1 adds the test that pins it (`the_level_is_read_at_the_blast_centre`).
+
+No measured world, golden or sandbox checksum moved.

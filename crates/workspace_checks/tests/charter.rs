@@ -73,13 +73,15 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog.rs",
-        count: 74,
-        reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load",
+        count: 76,
+        reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load \
+                 (the two detection radii: plan `2026-11-23-vision-and-detection` D-2)",
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog/validation.rs",
-        count: 47,
-        reason: "authoring: range checks on catalog decimals before their fixed-point conversion",
+        count: 49,
+        reason: "authoring: range checks on catalog decimals before their fixed-point conversion \
+                 (the detection radius: plan `2026-11-23-vision-and-detection` D-2)",
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog/placement_rules.rs",

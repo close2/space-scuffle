@@ -9,13 +9,18 @@
 //! the vision maps it leaves. Its bookkeeping is derived state: the checksum reads
 //! `vision_maps` and `known_blocked_cells`, never the counted-source lists.
 //!
+//! The phase also counts down every entity's attack-reveal counters (plan
+//! `2026-11-23-vision-and-detection` D-5) before anything reads vision: a reveal set by a strike
+//! in phase 7 of tick t is seen by that tick's retaliation and by acquisition on the following
+//! `reveal_ticks - 1` ticks, so it is in force for exactly `reveal_ticks` ticks.
+//!
 //! # Invariants
 //! - Incremental recasting leaves every counter and state exactly as a full recount would.
 //! - Sight lists are sorted by ID, with watchtowers at the top of the ID range.
 
 use crate::SimWorld;
 use sim_map::{watchtower_source, CellFlags, VisionSource};
-use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimVec2, VisibilityState};
+use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimScalar, SimVec2, VisibilityState};
 
 /// One sight source already counted into a player's vision map.
 #[derive(Clone, Copy)]
@@ -48,7 +53,8 @@ pub(crate) struct VisionWorkspace {
 impl SimWorld {
     /// Assigns each watchtower from the ground units standing on the map this tick.
     ///
-    /// Air units overfly towers, and structures and transported cargo do not occupy them.
+    /// Air units overfly towers, and structures and hidden units (transported cargo, gatherers
+    /// inside a structure) do not occupy them.
     // PERFORMANCE RATIONALE:
     // Why: This runs every tick, and most maps have few towers while battles have many units.
     // What: Skip entirely on towerless maps; otherwise reuse one scratch buffer of positions.
@@ -59,7 +65,7 @@ impl SimWorld {
         }
         self.vision.watchtower_units.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() || !entity.is_completed {
+            if entity.is_hidden() || !entity.is_completed {
                 continue;
             }
             let occupies = self.catalog.get(entity.unit_type_id).is_ok_and(|arch| {
@@ -78,11 +84,23 @@ impl SimWorld {
             .update_watchtower_capture(&self.vision.watchtower_units);
     }
 
-    /// Lists every sight source for this tick in ID order, watchtowers after all entities.
+    /// Takes one tick off every entity's nonzero attack-reveal counters (plan
+    /// `2026-11-23-vision-and-detection` D-5).
+    fn count_down_attack_reveals(&mut self) {
+        for entity in self.entities.values_mut() {
+            for ticks in &mut entity.attack_reveal_ticks {
+                *ticks = ticks.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Lists every sight source for this tick in ID order, watchtowers after all entities. A
+    /// hidden unit sees nothing: cargo, and a gatherer inside a structure (plan
+    /// `2026-11-24-hidden-harvesters` D-6, Q0107's default (2a)).
     fn collect_sights(&self, sights: &mut Vec<AppliedSight>) {
         sights.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() {
+            if entity.is_hidden() {
                 continue;
             }
             let Some(owner) = entity.owner.slot() else {
@@ -100,10 +118,21 @@ impl SimWorld {
                             arch,
                             entity.owner,
                         ),
-                        // A status may suppress detection (plan
-                        // `2026-11-10-spellcaster-mechanics` §6.4).
-                        is_detector: arch.is_detector
-                            && !entity.status_modifiers().suppress_detection,
+                        // A detector detects only once its construction completes (owner
+                        // answer Q0101 3(b); 5.0.14 hides the `Detector` button until then,
+                        // `Requirements="NotUnderConstruction"`; plan
+                        // `2026-11-24-owner-answers-cliff-and-vision` D-5, B-184); its sight is
+                        // unchanged meanwhile. The radius changes at completion, so
+                        // `sees_the_same` recasts the source on that tick. A status may
+                        // suppress detection (plan `2026-11-10-spellcaster-mechanics` §6.4).
+                        // Sight upgrades leave the detection radius as authored (plan
+                        // `2026-11-23-vision-and-detection` D-2).
+                        detection_radius: arch
+                            .detection_radius
+                            .filter(|_| {
+                                entity.is_completed && !entity.status_modifiers().suppress_detection
+                            })
+                            .unwrap_or(SimScalar::ZERO),
                     },
                 });
             }
@@ -128,8 +157,8 @@ impl SimWorld {
     ///
     /// Height only varies inside a ramp cell, so elsewhere the cell stands in for the position.
     fn sees_the_same(&self, a: &VisionSource, b: &VisionSource) -> bool {
-        if (a.mover_type, a.sight_radius, a.is_detector)
-            != (b.mover_type, b.sight_radius, b.is_detector)
+        if (a.mover_type, a.sight_radius, a.detection_radius)
+            != (b.mover_type, b.sight_radius, b.detection_radius)
         {
             return false;
         }
@@ -154,6 +183,7 @@ impl SimWorld {
     // Trade-off: One retained list of sources, and a full recount whenever terrain or a map is
     // edited outside this function. Counters and states end exactly as a full recount leaves them.
     pub fn update_vision(&mut self) {
+        self.count_down_attack_reveals();
         self.update_watchtower_control();
 
         let mut sights = std::mem::take(&mut self.vision.sights);

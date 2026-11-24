@@ -79,7 +79,9 @@ pub fn refresh_battle_fog(
 /// A unit is judged at the position it is drawn at, which is what the player would see. Only a
 /// [`Presence::Shown`] unit's bubble is drawn: a shimmering unit's look is its shimmer effect.
 /// Any unit not shown has its `selected` flag cleared on this frame, before the ring and the
-/// health bar read it.
+/// health bar read it. A housed unit, inside a structure while it gathers, is never shown, and it
+/// also leaves the selection while its control groups keep it (plan
+/// `2026-11-24-hidden-harvesters` D-10).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -98,6 +100,11 @@ pub fn apply_battle_fog(
         });
         if presence == Presence::Shown {
             continue;
+        }
+        if bubble.0.housed {
+            // Inside a structure, gathering: out of the selection, kept in its control groups
+            // (plan `2026-11-24-hidden-harvesters` D-10, Q0108's default (a)).
+            selection.leave(bubble.0.entity_id);
         }
         if selection.inspected() == Some(bubble.0.entity_id) {
             selection.stop_inspecting();

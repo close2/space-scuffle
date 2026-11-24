@@ -67,10 +67,12 @@ pub struct PlayerView {
     /// Abilities of the viewer's completed types that still need research, sorted by type and
     /// then ability index.
     pub ability_locks: Vec<AbilityLockView>,
-    /// Concealed entities of other players that the viewer detects now, sorted: each stands in
-    /// a cell that is `Visible` to the viewer and covered by one of the viewer's detectors. A
-    /// concealed entity not listed is hidden from the viewer (plan
-    /// `2026-11-09-effect-visualization` D-5). Never holds the viewer's own entities.
+    /// Concealed entities of other players that the viewer sees and detects now, sorted: each
+    /// stands in a cell covered by one of the viewer's detectors, and that cell is `Visible` to
+    /// the viewer or the entity is attack-revealed to it (plan
+    /// `2026-11-24-owner-answers-cliff-and-vision` D-4). A concealed entity not listed is hidden
+    /// from the viewer (plan `2026-11-09-effect-visualization` D-5). Never holds the viewer's
+    /// own entities.
     #[serde(default)]
     pub revealed: Vec<EntityId>,
     /// Readiness of every effect-tree ability (`AbilityEffectSpec::Effect`) of the viewer's
@@ -83,6 +85,12 @@ pub struct PlayerView {
     /// `2026-11-23-production-queue` D-10).
     #[serde(default)]
     pub rallies: Vec<RallyView>,
+    /// Living, uncarried entities of other players that their own attacks reveal to the viewer
+    /// now (plan `2026-11-23-vision-and-detection` D-5, D-6), sorted by ID: visible to the
+    /// viewer although their cell may not be; concealed ones still need `revealed`. Never holds
+    /// the viewer's own entities.
+    #[serde(default)]
+    pub attack_revealed: Vec<EntityId>,
 }
 
 impl PlayerView {
@@ -107,6 +115,7 @@ impl PlayerView {
         self.revealed.clear();
         self.cast_states.clear();
         self.rallies.clear();
+        self.attack_revealed.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -419,6 +428,7 @@ mod tests {
                 entity: EntityId(3),
                 point: [12.5, 7.25],
             }],
+            attack_revealed: vec![EntityId(21)],
         }
     }
 
@@ -429,6 +439,19 @@ mod tests {
         view.cast_states.clear();
         let text = ron::to_string(&view).expect("the view has no unserializable field");
         let legacy = text.replace(",revealed:[],cast_states:[]", "");
+        assert_ne!(legacy, text, "the field was removed from the text");
+        let back: PlayerView = ron::from_str(&legacy).expect("a missing list reads as empty");
+        assert_eq!(back, view);
+    }
+
+    /// Plan `2026-11-23-vision-and-detection` D-6: a view written before the attack-revealed
+    /// list existed reads it as empty.
+    #[test]
+    fn a_view_written_before_attack_revealed_existed_still_reads() {
+        let mut view = populated();
+        view.attack_revealed.clear();
+        let text = ron::to_string(&view).expect("the view has no unserializable field");
+        let legacy = text.replace(",attack_revealed:[]", "");
         assert_ne!(legacy, text, "the field was removed from the text");
         let back: PlayerView = ron::from_str(&legacy).expect("a missing list reads as empty");
         assert_eq!(back, view);

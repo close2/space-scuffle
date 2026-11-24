@@ -16,7 +16,7 @@
 #[path = "support/arena.rs"]
 mod arena;
 
-use sim_map::{CliffLevel, GameMap, MapCell, RampDir, RampProfile, CLIFF_LEVEL_HEIGHT};
+use sim_map::{CliffLevel, CliffSpan, GameMap, MapCell, RampDir, RampProfile, CLIFF_LEVEL_HEIGHT};
 use sim_types::{SimScalar, SimVec2};
 
 #[test]
@@ -218,12 +218,12 @@ fn diagonal_ramp_keeps_legacy_single_cell_behaviour() {
     );
 }
 
-/// Plan `2026-11-23-splash-cliff-levels` P-4 (D-2): a position on a ramp has the level of the
-/// ramp's lower landing, as each ramp cell stores it, everywhere on every cell of the run, for
-/// each cardinal direction and runs of one and three cells; the cell past the run's top has the
-/// upper level, the cell before its foot the lower one.
+/// Plan `2026-11-24-owner-answers-cliff-and-vision` P-1 (owner answer Q0099 1(c)): a position
+/// on a ramp spans both of the ramp's landings, everywhere on every cell of the run, for each
+/// cardinal direction and runs of one and three cells; the cell past the run's top spans the
+/// upper level only, the cell before its foot the lower one only.
 #[test]
-fn cliff_level_at_reads_the_lower_landing_on_every_ramp_cell() {
+fn cliff_span_at_covers_both_landings_on_every_ramp_cell() {
     let low = CliffLevel(1);
     let high = CliffLevel(2);
     // Sub-cell positions: the centre, and points near the low and high edges and the sides.
@@ -272,8 +272,8 @@ fn cliff_level_at_reads_the_lower_landing_on_every_ramp_cell() {
                         SimScalar::from_num(f64::from(y) + fy),
                     );
                     assert_eq!(
-                        map.cliff_level_at(pos),
-                        low,
+                        map.cliff_span_at(pos),
+                        CliffSpan { low, high },
                         "{dir:?} run {run} step {step} at ({fx}, {fy})"
                     );
                 }
@@ -285,11 +285,15 @@ fn cliff_level_at_reads_the_lower_landing_on_every_ramp_cell() {
                 )
             };
             assert_eq!(
-                map.cliff_level_at(centre(cell_of(run))),
-                high,
+                map.cliff_span_at(centre(cell_of(run))),
+                CliffSpan::single(high),
                 "{dir:?} top"
             );
-            assert_eq!(map.cliff_level_at(centre(cell_of(-1))), low, "{dir:?} foot");
+            assert_eq!(
+                map.cliff_span_at(centre(cell_of(-1))),
+                CliffSpan::single(low),
+                "{dir:?} foot"
+            );
         }
     }
 }

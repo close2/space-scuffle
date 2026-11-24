@@ -10,6 +10,7 @@
 use super::placement_rules::{
     PlacementRulesFile, ResourceFootprintDef, MAX_REACH_SIDE, MAX_RESOURCE_SIDE,
 };
+use super::CatalogError;
 use super::{
     PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
     UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
@@ -19,9 +20,9 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, Attribute, AttributeFlags, MoverType,
-    PlacementFlag, ProjectileTargetLossBehavior, ResourceKind, ShapeKind, SimAngle, SimScalar,
-    SplashCliff, SplashImpact, WeaponVisualKind,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackCommand, AttackVisibility, Attribute,
+    AttributeFlags, MissileValidation, MoverType, PlacementFlag, ProjectileTargetLossBehavior,
+    ResourceKind, ShapeKind, SimAngle, SimScalar, SplashCliff, SplashImpact, WeaponVisualKind,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -92,6 +93,23 @@ fn sight(definition: &str, field: &str, value: f64) -> SimResult<()> {
             definition,
             field,
             "must not exceed the maximum sight radius supported by vision",
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects an authored detection radius that is not above zero once quantized, or that vision
+/// would have to shorten (plan `2026-11-23-vision-and-detection` D-2). `None` detects nothing.
+fn detection(definition: &str, value: Option<f64>) -> SimResult<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    sight(definition, "detection_radius", value)?;
+    if SimScalar::from_num(value) <= SimScalar::ZERO {
+        return Err(invalid(
+            definition,
+            "detection_radius",
+            "must lie above zero; omit the field for a unit that does not detect",
         ));
     }
     Ok(())
@@ -632,6 +650,7 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
+        detection(&self.slug, self.detection_radius.map(f64::from))?;
         start_energy(
             &self.slug,
             f64::from(self.start_energy),
@@ -659,7 +678,33 @@ impl UnitArchetypeDef {
         for mode in self.modes.iter().chain(&self.capabilities.modes) {
             mode.validate(&self.slug)?;
         }
+        self.validate_stance_orders()?;
         self.validate_mode_abilities()
+    }
+
+    /// Every authored stance with Scan Move has Hold Position: both are commands of `StarCraft`
+    /// II's `move` ability (`core` AbilData:555-557), so no unit type has one without the other
+    /// (plan `2026-11-24-attack-orders` D-1). Checks the authored default stance and every mode.
+    fn validate_stance_orders(&self) -> SimResult<()> {
+        let modes = self.modes.iter().chain(&self.capabilities.modes);
+        let stances = self
+            .default_stance_orders
+            .map(|orders| (None, orders))
+            .into_iter()
+            .chain(modes.map(|mode| (Some(mode.mode_name.as_str()), mode.orders)));
+        for (mode, orders) in stances {
+            if orders.attack == AttackCommand::ScanMove && !orders.hold_position {
+                return Err(CatalogError::ScanMoveWithoutHoldPosition {
+                    definition: self.slug.clone(),
+                    stance: mode.map_or_else(
+                        || "default_stance_orders".to_owned(),
+                        |name| format!("modes.{name}.orders"),
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(())
     }
 
     /// A mode toggle switches one of the archetype's own modes and names the command that
@@ -909,6 +954,28 @@ impl WeaponSpecDef {
         }
     }
 
+    /// Checks the fire rules of plan `2026-11-24-fire-rules` (D-7): a lock needs a turret to lock
+    /// (5.0.14's only `LockTurretWhileFiring` weapon is turreted), and a weapon that removes its
+    /// attacker when it fires may not fire at a target its attack order did not name (its unit
+    /// would detonate on a target it never chose; no 5.0.14 weapon combines the two).
+    fn validate_fire_rules(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.locks_turret_while_firing && !self.has_turret {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.locks_turret_while_firing"),
+                "a weapon without a turret has no turret to lock",
+            ));
+        }
+        if self.fires_at_other_targets && self.suicide_on_attack {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.fires_at_other_targets"),
+                "a weapon that removes its attacker when it fires fires only at its order's target",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
     /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
     fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
@@ -953,6 +1020,13 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        if self.attack_visibility == (AttackVisibility::Visible { reveal_ticks: 0 }) {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.attack_visibility"),
+                "a visible attack reveals its attacker for at least one tick",
+            ));
+        }
         self.validate_random_delay(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
@@ -967,6 +1041,7 @@ impl WeaponSpecDef {
         }
         self.validate_arcs(definition, prefix)?;
         self.validate_turret(definition, prefix)?;
+        self.validate_fire_rules(definition, prefix)?;
         // B-123 (plan `2026-11-17-effect-snapshot-identity` D-7): the delivery path is chosen by
         // the speed, and an instant hit publishes its event by `visual_kind`, which has no event
         // for `Projectile`: such a weapon would fire with no look at all.
@@ -975,6 +1050,17 @@ impl WeaponSpecDef {
                 definition,
                 &format!("{prefix}.visual_kind"),
                 "an instant weapon publishes no projectile",
+            ));
+        }
+        // Plan `2026-11-24-weapon-validation` D-1: an instant weapon launches no missile, so a
+        // missile validation it authors would be read by nothing.
+        if self.projectile_speed.is_none()
+            && self.missile_validation != MissileValidation::default()
+        {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.missile_validation"),
+                "an instant weapon launches no missile to validate",
             ));
         }
         if let Some(speed) = self.projectile_speed {
@@ -1290,10 +1376,24 @@ impl StructureArchetypeDef {
         Ok(())
     }
 
+    /// Checks that only a gas extractor hides its harvesters (plan `2026-11-24-hidden-harvesters`
+    /// D-1): in 5.0.14 `HideHarvesters` is a flag of a resource behaviour, which only a structure
+    /// holding a resource carries.
+    fn validate_hidden_harvesters(&self) -> SimResult<()> {
+        if self.hides_harvesters && !self.is_gas_extractor {
+            return Err(CatalogError::HidesHarvestersWithoutExtractor {
+                definition: self.slug.clone(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         structure_attributes(&self.slug, &self.attributes)?;
         self.validate_auto_rally()?;
+        self.validate_hidden_harvesters()?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
         hp_regen_delay(
             &self.slug,
@@ -1348,6 +1448,7 @@ impl StructureArchetypeDef {
         self.validate_footprint_shape()?;
         self.validate_radius()?;
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        detection(&self.slug, self.detection_radius)?;
         structure_scan_range(
             &self.slug,
             self.ground_weapon.is_some() || self.air_weapon.is_some(),
@@ -1736,6 +1837,37 @@ mod tests {
             assert_eq!(refused.as_deref(), rejected, "{case}");
             structure.auto_rally = None;
         }
+        Ok(())
+    }
+
+    /// Plan `2026-11-24-hidden-harvesters` D-1: only a gas extractor may hide its harvesters; a
+    /// shipped extractor that hides them validates, and any other structure that does is refused
+    /// with the typed error naming it.
+    #[test]
+    fn only_a_gas_extractor_hides_its_harvesters() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::StructureCatalogFile;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        let extractor = file
+            .structures
+            .iter()
+            .position(|structure| structure.is_gas_extractor && structure.hides_harvesters)
+            .ok_or("real catalog has no extractor that hides its harvesters")?;
+        let other = file
+            .structures
+            .iter()
+            .position(|structure| !structure.is_gas_extractor)
+            .ok_or("real catalog has no structure that is not an extractor")?;
+        file.structures[extractor].validate()?;
+        let structure = &mut file.structures[other];
+        structure.hides_harvesters = true;
+        let slug = structure.slug.clone();
+        assert!(matches!(
+            structure.validate(),
+            Err(crate::error::SimCoreError::SpellCatalog(
+                crate::catalog::CatalogError::HidesHarvestersWithoutExtractor { definition }
+            )) if definition == slug
+        ));
         Ok(())
     }
 
@@ -4229,6 +4361,184 @@ mod weapon_movement_tests {
                 assert_eq!(
                     (weapon.allowed_movement, weapon.fires_outside_attack_order),
                     (AllowedMovement::Stopped, false),
+                    "{}",
+                    weapon.name
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "premise: the catalog has weapons");
+        Ok(())
+    }
+}
+
+/// Detection radii (plan `2026-11-23-vision-and-detection` D-2): a unit or structure row that
+/// detects authors a radius above zero and at most the vision bound; every refusal names
+/// `detection_radius`.
+#[cfg(test)]
+mod detection_tests {
+    use crate::catalog::{CatalogFile, StructureCatalogFile};
+    use crate::error::{SimCoreError, SimResult};
+    use sim_map::MAX_SIGHT_RADIUS_CELLS;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn refused_field(result: &SimResult<()>) -> Option<&str> {
+        match result {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field.as_str()),
+            _ => None,
+        }
+    }
+
+    fn refused_radii() -> [f64; 4] {
+        [0.0, -1.0, f64::from(MAX_SIGHT_RADIUS_CELLS) + 0.5, f64::NAN]
+    }
+
+    #[test]
+    fn a_unit_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file.units.into_iter().next().ok_or("shipped units")?;
+        for radius in refused_radii() {
+            #[allow(clippy::cast_possible_truncation, reason = "test values are small")]
+            let radius = radius as f32;
+            unit.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&unit.validate()),
+                Some("detection_radius"),
+                "unit radius {radius}"
+            );
+        }
+        unit.detection_radius = Some(11.0);
+        unit.validate()?;
+        unit.detection_radius = None;
+        unit.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_detection_radius_lies_above_zero_within_vision() -> TestResult {
+        let file: StructureCatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/structures.ron"))?;
+        let mut structure = file
+            .structures
+            .into_iter()
+            .next()
+            .ok_or("shipped structures")?;
+        for radius in refused_radii() {
+            structure.detection_radius = Some(radius);
+            assert_eq!(
+                refused_field(&structure.validate()),
+                Some("detection_radius"),
+                "structure radius {radius}"
+            );
+        }
+        structure.detection_radius = Some(11.0);
+        structure.validate()?;
+        Ok(())
+    }
+}
+
+/// Attack visibility (plan `2026-11-23-vision-and-detection` D-4): a `Visible` weapon reveals its
+/// attacker for at least one tick; zero is refused naming the field.
+#[cfg(test)]
+mod attack_visibility_tests {
+    use crate::catalog::CatalogFile;
+    use crate::error::SimCoreError;
+    use sim_types::AttackVisibility;
+
+    #[test]
+    fn a_visible_weapon_reveals_for_at_least_a_tick() -> Result<(), Box<dyn std::error::Error>> {
+        let file: CatalogFile =
+            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let mut unit = file
+            .units
+            .into_iter()
+            .find(|unit| unit.ground_weapon.is_some())
+            .ok_or("a shipped unit with a ground weapon")?;
+        let weapon = unit
+            .ground_weapon
+            .as_mut()
+            .ok_or("invariant: the unit was chosen for its ground weapon")?;
+        weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 0 };
+        let refused = match unit.validate() {
+            Err(SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        };
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|field| field.ends_with("attack_visibility")),
+            "a zero reveal is refused naming the field, got {refused:?}"
+        );
+        if let Some(weapon) = unit.ground_weapon.as_mut() {
+            weapon.attack_visibility = AttackVisibility::Visible { reveal_ticks: 54 };
+        }
+        unit.validate()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fire_rule_tests {
+    //! D-7 of plan `2026-11-24-fire-rules` (P-11): a lock needs a turret, a weapon that removes
+    //! its attacker may not fire at a target its attack order did not name, and both fields read
+    //! the engine defaults when omitted.
+    use super::strike_delay_tests::{refused_field, weapons};
+    use crate::catalog::{CatalogFile, WeaponSpecDef};
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn a_lock_needs_a_turret() -> TestResult {
+        let hull = |weapon: &WeaponSpecDef| !weapon.has_turret;
+        let field = refused_field(hull, |weapon| weapon.locks_turret_while_firing = true)?;
+        assert!(field.ends_with(".locks_turret_while_firing"), "{field}");
+        let turret = |weapon: &WeaponSpecDef| weapon.has_turret;
+        let field = refused_field(turret, |weapon| weapon.locks_turret_while_firing = true)?;
+        assert_eq!(field, "accepted", "a turret may lock");
+        Ok(())
+    }
+
+    #[test]
+    fn a_suicide_weapon_fires_only_at_its_orders_target() -> TestResult {
+        let suicide = |weapon: &WeaponSpecDef| weapon.suicide_on_attack;
+        let field = refused_field(suicide, |weapon| weapon.fires_at_other_targets = true)?;
+        assert!(field.ends_with(".fires_at_other_targets"), "{field}");
+        let other = |weapon: &WeaponSpecDef| !weapon.suicide_on_attack;
+        for outside in [false, true] {
+            let field = refused_field(other, |weapon| {
+                weapon.fires_at_other_targets = true;
+                weapon.fires_outside_attack_order = outside;
+            })?;
+            assert_eq!(
+                field, "accepted",
+                "the target option is independent of the order option ({outside})"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn omitted_fire_rules_read_the_engine_defaults() -> TestResult {
+        let text: String = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| {
+                !line.contains("fires_at_other_targets")
+                    && !line.contains("locks_turret_while_firing")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        let mut checked = 0_usize;
+        for mut unit in file.units {
+            for weapon in weapons(&mut unit) {
+                assert_eq!(
+                    (
+                        weapon.fires_at_other_targets,
+                        weapon.locks_turret_while_firing
+                    ),
+                    (false, false),
                     "{}",
                     weapon.name
                 );

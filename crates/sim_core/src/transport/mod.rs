@@ -260,6 +260,7 @@ impl SimWorld {
         actor.abandon_task_leg();
         actor.velocity = SimVec2::ZERO;
         actor.current_target = None;
+        actor.weapon_target = None;
         actor.current_funnel_waypoints.clear();
         Ok(TransportReceipt {
             passenger,

@@ -107,7 +107,22 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 40 (plan `2026-11-23-turret-wind-up` WP1, D-9), which encodes
 /// each weapon's movement rule and whether it fires outside an attack order; a scratch build that
 /// leaves them unhashed and keeps schema 39 reproduces `8_582_058_566_732_369_859`.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 5_438_070_395_987_993_470;
+/// Re-recorded for checksum schema 41 (plan `2026-11-23-vision-and-detection` WP4, D-7), which
+/// encodes each entity's attack-reveal counters and each weapon's attack visibility; a scratch
+/// build that leaves them unhashed and keeps schema 40 reproduces `5_438_070_395_987_993_470`.
+/// Re-recorded for checksum schema 43 (plan `2026-11-24-weapon-validation` WP1, D-7), which
+/// encodes each entity's teleport count, each projectile's target teleport count and each
+/// weapon's missile validation; a scratch build that leaves them unhashed and keeps schema 41
+/// reproduces `1_550_645_596_559_574_539`.
+/// Re-recorded for checksum schema 44 (plan `2026-11-24-hidden-harvesters` WP2, D-3, on its merge
+/// with `main` `7dc356fc`), which encodes each unit task's housing structure; a build that leaves
+/// it unhashed and keeps schema 43 reproduces `17_697_741_365_715_682_877`.
+/// Re-recorded for checksum schema 45 (plan `2026-11-24-fire-rules` WP1, D-8, on its merge with
+/// `main` `d92e40bb`), which encodes each weapon's two fire rules and each entity's own weapon
+/// target; a scratch build that leaves them unhashed and keeps schema 44 reproduces
+/// `8_410_876_910_713_629_694`. No turret moves in the sandbox, so the plan's other rules change
+/// nothing here.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_724_706_104_475_870_814;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

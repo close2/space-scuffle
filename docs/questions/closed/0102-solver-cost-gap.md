@@ -40,4 +40,31 @@ in the test harness use ranged attackers, so the two-abreast miss there is uncha
   re-deriving it, and some figures would move.
 - **(c) Keep the bar strict and keep Legacy** until a later attempt (all solver branches are kept on GitHub).
 
+## Update, 2026-11-24
+
+The gap is now larger, though the solver has not changed. Main's turret wind-up merge made the old movement
+code cheaper (10.35 G to 9.47 G instructions on 64 × 64), so the same solver now measures **+66.8 %**
+(15.79 G). Speed still holds on every scenario:
+
+| Scenario | Instructions against Legacy | Ticks per second |
+|---|---:|---:|
+| 400 units, 64 × 64, armies meet | +66.8 % | 111 |
+| 128 × 128, armies apart | +7.6 % | 183 |
+| Showcase canyon | +57.6 % | 80 |
+
+The held-out run (seeds never used before) confirmed the development table: the solver is worse than the old
+code on the same figures in both seed ranges, and on no others. Those figures are now open bugs B-188 to B-191.
+Two battle claims break under the solver; they are asked about separately in
+[Q0103](0103-solver-matrix-claims.md). The merge waits for both answers.
+
 ## Answer
+
+- **Option (a): Accept `+66.8 %` instructions on the 400-unit 64×64 scenario.**
+
+**Reasoning:** The ratio increase from `+62.6 %` to `+66.8 %` is an artifact of Legacy getting faster from the turret wind-up merge (`10.35 G → 9.47 G`), while actual speed passes Q0093 (c)'s 50 TPS bar with wide headroom on every scenario (`111` TPS = 4.4× real time on 64×64, `183` TPS on 128×128, `80` TPS on Showcase canyon). Do not compromise overlap tolerances over the relative instruction ratio; merge remains gated only on Q0103.
+
+## Resolution
+
+Accepted (a): the instruction bar no longer blocks the switch-over. The solver's WP6 (plan
+`2026-11-20-contact-solver`, Amendments 17 and 18, branch `contact-solver-plan`) now waits only on
+[Q0103](../open/0103-solver-matrix-claims.md). No overlap tolerance or iteration count is changed for cost.

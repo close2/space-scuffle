@@ -165,9 +165,9 @@ it, and recorded so that B-178's later rule finds it in place. P-5 checks the va
 
 | Rule | Source | Decision |
 |---|---|---|
-| `OnlyFireAtAttackOrderTarget 0` (Phoenix, Immortal, Colossus, Planetary Fortress): inside an attack order the weapon may fire at another target | S1, S4, S5, S7, S16 | **Out, registered B-180.** Our unit chooses one weapon per target plane, so the order's target is the weapon's target; modelling a weapon that fires elsewhere during an attack needs a per-weapon target |
+| `OnlyFireAtAttackOrderTarget 0` (Phoenix, Immortal, Colossus, Planetary Fortress): inside an attack order the weapon may fire at another target | S1, S4, S5, S7, S16 | **Out, registered B-180.** Our unit chooses one weapon per target plane, so the order's target is the weapon's target; modelling a weapon that fires elsewhere during an attack needs a per-weapon target. Settled by plan [`2026-11-24-fire-rules`](2026-11-24-fire-rules.md) WP3 |
 | `Slowing` against `Stopped`: a `Slowing` weapon may start while the unit brakes, a `Stopped` one only at rest | S10 | **Out, registered B-178.** Combat cannot tell braking from a push without the movement phase (D-3); under attack orders every weapon today starts while braking into its band |
-| `LockTurretWhileFiring` (Hellion) | S14 | **Out, registered B-179.** Ours slews the turret through the wind-up (`step_windup`) |
+| `LockTurretWhileFiring` (Hellion) | S14 | **Out, registered B-179.** Ours slews the turret through the wind-up (`step_windup`). Settled by plan [`2026-11-24-fire-rules`](2026-11-24-fire-rules.md) WP2, WP4 |
 | `NoDeceleration` (workers, Baneling, Mutalisk) | S15 | **Out, registered B-181.** A movement rule (B-39's glide), under `movement/` |
 | Patrol and `AcquireMove` | S9 | **Out.** Neither order is modelled (`UnitOrder` has none); when one is, it is an acquiring order like attack-move (**verify**) |
 | Hold Position | S12 | **Kept as today:** a holder's weapon works against `current_target`, tracked within reach (`Engagement::Hold`) |
@@ -649,13 +649,15 @@ no case relies on firing under `Move`).
   from pushes. Hook: `AllowedMovement` is already in the data; the rule reads `Slowing` when the movement phase
   exposes it (after the contact solver).
 - **F-2: B-180, `OnlyFireAtAttackOrderTarget 0`.** Needs a per-weapon target inside an attack order. Hook: the field
-  would sit beside `fires_outside_attack_order`; D-4's `Track` scan is the acquisition it would use.
+  would sit beside `fires_outside_attack_order`; D-4's `Track` scan is the acquisition it would use. **Settled by plan
+  [`2026-11-24-fire-rules`](2026-11-24-fire-rules.md) WP3** (`fires_at_other_targets`, `Entity::weapon_target`).
 - **F-3: a matrix fixture with `Move` orders and timed orders.** Would let the measured worlds show retreats and
   kiting (the WP2 move). Not added here: a fixture format change and new battles need their own claims.
 - **F-4: clearing `current_target` on a non-attack order.** A unit without a flagged weapon keeps a stale
   `current_target` under a move, as today; no combat rule reads it after WP2, but the solver pipeline's
   `in_range_of_live_target` does (`movement/`). Left to the contact-solver plan.
-- **B-179** (`LockTurretWhileFiring`), **B-181** (`NoDeceleration`): registered, deferred (§2.4).
+- **B-179** (`LockTurretWhileFiring`), **B-181** (`NoDeceleration`): registered, deferred (§2.4). B-179 is settled by
+  plan [`2026-11-24-fire-rules`](2026-11-24-fire-rules.md) WP2 and WP4.
 - **Patrol, `AcquireMove`:** not modelled orders.
 - **B-89** (Liberator turret), **B-22** (Carrier interceptors), **B-21** (Brood Lord): unchanged.
 
