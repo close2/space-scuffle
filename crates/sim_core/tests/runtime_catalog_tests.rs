@@ -3133,3 +3133,77 @@ fn an_edited_attack_visibility_hides_an_air_attacker() -> TestResult {
     bundle.finish()?;
     Ok(())
 }
+
+/// Plan `2026-11-24-hidden-harvesters` D-1, P-1 (validation): `hides_harvesters` is required on
+/// every `structures.ron` row, and a structure that hides its harvesters without being a gas
+/// extractor fails to load with the typed error, since in 5.0.14 the flag is a field of a
+/// resource behaviour that only an extractor holds.
+#[test]
+fn hiding_harvesters_is_required_and_refused_without_an_extractor() -> TestResult {
+    use sim_core::catalog::CatalogError;
+    let structures = std::fs::read_to_string(catalog_directory().join(FILES[1]))?;
+    let factions = sim_fixtures::shipped_factions();
+    let load = |text: &str| {
+        let mut catalog = UnitCatalog::from_ron_str(&factions, "(units: [])")?;
+        catalog.load_structures_from_ron_str(text)?;
+        Ok::<_, SimCoreError>(catalog)
+    };
+    let shipped = load(&structures)?;
+    let hiding = shipped
+        .archetypes()
+        .filter(|a| a.capabilities.hides_harvesters)
+        .count();
+    assert_eq!(hiding, 3, "the three gas extractors hide their harvesters");
+    let plain = "is_gas_extractor: false,\n            hides_harvesters: false,";
+    assert!(structures.contains(plain), "a plain structure row");
+    let wrong = structures.replacen(
+        plain,
+        "is_gas_extractor: false,\n            hides_harvesters: true,",
+        1,
+    );
+    let result = load(&wrong);
+    assert!(
+        matches!(
+            &result,
+            Err(SimCoreError::SpellCatalog(
+                CatalogError::HidesHarvestersWithoutExtractor { .. }
+            ))
+        ),
+        "{result:?}"
+    );
+    let missing = structures.replacen(plain, "is_gas_extractor: false,", 1);
+    assert!(
+        load(&missing).is_err(),
+        "a row without the field fails to load"
+    );
+    Ok(())
+}
+
+/// Plan `2026-11-24-hidden-harvesters` P-1 (charter §3.3, C6): whether an extractor hides its
+/// harvesters is read from `structures.ron` at run time. A bundle with one extractor's flag
+/// cleared loads in the same binary with that extractor no longer hiding, and the others still
+/// hiding.
+#[test]
+fn hiding_harvesters_is_read_at_run_time() -> TestResult {
+    let bundle = Bundle::new("hides-harvesters")?;
+    let path = bundle.directory.join(FILES[1]);
+    let text = std::fs::read_to_string(&path)?;
+    let hides = "hides_harvesters: true,";
+    assert_eq!(text.matches(hides).count(), 3, "three hiding rows");
+    std::fs::write(&path, text.replacen(hides, "hides_harvesters: false,", 1))?;
+    let edited = bundle.load()?;
+    let extractors: Vec<bool> = edited
+        .units
+        .archetypes()
+        .filter(|a| a.capabilities.is_gas_extractor)
+        .map(|a| a.capabilities.hides_harvesters)
+        .collect();
+    assert_eq!(extractors.len(), 3, "three extractors");
+    assert_eq!(
+        extractors.iter().filter(|hides| **hides).count(),
+        2,
+        "{extractors:?}"
+    );
+    bundle.finish()?;
+    Ok(())
+}

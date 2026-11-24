@@ -462,6 +462,11 @@ pub struct AbilitySpec {
 
 /// Bundle of optional mechanical capabilities possessed by an archetype.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored capabilities (dropoff, extractor, hidden harvesters, \
+              construction), each read by a different rule"
+)]
 pub struct ArchetypeCapabilities {
     /// Overclock / stim combat buff parameters (if capable).
     pub overclock: Option<OverclockSpec>,
@@ -481,6 +486,11 @@ pub struct ArchetypeCapabilities {
     /// Whether this structure extracts vespene gas for harvesters.
     #[serde(default)]
     pub is_gas_extractor: bool,
+    /// Whether a harvester gathering from this structure is inside it, hidden, for its gather
+    /// (5.0.14 `Flags HideHarvesters` of the structure's resource behaviour; plan
+    /// `2026-11-24-hidden-harvesters` D-1). Only a gas extractor may carry it.
+    #[serde(default)]
+    pub hides_harvesters: bool,
     /// Whether this unit can raise structures of its own faction.
     #[serde(default)]
     pub can_construct: bool,

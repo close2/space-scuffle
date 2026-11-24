@@ -1755,6 +1755,7 @@ impl UnitArchetypeDef {
             auto_rally: None,
             is_resource_dropoff: authored.is_resource_dropoff,
             is_gas_extractor: false,
+            hides_harvesters: false,
             can_construct: authored.can_construct,
             transport_capacity: authored.transport_capacity,
             abilities: abilities.clone(),
@@ -1998,6 +1999,10 @@ struct StructureArchetypeDef {
     pub auto_rally: Option<AutoRallySpecDef>,
     /// Whether this structure extracts vespene gas.
     pub is_gas_extractor: bool,
+    /// Whether a harvester gathering from this structure is inside it, hidden, for its gather
+    /// (5.0.14 `Flags HideHarvesters`; plan `2026-11-24-hidden-harvesters` D-1); required, so a
+    /// catalog written before the field fails to load. Only a gas extractor may set it.
+    pub hides_harvesters: bool,
     /// Detection radius in world units; omitted for a structure that detects nothing (plan
     /// `2026-11-23-vision-and-detection` D-2).
     #[serde(default)]
@@ -2036,8 +2041,9 @@ struct StructureArchetypeDef {
 }
 
 impl StructureArchetypeDef {
-    /// The capability bundle of this structure: a dropoff, an extractor, its abilities and its
-    /// auto-rally (plan `2026-11-23-production-queue` D-7); no unit capability.
+    /// The capability bundle of this structure: a dropoff, an extractor and whether it hides its
+    /// harvesters (plan `2026-11-24-hidden-harvesters` D-1), its abilities and its auto-rally
+    /// (plan `2026-11-23-production-queue` D-7); no unit capability.
     fn capabilities(&self) -> ArchetypeCapabilities {
         ArchetypeCapabilities {
             overclock: None,
@@ -2050,6 +2056,7 @@ impl StructureArchetypeDef {
             }),
             is_resource_dropoff: self.is_resource_dropoff,
             is_gas_extractor: self.is_gas_extractor,
+            hides_harvesters: self.hides_harvesters,
             can_construct: false,
             transport_capacity: 0,
             abilities: self.abilities.clone(),

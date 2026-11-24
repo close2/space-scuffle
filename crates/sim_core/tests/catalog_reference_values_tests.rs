@@ -666,6 +666,84 @@ fn b88_structure_attributes_follow_starcraft() -> TestResult {
     )
 }
 
+/// Whether a structure hides its harvesters, as 1 or 0 (5.0.14 `CBehaviorResource`
+/// `Flags HideHarvesters` on a behaviour of the structure's `BehaviorArray`; plan
+/// `2026-11-24-hidden-harvesters` S1, S2, D-1). Only the three gas extractors carry such a
+/// behaviour; no later layer clears the flag.
+const SC2_STRUCTURE_HIDES_HARVESTERS: [(&str, [f32; 1], &str); 49] = [
+    ("Command Center", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Orbital Command", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Planetary Fortress", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Supply Depot", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Refinery", [1.0], "HarvestableVespeneGeyserGas Flags HideHarvesters 1, liberty BehaviorData:824; Refinery BehaviorArray, liberty UnitData:5806"),
+    ("Barracks", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Engineering Bay", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Bunker", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Sensor Tower", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Missile Turret", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Factory", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Ghost Academy", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Starport", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Armory", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Fusion Core", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Tech Lab", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Reactor", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Nexus", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Pylon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Assimilator", [1.0], "HarvestableVespeneGeyserGasProtoss Flags HideHarvesters 1, liberty BehaviorData:836; Assimilator BehaviorArray, liberty UnitData:4151"),
+    ("Gateway", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Forge", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Photon Cannon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Shield Battery", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Cybernetics Core", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Twilight Council", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Stargate", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Robotics Facility", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Templar Archives", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Dark Shrine", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Robotics Bay", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Fleet Beacon", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hatchery", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Lair", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hive", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Extractor", [1.0], "HarvestableVespeneGeyserGasZerg Flags HideHarvesters 1, liberty BehaviorData:848; Extractor BehaviorArray, liberty UnitData:8179"),
+    ("Spawning Pool", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Evolution Chamber", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spine Crawler", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spore Crawler", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Roach Warren", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Baneling Nest", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Hydralisk Den", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Lurker Den", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Spire", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Greater Spire", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Infestation Pit", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Nydus Network", [0.0], "no resource behaviour with HideHarvesters"),
+    ("Ultralisk Cavern", [0.0], "no resource behaviour with HideHarvesters"),
+];
+
+/// B-161 (plan `2026-11-24-hidden-harvesters` P-1): every structure authors whether it hides
+/// its harvesters as its analogue does, and no unit hides any.
+#[test]
+fn b161_structures_hide_harvesters_as_starcraft() -> TestResult {
+    check_table(
+        "hides_harvesters",
+        true,
+        &SC2_STRUCTURE_HIDES_HARVESTERS,
+        &[],
+        |a| [f32::from(u8::from(a.capabilities.hides_harvesters))],
+    )?;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for archetype in catalogs.units.archetypes().filter(|a| !is_structure(a)) {
+        assert!(
+            !archetype.capabilities.hides_harvesters,
+            "{}: a unit hides no harvesters",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
 /// B-88 (P-2, plan `2026-11-23-structure-attributes` D-3): one meaning of "structure". An
 /// archetype has the `Structure` attribute exactly when it has a building shape, and there are
 /// exactly as many as the shipped `structures.ron` has rows, so combat's attribute test and the
