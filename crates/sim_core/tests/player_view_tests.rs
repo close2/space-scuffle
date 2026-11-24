@@ -1593,7 +1593,9 @@ fn revealed_lists_an_attack_revealed_detected_attacker() -> TestResult {
 
 /// A 32x32 world whose cells with x >= 16 stand one cliff level up (no ramp), with a ranged
 /// ground attacker of [`HOME`] on the plateau's edge ordered to attack a tough unit of [`AWAY`]
-/// below it, which cannot see it (plan `2026-11-24-attacker-snapshot`).
+/// holding below it (so it does not walk out of reach), which cannot see it (plan `2026-11-24-attacker-snapshot`). The attacker strikes
+/// more often than the catalog's snapshot cap (plan Amendment 1), counting its greatest random
+/// delay, so each strike refreshes the image before the cap ends it.
 fn hidden_attacker_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
     let mut map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
     for y in 0..32 {
@@ -1602,6 +1604,11 @@ fn hidden_attacker_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
         }
     }
     let mut world = SimWorld::with_catalogs(map, 0x183, units()?, UpgradeCatalog::default())?;
+    let cap = world
+        .catalog
+        .attack_snapshot_cap()
+        .ok_or("the shipped catalog authors a snapshot cap")?;
+    let cap = SimScalar::from_num(cap.get());
     let kind = world
         .catalog
         .archetypes()
@@ -1614,6 +1621,7 @@ fn hidden_attacker_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
                 .is_some_and(|w| {
                     w.attack_visibility == sim_types::AttackVisibility::Snapshot
                         && w.max_range >= SimScalar::from_i32(4)
+                        && SimScalar::from_i32(i32::from(w.period_ticks)) + w.random_delay_max < cap
                 })
         })
         .ok_or("a ranged Snapshot attacker")?
@@ -1626,7 +1634,10 @@ fn hidden_attacker_world() -> Result<(SimWorld, EntityId), Box<dyn Error>> {
     entity.hp = entity.max_hp;
     step(
         &mut world,
-        vec![command(HOME, vec![attacker], UnitOrder::attack(victim))],
+        vec![
+            command(HOME, vec![attacker], UnitOrder::attack(victim)),
+            command(AWAY, vec![victim], UnitOrder::HoldPosition),
+        ],
     );
     Ok((world, attacker))
 }

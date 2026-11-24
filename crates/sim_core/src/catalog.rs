@@ -58,6 +58,7 @@ pub use spells::{
 pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -515,6 +516,8 @@ pub struct UnitCatalog {
     movement_rules: MovementRules,
     placement_rules: PlacementRules,
     spells: Arc<SpellCatalog>,
+    /// `units.ron`'s `attack_snapshot_cap_ticks`; see [`Self::attack_snapshot_cap`].
+    attack_snapshot_cap: Option<NonZeroU32>,
 }
 
 impl UnitCatalog {
@@ -525,10 +528,12 @@ impl UnitCatalog {
     /// Returns [`SimCoreError`] for malformed RON, duplicate identities, blank slugs,
     /// numeric values that cannot be safely converted to simulation types, or a faction or
     /// class slug `factions` does not define ([`SimCoreError::UnknownFaction`],
-    /// [`SimCoreError::UnknownWeaponClass`], [`SimCoreError::UnknownArmorClass`]).
+    /// [`SimCoreError::UnknownWeaponClass`], [`SimCoreError::UnknownArmorClass`]), or an
+    /// `attack_snapshot_cap_ticks` of 0 ([`SimCoreError::CatalogInvalidValue`]).
     pub fn from_ron_str(factions: &FactionCatalog, ron_data: &str) -> SimResult<Self> {
         let catalog_file: CatalogFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
+        let attack_snapshot_cap = attack_snapshot_cap(catalog_file.attack_snapshot_cap_ticks)?;
 
         let mut catalog = Self {
             archetypes: vec![None; 128],
@@ -537,6 +542,7 @@ impl UnitCatalog {
             movement_rules: MovementRules::PER_UNIT,
             placement_rules: PlacementRules::NONE,
             spells: Arc::new(SpellCatalog::default()),
+            attack_snapshot_cap,
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
@@ -550,6 +556,23 @@ impl UnitCatalog {
     #[must_use]
     pub fn factions(&self) -> &FactionCatalog {
         &self.factions
+    }
+
+    /// The longest an attack snapshot lasts, in ticks after the strike that made or last
+    /// refreshed it: `units.ron`'s `attack_snapshot_cap_ticks` (plan `2026-11-24-attacker-snapshot`
+    /// Amendment 1, owner answer Q0112 2(c)). `None` when the file authors none: an image then
+    /// lasts until its player sees its spot or its attacker, as in `StarCraft` II 5.0.14.
+    /// Presentation only: the vision phase's prune reads it, no tick decision does.
+    #[must_use]
+    pub const fn attack_snapshot_cap(&self) -> Option<NonZeroU32> {
+        self.attack_snapshot_cap
+    }
+
+    /// Replaces the attack snapshot cap this catalog carries into the world; `None` lets an
+    /// image last until it is seen. For tools and tests that hold an image longer than the
+    /// authored cap; [`RuntimeCatalogs::load_from_directory`] always reads it from `units.ron`.
+    pub fn set_attack_snapshot_cap(&mut self, cap: Option<NonZeroU32>) {
+        self.attack_snapshot_cap = cap;
     }
 
     /// The movement rules of `movement_rules.ron` (group routing, plan `2026-11-10-group-routing`
@@ -1047,7 +1070,30 @@ fn compare_slugs(left: &str, right: &str) -> std::cmp::Ordering {
 
 #[derive(Debug, Deserialize)]
 struct CatalogFile {
+    /// The attack snapshot's cap in ticks; absent or `None` for none (plan
+    /// `2026-11-24-attacker-snapshot` Amendment 1).
+    #[serde(default)]
+    attack_snapshot_cap_ticks: Option<u32>,
     units: Vec<UnitArchetypeDef>,
+}
+
+/// Validates `units.ron`'s authored `attack_snapshot_cap_ticks`: `None` is no cap, and a cap
+/// must be at least one tick.
+///
+/// # Errors
+/// [`SimCoreError::CatalogInvalidValue`] for a cap of 0, which would drop every snapshot before
+/// it is shown.
+fn attack_snapshot_cap(authored: Option<u32>) -> SimResult<Option<NonZeroU32>> {
+    authored
+        .map(|ticks| {
+            NonZeroU32::new(ticks).ok_or_else(|| SimCoreError::CatalogInvalidValue {
+                definition: "units.ron".to_owned(),
+                field: "attack_snapshot_cap_ticks".to_owned(),
+                reason: "must be at least 1 tick: a cap of 0 drops every snapshot before it is \
+                         shown",
+            })
+        })
+        .transpose()
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -2192,6 +2238,32 @@ impl StructureArchetypeDef {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// Plan `2026-11-24-attacker-snapshot` Amendment 1: the snapshot cap is optional, a positive
+    /// cap is kept, and a cap of 0 is refused with a typed error naming the field.
+    #[test]
+    fn the_attack_snapshot_cap_is_optional_and_never_zero() {
+        assert_eq!(attack_snapshot_cap(None).expect("no cap is valid"), None);
+        assert_eq!(
+            attack_snapshot_cap(Some(25)).expect("a positive cap is valid"),
+            NonZeroU32::new(25)
+        );
+        assert!(matches!(
+            attack_snapshot_cap(Some(0)),
+            Err(SimCoreError::CatalogInvalidValue { field, .. })
+                if field == "attack_snapshot_cap_ticks"
+        ));
+        let units = include_str!("../../../assets/catalog/units.ron");
+        let file: CatalogFile = ron::from_str(units).expect("invariant: shipped units parse");
+        assert_eq!(
+            file.attack_snapshot_cap_ticks,
+            Some(u32::from(sim_types::TICKS_PER_SECOND)),
+            "the shipped cap is the owner's 1 second"
+        );
+        let absent: CatalogFile =
+            ron::from_str("(units: [])").expect("a file without the field parses");
+        assert_eq!(absent.attack_snapshot_cap_ticks, None);
+    }
 
     #[test]
     fn firing_half_angles_round_to_the_nearest_binary_unit() {

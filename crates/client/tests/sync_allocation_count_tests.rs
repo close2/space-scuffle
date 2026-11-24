@@ -37,8 +37,9 @@
 //!   in both running children, so during the window they go inside and come out, their bubbles
 //!   published `housed` and back (plan `2026-11-24-hidden-harvesters` P-10); everyone else stands
 //!   idle. Both running children also hold an attack snapshot: an enemy on a cliff struck a local
-//!   unit below it before the session began, and the struck unit was then made invulnerable, so
-//!   the image is held and unchanged through the window; the running live child adds the view
+//!   unit below it before the session began, and the struck unit was then made invulnerable
+//!   with the catalog's snapshot cap lifted, so the image is held and unchanged through the
+//!   window; the running live child adds the view
 //!   writer, the fog refill and the snapshot pool (plan `2026-11-24-attacker-snapshot` P-16).
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
@@ -246,8 +247,12 @@ fn watch_gas_crew(session: Res<'_, BattleSession>, mut crew: ResMut<'_, GasCrew>
 
 /// Stages an attack snapshot in `simulation` before its session begins: runs ticks until the
 /// enemy on the cliff has struck the local unit below it unseen, then makes that unit
-/// invulnerable, so no later strike refreshes the image and the window holds it unchanged.
+/// invulnerable, so no later strike refreshes the image and the window holds it unchanged. The
+/// catalog's snapshot cap (1 second, plan Amendment 1) is lifted first, so the unrefreshed image
+/// outlasts the window: this test counts a held image's allocations, not its lifetime, which
+/// `sim_core`'s `attack_snapshot_tests` pins.
 fn hold_attack_snapshot(simulation: &mut sim_core::SimWorld) -> TestResult {
+    simulation.catalog.set_attack_snapshot_cap(None);
     let staged = attack_snapshot_stage::stage(simulation);
     let mut view = sim_types::PlayerView::default();
     for _ in 0..400 {

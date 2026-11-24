@@ -586,7 +586,7 @@ pointer and the README row `Done`. `## As built` appended here. Commit `docs: cl
 
 ---
 
-## 15. Draft owner question (filed as [Q0112](../questions/open/0112-attacker-snapshot.md))
+## 15. Draft owner question (filed as [Q0112](../questions/closed/0112-attacker-snapshot.md))
 
 ````markdown
 # Q0112: The attacker snapshot: the minimap, how long it stays, and concealed attackers
@@ -642,6 +642,29 @@ Every option changes presentation only: no battle outcome, replay or checksum mo
 
 ---
 
+## Amendment 1 (2026-11-25, orchestrator): Q0112 answered 2(c), a 1-second cap
+
+The owner answered Q0112 1(a), **2(c)** and 3(a). Parts 1 and 3 are what this plan built. Part 2 changes D-3's
+lifetime: a snapshot still ends when its struck player sees its cell or the attacker, and it now also ends **at most
+1 second after the strike that made or last refreshed it** (a later strike by the same attacker on that player moves
+the record and restarts the cap). The owner wants the value easy to tune, so it is data, not a code constant:
+
+- **What changes.** The record keeps the tick of its last strike (unhashed, in `PresentationWorkspace`, like the pose).
+  `prune_attack_snapshots` (`world/vision.rs`) also drops a record once `tick - strike_tick` reaches the cap. The cap
+  is read at run time from the catalog (one authored field in seconds or ticks, beside the other vision or
+  presentation rules the catalog already loads; 1 second is 25 ticks, `TICKS_PER_SECOND`), validated (a cap of 0 is
+  refused with a typed error, since it would drop every snapshot before it is shown), and documented where it is
+  authored.
+- **Why.** Owner answer Q0112 2(c): a mobile high-ground attacker must not leave stale ghosts behind.
+- **Tests (red first).** In `attack_snapshot_tests.rs`: a snapshot left alone disappears exactly when the cap is
+  reached and not a tick earlier; a second strike before the cap moves the record and restarts the cap; the existing
+  "seen cell" and "seen attacker" drops still end it earlier; the cap is read from the catalog (a scratch catalog with a
+  different cap changes the lifetime); the validation refuses 0. The client steady-state and allocation tests keep
+  passing (the record grows by one integer, no heap data).
+- **Unchanged.** No checksum, golden or schema value moves (the records are unhashed and read by no tick decision);
+  the proof on four builds of the plan's WP1 is repeated on the final tree. Q0112 moves to `closed/` with a
+  `## Resolution` in the same branch.
+
 ## As built
 
 Built on branch `attacker-snapshot-plan` from `b010d0a6` (main `8a15bff9`, schema 45), 2026-11-24, with Q0112's
@@ -695,3 +718,46 @@ Deviations from the plan:
     345 to 348 (the opening of the lane fight); the `effects` take none. CI renders the video, so nothing was
     re-recorded. Measured after WP2, since no earlier tree records snapshots.
 11. **Not run here:** `cargo gate package` and the throughput bench (the verifier's package gate, Q0061).
+
+### As built: Amendment 1 (the 1-second cap, Q0112 2(c))
+
+Built on branch `snapshot-cap` from `5f9f63e9` (main `802df056`, checksum schema 47), 2026-11-25, in `c6b2de8c`.
+
+- **Where the cap is authored.** `assets/catalog/units.ron`, a top-level field beside `units` (the file whose
+  weapons author `attack_visibility`): `attack_snapshot_cap_ticks: Some(25)`, with its comment block at the head of
+  the file. `UnitCatalog::from_ron_str` reads it into `UnitCatalog::attack_snapshot_cap` (`Option<NonZeroU32>`); a
+  cap of 0 is refused with `SimCoreError::CatalogInvalidValue { definition: "units.ron", field:
+  "attack_snapshot_cap_ticks" }`, which the runtime loader reports against `units.ron`.
+- **The rule.** `SimWorld::prune_attack_snapshots` (`world/vision.rs`) also drops a record once
+  `current_tick - struck >= cap`, so a snapshot struck in tick t is listed after ticks t to t + 24 and gone after tick
+  t + 25. The record already carried `struck`; nothing was added to it.
+- **Tests.** Red first (`~/scratch/snapshot-cap/red/attack_snapshot_tests.log`: the four cap tests failed, the record
+  outliving 25, 40 and 200 ticks and a cap of 0 loading). In `attack_snapshot_tests.rs`:
+  `a_snapshot_left_alone_ends_when_the_cap_is_reached` (shipped 25: listed while younger, gone on exactly struck + 25),
+  `a_later_strike_before_the_cap_restarts_it` (moved pose, listed past the first strike's cap, gone the cap after the
+  last), `sight_still_ends_a_snapshot_before_the_cap`, `the_cap_is_read_from_the_catalog` (scratch copies of the
+  catalog directory with `Some(40)` and `None`), `a_cap_of_zero_is_refused`; P-5 to P-8 and P-10 now run on a scratch
+  catalog with a cap of 1,000,000 ticks, so only sight ends their image. Unit tests: `catalog.rs`
+  `the_attack_snapshot_cap_is_optional_and_never_zero`, `world/vision.rs`
+  `an_unseen_snapshot_is_dropped_when_its_cap_is_reached`.
+- **Proof.** Both goldens (`golden_replay_tests`, 4 tests) and `DEFAULT_SANDBOX_CHECKSUM` (`fixture_tests`, 3 tests)
+  pass unchanged on native debug and release and `wasm32-wasip1` release and debug on `c6b2de8c`; no fixture,
+  checksum constant or schema line changed (logs `~/scratch/snapshot-cap/proof/`).
+
+Deviations from the amendment:
+
+1. **An absent field means no cap.** The amendment asks for a validated authored field; leaving it optional
+   (absent or `None` = "until seen", 5.0.14's behaviour) keeps the 29 test-built `units.ron` fragments valid. The
+   shipped file authors 25, and a unit test requires it.
+2. **`UnitCatalog::set_attack_snapshot_cap`** (public, like `set_movement_rules`) was added for tests that hold an
+   image longer than the cap: the client's `a_held_attack_snapshot_changes_nothing_on_running_frames` and the
+   allocation count's running children make the struck unit invulnerable, so no strike refreshes their image, and they
+   lift the cap before staging (they measure a held image, not its lifetime). `a_refreshed_attack_snapshot_spawns_nothing`
+   runs under the shipped cap.
+3. **`player_view_tests`' hidden-attacker bench** now orders its victim to hold (it walked out of reach after the
+   first strikes, so the shipped cap ended the image within the 200-tick check) and picks an attacker whose period plus
+   greatest random delay is below the cap.
+4. **The cap is a difference from StarCraft II 5.0.14** (no duration in the data), chosen by the owner in Q0112 2(c);
+   it is recorded in the B-183 row. It is not added to `0052-sanctioned-sc2-deviations.md`, which this amendment did
+   not name.
+5. **Not run here:** `cargo gate package` and the throughput bench (the verifier's package gate).

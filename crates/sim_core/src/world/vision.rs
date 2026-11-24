@@ -16,8 +16,11 @@
 //!
 //! Once this tick's vision maps are final, the phase drops each player's attack snapshots that
 //! player now sees again: its spot is `Visible`, or the attacker itself is shown (plan
-//! `2026-11-24-attacker-snapshot` D-2). A strike of phase 7 records a snapshot on the same
-//! vision, so no snapshot is ever recorded for an attacker this phase showed.
+//! `2026-11-24-attacker-snapshot` D-2). It also drops each snapshot whose strike is the catalog's
+//! `attack_snapshot_cap_ticks` or more ticks old (plan Amendment 1, owner answer Q0112 2(c)): a
+//! snapshot struck in phase 7 of tick t is listed after ticks t to t + cap - 1 and dropped on
+//! tick t + cap. A strike of phase 7 records a snapshot on the same vision, so no snapshot is
+//! ever recorded for an attacker this phase showed.
 //!
 //! # Invariants
 //! - Incremental recasting leaves every counter and state exactly as a full recount would.
@@ -226,13 +229,19 @@ impl SimWorld {
     /// Drops every attack snapshot its viewer sees again: the cell of its spot is `Visible` to
     /// the viewer, or the attacker lives, is not hidden and is shown to the viewer
     /// ([`Self::shown_to`]). The attacker's death alone drops nothing; its image stays until
-    /// its spot is seen (plan `2026-11-24-attacker-snapshot` D-2, rule 6).
+    /// its spot is seen (plan `2026-11-24-attacker-snapshot` D-2, rule 6). Also drops every
+    /// snapshot whose last strike is at least the catalog's cap old
+    /// ([`crate::UnitCatalog::attack_snapshot_cap`], plan Amendment 1), whether seen or not.
     fn prune_attack_snapshots(&mut self) {
         if !self.presentation.has_attack_snapshots() {
             return;
         }
         let (map, vision_maps, entities) = (&self.map, &self.vision_maps, &self.entities);
+        let (now, cap) = (self.current_tick, self.catalog.attack_snapshot_cap());
         self.presentation.prune_attack_snapshots(|record| {
+            if cap.is_some_and(|cap| now.wrapping_sub(record.struck.0) >= cap.get()) {
+                return false;
+            }
             let Some(vision) = vision_maps.get(record.viewer) else {
                 return false;
             };
@@ -360,7 +369,8 @@ mod tests {
     }
 
     /// A flat 64x64 world, a mobile ground unit type of the shipped catalog, and its attacker
-    /// of player 0 at `attacker_at`, whose snapshot player 1 keeps at `spot`.
+    /// of player 0 at `attacker_at`, whose snapshot player 1 keeps at `spot`, struck on the
+    /// world's current tick.
     fn snapshot_world(attacker_at: SimVec2, spot: SimVec2) -> (SimWorld, EntityId, UnitTypeId) {
         let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
             .expect("invariant: a flat map");
@@ -384,7 +394,7 @@ mod tests {
             .record_attack_snapshot(AttackSnapshotRecord {
                 viewer: PlayerId(1),
                 attacker,
-                struck: Tick(1),
+                struck: Tick(world.current_tick),
                 pose: SnapshotPose {
                     unit_type: kind,
                     owner: PlayerId(0),
@@ -443,5 +453,23 @@ mod tests {
         world.entities.remove(&attacker);
         world.update_vision();
         assert_eq!(kept(&world), 1, "nor a reaped one");
+    }
+
+    /// Plan Amendment 1: an unseen snapshot is kept while its strike is younger than the
+    /// catalog's cap and dropped on the tick it reaches it.
+    #[test]
+    fn an_unseen_snapshot_is_dropped_when_its_cap_is_reached() {
+        let (mut world, _, _) = snapshot_world(at(52.5, 52.5), at(12.5, 12.5));
+        let cap = world
+            .catalog
+            .attack_snapshot_cap()
+            .expect("the shipped catalog authors a cap")
+            .get();
+        world.current_tick += cap - 1;
+        world.update_vision();
+        assert_eq!(kept(&world), 1, "one tick short of the cap: kept");
+        world.current_tick += 1;
+        world.update_vision();
+        assert_eq!(kept(&world), 0, "the cap is reached");
     }
 }
