@@ -869,3 +869,114 @@ fn an_unarmed_attack_mover_walks_past_enemies_and_acquires_nothing(
     assert!(armed_acquired, "the armed unit beside it acquired");
     Ok(())
 }
+
+/// An unarmed structure whose default stance has no A command, found by property; one that
+/// needs a geyser is passed over.
+fn unarmed_structure(
+    catalogs: &RuntimeCatalogs,
+) -> Result<UnitArchetype, Box<dyn std::error::Error>> {
+    Ok(catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. })
+                && !needs_a_geyser(arch)
+                && !arch.stance_armed(None)
+                && arch.stance_orders(None).attack == sim_types::AttackCommand::None
+        })
+        .ok_or("an unarmed structure without an A command")?
+        .clone())
+}
+
+/// The world of the D-9 tests: a sieged tank on (20, 20), an unarmed structure on cells (6, 6)
+/// and a marine-class walker on (30, 30), all owned by [`ME`].
+fn sieged_structure_and_walker(
+    catalogs: &RuntimeCatalogs,
+) -> Result<(SimWorld, [EntityId; 3]), Box<dyn std::error::Error>> {
+    let ((tank_arch, switches, mode), mobile_arch) = sieged_and_mobile(catalogs)?;
+    let structure_arch = unarmed_structure(catalogs)?;
+    let (mut world, tank) = unit_in(catalogs, &tank_arch, &switches, Stance::Settled(mode))?;
+    let structure = world.spawn_structure(structure_arch.unit_type_id, ME, 6, 6)?;
+    let walker = world.spawn_unit(mobile_arch.unit_type_id, ME, at(30, 30))?;
+    Ok((world, [tank, structure, walker]))
+}
+
+/// D-9 (B-176's `AttackMove` half; `ToSelection`, 5.0.14 `core` AbilData:127-129): one
+/// `AttackMove`, immediate or queued, naming a sieged tank, an unarmed structure and a
+/// marine-class unit moves the marine-class unit only. The sieged tank (anchored in its settled
+/// stance) and the structure (no A command) are filtered out before admission instead of
+/// refusing the command, and end the tick equal, field for field, to the same units in a world
+/// that received no command.
+#[test]
+fn an_attack_move_reaches_only_the_named_units_that_are_mobile_with_an_a_command(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let goal = at(40, 40);
+    let order = UnitOrder::AttackMove { target: goal };
+    for queue in [false, true] {
+        let (mut world, [tank, structure, walker]) = sieged_structure_and_walker(&catalogs)?;
+        let (mut untouched, _) = sieged_structure_and_walker(&catalogs)?;
+        step_with(
+            &mut world,
+            vec![command(vec![tank, structure, walker], order.clone(), queue)],
+        );
+        step(&mut untouched);
+        assert_eq!(
+            world.movement_outcomes()[0]
+                .result
+                .as_ref()
+                .map(|receipt| receipt.recipient_count),
+            Ok(1),
+            "queue {queue}: the command is admitted for the walker alone"
+        );
+        assert_eq!(
+            world.entities[&walker].order_queue.back(),
+            Some(&order),
+            "queue {queue}: the walker attack-moves"
+        );
+        assert_ne!(
+            world.entities[&walker], untouched.entities[&walker],
+            "queue {queue}: the walker took the order"
+        );
+        for (unit, what) in [
+            (tank, "the sieged tank"),
+            (structure, "the unarmed structure"),
+        ] {
+            assert_eq!(
+                world.entities[&unit], untouched.entities[&unit],
+                "queue {queue}: {what} is left as it was"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// D-9: an `AttackMove` whose every named unit is filtered out (a sieged tank and an unarmed
+/// structure) is a valid command that does nothing: it is admitted with no recipient, and the
+/// world ends the tick with the checksum of a world that received no command.
+#[test]
+fn an_attack_move_left_with_no_recipient_is_valid_and_does_nothing(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let order = UnitOrder::AttackMove { target: at(40, 40) };
+    let (mut world, [tank, structure, _]) = sieged_structure_and_walker(&catalogs)?;
+    let (mut untouched, _) = sieged_structure_and_walker(&catalogs)?;
+    step_with(
+        &mut world,
+        vec![command(vec![tank, structure], order, false)],
+    );
+    step(&mut untouched);
+    assert_eq!(
+        world.movement_outcomes()[0]
+            .result
+            .as_ref()
+            .map(|receipt| receipt.recipient_count),
+        Ok(0),
+        "the command is valid with no recipient"
+    );
+    for unit in [tank, structure] {
+        assert_eq!(world.entities[&unit], untouched.entities[&unit]);
+    }
+    assert_eq!(world.compute_checksum(), untouched.compute_checksum());
+    Ok(())
+}

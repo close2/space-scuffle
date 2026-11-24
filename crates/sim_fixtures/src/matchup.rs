@@ -1409,8 +1409,9 @@ mod tests {
 
     /// Whether `unit`, named in a first-tick attack `order`, took it (plan
     /// `2026-11-24-attack-orders` P-9): an `AttackTarget` leaves the unit's queue with that
-    /// explicit target, and an `AttackMove` names only a unit whose settled stance has an A
-    /// command.
+    /// explicit target, and an `AttackMove` names only a unit that is mobile in its settled
+    /// stance and whose settled stance has an A command, so that movement admission's filter
+    /// (plan `2026-11-24-attack-orders` D-9) drops none of them, and the unit took it.
     fn took_attack(world: &SimWorld, unit: EntityId, order: &UnitOrder) -> Result<bool, String> {
         let entity = world
             .entities
@@ -1423,7 +1424,9 @@ mod tests {
         Ok(match order {
             UnitOrder::AttackTarget { .. } => entity.order_queue.contains(order),
             UnitOrder::AttackMove { .. } => {
-                entity.settled_attack_command(archetype) != sim_types::AttackCommand::None
+                !entity.immobile_after_channel(archetype)
+                    && entity.settled_attack_command(archetype) != sim_types::AttackCommand::None
+                    && entity.order_queue.contains(order)
             }
             _ => true,
         })
@@ -1433,7 +1436,8 @@ mod tests {
     fn no_matrix_battle_scripts_an_attack_that_misses_a_unit_it_names(
     ) -> Result<(), Box<dyn std::error::Error>> {
         // P-9 (plan 2026-11-24-attack-orders): a scripted first-tick `AttackTarget` reaches
-        // every unit it names, and a scripted `AttackMove` names only units with an A command.
+        // every unit it names, and a scripted `AttackMove` names only mobile units with an A
+        // command, each of which took it (D-9).
         let matrix = Matrix::from_ron_str(MATRIX_RON)?;
         let seed = matrix.seeds[0];
         let (mut missed, mut attacks, mut moves) = (Vec::new(), 0, 0);
