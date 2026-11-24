@@ -117,7 +117,10 @@ use std::collections::BTreeMap;
 /// pipeline (plan `2026-11-20-contact-solver` WP6), so a replay recorded under the legacy
 /// pipeline is refused by its schema instead of diverging at its first contact. Number 42, once
 /// reserved for this plan, stays unused (its retarget field, G-6′, was stopped, Amendment 18).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 46;
+/// Schema 47 adds each unit's last seen point of its attack order's target,
+/// `MovementMemory::last_seen` (target, point and whether it is lost), after `slot` (plan
+/// `2026-11-24-weapon-validation` Amendment 2, B-195). The number is the next free at merge.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 47;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -16,7 +16,10 @@
 //! - A unit with a finite deceleration brakes at it into its destination and into its weapon's
 //!   range, and glides to rest at it when its order ends without arriving (B-39, Q0067).
 //!
-//! Pursuit obeys the same route, steering and contact rules. Only its goal moves.
+//! Pursuit obeys the same route, steering and contact rules. Only its goal moves. A player's
+//! attack order whose target its player has lost to fog is no pursuit: the unit walks, as on a
+//! move order, to where the target was last seen, and the order ends there (plan
+//! `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106 part 1 (a)).
 //!
 //! # Invariants
 //! - No route search runs twice for one actor within [`REPATH_COOLDOWN_TICKS`].
@@ -248,10 +251,19 @@ impl MotionProposal {
             actor.current_funnel_waypoints.drain(..count);
         }
         if let Some(destination) = self.retarget {
-            if let Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) =
-                actor.order_queue.front_mut()
-            {
-                *target = destination;
+            match actor.order_queue.front_mut() {
+                Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) => {
+                    *target = destination;
+                }
+                // A walk to a lost target's last seen point keeps the reachable point it found.
+                Some(UnitOrder::AttackTarget { target, .. }) => {
+                    if let Some(seen) = actor.movement.last_seen.as_mut() {
+                        if seen.target == *target {
+                            seen.point = destination;
+                        }
+                    }
+                }
+                _ => {}
             }
             if actor.has_task_order() {
                 actor.task.goal = Some(destination);
@@ -397,6 +409,19 @@ fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimV
         }
     };
     SimVec2::new(clamp(point.x, map.width()), clamp(point.y, map.height()))
+}
+
+/// The target `actor` fights: its current target, or else the target of its attack order. A
+/// target lost to fog, which the unit walks away from to its last seen point, is none (plan
+/// `2026-11-24-weapon-validation` Amendment 2): the unit is a walker, not engaged.
+fn engaged_target(actor: &Entity) -> Option<EntityId> {
+    actor
+        .current_target
+        .or(match actor.order_queue.front() {
+            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
+            _ => None,
+        })
+        .filter(|&id| actor.movement.lost_target_point(id).is_none())
 }
 
 fn arithmetic(id: EntityId, source: MovementMathError) -> MovementInvariant {
@@ -743,12 +768,7 @@ impl SimWorld {
             )
         };
         let target_lives = || {
-            actor
-                .current_target
-                .or(match actor.order_queue.front() {
-                    Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
-                    _ => None,
-                })
+            engaged_target(actor)
                 .is_some_and(|id| self.entities.get(&id).is_some_and(Entity::is_alive))
         };
         matches!(
@@ -776,11 +796,7 @@ impl SimWorld {
     /// Whether `actor` stands within its weapon's band of a live target: its current target, or
     /// the target of its attack order.
     fn in_range_of_live_target(&self, entry: MotionEntry, actor: &Entity) -> bool {
-        let target = actor.current_target.or(match actor.order_queue.front() {
-            Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
-            _ => None,
-        });
-        let Some((id, target)) = target.and_then(|id| {
+        let Some((id, target)) = engaged_target(actor).and_then(|id| {
             self.entities
                 .get(&id)
                 .filter(|t| t.is_alive())
@@ -810,13 +826,7 @@ impl SimWorld {
         {
             return None;
         }
-        let target = actor
-            .current_target
-            .or(match actor.order_queue.front() {
-                Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
-                _ => None,
-            })
-            .and_then(|id| self.entities.get(&id))?;
+        let target = engaged_target(actor).and_then(|id| self.entities.get(&id))?;
         let arch = self.catalog.get(actor.unit_type_id).ok()?;
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
         let siege = actor
@@ -1153,8 +1163,11 @@ impl SimWorld {
             Some(_) if actor.has_task_order() && actor.task.goal.is_some() => {
                 actor.task.goal.unwrap_or(actor.position)
             }
-            Some(UnitOrder::AttackTarget { target, origin }) => {
-                return Ok(ControlFlow::Break(MotionAction::Pursue(*target, *origin)))
+            Some(&UnitOrder::AttackTarget { target, origin }) => {
+                match self.last_seen_goal(entry, actor, target, origin) {
+                    Some(goal) => goal,
+                    None => return Ok(ControlFlow::Break(MotionAction::Pursue(target, origin))),
+                }
             }
             Some(&UnitOrder::CastAbility {
                 ability_index,
@@ -1184,6 +1197,29 @@ impl SimWorld {
             }
         };
         Ok(ControlFlow::Continue((proposal, target)))
+    }
+
+    /// The point a unit under its player's attack order walks to instead of pursuing `target`:
+    /// where its player last saw the target, once the target is lost to fog and while pursuit
+    /// would still chase it (plan `2026-11-24-weapon-validation` Amendment 2, B-195; Q0106 part
+    /// 1 (a)). The point is clamped into the unit's domain, as a cast's approach is. The walk is
+    /// a move order's: it stops there and the order ends ([`MotionProposal::finish`] pops it).
+    /// `None` while the target is seen, never seen under the order, or gone; pursuit decides then.
+    /// Acquisition writes the sighting in phase 4 ([`MovementMemory::sight`]), so the answer does
+    /// not depend on the order actors move in.
+    fn last_seen_goal(
+        &self,
+        entry: MotionEntry,
+        actor: &Entity,
+        target: EntityId,
+        origin: AttackOrigin,
+    ) -> Option<SimVec2> {
+        let point = actor
+            .movement
+            .lost_target_point(target)
+            .filter(|_| origin == AttackOrigin::Explicit)?;
+        self.is_entity_available_for_combat(actor.owner, target)
+            .then(|| clamp_into_domain(entry.policy, &self.map, point))
     }
 
     /// Whether `actor`'s swing holds it this tick: it is in its wind-up and the weapon of the

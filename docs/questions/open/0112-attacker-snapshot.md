@@ -35,3 +35,6 @@ Every option changes presentation only: no battle outcome, replay or checksum mo
 
 ## Answer
 
+- **1(a):** Close `B-183` for the battlefield view and track the minimap half as `B-204` until a minimap is built.
+- **2(c) — start with a 1-second cap:** The snapshot stays until you see that spot again or see the attacker itself, **capped at 1 second** after each shot (a later shot from the same attacker refreshes/moves it). Starting with 1 second keeps mobile high-ground attackers from leaving stale ghosts behind and can be tuned easily later since it is presentation-only.
+- **3(a):** Cloaked or burrowed attackers leave a snapshot **only if you detect the spot they fire from** (with a detector in range); otherwise you see nothing.
