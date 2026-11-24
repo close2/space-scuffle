@@ -786,6 +786,29 @@ The question number is the next free at filing (0106 on `cff46b37`, Q0103 to Q01
 
 ---
 
+## Amendment 1 (orchestrator, 2026-11-24): battle 35 restated; battle 42 placed by whole cells
+
+**Battle 35.** WP5 broke its claim ("a helpless colossus may flee out of their scan range", `red (0, 1)`): on 9 of
+20 seeds (22 and 33 of record) 2 or 3 Colossus analogues survive. Traced in the evidence: a Colossus analogue that
+flees beyond the Viking analogues' sight (10) fails the weapon filter (S4, D-3), and the Vikings' automatic attacks
+on it are dropped for their attack-move (D-5, Q0106 part 2's default; a unit is seen by its centre cell, part 4's
+default); every seed's first difference is a counted probe event. That is a sourced rule, and keeping the old
+outcome would fit the claim to B-185's chase by the true position. So the battle is restated, not the rule:
+- the claim reads "Vikings lose nothing; colossi that flee out of their sight survive (5.0.14 TargetFilters
+  Visible)";
+- the expectation is the measured range on the 20 seeds, `expect: (blue: (12, 12), red: (1, 3))`;
+- the fixture comment cites B-185, D-5 and Q0106 parts 2 and 4 and the first-difference trace;
+- a different answer to Q0106 part 2 (e.g. walking to the last seen point first) or part 4 (any part of the unit
+  seen) re-opens this expectation, which is then re-measured and re-traced.
+
+**Battle 42 (§7.4).** §7.4's positions (tank at (50.0, 32.0), workers at x = 41.5) do not meet its own rule, because
+sight is whole cells (a cell is seen when its offset from the viewer's cell lies within the radius): the tank at
+x = 50.0 stands in cell 49 or 50 under the spawn jitter, and a worker in cell 41 sees cell 49, so the struck workers
+answered and killed the tank on 9 of 20 seeds. By the same rule the tank stands at a cell centre, (50.5, 32.5), and
+the column at x = 41.85 (cell 41 under the jitter), rows 30.25 to 34.75: every worker is 9 cells from the tank (beyond
+its 8, inside the tank's 11). On all 20 seeds no worker swings and every struck worker flees to 13.55 to 14.09 from
+the tank, outside its sight and inside its reach (14.25).
+
 ## As built
 
 WP0 to WP6 on branch `weapon-validation-plan`, one commit each, with `main` at `e313268f` (the attack orders, no
@@ -803,15 +826,14 @@ schema change) merged in before WP6. Measurements and traces are in the
 | WP6 | this commit | Records, evidence, As built | — |
 
 Deviations and findings:
-- **Battle 42's positions** (§7.4's verify failed as written): sight is whole cells, and the plan's tank at x = 50.0
+- **Battle 42's positions** (§7.4's verify failed as written; Amendment 1): sight is whole cells, and the plan's tank at x = 50.0
   sits in cell 49 or 50 under the jitter, which a worker in cell 41 sees. The tank stands at (50.5, 32.5) and the
   column at x = 41.85, 9 cells away; every worker flees to 13.55 to 14.09 (inside reach 14.25) on all 20 seeds.
 - **P-6's "a player without a vision map"** cannot be reached through the public API (every slot has a vision map;
   an owner outside the slots cannot spawn a unit). It is a unit test of the predicate in `target_acquisition.rs`.
-- **Battle 35's claim breaks** (stop rule 3): "red 0 to 1" fails on 9 of 20 seeds (22 and 33 of record) because a
-  Colossus analogue that flees out of the Viking analogues' sight is dropped under D-5 and survives. Left as
-  recorded and reported with its trace; the matrix test fails on it until the orchestrator decides (re-record, or
-  Q0106 part 2 or 4).
+- **Battle 35's claim broke** (stop rule 3): "red 0 to 1" failed on 9 of 20 seeds (22 and 33 of record) because a
+  Colossus analogue that flees out of the Viking analogues' sight is dropped under D-5 and survives. Reported with
+  its trace; restated by Amendment 1 (`red (1, 3)`, the claim reworded).
 - **Re-derived tests**: seven tests drove combat with targets their player did not see (named in WP5's commit and
   the evidence); they now run the vision phase first or place a spotter.
 - `MissileValidation`'s refusal is `SimCoreError::CatalogInvalidValue` (the catalog's existing typed error) naming

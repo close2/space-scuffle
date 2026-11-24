@@ -193,3 +193,10 @@ voided this branch's first proof runs):
 
 **Client.** The skirmish stage log (`skirmish_match_tests`, release, radv) on the merged tree holds the same lines
 as WP0's; only the interleaving of two parallel tests' `tick 0: Mine` lines differs.
+
+## Amendment 1: battle 35 restated
+
+By the orchestrator's decision (plan Amendment 1), battle 35's claim reads "Vikings lose nothing; colossi that flee
+out of their sight survive (5.0.14 TargetFilters Visible)" and its expectation is the range measured on the merged
+tree's 20 seeds, `red (1, 3)` (per seed: 3203386110 1, 11 1, 22 2, 33 3, 1 1, 2 1, 3 2, 4 1, 5 1, 6 2, 7 2, 8 2, 9 2,
+10 3, 12 1, 13 1, 14 3, 15 1, 16 1, 17 1; Vikings 12 on every seed). The trace is WP5's above.
