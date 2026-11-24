@@ -1487,3 +1487,95 @@ instructions).
   sums, terrain steps, pair builds) is the Jacobi solve itself.
 - **By Amendment 16, step 2, this is a stop:** the bar fails by 2.6 points, and the split goes to the orchestrator
   for the owner.
+
+### 13.11 WP6 preparation (Q0102's default): the held-out run is a stop for review
+
+**Merge.** Main `36b914fd` (schema 40) is merged into the plan branch (`23c4a002`) before any golden is re-recorded,
+so they are re-recorded once. The plan branch adds no hashed state of its own.
+
+**Held-out run** (Amendment 16, option (b)). Seeds 9,000,001 to 9,001,000 per family, each scene family also
+relabelled, mirror 9,000,001 to 9,001,000; both pipelines from one harness binary of the plan branch with N
+(`runs/held-legacy-9000001`, `runs/held-solver-9000001`, each keeping its binary). Each was run once.
+
+*Solver: held-out against development* (development is §13.10's head: step 1 + P8 + O1 + N). The comparator's
+noise rule (§10) marks only these worse:
+
+| Figure | Development | Held-out | T-figure |
+|---|---:|---:|---|
+| arc M4 | 0.0052 % [0.0031, 0.0073] | 0.0074 % [0.0050, 0.0101] | T3 (≤ 1 %) holds on both |
+| arc friend overlap > 5 % while moving | 0.0012 % [0.0005, 0.0020] | 0.0024 % [0.0012, 0.0039] | T7 (≤ 0.1 %) holds on both |
+| cross give-ups = deadlocks | 2 [0, 5] | 6 [1, 13] | T4 (0) fails on both |
+
+Every other figure lies within noise, or is better: gap M2 and moving overlap, corner M1-hi and M2, cross resting
+overlap. The mirror is blue 0.523 [0.430, 0.613] with 889 draws (development 0.538 [0.448, 0.626], 883 draws); T9
+holds. Arc's relabel p for M1 is 0.011 (development 0.250), still above T8's 0.01.
+
+**By Amendment 16 this is a stop:** a held-out figure is worse than its development counterpart beyond the noise
+rule. Two of the three stay well inside their thresholds. The third, cross give-ups, fails T4 on both ranges.
+
+*The cross give-ups traced.* The four held-out cross scenes that give up are seeds 9,000,180, 9,000,353, 9,000,475
+and 9,000,606; the development scenes are 704 and 900. Seed 9,000,353 (θ 180°, 14 units a side, r 1) is traced in
+`trace/held/cross9000353.txt`. At tick 348, units 8 and 22 give up with NoProgress:
+- velocity 0;
+- 7.56 and 19.03 from their rings;
+- two bodies on the bearing point, two units in the band.
+
+This is the head-on stall that remains of WP3's side rule (§13.9: rule S, which aimed at it, was stopped). It is
+not a new mechanism; the held-out range has more head-on scenes that meet it.
+
+*Legacy on the held-out range, and Solver against Legacy there.* Solver is worse than Legacy beyond noise on the
+same figures as on the development range (§13.6), and on no other:
+- M4 in gap, cross and corner (within T3 for both);
+- arc give-ups 24 → 268, arc fill 0.977 / 0.889 → 0.970 / 0.857 (T5 holds for both);
+- corridor fill 0.972 → 0.910 (no T-figure; Q0095's two-abreast miss);
+- corner give-ups 0 → 5, completion 100 % → 99.8 %.
+
+Legacy's held-out mirror is blue 0.419 [0.383, 0.457] with 325 draws: it fails T9 there too.
+
+*Legacy: held-out against development* (`runs/legacy-head-1`), for scale. The held-out range differs from the
+development range for Legacy too. Beyond noise, Legacy is worse on arc fill (0.980 → 0.977) and corridor give-ups
+(275 → 345), and better on gap give-ups (454 → 354), cross give-ups (152 → 100) and five other figures. The
+comparator's noise rule draws on scene sampling within a range only. It does not cover differences between the
+two ranges' scene mixes, which Legacy shows here.
+
+**Held-out T-figures that still fail under Solver** (development figure in brackets):
+- T1: gap M1 1.10 / M1-hi 0.257 (1.09 / 0.267), arc 2.46 / 0.198 (2.36 / 0.184), cross 1.20 / 0.475 (1.19 / 0.485);
+- T4: gap 29 give-ups, 98.3 % complete (50, 97.4 %); cross 6, 99.6 % (2, 99.8 %); corner 5, 99.8 % (7, 99.7 %);
+- E1: arc 268 (309), corridor 25 (20);
+- T7 friend maximum: gap 224 scenes over (231), corner 5 (9).
+
+**WP6 work done before the stop** (commits `a639e0a3`, `96d668fb`):
+- **Default:** `pipeline: Solver` in `movement_rules.ron`.
+- **Tests restated** per §8.1 and Amendment 4 item 4:
+  - `the_shipped_rules_run_the_solver_pipeline_since_the_switch_over`;
+  - the fan-out test on the settled clump;
+  - two legacy-form tests pinned to Legacy until WP7;
+  - two internals tests over both pipelines, with a Solver twin for the off-map tick start.
+- **Goldens:** `golden_replay` (first change at checkpoint 0) and `golden_replay_orders` (checkpoint 2) are
+  re-recorded under Solver.
+  - Proof: with `pipeline: Legacy` the merged tree reproduces main's lists and `DEFAULT_SANDBOX_CHECKSUM` on native
+    debug and release and on `wasm32-wasip1` release and debug.
+  - The new lists agree on all four builds.
+  - `DEFAULT_SANDBOX_CHECKSUM` does not move.
+- **Matrix** (20 seeds under Solver):
+  - restated: 33 blue 0..13 → 0..16; 36b red 9..12 → 9..13; 38b blue 1..1 → 0..1 and red 5..8 → 4..8;
+  - **two winner flips, reported and not restated:** battle 26 (colossi against zerglings: zerglings win 17 of 20,
+    against 1 of 20 under Legacy) and battle 28 (immortals win 15 of 20, against 0 of 20). The matrix test fails on
+    them until the orchestrator decides.
+  - Battle 33's claim reads "narrowly"; under Solver the marines win all 20 seeds by 8 to 16.
+- **Showcase:**
+  - `route_trace` under Solver: player 1 still wins the lane fight; the viewer's last unit dies at tick 691 (663
+    before), the workers at ticks 1,091 and 1,128 (1,059 and 1,102), the hall at tick 2,505 (2,622).
+  - `clash` is lengthened from 375 to 400 frames.
+  - Render on the RX 580 under radv (`showcase render --driver radv`, one `with-gpu-lock` per take): `battle` take
+    165.6 s, `effects` take 591 frames in 74.6 s.
+    - `clash` runs from tick 297 to 697, past the last death;
+    - `march` ends on combat at the viewer's base at tick 1,010;
+    - `assault` (to about tick 1,410) covers both worker deaths.
+  - `showcase_storyboard_tests` (7) and `showcase_tests` (2) pass.
+
+**Not done, pending the review of this stop:**
+- throughput in `DESIGN.md` §5;
+- the §4 bug rows for the failing T-figures, and the Movement row;
+- the amendment listing the matrix restatements;
+- `cargo gate quick` and the client battle targets.
